@@ -16,9 +16,11 @@
 // a measurement; performance.rs only ever yields a Some abstractness for
 // complete compiler data, so `abstractness != null` is the plot gate here.
 const DASH_MAIN_SEQUENCE_MAX_DISTANCE=1/3;
+// Same rounding tolerance as zones.rs: A=0, I=2/3 sits on the corridor edge.
+const DASH_DISTANCE_TOLERANCE=1e-9;
 function dashZoneOf(abstractness,instability){
   const sum=abstractness+instability;
-  if(Math.abs(sum-1)<=DASH_MAIN_SEQUENCE_MAX_DISTANCE)return 'main';
+  if(Math.abs(sum-1)<=DASH_MAIN_SEQUENCE_MAX_DISTANCE+DASH_DISTANCE_TOLERANCE)return 'main';
   return sum<1?'pain':'useless';
 }
 const DASH_ZONE_STYLE={

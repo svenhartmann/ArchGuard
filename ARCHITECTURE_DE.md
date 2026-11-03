@@ -640,9 +640,13 @@ gemessen“, nie „sauber“ oder null.
 - **A/I-Zonen** (`zones.rs`): Klassifikation nach
   `D′ = |A + I − 1|` jenseits des ±1/3-Korridors; `A + I < 1` Zone of Pain,
   `A + I > 1` Zone of Uselessness. Grenze: `A` braucht Compilerbelege;
-  von keiner Abstraktionsmetrik gedeckte Grenzen bleiben `unmeasured`. Im
-  KPI-Block bleibt `zones` so lange `None`, bis es einen Produzenten der
-  Abstraktionsmetriken gibt — das Panel zeigt „not measured“, statt zu raten.
+  von keiner Abstraktionsmetrik gedeckte Grenzen bleiben `unmeasured`. Die
+  Pipeline startet keinen Compiler, deshalb bleibt `zones` im gecachten
+  KPI-Block `None`. Der Viewer füllt es aus den Knoten-Abstraktionsmetriken
+  der Performance-Analyse (Java und C#); SCC-Metriken zählen nicht doppelt.
+  Ohne eine einzige messbare Grenze bleibt es `None` — das Panel zeigt
+  „not measured“, statt zu raten. Textbericht und MCP-Tool `review_kpis`
+  lesen den gecachten Block und melden Zonen daher als nicht gemessen.
 - **Verstricktheit** (`tangles.rs`): Anteil der Knoten in einer zyklischen SCC
   mit mehr als einem Mitglied, bezogen auf die Sichtknoten.
 - **Hub-Gini** (`tangles.rs`): Gini-Koeffizient der Fan-in-Verteilung plus der

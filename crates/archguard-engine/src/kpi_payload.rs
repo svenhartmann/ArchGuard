@@ -52,8 +52,8 @@ const RISK_TOP: usize = 10;
 /// Module-view KPIs (propagation cost, SDP, tangledness, hubs, layer
 /// drift, health) run on the configured `[modules].depth` view; file
 /// KPIs (visibility, debt, leaks, risk gaps) run on the full graph.
-/// `zones` stays `None` until a producer of abstraction metrics exists
-/// — zones are never guessed.
+/// `zones` stays `None` here: it needs compiler abstractness, which only
+/// callers that run the call analysis add via `review_zones`.
 pub fn compute_review_kpis(
     root: &Path,
     config: &Config,
@@ -304,7 +304,7 @@ mod tests {
         let kpis = compute_review_kpis(dir.path(), &Config::default(), &empty_graph(), &[])
             .expect("empty project computes");
         assert!(kpis.propagation_cost.is_empty());
-        assert!(kpis.zones.is_none(), "no abstraction producer, no zones");
+        assert!(kpis.zones.is_none(), "no compiler evidence, no zones");
         assert!(kpis.dependencies.is_none(), "no manifests → not measured");
         assert!(kpis.debt.expect("scan ran").per_kloc.is_none(), "0 loc");
         assert!(

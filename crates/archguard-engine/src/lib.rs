@@ -115,7 +115,7 @@ pub use patterns::{
     ArchitecturePatternReport, PatternAssessment, PatternEvidence, analyze_architecture_patterns,
     architecture_patterns, pattern_inputs_fingerprint,
 };
-pub use performance::analyze_performance;
+pub use performance::{analyze_performance, review_zones};
 pub use pipeline::Level;
 pub use project_files::write_project_file;
 pub use quality_findings::{

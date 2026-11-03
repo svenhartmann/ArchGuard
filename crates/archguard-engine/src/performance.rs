@@ -2,7 +2,7 @@
 use archguard_core::{
     AbstractionMetric, ArchguardError, CallAnalysis, Config, ContractCandidate, CyclicBuildGroup,
     EntryClosure, Graph, NodeId, NodeKind, PerformanceReport, Ref, ReviewSources,
-    SourceCostFinding,
+    SourceCostFinding, ZoneStats,
 };
 use archguard_extract::{Lang, TargetSpec, extractor_for, strip_root};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -546,6 +546,21 @@ fn abstraction_metric(
         reason,
     }
 }
+/// Martin A/I zone counts for the review KPIs from the node-scope
+/// abstraction metrics of `report`. SCC metrics are skipped because their
+/// members already count as nodes. `None` while no boundary is measurable.
+pub fn review_zones(view: &Graph, report: &PerformanceReport) -> Option<ZoneStats> {
+    let nodes: Vec<_> = report
+        .abstractions
+        .iter()
+        .filter(|metric| metric.scope == "node")
+        .cloned()
+        .collect();
+    nodes
+        .iter()
+        .any(|metric| metric.coverage == "complete")
+        .then(|| archguard_analysis::zone_stats(view, &nodes))
+}
 fn contract_candidates(calls: &CallAnalysis) -> Vec<ContractCandidate> {
     let classes: BTreeMap<_, _> = calls
         .classes
@@ -932,6 +947,13 @@ mod tests {
             (b.abstractness, b.instability, b.distance),
             (Some(0.0), 1.0, Some(0.0))
         );
+        assert_eq!(
+            review_zones(&view, &report),
+            Some(archguard_core::ZoneStats {
+                main_sequence: 2,
+                ..Default::default()
+            })
+        );
         calls.status = "partial".into();
         let partial = analyze_performance(
             root.path(),
@@ -951,6 +973,50 @@ mod tests {
                     && metric.distance.is_none()
                     && metric.coverage == "unavailable")
         );
+        assert_eq!(
+            review_zones(&view, &partial),
+            None,
+            "no measurable boundary is not measured, never all-unmeasured zones"
+        );
+    }
+    #[test]
+    fn review_zones_count_nodes_once_and_skip_scc_metrics() {
+        let metric =
+            |scope: &str, name: &str, nodes: &[&str], a: Option<f64>, i: f64| AbstractionMetric {
+                scope: scope.into(),
+                name: name.into(),
+                nodes: nodes.iter().map(|node| node.to_string()).collect(),
+                types: 1,
+                abstract_types: 0,
+                fan_in: 0,
+                fan_out: 0,
+                instability: i,
+                abstractness: a,
+                distance: None,
+                coverage: if a.is_some() {
+                    "complete"
+                } else {
+                    "unavailable"
+                }
+                .into(),
+                reason: None,
+            };
+        let view = graph();
+        let names: Vec<_> = view.nodes.iter().map(|node| node.name.as_str()).collect();
+        let mut abstractions = vec![
+            metric("node", names[0], &[names[0]], Some(0.0), 0.0),
+            metric("scc", "scc-1", &names, Some(0.0), 0.0),
+        ];
+        for name in &names[1..] {
+            abstractions.push(metric("node", name, &[name], None, 0.0));
+        }
+        let report = PerformanceReport {
+            abstractions,
+            ..PerformanceReport::default()
+        };
+        let zones = review_zones(&view, &report).expect("one measured boundary");
+        assert_eq!(zones.zone_of_pain, 1, "the SCC metric must not count again");
+        assert_eq!(zones.unmeasured, names.len() - 1);
     }
     #[test]
     fn scc_abstractness_counts_types_instead_of_averaging_package_ratios() {

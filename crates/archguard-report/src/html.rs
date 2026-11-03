@@ -121,6 +121,9 @@ pub struct HtmlContext<'a> {
     /// The last generated PR comment Markdown (R25/R42); `None` when no
     /// `pr-comment.md` exists — the panel then states the absence.
     pub pr_comment_markdown: Option<&'a str>,
+    /// KPI block completed with evidence the cached graph lacks (zones
+    /// from compiler abstractness); `None` embeds the graph's own block.
+    pub review_kpis: Option<&'a archguard_core::ReviewKpis>,
 }
 
 /// Render `g` as one self-contained HTML page (see the module docs).
@@ -242,7 +245,7 @@ pub fn to_html_with_context(
         // Review Dashboard (R36): the KPI block the pipeline attached to
         // this graph; null means NOT MEASURED — the dashboard shows that
         // honestly and never renders invented zeros.
-        "reviewKpis": g.review_kpis,
+        "reviewKpis": context.review_kpis.or(g.review_kpis.as_ref()),
         // R40/R39/R42 inputs; each null stays "not provided", never empty.
         "reviewRegister": context.review_register,
         "reviewHistory": context.review_history,
@@ -1032,6 +1035,28 @@ mod tests {
                 "{key} must stay null when not provided"
             );
         }
+        // Zones need compiler evidence the cached graph KPIs lack; the
+        // caller's completed KPI block replaces the graph's.
+        let completed = archguard_core::ReviewKpis {
+            zones: Some(archguard_core::ZoneStats {
+                zone_of_pain: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let page = super::to_html_with_context(
+            &sample_graph(),
+            None,
+            0,
+            &cyclic_edges(),
+            &findings(),
+            None,
+            &super::HtmlContext {
+                review_kpis: Some(&completed),
+                ..Default::default()
+            },
+        );
+        assert_eq!(payload(&page)["reviewKpis"]["zones"]["zone_of_pain"], 1);
     }
 
     #[test]

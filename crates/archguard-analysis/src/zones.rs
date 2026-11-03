@@ -13,6 +13,9 @@ use archguard_core::{AbstractionMetric, Graph, ZoneStats};
 /// A boundary with `D'` beyond this is considered far from the main
 /// sequence (the classic ±1/3 corridor).
 const MAIN_SEQUENCE_MAX_DISTANCE: f64 = 1.0 / 3.0;
+/// Absorbs rounding in `A + I − 1` so a boundary exactly on the corridor
+/// edge (e.g. A = 0, I = 2/3) stays on the main sequence.
+const DISTANCE_TOLERANCE: f64 = 1e-9;
 
 /// Zone distribution over the abstraction metrics of `graph`.
 ///
@@ -33,7 +36,7 @@ pub fn zone_stats(graph: &Graph, abstractions: &[AbstractionMetric]) -> ZoneStat
             (true, Some(abstractness)) => {
                 let sum = abstractness + metric.instability;
                 let distance = (sum - 1.0).abs();
-                if distance <= MAIN_SEQUENCE_MAX_DISTANCE {
+                if distance <= MAIN_SEQUENCE_MAX_DISTANCE + DISTANCE_TOLERANCE {
                     stats.main_sequence += 1;
                 } else if sum < 1.0 {
                     stats.zone_of_pain += 1;
@@ -99,6 +102,16 @@ mod tests {
         assert_eq!(stats.zone_of_uselessness, 1);
         assert_eq!(stats.main_sequence, 2);
         assert_eq!(stats.unmeasured, 0);
+    }
+
+    #[test]
+    fn corridor_edge_stays_main_despite_float_rounding() {
+        // A=0, I=2/3 (fan-in 1, fan-out 2) has D' = 1/3 exactly, but
+        // `(0.0 + 2.0/3.0 - 1.0).abs()` rounds to 0.33333333333333337.
+        let g = graph(&["edge"], &[]);
+        let stats = zone_stats(&g, &[metric("edge", 0.0, 2.0 / 3.0)]);
+        assert_eq!(stats.main_sequence, 1);
+        assert_eq!(stats.zone_of_pain, 0);
     }
 
     #[test]

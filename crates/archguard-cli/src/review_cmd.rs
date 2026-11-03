@@ -203,6 +203,12 @@ pub(crate) fn html_with_services(
         &calls,
         &ids,
     )?;
+    // The pipeline runs no compiler, so its KPI block leaves zones unmeasured;
+    // the abstractness computed here for the viewer fills them in.
+    let review_kpis = graph.review_kpis.clone().map(|mut kpis| {
+        kpis.zones = archguard_engine::review_zones(&view, &performance);
+        kpis
+    });
     let ownership =
         archguard_engine::analyze_ownership(root, graph, &sources, &loaded.config.ownership_rules)?;
     let co_change = archguard_engine::co_change(
@@ -324,6 +330,7 @@ pub(crate) fn html_with_services(
             review_register: review_register.as_ref(),
             review_history: Some(&review_history),
             pr_comment_markdown: pr_comment_markdown.as_deref(),
+            review_kpis: review_kpis.as_ref(),
         },
     ))
 }
