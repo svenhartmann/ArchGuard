@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 quote = "1"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 globset = "0.4"
 ignore = "0.4.33"
