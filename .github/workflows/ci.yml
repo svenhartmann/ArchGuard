@@ -19,11 +19,15 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Debug info makes linking the Kùzu-backed test binaries take ~10 minutes.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   check:
     name: fmt / clippy / test
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,9 +39,11 @@ jobs:
           components: rustfmt, clippy
 
       # Only main writes the cache; PRs restore it without filling the quota.
+      # Save on failure too: the Kùzu C++ build alone takes ~12 minutes.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
@@ -85,6 +91,12 @@ jobs:
 
       - name: Advisory check
         run: cargo audit --file Cargo.lock
+
+      - name: Install ripgrep for benchmark replays
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+          rg --version
 
       - name: Workspace dependency allowlist
         run: |
