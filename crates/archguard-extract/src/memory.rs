@@ -97,6 +97,8 @@ fn read_all_rules(lang: Lang) -> &'static [Rule] {
             (&["stream_get_contents", "("], High),
             (&["fetchAll", "("], Medium),
         ],
+        // No Kotlin rules yet: no candidates rather than guessed ones.
+        Lang::Kotlin => &[],
     }
 }
 
@@ -307,6 +309,7 @@ pub fn scan_memory(source: &str, lang: Lang) -> Vec<MemoryCandidate> {
         Lang::Ts | Lang::Js => Flavor::Js,
         Lang::Rust => Flavor::Rust,
         Lang::Php => Flavor::Php,
+        Lang::Kotlin => Flavor::Kotlin,
     };
     let all = tokens(source, flavor);
     let code = Code::new(source, &all);
@@ -736,6 +739,7 @@ fn declaration(c: &Code, eq: usize, lang: Lang, spring: bool) -> Option<Declarat
             let at = typed(&left).unwrap_or(left.len() - 1);
             (start + at, collection.to_string())
         }
+        Lang::Kotlin => return None,
         Lang::Go => {
             if c.braces[eq] != 0 || c.parens[eq] > 1 {
                 return None;

@@ -281,7 +281,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     for (index, language) in config.project.languages.iter().enumerate() {
         if !matches!(
             language.as_str(),
-            "auto" | "rs" | "ts" | "js" | "py" | "java" | "cs" | "php" | "go"
+            "auto" | "rs" | "ts" | "js" | "py" | "java" | "cs" | "php" | "go" | "kt"
         ) {
             return Err(invalid(
                 &format!("project.languages[{index}]"),

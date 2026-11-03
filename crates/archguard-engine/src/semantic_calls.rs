@@ -88,6 +88,7 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
             Lang::Rust => "rust",
             Lang::Php => "php",
             Lang::Go => "go",
+            Lang::Kotlin => "kotlin",
         };
         let mut report = match lang {
             Lang::Java => crate::java_calls::analyze_java_calls(root, config),

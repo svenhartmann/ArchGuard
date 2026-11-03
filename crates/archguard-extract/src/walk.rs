@@ -23,6 +23,7 @@ pub enum Lang {
     CSharp,
     Php,
     Go,
+    Kotlin,
 }
 
 impl Lang {
@@ -38,6 +39,8 @@ impl Lang {
             "cs" => Some(Lang::CSharp),
             "php" => Some(Lang::Php),
             "go" => Some(Lang::Go),
+            // Not `.kts`: those are mostly Gradle build scripts, not application code.
+            "kt" => Some(Lang::Kotlin),
             _ => None,
         }
     }
@@ -155,11 +158,13 @@ mod tests {
             ("java", Lang::Java),
             ("cs", Lang::CSharp),
             ("php", Lang::Php),
+            ("kt", Lang::Kotlin),
         ] {
             assert_eq!(Lang::from_extension(ext), Some(lang), "ext {ext}");
         }
         assert_eq!(Lang::from_extension("txt"), None);
-        assert_eq!(Lang::from_extension("kt"), None);
+        assert_eq!(Lang::from_extension("scala"), None);
+        assert_eq!(Lang::from_extension("kts"), None);
         assert_eq!(Lang::from_extension(""), None);
     }
 
@@ -168,11 +173,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for rel in [
             "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs", "j.php",
+            "k.kt",
         ] {
             touch(dir.path(), rel);
         }
         touch(dir.path(), "notes.txt");
-        touch(dir.path(), "Other.kt");
+        touch(dir.path(), "Other.scala");
         touch(dir.path(), "noext");
 
         let files = walk_dir(dir.path(), &[]).unwrap();
@@ -180,7 +186,7 @@ mod tests {
             rel_paths(&files),
             [
                 "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs",
-                "j.php",
+                "j.php", "k.kt",
             ]
         );
         let langs: Vec<Lang> = files.iter().map(|f| f.lang).collect();
@@ -197,6 +203,7 @@ mod tests {
                 Lang::Java,
                 Lang::CSharp,
                 Lang::Php,
+                Lang::Kotlin,
             ]
         );
     }

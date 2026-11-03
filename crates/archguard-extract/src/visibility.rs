@@ -24,6 +24,7 @@ pub fn scan_visibility(rel_path: &str, content: &str, lang: Lang) -> Visibility 
         Lang::CSharp => crate::cs::scan_visibility(content),
         Lang::Php => crate::php::scan_visibility(content),
         Lang::Go => crate::go::scan_visibility(content),
+        Lang::Kotlin => Visibility::default(),
     };
     visibility.file = rel_path.to_string();
     visibility

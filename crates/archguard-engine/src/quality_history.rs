@@ -155,6 +155,7 @@ fn language(lang: &str) -> &str {
         "cs" => "csharp",
         "py" => "python",
         "rs" => "rust",
+        "kt" => "kotlin",
         other => other,
     }
 }

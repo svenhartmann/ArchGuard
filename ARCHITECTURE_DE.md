@@ -321,6 +321,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 | Sprache | Hierarchie-Quelle | Erfasste Importe | Auflösung |
 | --- | --- | --- | --- |
 | **Java** | `package a.b;` (logisch) | `import a.b.C;`, `import static`, `import a.b.*;`, qualifizierte Namen `com.a.B` im Code | Datei per Klassennamen-Match im Paket; sonst Pseudoknoten `a/b/*`; qualifizierte Namen nur zu einer Typdatei eines deklarierten Pakets |
+| **Kotlin** | `package a.b` (logisch, gemeinsam mit Java) | `import a.b.C`, `import a.b.C as D`, `import a.b.*`, qualifizierte Namen `com.a.B` im Code; `kotlin.*`/`kotlinx.*`/`java.*`/`javax.*` ignoriert | Wie Java, gegen Java- und Kotlin-Dateien; eine Top-Level-Funktion ohne gleichnamige Datei endet am Paket-Pseudoknoten |
 | **C#** | `namespace A.B;` / `namespace A.B { }` (logisch — Datei ≠ Verzeichnis möglich) | `using A.B;`, `using static`, Alias-`using X = A.B.C;`, `global using`, qualifizierte Namen `A.B.C` im Code | Namespace-Ebene (Pseudoknoten `A/B/*`); eindeutige Datei, wenn möglich; qualifizierte Namen nur zu einer Typdatei eines deklarierten Namespace |
 | **Python** | Verzeichnis/Datei (physisch, `__init__.py`-Pakete) | `import a.b`, `from a.b import x`, relative `from . import y` | absolut: Modulpfad-Match (`a/b.py`, `a/b/__init__.py`); relativ: Pfad |
 | **TypeScript/JS** | Verzeichnis (physisch) | `import … from`, `export … from`, `require()`, dyn. `import()` | relative Pfade (tsconfig-paths-Aliase: v1.1) |

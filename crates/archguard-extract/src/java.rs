@@ -44,13 +44,7 @@ fn qualified_names(rel_path: &str, content: &str) -> Vec<RawImport> {
     let lines: Vec<&str> = content.lines().collect();
     crate::lex::dotted_chains(content, crate::lex::Flavor::C, &["package", "import"])
         .into_iter()
-        .filter(|(_, segments)| {
-            segments[0].starts_with(char::is_lowercase)
-                && !matches!(segments[0].as_str(), "this" | "super")
-                && segments[1..]
-                    .iter()
-                    .any(|segment| segment.starts_with(char::is_uppercase))
-        })
+        .filter(|(_, segments)| is_qualified_type(segments))
         .map(|(line, segments)| RawImport {
             source: rel_path.to_string(),
             target: TargetSpec::Qualified(segments),
@@ -62,6 +56,16 @@ fn qualified_names(rel_path: &str, content: &str) -> Vec<RawImport> {
                 .to_string(),
         })
         .collect()
+}
+
+/// A dotted chain shaped like a JVM type name: a lowercase package segment
+/// first and a capitalized segment later. Shared with the Kotlin scanner.
+pub(crate) fn is_qualified_type(segments: &[String]) -> bool {
+    segments[0].starts_with(char::is_lowercase)
+        && !matches!(segments[0].as_str(), "this" | "super")
+        && segments[1..]
+            .iter()
+            .any(|segment| segment.starts_with(char::is_uppercase))
 }
 
 /// The [`Declaration`] of a comment-stripped `package a.b.c;` line, `None`

@@ -88,6 +88,7 @@ pub fn registry() -> Vec<Box<dyn Extractor>> {
         Box::new(crate::cs::CsExtractor),
         Box::new(crate::php::PhpExtractor),
         Box::new(crate::go::GoExtractor),
+        Box::new(crate::kotlin::KotlinExtractor),
     ]
 }
 
@@ -211,6 +212,7 @@ mod tests {
             Lang::CSharp,
             Lang::Php,
             Lang::Go,
+            Lang::Kotlin,
         ] {
             let found = extractor_for(lang);
             assert_eq!(found.is_some(), registered.contains(&lang), "lang {lang:?}");

@@ -510,6 +510,7 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::CSharp => "cs",
         Lang::Php => "php",
         Lang::Go => "go",
+        Lang::Kotlin => "kt",
     }
 }
 
@@ -518,8 +519,13 @@ struct ImportIndex {
     stems: BTreeMap<String, Vec<String>>,
     dirs: BTreeSet<String>,
 }
-fn import_family(lang: &'static str) -> &'static str {
-    if lang == "ts" { "js" } else { lang }
+fn import_family(lang: &str) -> &str {
+    match lang {
+        "ts" => "js",
+        // Kotlin and Java share the JVM package namespace and import each other.
+        "kt" => "java",
+        _ => lang,
+    }
 }
 fn resolve_python(
     raw: &RawImport,
@@ -609,7 +615,9 @@ fn resolve_target(
         TargetSpec::Symbol { path, stem } => match decl_map.resolve_symbol(path, stem.as_deref()) {
             SymbolTarget::File(file) => node_of.get(&file).copied(),
             SymbolTarget::Module(module) => Some(builder.ensure_pseudo(&module)),
-            SymbolTarget::External if lang == "java" || (lang == "cs" && stem.is_some()) => {
+            SymbolTarget::External
+                if import_family(lang) == "java" || (lang == "cs" && stem.is_some()) =>
+            {
                 let mut scope = path.as_str();
                 let mut found = None;
                 while let Some((parent, outer)) = scope.rsplit_once('/') {

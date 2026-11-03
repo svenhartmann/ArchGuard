@@ -2,6 +2,8 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Flavor {
     C,
+    /// C-like, plus nested block comments.
+    Kotlin,
     Rust,
     Js,
     Python,
@@ -83,7 +85,10 @@ pub(crate) fn tokens(source: &str, flavor: Flavor) -> Vec<Token> {
             i += 2;
             let mut depth = 1usize;
             while i < chars.len() {
-                if flavor == Flavor::Rust && at(i) == Some('/') && at(i + 1) == Some('*') {
+                if matches!(flavor, Flavor::Rust | Flavor::Kotlin)
+                    && at(i) == Some('/')
+                    && at(i + 1) == Some('*')
+                {
                     depth += 1;
                     i += 2;
                     continue;
@@ -176,7 +181,11 @@ pub(crate) fn tokens(source: &str, flavor: Flavor) -> Vec<Token> {
             literal = true;
             let run = chars[i..].iter().take_while(|p| p.1 == c).count();
             let width = if c != '`' && run >= 3 {
-                if flavor == Flavor::C { run } else { 3 }
+                if matches!(flavor, Flavor::C | Flavor::Kotlin) {
+                    run
+                } else {
+                    3
+                }
             } else {
                 1
             };

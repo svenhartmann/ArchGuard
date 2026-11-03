@@ -372,6 +372,7 @@ fn changed_sources(
             archguard_extract::Lang::Php => "php",
             archguard_extract::Lang::Go => "go",
             archguard_extract::Lang::Rust => "rust",
+            archguard_extract::Lang::Kotlin => "kotlin",
         };
         changes.push(ChangedSource {
             path: source.rel_path,
