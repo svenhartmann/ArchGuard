@@ -2,7 +2,7 @@
 //! walk → extract → resolve → build → view → analyse → report.
 //!
 //! The derivation of the effective config (Kap. 6 steps 2 and 7)
-//! lives in [`effective`](crate::effective); [`analyze`] feeds it a
+//! lives in [`effective`](crate::effective); [`analyze`](crate::effective::analyze) feeds it a
 //! plain config whose sections all count as undesclared, so they get
 //! derived. What this module does, in Kap. 6 order:
 //!
@@ -55,8 +55,6 @@ use archguard_extract::{
     parse_psr4, resolve_relative, strip_root, walk,
 };
 
-use crate::config::LoadedConfig;
-
 /// `schema_version` of the emitted [`Report`] (Kap. 5).
 const REPORT_SCHEMA_VERSION: u32 = 1;
 /// Cycle sampling bound per SCC (Kap. 7: `max_cycles_per_scc`).
@@ -82,52 +80,13 @@ pub(crate) const PROVENANCE_KEYS: [&str; 11] = [
     "store",
 ];
 
-/// The granularity [`analyze`] reports at (CLI/MCP `--level`, Kap. 9).
+/// The granularity [`analyze`](crate::effective::analyze) reports at (CLI/MCP `--level`, Kap. 9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     /// The default view: modules named by `modules.depth` (Kap. 5.2).
     Module,
     /// Every source file is a node of its own (raw tree, `--level file`).
     File,
-}
-
-/// Run the complete pipeline over `root` with `config` **as the
-/// declared config** at `level`: as nothing of it is marked as written
-/// by the user, the effective-config derivation (T46, Kap. 6 steps 2
-/// and 7) fills the `project`, `modules` and `layers` sections from
-/// the project itself; `rules`, `store` and `derive_layers` are taken
-/// from `config` verbatim. Callers holding a [`LoadedConfig`] with
-/// real provenance call
-/// [`analyze_effective`](crate::effective::analyze_effective) instead.
-///
-/// Unresolved (external) import targets are reported as warnings on
-/// stderr — the [`FindingKind`] vocabulary of Kap. 5 has no external
-/// kind, so they never appear as findings and never fail the run.
-pub fn analyze(
-    root: &Path,
-    config: &Config,
-    level: Level,
-) -> Result<(Graph, Report), ArchguardError> {
-    let (graph, report, warnings) = analyze_with_warnings(root, config, level)?;
-    print_warnings(&warnings);
-    Ok((graph, report))
-}
-
-/// The effective pipeline body with an all-`Default` provenance
-/// standing in for `config` (see [`analyze`]), additionally handing
-/// back the collected external-import warnings (what [`analyze`]
-/// prints). Crate-internal so tests can assert the warnings themselves.
-pub(crate) fn analyze_with_warnings(
-    root: &Path,
-    config: &Config,
-    level: Level,
-) -> Result<(Graph, Report, Vec<String>), ArchguardError> {
-    let loaded = LoadedConfig {
-        config: config.clone(),
-        sources: crate::config::all_default_sources(),
-    };
-    let run = crate::effective::effective_run(root, &loaded, level)?;
-    Ok((run.graph, run.report, run.warnings))
 }
 
 /// Echo the collected external-import warnings to stderr the way
@@ -747,37 +706,6 @@ fn stem_path(path: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Write `files` (path, content) into a fresh temp dir.
-    fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("temp dir");
-        for (rel, content) in files {
-            let path = dir.path().join(rel);
-            fs::create_dir_all(path.parent().expect("parent dir")).expect("create dirs");
-            fs::write(path, content).expect("write file");
-        }
-        dir
-    }
-
-    /// Names of the nodes of `graph` that `name` is an edge to from
-    /// `from_name`, for asserting resolved edges by name.
-    fn targets(graph: &Graph, from_name: &str) -> Vec<String> {
-        let from = graph
-            .nodes
-            .iter()
-            .find(|node| node.name == from_name)
-            .unwrap_or_else(|| panic!("test: no node {from_name}"))
-            .id;
-        graph
-            .out_edges(from)
-            .map(|edge| {
-                graph
-                    .node_name(edge.to)
-                    .expect("test: known id")
-                    .to_string()
-            })
-            .collect()
-    }
-
     #[test]
     fn deny_matches_only_names_its_own_level() {
         assert!(deny_matches(DenyCycles::Module, Level::Module));
@@ -825,144 +753,35 @@ mod tests {
         assert_eq!(join_module("App", ""), "App");
         assert_eq!(join_module("", ""), "");
     }
+}
 
+#[cfg(test)]
+mod go_graph_tests {
+    use super::*;
     #[test]
-    fn external_imports_warn_and_never_produce_edges() {
-        let dir = fixture(&[
-            ("src/app/uses_lib.ts", "import { x } from \"react\";\n"),
-            ("src/app/util.ts", "export const x = 1;\n"),
-        ]);
-        let (graph, report, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
-        assert!(graph.edges.is_empty(), "unresolved imports create no edges");
-        assert_eq!(report.summary.status, archguard_core::Status::Pass);
-        assert_eq!(warnings.len(), 1);
-        assert!(
-            warnings[0].contains("react") && warnings[0].contains("app/uses_lib.ts"),
-            "warning: {}",
-            warnings[0]
-        );
-    }
-
-    #[test]
-    fn path_spec_imports_edge_file_to_file() {
-        let dir = fixture(&[
-            ("src/app/main.ts", "import { helper } from \"./util\";\n"),
-            ("src/app/util.ts", "export const helper = 1;\n"),
-        ]);
-        let (graph, report, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
-        assert!(warnings.is_empty(), "warnings: {warnings:?}");
-        assert_eq!(targets(&graph, "app/main.ts"), ["app/util.ts"]);
-        assert_eq!(report.summary.status, archguard_core::Status::Pass);
-    }
-
-    #[test]
-    fn psr4_prefixes_make_namespace_imports_resolvable_without_declarations() {
-        // `Home.php` has no `namespace` declaration of its own and
-        // `User.php` none either: only the PSR-4 mapping of
-        // `composer.json` connects `use App\Model\User;` to the file.
-        let dir = fixture(&[
-            (
-                "composer.json",
-                r#"{"autoload": {"psr-4": {"App\\": "src/"}}}"#,
-            ),
-            ("src/Controller/Home.php", "<?php\nuse App\\Model\\User;\n"),
-            ("src/Model/User.php", "<?php\nclass User {}\n"),
-        ]);
-        let (graph, _report, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
-        assert!(warnings.is_empty(), "warnings: {warnings:?}");
-        assert_eq!(
-            targets(&graph, "Controller/Home.php"),
-            ["Model/User.php"],
-            "PSR-4 must resolve the use-statement to the class file"
-        );
-    }
-
-    #[test]
-    fn symbolic_import_without_target_warns_and_pseudo_nodes_edge() {
-        // Java: a package nothing declares → warning; the declared
-        // package's unknown class → pseudo node `<module>/*`.
-        let dir = fixture(&[
-            (
-                "src/com/example/App.java",
-                "package com.example;\nimport com.example.Order;\nimport com.unknown.Thing;\n",
-            ),
-            (
-                "src/com/example/Order.java",
-                "package com.example;\nclass Order {}\n",
-            ),
-        ]);
-        let (graph, _report, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
-        assert_eq!(warnings.len(), 1, "warnings: {warnings:?}");
-        assert!(
-            warnings[0].contains("com/unknown/Thing"),
-            "warning: {warnings:?}"
-        );
-        // App.java edges to the uniquely matched Order.java; the
-        // unresolved import left no edge.
-        assert_eq!(
-            targets(&graph, "com/example/App.java"),
-            ["com/example/Order.java"]
-        );
-    }
-    #[test]
-    fn python_symbols_resolve_to_their_module_and_packages_keep_init_files() {
-        let dir = fixture(&[
-            (
-                "src/main.py",
-                "import helper; from\thelper import Thing\nfrom pkg import Exported; import helper.missing\n",
-            ),
-            ("src/helper.py", "class Thing: pass\n"),
-            ("src/pkg/__init__.py", "Exported = 1\n"),
-            (
-                "src/pkg/child.py",
-                "from . import Exported\nfrom .model import Model\n",
-            ),
-            ("src/pkg/model.py", "class Model: pass\n"),
-        ]);
-        let (g, _, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("helper.missing"));
-        assert_eq!(targets(&g, "main.py"), ["helper.py", "pkg/__init__.py"]);
-        assert_eq!(
-            targets(&g, "pkg/child.py"),
-            ["pkg/__init__.py", "pkg/model.py"]
-        );
-    }
-    #[test]
-    fn module_resolution_does_not_cross_language_boundaries_and_js_uses_index_files() {
-        let dir = fixture(&[
-            ("src/main.ts", "import './only-rust'; import './folder';"),
-            ("src/only-rust.rs", "pub struct Rust;"),
-            ("src/folder/index.js", "export const a=1;"),
-            ("src/Consumer.java", "package p; import foreign.Type;"),
-            ("src/Type.cs", "namespace foreign; public class Type {}"),
-        ]);
-        let (g, _, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
-        assert_eq!(targets(&g, "main.ts"), ["folder/index.js"]);
-        assert!(targets(&g, "p/Consumer.java").is_empty());
-    }
-    #[test]
-    fn java_nested_type_imports_resolve_to_the_enclosing_type_file() {
-        let dir = fixture(&[
-            (
-                "src/Outer.java",
-                "package domain; public class Outer {public static class Inner {}}",
-            ),
-            (
-                "src/Client.java",
-                "package client; import domain.Outer.Inner;",
-            ),
-        ]);
-        let (g, _, warnings) =
-            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
+    fn imports_target_unique_local_packages_and_cache_tracks_modules() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("src/store")).unwrap();
+        std::fs::write(d.path().join("go.mod"), "module example.org/shop\n").unwrap();
+        std::fs::write(
+            d.path().join("src/api.go"),
+            "package api\nimport \"example.org/shop/src/store\"\n",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("src/store/db.go"), "package store\n").unwrap();
+        let mut config = archguard_core::Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let files = walk_files(d.path(), &config).unwrap();
+        let (graph, warnings) = build_graph(d.path(), &files, &config).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(targets(&g, "client/Client.java"), ["domain/Outer.java"]);
+        assert_eq!(graph.edges.len(), 1);
+        assert!(graph.nodes.iter().any(|n| n.name == "api.go"));
+        assert!(graph.nodes.iter().any(|n| n.name == "store/*"));
+        let before = crate::go_sources::fingerprint(d.path(), &files);
+        std::fs::write(d.path().join("go.mod"), "module example.org/other\n").unwrap();
+        assert_ne!(before, crate::go_sources::fingerprint(d.path(), &files));
+        let (graph, warnings) = build_graph(d.path(), &files, &config).unwrap();
+        assert!(graph.edges.is_empty());
+        assert_eq!(warnings.len(), 1);
     }
 }

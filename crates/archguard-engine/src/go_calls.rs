@@ -51,7 +51,7 @@ fn prepare(root: &Path, config: &Config) -> Result<(Vec<serde_json::Value>, [u8;
     let mut input = Vec::new();
     let mut bytes = 0;
     for file in files.iter().filter(|f| f.lang == Lang::Go) {
-        let content = crate::service_projects::read_manifest(root, Path::new(&file.rel_path))
+        let content = crate::project_files::read_manifest(root, Path::new(&file.rel_path))
             .map_err(|e| format!("{}: {e}", file.rel_path))?;
         bytes += content.len();
         if bytes > 64 * 1024 * 1024 || input.len() >= 20000 {

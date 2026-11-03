@@ -222,7 +222,7 @@ fn collect(
             continue;
         }
         if ty.is_dir() {
-            if !super::excluded(&entry.file_name().to_string_lossy())
+            if !super::support::excluded(&entry.file_name().to_string_lossy())
                 && !matches!(
                     entry.file_name().to_str(),
                     Some("bin" | "obj" | "node_modules")

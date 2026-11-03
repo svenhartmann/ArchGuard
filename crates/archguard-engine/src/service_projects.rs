@@ -1,7 +1,5 @@
 //! Manifest project boundaries complement deployment declarations; no build command is run.
 use std::collections::BTreeSet;
-use std::fs;
-use std::io::Read;
 use std::path::{Component, Path};
 
 use archguard_core::{
@@ -9,7 +7,6 @@ use archguard_core::{
 };
 use roxmltree::{Document, Node};
 
-const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_PROJECTS: usize = 2_000;
 const MAX_ENTRIES: usize = 100_000;
 
@@ -51,51 +48,9 @@ fn relative_name(path: &Path) -> Option<String> {
         .collect::<Option<Vec<_>>>()
         .map(|parts| parts.join("/"))
 }
-pub(crate) fn read_manifest(root: &Path, relative: &Path) -> std::io::Result<String> {
-    #[cfg(unix)]
-    let file = {
-        use rustix::fs::{Mode, OFlags, openat};
-        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
-        let mut parent = openat(rustix::fs::CWD, root, flags, Mode::empty())?;
-        for part in relative.parent().unwrap_or(Path::new("")).components() {
-            parent = openat(&parent, Path::new(part.as_os_str()), flags, Mode::empty())?;
-        }
-        fs::File::from(openat(
-            &parent,
-            Path::new(
-                relative
-                    .file_name()
-                    .ok_or(std::io::ErrorKind::InvalidInput)?,
-            ),
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-            Mode::empty(),
-        )?)
-    };
-    #[cfg(not(unix))]
-    let file = {
-        let mut path = root.to_path_buf();
-        for component in relative.components() {
-            path.push(component);
-            if fs::symlink_metadata(&path)?.file_type().is_symlink() {
-                return Err(std::io::ErrorKind::PermissionDenied.into());
-            }
-        }
-        fs::File::open(path)?
-    };
-    if !file.metadata()?.is_file() || file.metadata()?.len() > MAX_BYTES {
-        return Err(std::io::ErrorKind::InvalidData.into());
-    }
-    let mut source = String::new();
-    file.take(MAX_BYTES + 1).read_to_string(&mut source)?;
-    if source.len() as u64 > MAX_BYTES {
-        return Err(std::io::ErrorKind::InvalidData.into());
-    }
-    Ok(source)
-}
-
 pub(crate) fn augment(
     root: &Path,
-    discovery: &crate::services::Discovery,
+    discovery: &crate::services::support::Discovery,
     report: &mut ServiceTopology,
 ) -> Result<(), ArchguardError> {
     let walker = discovery.walk(root);
@@ -153,7 +108,7 @@ pub(crate) fn augment(
     paths.sort();
     let mut total = 0usize;
     for (manifest, ecosystem) in paths {
-        let source = match read_manifest(root, Path::new(&manifest)) {
+        let source = match crate::project_files::read_manifest(root, Path::new(&manifest)) {
             Ok(source) => source,
             Err(_) => {
                 diagnostic(
@@ -632,7 +587,7 @@ fn parse_cargo(
             main
         };
         let default_main = package.get("autobins").and_then(|v| v.as_bool()) != Some(false)
-            && read_manifest(root, &main).is_ok();
+            && crate::project_files::read_manifest(root, &main).is_ok();
         if doc
             .get("bin")
             .and_then(|v| v.as_array())

@@ -18,7 +18,7 @@ fn paths(config: &Config) -> Vec<String> {
 }
 fn read(root: &Path, path: &str) -> Result<Vec<u8>, String> {
     let normalized = crate::evidence_import::relative(path).map_err(|e| e.to_string())?;
-    crate::security::read_repo_file(root, Path::new(&normalized), MAX_BYTES)
+    crate::project_files::read_repo_file(root, Path::new(&normalized), MAX_BYTES)
         .map_err(|e| e.to_string())
 }
 pub fn pattern_inputs_fingerprint(root: &Path, config: &Config) -> String {

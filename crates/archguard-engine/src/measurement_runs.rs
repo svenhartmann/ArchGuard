@@ -91,7 +91,7 @@ fn validate(input: &Input) -> Result<(), ArchguardError> {
     Ok(())
 }
 fn load(root: &Path) -> Result<Input, ArchguardError> {
-    match crate::security::read_repo_file(root, Path::new(FILE), evidence::MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(FILE), evidence::MAX_BYTES) {
         Ok(bytes) => {
             let input = serde_json::from_slice(&bytes).map_err(error)?;
             validate(&input)?;

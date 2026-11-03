@@ -334,7 +334,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     }
     archguard_analysis::validate_dependency_rules(&config.dependency_rules)?;
     crate::target_architecture::validate(config)?;
-    crate::review_sources::validate_review_since(&config.review.git_since)?;
+    validate_review_since(&config.review.git_since)?;
     if config.performance.min_barrel_exports == 0 {
         return Err(invalid(
             "performance.min_barrel_exports",
@@ -447,7 +447,7 @@ pub fn default_config_string() -> String {
 
 /// Provenance map with every [`SECTION_KEYS`] entry at
 /// [`ConfigSource::Default`] — the shape of a config nothing of which
-/// was written by the user (the input of [`analyze`](crate::pipeline::analyze)
+/// was written by the user (the input of [`analyze`](crate::effective::analyze)
 /// and of `archguard init`).
 pub(crate) fn all_default_sources() -> BTreeMap<String, ConfigSource> {
     SECTION_KEYS
@@ -459,6 +459,58 @@ pub(crate) fn all_default_sources() -> BTreeMap<String, ConfigSource> {
 /// A [`ArchguardError::Config`] prefixed with the offending file.
 fn config_error(path: &Path, err: &dyn std::fmt::Display) -> ArchguardError {
     ArchguardError::Config(format!("{}: {err}", path.display()))
+}
+
+/// Deliberately narrow date values: calendar dates or positive relative units.
+/// Dates are always passed as one `--since=...` argument, never as revisions.
+pub(crate) fn validate_review_since(since: &str) -> Result<(), ArchguardError> {
+    let relative = since.strip_suffix(".ago").unwrap_or(since);
+    let valid_relative = relative.split_once('.').is_some_and(|(number, unit)| {
+        !number.is_empty()
+            && number.bytes().all(|byte| byte.is_ascii_digit())
+            && number.parse::<u32>().is_ok_and(|count| count > 0)
+            && matches!(
+                unit,
+                "day" | "days" | "week" | "weeks" | "month" | "months" | "year" | "years"
+            )
+    });
+    let date: Vec<_> = since.split('-').collect();
+    let valid_date = if date.len() == 3
+        && date[0].len() == 4
+        && date[1].len() == 2
+        && date[2].len() == 2
+        && date
+            .iter()
+            .all(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        let year: u32 = date[0].parse().unwrap_or(0);
+        let month: u32 = date[1].parse().unwrap_or(0);
+        let day: u32 = date[2].parse().unwrap_or(0);
+        let leap =
+            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+        let days = match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if leap {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 0,
+        };
+        year > 0 && day > 0 && day <= days
+    } else {
+        false
+    };
+    if since.len() <= 64 && (valid_relative || valid_date) {
+        Ok(())
+    } else {
+        Err(ArchguardError::Config(
+            "review Git window must be YYYY-MM-DD or a positive relative duration such as 180.days or 6.months".into(),
+        ))
+    }
 }
 
 #[cfg(test)]

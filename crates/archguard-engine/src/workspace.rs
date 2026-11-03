@@ -40,7 +40,11 @@ pub fn analyze_workspace_with_topology(
     let mut sources = BTreeMap::new();
     let mut total = 0usize;
     for project in &topology.projects {
-        match crate::security::read_repo_file(&root, Path::new(&project.manifest), MAX_MANIFEST) {
+        match crate::project_files::read_repo_file(
+            &root,
+            Path::new(&project.manifest),
+            MAX_MANIFEST,
+        ) {
             Ok(bytes) => {
                 total += bytes.len();
                 if total > 32 * 1024 * 1024 {
@@ -314,7 +318,7 @@ fn path_target(
             format!("{path}/{name}")
         };
     }
-    crate::security::read_repo_file(root, Path::new(&path), MAX_MANIFEST)
+    crate::project_files::read_repo_file(root, Path::new(&path), MAX_MANIFEST)
         .map_err(|_| "local manifest is missing, symlinked, outside scope or unreadable")?;
     let candidates: Vec<_> = report
         .projects

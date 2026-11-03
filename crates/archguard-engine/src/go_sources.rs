@@ -7,7 +7,7 @@ pub(crate) fn package_path(root: &Path, relative: &str) -> String {
     let directory = Path::new(relative).parent().unwrap_or(Path::new(""));
     for ancestor in directory.ancestors() {
         let manifest = ancestor.join("go.mod");
-        if let Ok(source) = crate::service_projects::read_manifest(root, &manifest) {
+        if let Ok(source) = crate::project_files::read_manifest(root, &manifest) {
             if let Some(module) = archguard_extract::go::module_path(&source) {
                 let suffix = directory
                     .strip_prefix(ancestor)
@@ -47,7 +47,7 @@ pub(crate) fn fingerprint(root: &Path, files: &[SourceFile]) -> [u8; 32] {
     for path in paths {
         hash.update(path.to_string_lossy().as_bytes());
         hash.update([0]);
-        match crate::service_projects::read_manifest(root, &path) {
+        match crate::project_files::read_manifest(root, &path) {
             Ok(source) => {
                 hash.update([1]);
                 hash.update(source.as_bytes());
@@ -81,36 +81,5 @@ mod tests {
             package_path(d.path(), "nested/pkg/a.go"),
             "archguard.local/nested/pkg"
         );
-    }
-}
-
-#[cfg(test)]
-mod graph_tests {
-    use super::*;
-    #[test]
-    fn imports_target_unique_local_packages_and_cache_tracks_modules() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(d.path().join("src/store")).unwrap();
-        std::fs::write(d.path().join("go.mod"), "module example.org/shop\n").unwrap();
-        std::fs::write(
-            d.path().join("src/api.go"),
-            "package api\nimport \"example.org/shop/src/store\"\n",
-        )
-        .unwrap();
-        std::fs::write(d.path().join("src/store/db.go"), "package store\n").unwrap();
-        let mut config = archguard_core::Config::default();
-        config.project.source_roots = vec!["src".into()];
-        let files = crate::pipeline::walk_files(d.path(), &config).unwrap();
-        let (graph, warnings) = crate::pipeline::build_graph(d.path(), &files, &config).unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(graph.edges.len(), 1);
-        assert!(graph.nodes.iter().any(|n| n.name == "api.go"));
-        assert!(graph.nodes.iter().any(|n| n.name == "store/*"));
-        let before = fingerprint(d.path(), &files);
-        std::fs::write(d.path().join("go.mod"), "module example.org/other\n").unwrap();
-        assert_ne!(before, fingerprint(d.path(), &files));
-        let (graph, warnings) = crate::pipeline::build_graph(d.path(), &files, &config).unwrap();
-        assert!(graph.edges.is_empty());
-        assert_eq!(warnings.len(), 1);
     }
 }

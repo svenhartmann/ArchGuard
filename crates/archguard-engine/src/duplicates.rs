@@ -310,7 +310,8 @@ pub fn import_duplicates(
 }
 pub fn read_duplicates(root: &Path, config: &Config, graph: &Graph) -> DuplicationReport {
     let read = || -> Result<DuplicationReport, ArchguardError> {
-        let bytes = match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+        let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES)
+        {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(empty("not_imported")),
             Err(e) => return Err(e.into()),

@@ -331,8 +331,11 @@ fn changed_sources(
         if !all.contains(&source.rel_path) {
             continue;
         }
-        let bytes =
-            crate::security::read_repo_file(root, Path::new(&source.rel_path), 8 * 1024 * 1024)?;
+        let bytes = crate::project_files::read_repo_file(
+            root,
+            Path::new(&source.rel_path),
+            8 * 1024 * 1024,
+        )?;
         let text = std::str::from_utf8(&bytes).map_err(error)?;
         let line_count = u32::try_from(text.lines().count()).map_err(error)?;
         let lines = if untracked.contains(&source.rel_path) {

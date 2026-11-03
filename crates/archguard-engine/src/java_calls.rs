@@ -217,7 +217,7 @@ fn prepare_sources(
     let mut entries = settings.classpath.clone();
     // Standard dependency-plugin/Gradle-export output, explicitly placed in
     // ArchGuard's data directory. Read references only; never run a build.
-    match crate::security::read_repo_file(
+    match crate::project_files::read_repo_file(
         &root,
         Path::new(".archguard/java-classpath.txt"),
         1024 * 1024,

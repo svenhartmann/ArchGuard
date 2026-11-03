@@ -54,7 +54,7 @@ pub(crate) fn read_input(root: &Path, path: &Path) -> Result<Vec<u8>, ArchguardE
     Ok(bytes)
 }
 pub(crate) fn fingerprint(root: &Path, path: &str) -> String {
-    match crate::security::read_repo_file(root, Path::new(path), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(path), MAX_BYTES) {
         Ok(bytes) => hash(&bytes),
         Err(e) => format!("unavailable:{:?}", e.kind()),
     }
@@ -153,9 +153,12 @@ impl<'a> Sources<'a> {
             .entry(path.into())
             .or_insert_with(|| {
                 let node = self.paths.get(path)?.clone();
-                let bytes =
-                    crate::security::read_repo_file(self.root, Path::new(path), MAX_SOURCE_BYTES)
-                        .ok()?;
+                let bytes = crate::project_files::read_repo_file(
+                    self.root,
+                    Path::new(path),
+                    MAX_SOURCE_BYTES,
+                )
+                .ok()?;
                 let hash = hash(&bytes);
                 let text = String::from_utf8(bytes).ok()?;
                 let lines = u32::try_from(text.lines().count()).ok()?;

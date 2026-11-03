@@ -97,7 +97,7 @@ fn hash(value: &impl Serialize) -> Result<String, ArchguardError> {
     Ok(evidence::hash(&serde_json::to_vec(value).map_err(error)?))
 }
 fn snapshot_fingerprint(root: &Path, name: &str) -> String {
-    match crate::security::read_repo_file(root, Path::new(name), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(name), MAX_BYTES) {
         Ok(bytes) => evidence::hash(&bytes),
         Err(e) => format!("unavailable:{:?}", e.kind()),
     }
@@ -619,7 +619,7 @@ fn affected_files(graph: &Graph, targets: &BTreeSet<String>) -> BTreeSet<String>
         .collect()
 }
 fn load_decisions(root: &Path) -> Result<ReviewDecisions, ArchguardError> {
-    match crate::security::read_repo_file(root, Path::new(DECISIONS), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(DECISIONS), MAX_BYTES) {
         Ok(bytes) => {
             let document: ReviewDecisions = serde_json::from_slice(&bytes).map_err(error)?;
             validate_decisions(&document)?;
@@ -861,7 +861,7 @@ pub fn save_review(root: &Path, report: &ReviewReport) -> Result<(), ArchguardEr
     match crate::project_files::write_project_file(root, Path::new(&name), &bytes, false) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing = crate::security::read_repo_file(
+            let existing = crate::project_files::read_repo_file(
                 root,
                 &Path::new(".archguard").join(&name),
                 MAX_BYTES,
@@ -900,7 +900,7 @@ fn assert_current(root: &Path, report: &ReviewReport) -> Result<(), ArchguardErr
 /// The supplied configuration must be the effective current analysis config.
 pub fn read_saved_review(root: &Path, loaded: &LoadedConfig, now: u64) -> SavedReview {
     let read = || -> Result<SavedReview, ArchguardError> {
-        let bytes = match crate::security::read_repo_file(root, Path::new(LATEST), MAX_BYTES) {
+        let bytes = match crate::project_files::read_repo_file(root, Path::new(LATEST), MAX_BYTES) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(SavedReview {

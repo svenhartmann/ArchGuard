@@ -83,7 +83,7 @@ pub use api_contracts::{
 };
 pub use arc42::{arc42_document, arc42_from_evidence};
 pub use architecture::architecture_context;
-pub use cache::{analyze_cached, fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
+pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{
@@ -99,8 +99,8 @@ pub use duplicates::{
     import_duplicates, read_duplicates,
 };
 pub use effective::{
-    AnalysisRun, analyze_effective, analyze_run, analyze_run_quiet, derive_project_hints,
-    effective_config_string,
+    AnalysisRun, analyze, analyze_cached, analyze_effective, analyze_run, analyze_run_quiet,
+    derive_project_hints, effective_config_string,
 };
 pub use java_calls::analyze_java_calls;
 pub use kpi_payload::ReviewKpis;
@@ -116,7 +116,7 @@ pub use patterns::{
     architecture_patterns, pattern_inputs_fingerprint,
 };
 pub use performance::analyze_performance;
-pub use pipeline::{Level, analyze};
+pub use pipeline::Level;
 pub use project_files::write_project_file;
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,

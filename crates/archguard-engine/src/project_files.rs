@@ -1,6 +1,105 @@
-//! Project-local files share the cache's descriptor-relative storage on Unix.
+//! Project-local files below `<root>/.archguard`, written through descriptor-relative
+//! storage on Unix that the graph cache shares.
 use std::io;
 use std::path::{Component, Path};
+
+/// The project-local ArchGuard directory below the analysed root.
+pub(crate) const PROJECT_DIR: &str = ".archguard";
+
+/// Descriptor-relative, no-follow primitives for `<root>/.archguard` on Unix,
+/// shared by project files and the graph cache.
+#[cfg(unix)]
+pub(crate) mod safe {
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use rustix::fd::{AsFd, OwnedFd};
+    use rustix::fs::{AtFlags, Mode, OFlags, fsync, linkat, mkdirat, openat, renameat, unlinkat};
+    use rustix::io::Errno;
+
+    use super::PROJECT_DIR;
+
+    /// Disambiguates temporary names from the same process.
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    /// `openat` flags for a directory we traverse *into*; `follow` is
+    /// only ever true for the caller-chosen root itself — everything
+    /// below it is repository state and must not be a symlink.
+    pub(crate) fn dir_flags(follow: bool) -> OFlags {
+        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY;
+        if !follow {
+            flags |= OFlags::NOFOLLOW;
+        }
+        flags
+    }
+
+    /// Atomically commit bytes in an already opened directory. Create-only
+    /// publication uses a hard link so an existing entry can never be replaced.
+    pub(crate) fn write_atomic(
+        dir_fd: &impl AsFd,
+        name: &Path,
+        bytes: &[u8],
+        overwrite: bool,
+    ) -> std::io::Result<()> {
+        let tmp = format!(
+            ".archguard-{}-{}.tmp",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        // O_EXCL | O_NOFOLLOW: the fresh name can never be a pre-planted
+        // symlink, and renameat below replaces the *target entry* — a
+        // symlinked target is swapped for the new regular file
+        // instead of being written through.
+        let fd = openat(
+            dir_fd,
+            &tmp,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_bits_retain(0o600),
+        )?;
+        let result = (|| {
+            let mut file = File::from(fd);
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            if overwrite {
+                // POSIX rename replaces the target entry itself; a symlinked
+                // cache.json is swapped, never written through one.
+                renameat(dir_fd, &tmp, dir_fd, name)?;
+            } else {
+                linkat(dir_fd, &tmp, dir_fd, name, AtFlags::empty())?;
+            }
+            Ok::<_, std::io::Error>(())
+        })();
+        // Rename consumed the name on success; create-only publication and
+        // failures both need to remove it explicitly.
+        let _ = unlinkat(dir_fd, &tmp, AtFlags::empty());
+        result?;
+        // Durability of the rename itself; the visible state is already
+        // consistent without it (rename is atomic for readers).
+        let _ = fsync(dir_fd);
+        Ok(())
+    }
+
+    pub(crate) fn open_subdirectory(parent: &impl AsFd, name: &Path) -> std::io::Result<OwnedFd> {
+        match mkdirat(parent, name, Mode::from_bits_retain(0o755)) {
+            Ok(()) | Err(Errno::EXIST) => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(openat(parent, name, dir_flags(false), Mode::empty())?)
+    }
+
+    pub(crate) fn open_project_directory(dir: &Path) -> std::io::Result<OwnedFd> {
+        // The root is chosen by the caller (CLI/MCP), so following
+        // symlinks on the way there is fine — e.g. /tmp-style symlinks
+        // on macOS. Only components *below* the root are untrusted.
+        let root = openat(rustix::fs::CWD, dir, dir_flags(true), Mode::empty())?;
+        // ELOOP on a symlink, ENOTDIR on a file: a repository-controlled
+        // redirect is refused here, before anything is opened or created.
+        open_subdirectory(&root, Path::new(PROJECT_DIR))
+    }
+}
 
 /// Store bytes below `<root>/.archguard`, creating ordinary parent directories.
 ///
@@ -41,7 +140,6 @@ fn write_project_file_with(
     overwrite: bool,
     before_write: impl FnOnce(),
 ) -> io::Result<bool> {
-    use crate::cache::safe;
     use rustix::fs::{Mode, OFlags, openat};
     use rustix::io::Errno;
     use std::fs::File;
@@ -145,6 +243,116 @@ fn write_project_file_with(
     }
     .map_err(|error| error.error)?;
     Ok(true)
+}
+
+/// Read repository state without following any component below the chosen root.
+pub(crate) fn read_repo_file(root: &Path, relative: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    if relative
+        .components()
+        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags, openat};
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        let mut parent = openat(rustix::fs::CWD, root, flags, Mode::empty())?;
+        for component in relative.parent().unwrap_or(Path::new("")).components() {
+            parent = openat(
+                &parent,
+                Path::new(component.as_os_str()),
+                flags | OFlags::NOFOLLOW,
+                Mode::empty(),
+            )?;
+        }
+        std::fs::File::from(openat(
+            &parent,
+            Path::new(
+                relative
+                    .file_name()
+                    .ok_or(std::io::ErrorKind::InvalidInput)?,
+            ),
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?)
+    };
+    #[cfg(not(unix))]
+    let file = {
+        let mut path = root.to_path_buf();
+        for component in relative.components() {
+            path.push(component);
+            if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(std::io::Error::other(
+                    "symlink is outside the security scan scope",
+                ));
+            }
+        }
+        std::fs::File::open(path)?
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(std::io::Error::other(
+            "dependency input is not a regular bounded file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::other(
+            "dependency input exceeded its size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Upper bound of a project manifest read by [`read_manifest`].
+const MANIFEST_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Read a UTF-8 project manifest without following any symlink below `root`.
+pub(crate) fn read_manifest(root: &Path, relative: &Path) -> std::io::Result<String> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags, openat};
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
+        let mut parent = openat(rustix::fs::CWD, root, flags, Mode::empty())?;
+        for part in relative.parent().unwrap_or(Path::new("")).components() {
+            parent = openat(&parent, Path::new(part.as_os_str()), flags, Mode::empty())?;
+        }
+        std::fs::File::from(openat(
+            &parent,
+            Path::new(
+                relative
+                    .file_name()
+                    .ok_or(std::io::ErrorKind::InvalidInput)?,
+            ),
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?)
+    };
+    #[cfg(not(unix))]
+    let file = {
+        let mut path = root.to_path_buf();
+        for component in relative.components() {
+            path.push(component);
+            if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+        }
+        std::fs::File::open(path)?
+    };
+    if !file.metadata()?.is_file() || file.metadata()?.len() > MANIFEST_MAX_BYTES {
+        return Err(std::io::ErrorKind::InvalidData.into());
+    }
+    use std::io::Read;
+    let mut source = String::new();
+    file.take(MANIFEST_MAX_BYTES + 1)
+        .read_to_string(&mut source)?;
+    if source.len() as u64 > MANIFEST_MAX_BYTES {
+        return Err(std::io::ErrorKind::InvalidData.into());
+    }
+    Ok(source)
 }
 
 #[cfg(test)]

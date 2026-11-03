@@ -884,7 +884,7 @@ fn gather(
                     .push(escape_glob(&file.rel_path));
                 continue;
             }
-            let bytes = match crate::security::read_repo_file(
+            let bytes = match crate::project_files::read_repo_file(
                 &input.root,
                 Path::new(&file.rel_path),
                 8 * 1024 * 1024,

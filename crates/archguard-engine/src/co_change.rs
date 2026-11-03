@@ -6,8 +6,9 @@ use std::path::Path;
 use archguard_core::{ArchguardError, Config, GitEvidence, GitStatus, Graph, NodeId};
 use serde::{Deserialize, Serialize};
 
+use crate::config::validate_review_since;
 use crate::review_sources::{
-    MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence, validate_review_since,
+    MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence,
 };
 
 const MAX_FILES_PER_COMMIT: usize = 100;

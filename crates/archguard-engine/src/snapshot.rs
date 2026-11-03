@@ -267,7 +267,8 @@ pub fn read_snapshots(root: &Path) -> Vec<Snapshot> {
             }
             let name = path.file_name()?.to_str()?.to_string();
             let relative = Path::new(CACHE_DIR).join(HISTORY_DIR).join(&name);
-            let bytes = crate::security::read_repo_file(root, &relative, SNAPSHOT_LIMIT).ok()?;
+            let bytes =
+                crate::project_files::read_repo_file(root, &relative, SNAPSHOT_LIMIT).ok()?;
             let text = String::from_utf8(bytes).ok()?;
             // Same tolerance as the graph cache: a corrupt snapshot is
             // skipped, never fatal.

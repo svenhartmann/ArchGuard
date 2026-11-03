@@ -355,7 +355,7 @@ fn crate_directory(file: &str) -> Option<&Path> {
 }
 fn read_manifest(root: &Path, directory: &Path) -> Option<Manifest> {
     let path = directory.join("Cargo.toml");
-    let bytes = crate::security::read_repo_file(root, &path, MANIFEST_LIMIT).ok()?;
+    let bytes = crate::project_files::read_repo_file(root, &path, MANIFEST_LIMIT).ok()?;
     let table: toml::Table = std::str::from_utf8(&bytes).ok()?.parse().ok()?;
     let package = table.get("package")?.get("name")?.as_str()?.to_owned();
     // A binary reaches its own library under the package name.
@@ -382,7 +382,7 @@ pub(crate) fn hash_manifests<'a>(
     let directories: BTreeSet<_> = rust_files.filter_map(crate_directory).collect();
     for directory in directories {
         let path = directory.join("Cargo.toml");
-        if let Ok(bytes) = crate::security::read_repo_file(root, &path, MANIFEST_LIMIT) {
+        if let Ok(bytes) = crate::project_files::read_repo_file(root, &path, MANIFEST_LIMIT) {
             hash.update(path.to_string_lossy().as_bytes());
             hash.update((bytes.len() as u64).to_le_bytes());
             hash.update(bytes);

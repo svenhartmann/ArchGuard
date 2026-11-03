@@ -89,7 +89,7 @@ fn unix(time: SystemTime) -> Option<u64> {
 
 /// Only the bounded snapshot is read. Source freshness is checked by read_test_coverage.
 pub fn test_coverage_fingerprint(root: &Path) -> String {
-    match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => hash(&bytes),
         Err(e) => format!("unavailable:{:?}", e.kind()),
     }
@@ -119,7 +119,7 @@ fn source_paths(
 
 /// Return a saved measurement with current source freshness; never execute tests.
 pub fn read_test_coverage(root: &Path, config: &Config, graph: &Graph) -> TestCoverageReport {
-    let bytes = match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+    let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let mut report = TestCoverageReport::empty("not_imported");
@@ -191,7 +191,7 @@ pub fn read_test_coverage(root: &Path, config: &Config, graph: &Graph) -> TestCo
     let mut stale = 0;
     for file in &mut report.files {
         let unchanged = paths.get(&file.path) == Some(&file.node)
-            && crate::security::read_repo_file(root, Path::new(&file.path), MAX_SOURCE_BYTES)
+            && crate::project_files::read_repo_file(root, Path::new(&file.path), MAX_SOURCE_BYTES)
                 .is_ok_and(|bytes| hash(&bytes) == file.source_sha256);
         if !unchanged {
             file.status = "changed_since_import".into();
@@ -289,15 +289,15 @@ pub fn import_test_coverage(
             continue;
         }
         let entry = entries[0];
-        let bytes = match crate::security::read_repo_file(root, Path::new(&path), MAX_SOURCE_BYTES)
-        {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                report.unmatched_files += 1;
-                report.diagnostic(format!("{path}: cannot hash source: {e}"));
-                continue;
-            }
-        };
+        let bytes =
+            match crate::project_files::read_repo_file(root, Path::new(&path), MAX_SOURCE_BYTES) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    report.unmatched_files += 1;
+                    report.diagnostic(format!("{path}: cannot hash source: {e}"));
+                    continue;
+                }
+            };
         report.files.push(TestCoverageFile {
             node: paths[&path].clone(),
             path,

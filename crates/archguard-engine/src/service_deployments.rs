@@ -27,7 +27,7 @@ pub(super) fn read(root: &Path, path: &Path) -> Option<String> {
     {
         return None;
     }
-    crate::service_projects::read_manifest(root, relative).ok()
+    crate::project_files::read_manifest(root, relative).ok()
 }
 fn endpoint_key(key: &str) -> bool {
     let k = key.to_ascii_uppercase();
@@ -191,7 +191,7 @@ fn labels(v: &Value) -> BTreeMap<String, String> {
 }
 pub(super) fn augment(
     root: &Path,
-    discovery: &crate::services::Discovery,
+    discovery: &super::support::Discovery,
     report: &mut ServiceTopology,
 ) -> Vec<Deployment> {
     let mut out = Vec::new();

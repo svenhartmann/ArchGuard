@@ -91,7 +91,7 @@ fn safe_help(value: &str) -> bool {
 
 /// A change to the saved report invalidates the live-viewer cache.
 pub fn quality_findings_fingerprint(root: &Path) -> String {
-    match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => hash(&bytes),
         Err(e) => format!("unavailable:{:?}", e.kind()),
     }
@@ -124,7 +124,7 @@ fn source_paths(
 
 /// Read normalized evidence and recheck mapped source files, never execute tools.
 pub fn read_quality_findings(root: &Path, config: &Config, graph: &Graph) -> QualityReport {
-    let bytes = match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+    let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return QualityReport::empty("not_imported");
@@ -204,7 +204,7 @@ pub fn read_quality_findings(root: &Path, config: &Config, graph: &Graph) -> Qua
         }
         let path = finding.path.as_ref().expect("validated mapped path");
         let current = hashes.entry(path.clone()).or_insert_with(|| {
-            crate::security::read_repo_file(root, Path::new(path), MAX_SOURCE_BYTES)
+            crate::project_files::read_repo_file(root, Path::new(path), MAX_SOURCE_BYTES)
                 .ok()
                 .map(|bytes| hash(&bytes))
         });
@@ -412,9 +412,13 @@ pub fn import_quality_findings(
             match mapping {
                 Ok(path) => {
                     let source_hash = hashes.entry(path.clone()).or_insert_with(|| {
-                        crate::security::read_repo_file(root, Path::new(&path), MAX_SOURCE_BYTES)
-                            .ok()
-                            .map(|bytes| hash(&bytes))
+                        crate::project_files::read_repo_file(
+                            root,
+                            Path::new(&path),
+                            MAX_SOURCE_BYTES,
+                        )
+                        .ok()
+                        .map(|bytes| hash(&bytes))
                     });
                     if let Some(source_hash) = source_hash {
                         finding.node = Some(paths[&path].clone());

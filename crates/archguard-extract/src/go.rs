@@ -1,8 +1,8 @@
 //! Go import declarations. Package dependencies stay package-level; imports do
 //! not imply that every file in the target package is used. No SDK is needed.
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
-use crate::visibility::Visibility;
 use crate::walk::Lang;
+use archguard_core::Visibility;
 
 pub struct GoExtractor;
 #[derive(Clone)]

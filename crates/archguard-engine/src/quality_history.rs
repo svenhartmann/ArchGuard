@@ -214,7 +214,7 @@ pub fn build_quality_snapshot(
         let Some(path) = source.path else {
             continue;
         };
-        let bytes = crate::security::read_repo_file(root, Path::new(&path), MAX_SOURCE_BYTES)
+        let bytes = crate::project_files::read_repo_file(root, Path::new(&path), MAX_SOURCE_BYTES)
             .map_err(error)?;
         source_bytes += bytes.len() as u64;
         if source_bytes > 256 * 1024 * 1024 {
@@ -792,7 +792,7 @@ pub fn read_quality_history(root: &Path) -> QualityHistoryReport {
             report.records_truncated = true;
             break;
         }
-        let result = crate::security::read_repo_file(root, &path, MAX_RECORD_BYTES)
+        let result = crate::project_files::read_repo_file(root, &path, MAX_RECORD_BYTES)
             .map_err(|e| e.to_string())
             .and_then(|bytes| {
                 bytes_read += bytes.len() as u64;

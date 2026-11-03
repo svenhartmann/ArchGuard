@@ -103,7 +103,7 @@ fn input(root: &Path, path: &Path) -> Result<(String, Vec<u8>), ArchguardError> 
     } else {
         path
     };
-    let bytes = crate::security::read_repo_file(&canonical, relative, MAX_BYTES)?;
+    let bytes = crate::project_files::read_repo_file(&canonical, relative, MAX_BYTES)?;
     let name = relative
         .to_str()
         .ok_or_else(|| error("Contract input path must be UTF-8"))?
@@ -124,18 +124,21 @@ fn refresh(report: &mut ApiContractReport, root: &Path, topology: &ServiceTopolo
                 c.provider
             ));
         }
-        c.source_status =
-            match crate::security::read_repo_file(root, Path::new(&c.source_path), MAX_BYTES) {
-                Ok(b) if hash(&b) == c.source_sha256 => "unchanged_since_import",
-                _ => {
-                    stale = true;
-                    "changed_since_import"
-                }
+        c.source_status = match crate::project_files::read_repo_file(
+            root,
+            Path::new(&c.source_path),
+            MAX_BYTES,
+        ) {
+            Ok(b) if hash(&b) == c.source_sha256 => "unchanged_since_import",
+            _ => {
+                stale = true;
+                "changed_since_import"
             }
-            .into();
+        }
+        .into();
         if let Some(path) = &c.usage_path {
             c.usage_status =
-                match crate::security::read_repo_file(root, Path::new(path), MAX_BYTES) {
+                match crate::project_files::read_repo_file(root, Path::new(path), MAX_BYTES) {
                     Ok(b) if c.usage_sha256.as_ref() == Some(&hash(&b)) => "unchanged_since_import",
                     _ => {
                         stale = true;
@@ -199,31 +202,32 @@ fn valid_snapshot(report: &ApiContractReport) -> bool {
         })
 }
 pub fn read_api_contracts(root: &Path, topology: &ServiceTopology) -> ApiContractReport {
-    let mut report = match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return empty(),
-        Ok(bytes) => match serde_json::from_slice::<ApiContractReport>(&bytes) {
-            Ok(r) if valid_snapshot(&r) => r,
-            _ => {
+    let mut report =
+        match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return empty(),
+            Ok(bytes) => match serde_json::from_slice::<ApiContractReport>(&bytes) {
+                Ok(r) if valid_snapshot(&r) => r,
+                _ => {
+                    let mut r = empty();
+                    r.status = "error".into();
+                    r.diagnostics
+                        .push("Invalid contract snapshot; import OpenAPI again.".into());
+                    return r;
+                }
+            },
+            Err(_) => {
                 let mut r = empty();
                 r.status = "error".into();
                 r.diagnostics
-                    .push("Invalid contract snapshot; import OpenAPI again.".into());
+                    .push("Contract snapshot cannot be read safely.".into());
                 return r;
             }
-        },
-        Err(_) => {
-            let mut r = empty();
-            r.status = "error".into();
-            r.diagnostics
-                .push("Contract snapshot cannot be read safely.".into());
-            return r;
-        }
-    };
+        };
     refresh(&mut report, root, topology);
     report
 }
 pub fn api_contracts_fingerprint(root: &Path) -> String {
-    match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+    match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => {
             let mut h = Sha256::new();
             h.update(&bytes);
@@ -233,7 +237,7 @@ pub fn api_contracts_fingerprint(root: &Path) -> String {
                         .into_iter()
                         .flatten()
                     {
-                        match crate::security::read_repo_file(root, Path::new(p), MAX_BYTES) {
+                        match crate::project_files::read_repo_file(root, Path::new(p), MAX_BYTES) {
                             Ok(b) => h.update(hash(&b)),
                             Err(_) => h.update(b"unavailable"),
                         }

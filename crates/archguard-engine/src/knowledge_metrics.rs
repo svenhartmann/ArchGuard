@@ -1,6 +1,7 @@
 //! Contribution concentration in a bounded Git history window, not actual expertise.
+use crate::config::validate_review_since;
 use crate::review_sources::{
-    MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence, validate_review_since,
+    MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence,
 };
 use archguard_core::{ArchguardError, Config, GitStatus, Graph};
 use serde::{Deserialize, Serialize};

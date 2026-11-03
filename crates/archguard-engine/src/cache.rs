@@ -13,7 +13,7 @@
 //! directory descriptors with `O_NOFOLLOW`, never through pathnames a
 //! concurrent actor could swap for symlinks mid-flight. A symlinked
 //! `.archguard` (or a non-regular entry) is refused, not followed:
-//! saving returns `Err`, which [`analyze_cached_inner`] downgrades to
+//! saving returns `Err`, which [`analyze_cached`](crate::effective::analyze_cached) downgrades to
 //! a warning — analysis stays correct without a cache, and a load of
 //! anything non-regular is a cache miss, never trusted content. On
 //! non-unix platforms there is no no-follow syscall; there the entry
@@ -32,18 +32,18 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use archguard_core::{ArchguardError, Config, Graph, Report};
+use archguard_core::{ArchguardError, Config, Graph};
 use archguard_extract::SourceFile;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::pipeline::{self, Level};
+use crate::pipeline;
 
 /// Cache directory under the analysed root (hidden, hence never walked).
 /// Also the anchor of the T41 snapshot history (see [`crate::snapshot`]).
-pub(crate) const CACHE_DIR: &str = ".archguard";
+pub(crate) const CACHE_DIR: &str = crate::project_files::PROJECT_DIR;
 /// The single cache entry inside [`CACHE_DIR`]: [`CacheEntry`] as JSON.
-const CACHE_FILE: &str = "cache.json";
+pub(crate) const CACHE_FILE: &str = "cache.json";
 // Increment when extractor semantics or the cache contract change.
 const CACHE_SCHEMA: u32 = 5;
 
@@ -60,9 +60,9 @@ struct CacheEntryRef<'a> {
 
 /// Owned [`CacheEntryRef`] for deserialisation.
 #[derive(Deserialize)]
-struct CacheEntry {
+pub(crate) struct CacheEntry {
     schema_version: u32,
-    fingerprint: String,
+    pub(crate) fingerprint: String,
     graph: Graph,
     warnings: Vec<String>,
 }
@@ -160,7 +160,7 @@ fn file_stamp(path: &Path) -> FileStamp {
 /// creating the cache directory as a real directory. Any
 /// repository-controlled symlink on the way (`O_NOFOLLOW` violations,
 /// non-directory `.archguard`) returns `Err` instead of following it;
-/// [`analyze_cached_inner`] turns that into a warning, so analysis
+/// [`crate::effective::analyze_cached`] turns that into a warning, so analysis
 /// never depends on the cache being writable.
 pub fn save_graph(dir: &Path, graph: &Graph, fp: &str) -> Result<(), ArchguardError> {
     save_entry(dir, graph, fp, &[])
@@ -236,7 +236,7 @@ fn valid_graph(graph: &Graph) -> bool {
     })
 }
 
-fn extraction_fingerprint(
+pub(crate) fn extraction_fingerprint(
     root: &Path,
     files: &[SourceFile],
     config: &Config,
@@ -272,94 +272,13 @@ fn extraction_fingerprint(
 #[cfg(unix)]
 pub(crate) mod safe {
     use std::fs::File;
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::path::Path;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    use rustix::fd::{AsFd, OwnedFd};
-    use rustix::fs::{AtFlags, Mode, OFlags, fsync, linkat, mkdirat, openat, renameat, unlinkat};
-    use rustix::io::Errno;
+    use rustix::fs::{Mode, OFlags, openat};
 
     use super::{CACHE_DIR, CACHE_FILE};
-
-    /// Disambiguates temporary names from the same process.
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    /// `openat` flags for a directory we traverse *into*; `follow` is
-    /// only ever true for the caller-chosen root itself — everything
-    /// below it is repository state and must not be a symlink.
-    fn dir_flags(follow: bool) -> OFlags {
-        let mut flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY;
-        if !follow {
-            flags |= OFlags::NOFOLLOW;
-        }
-        flags
-    }
-
-    /// Atomically commit bytes in an already opened directory. Create-only
-    /// publication uses a hard link so an existing entry can never be replaced.
-    pub(crate) fn write_atomic(
-        dir_fd: &impl AsFd,
-        name: &Path,
-        bytes: &[u8],
-        overwrite: bool,
-    ) -> std::io::Result<()> {
-        let tmp = format!(
-            ".archguard-{}-{}.tmp",
-            std::process::id(),
-            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
-        );
-        // O_EXCL | O_NOFOLLOW: the fresh name can never be a pre-planted
-        // symlink, and renameat below replaces the *target entry* — a
-        // symlinked cache.json is swapped for the new regular file
-        // instead of being written through.
-        let fd = openat(
-            dir_fd,
-            &tmp,
-            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::from_bits_retain(0o600),
-        )?;
-        let result = (|| {
-            let mut file = File::from(fd);
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            drop(file);
-            if overwrite {
-                // POSIX rename replaces the target entry itself; a symlinked
-                // cache.json is swapped, never written through one.
-                renameat(dir_fd, &tmp, dir_fd, name)?;
-            } else {
-                linkat(dir_fd, &tmp, dir_fd, name, AtFlags::empty())?;
-            }
-            Ok::<_, std::io::Error>(())
-        })();
-        // Rename consumed the name on success; create-only publication and
-        // failures both need to remove it explicitly.
-        let _ = unlinkat(dir_fd, &tmp, AtFlags::empty());
-        result?;
-        // Durability of the rename itself; the visible state is already
-        // consistent without it (rename is atomic for readers).
-        let _ = fsync(dir_fd);
-        Ok(())
-    }
-
-    pub(crate) fn open_subdirectory(parent: &impl AsFd, name: &Path) -> std::io::Result<OwnedFd> {
-        match mkdirat(parent, name, Mode::from_bits_retain(0o755)) {
-            Ok(()) | Err(Errno::EXIST) => {}
-            Err(error) => return Err(error.into()),
-        }
-        Ok(openat(parent, name, dir_flags(false), Mode::empty())?)
-    }
-
-    pub(crate) fn open_project_directory(dir: &Path) -> std::io::Result<OwnedFd> {
-        // The root is chosen by the caller (CLI/MCP), so following
-        // symlinks on the way there is fine — e.g. /tmp-style symlinks
-        // on macOS. Only components *below* the root are untrusted.
-        let root = openat(rustix::fs::CWD, dir, dir_flags(true), Mode::empty())?;
-        // ELOOP on a symlink, ENOTDIR on a file: a repository-controlled
-        // redirect is refused here, before anything is opened or created.
-        open_subdirectory(&root, Path::new(CACHE_DIR))
-    }
+    use crate::project_files::safe::{dir_flags, open_project_directory, write_atomic};
 
     pub fn save(dir: &Path, json: &[u8]) -> std::io::Result<()> {
         let cache = open_project_directory(dir)?;
@@ -424,36 +343,6 @@ mod safe {
     }
 }
 
-/// [`analyze`](crate::pipeline::analyze) with the graph cache: walk, fingerprint,
-/// and on a fingerprint hit load `.archguard/cache.json` instead of
-/// extracting and building — the analyses always rerun. On a miss the
-/// full pipeline runs and the fresh graph is saved for the next run;
-/// an unwritable or symlinked (unsafe) cache only warns, it never
-/// fails the analysis.
-pub fn analyze_cached(
-    root: &Path,
-    config: &Config,
-    level: Level,
-) -> Result<(Graph, Report), ArchguardError> {
-    let (graph, report, _cache_hit) = analyze_cached_inner(root, config, level)?;
-    Ok((graph, report))
-}
-
-/// [`analyze_cached`] additionally reporting whether the graph came
-/// from the cache — the observable seam its tests assert on.
-pub(crate) fn analyze_cached_inner(
-    root: &Path,
-    config: &Config,
-    level: Level,
-) -> Result<(Graph, Report, bool), ArchguardError> {
-    let loaded = crate::config::LoadedConfig {
-        config: config.clone(),
-        sources: crate::config::all_default_sources(),
-    };
-    let run = crate::effective::analyze_run(root, &loaded, level)?;
-    Ok((run.graph, run.report, run.cache_hit))
-}
-
 pub(crate) fn extract_cached(
     root: &Path,
     files: &[SourceFile],
@@ -487,7 +376,6 @@ pub(crate) fn extract_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::Status;
     use archguard_extract::Lang;
     use std::fs::File;
     use std::time::SystemTime;
@@ -502,54 +390,6 @@ mod tests {
             fs::write(path, content).expect("write file");
         }
         dir
-    }
-
-    fn cycle_fixture() -> tempfile::TempDir {
-        fixture(&[
-            (
-                "src/a.ts",
-                "import { b } from \"./b\";\nexport const a = b + 1;\n",
-            ),
-            (
-                "src/b.ts",
-                "import { c } from \"./c\";\nexport const b = c + 1;\n",
-            ),
-            (
-                "src/c.ts",
-                "import { a } from \"./a\";\nexport const c = a + 1;\n",
-            ),
-        ])
-    }
-
-    #[test]
-    fn second_run_is_served_from_the_cache() {
-        let dir = cycle_fixture();
-        let (graph1, report1, hit1) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
-        assert!(!hit1, "first run must build, not hit");
-
-        // The single cache entry exists and carries a fingerprint that
-        // matches a freshly computed one.
-        let cache = dir.path().join(".archguard");
-        assert!(cache.join(CACHE_FILE).is_file(), "cache entry missing");
-        let raw = fs::read_to_string(cache.join(CACHE_FILE)).expect("cache entry file");
-        let entry: CacheEntry = serde_json::from_str(&raw).expect("cache entry parses");
-        assert_eq!(
-            entry.fingerprint,
-            current_fingerprint(dir.path()),
-            "stored fingerprint mismatch"
-        );
-
-        let (graph2, report2, hit2) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
-        assert!(hit2, "second run must be served from the cache");
-        assert_eq!(graph1, graph2);
-        assert_eq!(report1, report2);
-        assert_eq!(
-            report2.summary.status,
-            Status::Fail,
-            "the cycle is still found"
-        );
     }
 
     #[test]
@@ -609,43 +449,6 @@ mod tests {
         let (warm, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(hit, "the rebuilt current-version cache is reusable");
         assert_eq!(warm, graph);
-    }
-
-    #[test]
-    fn changed_mtime_and_length_miss_the_cache() {
-        let dir = cycle_fixture();
-        let (_, _, hit1) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
-        assert!(!hit1);
-
-        // Modify one fixture file: different content (→ different len)
-        // and an explicitly pinned mtime (→ different mtime), so the
-        // fingerprint changes no matter the filesystem's time granularity.
-        let path = dir.path().join("src/b.ts");
-        fs::write(
-            &path,
-            "import { c } from \"./c\";\nexport const b = c + 1000;\n",
-        )
-        .expect("rewrite");
-        let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        File::options()
-            .write(true)
-            .open(&path)
-            .expect("open")
-            .set_modified(time)
-            .expect("set mtime");
-
-        let (graph, report, hit) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
-        assert!(!hit, "changed mtime+length must invalidate the cache");
-        assert_eq!(graph.edges.len(), 3, "graph rebuilt correctly");
-        assert_eq!(report.summary.sccs, 1);
-        assert_eq!(report.summary.status, Status::Fail);
-
-        // A third, unmodified run hits again.
-        let (_, _, hit3) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 3");
-        assert!(hit3, "fresh cache after rebuild");
     }
 
     #[test]
@@ -719,229 +522,5 @@ mod tests {
             load_graph_if_fresh(dir.path(), "abc").is_none(),
             "parse error tolerated"
         );
-    }
-
-    /// The freshly computed fingerprint of everything currently under
-    /// `dir` with the default config.
-    fn current_fingerprint(dir: &Path) -> String {
-        let files = pipeline::walk_files(dir, &Config::default()).expect("walk");
-        let mut config = Config::default();
-        (config.project.source_roots, config.project.languages) =
-            crate::effective::derive_project_hints(dir).unwrap();
-        extraction_fingerprint(dir, &files, &config).unwrap()
-    }
-
-    /// A graph claiming "no cycle" — anything a poisoned cache could
-    /// serve to flip the analysis verdict.
-    fn foreign_graph() -> Graph {
-        Graph {
-            review_kpis: None,
-            semantic: None,
-            schema_version: 1,
-            root: "foreign".to_string(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        }
-    }
-
-    // F03 regression: the cache lives under the repository-controlled
-    // root, so every component of its path is attacker-controlled and
-    // may be swapped for a symlink at any moment.
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlinked_cache_directory_cannot_redirect_writes_outside_the_root() {
-        use std::os::unix::fs::symlink;
-
-        let outside = tempfile::tempdir().expect("outside dir");
-        let sentinel = outside.path().join("sentinel");
-        fs::write(&sentinel, b"do not touch").expect("sentinel");
-
-        let dir = cycle_fixture();
-        symlink(outside.path(), dir.path().join(".archguard")).expect("symlink cache dir");
-
-        // The cache is an optional optimisation: analysis must stay
-        // correct even though the cache cannot be used.
-        let (graph, report, hit) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module)
-                .expect("analysis survives an unsafe cache directory");
-        assert!(!hit, "an unsafe cache directory is never served");
-        assert_eq!(graph.edges.len(), 3, "graph built from the sources");
-        assert_eq!(report.summary.status, Status::Fail);
-
-        // Nothing was created or altered through the symlink.
-        assert_eq!(
-            fs::read(&sentinel).expect("sentinel readable"),
-            b"do not touch",
-            "external sentinel untouched"
-        );
-        for name in ["graph.json", "fingerprint", "cache.json"] {
-            assert!(
-                !outside.path().join(name).exists(),
-                "{name} must not appear outside the root"
-            );
-        }
-
-        let (_, _, hit2) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
-        assert!(!hit2, "an unsafe cache directory stays untrusted");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlinked_cache_files_cannot_overwrite_external_sentinels() {
-        use std::os::unix::fs::symlink;
-
-        let outside = tempfile::tempdir().expect("outside dir");
-        let victims: Vec<std::path::PathBuf> = [
-            "victim-graph.json",
-            "victim-fingerprint",
-            "victim-cache.json",
-        ]
-        .iter()
-        .map(|name| {
-            let path = outside.path().join(name);
-            fs::write(&path, b"ORIGINAL").expect("write victim");
-            path
-        })
-        .collect();
-
-        let dir = cycle_fixture();
-        let cache = dir.path().join(".archguard");
-        fs::create_dir_all(&cache).expect("cache dir");
-        symlink(&victims[0], cache.join("graph.json")).expect("symlink graph");
-        symlink(&victims[1], cache.join("fingerprint")).expect("symlink fingerprint");
-        symlink(&victims[2], cache.join("cache.json")).expect("symlink cache entry");
-
-        let (graph, _, hit) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
-        assert!(!hit, "symlinked cache files are never served");
-        assert_eq!(graph.edges.len(), 3);
-
-        for victim in &victims {
-            assert_eq!(
-                fs::read(victim).expect("victim readable"),
-                b"ORIGINAL",
-                "{} untouched",
-                victim.display()
-            );
-        }
-
-        // The cache works again once the entry is a real regular file
-        // (replaced as a symlink, never written through one).
-        let entry = fs::symlink_metadata(cache.join("cache.json")).expect("cache entry");
-        assert!(
-            entry.is_file(),
-            "cache entry is a regular file, not a symlink"
-        );
-        let (_, _, hit2) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
-        assert!(hit2, "the regular cache entry is served");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_symlinked_cache_entry_serves_no_foreign_graph() {
-        use std::os::unix::fs::symlink;
-
-        let dir = cycle_fixture();
-        analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("warm");
-        let fp = current_fingerprint(dir.path());
-
-        // A valid-looking cache document (right fingerprint, cycle-free
-        // graph) placed outside the root, reached through a symlink.
-        let outside = tempfile::tempdir().expect("outside dir");
-        let poison = outside.path().join("poison.json");
-        let poison_bytes = format!(
-            "{{\"fingerprint\":\"{fp}\",\"graph\":{}}}",
-            serde_json::to_string(&foreign_graph()).expect("json")
-        );
-        fs::write(&poison, &poison_bytes).expect("write poison");
-        let _ = fs::remove_file(dir.path().join(".archguard").join("cache.json"));
-        symlink(&poison, dir.path().join(".archguard").join("cache.json")).expect("symlink");
-
-        let (graph, report, hit) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run");
-        assert!(!hit, "a symlinked cache entry is not trusted");
-        assert_eq!(graph.edges.len(), 3, "graph rebuilt, not poisoned");
-        assert_eq!(report.summary.status, Status::Fail, "no verdict flip");
-        assert_eq!(
-            fs::read(&poison).expect("poison readable"),
-            poison_bytes.as_bytes(),
-            "poison file untouched"
-        );
-    }
-
-    #[test]
-    fn a_stale_or_hand_written_pair_is_never_trusted_as_a_mixed_generation() {
-        let dir = cycle_fixture();
-        let (graph_a, _, hit1) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
-        assert!(!hit1);
-        let fp_a = current_fingerprint(dir.path());
-        let files = pipeline::walk_files(dir.path(), &Config::default()).unwrap();
-        let (imports_a, _) = pipeline::build_graph(dir.path(), &files, &Config::default()).unwrap();
-        assert!(
-            imports_a.semantic.is_none(),
-            "disk cache contains import extraction only"
-        );
-        assert!(
-            graph_a.semantic.is_some(),
-            "analysis attaches fresh compiler coverage"
-        );
-        assert_eq!(graph_a.nodes, imports_a.nodes);
-        assert_eq!(
-            graph_a.edges, imports_a.edges,
-            "TS fixture has import evidence only"
-        );
-        assert_eq!(
-            load_graph_if_fresh(dir.path(), &fp_a).as_ref(),
-            Some(&imports_a),
-            "the saved generation is served for its own fingerprint"
-        );
-
-        // Simulate a crash between the (formerly two) cache writes: the
-        // graph file replaced while the fingerprint is still the old
-        // one. The store must never serve the foreign graph under the
-        // old fingerprint.
-        let foreign = foreign_graph();
-        fs::write(
-            dir.path().join(".archguard").join("graph.json"),
-            serde_json::to_vec(&foreign).expect("json"),
-        )
-        .expect("plant foreign graph file");
-        let served = load_graph_if_fresh(dir.path(), &fp_a);
-        assert_ne!(
-            served.as_ref(),
-            Some(&foreign),
-            "an old fingerprint must never pair with a foreign graph"
-        );
-
-        // A save for another fingerprint is visible all-or-nothing.
-        save_graph(dir.path(), &foreign, "fp-B").expect("save B");
-        assert_eq!(
-            load_graph_if_fresh(dir.path(), "fp-B").as_ref(),
-            Some(&foreign)
-        );
-        assert!(
-            load_graph_if_fresh(dir.path(), &fp_a).is_none(),
-            "generation A is fully replaced"
-        );
-
-        // A torn entry (interrupted write, corruption) is a miss, never
-        // a panic, and recovers by rebuilding.
-        fs::write(
-            dir.path().join(".archguard").join("cache.json"),
-            b"{\"fingerprint\":\"fp-B\",\"graph\":{\"nod",
-        )
-        .expect("torn entry");
-        assert!(
-            load_graph_if_fresh(dir.path(), "fp-B").is_none(),
-            "torn cache is a miss"
-        );
-        let (graph_c, _, hit_c) =
-            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("rebuild");
-        assert!(!hit_c);
-        assert_eq!(graph_c, graph_a, "rebuilt from sources, verdict intact");
     }
 }

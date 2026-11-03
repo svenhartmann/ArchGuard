@@ -405,10 +405,11 @@ pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     for file in files.iter().filter(|file| file.lang == Lang::Rust) {
         report.files += 1;
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let parsed = crate::security::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
-            .and_then(|text| syn::parse_file(&text).map_err(|error| error.to_string()));
+        let parsed =
+            crate::project_files::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
+                .and_then(|text| syn::parse_file(&text).map_err(|error| error.to_string()));
         match parsed {
             Ok(syntax) => {
                 let package = stripped

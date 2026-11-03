@@ -111,7 +111,7 @@ pub fn analyze_run_quiet(
 /// build run against the effective values. The provenance of every
 /// section lands in [`Report::config`].
 ///
-/// External-import warnings go to stderr as in [`analyze`](crate::pipeline::analyze).
+/// External-import warnings go to stderr as in [`analyze`].
 pub fn analyze_effective(
     root: &Path,
     loaded: &LoadedConfig,
@@ -406,7 +406,7 @@ pub fn derive_project_hints(root: &Path) -> Result<(Vec<String>, Vec<String>), A
     if files
         .iter()
         .any(|file| file.lang == archguard_extract::Lang::Go)
-        && crate::service_projects::read_manifest(root, Path::new("go.mod"))
+        && crate::project_files::read_manifest(root, Path::new("go.mod"))
             .ok()
             .and_then(|source| archguard_extract::go::module_path(&source))
             .is_some()
@@ -670,6 +670,75 @@ fn toml_str(value: &str) -> String {
 fn toml_list(values: &[String]) -> String {
     let items: Vec<String> = values.iter().map(|value| toml_str(value)).collect();
     format!("[{}]", items.join(", "))
+}
+
+/// [`analyze`] with the graph cache: walk, fingerprint,
+/// and on a fingerprint hit load `.archguard/cache.json` instead of
+/// extracting and building — the analyses always rerun. On a miss the
+/// full pipeline runs and the fresh graph is saved for the next run;
+/// an unwritable or symlinked (unsafe) cache only warns, it never
+/// fails the analysis.
+pub fn analyze_cached(
+    root: &Path,
+    config: &Config,
+    level: Level,
+) -> Result<(Graph, Report), ArchguardError> {
+    let (graph, report, _cache_hit) = analyze_cached_inner(root, config, level)?;
+    Ok((graph, report))
+}
+
+/// [`analyze_cached`] additionally reporting whether the graph came
+/// from the cache — the observable seam its tests assert on.
+pub(crate) fn analyze_cached_inner(
+    root: &Path,
+    config: &Config,
+    level: Level,
+) -> Result<(Graph, Report, bool), ArchguardError> {
+    let loaded = crate::config::LoadedConfig {
+        config: config.clone(),
+        sources: crate::config::all_default_sources(),
+    };
+    let run = crate::effective::analyze_run(root, &loaded, level)?;
+    Ok((run.graph, run.report, run.cache_hit))
+}
+
+/// Run the complete pipeline over `root` with `config` **as the
+/// declared config** at `level`: as nothing of it is marked as written
+/// by the user, the effective-config derivation (T46, Kap. 6 steps 2
+/// and 7) fills the `project`, `modules` and `layers` sections from
+/// the project itself; `rules`, `store` and `derive_layers` are taken
+/// from `config` verbatim. Callers holding a [`LoadedConfig`] with
+/// real provenance call
+/// [`analyze_effective`](crate::effective::analyze_effective) instead.
+///
+/// Unresolved (external) import targets are reported as warnings on
+/// stderr — the [`FindingKind`] vocabulary of Kap. 5 has no external
+/// kind, so they never appear as findings and never fail the run.
+pub fn analyze(
+    root: &Path,
+    config: &Config,
+    level: Level,
+) -> Result<(Graph, Report), ArchguardError> {
+    let (graph, report, warnings) = analyze_with_warnings(root, config, level)?;
+    pipeline::print_warnings(&warnings);
+    Ok((graph, report))
+}
+
+/// The effective pipeline body with an all-`Default` provenance
+/// standing in for `config` (see [`analyze`]), additionally handing
+/// back the collected external-import warnings (what [`analyze`]
+/// prints). Crate-internal so tests can assert the warnings themselves.
+pub(crate) fn analyze_with_warnings(
+    root: &Path,
+    config: &Config,
+    level: Level,
+) -> Result<(Graph, Report, Vec<String>), ArchguardError> {
+    let loaded = crate::config::LoadedConfig {
+        config: config.clone(),
+        sources: crate::config::all_default_sources(),
+    };
+    let run = effective_run(root, &loaded, level)?;
+    Ok((run.graph, run.report, run.warnings))
 }
 
 #[cfg(test)]
@@ -1181,5 +1250,514 @@ mod tests {
             toml_list(&["x".to_string(), "y".to_string()]),
             "[\"x\", \"y\"]"
         );
+    }
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    /// Write `files` (path, content) into a fresh temp dir.
+    fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for (rel, content) in files {
+            let path = dir.path().join(rel);
+            fs::create_dir_all(path.parent().expect("parent dir")).expect("create dirs");
+            fs::write(path, content).expect("write file");
+        }
+        dir
+    }
+
+    /// Names of the nodes of `graph` that `name` is an edge to from
+    /// `from_name`, for asserting resolved edges by name.
+    fn targets(graph: &Graph, from_name: &str) -> Vec<String> {
+        let from = graph
+            .nodes
+            .iter()
+            .find(|node| node.name == from_name)
+            .unwrap_or_else(|| panic!("test: no node {from_name}"))
+            .id;
+        graph
+            .out_edges(from)
+            .map(|edge| {
+                graph
+                    .node_name(edge.to)
+                    .expect("test: known id")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn external_imports_warn_and_never_produce_edges() {
+        let dir = fixture(&[
+            ("src/app/uses_lib.ts", "import { x } from \"react\";\n"),
+            ("src/app/util.ts", "export const x = 1;\n"),
+        ]);
+        let (graph, report, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
+        assert!(graph.edges.is_empty(), "unresolved imports create no edges");
+        assert_eq!(report.summary.status, archguard_core::Status::Pass);
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("react") && warnings[0].contains("app/uses_lib.ts"),
+            "warning: {}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn path_spec_imports_edge_file_to_file() {
+        let dir = fixture(&[
+            ("src/app/main.ts", "import { helper } from \"./util\";\n"),
+            ("src/app/util.ts", "export const helper = 1;\n"),
+        ]);
+        let (graph, report, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(targets(&graph, "app/main.ts"), ["app/util.ts"]);
+        assert_eq!(report.summary.status, archguard_core::Status::Pass);
+    }
+
+    #[test]
+    fn psr4_prefixes_make_namespace_imports_resolvable_without_declarations() {
+        // `Home.php` has no `namespace` declaration of its own and
+        // `User.php` none either: only the PSR-4 mapping of
+        // `composer.json` connects `use App\Model\User;` to the file.
+        let dir = fixture(&[
+            (
+                "composer.json",
+                r#"{"autoload": {"psr-4": {"App\\": "src/"}}}"#,
+            ),
+            ("src/Controller/Home.php", "<?php\nuse App\\Model\\User;\n"),
+            ("src/Model/User.php", "<?php\nclass User {}\n"),
+        ]);
+        let (graph, _report, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(
+            targets(&graph, "Controller/Home.php"),
+            ["Model/User.php"],
+            "PSR-4 must resolve the use-statement to the class file"
+        );
+    }
+
+    #[test]
+    fn symbolic_import_without_target_warns_and_pseudo_nodes_edge() {
+        // Java: a package nothing declares → warning; the declared
+        // package's unknown class → pseudo node `<module>/*`.
+        let dir = fixture(&[
+            (
+                "src/com/example/App.java",
+                "package com.example;\nimport com.example.Order;\nimport com.unknown.Thing;\n",
+            ),
+            (
+                "src/com/example/Order.java",
+                "package com.example;\nclass Order {}\n",
+            ),
+        ]);
+        let (graph, _report, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::Module).expect("analyze");
+        assert_eq!(warnings.len(), 1, "warnings: {warnings:?}");
+        assert!(
+            warnings[0].contains("com/unknown/Thing"),
+            "warning: {warnings:?}"
+        );
+        // App.java edges to the uniquely matched Order.java; the
+        // unresolved import left no edge.
+        assert_eq!(
+            targets(&graph, "com/example/App.java"),
+            ["com/example/Order.java"]
+        );
+    }
+    #[test]
+    fn python_symbols_resolve_to_their_module_and_packages_keep_init_files() {
+        let dir = fixture(&[
+            (
+                "src/main.py",
+                "import helper; from\thelper import Thing\nfrom pkg import Exported; import helper.missing\n",
+            ),
+            ("src/helper.py", "class Thing: pass\n"),
+            ("src/pkg/__init__.py", "Exported = 1\n"),
+            (
+                "src/pkg/child.py",
+                "from . import Exported\nfrom .model import Model\n",
+            ),
+            ("src/pkg/model.py", "class Model: pass\n"),
+        ]);
+        let (g, _, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("helper.missing"));
+        assert_eq!(targets(&g, "main.py"), ["helper.py", "pkg/__init__.py"]);
+        assert_eq!(
+            targets(&g, "pkg/child.py"),
+            ["pkg/__init__.py", "pkg/model.py"]
+        );
+    }
+    #[test]
+    fn module_resolution_does_not_cross_language_boundaries_and_js_uses_index_files() {
+        let dir = fixture(&[
+            ("src/main.ts", "import './only-rust'; import './folder';"),
+            ("src/only-rust.rs", "pub struct Rust;"),
+            ("src/folder/index.js", "export const a=1;"),
+            ("src/Consumer.java", "package p; import foreign.Type;"),
+            ("src/Type.cs", "namespace foreign; public class Type {}"),
+        ]);
+        let (g, _, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(targets(&g, "main.ts"), ["folder/index.js"]);
+        assert!(targets(&g, "p/Consumer.java").is_empty());
+    }
+    #[test]
+    fn java_nested_type_imports_resolve_to_the_enclosing_type_file() {
+        let dir = fixture(&[
+            (
+                "src/Outer.java",
+                "package domain; public class Outer {public static class Inner {}}",
+            ),
+            (
+                "src/Client.java",
+                "package client; import domain.Outer.Inner;",
+            ),
+        ]);
+        let (g, _, warnings) =
+            analyze_with_warnings(dir.path(), &Config::default(), Level::File).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(targets(&g, "client/Client.java"), ["domain/Outer.java"]);
+    }
+}
+
+#[cfg(test)]
+mod cache_entry_tests {
+    use super::*;
+    use crate::cache::{
+        CACHE_FILE, CacheEntry, extraction_fingerprint, load_graph_if_fresh, save_graph,
+    };
+    use crate::pipeline::Level;
+    use archguard_core::Status;
+    use std::fs::File;
+    use std::time::SystemTime;
+
+    /// Write `files` (path, content) into a fresh temp dir, mirroring
+    /// the T22 integration fixture: a → b → c → a cycle under `src`.
+    fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for (rel, content) in files {
+            let path = dir.path().join(rel);
+            fs::create_dir_all(path.parent().expect("parent dir")).expect("create dirs");
+            fs::write(path, content).expect("write file");
+        }
+        dir
+    }
+
+    fn cycle_fixture() -> tempfile::TempDir {
+        fixture(&[
+            (
+                "src/a.ts",
+                "import { b } from \"./b\";\nexport const a = b + 1;\n",
+            ),
+            (
+                "src/b.ts",
+                "import { c } from \"./c\";\nexport const b = c + 1;\n",
+            ),
+            (
+                "src/c.ts",
+                "import { a } from \"./a\";\nexport const c = a + 1;\n",
+            ),
+        ])
+    }
+
+    #[test]
+    fn second_run_is_served_from_the_cache() {
+        let dir = cycle_fixture();
+        let (graph1, report1, hit1) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
+        assert!(!hit1, "first run must build, not hit");
+
+        // The single cache entry exists and carries a fingerprint that
+        // matches a freshly computed one.
+        let cache = dir.path().join(".archguard");
+        assert!(cache.join(CACHE_FILE).is_file(), "cache entry missing");
+        let raw = fs::read_to_string(cache.join(CACHE_FILE)).expect("cache entry file");
+        let entry: CacheEntry = serde_json::from_str(&raw).expect("cache entry parses");
+        assert_eq!(
+            entry.fingerprint,
+            current_fingerprint(dir.path()),
+            "stored fingerprint mismatch"
+        );
+
+        let (graph2, report2, hit2) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
+        assert!(hit2, "second run must be served from the cache");
+        assert_eq!(graph1, graph2);
+        assert_eq!(report1, report2);
+        assert_eq!(
+            report2.summary.status,
+            Status::Fail,
+            "the cycle is still found"
+        );
+    }
+
+    #[test]
+    fn changed_mtime_and_length_miss_the_cache() {
+        let dir = cycle_fixture();
+        let (_, _, hit1) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
+        assert!(!hit1);
+
+        // Modify one fixture file: different content (→ different len)
+        // and an explicitly pinned mtime (→ different mtime), so the
+        // fingerprint changes no matter the filesystem's time granularity.
+        let path = dir.path().join("src/b.ts");
+        fs::write(
+            &path,
+            "import { c } from \"./c\";\nexport const b = c + 1000;\n",
+        )
+        .expect("rewrite");
+        let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        File::options()
+            .write(true)
+            .open(&path)
+            .expect("open")
+            .set_modified(time)
+            .expect("set mtime");
+
+        let (graph, report, hit) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
+        assert!(!hit, "changed mtime+length must invalidate the cache");
+        assert_eq!(graph.edges.len(), 3, "graph rebuilt correctly");
+        assert_eq!(report.summary.sccs, 1);
+        assert_eq!(report.summary.status, Status::Fail);
+
+        // A third, unmodified run hits again.
+        let (_, _, hit3) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 3");
+        assert!(hit3, "fresh cache after rebuild");
+    }
+
+    /// The freshly computed fingerprint of everything currently under
+    /// `dir` with the default config.
+    fn current_fingerprint(dir: &Path) -> String {
+        let files = pipeline::walk_files(dir, &Config::default()).expect("walk");
+        let mut config = Config::default();
+        (config.project.source_roots, config.project.languages) =
+            crate::effective::derive_project_hints(dir).unwrap();
+        extraction_fingerprint(dir, &files, &config).unwrap()
+    }
+
+    /// A graph claiming "no cycle" — anything a poisoned cache could
+    /// serve to flip the analysis verdict.
+    fn foreign_graph() -> Graph {
+        Graph {
+            review_kpis: None,
+            semantic: None,
+            schema_version: 1,
+            root: "foreign".to_string(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
+    // F03 regression: the cache lives under the repository-controlled
+    // root, so every component of its path is attacker-controlled and
+    // may be swapped for a symlink at any moment.
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_cache_directory_cannot_redirect_writes_outside_the_root() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().expect("outside dir");
+        let sentinel = outside.path().join("sentinel");
+        fs::write(&sentinel, b"do not touch").expect("sentinel");
+
+        let dir = cycle_fixture();
+        symlink(outside.path(), dir.path().join(".archguard")).expect("symlink cache dir");
+
+        // The cache is an optional optimisation: analysis must stay
+        // correct even though the cache cannot be used.
+        let (graph, report, hit) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module)
+                .expect("analysis survives an unsafe cache directory");
+        assert!(!hit, "an unsafe cache directory is never served");
+        assert_eq!(graph.edges.len(), 3, "graph built from the sources");
+        assert_eq!(report.summary.status, Status::Fail);
+
+        // Nothing was created or altered through the symlink.
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel readable"),
+            b"do not touch",
+            "external sentinel untouched"
+        );
+        for name in ["graph.json", "fingerprint", "cache.json"] {
+            assert!(
+                !outside.path().join(name).exists(),
+                "{name} must not appear outside the root"
+            );
+        }
+
+        let (_, _, hit2) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
+        assert!(!hit2, "an unsafe cache directory stays untrusted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_cache_files_cannot_overwrite_external_sentinels() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().expect("outside dir");
+        let victims: Vec<std::path::PathBuf> = [
+            "victim-graph.json",
+            "victim-fingerprint",
+            "victim-cache.json",
+        ]
+        .iter()
+        .map(|name| {
+            let path = outside.path().join(name);
+            fs::write(&path, b"ORIGINAL").expect("write victim");
+            path
+        })
+        .collect();
+
+        let dir = cycle_fixture();
+        let cache = dir.path().join(".archguard");
+        fs::create_dir_all(&cache).expect("cache dir");
+        symlink(&victims[0], cache.join("graph.json")).expect("symlink graph");
+        symlink(&victims[1], cache.join("fingerprint")).expect("symlink fingerprint");
+        symlink(&victims[2], cache.join("cache.json")).expect("symlink cache entry");
+
+        let (graph, _, hit) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
+        assert!(!hit, "symlinked cache files are never served");
+        assert_eq!(graph.edges.len(), 3);
+
+        for victim in &victims {
+            assert_eq!(
+                fs::read(victim).expect("victim readable"),
+                b"ORIGINAL",
+                "{} untouched",
+                victim.display()
+            );
+        }
+
+        // The cache works again once the entry is a real regular file
+        // (replaced as a symlink, never written through one).
+        let entry = fs::symlink_metadata(cache.join("cache.json")).expect("cache entry");
+        assert!(
+            entry.is_file(),
+            "cache entry is a regular file, not a symlink"
+        );
+        let (_, _, hit2) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 2");
+        assert!(hit2, "the regular cache entry is served");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_cache_entry_serves_no_foreign_graph() {
+        use std::os::unix::fs::symlink;
+
+        let dir = cycle_fixture();
+        analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("warm");
+        let fp = current_fingerprint(dir.path());
+
+        // A valid-looking cache document (right fingerprint, cycle-free
+        // graph) placed outside the root, reached through a symlink.
+        let outside = tempfile::tempdir().expect("outside dir");
+        let poison = outside.path().join("poison.json");
+        let poison_bytes = format!(
+            "{{\"fingerprint\":\"{fp}\",\"graph\":{}}}",
+            serde_json::to_string(&foreign_graph()).expect("json")
+        );
+        fs::write(&poison, &poison_bytes).expect("write poison");
+        let _ = fs::remove_file(dir.path().join(".archguard").join("cache.json"));
+        symlink(&poison, dir.path().join(".archguard").join("cache.json")).expect("symlink");
+
+        let (graph, report, hit) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run");
+        assert!(!hit, "a symlinked cache entry is not trusted");
+        assert_eq!(graph.edges.len(), 3, "graph rebuilt, not poisoned");
+        assert_eq!(report.summary.status, Status::Fail, "no verdict flip");
+        assert_eq!(
+            fs::read(&poison).expect("poison readable"),
+            poison_bytes.as_bytes(),
+            "poison file untouched"
+        );
+    }
+
+    #[test]
+    fn a_stale_or_hand_written_pair_is_never_trusted_as_a_mixed_generation() {
+        let dir = cycle_fixture();
+        let (graph_a, _, hit1) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("run 1");
+        assert!(!hit1);
+        let fp_a = current_fingerprint(dir.path());
+        let files = pipeline::walk_files(dir.path(), &Config::default()).unwrap();
+        let (imports_a, _) = pipeline::build_graph(dir.path(), &files, &Config::default()).unwrap();
+        assert!(
+            imports_a.semantic.is_none(),
+            "disk cache contains import extraction only"
+        );
+        assert!(
+            graph_a.semantic.is_some(),
+            "analysis attaches fresh compiler coverage"
+        );
+        assert_eq!(graph_a.nodes, imports_a.nodes);
+        assert_eq!(
+            graph_a.edges, imports_a.edges,
+            "TS fixture has import evidence only"
+        );
+        assert_eq!(
+            load_graph_if_fresh(dir.path(), &fp_a).as_ref(),
+            Some(&imports_a),
+            "the saved generation is served for its own fingerprint"
+        );
+
+        // Simulate a crash between the (formerly two) cache writes: the
+        // graph file replaced while the fingerprint is still the old
+        // one. The store must never serve the foreign graph under the
+        // old fingerprint.
+        let foreign = foreign_graph();
+        fs::write(
+            dir.path().join(".archguard").join("graph.json"),
+            serde_json::to_vec(&foreign).expect("json"),
+        )
+        .expect("plant foreign graph file");
+        let served = load_graph_if_fresh(dir.path(), &fp_a);
+        assert_ne!(
+            served.as_ref(),
+            Some(&foreign),
+            "an old fingerprint must never pair with a foreign graph"
+        );
+
+        // A save for another fingerprint is visible all-or-nothing.
+        save_graph(dir.path(), &foreign, "fp-B").expect("save B");
+        assert_eq!(
+            load_graph_if_fresh(dir.path(), "fp-B").as_ref(),
+            Some(&foreign)
+        );
+        assert!(
+            load_graph_if_fresh(dir.path(), &fp_a).is_none(),
+            "generation A is fully replaced"
+        );
+
+        // A torn entry (interrupted write, corruption) is a miss, never
+        // a panic, and recovers by rebuilding.
+        fs::write(
+            dir.path().join(".archguard").join("cache.json"),
+            b"{\"fingerprint\":\"fp-B\",\"graph\":{\"nod",
+        )
+        .expect("torn entry");
+        assert!(
+            load_graph_if_fresh(dir.path(), "fp-B").is_none(),
+            "torn cache is a miss"
+        );
+        let (graph_c, _, hit_c) =
+            analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("rebuild");
+        assert!(!hit_c);
+        assert_eq!(graph_c, graph_a, "rebuilt from sources, verdict intact");
     }
 }

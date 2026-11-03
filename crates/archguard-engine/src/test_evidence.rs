@@ -336,7 +336,8 @@ pub fn import_test_evidence(
 }
 pub fn read_test_evidence(root: &Path, config: &Config, graph: &Graph) -> TestEvidenceReport {
     let result = (|| -> Result<TestEvidenceReport, ArchguardError> {
-        let bytes = match crate::security::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
+        let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES)
+        {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(empty("not_imported")),
             Err(e) => return Err(e.into()),
