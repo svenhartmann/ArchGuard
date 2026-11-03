@@ -12,14 +12,14 @@ Architekturgrundlagen und Implementierungsreferenz. Bedienung und Grenzen:
 
 ## 1. Ziel und Abgrenzung
 
-**Ziel:** Ein einzelnes, schnelles Binary, das
+**Ziel:** Ein einzelnes Binary, das
 
 1. aus einem Quellcode-Baum einen **hierarchischen Abhängigkeitsgraphen** extrahiert (Containment-Baum: System → Module → Untermodule → Dateien),
 2. darauf **Zyklen** (SCCs), **Schichtenverletzungen** und **Kopplungsmetriken** (Martin + Lakos: ACD/CCD/NCCD) berechnet — auf **jeder Zoomstufe**,
 3. **Drill-down** bietet: vom Systemüberblick per Zoom-in bis zur einzelnen Import-Zeile, als Graph-Ansicht **und** als Dependency-Structure-Matrix (DSM),
-4. **konkrete Vorschläge** liefert, welche Kanten man trennen sollte, und sie per **Simulation** („was wäre, wenn ich X verschiebe / die Kante kappe?") risikofrei prüfbar macht,
-5. **Snapshots & Trends** festhält (wird die Architektur besser oder schlechter?),
-6. **out-of-the-box läuft**: erster Lauf ohne Konfiguration — Wurzeln, Sprachen, Zoom-Tiefe und Schichten werden aus dem Projekt abgeleitet; `archguard.toml` korrigiert nur bei Bedarf und befördert abgeleitete Hinweise zu CI-Gates (Kap. 11),
+4. **konkrete Vorschläge** liefert, welche Kanten man trennen sollte, und deren Wirkung per **Simulation** (Kante entfernen, Knoten verschieben, Knoten zusammenführen) ohne Codeänderung berechnet,
+5. **Snapshots** speichert und Kennzahlen über Snapshots als Zeitreihe (`trend`) ausgibt,
+6. **ohne Konfiguration läuft**: Wurzeln, Sprachen, Zoom-Tiefe und Schichten werden aus dem Projekt abgeleitet; `archguard.toml` überschreibt abgeleitete Werte und macht abgeleitete Regeln zu CI-Gates (Kap. 11),
 7. das alles per **CLI** (CI-tauglich, Exit-Codes) und per **MCP über stdio** (für KI-Agenten) anbietet.
 
 Den Funktionsumfang beschreibt Kap. 15.
@@ -37,14 +37,14 @@ Den Funktionsumfang beschreibt Kap. 15.
 
 | Prinzip | Konsequenz |
 | --- | --- |
-| **Zyklenfrei by construction** | Cargo-Workspace mit getrennten Crates: Cargo verbietet zyklische Crate-Abhängigkeiten — ein Zyklus ist ein *Build-Fehler*, keine Review-Frage. Zusätzlich Dogfooding in CI (Kap. 12). |
-| **Dependency Sink** | Alle gemeinsamen Typen liegen in `archguard-core` (unterste Schicht, hängt von nichts Eigenem ab). Mittlere Crates kennen sich gegenseitig **nicht**. |
-| **Small-context-friendly** | Jedes Crate ist klein und in sich geschlossen; ein Coding-Agent braucht pro Task nur sein Crate plus die Typen aus `archguard-core`. MCP-Antworten sind paginiert und zusammengefasst (Kap. 10.1), damit sie in kleine Kontextfenster passen. |
-| **Summary first, drill-down by ID** | Kein Tool-Call liefert je den ganzen Graphen. Erst Zusammenfassung mit IDs, dann gezieltes Nachladen (`cycle_get`, `edge_evidence`). |
-| **Ableitung statt Vorarbeit** | Erster Lauf läuft ohne Config: Wurzeln, Sprachen, Zoom-Tiefe und Schichten werden aus dem Projekt abgeleitet (Kap. 11). `archguard.toml` ist das korrigierende Delta — abgeleitete Regeln werden erst durch Aufnahme ins File zum CI-Gate („Promotion"). |
-| **Deterministisch** | Stabile Sortierung aller Ausgaben → Golden-File-Tests, reproduzierbare Baselines, diffbare Reports. |
-| **Sparsam** | Rust, ein statisches Binary, keine Runtime, keine Daemon-Pflicht. v1 single-threaded (einfacher für kleine Modelle korrekt zu implementieren); Parallelisierung mit `rayon` ist eine spätere, isolierte Optimierung. Die embedded Graph-DB (Kap. 8) ist ein optionales Cargo-Feature — das Slim-Binary bleibt klein. |
-| **Richtiges Werkzeug je Aufgabe** | Hot-Path-Algorithmen laufen in-memory auf `petgraph` (dafür gebaute Graph-Bibliothek, µs–ms); Persistenz, Ad-hoc-Queries und Visualisierung übernimmt eine **embedded Graph-Datenbank** mit openCypher und Explorer-UI (Kap. 8) — keine Eigenbauten für Probleme, die Graph-Tooling schon löst. |
+| **Azyklische Crates** | Cargo-Workspace mit getrennten Crates; Cargo lehnt zyklische Crate-Abhängigkeiten beim Build ab. Die erlaubten Kanten prüft zusätzlich `scripts/checks/check_architecture.py` in CI (Kap. 12). |
+| **Dependency Sink** | Gemeinsame Typen liegen in `archguard-core` (Schicht 0, keine Workspace-Abhängigkeiten). Die Crates der Schicht 1 haben keine Abhängigkeiten untereinander. |
+| **Begrenzte Antwortgröße** | MCP-Antworten sind auf ein 4-KiB-Budget gekürzt und paginiert (Kap. 10.1). |
+| **Zusammenfassung, dann Details per ID** | Kein MCP-Tool liefert den vollständigen Graphen. Listen-Tools liefern IDs; Details liefern `cycle_get`, `edge_evidence` u. a. |
+| **Ableitung vor Konfiguration** | Wurzeln, Sprachen, Zoom-Tiefe und Schichten werden abgeleitet (Kap. 11). `archguard.toml` enthält nur Abweichungen; eine abgeleitete Regel wird erst durch Eintrag in die Datei zum CI-Gate („Promotion"). |
+| **Deterministisch** | Alle Ausgaben sind stabil sortiert. Voraussetzung für Golden-File-Tests, Baseline-Vergleiche und Report-Diffs. |
+| **Ein Binary** | Rust, statisch gelinkt, kein Daemon. Die Analyse-Pipeline ist single-threaded; `rayon` wird nicht verwendet. Die Graph-DB (Kap. 8) ist das optionale Cargo-Feature `db`. |
+| **Analyse in-memory, DB als Spiegel** | Graphalgorithmen laufen in-memory auf `petgraph`. Persistenz, Ad-hoc-Queries und Visualisierung laufen über eine embedded Graph-Datenbank mit openCypher (Kap. 8). |
 
 ---
 
@@ -66,7 +66,7 @@ graph LR
     G --> H3[Graph-DB-Spiegel<br/>openCypher · Explorer-UI]
 ```
 
-### 3.2 Crate-Graph (die eigene Architektur — azyklisch, 4 Schichten)
+### 3.2 Crate-Graph
 
 ```mermaid
 graph TD
@@ -77,7 +77,7 @@ graph TD
     subgraph L2["Schicht 2 — Orchestrierung"]
         ENG["archguard-engine"]
     end
-    subgraph L1["Schicht 1 — Fachlogik (kennen sich NICHT)"]
+    subgraph L1["Schicht 1 — Fachlogik"]
         EXT["archguard-extract"]
         ANA["archguard-analysis"]
         REP["archguard-report"]
@@ -101,15 +101,16 @@ graph TD
     STO --> CORE
 ```
 
-Alle Pfeile zeigen nur nach unten. `archguard-mcp` ist eine Library, die vom CLI-Binary über das
-Subkommando `archguard mcp` gestartet wird → ein einziges Binary für beide Betriebsarten.
+Jede Kante führt von einer höheren zu einer niedrigeren Schicht. Innerhalb von Schicht 1 gibt es
+keine Kanten. Die zwölf Kanten sind die vollständige Allowlist von
+`scripts/checks/check_architecture.py` (Kap. 12). `archguard-mcp` ist eine Library; das Binary
+`archguard` startet den MCP-Server über das Subkommando `archguard mcp`.
 
 ---
 
 ### 3.3 Review, Quellenbelege und organisatorischer Kontext
 
-Die neuen Analysen folgen demselben Crate-Graphen. Gemeinsame Datentypen liegen in
-`archguard-core`: `ReviewReport`/`ReviewSources`, `PerformanceReport`, deklarierte
+Gemeinsame Datentypen liegen in `archguard-core`: `ReviewReport`/`ReviewSources`, `PerformanceReport`, deklarierte
 Abhängigkeits-/Ownership-Regeln und `ArchitectureContext`. Die reine
 Review-Berechnung liegt in `archguard-analysis/src/review.rs`. Sie erhält einen
 vollständigen Graphen, die aktuelle Aggregationssicht und separat erhobene
@@ -179,24 +180,24 @@ Dateiformate, Auswirkungen auf Gates und Beleggrenzen stehen in der
 ```text
 archguard/
 ├── Cargo.toml                 # [workspace] members = crates/*
-├── .archguard/archguard.toml      # eigene Architektur-Regeln (Dogfooding)
+├── .archguard/archguard.toml      # Architekturregeln für dieses Repository
 ├── crates/
 │   ├── archguard-core/           # L0: Typen, keine eigene Logik-Abhängigkeit
-│   ├── archguard-extract/        # L1: Walker, Extractor-Trait, Scanner (Java, C#, Py, TS/JS, PHP, Rust), Resolver
+│   ├── archguard-extract/        # L1: Walker, Extractor-Trait, Scanner (Java, C#, Py, TS/JS, PHP, Rust, Go), Resolver
 │   ├── archguard-analysis/       # L1: SCC, Zyklen, Metriken, Layer-Regeln, Cut-Vorschläge, Baseline
 │   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, html, graphml, sarif)
 │   ├── archguard-store/          # L1: GraphStore-Trait, Graph-DB-Spiegel (openCypher), Query-Guard
 │   ├── archguard-engine/         # L2: Config laden, Pipeline orchestrieren, Graph-Cache
 │   ├── archguard-mcp/            # L3: MCP-Server (stdio), Tool-Registrierung
 │   └── archguard-cli/            # L3: Binary `archguard`, clap-Kommandos
-├── fixtures/                  # Mini-Beispielprojekte für Tests (ts-cyclic, py-layers, rs-clean)
-└── .github/workflows/ci.yml   # fmt, clippy, test, Dogfood-Check
+├── fixtures/                  # Testprojekte (ts-cyclic, py-layers, rs-clean, java-packages, …)
+└── .github/workflows/ci.yml   # fmt, clippy, test, Architektur-Check
 ```
 
-| Crate | Verantwortung | Externe Abhängigkeiten (bewusst minimal) |
+| Crate | Verantwortung | Externe Abhängigkeiten |
 | --- | --- | --- |
 | `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError` | `serde`, `serde_json`, `thiserror` |
-| `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset` |
+| `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset`, `serde_json` |
 | `archguard-analysis` | Tarjan-SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
 | `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `kuzu = "=0.11.3"` (Ladybug-/Kuzu-Lineage, nur hinter Cargo-Feature `db`) |
@@ -204,8 +205,8 @@ archguard/
 | `archguard-mcp` | MCP-Tools, JSON-Schemas, Pagination-Guard | `rmcp` (offizielles MCP-Rust-SDK), `tokio` (nur hier), `schemars` |
 | `archguard-cli` | Argument-Parsing, Exit-Codes, Formatauswahl | `clap`, `anyhow` |
 
-> `tokio`/async bleibt **ausschließlich** in `archguard-mcp`. Engine und darunter sind synchron —
-> das hält die Fachlogik trivial testbar und für kleine Modelle leicht implementierbar.
+`tokio` ist nur direkte Abhängigkeit von `archguard-mcp`. `archguard-engine` und die Schichten 0–1
+sind synchron.
 
 ---
 
@@ -241,7 +242,7 @@ mit `parent`-Zeigern (System → Module → Untermodule → Dateien). Die Hierar
 
 - **physisch** (Verzeichnisbaum): TypeScript/JS, Python, Rust — der Ordnerpfad ist das Modul;
 - **logisch** (Paket-/Namespace-Deklaration): Java, C#, PHP — maßgeblich ist `package a.b;`
-  bzw. `namespace A.B;`, nicht der Ordner (bei C# können beide auseinanderfallen!).
+  bzw. `namespace A.B;`, nicht der Ordner (bei C# können Namespace und Ordner voneinander abweichen).
 
 Knotennamen sind normalisierte Modulpfade (`a/b/…`). Kanten verbinden `file`-Knoten; kann ein
 symbolischer Import keiner Datei zugeordnet werden (z. B. `import a.b.*` oder ein C#-Namespace
@@ -255,8 +256,8 @@ Dateiknoten genau einen sichtbaren Vorfahren hat (Default: Tiefe aus `modules.de
 `aggregate(graph, cut)` projiziert alle Datei-Kanten auf die sichtbaren Vorfahren
 (Ref-Counts summiert, Beleg-Stichprobe erhalten) — und liefert **wieder einen `Graph`**.
 
-Daraus folgt der zentrale Trick der Architektur: **Alle Analysen (SCC, Layer, Metriken, DSM,
-Simulation) laufen unverändert auf jeder Zoomstufe**, weil jede Zoomstufe einfach ein Graph ist.
+Da jede Sicht ein `Graph` ist, laufen SCC, Layer-Check, Metriken, DSM und Simulation auf jeder
+Zoomstufe ohne ebenenspezifischen Code.
 
 - **Zoom-in** = `expand(node)`: Knoten wird im Cut durch seine Kinder ersetzt; ein Modul-Zyklus
   lässt sich so bis auf die verursachenden Dateien und Import-Zeilen aufklappen.
@@ -333,8 +334,9 @@ partielle Abdeckung; DIT/NOC sind nicht anwendbar. Auch Java, C# und
 TypeScript/JavaScript ergänzen Importbelege durch Compiler-Helper. Die README
 beschreibt den aktuellen Umfang und die Voraussetzungen.
 
-Alle Scanner sind zeilenbasiert (~100 Zeilen pro Sprache, je ein isolierter Task), hängen nur am
-`Extractor`-Trait und kennen einander nicht — eine neue Sprache ist ein neuer kleiner Task, kein Umbau.
+Alle Scanner sind zeilenbasiert und implementieren den `Extractor`-Trait
+(`archguard-extract/src/extract.rs`). `registry()` registriert sie; Scanner importieren einander
+nicht. Eine neue Sprache erfordert einen neuen Scanner und einen Eintrag in `registry()`.
 
 ---
 
@@ -342,33 +344,33 @@ Alle Scanner sind zeilenbasiert (~100 Zeilen pro Sprache, je ein isolierter Task
 
 | Problem | Verfahren | Begründung |
 | --- | --- | --- |
-| Zyklenerkennung | **Tarjan SCC** (`petgraph::algo::tarjan_scc`), O(V+E) | Standard, fertig in petgraph, deterministisch |
+| Zyklenerkennung | **Tarjan SCC** (`petgraph::algo::tarjan_scc`), O(V+E) | Implementierung aus `petgraph` |
 | Zyklen aufzählen | Wurzelbegrenzte DFS **innerhalb** jeder SCC mit Kanten-, Ergebnis- und Längenbudget; `sampling` weist Grenzen/Vollständigkeit aus | Beispielsuche bleibt begrenzt, auch ohne kurzen gefundenen Zyklus; SCC-Erkennung bleibt unabhängig |
-| Cut-Vorschläge | Greedy-Heuristik: pro SCC-Kante `score = (gebrochene Sample-Zyklen / Zyklen gesamt) × 1/(1 + ln(ref_count))` — wenige Import-Stellen = billiger Schnitt | Approximiert Minimum-Feedback-Arc-Set; nachvollziehbare Begründung pro Vorschlag |
-| Metriken | Fan-in (Ca), Fan-out (Ce), Instabilität `I = Ce/(Ca+Ce)`, Zyklus-Beteiligung %, SCC-Größenverteilung | Klassisch (Martin-Metriken), sprachunabhängig berechenbar |
-| Hierarchie-Aggregation | `aggregate(Graph, Cut) -> Graph`: Datei-Kanten auf sichtbare Vorfahren projizieren, Ref-Counts summieren | Sichten sind wieder `Graph`-Instanzen → **alle** Analysen laufen unverändert auf jeder Zoomstufe |
-| ACD / CCD / NCCD | „Depends-Upon"-Mengen per Erreichbarkeits-DFS; CCD = Σ, ACD = CCD/n, NCCD = CCD normiert auf Binärbaum | Lakos-Kopplungsmaße, rein graphbasiert, sprachunabhängig |
-| Simulation | `SimOp { CutEdge, MoveNode, Merge }` auf Kopie des Graphen anwenden, Analysen neu laufen lassen, Findings/Metriken diffen. **SimOp-JSON ist der universelle Vertrag**: bestätigte Aktionen im HTML-Viewer, CLI (`simulate --ops`) und Agent (MCP `simulate`) erzeugen und konsumieren exakt dasselbe Format | „Virtual Refactoring": Agent/Mensch prüft die Wirkung, **bevor** Code angefasst wird — ein Ops-Format für drei Hände |
-| Layer-Check | Knoten → Layer via Glob auf den Namen (`globset`); Kante erlaubt ⇔ Ziel-Layer ∈ `may_depend_on` des Quell-Layers (transitiv nicht nötig, nur direkte Kanten); Severity nach Ursprung: deklariert ⇒ `Error`, abgeleitet ⇒ `Info` (Promotion, Kap. 11) | Einfach erklärbares Regelmodell; abgeleitete Hinweise blockieren nie die CI |
-| **Layer-Ableitung** | SCC-Kondensation → Longest-Path-Ranking auf dem kondensierten DAG (`rank = 1 + max(rank der Abhängigkeiten)`, Senken = 0); Namensaffinitäts-Tabelle (`core\|domain\|model\|entity\|shared` unten, `app\|service\|usecase\|logic\|feature` Mitte, `api\|ui\|cli\|web\|controller\|http` oben) benennt die Ränge; Module **in** SCCs sind nicht rankbar → Info-Finding „Zyklus verhindert Schichtung" statt Layer-Verletzung | Zero-Config Start-Hypothese statt Layer-Boilerplate; Zyklen blockieren die Schichtung — genau die Aussage, um die es dem Tool geht |
-| **Projekt-Ableitung** | Manifest-Sniffing (`composer.json` PSR-4, `Cargo.toml`, `tsconfig.json`, `pyproject.toml`/`setup.py`, `pom.xml`) + Endungs-Statistik über die gewalkten Dateien; deklarierte Werte gewinnen immer | Nimmt die zwei häufigsten Config-Fehler (falsche Wurzel, falsche Sprache) weg, ohne dass jemand eine Config schreibt |
-| Baseline | Zyklus-Hash = SHA-256 über sortierte Knotennamen der SCC; Diff = neue/entfernte Hashes | „Ratchet": Alt-Zyklen tolerieren, neue blocken |
+| Cut-Vorschläge | Greedy-Heuristik: pro SCC-Kante `score = (gebrochene Sample-Zyklen / Zyklen gesamt) × 1/(1 + ln(ref_count))` ; weniger Import-Stellen ergeben einen höheren Score | Heuristik für das NP-schwere Minimum-Feedback-Arc-Set; jeder Vorschlag enthält Score und Begründungstext |
+| Metriken | Fan-in (Ca), Fan-out (Ce), Instabilität `I = Ce/(Ca+Ce)`, Zyklus-Beteiligung %, SCC-Größenverteilung | Martin-Metriken; nur aus Graphkanten berechnet |
+| Hierarchie-Aggregation | `aggregate(Graph, Cut) -> Graph`: Datei-Kanten auf sichtbare Vorfahren projizieren, Ref-Counts summieren | Sichten sind `Graph`-Instanzen; alle Analysen laufen auf jeder Zoomstufe |
+| ACD / CCD / NCCD | „Depends-Upon"-Mengen per Erreichbarkeits-DFS; CCD = Σ, ACD = CCD/n, NCCD = CCD normiert auf Binärbaum | Lakos-Kopplungsmaße; nur aus Graphkanten berechnet |
+| Simulation | `SimOp { CutEdge, MoveNode, Merge }` auf Kopie des Graphen anwenden, Analysen neu laufen lassen, Findings/Metriken diffen. **SimOp-JSON ist der universelle Vertrag**: bestätigte Aktionen im HTML-Viewer, CLI (`simulate --ops`) und Agent (MCP `simulate`) erzeugen und konsumieren exakt dasselbe Format | Wirkung einer Strukturänderung wird vor der Codeänderung berechnet; ein Format für Viewer, CLI und MCP |
+| Layer-Check | Knoten → Layer via Glob auf den Namen (`globset`); Kante erlaubt ⇔ Ziel-Layer ∈ `may_depend_on` des Quell-Layers (transitiv nicht nötig, nur direkte Kanten); Severity nach Ursprung: deklariert ⇒ `Error`, abgeleitet ⇒ `Info` (Promotion, Kap. 11) | Nur direkte Kanten werden geprüft; abgeleitete Layer lassen `check` nicht fehlschlagen |
+| **Layer-Ableitung** | SCC-Kondensation → Longest-Path-Ranking auf dem kondensierten DAG (`rank = 1 + max(rank der Abhängigkeiten)`, Senken = 0); Namensaffinitäts-Tabelle (`core\|domain\|model\|entity\|shared` unten, `app\|service\|usecase\|logic\|feature` Mitte, `api\|ui\|cli\|web\|controller\|http` oben) benennt die Ränge; Module **in** SCCs sind nicht rankbar → Info-Finding „Zyklus verhindert Schichtung" statt Layer-Verletzung | Liefert Layer ohne Konfiguration; ein Longest-Path-Ranking ist nur auf einem DAG definiert |
+| **Projekt-Ableitung** | Manifest-Sniffing (`composer.json` PSR-4, `Cargo.toml`, `tsconfig.json`, `pyproject.toml`/`setup.py`, `pom.xml`) + Endungs-Statistik über die gewalkten Dateien; deklarierte Werte gewinnen immer | Source-Roots und Sprachen ohne `[project]`-Abschnitt |
+| Baseline | Zyklus-Hash = SHA-256 über sortierte Knotennamen der SCC; Diff = neue/entfernte Hashes | Zyklen der Baseline werden toleriert; neue Zyklus-Hashes lassen `check` fehlschlagen |
 
 ---
 
 ## 8. Graph-Storage, Query & Visualisierung
 
-**Arbeitsteilung:** Die Analyse-Algorithmen (Kap. 7) laufen **in-memory auf `petgraph`** — der dafür ausgelegten Rust-Graphbibliothek. Bei 10³–10⁵ Knoten heißt das Mikro- bis Millisekunden, ohne I/O; eine Datenbank im Hot-Path würde nur bremsen. Für alles, wofür eine Datenbank *tatsächlich* gebaut ist — Persistenz, Ad-hoc-Queries, interaktive Visualisierung — spiegelt `archguard-store` den Graphen samt Analyse-Ergebnissen in eine **embedded Graph-Datenbank**.
+Die Analyse-Algorithmen (Kap. 7) laufen in-memory auf `petgraph` und lesen nicht aus der Datenbank. `archguard-store` spiegelt Graph und Analyseergebnisse in eine embedded Graph-Datenbank für Persistenz, Ad-hoc-Queries und Visualisierung.
 
 ### 8.1 Backend: Ladybug/Kuzu-Lineage hinter einem Trait
 
-Gewählt wird die **Kuzu-Lineage** (embedded, spaltenorientiert, openCypher, sehr schnell, MIT-Lizenz, kein Server-Prozess). Wichtiger Kontext: Das ursprüngliche Kuzu-Projekt wurde im Oktober 2025 archiviert (Team von Apple übernommen); aktiver Community-Nachfolger ist **[LadybugDB](https://ladybugdb.com/)** (dateiformat- und Cypher-kompatibler Fork).
+Backend ist die **Kuzu-Lineage** (embedded, spaltenorientiert, openCypher, MIT-Lizenz, kein Server-Prozess). Das Kuzu-Projekt wurde im Oktober 2025 archiviert. **[LadybugDB](https://ladybugdb.com/)** ist ein Fork mit kompatiblem Dateiformat und Cypher-Dialekt.
 
-Konsequenzen für die Architektur:
+Umsetzung:
 
 1. **Trait statt Direktabhängigkeit:** `archguard-store` definiert `GraphStore { sync(graph, report), query(cypher, limit) }`. Das DB-Backend ist dahinter austauschbar (Ladybug-Rust-SDK, CozoDB, …), ohne dass Engine, CLI oder MCP sich ändern.
 2. **v1-Binding:** gepinntes `kuzu = "=0.11.3"`-Crate (letztes Release der Lineage, dateikompatibel mit Ladybug und den Explorer-UIs). Migration auf das Ladybug-Rust-SDK, sobald verfügbar, ist ein isolierter Task im Store-Crate.
-3. **Optionales Cargo-Feature `db`:** Das C++-Backend bläht Build und Binary auf; das Slim-Binary kommt ohne aus (alle Analysen funktionieren, nur `db`-Kommandos und `graph_query` fehlen). Releases: `archguard` (slim) und `archguard-full`.
+3. **Optionales Cargo-Feature `db`:** Das C++-Backend vergrößert Build-Zeit und Binary. Ohne `db` fehlen nur die `db`-Kommandos und `graph_query`; alle Analysen sind enthalten. Releases: `archguard` (slim) und `archguard-full`.
 4. **Read-only nach außen:** Query-Zugang (CLI/MCP) läuft durch einen Sanitizer — nur `MATCH`/`RETURN`, erzwungenes `LIMIT`. Schreiben kann ausschließlich `sync`.
 
 ### 8.2 DB-Schema
@@ -381,7 +383,7 @@ CREATE NODE TABLE finding(id STRING PRIMARY KEY, kind STRING, severity STRING, d
 CREATE REL  TABLE involves(FROM finding TO module);
 ```
 
-`sync` ist idempotent (Tabellen leeren, neu befüllen). Beispiel-Queries, wie sie ein Agent oder Mensch stellt:
+`sync` ist idempotent (Tabellen leeren, neu befüllen). Beispiel-Queries:
 
 ```cypher
 // Welche Module hängen an einem Zyklus?
@@ -396,14 +398,14 @@ MATCH (a:module)-[:depends_on*1..4]->(b:module {name: "domain/money"})
 RETURN DISTINCT a.name LIMIT 25;
 ```
 
-### 8.3 Visualisierungswege (schnell → mächtig)
+### 8.3 Visualisierungswege
 
 | Weg | Wofür | Aufwand |
 | --- | --- | --- |
-| `archguard graph --format mermaid\|dot` | Doku, PR-Kommentare, READMEs | null — Textausgabe |
-| `archguard graph --format html` | **Architektur-Dashboard** als eine HTML-Datei: Explorer, Graph/Matrix und kontextbezogener Inspektor; explizite Simulation mit bestätigten Aktionen und JSON-Export. Browse-Klicks inspizieren nur. Farben kennzeichnen Zyklus-/Simulationsstatus, Breiten die vollständigen Importzahlen. Bedienung und Prüfgrenzen: [README.md](README_DE.md#mit-einem-projekt-starten) | null — Datei öffnen |
+| `archguard graph --format mermaid\|dot` | Doku, PR-Kommentare, READMEs | keiner (Textausgabe) |
+| `archguard graph --format html` | **Architektur-Dashboard** als eine HTML-Datei: Explorer, Graph/Matrix und kontextbezogener Inspektor; explizite Simulation mit bestätigten Aktionen und JSON-Export. Browse-Klicks inspizieren nur. Farben kennzeichnen Zyklus-/Simulationsstatus, Breiten die vollständigen Importzahlen. Bedienung und Prüfgrenzen: [README_DE.md](README_DE.md#mit-einem-projekt-starten) | keiner (Datei öffnen) |
 | `archguard serve [PATH]` | Derselbe Viewer über lokalen HTTP-Server; gecachte Analyse wird auf Browser-Polls aktualisiert, geänderte Berichte laden automatisch neu. Keine statische Freigabe von Projektdateien; Details in README | URL öffnen |
-| `archguard cycles --format html` | Gleicher Viewer, aber direkt auf die Zyklen fokussiert gestartet | null — Datei öffnen |
+| `archguard cycles --format html` | Gleicher Viewer, startet mit Fokus auf Zyklen | keiner (Datei öffnen) |
 | Explorer-Web-UI (Kuzu/Ladybug Explorer) direkt auf `.archguard/graph.db` | Interaktive Cypher-Exploration mit Graph-Rendering | Docker-Container starten |
 | [G.V()](https://gdotv.com/) auf `.archguard/graph.db` | Graph-IDE: Query-Editor, Layouts, Debugging | Desktop-App |
 | `archguard graph --format graphml\|gexf` → Gephi Lite / yEd | Große Graphen, Layout-Algorithmen, Cluster-Analysen | Import-Klick |
@@ -427,14 +429,14 @@ Beispiel CI: `archguard check . --baseline --format sarif > archguard.sarif`
 
 Transport: **stdio** (Standard für lokale Agenten; Registrierung z. B. `claude mcp add archguard -- archguard mcp --root .`).
 Die kanonische Server-Root begrenzt alle Projekt-, Baseline- und DB-Pfade einschließlich Symlink-Zielen; relative Argumente beziehen sich auf diese Root, nicht das Prozess-CWD. Nur CLI-Aufrufe dürfen frei andere Projekte wählen.
-SDK: `rmcp` (offizielles Rust-SDK des Model Context Protocol). Jedes Tool bekommt ein JSON-Schema (`schemars`) und eine **kurze, beispielhaltige Beschreibung** — die Beschreibungen sind Teil des Prompts kleiner Agenten und werden entsprechend knapp formuliert.
+SDK: `rmcp` (offizielles Rust-SDK des Model Context Protocol). Jedes Tool hat ein JSON-Schema (`schemars`) und eine Beschreibung mit Beispiel. Tool-Beschreibungen werden in den Kontext des Agenten geladen und sind deshalb kurz.
 
-### 10.1 Design-Regel „kleiner Kontext"
+### 10.1 Antwortgrenzen
 
 - Listen werden mit einem **4-KiB-Budget** gekürzt; große Einzeltexte können das Budget überschreiten.
 - Abgeschnittene Antworten tragen `"truncated": true`; paginierte Tools bieten zusätzlich `"next_offset"`. Top-N-Tools haben keine generische Offset-Paginierung.
 - Kein Tool liefert den Rohgraphen; Drill-down läuft über IDs.
-- `scan` läuft implizit: jedes Tool scannt bei Bedarf selbst (mit Cache) — Agenten müssen keine Reihenfolge kennen.
+- Jedes Tool scannt bei Bedarf selbst (mit Cache); es gibt keine vorgeschriebene Aufrufreihenfolge.
 
 ### 10.2 Tool-Schnittstelle
 
@@ -464,27 +466,25 @@ Standardpfad, Legacy-Kompatibilität und Ablage der Analysedaten stehen im
 [Projektstandard](README_DE.md#konfiguration-und-projektdaten).
 
 **Auflösung: `deklariert ⇐ abgeleitet ⇐ Default`.** Jeder Wert kommt der Reihe nach aus `archguard.toml`,
-sonst aus dem analysierten Projekt, sonst aus dem Default. Ein Lauf funktioniert damit **immer ohne
-`archguard.toml`**, und die Datei enthält nur das *Intent-Delta*: Der Nutzer korrigiert, wo die Ableitung
-danebenliegt, oder befördert abgeleitete Regeln zum CI-Gate. Die Provenienz je Abschnitt landet im
-Report (`config`-Block, Kap. 5); `archguard config` und MCP `config_view` zeigen, was Intent und was
-Hypothese ist.
+sonst aus dem analysierten Projekt, sonst aus dem Default. Ein Lauf benötigt keine `archguard.toml`. Die Datei
+enthält nur Abweichungen von der Ableitung und abgeleitete Regeln, die als CI-Gate gelten sollen. Die Provenienz je Abschnitt landet im
+Report (`config`-Block, Kap. 5); `archguard config` und MCP `config_view` zeigen je Wert, ob er deklariert,
+abgeleitet oder Default ist.
 
 | Abschnitt | Ableitung, falls nicht deklariert |
 | --- | --- |
 | `[project]` | Roots + Sprachen per Manifest-Sniffing (PSR-4, `Cargo.toml`, tsconfig, pyproject, pom) und Endungs-Statistik (Kap. 7); `exclude`: Defaults |
 | `[modules].depth` | Depth mit Ziel ~10–100 sichtbarer Modul-Knoten |
 | `[[layers]]` | Longest-Path-Ranking auf dem SCC-kondensierten Graphen + Namensaffinität (Kap. 7) |
-| `[rules]` | **ehrlich nicht ableitbar** (Schwellen = Intent) — `deny_cycles`/`max_scc_size` haben sichere Defaults, weitere Gates aus (`0`); `init` schreibt gemessene Werte als kommentierte Vorschläge |
-| `[store]` | Defaults (pure Infrastruktur, nichts abzuleiten) |
+| `[rules]` | nicht abgeleitet: `deny_cycles`/`max_scc_size` haben Defaults, alle weiteren Gates sind aus (`0`); `init` schreibt gemessene Werte als auskommentierte Vorschläge |
+| `[store]` | Defaults |
 
-**Layer: Promotion statt Vorarbeit.** Komplett abgeleitete Layer würden per Konstruktion *nie* eine
-Verletzung finden — der Graph ist gegen sich selbst immer konform. Deshalb folgt die Severity dem
-Ursprung, nicht der Art:
+**Layer-Severity.** Aus einem Graphen abgeleitete Layer erzeugen auf demselben Graphen keine
+Verletzung. Die Severity einer `LayerViolation` hängt daher vom Ursprung der Layer-Definition ab:
 
 | Layer-Ursprung | Severity der `LayerViolation` | Verhalten von `check` |
 | --- | --- | --- |
-| abgeleitet (nicht in `archguard.toml`) | `Info` | bleibt `pass` — Struktur-Hinweis, blockiert nie die CI |
+| abgeleitet (nicht in `archguard.toml`) | `Info` | bleibt `pass` |
 | deklariert (`archguard.toml`) | `Error` | blockiert (`status: fail`, Exit-Code 1) |
 
 Module **in** Zyklen sind nicht rankbar → ein Info-Finding `layer_unranked` („Zyklus verhindert
@@ -495,13 +495,13 @@ gleichen Namens (`contains`, `may_depend_on`); weitere deklarierte kommen hinzu.
 `derive_layers = false` (Top-Level-Key, oder Flag `--no-derive`) schaltet die Layer-Ableitung
 komplett ab — dann gilt ausschließlich das Geschriebene.
 
-**Beispiel — Korrektur-Delta (der Normalfall, nach dem ersten Lauf entstanden):**
+**Beispiel — nur Abweichungen deklariert:**
 
 ```toml
-derive_layers = true        # alles andere bleibt abgeleitet; nur Abweichungen werden festgeschrieben
+derive_layers = true        # nicht deklarierte Layer werden abgeleitet
 
 [[layers]]
-name = "core"               # hieß in der Ableitung "layer-0" — hier befördert: ab jetzt Error-Gate
+name = "core"               # abgeleitet als "layer-0"; deklariert ⇒ Verletzungen haben Severity Error
 contains = ["core/**", "shared/**"]
 may_depend_on = []
 
@@ -510,7 +510,7 @@ deny_cycles = "module"
 max_scc_size = 1
 ```
 
-**Beispiel — Vollkonfiguration (`archguard init` schreibt sie abgeleitet hin, der Nutzer editiert):**
+**Beispiel — von `archguard init` erzeugte Datei:**
 
 ```toml
 derive_layers = true
@@ -550,76 +550,72 @@ db = ".archguard/graph.db"
 sync_on_check = false
 ```
 
-> `archguard init` schreibt also keinen Boilerplate, sondern den **abgeleiteten Stand** samt gemessener
-> Schwellwert-Vorschläge — der Nutzer kürzt die Datei auf sein Delta. Das ist derselbe Ratchet-Gedanke
-> wie bei der Baseline (Kap. 7): Bestand akzeptieren, Abweichung davon blockieren — nur eben auf die
-> Config selbst angewandt.
+`archguard init` schreibt die abgeleiteten Werte und gemessene Schwellwerte als auskommentierte
+Vorschläge.
 
 ---
 
 ## 12. Sicherungen der eigenen Architektur
 
 1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die acht Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind zwölf Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
-2. **Dependency Sink:** Gemeinsame Typen nur in `archguard-core`; die L1-Crates (`extract`, `analysis`, `report`, `store`) importieren einander **nie**. Wer einen Typ „weiter oben" braucht, verschiebt ihn nach `core` — nie eine Kante nach oben oder zur Seite.
+2. **Dependency Sink:** Gemeinsame Typen liegen in `archguard-core`. Die L1-Crates (`extract`, `analysis`, `report`, `store`) haben keine Abhängigkeiten untereinander; ein Typ, den mehrere L1-Crates brauchen, gehört nach `archguard-core`.
 3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Der zeilenbasierte Rust-Scanner löst Workspace-Sibling-Imports nicht auf; dieser Scan ersetzt deshalb die Manifest-Allowlist nicht.
-4. **Änderungsumfang:** Beiträge bleiben innerhalb der dokumentierten Crate-Grenzen. Neue Manifest-Abhängigkeiten werden gegen die Allowlist geprüft.
 
 ---
 
 ## 13. Teststrategie & CI
 
-- **Unit-Tests** pro Crate (jeder Task liefert seine Tests mit — Definition of Done).
-- **Fixtures:** drei Mini-Projekte unter `fixtures/` — `ts-cyclic/` (bewusste Zyklen), `py-layers/` (Layer-Verletzung), `rs-clean/` (sauber). Je ~10 Dateien, von Hand geschrieben.
-- **Golden-File-Tests:** `archguard check fixtures/ts-cyclic --format json` gegen eingechecktes Soll-JSON (möglich dank deterministischer Sortierung).
-- **CLI-Integrationstests:** `assert_cmd` + `insta` (Snapshot) für Exit-Codes und Textausgabe.
+- **Unit-Tests** in jedem Crate.
+- **Fixtures:** Testprojekte unter `fixtures/`, u. a. `ts-cyclic/` (Zyklen), `py-layers/` (Layer-Verletzung), `rs-clean/` (keine Befunde), `java-packages/`, `cs-namespaces/`, `php-psr4/`.
+- **Golden-File-Tests:** `crates/archguard-cli/tests/goldens.rs` vergleicht die JSON-Ausgabe für die Fixtures mit `crates/archguard-cli/tests/goldens/*.json`.
+- **CLI-Integrationstests:** `assert_cmd` in `crates/archguard-cli/tests/` prüft Exit-Codes und Ausgaben.
 - **CI (GitHub Actions):** Reproduzierbare Slim-/DB-Prüfungen, Viewer-Zustandstests, echter CLI/MCP-Transporttest, Architektur-Allowlist, Quellscan und wöchentliche Dependency-Prüfung; Befehle in [ci.yml](.github/workflows/ci.yml), Advisory-Entscheidungen in [SECURITY.md](SECURITY.md).
 
 ---
 
-## 14. Technologie-Entscheidungen (Kurzbegründung)
+## 14. Technologie-Entscheidungen
 
-| Entscheidung | Alternative | Warum so |
+| Entscheidung | Alternative | Begründung |
 | --- | --- | --- |
-| Rust | Go, Zig | Ein statisches Binary, kein GC, `petgraph`/`ignore`/`clap`/`rmcp` sind reif; „sparsames Framework" wie gefordert |
-| Zeilenbasierte Scanner (v1) | tree-sitter | Scanner sind je ~100 Zeilen → perfekte Small-Model-Tasks; tree-sitter bleibt hinter dem `Extractor`-Trait nachrüstbar |
-| `petgraph` statt eigenem Tarjan | Eigenimplementierung | Korrektheit geschenkt; der Task reduziert sich auf Mapping Graph↔petgraph — klein und risikofrei |
-| Sync-Core, async nur im MCP-Crate | durchgängig async | Fachlogik bleibt trivial; `tokio` leckt nicht in untere Schichten |
-| Ein Binary mit `mcp`-Subkommando | zwei Binaries | Einfachere Distribution (`cargo install archguard`, Homebrew, ein Release-Artefakt) |
-| Zyklen-**Sampling** statt Vollaufzählung | Johnson vollständig | Antwortgröße kalkulierbar (Kontextbudget!), Laufzeit begrenzt |
-| Embedded Graph-DB (Ladybug/Kuzu-Lineage) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher + Explorer-/G.V()-Visualisierung; Kuzu-Archivierung 2025 wird durch Trait + Feature-Flag + gepinntes Binding abgefedert |
-| Analyse in-memory (petgraph), DB nur zur Exploration | Alles in der DB rechnen | SCC/Metriken sind O(V+E) in-memory — schneller als jede Query-Engine; DB glänzt bei Ad-hoc-Fragen und Visualisierung |
-| Zustandsloser Zoom: Client sendet `expanded`-Liste mit | Server-Session je Client | MCP-Server bleibt zustandslos (robust, parallel nutzbar, cachebar); der HTML-Viewer hält seinen Zoom-Zustand selbst |
-| Hierarchie als Containment-Baum, Sichten = aggregierte Graphen | Separater Graph je Ebene | Ein Datenmodell, jede Zoomstufe „ist" ein Graph → Analysen/Formatter brauchen keine Ebenen-Sonderfälle |
-| Config-Ableitung + Promotion (`deklariert ⇐ abgeleitet ⇐ Default`) | Rein manuelle Config, oder reine Ableitung | Rein manuell ist Boilerplate, den niemand pflegt; reine Ableitung ist selbstkonform (nie eine Verletzung). Ursprungsbasierte Severity (abgeleitet ⇒ Info, deklariert ⇒ Error) verbindet Zero-Config-Nutzbarkeit mit echten CI-Gates |
-| SimOps-JSON als gemeinsamer Vertrag (Viewer-Aktionen, CLI `--ops`, MCP `simulate`) | Editier-Viewer mit direktem Code-Write, oder reine CLI-Simulation | Ein Format für Maus, Mensch und Agent; das Tool ändert nie Code — Reparieren bleibt Absicht (Promotion bleibt Konsistenz-Prinzip) |
+| Rust | Go, Zig | Ein statisches Binary ohne GC; `petgraph`, `ignore`, `clap` und `rmcp` sind verfügbar |
+| Zeilenbasierte Scanner | tree-sitter | Keine Grammatik-Abhängigkeit je Sprache; tree-sitter kann später hinter dem `Extractor`-Trait ergänzt werden |
+| `petgraph` statt eigenem Tarjan | Eigenimplementierung | Getestete Implementierung; eigener Code beschränkt sich auf das Mapping `Graph` ↔ `petgraph` |
+| Sync-Core, async nur im MCP-Crate | durchgängig async | Fachlogik ohne async; `tokio` nur im MCP-Crate |
+| Ein Binary mit `mcp`-Subkommando | zwei Binaries | Ein Release-Artefakt je Variante |
+| Zyklen-**Sampling** statt Vollaufzählung | Johnson vollständig | Begrenzte Antwortgröße und Laufzeit |
+| Embedded Graph-DB (Ladybug/Kuzu-Lineage) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher, Explorer-/G.V()-Visualisierung. Trait, Feature-Flag und gepinnte Version entkoppeln vom archivierten Kuzu-Projekt |
+| Analyse in-memory (petgraph), DB nur zur Exploration | Alles in der DB rechnen | SCC und Metriken sind O(V+E) in-memory ohne I/O; die DB dient Ad-hoc-Queries und Visualisierung |
+| Zustandsloser Zoom: Client sendet `expanded`-Liste mit | Server-Session je Client | MCP-Server ohne Session-Zustand; der HTML-Viewer hält seinen Zoom-Zustand selbst |
+| Hierarchie als Containment-Baum, Sichten = aggregierte Graphen | Separater Graph je Ebene | Ein Datenmodell; jede Zoomstufe ist ein `Graph`, Analysen und Formatter haben keinen ebenenspezifischen Code |
+| Config-Ableitung + Promotion (`deklariert ⇐ abgeleitet ⇐ Default`) | Rein manuelle Config, oder reine Ableitung | Reine Ableitung erzeugt auf dem eigenen Graphen keine Verletzung. Severity nach Ursprung (abgeleitet ⇒ Info, deklariert ⇒ Error) erlaubt Läufe ohne Konfiguration und CI-Gates aus deklarierten Regeln |
+| SimOps-JSON als gemeinsamer Vertrag (Viewer-Aktionen, CLI `--ops`, MCP `simulate`) | Editier-Viewer mit direktem Code-Write, oder reine CLI-Simulation | Ein Format für Viewer, CLI und MCP; ArchGuard schreibt keinen Quellcode |
 
 ---
 
 ## 15. Funktionsumfang
 
 ArchGuard verbindet Abhängigkeitsanalyse, Architekturregeln und Simulation über
-CLI, MCP und den HTML-Viewer. Die Tabelle ordnet die Funktionen den ursprünglichen
-Ausbaustufen zu; aktueller Stand und Analysegrenzen stehen in [README.md](README_DE.md).
+CLI, MCP und den HTML-Viewer. Analysegrenzen stehen in [README_DE.md](README_DE.md).
 
-| Funktion | Umsetzung | Stufe |
+| Funktion | Umsetzung | Status |
 | --- | --- | --- |
-| Zyklenerkennung + Breakup-Vorschläge | SCC (Tarjan), Zyklen-Sampling, Cut-Scoring mit Begründung | Implemented |
+| Zyklenerkennung + Breakup-Vorschläge | SCC (Tarjan), Zyklen-Sampling, Cut-Scoring mit Begründung | implementiert |
 | Architekturregeln (Schichten, Komponenten) | `archguard.toml`-Layer-Regeln + Layer-**Ableitung** mit Promotion (Kap. 11) | implementiert |
 | Basis-Metriken (Martin: Ca/Ce/Instabilität) | Ein-/ausgehende Kopplung und Instabilität aus dem Abhängigkeitsgraphen | implementiert |
-| Hierarchischer Drill-down / Zoom-in | Containment-Baum + Sichten (Kap. 5.2): `graph_expand`, `--expand`, HTML-Viewer mit Doppelklick-Zoom | Implemented |
+| Hierarchischer Drill-down / Zoom-in | Containment-Baum + Sichten (Kap. 5.2): `graph_expand`, `--expand`, HTML-Viewer mit Doppelklick-Zoom | implementiert |
 | Zyklen-Visualisierung | Zyklen-Panel im HTML-Viewer (SCC isolieren, Belege als Tooltip), DSM-Markierungen, Mermaid/DOT-Export | implementiert |
 | Dependency-Structure-Matrix (DSM) | `archguard dsm`, MCP-Tool `dsm`, DSM-Tab im Viewer | implementiert |
 | Lakos-Metriken (ACD/CCD/NCCD) | Kap. 7, auf jeder Zoomstufe | implementiert |
 | Virtuelle Refactorings (Simulation) | `archguard simulate` / MCP `simulate`: Move/Cut/Merge, Findings-Delta | implementiert |
 | Trends / Historie | `snapshot`/`trend` + Zeitreihen in der Graph-DB | implementiert |
 | Quality Gates | Schwellwerte in `[rules]` (`max_scc_size`, `max_acd`, …) + Exit-Code | implementiert |
-| Graphabfragen | openCypher über `graph_query`/`db query` | **v1** (Feature `db`) |
-| Symbolgenaue Analyse und Qualitätsmetriken | Implementiert für Java/C#/TypeScript/JavaScript/Go über Compiler-Helper; Umfang und Messregeln in [README: Erweiterte Qualitätsmetriken](README_DE.md#sprachen-und-quellmetriken) | **implementiert, mit expliziter Messabdeckung** |
+| Graphabfragen | openCypher über `graph_query`/`db query` | implementiert (Feature `db`) |
+| Symbolgenaue Analyse und Qualitätsmetriken | Implementiert für Java/C#/TypeScript/JavaScript/Go über Compiler-Helper; Umfang und Messregeln in [README: Erweiterte Qualitätsmetriken](README_DE.md#sprachen-und-quellmetriken) | implementiert; Messabdeckung wird ausgewiesen |
 | Duplikat-Erkennung | [CPD-XML-Import](README_DE.md#sprachen-und-quellmetriken) mit Fundstellen, Quellaktualität und Review-Befunden; kein eigener Clone-Scanner | implementiert |
-| Review-Kennzahlen | KPI-Block `review_kpis` im Analyse-Payload (R23): Propagationskosten, SDP, Zonen, Verstricktheit, Hub-Gini, Schichtdrift, Schuldendichte, API-Oberfläche, Leaks, Risikolücken, Health; Definitionen und Grenzen unten | **implementiert, mit expliziten Messgrenzen** |
+| Review-Kennzahlen | KPI-Block `review_kpis` im Analyse-Payload (R23): Propagationskosten, SDP, Zonen, Verstricktheit, Hub-Gini, Schichtdrift, Schuldendichte, API-Oberfläche, Leaks, Risikolücken, Health; Definitionen und Grenzen unten | implementiert; Messgrenzen unten |
 | Entscheidungsregister | `archguard review-decision` / MCP `review_decisions`; Register `.archguard/reviews.json`, atomarer Upsert per Id (Format unten) | implementiert |
 | PR-Kommentar | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; Format unten | implementiert |
-| GUI-Anwendung / IDE-Plugins | bewusst **nicht** — stattdessen selbständiger HTML-Viewer, Explorer-UI auf der DB, G.V() | — |
+| GUI-Anwendung / IDE-Plugins | nicht vorgesehen; stattdessen HTML-Viewer, Explorer-UI auf der DB, G.V() | — |
 
 ### Review-Kennzahlen und ihre Grenzen
 
