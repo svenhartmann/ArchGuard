@@ -73,6 +73,18 @@ see the viewer's help and `archguard doctor`.
 SHA-256 checksums verify consistency with the downloaded manifest; they are not
 a publisher signature. A successful malware scan is not a guarantee of safety.
 
+## Update an installed binary
+
+`archguard update --check` reports whether a newer release exists;
+`archguard update` installs it in place. It reads the latest **published**
+release from the GitHub API (drafts and pre-releases are invisible to it), picks
+the archive for the target the binary was built for, verifies the archive
+against `SHA256SUMS` and the binary against `release-info.json`, and only then
+replaces the running executable. Any mismatch leaves the installed binary
+untouched and exits with code 3. A binary built for a target without a release
+archive (for example `*-linux-gnu` from `cargo build`) cannot update itself.
+`ARCHGUARD_UPDATE_API` replaces `https://api.github.com`, e.g. for a mirror.
+
 ## Report ZIP
 
 The `release-bundle` artifact and the tag release draft include one ZIP containing:

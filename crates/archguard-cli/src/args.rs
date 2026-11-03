@@ -309,6 +309,13 @@ pub(crate) enum Command {
     /// Check which external packages this OS (macOS/Windows/Linux) needs for
     /// full features: git history, Java/C#/TypeScript call analysis. Always exit 0.
     Doctor,
+    /// Replace this binary with the latest published GitHub release after
+    /// verifying its SHA-256 checksums.
+    Update {
+        /// Only report whether a newer release exists; change nothing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Import/read SARIF quality findings, optionally gate changed-code quality.
     Quality {
         #[arg(value_name = "PFAD")]

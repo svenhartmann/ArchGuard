@@ -13,7 +13,13 @@ path = "src/main.rs"
 archguard-engine = { path = "../archguard-engine" }
 archguard-mcp = { path = "../archguard-mcp" }
 clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+self-replace = "1"
 serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+ureq = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 assert_cmd = "2"

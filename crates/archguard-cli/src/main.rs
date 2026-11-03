@@ -52,6 +52,7 @@ mod serve_cmd;
 mod service_cmd;
 mod simulate_cmd;
 mod trend_cmd;
+mod update_cmd;
 mod view_util;
 mod workspace_cmd;
 
@@ -112,7 +113,7 @@ impl Command {
                 DbAction::Query { .. } => None,
             },
             Command::Mcp { .. } => None,
-            Command::Doctor => None,
+            Command::Doctor | Command::Update { .. } => None,
             Command::ReviewDecision { .. } => None,
         }
     }
@@ -139,6 +140,9 @@ fn run(cli: &Cli) -> i32 {
     }
     if matches!(cli.command, Command::Doctor) {
         return doctor_cmd::run(cli);
+    }
+    if let Command::Update { check } = &cli.command {
+        return update_cmd::run(cli, *check);
     }
     let root = match resolve_root(cli.command.path()) {
         Ok(root) => root,
@@ -489,9 +493,10 @@ fn run(cli: &Cli) -> i32 {
         | Command::Diff { .. }
         | Command::Serve { .. }
         | Command::Doctor
+        | Command::Update { .. }
         | Command::ReviewDecision { .. } => {
             unreachable!(
-                "init, mcp, db, trend, services, security, serve, review-decision and doctor are handled before the analysis"
+                "init, mcp, db, trend, services, security, serve, review-decision, doctor and update are handled before the analysis"
             )
         }
     }
