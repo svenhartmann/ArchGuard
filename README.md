@@ -58,6 +58,8 @@ Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/
 | Rust | Yes | Complexity, Cognitive and Halstead per function from syntax; calls and types stay unresolved | None |
 | Python, PHP | Yes | Import-graph analysis; no compiler-backed class metrics | No language compiler required for imports |
 
+Dependencies written as fully qualified names without an import also count for PHP (`\A\B\C`) and Rust (`crate::`, `self::` and `super::` paths). In Java and C#, such names are found only by the compiler helpers.
+
 Go uses the bundled `go/parser` and `go/types` helper without executing project code or downloading modules. Embedding is composition: DIT/NOC are not applicable. Dynamic calls, missing references, and combined build variants remain explicit analysis gaps.
 
 **KPI help** in the viewer lists setup, supported measurements, and import examples for each language. Coverage and runtime measurements require actual reports; missing data is not treated as zero.

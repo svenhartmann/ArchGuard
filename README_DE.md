@@ -58,6 +58,8 @@ Die Diensterkennung berücksichtigt `.gitignore` und `project.exclude`. Untergeo
 | Rust | Ja | Complexity, Cognitive und Halstead pro Funktion aus der Syntax; Aufrufe und Typen bleiben unaufgelöst | Keine |
 | Python, PHP | Ja | Importgraph-Analyse; keine compilerbasierten Klassenmetriken | Für Importe kein Sprachcompiler erforderlich |
 
+Abhängigkeiten, die als voll qualifizierter Name ohne Import geschrieben sind, zählen bei PHP (`\A\B\C`) und Rust (Pfade mit `crate::`, `self::` und `super::`) ebenfalls. In Java und C# finden nur die Compiler-Helfer solche Namen.
+
 Go nutzt den mitgelieferten `go/parser`- und `go/types`-Helfer, ohne Projektcode auszuführen oder Module herunterzuladen. Embedding ist Komposition: DIT/NOC sind nicht anwendbar. Dynamische Aufrufe, fehlende Referenzen und zusammengefasste Build-Varianten bleiben ausdrückliche Analyselücken.
 
 Die **KPI-Hilfe** im Viewer enthält Einrichtung, unterstützte Messwerte und Importbeispiele pro Sprache. Testabdeckung und Laufzeitmessungen benötigen echte Berichte; fehlende Daten gelten nicht als Nullwerte.

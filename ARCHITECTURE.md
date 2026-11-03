@@ -320,8 +320,8 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 | **C#** | `namespace A.B;` / `namespace A.B { }` (logical; may differ from directory) | `using A.B;`, `using static`, alias `using X = A.B.C;`, `global using`, qualified names `A.B.C` in code | Namespace pseudo-node `A/B/*`; unique file when possible; qualified names only to a type file of a declared namespace |
 | **Python** | Directory/file (physical, `__init__.py` packages) | `import a.b`, `from a.b import x`, relative `from . import y` | Absolute: module-path match (`a/b.py`, `a/b/__init__.py`); relative: path |
 | **TypeScript/JS** | Directory (physical) | `import … from`, `export … from`, `require()`, dynamic `import()` | Relative paths (tsconfig path aliases: v1.1) |
-| **PHP** | `namespace A\B;` plus PSR-4 from `composer.json` (logical) | `use A\B\C;` including grouped syntax and `use function/const`, `require`/`include` | PSR-4 → file; otherwise pseudo-node; `require` as path |
-| **Rust** | Module tree (`mod`/file, physical) | `use crate::…`, `use super::…`, `mod x;` | Module-path match |
+| **PHP** | `namespace A\B;` plus PSR-4 from `composer.json` (logical) | `use A\B\C;` including grouped syntax and `use function/const`, `require`/`include`, fully qualified names `\A\B\C` in code | PSR-4 → file; otherwise pseudo-node; `require` as path |
+| **Rust** | Module tree (`mod`/file, physical) | `use crate::…`, `use super::…`, `mod x;`, paths in code such as `crate::a::B::new()` | Module-path match; workspace crates through local `Cargo.toml` dependencies |
 
 Go additionally uses module/package imports and a Go SDK parser/type helper.
 Its semantic model includes packages, structs, interfaces and function groups,
@@ -330,10 +330,12 @@ partial coverage; DIT/NOC are not applicable. Compiler helpers for Java, C# and
 TypeScript/JavaScript likewise supplement import evidence; the README documents
 current coverage and requirements.
 
-All scanners are line-based and implement the `Extractor` trait
-(`archguard-extract/src/extract.rs`). `registry()` registers them; scanners do
-not import one another. A new language requires a new scanner and an entry in
-`registry()`.
+The scanners in `archguard-extract` are line-based with lexical shielding and
+implement the `Extractor` trait (`archguard-extract/src/extract.rs`).
+`registry()` registers them; scanners do not import one another. A new language
+requires a new scanner and an entry in `registry()`. Rust import edges come from
+the `syn`-based resolver in `archguard-engine/src/rust_imports.rs`, which also
+links paths written in code and imports of local workspace crates.
 
 ---
 
@@ -570,7 +572,7 @@ commented-out suggestions.
 
 1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the eight workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Twelve edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
 2. **Dependency sink:** shared types live in `archguard-core`. L1 crates (`extract`, `analysis`, `report`, `store`) have no dependencies on one another; a type needed by several L1 crates belongs in `archguard-core`.
-3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. The line-based Rust scanner does not resolve workspace sibling imports, so this scan does not replace the manifest allowlist.
+3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. It resolves imports between the workspace crates, but only those used in scanned non-test source; the manifest allowlist also covers declared build, dev, optional and target-specific dependencies, so the scan does not replace it.
 
 ---
 

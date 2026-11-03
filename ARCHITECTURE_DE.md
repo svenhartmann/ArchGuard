@@ -324,8 +324,8 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 | **C#** | `namespace A.B;` / `namespace A.B { }` (logisch — Datei ≠ Verzeichnis möglich) | `using A.B;`, `using static`, Alias-`using X = A.B.C;`, `global using`, qualifizierte Namen `A.B.C` im Code | Namespace-Ebene (Pseudoknoten `A/B/*`); eindeutige Datei, wenn möglich; qualifizierte Namen nur zu einer Typdatei eines deklarierten Namespace |
 | **Python** | Verzeichnis/Datei (physisch, `__init__.py`-Pakete) | `import a.b`, `from a.b import x`, relative `from . import y` | absolut: Modulpfad-Match (`a/b.py`, `a/b/__init__.py`); relativ: Pfad |
 | **TypeScript/JS** | Verzeichnis (physisch) | `import … from`, `export … from`, `require()`, dyn. `import()` | relative Pfade (tsconfig-paths-Aliase: v1.1) |
-| **PHP** | `namespace A\B;` + PSR-4-Mapping aus `composer.json` (logisch) | `use A\B\C;` (auch Gruppen-Syntax, `use function/const`), `require`/`include` | PSR-4 → Datei; sonst Pseudoknoten; `require` als Pfad |
-| **Rust** | Modulbaum (`mod`/Datei, physisch) | `use crate::…`, `use super::…`, `mod x;` | Modulpfad-Match |
+| **PHP** | `namespace A\B;` + PSR-4-Mapping aus `composer.json` (logisch) | `use A\B\C;` (auch Gruppen-Syntax, `use function/const`), `require`/`include`, voll qualifizierte Namen `\A\B\C` im Code | PSR-4 → Datei; sonst Pseudoknoten; `require` als Pfad |
+| **Rust** | Modulbaum (`mod`/Datei, physisch) | `use crate::…`, `use super::…`, `mod x;`, Pfade im Code wie `crate::a::B::new()` | Modulpfad-Match; Workspace-Crates über lokale `Cargo.toml`-Abhängigkeiten |
 
 Go ergänzt Modul-/Paketimporte mit einem Parser-/Typ-Helper des Go SDK.
 Das semantische Modell enthält Pakete, Structs, Interfaces und Funktionsgruppen
@@ -334,9 +334,12 @@ partielle Abdeckung; DIT/NOC sind nicht anwendbar. Auch Java, C# und
 TypeScript/JavaScript ergänzen Importbelege durch Compiler-Helper. Die README
 beschreibt den aktuellen Umfang und die Voraussetzungen.
 
-Alle Scanner sind zeilenbasiert und implementieren den `Extractor`-Trait
-(`archguard-extract/src/extract.rs`). `registry()` registriert sie; Scanner importieren einander
-nicht. Eine neue Sprache erfordert einen neuen Scanner und einen Eintrag in `registry()`.
+Die Scanner in `archguard-extract` sind zeilenbasiert mit lexikalischer Abschirmung und
+implementieren den `Extractor`-Trait (`archguard-extract/src/extract.rs`). `registry()` registriert
+sie; Scanner importieren einander nicht. Eine neue Sprache erfordert einen neuen Scanner und einen
+Eintrag in `registry()`. Rust-Importkanten liefert der `syn`-basierte Resolver in
+`archguard-engine/src/rust_imports.rs`; er verknüpft auch Pfade im Code und Importe lokaler
+Workspace-Crates.
 
 ---
 
@@ -559,7 +562,7 @@ Vorschläge.
 
 1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die acht Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind zwölf Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
 2. **Dependency Sink:** Gemeinsame Typen liegen in `archguard-core`. Die L1-Crates (`extract`, `analysis`, `report`, `store`) haben keine Abhängigkeiten untereinander; ein Typ, den mehrere L1-Crates brauchen, gehört nach `archguard-core`.
-3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Der zeilenbasierte Rust-Scanner löst Workspace-Sibling-Imports nicht auf; dieser Scan ersetzt deshalb die Manifest-Allowlist nicht.
+3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Er löst Importe zwischen den Workspace-Crates auf, aber nur die im gescannten Quellcode ohne Tests genutzten; die Manifest-Allowlist prüft zusätzlich deklarierte Build-, Dev-, optionale und zielspezifische Abhängigkeiten, deshalb ersetzt der Scan sie nicht.
 
 ---
 
