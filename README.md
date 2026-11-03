@@ -58,7 +58,7 @@ Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/
 | Rust | Yes | Complexity, Cognitive and Halstead per function from syntax; calls and types stay unresolved | None |
 | Python, PHP | Yes | Import-graph analysis; no compiler-backed class metrics | No language compiler required for imports |
 
-Dependencies written as fully qualified names without an import also count for PHP (`\A\B\C`) and Rust (`crate::`, `self::` and `super::` paths). In Java and C#, such names are found only by the compiler helpers.
+Dependencies written as fully qualified names without an import also count: PHP `\A\B\C`, Rust `crate::`, `self::` and `super::` paths, and Java/C# dotted names such as `com.a.B` or `A.B.C`. For Java and C#, the scanner links such a name only to a type file of a declared package or namespace; the compiler helpers additionally resolve names hidden behind variables.
 
 Go uses the bundled `go/parser` and `go/types` helper without executing project code or downloading modules. Embedding is composition: DIT/NOC are not applicable. Dynamic calls, missing references, and combined build variants remain explicit analysis gaps.
 

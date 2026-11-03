@@ -58,7 +58,7 @@ Die Diensterkennung berücksichtigt `.gitignore` und `project.exclude`. Untergeo
 | Rust | Ja | Complexity, Cognitive und Halstead pro Funktion aus der Syntax; Aufrufe und Typen bleiben unaufgelöst | Keine |
 | Python, PHP | Ja | Importgraph-Analyse; keine compilerbasierten Klassenmetriken | Für Importe kein Sprachcompiler erforderlich |
 
-Abhängigkeiten, die als voll qualifizierter Name ohne Import geschrieben sind, zählen bei PHP (`\A\B\C`) und Rust (Pfade mit `crate::`, `self::` und `super::`) ebenfalls. In Java und C# finden nur die Compiler-Helfer solche Namen.
+Abhängigkeiten, die als voll qualifizierter Name ohne Import geschrieben sind, zählen ebenfalls: PHP `\A\B\C`, Rust-Pfade mit `crate::`, `self::` und `super::` sowie Java-/C#-Namen wie `com.a.B` oder `A.B.C`. Bei Java und C# verknüpft der Scanner einen solchen Namen nur mit einer Typdatei eines deklarierten Pakets oder Namespace; die Compiler-Helfer lösen zusätzlich Namen hinter Variablen auf.
 
 Go nutzt den mitgelieferten `go/parser`- und `go/types`-Helfer, ohne Projektcode auszuführen oder Module herunterzuladen. Embedding ist Komposition: DIT/NOC sind nicht anwendbar. Dynamische Aufrufe, fehlende Referenzen und zusammengefasste Build-Varianten bleiben ausdrückliche Analyselücken.
 
