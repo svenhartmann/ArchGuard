@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, verified 2026-10-27
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Verify Go SDK and native analyzer
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          GOENV: 'off'
+          GOWORK: 'off'
+          GO111MODULE: 'off'
+          GOFLAGS: ''
+        run: |
+          go version
+          echo "ARCHGUARD_GO=$(command -v go)" >> "$GITHUB_ENV"
+          go test crates/archguard-engine/src/ArchguardCallScanner.go crates/archguard-engine/src/ArchguardCallScanner_test.go
+          go vet crates/archguard-engine/src/ArchguardCallScanner.go
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Verify Node for Rust parity and viewer tests
+        run: |
+          node --version
+          node -e 'if (Number(process.versions.node.split(".")[0]) < 20) throw new Error("Review parity and viewer tests require Node 20+")'
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test slim
+        run: cargo test --workspace --locked
+
+      - name: Test DB feature
+        run: cargo test --workspace --all-features --locked
+
+      - name: Install advisory checker
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Advisory check
+        run: cargo audit --file Cargo.lock
+
+      - name: Workspace dependency allowlist
+        run: |
+          cargo fetch --locked
+          for suite in checks release benchmarks; do
+            python3 -m unittest discover -s "scripts/$suite" -p 'test_*.py'
+          done
+          python3 -m unittest discover -s scripts/integration -p test_viewer_payload.py
+          python3 -m unittest discover -s scripts/integration -p test_jellyfin_example_import.py
+          python3 scripts/checks/check_architecture.py
+
+      - name: Viewer state and security regressions
+        run: |
+          node scripts/viewer/test_viewer.js
+          node scripts/viewer/test_viewer_state.js
+          node scripts/viewer/test_viewer_lazy_network.js
+          node scripts/viewer/test_viewer_deferred_analysis.js
+          node scripts/viewer/test_viewer_language.js
+          node scripts/viewer/test_viewer_tree_navigation.js
+          node scripts/viewer/test_viewer_tree_branches.js
+          node scripts/viewer/test_viewer_tree_bulk.js
+          node scripts/viewer/test_viewer_tree_options.js
+          node scripts/viewer/test_viewer_simplified_shell.js
+          node scripts/viewer/test_viewer_breadcrumbs.js
+          node scripts/viewer/test_viewer_tooltips.js
+          node scripts/viewer/test_viewer_metric_tooltips.js
+          node scripts/viewer/test_viewer_context_help.js
+          node scripts/viewer/test_viewer_detail_graphs.js
+          node scripts/viewer/test_viewer_detail_graph_style.js
+          node scripts/viewer/test_viewer_cycle_explanation.js
+          node scripts/viewer/test_viewer_matrix_headers.js
+          node scripts/viewer/test_viewer_cohesion_graphs.js
+          node scripts/viewer/test_viewer_package_cycles.js
+          node scripts/viewer/test_viewer_package_context_scaling.js
+          node scripts/viewer/test_viewer_cycles_only.js
+          node scripts/viewer/test_cycle_planner.js
+          node scripts/viewer/test_viewer_repair.js
+          node scripts/viewer/test_viewer_colors.js
+          node scripts/viewer/test_viewer_palette.js
+          node scripts/viewer/test_viewer_exports.js
+          node scripts/viewer/test_viewer_i18n_static.js
+          node scripts/viewer/test_viewer_i18n_repair.js
+          node scripts/viewer/test_viewer_i18n_graph.js
+          node scripts/viewer/test_viewer_i18n_network.js
+          node scripts/viewer/test_viewer_calls.js
+          node scripts/viewer/test_viewer_calls_tree.js
+          node scripts/viewer/test_viewer_calls_tree_layout.js
+          node scripts/viewer/test_viewer_call_rankings_model.js
+          node scripts/viewer/test_viewer_call_rankings.js
+          node scripts/viewer/test_viewer_call_cycles_model.js
+          node scripts/viewer/test_viewer_call_cycles.js
+          node scripts/viewer/test_viewer_method_complexity.js
+          node scripts/viewer/test_viewer_quality_metrics.js
+          node scripts/viewer/test_viewer_quality_findings.js
+          node scripts/viewer/test_viewer_engineering_quality.js
+          node scripts/viewer/test_viewer_duplicates.js
+          node scripts/viewer/test_viewer_workspace.js
+          node scripts/viewer/test_viewer_typescript.js
+          node scripts/viewer/test_viewer_connection_coverage.js
+          node scripts/viewer/test_viewer_missing_reference.js
+          node scripts/viewer/test_viewer_semantic_calls.js
+          node scripts/viewer/test_viewer_semantic_graph.js
+          node scripts/viewer/test_viewer_compact_calls.js
+          node scripts/viewer/test_viewer_performance.js
+          node scripts/viewer/test_viewer_architecture.js
+          node scripts/viewer/test_viewer_patterns.js
+          node scripts/viewer/test_viewer_assessment.js
+          node scripts/viewer/test_viewer_scenarios.js
+          node scripts/viewer/test_viewer_independent_labels.js
+          node scripts/viewer/test_viewer_call_inspector_layout.js
+          node scripts/viewer/test_viewer_review.js
+          node scripts/viewer/test_viewer_i18n_panels.js
+          node scripts/viewer/test_viewer_dependencies.js
+          node scripts/viewer/test_viewer_tree_layout.js
+          node scripts/viewer/test_viewer_tree.js
+          node scripts/viewer/test_viewer_tree_controls.js
+          node scripts/viewer/test_viewer_exploration.js
+          node scripts/viewer/test_viewer_responsive_tree.js
+          node scripts/viewer/test_viewer_workspace_density.js
+          node scripts/viewer/test_viewer_clean_ui.js
+          node scripts/viewer/test_viewer_development_entry.js
+          node scripts/viewer/test_viewer_world.js
+          node scripts/viewer/test_viewer_world_navigation.js
+          node scripts/viewer/test_viewer_world_cycles.js
+          node scripts/viewer/test_viewer_world_rotation.js
+          node scripts/viewer/test_viewer_world_upgrades.js
+          node scripts/viewer/test_viewer_panels.js
+          node scripts/viewer/test_viewer_direction_reference.js
+          node scripts/viewer/test_viewer_services.js
+          node scripts/viewer/test_viewer_monorepo.js
+          node scripts/viewer/test_viewer_repository.js
+          node scripts/viewer/test_viewer_security.js
+          node scripts/viewer/test_serve_reload.js
+
+      - name: Shop example business flows and service topology
+        run: |
+          node --test examples/service-shop/test/*.test.js
+          node scripts/viewer/test_service_shop.js
+
+      - name: Java call analysis with real compiler
+        run: |
+          python3 scripts/integration/test_java_calls.py
+          python3 scripts/integration/test_java_json_memory.py
+          python3 scripts/integration/test_java_abstraction.py
+          python3 scripts/integration/test_java_project_context.py
+          python3 scripts/integration/test_method_complexity.py java
+
+      - name: CSharp call analysis with real Roslyn compiler
+        run: |
+          python3 scripts/integration/test_csharp_calls.py
+          python3 scripts/integration/test_method_complexity.py csharp
+          python3 scripts/integration/test_quality_gate_ranges.py
+
+      - name: TypeScript compiler analysis in isolated tool directory
+        run: |
+          npm install --prefix "$RUNNER_TEMP/archguard-typescript" --no-save --ignore-scripts --package-lock=false typescript@5.8.2
+          python3 scripts/integration/test_typescript_calls.py --compiler "$RUNNER_TEMP/archguard-typescript/node_modules/typescript/lib/typescript.js"
+
+      - name: CLI and MCP transport smoke test with DB
+        run: |
+          cargo build -p archguard-cli --all-features --locked
+          python3 scripts/integration/smoke_cli.py target/debug/archguard --db
+          python3 scripts/integration/test_change_context.py target/debug/archguard --java
+          python3 scripts/integration/test_architecture_findings.py target/debug/archguard
+          python3 scripts/integration/test_development_mcp.py target/debug/archguard
+          python3 scripts/integration/test_semantic_graph.py target/debug/archguard
+          python3 scripts/integration/test_serve_async.py target/debug/archguard
+          python3 scripts/integration/test_java_calls_live.py target/debug/archguard
+          python3 scripts/integration/test_csharp_calls_live.py target/debug/archguard
+          python3 scripts/integration/test_typescript_calls_live.py target/debug/archguard --compiler "$RUNNER_TEMP/archguard-typescript/node_modules/typescript/lib/typescript.js"
+          python3 scripts/integration/test_patterns_live.py target/debug/archguard --out "$RUNNER_TEMP/archguard-patterns-example"
+          node scripts/viewer/test_patterns_html.js "$RUNNER_TEMP/archguard-patterns-example/example.html"
+          python3 scripts/integration/test_engineering_quality_live.py target/debug/archguard --out "$RUNNER_TEMP/archguard-quality-example"
+          node scripts/viewer/test_engineering_quality_html.js "$RUNNER_TEMP/archguard-quality-example/example.html"
+          python3 scripts/integration/test_workspace_live.py target/debug/archguard --out "$RUNNER_TEMP/archguard-workspace-example"
+          node scripts/viewer/test_workspace_html.js "$RUNNER_TEMP/archguard-workspace-example/example.html" --synthetic
+
+      - name: Source analysis (dogfooding with R30 review gates)
+        # The repo's own .archguard/archguard.toml scopes the gate to crates/ and
+        # declares the [review] ceilings (dated baseline, R45). check exits
+        # non-zero on any gate breach; review proves the full review
+        # pipeline runs on the product. Fixtures keep their intentional
+        # cycles by design and are excluded from this gate.
+        run: |
+          ./target/debug/archguard check . --format text
+          ./target/debug/archguard review . --format text
+
+  java21-complexity:
+    name: Java 21 pattern-switch metrics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Measure type, record and null switch labels
+        run: python3 scripts/integration/test_method_complexity.py java21

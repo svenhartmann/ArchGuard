@@ -1,0 +1,26 @@
+// Execute the embedded application generated from real compiler observations.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const file=process.argv[2];assert.ok(file,'Pass the generated patterns example.html');
+const html=fs.readFileSync(file,'utf8'),data=JSON.parse(html.match(/<script id="archguard-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+const js=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).find(s=>s.includes('function renderPatternAssessments('));
+const source=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0].replace(/^const js=.*$/m,'const js=LIVE_JS;').replace(/^const html=.*$/m,'const html=LIVE_HTML;');
+const launch=vm.runInNewContext(source+'\nlaunch;',{require,console,performance,Blob,LIVE_JS:js,LIVE_HTML:html});
+const app=launch(data,{library:false});app.run("showTab('architecture')");
+assert.equal(app.ids.get('architecture-content').querySelectorAll('details[data-pattern]').length,0);
+app.run("renderPatternAssessments(document.getElementById('architecture-content'))");
+const list=app.ids.get('architecture-content'),port=data.insights.patterns.assessments.find(p=>p.pattern==='ports_and_adapters');
+assert.equal(port.status,'candidate');assert.match(list.textContent,/Ports and adapters/);
+const detail=list.querySelectorAll('details[data-pattern]').find(d=>d.getAttribute('data-pattern')===port.id);assert.ok(detail);detail.open=true;detail.dispatch('toggle');
+assert.match(detail.textContent,/src\/core\/Use.java:1/);
+assert.match(detail.textContent,/src\/infra\/Db.java:1/);
+assert.equal(app.run('exportSnapshot().patterns.assessments.length'),data.insights.patterns.assessments.length);
+assert.ok(app.run('exportMarkdown(exportSnapshot())').includes(app.run("exportMarkdownCell('port_call')")));
+detail.querySelectorAll('button').find(b=>b.getAttribute('data-pattern-focus')===port.id).click();
+assert.equal(app.run('ui.workspace'),'graph');assert.equal(app.run('patternHighlight.nodes.size'),3);
+assert.equal(app.run('view.nodes.some(n=>patternNodeMarked(n))'),true);
+assert.equal(app.run('view.edges.some(e=>patternEdgeMarked({source:{id:e.from},target:{id:e.to}}))'),true);
+app.run("ops.push({kind:'test-placeholder'});");assert.equal(app.run('view.nodes.some(n=>patternNodeMarked(n))'),false);app.run('ops.pop()');
+app.run("showTab('services')");assert.match(app.ids.get('service-patterns').textContent,/messaging candidate/);
+app.run("setViewerLanguage('de');showTab('architecture');renderPatternAssessments(document.getElementById('architecture-content'))");assert.match(list.textContent,/Ports und Adapter/);
+const result={actualEmbeddedJavaScript:true,syntheticSources:true,environment:'Node DOM harness; no browser layout or paint',checks:['compiler source evidence','graph highlights','services candidates','complete exports','DE/EN']};
+fs.writeFileSync(path.join(path.dirname(file),'html-verification.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));

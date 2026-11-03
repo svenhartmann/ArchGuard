@@ -1,0 +1,43 @@
+// Graph boot should not expand optional compiler data or derive move proposals.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const context={require,console,performance,Blob};
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{...context});
+const compactFixture=vm.runInNewContext(fs.readFileSync('scripts/viewer/test_viewer_compact_calls.js','utf8').split('const original=')[0]+'\n({fixture,compact,expected});',{...context});
+const fixture={...compactFixture.fixture,calls:compactFixture.compact};
+const app=launch(fixture,{library:false});
+assert.equal(app.run('data.calls.compact?.encoding'),'string-pool-v1','default graph leaves the optional call transport compact');
+assert.equal(app.run('callClasses.size+callMethods.size'),0,'default graph does not construct unused compiler indexes');
+app.run('var decodes=0,originalDecode=decodeCallPayload;decodeCallPayload=function(...args){decodes++;return originalDecode(...args);};');
+assert.equal(app.run("callClassLabel('p.A')"),'C# <type>','inspector labels retain the declared name without expanding method/call rows');
+assert.equal(app.run("callClassLabel('p.B')"),'B');
+app.run("selectNode('src/A.cs');showTab('dsm');showTab('graph')");
+assert.equal(app.run('decodes'),0,'node inspector and matrix do not need expanded call records');
+assert.equal(app.run('callClasses.size+callMethods.size'),0);
+app.run("openCallsForNode('src/A.cs')");
+assert.equal(app.run('decodes'),1);
+assert.deepEqual(JSON.parse(app.run('JSON.stringify(callModel)')),JSON.parse(JSON.stringify(compactFixture.expected)));
+app.run("showTab('graph');showTab('calls');callUi.resolution='external';renderCalls();exportSnapshot()");
+assert.equal(app.run('decodes'),1,'Calls revisits, filtering and exports reuse one decoded snapshot');
+assert.equal(app.run('exportSnapshot().edges[0].evidence[0].code'),compactFixture.expected.calls[0].code);
+const initial=launch({...fixture,initialTab:'calls'},{library:false});
+assert.equal(initial.run('ui.workspace'),'calls');assert.equal(initial.run('callModel.compact'),undefined,'an explicitly requested initial Calls tab prepares its data');
+assert.equal(initial.run('callClasses.size'),compactFixture.expected.classes.length);
+
+const callsFixture=vm.runInNewContext(fs.readFileSync('scripts/viewer/test_viewer_calls.js','utf8').split('const app=launch')[0]+'\nfixture;',{...context});
+const repair=launch({...callsFixture,edges:[{from:2,to:3,count:1,refs:[]},{from:3,to:2,count:1,refs:[]}]},{library:false});
+assert.equal(repair.run('callClasses.size'),0);
+const document=JSON.parse(repair.run(`JSON.stringify(repairPlanDocument({scopeNames:['app/api','app/impl'],before:{},rankingLowerBound:false},{ops:[{cut_edge:{from:'app/api',to:'app/impl'}}],referenceLowerBound:false}))`));
+assert.ok(document.calls.some(call=>call.code.includes('service.fetch()')),'cycle repair prepares and retains original compiler evidence without opening Calls');
+assert.ok(repair.run('callClasses.size')>0);
+
+const node=(id,name,parent=null,kind='module')=>({id,name,parent,kind});
+const moves=launch({root:'/tmp/lazy-moves',nodes:[node(0,'A'),node(1,'A/a.ts',0,'file'),node(2,'B'),node(3,'B/b.ts',2,'file')],edges:[{from:1,to:3,count:2,refs:[]}],findings:[],cyclicEdges:[],view:{depth:0,visible:null}},{library:false});
+assert.equal(moves.run('moveSuggestions'),null,'no package is selected at boot, so no move candidates are computed');
+moves.run('var suggestionsBuilt=0,originalSuggestions=packageMoveSuggestions;packageMoveSuggestions=function(...args){suggestionsBuilt++;return originalSuggestions(...args);};');
+moves.run('renderAll(false);setAllTreeBranches(true);setAllTreeBranches(false)');assert.equal(moves.run('suggestionsBuilt'),0);
+moves.run("selectNode('A')");assert.equal(moves.run('suggestionsBuilt'),1);assert.equal(moves.run('moveSuggestions.get(0).target'),'B');
+moves.run("selectNode('B');selectNode('A')");assert.equal(moves.run('suggestionsBuilt'),1,'selection reuses candidates from the same working graph');
+moves.run("ui.simulation=true;recordOp(encodeCut('A','B'))");assert.equal(moves.run('suggestionsBuilt'),2,'changed topology invalidates and rebuilds a currently requested suggestion');assert.equal(moves.run('moveSuggestions.has(0)'),false);
+moves.click('undo-ops');assert.equal(moves.run('suggestionsBuilt'),3);assert.equal(moves.run('moveSuggestions.get(0).target'),'B');
+console.log('Deferred analysis: graph skips call decoding/indexes and move candidates; Calls, repair evidence, export and simulation invalidation remain exact');

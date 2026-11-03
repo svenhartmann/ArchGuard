@@ -1,0 +1,27 @@
+/target/
+
+/archguard/
+
+# Regenerated analysis outputs; configs, baselines, scenarios and history remain trackable.
+**/.archguard/cache.json
+**/.archguard/graph.json
+**/.archguard/effective-config.json
+**/.archguard/security.json
+**/.archguard/services.json
+**/.archguard/reports/
+**/.archguard/graph.db*
+**/.archguard/.*.tmp
+**/.archguard/.gitignore
+**/.archguard/review.json
+**/.archguard/validations/
+
+# Local agent worktrees (managed separately with git worktree).
+/.claude/worktrees/
+
+# Downloaded upstream sources for the reproducible analysis examples.
+/examples/checkouts/
+
+# Local Python bytecode and generated browser report.
+__pycache__/
+*.py[cod]
+/zyklen.html

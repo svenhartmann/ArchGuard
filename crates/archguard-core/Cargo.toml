@@ -1,0 +1,13 @@
+[package]
+name = "archguard-core"
+description = "L0: core types for archguard (no dependencies on other archguard crates)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"

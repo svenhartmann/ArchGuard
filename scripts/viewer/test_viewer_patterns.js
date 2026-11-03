@@ -1,0 +1,51 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const item={id:'layer',pattern:'layered',scope:'.',status:'mixed',basis:'dependency_structure',nodes:['web/A.ts','data/B.ts'],nodes_total:2,services:[],services_total:0,metrics:{forward_dependencies:2},evidence:[{kind:'dependency',from:'web/A.ts',to:'data/B.ts',file:'src/web/A.ts',line:3,message:'<img src=x onerror=alert(1)>'}],evidence_total:1,counter_evidence:[{kind:'dependency',from:'data/B.ts',to:'web/A.ts',message:'reverse dependency'}],counter_evidence_total:1,missing_evidence:['Runtime not observed']};
+const patterns={schema_version:1,status:'assessed',definition:'architecture-patterns/v1',coverage:{semantic_status:'partial'},assessments:[item],assessments_total:1,limitations:['Hypotheses only'],diagnostics:[]};
+const fixture={root:'/repo',nodes:[{id:0,name:'web/A.ts',kind:'file',parent:null},{id:1,name:'data/B.ts',kind:'file',parent:null}],edges:[{from:0,to:1,count:1,refs:[]}],findings:[],cyclicEdges:[],view:{depth:0,visible:null},insights:{patterns}};
+const app=launch(fixture,{library:false});app.run("showTab('architecture')");
+const content=app.ids.get('architecture-content');
+assert.equal(content.querySelectorAll('details[data-pattern]').length,0,'Architecture prioritizes documentation, not style guesses');
+// The retained pattern component is tested independently from the Architecture workspace.
+app.run("renderPatternAssessments(document.getElementById('architecture-content'))");
+assert.match(content.textContent,/Architecture pattern/);
+assert.match(content.textContent,/Layered/);
+assert.match(content.textContent,/Runtime not observed/);
+const details=content.querySelectorAll('details').find(d=>d.textContent.includes('Layered'));assert.ok(details);details.open=true;details.dispatch('toggle');
+assert.match(content.textContent,/src\/web\/A\.ts:3/);assert.match(content.textContent,/reverse dependency/);
+assert.equal(content.querySelectorAll('img').length,0);
+assert.equal(app.run('exportSnapshot().patterns.assessments.length'),1);
+assert.match(app.run('exportMarkdown(exportSnapshot())'),/reverse dependency/);
+const focus=content.querySelectorAll('button').find(b=>b.getAttribute('data-pattern-focus')==='layer');assert.ok(focus);focus.click();
+assert.equal(app.run('ui.workspace'),'graph');assert.equal(app.run('patternHighlight.nodes.size'),2);
+app.click('language-de');app.run("showTab('architecture');renderPatternAssessments(document.getElementById('architecture-content'))");assert.match(content.textContent,/Architekturmuster|Schichten/);
+const many=launch({...fixture,insights:{patterns:{...patterns,assessments:Array.from({length:35},(_,i)=>({...item,id:String(i),scope:String(i)})),assessments_total:35}}},{library:false});
+many.run("showTab('architecture');renderPatternAssessments(document.getElementById('architecture-content'))");const list=many.ids.get('architecture-content');assert.equal(list.querySelectorAll('details[data-pattern]').length,20);
+list.querySelectorAll('button').find(b=>b.getAttribute('data-pattern-more')==='true').click();many.run("renderPatternAssessments(document.getElementById('architecture-content'))");assert.equal(list.querySelectorAll('details[data-pattern]').length,35);
+assert.equal(many.run('exportSnapshot().patterns.assessments.length'),35);
+const repository=launch({...fixture,nodes:[],edges:[],services:{services:[],projects:[],dependencies:[],cycles:[],compose_files:[],diagnostics:[],complete:true},insights:{repository:{mode:'overview',root:'/repo'},patterns:{...patterns,assessments:[item,{...item,id:'messages',pattern:'event_driven',nodes:[],nodes_total:0}],assessments_total:2}}},{library:false});
+repository.run("showTab('services')");assert.match(repository.ids.get('service-patterns')?.textContent||'',/messaging candidate/);
+
+assert.match(repository.ids.get('service-patterns').textContent,/1 \/ 1 assessments/);
+console.log('Patterns UI: evidence, counter-evidence, source links, safe text, graph highlight, DE/EN, paging and complete exports passed');
+
+const structural={...item,id:'levels',pattern:'dependency_layers',status:'candidate',nodes:['web/A.ts','data/B.ts'],metrics:{dependency_levels:3,source_files:3,scope_source_files:12,cyclic_groups:0},counter_evidence:[],counter_evidence_total:0};
+const recall=launch({...fixture,insights:{patterns:{...patterns,definition:'architecture-patterns/v2',assessments:[structural],assessments_total:1}}},{library:false});
+recall.run("setViewerLanguage('de');showTab('architecture');renderPatternAssessments(document.getElementById('architecture-content'))");
+const recallRoot=recall.ids.get('architecture-content'),structureList=recallRoot.querySelector('div[data-pattern-structures]');
+assert.ok(structureList,'graph-derived structure must be distinguished from a named architecture style');
+const structuralDetails=structureList.querySelector('details[data-pattern]');
+assert.match(structuralDetails.querySelector('summary').textContent,/3 Ebenen.*3.*12 Dateien/,'the collapsed summary explains the actual detected scope');
+structuralDetails.open=true;structuralDetails.dispatch('toggle');
+assert.ok(structuralDetails.querySelector('figure[data-detail-graph]'),'a structural result must show its actual recorded dependencies');
+assert.equal(structuralDetails.querySelectorAll('path[data-detail-edge]').length,1);
+assert.equal(recall.run('exportSnapshot().patterns.assessments[0].metrics.dependency_levels'),3);
+assert.ok(recall.run('exportMarkdown(exportSnapshot())').includes(recall.run("exportMarkdownCell('dependency_layers')")));
+
+const crowdedRows=[...Array.from({length:25},(_,i)=>({...item,id:'inversion-'+i,pattern:'dependency_inversion',scope:'contract/'+i})),{...item,id:'named-style',status:'candidate'},{...structural,id:'broad-levels'}];
+const crowded=launch({...fixture,insights:{patterns:{...patterns,assessments:crowdedRows,assessments_total:crowdedRows.length}}},{library:false});
+crowded.run("showTab('architecture');renderPatternAssessments(document.getElementById('architecture-content'))");
+const visibleIds=crowded.ids.get('architecture-content').querySelectorAll('details[data-pattern]').map(d=>d.getAttribute('data-pattern'));
+assert.ok(visibleIds.includes('named-style'),'local interface observations must not hide an architecture style on the first page');
+assert.ok(visibleIds.includes('broad-levels'),'the broad dependency structure must be visible before paging through individual interfaces');

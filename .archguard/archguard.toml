@@ -1,0 +1,86 @@
+# ArchGuard dogfood policy for this repository (R45).
+#
+# The CI dogfood step runs `archguard check .` and `archguard review .` against
+# this file. Scope is the real Rust product source under crates/; fixtures/ and
+# examples/ carry INTENTIONAL cycles (they are cycle-detection test data) and
+# are excluded, as are test-only trees: failing the product's gate on them would
+# measure test data, not the product.
+
+# Nothing measured may override the declared crate graph below.
+derive_layers = false
+
+[project]
+source_roots = ["crates"]
+languages = ["rs"]
+exclude = [
+    "**/tests/**",
+    "**/*.spec.*",
+    "**/generated/**",
+    "**/fixtures/**",
+    "**/examples/**",
+    "**/target/**",
+]
+
+# The crate layers of ARCHITECTURE.md Kap. 3.2, bottom to top, as declared
+# Intent. One layer per crate: the braces in the drawing mark the same *rank*,
+# and separate layers keep extract/analysis/report/store mutually
+# dependency-free.
+
+[[layers]]
+name = "core"
+contains = ["archguard-core", "archguard-core/**"]
+may_depend_on = []
+
+[[layers]]
+name = "extract"
+contains = ["archguard-extract", "archguard-extract/**"]
+may_depend_on = ["core"]
+
+[[layers]]
+name = "analysis"
+contains = ["archguard-analysis", "archguard-analysis/**"]
+may_depend_on = ["core"]
+
+[[layers]]
+name = "report"
+contains = ["archguard-report", "archguard-report/**"]
+may_depend_on = ["core"]
+
+[[layers]]
+name = "store"
+contains = ["archguard-store", "archguard-store/**"]
+may_depend_on = ["core"]
+
+[[layers]]
+name = "engine"
+contains = ["archguard-engine", "archguard-engine/**"]
+may_depend_on = ["core", "extract", "analysis", "report", "store"]
+
+[[layers]]
+name = "mcp"
+contains = ["archguard-mcp", "archguard-mcp/**"]
+may_depend_on = ["engine"]
+
+[[layers]]
+name = "cli"
+contains = ["archguard-cli", "archguard-cli/**"]
+may_depend_on = ["engine", "mcp"]
+
+
+# No source file may take part in a cycle: child modules import from the module
+# that defines an item, never back through their crate root.
+[rules]
+deny_cycles = "file"
+
+# Review gates from R30/R31, active on the product source. Gates fire on values
+# STRICTLY greater than these ceilings (see check_cmd review gates), so the
+# current tree passes and a structural regression turns CI red. Ceiling values
+# are a dated baseline of the product source, not invented: at commit R42 the
+# product (crates/) measured 0 SDP violations, tangledness 0.0 and no propagation
+# cost (health 100). adr_required_on_accept_risk makes `review --record` demand
+# an ADR for accepted risks (R31 CLI gate).
+[review]
+max_sdp_violations = 5
+max_tangledness = 0.10
+max_propagation_cost = 0.20
+adr_required_on_accept_risk = true

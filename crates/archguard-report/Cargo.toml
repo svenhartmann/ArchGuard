@@ -1,0 +1,12 @@
+[package]
+name = "archguard-report"
+description = "L1: formatters for the report types (json, text, mermaid, dot, html, graphml, sarif)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+# The report formats are serialization; serde_json is the canonical writer.
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }

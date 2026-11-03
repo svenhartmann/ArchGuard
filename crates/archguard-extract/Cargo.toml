@@ -1,0 +1,15 @@
+[package]
+name = "archguard-extract"
+description = "L1: file walker, extractor trait and language scanners."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+globset = "0.4.20"
+ignore = "0.4.33"
+serde_json = "1"
+archguard-core = { path = "../archguard-core" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

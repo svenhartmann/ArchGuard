@@ -1,0 +1,268 @@
+{
+  "config": {
+    "architecture": "default",
+    "dependency_rules": "default",
+    "layers": "derived",
+    "modules": "derived",
+    "ownership_rules": "default",
+    "performance": "default",
+    "project": "derived",
+    "review": "default",
+    "rules": "default",
+    "semantic": "default",
+    "store": "default"
+  },
+  "findings": [
+    {
+      "cycles_sampled": 0,
+      "edge_count": 2,
+      "id": "metric-max-scc-size-scc-1",
+      "kind": "metric_threshold",
+      "nodes": [
+        "App/One/One.php",
+        "App/Two/Two.php"
+      ],
+      "severity": "error",
+      "suggested_cuts": []
+    },
+    {
+      "cycles_sampled": 1,
+      "edge_count": 2,
+      "id": "scc-1",
+      "kind": "cycle",
+      "nodes": [
+        "App/One/One.php",
+        "App/Two/Two.php"
+      ],
+      "sampling": {
+        "budget_exhausted": false,
+        "complete": false,
+        "cycle_limit_reached": false,
+        "edge_budget": 10000,
+        "explored_edges": 2,
+        "length_limited": false,
+        "root_search_complete": true,
+        "searched_from": "App/One/One.php"
+      },
+      "severity": "error",
+      "suggested_cuts": [
+        {
+          "from": "App/One/One.php",
+          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 1.0,
+          "to": "App/Two/Two.php"
+        },
+        {
+          "from": "App/Two/Two.php",
+          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 1.0,
+          "to": "App/One/One.php"
+        }
+      ]
+    },
+    {
+      "cycles_sampled": 0,
+      "edge_count": 0,
+      "id": "layers-unranked",
+      "kind": "layer_unranked",
+      "nodes": [
+        "App/One/One.php",
+        "App/Two/Two.php"
+      ],
+      "severity": "info",
+      "suggested_cuts": []
+    }
+  ],
+  "metrics": {
+    "App/Boot.php": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "App/One/Helper.php": {
+      "fan_in": 0,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "App/One/One.php": {
+      "fan_in": 2,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.33333334
+    },
+    "App/Three/Three.php": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.5
+    },
+    "App/Three/Util.php": {
+      "fan_in": 0,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "App/Two/Two.php": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.5
+    }
+  },
+  "review_kpis": {
+    "api_surface": [
+      {
+        "exported_symbols": 12,
+        "files": 6,
+        "per_file": 2.0,
+        "top": [
+          [
+            "Boot.php",
+            2
+          ],
+          [
+            "One/Helper.php",
+            2
+          ],
+          [
+            "One/One.php",
+            2
+          ],
+          [
+            "Three/Three.php",
+            2
+          ],
+          [
+            "Three/Util.php",
+            2
+          ]
+        ]
+      }
+    ],
+    "debt": {
+      "by_kind": {},
+      "loc": 74,
+      "markers": 0,
+      "per_kloc": 0.0
+    },
+    "dependencies": null,
+    "health": {
+      "level": "yellow",
+      "parts": {
+        "hubs": 0.41666666666666663,
+        "sdp": 0.75,
+        "tangledness": 0.6666666666666667
+      },
+      "score": 61.11111111111111,
+      "trend": null
+    },
+    "hub_gini": {
+      "gini": 0.5833333333333334,
+      "top_share": 1.0
+    },
+    "layer_drift": null,
+    "leaks": [],
+    "propagation_cost": [
+      {
+        "affected": 2,
+        "pc": 0.3333333333333333,
+        "scc_id": "scc-1",
+        "size": 2,
+        "total": 6
+      }
+    ],
+    "risk_gaps": [
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 42.0,
+        "path": "App/One/One.php"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 40.0,
+        "path": "App/Two/Two.php"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 5.0,
+        "path": "App/Three/Three.php"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "App/Boot.php"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 0.0,
+        "path": "App/One/Helper.php"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 0.0,
+        "path": "App/Three/Util.php"
+      }
+    ],
+    "sdp_violations": [
+      {
+        "evidence": [
+          "One/One.php:5"
+        ],
+        "from": "App/One/One.php",
+        "i_from": 0.3333333432674408,
+        "i_to": 0.5,
+        "to": "App/Two/Two.php"
+      }
+    ],
+    "tangledness": {
+      "quote": 0.3333333333333333,
+      "tangled_nodes": 2,
+      "total": 6
+    },
+    "zones": null
+  },
+  "schema_version": 1,
+  "semantic": {
+    "analyzers": [
+      {
+        "backend": "none",
+        "diagnostics": [
+          "Semantic analysis for php is not implemented; import analysis remains available."
+        ],
+        "files": 6,
+        "language": "php",
+        "project": null,
+        "status": "unavailable",
+        "version": null
+      }
+    ],
+    "diagnostics": [
+      "php: Semantic analysis for php is not implemented; import analysis remains available."
+    ],
+    "projected_calls": 0,
+    "projected_supertypes": 0,
+    "projected_type_uses": 0,
+    "skipped_project_calls": 0,
+    "skipped_type_uses": 0,
+    "status": "unavailable"
+  },
+  "summary": {
+    "acd": 2.1666666666666665,
+    "ccd": 13,
+    "edges": 4,
+    "largest_scc": 2,
+    "layer_violations": 0,
+    "nccd": 0.952277391035442,
+    "nodes": 6,
+    "sccs": 1,
+    "status": "fail"
+  }
+}

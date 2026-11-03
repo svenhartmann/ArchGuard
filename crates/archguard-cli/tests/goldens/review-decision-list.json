@@ -1,0 +1,22 @@
+{
+  "decisions": [
+    {
+      "adr_link": "docs/adr/001.md",
+      "author": "cli",
+      "decision": "accept-risk",
+      "finding_ref": "scc-1",
+      "id": "scc-1",
+      "note": "zyklus bewusst",
+      "ts": "<TS>"
+    },
+    {
+      "author": "cli",
+      "decision": "defer",
+      "finding_ref": "scc-2",
+      "id": "scc-2",
+      "note": "später auflösen",
+      "ts": "<TS>"
+    }
+  ],
+  "version": 0
+}

@@ -1,0 +1,190 @@
+{
+  "config": {
+    "architecture": "default",
+    "dependency_rules": "default",
+    "layers": "derived",
+    "modules": "derived",
+    "ownership_rules": "default",
+    "performance": "default",
+    "project": "derived",
+    "review": "default",
+    "rules": "default",
+    "semantic": "default",
+    "store": "default"
+  },
+  "findings": [],
+  "metrics": {
+    "alpha/gamma": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "alpha/mod.rs": {
+      "fan_in": 2,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.33333334
+    },
+    "beta/delta": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "beta/mod.rs": {
+      "fan_in": 2,
+      "fan_out": 2,
+      "in_cycle": false,
+      "instability": 0.5
+    },
+    "epsilon/mod.rs": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.5
+    },
+    "main.rs": {
+      "fan_in": 0,
+      "fan_out": 3,
+      "in_cycle": false,
+      "instability": 1.0
+    }
+  },
+  "review_kpis": {
+    "api_surface": [
+      {
+        "exported_symbols": 5,
+        "files": 5,
+        "per_file": 1.0,
+        "top": [
+          [
+            "alpha/gamma/mod.rs",
+            1
+          ],
+          [
+            "alpha/mod.rs",
+            1
+          ],
+          [
+            "beta/delta/mod.rs",
+            1
+          ],
+          [
+            "beta/mod.rs",
+            1
+          ],
+          [
+            "epsilon/mod.rs",
+            1
+          ]
+        ]
+      }
+    ],
+    "debt": {
+      "by_kind": {},
+      "loc": 30,
+      "markers": 0,
+      "per_kloc": 0.0
+    },
+    "dependencies": null,
+    "health": {
+      "level": "green",
+      "parts": {
+        "hubs": 0.6904761904761905,
+        "sdp": 1.0,
+        "tangledness": 1.0
+      },
+      "score": 89.68253968253968,
+      "trend": null
+    },
+    "hub_gini": {
+      "gini": 0.30952380952380953,
+      "top_share": 1.0
+    },
+    "layer_drift": null,
+    "leaks": [],
+    "propagation_cost": [],
+    "risk_gaps": [
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 10.0,
+        "path": "beta/mod.rs"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 9.0,
+        "path": "alpha/mod.rs"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 6.0,
+        "path": "alpha/gamma/mod.rs"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 6.0,
+        "path": "main.rs"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 5.0,
+        "path": "beta/delta/mod.rs"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 5.0,
+        "path": "epsilon/mod.rs"
+      }
+    ],
+    "sdp_violations": [],
+    "tangledness": {
+      "quote": 0.0,
+      "tangled_nodes": 0,
+      "total": 6
+    },
+    "zones": null
+  },
+  "schema_version": 1,
+  "semantic": {
+    "analyzers": [
+      {
+        "backend": "syn",
+        "diagnostics": [
+          "Syntax-only analysis: complexity and Halstead per function. Calls and types are not resolved, and macro bodies that are not expressions stay opaque."
+        ],
+        "files": 6,
+        "language": "rust",
+        "project": null,
+        "status": "partial",
+        "version": null
+      }
+    ],
+    "diagnostics": [
+      "rust: Syntax-only analysis: complexity and Halstead per function. Calls and types are not resolved, and macro bodies that are not expressions stay opaque."
+    ],
+    "projected_calls": 0,
+    "projected_supertypes": 0,
+    "projected_type_uses": 0,
+    "skipped_project_calls": 0,
+    "skipped_type_uses": 0,
+    "status": "partial"
+  },
+  "summary": {
+    "acd": 3.1666666666666665,
+    "ccd": 19,
+    "edges": 7,
+    "largest_scc": 0,
+    "layer_violations": 0,
+    "nccd": 1.3917900330517998,
+    "nodes": 6,
+    "sccs": 0,
+    "status": "pass"
+  }
+}

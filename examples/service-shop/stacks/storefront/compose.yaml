@@ -1,0 +1,55 @@
+# Independent deployment stack. Shared network connects the three stacks.
+x-build: &build
+  dockerfile: ../../Dockerfile
+  additional_contexts:
+    runtime: ../../runtime
+x-app: &app
+  init: true
+  networks: [shop, data]
+  expose: ["8080"]
+services:
+  gateway:
+    <<: *app
+    build: {<<: *build, context: ../../services/gateway}
+    ports: ["127.0.0.1:8890:8080"]
+    environment:
+      CATALOG_API: http://catalog:8080
+      ORDERS_API: http://orders:8080
+      INVENTORY_API: http://inventory:8080
+  catalog:
+    <<: *app
+    build: {<<: *build, context: ../../services/catalog}
+    environment:
+      PRICING_API: http://pricing:8080
+      INVENTORY_API: http://inventory:8080
+      # Deployment target; the demo adapter keeps data in memory.
+      DATABASE_URL: postgresql://catalog-db:5432/catalog
+    depends_on: [catalog-db]
+  pricing:
+    <<: *app
+    build: {<<: *build, context: ../../services/pricing}
+    environment:
+      PROMOTIONS_API: http://promotions:8080
+      REDIS_URL: redis://redis:6379
+    depends_on: [redis]
+  promotions:
+    <<: *app
+    build: {<<: *build, context: ../../services/promotions}
+    environment:
+      CATALOG_API: http://catalog:8080
+      REDIS_URL: redis://redis:6379
+    depends_on: [redis]
+  catalog-db:
+    image: postgres:17-alpine
+    networks: [data]
+    environment:
+      POSTGRES_DB: catalog
+      POSTGRES_PASSWORD: local-demo-only
+  redis:
+    image: redis:7-alpine
+    networks: [data]
+networks:
+  shop:
+    name: archguard-service-shop-demo
+    external: true
+  data: {}

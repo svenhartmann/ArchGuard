@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [report,executablePath,modulePath]=process.argv.slice(2);
+const {default:puppeteer}=await import(pathToFileURL(path.resolve(modulePath)).href);
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(fs.readFileSync(report));});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const origin='http://127.0.0.1:'+server.address().port;
+const browser=await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox']});
+try{
+ const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith(origin)?r.continue():r.abort());
+ await page.goto(origin+'/?project=kafka#tab=architecture&chapter=5',{waitUntil:'load'});
+ await page.waitForSelector('[data-arc42-level-scope]');
+ const target=await page.evaluate(()=>[...arc42BuildingLevels(null).entries.values()].find(n=>n.level===3));
+ await page.click('[data-arc42-level-scope="'+target.parent+'"]');
+ await page.click('[data-arc42-level-scope="'+target.node.id+'"]');
+ await page.waitForFunction(name=>decodeURIComponent(location.hash).includes('scope='+name),{},target.node.name);
+ const link=page.url();assert.ok(link.includes('?project=kafka#'));assert.ok(!link.includes('/Users/'));
+ await page.reload({waitUntil:'load'});
+ assert.equal(await page.evaluate(()=>architectureUi.diagramStates.dependencies.scope),String(target.node.id));
+ assert.equal(await page.evaluate(()=>architectureUi.chapter),'5');
+ await page.click('[data-tab="security"]');await page.waitForFunction(()=>location.hash.includes('tab=security'));
+ await page.goBack({waitUntil:'load'});assert.equal(await page.evaluate(()=>ui.workspace),'architecture');
+ assert.equal(await page.evaluate(()=>architectureUi.diagramStates.dependencies.scope),String(target.node.id));
+ await page.goForward({waitUntil:'load'});assert.equal(await page.evaluate(()=>ui.workspace),'security');
+ await page.evaluate(()=>{window.copiedLink=null;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedLink=text;}}});});
+ await page.click('[data-view-link]');assert.equal(await page.evaluate(()=>window.copiedLink),page.url());
+ await page.goto(origin+'/#tab=start&scope='+encodeURIComponent(target.node.name)+'&lens=complexity&kpi=cbo',{waitUntil:'load'});
+ assert.equal(await page.evaluate(()=>worldUi.within),target.node.name);assert.equal(await page.evaluate(()=>worldUi.kpi),'cbo');
+ await page.reload({waitUntil:'load'});assert.equal(await page.evaluate(()=>worldUi.lens),'complexity');
+ const file=await page.evaluate(()=>data.nodes.find(n=>n.kind!=='module').name);
+ await page.goto(origin+'/#tab=graph&node='+encodeURIComponent(file),{waitUntil:'load'});
+ assert.equal(await page.evaluate(()=>ui.selection.name),file);await page.reload({waitUntil:'load'});assert.equal(await page.evaluate(()=>ui.selection.name),file);
+ assert.deepEqual(errors,[]);console.log('Kafka browser navigation: arc42 level 3 reload, project query, history back/forward, copy, World KPI and graph file reload passed');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

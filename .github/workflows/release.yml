@@ -1,0 +1,243 @@
+name: Release builds
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate version and packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Validate tag and workspace version
+        id: version
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: |
+          version="$(python scripts/release/release_artifacts.py version --tag "$RELEASE_TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test packaging and malware failure handling
+        run: |
+          python -m unittest discover -s scripts/release -p test_release_artifacts.py
+          python -m unittest discover -s scripts/release -p test_release_report.py
+          python -m unittest discover -s scripts/release -p test_scan_malware.py
+
+  build:
+    name: Build / ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            suffix: .exe
+          - os: macos-15
+            target: aarch64-apple-darwin
+            suffix: ''
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            suffix: ''
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            suffix: ''
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            suffix: ''
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      RELEASE_TARGET: ${{ matrix.target }}
+      RELEASE_BINARY: target/${{ matrix.target }}/release/archguard${{ matrix.suffix }}
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Install native musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+      - name: Build locked release CLI
+        run: cargo build -p archguard-cli --release --locked --target "$RELEASE_TARGET"
+      - name: Native functional smoke test
+        run: python scripts/release/smoke_release.py "$RELEASE_BINARY"
+      - name: Package binary and metadata
+        run: python scripts/release/release_artifacts.py pack --binary "$RELEASE_BINARY" --target "$RELEASE_TARGET" --out dist --revision "$GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-candidate-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  scan:
+    name: Verify and scan all release artifacts
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-candidate-*
+          merge-multiple: true
+          path: dist
+      - name: Verify complete release set and extract safely
+        run: python scripts/release/release_artifacts.py verify --directory dist --extract "$RUNNER_TEMP/release-scan" --revision "$GITHUB_SHA"
+      - name: Install ClamAV and update signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service
+          sudo sed -i '/^NotifyClamd /d' /etc/clamav/freshclam.conf
+          sudo freshclam 2>&1 | tee "$RUNNER_TEMP/release-signatures.log"
+          clamscan --version
+      - name: Scan final archives AND extracted binaries for every OS
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/release/scan_malware.sh dist "$RUNNER_TEMP/release-scan" 2>&1 | tee "$RUNNER_TEMP/release-malware.log"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-scanned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-malware-log
+          path: |
+            ${{ runner.temp }}/release-malware.log
+            ${{ runner.temp }}/release-signatures.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Tag releases must run the complete checks for that exact tagged revision.
+  quality:
+    needs: prepare
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/ci.yml
+  security:
+    needs: prepare
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/security.yml
+
+  bundle:
+    name: ZIP with release verification report
+    if: always()
+    needs: [prepare, build, scan, quality, security]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.scan.result == 'success'
+        with:
+          name: release-scanned
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-malware-log
+          merge-multiple: true
+          path: scan-logs
+      - name: Assemble offline report and ZIP
+        env:
+          RELEASE_JOB_RESULTS: ${{ toJSON(needs) }}
+          RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python scripts/release/release_report.py --directory dist --logs scan-logs --out bundle --revision "$GITHUB_SHA" --run-url "$RELEASE_RUN_URL"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle
+          path: bundle/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    name: Create scanned release draft
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, scan, quality, security, bundle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-scanned
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: bundle
+      - name: Verify report ZIP checksum
+        working-directory: bundle
+        run: sha256sum --check --strict *.sha256
+      - name: Re-verify the scanned bytes before upload
+        run: python scripts/release/release_artifacts.py verify --directory dist --extract "$RUNNER_TEMP/release-verify" --revision "$GITHUB_SHA"
+      - name: Create draft with the exact scanned assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'ArchGuard %s\n\nCommit: %s\n\nFive native CLI builds passed smoke tests and ClamAV archive/binary scans. CI, RustSec advisories and secret scanning passed. Verify downloads with SHA256SUMS. See RELEASES.md for installation, unsigned binaries and optional tool requirements.\n' "$RELEASE_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" --verify-tag --draft \
+            --title "ArchGuard $RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" \
+            dist/*.zip dist/*.tar.gz dist/SHA256SUMS bundle/*.zip bundle/*.sha256

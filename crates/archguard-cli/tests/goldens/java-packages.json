@@ -1,0 +1,265 @@
+{
+  "config": {
+    "architecture": "default",
+    "dependency_rules": "default",
+    "layers": "derived",
+    "modules": "derived",
+    "ownership_rules": "default",
+    "performance": "default",
+    "project": "derived",
+    "review": "default",
+    "rules": "default",
+    "semantic": "default",
+    "store": "default"
+  },
+  "findings": [
+    {
+      "cycles_sampled": 0,
+      "edge_count": 2,
+      "id": "metric-max-scc-size-scc-1",
+      "kind": "metric_threshold",
+      "nodes": [
+        "blue/Blue.java",
+        "red/Red.java"
+      ],
+      "severity": "error",
+      "suggested_cuts": []
+    },
+    {
+      "cycles_sampled": 1,
+      "edge_count": 2,
+      "id": "scc-1",
+      "kind": "cycle",
+      "nodes": [
+        "blue/Blue.java",
+        "red/Red.java"
+      ],
+      "sampling": {
+        "budget_exhausted": false,
+        "complete": false,
+        "cycle_limit_reached": false,
+        "edge_budget": 10000,
+        "explored_edges": 2,
+        "length_limited": false,
+        "root_search_complete": true,
+        "searched_from": "blue/Blue.java"
+      },
+      "severity": "error",
+      "suggested_cuts": [
+        {
+          "from": "blue/Blue.java",
+          "reason": "ref_count: 3; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 0.47650534,
+          "to": "red/Red.java"
+        },
+        {
+          "from": "red/Red.java",
+          "reason": "ref_count: 3; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 0.47650534,
+          "to": "blue/Blue.java"
+        }
+      ]
+    },
+    {
+      "cycles_sampled": 0,
+      "edge_count": 0,
+      "id": "layers-unranked",
+      "kind": "layer_unranked",
+      "nodes": [
+        "blue/Blue.java",
+        "red/Red.java"
+      ],
+      "severity": "info",
+      "suggested_cuts": []
+    }
+  ],
+  "metrics": {
+    "blue/Blue.java": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.5
+    },
+    "blue/Util.java": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "green/Green.java": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "green/Leaf.java": {
+      "fan_in": 2,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "red/Helper.java": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "red/Red.java": {
+      "fan_in": 2,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.33333334
+    }
+  },
+  "review_kpis": {
+    "api_surface": [
+      {
+        "exported_symbols": 6,
+        "files": 6,
+        "per_file": 1.0,
+        "top": [
+          [
+            "Blue.java",
+            1
+          ],
+          [
+            "Green.java",
+            1
+          ],
+          [
+            "Helper.java",
+            1
+          ],
+          [
+            "Leaf.java",
+            1
+          ],
+          [
+            "Red.java",
+            1
+          ]
+        ]
+      }
+    ],
+    "debt": {
+      "by_kind": {},
+      "loc": 52,
+      "markers": 0,
+      "per_kloc": 0.0
+    },
+    "dependencies": null,
+    "health": {
+      "level": "yellow",
+      "parts": {
+        "hubs": 0.43333333333333335,
+        "sdp": 0.8,
+        "tangledness": 0.6666666666666667
+      },
+      "score": 63.33333333333334,
+      "trend": null
+    },
+    "hub_gini": {
+      "gini": 0.5666666666666667,
+      "top_share": 1.0
+    },
+    "layer_drift": null,
+    "leaks": [],
+    "propagation_cost": [
+      {
+        "affected": 2,
+        "pc": 0.3333333333333333,
+        "scc_id": "scc-1",
+        "size": 2,
+        "total": 6
+      }
+    ],
+    "risk_gaps": [
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 41.0,
+        "path": "red/Red.java"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 39.0,
+        "path": "blue/Blue.java"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 6.0,
+        "path": "green/Leaf.java"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "blue/Util.java"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "green/Green.java"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "red/Helper.java"
+      }
+    ],
+    "sdp_violations": [
+      {
+        "evidence": [
+          "Red.java:3",
+          "Red.java:7"
+        ],
+        "from": "red/Red.java",
+        "i_from": 0.3333333432674408,
+        "i_to": 0.5,
+        "to": "blue/Blue.java"
+      }
+    ],
+    "tangledness": {
+      "quote": 0.3333333333333333,
+      "tangled_nodes": 2,
+      "total": 6
+    },
+    "zones": null
+  },
+  "schema_version": 1,
+  "semantic": {
+    "analyzers": [
+      {
+        "backend": "javac",
+        "diagnostics": [],
+        "files": 6,
+        "language": "java",
+        "project": null,
+        "status": "ready",
+        "version": "<COMPILER_VERSION>"
+      }
+    ],
+    "diagnostics": [],
+    "projected_calls": 10,
+    "projected_supertypes": 0,
+    "projected_type_uses": 0,
+    "skipped_project_calls": 0,
+    "skipped_type_uses": 0,
+    "status": "ready"
+  },
+  "summary": {
+    "acd": 2.0,
+    "ccd": 12,
+    "edges": 5,
+    "largest_scc": 2,
+    "layer_violations": 0,
+    "nccd": 0.8790252840327156,
+    "nodes": 6,
+    "sccs": 1,
+    "status": "fail"
+  }
+}

@@ -1,0 +1,5 @@
+# Golden fixture for the Review-KPI payload (R43): the module view is
+# pinned to the file level so the SDP, leak and debt evidence below stays
+# byte-identical regardless of how depth derivation evolves.
+[modules]
+depth = 2

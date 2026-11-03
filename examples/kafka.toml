@@ -1,0 +1,63 @@
+# Apache Kafka 4.1.0, commit 13f70256db3c994c590e5d262a7cc50b9e973204.
+# Java production sources; excludes Scala, tests, test helpers and examples.
+derive_layers = false
+
+[project]
+languages = ["java"]
+source_roots = [
+  "clients/src/main/java",
+  "connect/api/src/main/java",
+  "connect/basic-auth-extension/src/main/java",
+  "connect/file/src/main/java",
+  "connect/json/src/main/java",
+  "connect/mirror-client/src/main/java",
+  "connect/mirror/src/main/java",
+  "connect/runtime/src/main/java",
+  "connect/transforms/src/main/java",
+  "coordinator-common/src/main/java",
+  "core/src/main/java",
+  "generator/src/main/java",
+  "group-coordinator/group-coordinator-api/src/main/java",
+  "group-coordinator/src/main/java",
+  "metadata/src/main/java",
+  "raft/src/main/java",
+  "server-common/src/main/java",
+  "server/src/main/java",
+  "share-coordinator/src/main/java",
+  "shell/src/main/java",
+  "storage/api/src/main/java",
+  "storage/src/main/java",
+  "streams/src/main/java",
+  "tools/src/main/java",
+  "tools/tools-api/src/main/java",
+  "transaction-coordinator/src/main/java",
+  "trogdor/src/main/java"
+]
+exclude = [
+  "**/src/test/**",
+  "**/src/testFixtures/**",
+  "**/build/**",
+  "tests/**",
+  "examples/**",
+  "jmh-benchmarks/**",
+  "connect/test-plugins/**",
+  "streams/examples/**",
+  "streams/quickstart/**",
+  "streams/test-utils/**",
+  "test-common/**",
+  "**/*.py",
+  "**/*.js",
+  "**/*.jsx",
+  "**/*.ts",
+  "**/*.tsx",
+  "**/*.rs",
+  "**/*.cs",
+  "**/*.php"
+]
+
+[modules]
+depth = 3
+
+[rules]
+deny_cycles = "module"
+max_scc_size = 1

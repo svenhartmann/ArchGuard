@@ -1,0 +1,18 @@
+# ArchGuard — CLI + MCP tool for software architecture analysis.
+[workspace]
+resolver = "3"
+members = [
+    "crates/archguard-analysis",
+    "crates/archguard-cli",
+    "crates/archguard-core",
+    "crates/archguard-engine",
+    "crates/archguard-extract",
+    "crates/archguard-mcp",
+    "crates/archguard-report",
+    "crates/archguard-store",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"

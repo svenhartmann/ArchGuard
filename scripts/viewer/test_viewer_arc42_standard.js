@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const base=fs.readFileSync('scripts/viewer/test_viewer_arc42_diagrams.js','utf8').split('const app=launch')[0];
+const {launch,fixture}=vm.runInNewContext(base+'\n({launch,fixture})',{require,console,performance,Blob});
+const app=launch(fixture,{library:false});
+assert.equal(app.run('typeof arc42StandardGraph'),'function','standard diagram model replaces hand-positioned rows');
+const model=JSON.parse(app.run('JSON.stringify(arc42StandardGraph(arc42PackageProjection(),null))'));
+assert.equal(model.graphAttributes.rankdir,'TB');assert.equal(model.nodes.length,12);assert.ok(model.nodes.some(n=>n.attributes.shape==='folder'));assert.ok(model.edges.some(e=>e.attributes.color==='#ee7d87'));assert.ok(model.edges.every(e=>e.attributes.label));
+const puml=app.run('arc42PlantUml(arc42PackageProjection())');assert.match(puml,/@startuml/);assert.match(puml,/package "/);assert.match(puml,/#ee7d87/);assert.doesNotMatch(puml,/!include/);
+const deployment=app.run("arc42PlantUml(arc42DeploymentProjection('dev.yml'))");assert.match(deployment,/Deployment_Node/);assert.match(deployment,/Container/);assert.match(deployment,/startup/);assert.doesNotMatch(deployment,/prod.yml/);
+app.run('let evil={nodes:[{id:"x",name:\'quote"\\n!include https://evil.test\\n@enduml\',kind:"package"}],edges:[]};');
+assert.equal(app.run('arc42PlantUml(evil).split("\\n").filter(l=>l.startsWith("@enduml")).length'),1);assert.ok(!app.run('arc42PlantUml(evil).split("\\n").some(l=>l.startsWith("!include"))'));
+const before=app.run('JSON.stringify(data)');app.run('arc42StandardGraph(arc42PackageProjection(),null);arc42PlantUml(arc42PackageProjection())');assert.equal(app.run('JSON.stringify(data)'),before);
+console.log('arc42 standards: UML packages, directed counts and cycles, isolated C4 deployment, safe PlantUML and immutable evidence passed');

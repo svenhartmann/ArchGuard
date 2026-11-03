@@ -1,0 +1,20 @@
+[package]
+name = "archguard-analysis"
+description = "L1: SCCs, cycles, metrics, layer rules, cut scoring, baseline diff."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-core = { path = "../archguard-core" }
+# Only the SCC detection needs an external crate; Tarjan is petgraph's.
+petgraph = "0.8"
+# The layer check matches `contains` globs against node names (Kap. 9).
+globset = "0.4"
+# The baseline hashes cycle memberships with SHA-256 (Kap. 7, T17).
+sha2 = "0.10"
+# `Baseline` is persisted as `.archguard/baseline.json` via serde (Kap. 9).
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

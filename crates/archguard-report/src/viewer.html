@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArchGuard graph</title>
+<!--
+  ArchGuard architecture viewer v2 (T34/T39). Only the optional Network view
+  REQUIRES AN INTERNET CONNECTION: its pinned drawing library loads on demand.
+  Tree, dependencies and all graph data, CSS and application JS are inline.
+-->
+<style>
+  /* ── Design tokens (U01) ────────────────────────────────────────────────
+     The ONLY palette source: every DOM style AND the canvas palette (C in
+     APP_JS) read these custom properties. `data-theme` on <html> is set by
+     the theme switcher; the `prefers-color-scheme` blocks only cover the
+     pre-script paint for the System preference. */
+  :root {
+    --bg: #F5F7FB; --panel: #FFFFFF; --panel-2: #EEF2F8;
+    --text: #172033; --muted: #5B6472;
+    --accent: #2563EB; --accent-contrast: #FFFFFF; --border: #DDE3ED;
+    /* canvas palette (read by JS via getComputedStyle) */
+    --c-node: #2563EB; --c-cycle: #D92D20; --c-dim: #D7DEE9;
+    --c-label: #172033; --c-edge: #64748B;
+    --c-incoming: #0369A1; --c-outgoing: #7C3AED;
+    --c-resolved: #1E8E3E; --c-introduced: #D50000;
+    --c-package: #FFFAED; --c-package-tab: #F1D998;
+    --c-package-border: #A77D32; --c-package-selected: #EDF4FF;
+    --c-priority: #9A4D00; --c-priority-fill: #FFE0A3; --c-priority-text: #502500;
+    /* class-metric tones (heatmap cells and world canvas share these) */
+    --m-low: #16845b; --m-medium: #c58a23; --m-high: #db4c4c;
+    --shadow: 0 1px 2px rgba(23,32,51,.05), 0 2px 6px rgba(23,32,51,.08);
+    --radius: 10px; --radius-sm: 8px;
+    --gap-1: 8px; --gap-2: 12px; --gap-3: 16px;
+    --font: -apple-system, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  html[data-theme='dark'] {
+    --bg: #101722; --panel: #182231; --panel-2: #131C29;
+    --text: #E6EDF7; --muted: #93A1B5;
+    --accent: #5B9CF6; --accent-contrast: #0B1220; --border: #2B3A4E;
+    --c-node: #7FB0F7; --c-cycle: #FF6B61; --c-dim: #33415A;
+    --c-label: #E6EDF7; --c-edge: #8FA0B5;
+    --c-incoming: #38BDF8; --c-outgoing: #C4B5FD;
+    --c-resolved: #3FBF6A; --c-introduced: #FF5252;
+    --c-package: #302B20; --c-package-tab: #55452A;
+    --c-package-border: #BFA16A; --c-package-selected: #20374F;
+    --c-priority: #FFC267; --c-priority-fill: #805017; --c-priority-text: #FFF2D5;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    /* Pre-JS paint only; the script pins data-theme immediately. */
+    html:not([data-theme]) { background: #101722; color: #E6EDF7; }
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font-family: var(--font); font-size: 14px; }
+  body { display: flex; flex-direction: column; }
+
+  /* ── Base controls (U01) ──────────────────────────────────────────────── */
+  button { font: inherit; color: inherit; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+         padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
+         background: none; color: var(--text); font-size: 14px; line-height: 1.2;
+         cursor: pointer; }
+  .btn-primary { background: var(--accent); color: var(--accent-contrast);
+                 box-shadow: var(--shadow); }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-secondary { background: var(--panel); border-color: var(--border);
+                   box-shadow: var(--shadow); }
+  .btn-secondary:hover { background: var(--panel-2); }
+  .btn-quiet { color: var(--muted); padding: 6px 8px; }
+  .btn-quiet:hover { background: var(--panel-2); color: var(--text); }
+  svg.icon { width: 15px; height: 15px; flex: 0 0 auto; }
+  .export-menu { position: relative; }
+  .export-menu > summary { list-style: none; white-space: nowrap; }
+  .export-menu > summary::-webkit-details-marker { display: none; }
+  .export-menu > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: grid; gap: 6px; width: 240px; padding: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .export-menu small { font-size: 12px; line-height: 1.4; color: var(--muted); }
+  .export-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .workspace-menu { position: relative; }
+  .workspace-menu > summary { list-style: none; white-space: nowrap; cursor: pointer; }
+  .workspace-menu > summary::-webkit-details-marker { display: none; }
+  .workspace-menu > summary::after { content: '⌄'; color: var(--muted); margin-left: 4px; }
+  .workspace-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .workspace-menu > .menu-content { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; display: grid; gap: 8px; width: 280px; max-width: calc(100vw - 32px); max-height: min(440px, 60vh); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
+  .menu-content > .btn { justify-content: flex-start; text-align: left; }
+  .menu-label { font-size: 11px; font-weight: 650; color: var(--muted); }
+  .menu-content #diagram-modes { display: grid; gap: 5px; }
+  #graph-display-menu > .menu-content { left: 0; right: auto; }
+  #refactor-summary[data-active='true'] { color: var(--accent); border-color: var(--accent); }
+  #simulation-indicator { color: inherit; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px;
+           border: 1px solid var(--border); background: var(--panel-2);
+           color: var(--muted); font-size: 11px; }
+  button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Top bar: tabs (segmented), search, theme, actions ────────────────── */
+  #topbar { display: flex; gap: var(--gap-2); align-items: center;
+            padding: var(--gap-1) var(--gap-2); background: var(--panel);
+            border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+            flex: 0 0 auto; }
+  #tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--panel-2);
+          border: 1px solid var(--border); border-radius: var(--radius); }
+  #tabs button { border: none; background: none; border-radius: var(--radius-sm);
+                 padding: 6px 14px; font-size: 14px; color: var(--muted);
+                 cursor: pointer; }
+  #tabs button.active { background: var(--panel); color: var(--accent);
+                        font-weight: 600; box-shadow: var(--shadow); }
+  #filter { padding: 7px 10px; font: inherit; font-size: 14px; width: 220px;
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            background: var(--panel); color: var(--text);
+            -webkit-appearance: none; appearance: none; }
+  #filter::placeholder { color: var(--muted); }
+  #spacer { flex: 1 1 auto; }
+  #language-switch { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; }
+  #language-switch button { background: transparent; border: 0; border-radius: 5px; padding: 6px 8px; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 650; }
+  #language-switch button[aria-pressed='true'] { background: var(--panel-2); color: var(--accent); }
+  #theme-switch { display: inline-flex; gap: 2px; padding: 3px;
+                  background: var(--panel-2); border: 1px solid var(--border);
+                  border-radius: var(--radius); }
+  #theme-switch button { border: none; background: none; width: 30px; height: 28px;
+                         border-radius: var(--radius-sm); display: inline-flex;
+                         align-items: center; justify-content: center;
+                         color: var(--muted); cursor: pointer; }
+  #theme-switch button[aria-pressed='true'] { background: var(--panel);
+                                              color: var(--accent);
+                                              box-shadow: var(--shadow); }
+
+  /* ── Breadcrumbs: paths ⇒ monospace (quiet button row) ────────────────── */
+  #breadcrumbs { padding: 6px var(--gap-2); font-size: 13px; flex: 0 0 auto;
+                 font-family: var(--mono); color: var(--muted);
+                 background: var(--panel); border-bottom: 1px solid var(--border); }
+  #breadcrumbs button { font: inherit; background: none; border: none;
+                        color: var(--accent); cursor: pointer; padding: 2px 4px;
+                        border-radius: 6px; }
+  #breadcrumbs button:hover { background: var(--panel-2); }
+  #breadcrumbs button[aria-current='location'] { color: var(--text); font-weight: 600; }
+
+  /* ── Workspace ────────────────────────────────────────────────────────── */
+  #main { position: relative; flex: 1 1 auto; overflow: hidden; }
+  #tab-graph { position: absolute; top: 0; left: 0; bottom: 0; right: 258px; }
+  #graph { width: 100%; height: 100%; }
+  /* force-graph 1.52 nests this floating label inside its canvas container.
+     Leave the library's positioning and show/hide behavior intact. */
+  #graph .float-tooltip-kap, #graph-context-tooltip {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 8px 10px;
+    font: 12px/1.5 var(--font); text-align: left; white-space: normal;
+    max-width: min(400px, calc(100% - 24px)); box-sizing: border-box;
+    overflow-wrap: anywhere; pointer-events: none; z-index: 3;
+  }
+  #graph-context-tooltip { position: absolute; }
+  /* F17 direction/width legend — static overlay inside the graph tab. */
+  #edge-legend { position: absolute; right: var(--gap-1); bottom: var(--gap-1);
+                 z-index: 2; background: var(--panel); border: 1px solid var(--border);
+                 border-radius: var(--radius-sm); box-shadow: var(--shadow);
+                 padding: var(--gap-1) var(--gap-2); font-size: 11px;
+                 line-height: 1.4; pointer-events: none; color: var(--muted); }
+  #edge-legend .leg-row { display: flex; align-items: center; gap: 6px; }
+  #edge-legend .leg-line { width: 34px; border-top-style: solid; }
+  #sidebar { position: absolute; top: 0; right: 0; bottom: 0; width: 250px;
+             overflow-y: auto; border-left: 1px solid var(--border);
+             background: var(--panel); padding: var(--gap-1) var(--gap-2);
+             box-sizing: border-box; font-size: 13px; }
+  #sidebar h3 { margin: var(--gap-2) 0 6px; font-size: 11px; font-weight: 600;
+                letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  #sidebar table { border-collapse: collapse; width: 100%;
+                   font-variant-numeric: tabular-nums; }
+  #sidebar td, #sidebar th { padding: 3px 6px; text-align: left;
+                             border-bottom: 1px solid var(--border); }
+  #sidebar .mono { font-family: var(--mono); font-size: 12px; }
+  #tab-cycles, #tab-dsm { position: absolute; inset: 0; right: 258px;
+                          overflow: auto; padding: var(--gap-2); box-sizing:
+                          border-box; background: var(--bg); }
+  .panel-hidden { display: none !important; }
+  #cycles-panel { list-style: none; margin: 0; padding: 0; }
+  #cycles-panel li { padding: var(--gap-1) 10px; margin: 6px 0; cursor: pointer;
+                     border: 1px solid var(--border); border-radius: var(--radius-sm);
+                     background: var(--panel); box-shadow: var(--shadow);
+                     font-family: var(--mono); font-size: 12px; }
+  #cycles-panel li:hover { border-color: var(--accent); }
+  #cycles-panel li.empty { cursor: default; color: var(--muted); box-shadow: none; }
+  table.dsm { border-collapse: collapse; font-size: 12px;
+              font-variant-numeric: tabular-nums; }
+  table.dsm th, table.dsm td { border: 1px solid var(--border); padding: 3px 8px; }
+  table.dsm th { background: var(--panel); color: var(--muted); font-weight: 600; }
+  table.dsm td.dsm-cyclic { background: rgba(217, 45, 32, 0.22); font-weight: 700; }
+  #ops-strip { display: flex; gap: var(--gap-2); align-items: center; flex-wrap: wrap;
+               border-top: 1px solid var(--border); background: var(--panel);
+               padding: 6px var(--gap-2); flex: 0 0 auto; font-size: 13px; }
+  #ops-list { list-style: none; margin: 0; padding: 0; display: flex;
+              gap: 10px; flex-wrap: wrap; }
+  #ops-list li { padding: 2px 10px; border: 1px solid var(--border);
+                 border-radius: 999px; background: var(--panel-2);
+                 color: var(--muted); font-size: 12px; }
+
+  /* Dashboard shell; all assets are embedded, no frontend build required. */
+  * { box-sizing: border-box; }
+  [hidden], .panel-hidden { display: none !important; }
+  body { overflow: hidden; }
+  #topbar { position: relative; z-index: 10; min-height: 56px; padding: 8px 16px; flex-wrap: wrap; }
+  .brand { font-size: 24px; letter-spacing: -4px; font-weight: 800; padding-right: 8px; color: var(--accent); }
+  .brand span { color: var(--text); }
+  .project-title { min-width: 100px; max-width: 240px; flex: 1; }
+  h1 { font-size: 18px; line-height: 1.3; margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
+  #filter { flex: 1; min-width: 120px; max-width: 240px; }
+  #summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 20px; padding: 6px 16px; border-bottom: 1px solid var(--border); flex: 0 0 auto; max-height: 35vh; overflow: auto; }
+  #repository-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex: 0 0 auto; max-height: 30vh; overflow: auto; font-size: 12px; }
+  #repository-project { max-width: min(500px, 65vw); }
+  #repository-scope { flex-basis: 100%; margin: 0; }
+  #repository-standalone { flex-basis: 100%; }
+  #repository-standalone-note { margin: 0 0 4px; }
+  .repository-command { overflow-wrap: anywhere; user-select: text; margin-right: 8px; }
+  .metric { font-size: 12px; color: var(--muted); }
+  .metric strong { font-size: 21px; color: var(--text); font-variant-numeric: tabular-nums; margin-right: 7px; }
+  [data-metric-help] { cursor: help; }
+  [data-metric-help]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+  #metric-tooltip { position: fixed; z-index: 40; width: 420px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; padding: 12px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); font: 13px/1.5 var(--font); overflow-wrap: anywhere; }
+  .metric-help-marker { color: var(--muted); font-size: 12px; }
+  .report-status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .graph-coverage { margin: 0; font-size: 12px; }
+  #main { --explorer-width: 238px; --inspector-width: 290px; --explorer-track: var(--explorer-width); --inspector-track: var(--inspector-width); --explorer-divider: 6px; --inspector-divider: 6px; display: grid; grid-template-columns: var(--explorer-track) var(--explorer-divider) minmax(0,1fr) var(--inspector-divider) var(--inspector-track); min-height: 0; }
+  #main.explorer-closed { --explorer-track: 0px; --explorer-divider: 0px; }
+  #main.inspector-closed { --inspector-track: 0px; --inspector-divider: 0px; }
+  #explorer, #inspector { background: var(--panel); min-width: 0; overflow: auto; padding: 16px; }
+  #explorer { grid-column: 1; grid-row: 1; }
+  #inspector { grid-column: 5; grid-row: 1; }
+  .explorer-closed #explorer, .inspector-closed #inspector { visibility: hidden; padding: 0; }
+  .panel-resizer { position: relative; grid-row: 1; min-width: 0; cursor: col-resize; touch-action: none; background: var(--bg); z-index: 3; }
+  .panel-resizer::before { content: ''; position: absolute; inset: 0 2px; background: var(--border); border-radius: 2px; }
+  .panel-resizer::after { content: ''; position: absolute; inset: 0 -3px; }
+  .panel-resizer:hover::before, .panel-resizer:focus-visible::before, .panel-resizing .panel-resizer:focus::before { background: var(--accent); }
+  #explorer-resizer { grid-column: 2; }
+  #inspector-resizer { grid-column: 4; }
+  .explorer-closed #explorer-resizer, .inspector-closed #inspector-resizer { display: none; }
+  #main.panel-resizing, #main.panel-resizing * { cursor: col-resize !important; user-select: none !important; }
+  .panel-heading { font-weight: 650; font-size: 15px; margin: 0 0 16px; }
+  #workspace { grid-column: 3; grid-row: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .workspace-bar { position: relative; z-index: 3; min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 4px 10px; }
+  .workspace-bar #tabs { max-width: 100%; overflow-x: auto; box-sizing: border-box; }
+  .workspace-location { min-width: min(120px, 100%); flex: 1 1 120px; display: flex; align-items: center; gap: 8px; }
+  .workspace-location #breadcrumbs { flex: 1; min-width: 0; }
+  .workspace-help, .tree-legend-details { position: static; flex: 0 0 auto; font-size: 12px; }
+  .workspace-help summary, .tree-legend-details summary, #graph-scope-details summary { cursor: pointer; color: var(--muted); min-height: 32px; line-height: 20px; padding: 6px 4px; white-space: nowrap; }
+  .workspace-help > small, .tree-legend-content { position: absolute; top: calc(100% + 4px); z-index: 4; display: block; width: 320px; max-width: min(320px, calc(100% - 20px)); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); box-shadow: var(--shadow); font-size: 12px; line-height: 1.5; }
+  .workspace-help > small { right: 10px; }
+  .tree-legend-content { left: 10px; }
+  #graph-options { position: relative; z-index: 2; flex: 0 0 auto; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .graph-option-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+  #edge-modes { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+  #edge-modes button, #toggle-cycles { padding: 5px 8px; font-size: 11px; }
+  #edge-modes [aria-pressed=true], #toggle-cycles[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
+  .graph-status { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; }
+  #edge-reference, #graph-visibility, #graph-hint { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
+  #edge-reference { max-width: min(480px, 50%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #graph-status-brief, #graph-filter-feedback { font-size: 12px; line-height: 1.4; color: var(--muted); }
+  #graph-status-brief { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #graph-filter-feedback { flex-basis: 100%; padding: 3px 0; }
+  .tree-options-content { display: grid; gap: 8px; width: 240px; }
+  #graph-scope-details { font-size: 12px; }
+  #graph-scope-details[open] { flex-basis: 100%; order: 1; }
+  #graph-scope-details #graph-hint { padding: 0 4px 4px; }
+  #breadcrumbs { border: 0; padding: 0; overflow: auto; max-width: 100%; white-space: nowrap; }
+  #viewport { position: relative; min-height: 0; flex: 1; }
+  #tab-graph, #tab-dsm, #tab-calls, #tab-services, #tab-architecture, #tab-security { position: absolute; inset: 0; padding: 0; }
+  #tab-security { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
+  #tab-security h2 { margin: 0 0 8px; }
+  /* Review Dashboard (R36): panel containers are filled by viewer_dash_*.js (R37–R42). */
+  #tab-review-dashboard { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
+  #tab-review-dashboard h2 { margin: 0 0 8px; }
+  #dashboard-status { font-weight: 650; }
+  #dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+  .dash-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
+  .dash-panel h3 { margin: 0; font-size: 14px; }
+  .dash-panel.dash-wide { grid-column: 1 / -1; }
+  .dash-panel .empty { color: var(--muted); }
+  /* R37 KPI cards (viewer_dash_kpis.js). */
+  #dashboard-kpis .dash-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .dash-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
+  .dash-card strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .dash-card > span { color: var(--muted); font-size: 12px; }
+  .dash-card small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+  .dash-card[data-level=green] strong { color: var(--c-resolved); }
+  .dash-card[data-level=yellow] strong { color: var(--c-priority); }
+  .dash-card[data-level=red] strong { color: var(--c-cycle); }
+  .dash-card[data-node] { cursor: pointer; }
+  .dash-card[data-node]:hover { border-color: var(--accent); }
+  .dash-card[data-node]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* R38 A/I zone scatter (viewer_dash_zones.js). */
+  #dashboard-zones svg { width: 100%; height: auto; max-width: 360px; }
+  #dashboard-zones .dash-zone-counts { font-variant-numeric: tabular-nums; }
+  .dash-zone-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+  .dash-zone-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+  .dash-zone-point, #dashboard-zones circle[tabindex] { cursor: pointer; }
+  #dashboard-zones circle[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #security-status { font-weight: 650; }
+  #security-status[data-status=error], #security-status[data-status=stale] { color: var(--c-priority); }
+  #security-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 16px 0 8px; }
+  .security-metric { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
+  .security-metric strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+  .security-metric span { color: var(--muted); font-size: 12px; }
+  #security-severities { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .security-severity { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 12px; }
+  .security-severity[data-security-severity=critical], .security-severity[data-security-severity=high] { color: var(--c-cycle); border-color: var(--c-cycle); }
+  .security-severity[data-security-severity=medium] { color: var(--c-priority); }
+  #security-coverage { padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  #security-coverage summary, .security-evidence summary { cursor: pointer; padding: 5px 0; }
+  #security-coverage-content, .security-finding { overflow-wrap: anywhere; }
+  .security-command { display: block; white-space: pre-wrap; margin: 8px 0; }
+  .security-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin: 16px 0 8px; }
+  .security-controls label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; }
+  .security-controls label:first-child { flex: 1; min-width: min(200px, 100%); }
+  .security-controls input, .security-controls select { box-sizing: border-box; width: 100%; min-width: 0; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .security-finding { padding: 14px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
+  .security-finding-heading, .security-versions { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; }
+  .security-finding h3 { font-size: 15px; margin: 0; }
+  .security-finding p, .security-versions, .security-evidence { font-size: 12px; }
+  .security-versions { color: var(--muted); margin: 8px 0; }
+  #tab-architecture { overflow: auto; min-height: 0; background: var(--bg); padding: 14px; }
+  .architecture-section { margin: 12px 0; padding: 12px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+  .architecture-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .architecture-relation { display: block; width: 100%; text-align: left; margin: 6px 0; overflow-wrap: anywhere; }
+  .architecture-relation[data-policy=forbidden] { border-left: 3px solid var(--c-cycle); }
+  .architecture-relation[data-policy=allowed] { border-left: 3px solid var(--c-incoming); }
+  .architecture-relation[aria-pressed=true] { outline: 2px solid var(--accent); }
+  #architecture-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #tab-services { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+  .services-description { padding: 12px 16px 6px; max-height: 35%; overflow: auto; border-bottom: 1px solid var(--border); }
+  .services-description p { margin: 5px 0; font-size: 12px; }
+  #services-projects { margin: 8px 0; font-size: 12px; }
+  #services-projects summary { cursor: pointer; padding: 4px 0; }
+  #workspace-panel { margin: 8px 0; } #workspace-panel > summary { cursor: pointer; font-weight: 600; }
+  #workspace-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+  #workspace-controls label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+  #workspace-controls select, #workspace-controls input { max-width: 260px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+  #workspace-list { max-height: 380px; overflow: auto; } #workspace-list .engineering-card { margin: 8px 0; }
+  .workspace-evidence { padding: 4px 0; overflow-wrap: anywhere; }
+  .workspace-relation[data-direction=incoming] { border-left: 3px solid var(--c-incoming); }
+  .workspace-relation[data-direction=outgoing] { border-left: 3px solid var(--c-outgoing); }
+  #services-project-list { display: grid; gap: 3px; max-height: 180px; overflow: auto; margin: 6px 0; }
+  .service-project { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; text-align: left; width: 100%; min-width: 0; overflow-wrap: anywhere; }
+  .service-project[aria-pressed="true"] { border-color: var(--accent); }
+  .service-project .mono { flex: 1; min-width: min(180px,100%); }
+  .services-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .services-toolbar label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .services-toolbar select { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
+  #services-tree { flex: 1; min-height: 160px; overflow: auto; }
+  #services-tree svg { display: block; flex-shrink: 0; }
+  #services-cycles { display: flex; gap: 6px; flex-wrap: wrap; }
+  .service-cycle { color: var(--c-cycle); text-align: left; overflow-wrap: anywhere; }
+  #services-cycles-only[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
+  .service-evidence { border-top: 1px solid var(--border); padding: 10px 0; overflow-wrap: anywhere; }
+  .service-connection { display: block; text-align: left; overflow-wrap: anywhere; }
+  #services-tooltip { position: fixed; z-index: 20; max-width: min(520px,calc(100vw - 24px)); max-height: 50vh; overflow: auto; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 8px 24px #0004; pointer-events: none; font-size: 12px; overflow-wrap: anywhere; }
+  #diagram-modes { display: flex; flex-wrap: wrap; gap: 5px; padding-right: 10px; border-right: 1px solid var(--border); }
+  #diagram-modes [aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
+  #dependency-browser { position: absolute; inset: 0; overflow: auto; padding: 20px; background: var(--bg); }
+  #package-tree { position: absolute; inset: 0; overflow: auto; background: var(--bg); }
+  #package-tree > svg { display: block; max-width: none; }
+  .package-tree-legend { position: sticky; top: 0; left: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; box-sizing: border-box; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  .package-tree-zoom { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+  .package-tree-zoom .btn { font-size: 12px; padding: 4px 8px; }
+  .tree-scale { min-width: 38px; font-variant-numeric: tabular-nums; }
+  .tree-reference { overflow-wrap: anywhere; }
+  .tree-direction-count { font: 11px system-ui; pointer-events: none; }
+  .package-tree-hierarchy { fill: none; stroke: var(--border); stroke-width: 1.5; pointer-events: none; }
+  .package-tree-node { cursor: pointer; outline: none; }
+  .tree-node-shape { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+  .tree-package .tree-node-shape { fill: var(--c-package); stroke: var(--c-package-border); }
+  .tree-context .tree-node-shape { stroke-dasharray: 4 3; }
+  .package-tree-node.in-cycle .tree-node-shape { stroke: var(--c-cycle); }
+  .package-tree-node.is-selected .tree-node-shape, .package-tree-node:focus .tree-node-shape, .package-tree-node:hover .tree-node-shape { stroke: var(--accent); stroke-width: 2.5; }
+  .tree-node-name { fill: var(--text); font: 600 13px system-ui; pointer-events: none; }
+  .tree-context .tree-node-name { fill: var(--muted); font-size: 11px; }
+  .tree-row .tree-node-name { font-size: 12px; font-weight: 500; }
+  .tree-row[data-pattern-node="true"] .tree-row-background { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 3; }
+  .tree-row-background { fill: transparent; stroke: none; }
+  .tree-row.in-cycle .tree-row-background { fill: var(--c-cycle); fill-opacity: .12; }
+  .tree-row.is-selected .tree-row-background, .tree-row:hover .tree-row-background, .tree-row:focus .tree-row-background { fill: var(--accent); fill-opacity: .16; stroke: var(--accent); stroke-width: 1; }
+  .tree-row-icon { fill: var(--c-package); stroke: var(--c-package-border); stroke-width: 1.2; pointer-events: none; }
+  .tree-row-meta { fill: var(--muted); font: 10px system-ui; pointer-events: none; }
+  .tree-relation-node { cursor: pointer; outline: none; }
+  .tree-relation-background { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
+  .tree-relation-node.in-cycle .tree-row-icon { stroke: var(--c-cycle); }
+  .tree-relation-node.is-selected .tree-relation-background, .tree-relation-node:hover .tree-relation-background, .tree-relation-node:focus .tree-relation-background { stroke: var(--accent); stroke-width: 2; }
+  .tree-relation-axis { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 5; opacity: .5; pointer-events: none; }
+  .tree-branch-band { fill: var(--panel); fill-opacity: .28; stroke: var(--border); stroke-width: .6; pointer-events: none; }
+  .tree-level-divider { stroke: var(--border); stroke-width: 1; pointer-events: none; }
+  .tree-disclosure { cursor: pointer; outline: none; }
+  .tree-disclosure rect { fill: var(--panel); stroke: var(--muted); stroke-width: 1; }
+  .tree-disclosure path { fill: none; stroke: var(--text); stroke-width: 1.2; pointer-events: none; }
+  .tree-disclosure:focus rect, .tree-disclosure:hover rect { stroke: var(--accent); stroke-width: 2; }
+  .tree-node-kind { fill: var(--muted); font: 9px system-ui; pointer-events: none; }
+  .tree-node-detail { fill: var(--muted); font: 11px system-ui; pointer-events: none; }
+  .in-cycle .tree-node-detail { fill: var(--c-cycle); }
+  .tree-priority-shape { fill: var(--c-priority-fill); stroke: var(--c-priority); }
+  .tree-priority-text { fill: var(--c-priority-text); font: 600 11px system-ui; }
+  .package-tree-edge { cursor: pointer; outline: none; }
+  .tree-edge-line { stroke-linejoin: round; }
+  .package-tree-edge:hover .tree-edge-line, .package-tree-edge:focus .tree-edge-line, .package-tree-edge.is-selected .tree-edge-line { stroke-width: 3.5; }
+  .edge-hover .package-tree-edge { opacity: .15; }
+  .edge-hover .package-tree-edge.is-hovered, .edge-hover .package-tree-edge.is-selected { opacity: 1; }
+  .package-tree-node.search-dimmed { opacity: .3; }
+  .dependency-browser-heading { margin-bottom: 18px; }
+  .dependency-browser-heading h2 { margin: 0 0 6px; font-size: 19px; overflow-wrap: anywhere; }
+  .dependency-browser-heading p { margin: 5px 0; }
+  .dependency-kind { color: var(--muted); font-size: 10px; letter-spacing: .05em; }
+  .dependency-incoming-label, .dependency-incoming h3 { color: var(--c-incoming); }
+  .dependency-outgoing-label, .dependency-outgoing h3 { color: var(--c-outgoing); }
+  .dependency-priority { padding: 2px 6px; color: var(--c-priority-text); background: var(--c-priority-fill); border: 1px solid var(--c-priority); border-radius: 4px; font-size: 11px; font-weight: 650; }
+  .dependency-lanes { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,.75fr) minmax(0,1fr); gap: 16px; align-items: start; }
+  .dependency-section { min-width: 0; margin-bottom: 20px; }
+  .dependency-section h3 { margin: 0 0 12px; font-size: 14px; }
+  .dependency-center { position: sticky; top: 0; min-width: 0; border: 1px solid var(--accent); border-radius: 10px; background: var(--panel); padding: 16px; }
+  .dependency-center h3 { margin: 8px 0; font-size: 16px; overflow-wrap: anywhere; }
+  .dependency-center .btn { margin-top: 10px; }
+  .dependency-row { margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  .dependency-row.dependency-incoming { border-left: 3px solid var(--c-incoming); }
+  .dependency-row.dependency-outgoing { border-left: 3px solid var(--c-outgoing); }
+  .dependency-route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+  .dependency-node-link { padding: 0; overflow-wrap: anywhere; text-align: left; font-size: 12px; max-width: 100%; }
+  .dependency-route-arrow { color: var(--muted); }
+  .dependency-row-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin-top: 7px; }
+  .dependency-evidence { padding: 0; font-size: 11px; color: var(--muted); text-align: left; }
+  .dependency-cycle-badge { display: inline-block; color: var(--c-cycle); font-size: 10px; line-height: 1.4; }
+  .dependency-cycle-badge[data-cycle-state='Package cycle context'] { color: var(--muted); }
+  .dependency-cycle-badge[data-cycle-state='Cycle resolved'] { color: var(--c-resolved); }
+  .dependency-page { grid-column: 1 / -1; padding: 6px 0; }
+  @media (max-width: 1100px) { .dependency-lanes { grid-template-columns: minmax(0,1fr); } .dependency-center { position: static; grid-row: 1; } }
+  #tab-cycles { position: static; padding: 0; overflow: visible; background: transparent; }
+  #sidebar { position: static; width: auto; border: 0; padding: 0; overflow: visible; }
+  #sidebar h2 { font-size: 17px; margin-top: 0; overflow-wrap: anywhere; }
+  #sidebar h3 { margin-top: 20px; }
+  .inspector-eyebrow { display: block; margin-bottom: 8px; font-size: 10px; letter-spacing: .1em; color: var(--muted); }
+  .inspector-full-name { font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+  .inspector-metrics { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; margin: 14px 0; }
+  .inspector-metric { padding: 10px 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); text-align: center; }
+  .inspector-metric strong, .inspector-metric span { display: block; }
+  .inspector-metric strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .inspector-metric span { margin-top: 3px; color: var(--muted); font-size: 10px; }
+  .inspector-section { margin: 14px 0; border-top: 1px solid var(--border); padding-top: 12px; }
+  .inspector-section > summary { cursor: pointer; font-size: 12px; font-weight: 650; padding: 4px 0; }
+  .inspector-neighbors { max-height: 260px; overflow: auto; margin-top: 6px; }
+  .inspector-neighbor { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .inspector-neighbor .neighbor { flex: 1; min-width: 0; padding: 5px; }
+  .inspector-neighbor > button:last-child { flex-shrink: 0; font-size: 11px; color: var(--muted); }
+  .muted, .empty { color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .empty { padding: 20px 4px; }
+  #explorer-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  #explorer-tabs button { flex: 1; border: 0; background: var(--panel-2); border-radius: 8px; padding: 8px; cursor: pointer; }
+  #explorer-tabs [aria-selected=true] { color: var(--accent); font-weight: 650; }
+  .review-list { list-style: none; padding: 0; margin: 12px 0; }
+  .review-row { display: block; width: 100%; padding: 10px; margin: 6px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); text-align: left; cursor: pointer; }
+  .review-row strong, .review-row small { display: block; overflow-wrap: anywhere; }
+  .review-row small { margin-top: 5px; color: var(--muted); }
+  .review-row[data-priority='high'] { border-left: 4px solid var(--c-priority); }
+  .review-score { color: var(--c-priority); font-weight: 650; }
+  .review-details { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+  .review-details dl { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px 12px; }
+  .review-details dd { margin: 0; text-align: right; }
+  .review-details ul { padding-left: 20px; }
+  #coverage-review { margin: 10px 0 16px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+  #coverage-review summary { cursor: pointer; font-size: 12px; }
+  #coverage-review p { overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; }
+  #coverage-review pre { font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #quality-review { margin: 10px 0 16px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+  #quality-review summary { cursor: pointer; font-size: 12px; }
+  #quality-review p, #quality-review small { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+  #quality-review pre { font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #quality-review input, #quality-review select { max-width: 100%; width: 100%; margin: 4px 0; }
+  #quality-list article { margin: 8px 0; } #quality-list a { display: block; font-size: 11px; }
+  .quality-badge { background: var(--c-priority-fill); color: var(--c-priority-text); border-radius: 3px; padding: 1px 4px; font-size: 10px; flex-shrink: 0; }
+  .kpi-details { flex: 0 1 auto; min-width: 0; font-size: 12px; }
+  .kpi-details[open] { flex-basis: 100%; order: 1; }
+  .kpi-details summary { cursor: pointer; color: var(--accent); }
+  .kpi-grid { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 12px 0; }
+  #module-list, #cycles-panel { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; padding: 0; list-style: none; }
+  .explorer-row { display: block; width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 9px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+  .explorer-row:hover { background: var(--panel-2); }
+  .explorer-row[aria-pressed=true] { color: var(--accent); background: var(--panel-2); border-color: var(--accent); }
+  .explorer-row small { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  #module-list { display: block; }
+  .explorer-item { margin: 2px 0; }
+  .explorer-tree-row { display: flex; align-items: flex-start; min-width: 0; }
+  .explorer-children { margin: 0 0 0 11px; padding: 0 0 0 12px; border-left: 1px solid var(--border); list-style: none; }
+  .explorer-toggle, .explorer-toggle-space { flex: 0 0 22px; width: 22px; height: 30px; }
+  .explorer-toggle { padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; border-radius: 4px; }
+  .explorer-toggle:hover { background: var(--panel-2); }
+  .explorer-toggle:disabled { opacity: .55; cursor: default; }
+  .explorer-node { display: flex; gap: 8px; align-items: flex-start; flex: 1; min-width: 0; width: auto; padding: 6px 5px; border-radius: 5px; }
+  .explorer-text { display: block; flex: 1; min-width: 0; }
+  .explorer-name { display: block; font-size: 12px; line-height: 18px; }
+  .explorer-priority { flex: 0 0 auto; margin-left: auto; padding: 0 4px; border: 1px solid var(--c-priority); border-radius: 4px; color: var(--c-priority-text); background: var(--c-priority-fill); font-size: 10px; font-weight: 650; line-height: 16px; white-space: nowrap; }
+  .explorer-priority[data-tree-priority='medium'] { color: var(--c-priority); background: transparent; }
+  .explorer-node small { font-size: 10px; margin-top: 1px; overflow-wrap: anywhere; }
+  .explorer-icon { position: relative; display: block; flex: 0 0 14px; width: 14px; height: 13px; margin-top: 2px; }
+  .package-icon { height: 11px; margin-top: 5px; border: 1px solid var(--c-package-border); border-radius: 1px; background: var(--c-package); }
+  .package-icon::before { content: ''; position: absolute; left: -1px; top: -4px; width: 7px; height: 4px; border: 1px solid var(--c-package-border); border-bottom: 0; border-radius: 2px 2px 0 0; background: var(--c-package-tab); }
+  .file-icon { flex-basis: 11px; width: 11px; height: 14px; margin-left: 1px; margin-right: 2px; border: 1px solid var(--muted); border-radius: 1px; background: var(--panel); }
+  .file-icon::after { content: ''; position: absolute; top: 3px; left: 2px; width: 5px; height: 1px; background: var(--muted); box-shadow: 0 3px var(--muted), 0 6px var(--muted); }
+  .context-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  .evidence { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .evidence pre, .path { font: 12px/1.6 var(--mono); overflow: auto; max-width: 100%; white-space: pre; }
+  .evidence .path { color: var(--muted); }
+  .neighbor { display: block; width: 100%; text-align: left; overflow-wrap: anywhere; }
+  #graph-controls { position: absolute; bottom: 16px; left: 16px; display: flex; flex-wrap: wrap; gap: 5px; z-index: 2; max-width: calc(100% - 170px); }
+  #graph-state { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 24px; max-width: 85%; text-align: center; pointer-events: none; }
+  #graph-state button { pointer-events: auto; margin-top: 8px; }
+  #edge-legend { font-size: 10px; bottom: 16px; right: 16px; }
+  #tab-calls { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); container-type: inline-size; }
+  .calls-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .calls-toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+  .calls-toolbar select, .calls-toolbar input, .calls-ranking-controls select { box-sizing: border-box; max-width: 100%; padding: 7px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; }
+  #calls-package { max-width: 320px; } #calls-internal[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+  .calls-toolbar { flex-shrink: 0; max-height: 30%; overflow: auto; }
+  .calls-description { padding: 6px 14px; max-height: 30%; overflow: auto; flex-shrink: 0; }
+  .calls-description p { margin: 6px 0; }
+  .calls-description summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .calls-columns { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(190px, .65fr) minmax(210px, .75fr) minmax(0, 1fr); gap: 12px; padding: 8px 12px 16px; }
+  .calls-outline, .calls-master, .calls-detail { min-width: 0; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--panel); }
+  .calls-outline h2, .calls-master h2 { margin: 0 0 12px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .calls-outline > p { font-size: 11px; line-height: 1.5; margin: 8px 0; overflow-wrap: anywhere; }
+  .calls-tree-controls { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .calls-tree-controls .btn { min-height: 28px; padding: 4px 7px; font-size: 11px; }
+  #calls-tree { min-width: 0; padding: 3px 0; }
+  .call-tree-row { position: relative; display: flex; align-items: center; gap: 3px; min-width: 210px; min-height: 28px; margin-left: calc(var(--call-tree-depth, 0) * 14px); padding-left: 6px; border-left: 1px solid var(--border); }
+  .call-tree-row::before { content: ''; position: absolute; left: 0; width: 5px; top: 50%; border-top: 1px solid var(--border); }
+  .call-tree-toggle { flex: 0 0 22px; width: 22px; min-height: 24px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; cursor: pointer; font-size: 12px; }
+  .call-tree-toggle:hover { background: var(--panel-2); border-color: var(--border); }
+  .call-tree-label { flex: 1 1 auto; min-width: 0; padding: 5px 6px; border: 1px solid transparent; border-radius: 5px; background: none; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .call-tree-label:hover { background: var(--panel-2); }
+  .call-tree-label[aria-pressed=true] { background: var(--c-package-selected); border-color: var(--accent); box-shadow: inset 2px 0 var(--accent); }
+  .call-tree-row[data-call-kind=package] .call-tree-label { font-weight: 650; }
+  .call-tree-row[data-call-kind=method] .call-tree-label { font-family: var(--mono); font-size: 11px; }
+  .call-tree-meta { flex: 0 0 auto; max-width: 42%; font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .call-tree-row[data-call-role=caller] .call-tree-meta { color: var(--c-outgoing); }
+  .call-tree-row[data-call-role=target] .call-tree-meta { color: var(--c-incoming); }
+  .call-tree-row[data-call-role=both] .call-tree-meta { color: var(--accent); }
+  .call-tree-label:focus-visible, .call-tree-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+  #calls-relations { min-width: 0; }
+  .calls-ranking-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .calls-ranking-controls label { display: flex; flex: 1 1 110px; flex-direction: column; gap: 4px; color: var(--muted); font-size: 11px; min-width: 0; }
+  .calls-ranking-controls select { width: 100%; min-width: 0; }
+  #calls-ranking p { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+  #calls-ranking details { margin: 8px 0 12px; }
+  #calls-ranking summary { cursor: pointer; font-size: 11px; color: var(--muted); }
+  .calls-master .calls-tree-controls [aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+  .call-rank { white-space: normal; overflow-wrap: anywhere; }
+  .call-rank strong { display: block; font-size: 12px; }
+  #calls-cycles p, #calls-cycles summary { font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+  #calls-cycles-list { max-height: 220px; overflow: auto; margin: 8px 0; }
+  #calls-cycle-detail { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px; }
+  #calls-cycle-detail h3 { font-size: 12px; color: var(--c-cycle); }
+  #calls-cycle-detail details { margin: 10px 0; }
+  #calls-cycle-detail summary { cursor: pointer; }
+  .call-cycle-member, .call-cycle-edge { display: block; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; margin: 5px 0; }
+  .call-cycle-edge[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+  .call-tree-cycle { color: var(--c-cycle); font-size: 11px; flex-shrink: 0; }
+  .call-tree-row[data-call-cycle-member=true] { border-left-color: var(--c-cycle); }
+  .call-relation { margin-bottom: 8px; background: var(--panel); border-color: var(--border); padding: 12px; }
+  .call-relation[aria-pressed=true] { box-shadow: inset 3px 0 var(--accent); }
+  #calls-evidence, #calls-suggestions { min-width: 0; overflow-wrap: anywhere; }
+  #calls-evidence h3, #calls-suggestions h3 { margin-top: 12px; }
+  .call-proposal { padding: 12px; margin: 10px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; line-height: 1.6; }
+  .call-proposal h4 { margin: 0 0 6px; } .call-proposal ol { padding-left: 20px; }
+  .call-method { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .call-method > summary { cursor: pointer; padding: 12px; background: var(--panel-2); font: 12px/1.6 var(--mono); overflow-wrap: anywhere; }
+  .call-method > summary .badge { margin-left: 8px; font-family: var(--font); white-space: nowrap; }
+  .call-method .evidence { margin: 0; border: 0; border-radius: 0; border-top: 1px solid var(--border); }
+  .call-method pre { margin-bottom: 0; padding: 10px; border-radius: 6px; background: var(--bg); }
+  .call-proposal > summary { cursor: pointer; font-weight: 650; }
+  #sidebar .review-details pre { font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .repair-plan { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 12px 0; background: var(--panel-2); }
+  .repair-plan h4 { margin: 0 0 8px; } .repair-plan p, #repair-result { overflow-wrap: anywhere; }
+  .repair-plan summary { cursor: pointer; color: var(--accent); }
+  .repair-plan pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 var(--mono); }
+  .repair-plan ol { padding-left: 20px; }
+  .call-proposal .path { white-space: normal; overflow-wrap: anywhere; }
+  @media (max-width: 1100px) { .calls-columns { grid-template-columns: minmax(190px, .8fr) minmax(0, 1fr); grid-template-rows: minmax(0, .6fr) minmax(0, 1fr); overflow: auto; } .calls-outline { grid-row: 1 / 3; } }
+  @media (max-width: 900px) { .calls-columns { grid-template-columns: minmax(0, 1fr); overflow: auto; display: block; } .calls-outline, .calls-master { margin-bottom: 12px; } .calls-outline, .calls-master, .calls-detail { overflow: visible; } }
+  /* Follow the actual workspace width when Explorer/Inspector are resized. */
+  @container (max-width: 900px) { .calls-columns { grid-template-columns: minmax(190px, .8fr) minmax(0, 1fr); grid-template-rows: minmax(0, .6fr) minmax(0, 1fr); overflow: auto; } .calls-outline { grid-row: 1 / 3; } }
+  @container (max-width: 600px) { .calls-columns { display: block; overflow: auto; } .calls-outline, .calls-master { margin-bottom: 12px; } .calls-outline, .calls-master, .calls-detail { overflow: visible; } }
+  @media (max-width: 900px), (max-height: 600px) {
+    #tab-services { overflow: auto; }
+    .services-description { flex: 0 0 auto; max-height: none; overflow: visible; }
+    .services-toolbar { flex-shrink: 0; }
+    #services-tree { flex: 1 0 auto; overflow: visible; }
+  }
+  #tab-dsm { display: flex; flex-direction: column; }
+  .matrix-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; font-size: 12px; color: var(--muted); }
+  #dsm-tab { overflow: auto; flex: 1; min-height: 0; padding: 0 12px 12px; }
+  table.dsm { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  .dsm th, .dsm td { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0; min-width: 40px; height: 38px; text-align: center; }
+  .dsm thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); min-width: 160px; max-width: 240px; padding: 8px; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+  .dsm th:first-child { position: sticky; left: 0; background: var(--panel); padding: 8px; min-width: 180px; max-width: 240px; text-align: left; overflow-wrap: anywhere; }
+  .dsm thead th:first-child { z-index: 3; }
+  .matrix-heading { display: flex; align-items: flex-start; gap: 6px; }
+  .matrix-heading > span { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; user-select: text; }
+  .matrix-heading .matrix-copy { flex: 0 0 24px; padding: 2px; min-height: 24px; height: 24px; font-size: 16px; line-height: 1; }
+  .dsm td button { width: 100%; height: 100%; border: 0; background: var(--cell-bg,transparent); cursor: pointer; padding: 5px; font-variant-numeric: tabular-nums; }
+  .dsm td button[aria-pressed=true] { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .dsm-cyclic button { color: var(--c-cycle); font-weight: 700; }
+  .dsm .diagonal { background: var(--panel-2); color: var(--muted); }
+  .dsm.compact th, .dsm.compact td { min-width: 34px; height: 28px; font-size: 10px; }
+  .dsm.compact thead th { min-width: 120px; }
+  #ops-strip { gap: 12px; padding: 12px 20px; flex-wrap: wrap; }
+  #ops-list { flex: 1; max-height: 100px; overflow: auto; }
+  #simulation-mode[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
+  #feedback { min-height: 24px; padding: 4px 20px; font-size: 12px; background: var(--panel); color: var(--muted); }
+  #feedback:empty { display: none; }
+  dialog { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: min(480px,90vw); box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgba(10,20,35,.4); }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  #scenario-dialog { width: min(600px, 90vw); max-width: 90vw; max-height: 85vh; overflow: auto; }
+  .scenario-field { display: grid; gap: 5px; margin: 12px 0; }
+  .scenario-field input, .scenario-field select, .scenario-field textarea { box-sizing: border-box; width: 100%; }
+  .scenario-field textarea { min-height: 72px; resize: vertical; }
+  .scenario-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 1100px) {
+    #main, #main.explorer-closed, #main.inspector-closed, #main.explorer-closed.inspector-closed { display: block; }
+    #workspace { height: 100%; }
+    #explorer, #inspector { position: absolute; top: 0; bottom: 0; z-index: 5; box-shadow: var(--shadow); }
+    #explorer { left: 0; width: var(--explorer-width); } #inspector { right: 0; width: var(--inspector-width); }
+    .panel-resizer { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 6; }
+    #explorer-resizer { left: var(--explorer-width); } #inspector-resizer { right: var(--inspector-width); }
+    .explorer-closed #explorer, .inspector-closed #inspector { display: none; }
+    #topbar { padding: 8px 12px; gap: 6px; } .eyebrow { display: none; }
+    #spacer { display: none; } #filter { max-width: none; }
+    #summary { gap: 6px 12px; padding: 6px 12px; } .metric strong { font-size: 17px; }
+  }
+  @media (max-width: 600px) {
+    .export-menu > div { position: static; width: min(240px, 70vw); }
+    #topbar .workspace-menu > .menu-content { position: static; margin-top: 6px; max-height: none; }
+    #topbar { max-height: 35vh; overflow: auto; } .project-title { flex-basis: calc(100% - 60px); max-width: none; }
+    #summary { gap: 8px; max-height: 20vh; } .report-status { width: 100%; margin: 0; }
+    .workspace-bar { flex-wrap: wrap; } .workspace-location { flex-basis: 100%; }
+    #graph-controls { max-width: 90%; } #edge-legend { top: 10px; bottom: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+  #tab-quality { position:absolute; inset:0; padding:16px; overflow:auto; min-height:0; box-sizing:border-box; }
+  #tab-assessment { position:absolute; inset:0; padding:18px; overflow:auto; background:var(--bg); box-sizing:border-box; }
+  #assessment-content { max-width:1400px; margin:0 auto; }
+  .assessment-summary { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; }
+  .assessment-summary > div { display:flex; flex-direction:column; gap:4px; padding:12px 18px; border:1px solid var(--border); border-radius:8px; min-width:120px; }
+  .assessment-summary strong { font-size:24px; }
+  .assessment-controls { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  .assessment-controls input { flex:1; min-width:160px; }
+  .assessment-layout { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:start; }
+  .assessment-section { margin:18px 0; min-width:0; }
+  .assessment-section h3 { margin:0 0 10px; }
+  .assessment-finding { display:block; width:100%; text-align:left; white-space:pre-line; overflow-wrap:anywhere; padding:12px; margin:6px 0; border:1px solid var(--border); border-radius:6px; color:var(--text); background:var(--panel); cursor:pointer; }
+  .assessment-finding[aria-pressed="true"] { outline:2px solid var(--accent); }
+  .assessment-field { display:flex; flex-direction:column; gap:5px; margin:12px 0; }
+  .assessment-field textarea { min-height:70px; resize:vertical; }
+  #assessment-content input, #assessment-content select, #assessment-content textarea { padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:4px; max-width:100%; box-sizing:border-box; }
+  #assessment-content pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; }
+  .assessment-file { display:block; overflow-wrap:anywhere; margin:4px 0; }
+  .assessment-warning { padding:10px; border-left:3px solid #c58a23; overflow-wrap:anywhere; }
+  @media (max-width:1100px) { .assessment-layout { grid-template-columns:minmax(0,1fr); } }
+  .engineering-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+  .engineering-controls label { display:flex; flex-direction:column; gap:4px; max-width:100%; }
+  .engineering-controls select,.engineering-controls input { max-width:320px; width:100%; padding:7px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:6px; }
+  #engineering-list { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; margin:12px 0; align-items:start; }
+  .engineering-card { padding:12px; border:1px solid var(--border); border-radius:9px; background:var(--panel); overflow-wrap:anywhere; min-width:0; }
+  .engineering-card h3 { font-size:14px; margin:0 0 8px; } .engineering-card p,.engineering-card small { font-size:12px; line-height:1.5; }
+  .engineering-card pre,#engineering-note pre { white-space:pre-wrap; font-size:11px; overflow-wrap:anywhere; }
+  .engineering-card details { margin-top:8px; } #contracts-panel { margin:10px 0; } #contracts-list .engineering-card { margin:8px 0; }
+  .class-heatmap-controls,.class-metric-actions,.class-heatmap-legend { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .class-heatmap-controls label { display:flex; flex-direction:column; gap:4px; font-size:12px; max-width:100%; }
+  .class-heatmap-controls select { padding:7px; color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:6px; max-width:100%; }
+  .class-metric-actions { margin:12px 0; }
+  .class-heatmap-legend { font-size:11px; }
+  .class-heatmap-scroll { overflow:auto; min-width:0; max-width:100%; border:1px solid var(--border); border-radius:8px; }
+  .class-heatmap { border-collapse:separate; border-spacing:4px; width:100%; min-width:650px; table-layout:fixed; font-size:12px; }
+  .class-heatmap caption { text-align:left; color:var(--muted); padding:10px; }
+  .class-heatmap th:first-child { width:40%; text-align:left; }
+  .class-heatmap th { font-weight:500; padding:6px; }
+  .class-heatmap th span[data-metric-help]::after,.engineering-card [data-metric-help]::after { content:' ⓘ'; color:var(--muted); font-size:10px; }
+  .class-heatmap-name { width:100%; border:0; color:var(--text); background:transparent; text-align:left; padding:8px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .class-metric-tone { display:block; padding:8px; border:1px solid var(--border); border-radius:5px; color:var(--text); background:var(--panel-2); font-variant-numeric:tabular-nums; }
+  button.class-metric-tone { width:100%; cursor:pointer; }
+  .class-heatmap-legend .class-metric-tone { padding:4px 8px; }
+  .class-metric-tone[data-metric-state=low] { background:color-mix(in srgb,var(--m-low) 17%,var(--panel)); border-color:color-mix(in srgb,var(--m-low) 50%,var(--border)); }
+  .class-metric-tone[data-metric-state=medium] { background:color-mix(in srgb,var(--m-medium) 20%,var(--panel)); border-color:color-mix(in srgb,var(--m-medium) 55%,var(--border)); }
+  .class-metric-tone[data-metric-state=high] { background:color-mix(in srgb,var(--m-high) 23%,var(--panel)); border-color:color-mix(in srgb,var(--m-high) 60%,var(--border)); font-weight:700; }
+  .class-metric-tone[data-metric-state=info] { background:color-mix(in srgb,var(--accent) 12%,var(--panel)); }
+  .class-metric-tone[data-metric-state=unknown] { border-style:dashed; color:var(--muted); }
+  .class-heatmap tr[data-selected] > th { box-shadow:inset 3px 0 var(--accent); }
+  .class-heatmap button:focus-visible,.class-heatmap-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  [data-heatmap-detail] { scroll-margin:12px; }
+  .report-workspace #main { --explorer-track: 0px; --inspector-track: 0px; --explorer-divider: 0px; --inspector-divider: 0px; }
+  .report-workspace #explorer, .report-workspace #inspector, .report-workspace .panel-resizer, .report-workspace #summary, .report-workspace #toggle-explorer, .report-workspace #toggle-inspector, .report-workspace #filter, .report-workspace #clear-search, .report-workspace #refactor-menu { display: none; }
+  .cycle-explanation .detail-verdict { margin: 10px 0; }
+  .cycle-explanation > small { display: block; font-size: 11px; line-height: 1.5; }
+  .cycle-explanation pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #sidebar .cycle-counts { margin-top: 12px; font-size: 11px; table-layout: fixed; }
+  .cycle-counts caption { text-align: left; font-weight: 600; margin-bottom: 6px; }
+  #sidebar .cycle-counts td, #sidebar .cycle-counts th { padding: 6px 3px; overflow-wrap: anywhere; border-bottom: 1px solid var(--border); }
+  #sidebar .cycle-counts th:first-child { width: 42%; }
+  .cycle-counts button { padding: 2px 0; text-align: left; white-space: normal; font-size: 11px; }
+  .detail-graph { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0; }
+  .detail-graph figcaption { font-size: 12px; font-weight: 600; }
+  .detail-graph-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 8px 0; font-size: 10px; }
+  .detail-graph-legend span::before { content: '→'; margin-right: 4px; }
+  .detail-graph-prefix { color: var(--muted); overflow-wrap: anywhere; font-size: 10px !important; margin: 6px 0; }
+  .detail-graph-routing { color: var(--muted); font-size: 10px !important; margin: 6px 0; }
+  .pattern-summary { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: normal; }
+  .detail-graph-board { position: relative; width: 100%; margin: 10px 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-sizing: border-box; }
+  .detail-graph-board > svg { position: absolute; width: 100%; height: 100%; inset: 0; pointer-events: none; }
+  .detail-graph-rows { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; width: 54%; }
+  .detail-graph-board[data-detail-relations=false] .detail-graph-rows { width: 100%; }
+  .detail-graph-link { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .detail-graph-hit { fill: none; stroke: transparent; stroke-width: 8; pointer-events: stroke; }
+  .detail-graph-edge[role=button] { cursor: pointer; outline: none; }
+  .detail-graph-edge:hover .detail-graph-link, .detail-graph-edge:focus .detail-graph-link { stroke-width: 2.5; }
+  .edge-hover .detail-graph-edge:not(.is-hovered) { opacity: .2; }
+  .detail-graph-relation > rect { fill: var(--panel); stroke: var(--border); }
+  .detail-graph-relation[role=button] { pointer-events: all; cursor: pointer; outline: none; }
+  .detail-graph-relation[data-detail-focus=true] > rect, .detail-graph-relation.is-related > rect { stroke: var(--accent); fill: var(--bg); }
+  .detail-graph-node { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 52px; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); font: 12px/1.4 var(--font); text-align: left; box-sizing: border-box; }
+  .detail-graph-node > svg { flex: 0 0 16px; width: 16px; height: 20px; }
+  .detail-graph-node:not([data-detail-kind=module]):not([data-detail-kind=project]) .tree-row-icon, .detail-graph-relation:not([data-detail-kind=module]):not([data-detail-kind=project]) .tree-row-icon { fill: none; stroke: var(--muted); }
+  .detail-graph-label { min-width: 0; overflow-wrap: anywhere; }
+  .detail-graph-label strong { display: block; font-weight: 500; }
+  .detail-graph-label small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+  button.detail-graph-node { cursor: pointer; }
+  .detail-graph-node[data-detail-focus=true], button.detail-graph-node:hover, button.detail-graph-node:focus-visible, .detail-graph-node.is-related { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+  .detail-graph-evidence { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .detail-graph-evidence > summary { cursor: pointer; padding: 4px 0; }
+  .detail-graph-connections { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .detail-graph-connections > * { font-size: 11px; text-align: left; white-space: normal; overflow-wrap: anywhere; padding: 3px 0; }
+  .detail-graph > p, .detail-verdict { font-size: 12px; line-height: 1.5; }
+  .detail-verdict { border-left: 2px solid var(--accent); padding-left: 10px; }
+  .detail-file-pair { display: block; font-size: 11px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  #sidebar .inspector-section pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+  #engineering-list.cohesion-list { display: block; }
+  .cohesion-card { margin: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 12px 0; }
+  .cohesion-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .cohesion-heading h3 { margin: 0; } .cohesion-heading button { flex-shrink: 0; }
+  .cohesion-workbench { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(240px, 2fr); gap: 16px; align-items: start; max-width: 880px; }
+  .cohesion-groups { max-height: 380px; overflow: auto; padding: 2px; display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .cohesion-group { display: block; text-align: left; white-space: normal; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; }
+  .cohesion-group[aria-pressed="true"] { border-color: var(--accent); background: var(--panel-2); }
+  .cohesion-group span { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+  .cohesion-workbench .detail-graph { margin-top: 12px; }
+  @media (max-width: 900px) { .cohesion-workbench { grid-template-columns: minmax(0,1fr); gap: 0; } .cohesion-groups { flex-direction: row; flex-wrap: wrap; } .cohesion-group { flex: 1 1 140px; } }
+  .action-with-help { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+  .context-help-trigger { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: transparent; color: var(--muted); font: 600 12px var(--font); cursor: help; }
+  .menu-content .action-with-help > .btn { flex: 1; text-align: left; }
+  .context-help-trigger:hover { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
+  [data-action-help][hidden] + .context-help-trigger { display: none; }
+  .context-note { margin: 8px 0; font-size: 12px; }
+  .context-note > summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+  .context-note p { max-width: 76ch; }
+  .pattern-list > details[data-pattern] { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .pattern-list > details[data-pattern] > summary { cursor: pointer; font-weight: 500; }
+  .pattern-list > details[data-pattern] > p { color: var(--muted); font-size: 12px; }
+  .architecture-section { margin-block: 14px; }
+  .assessment-summary > div { padding: 8px 14px; border: 0; border-left: 2px solid var(--border); border-radius: 0; min-width: 100px; }
+  .assessment-summary strong { font-size: 22px; }
+.quality-metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:12px 0}.quality-metric-grid small{display:block;color:var(--muted)}.knowledge-bar{height:6px;background:var(--border);border-radius:6px;overflow:hidden;margin:10px 0}.knowledge-bar span{display:block;height:100%;background:var(--accent)}
+  /* Keep each workspace focused; secondary explanations stay on demand. */
+  .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+  .context-workspace #main { --explorer-track:0px; --explorer-divider:0px; }
+  .context-workspace #explorer, .context-workspace #explorer-resizer, .context-workspace #summary, .context-workspace #toggle-explorer, .context-workspace #filter, .context-workspace #clear-search, .context-workspace #refactor-menu { display:none; }
+  .engineering-scope { max-width:100%; min-width:180px; }
+  .engineering-scope > summary { cursor:pointer; padding:7px 10px; border:1px solid var(--border); border-radius:6px; overflow-wrap:anywhere; }
+  .engineering-scope-content { display:flex; align-items:end; gap:6px; padding-top:8px; }
+  .class-heatmap-controls .class-heatmap-legend { margin-left:auto; }
+  #summary .graph-coverage { white-space:nowrap; }
+  .calls-description { display:flex; align-items:center; flex-wrap:wrap; gap:4px 18px; }
+  .calls-description > details[open] { flex-basis:100%; }
+  #repository-scope[hidden], #repository-heading[hidden] { display:none; }
+  #tab-start { position:absolute; inset:0; padding:18px; overflow:auto; overscroll-behavior:contain; }
+  .atlas-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0; }
+  .atlas-toolbar strong { margin-right:auto; overflow-wrap:anywhere; }
+  .atlas-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr)); gap:10px; margin:12px 0; }
+  .atlas-area { position:relative; min-width:0; text-align:left; display:flex; flex-direction:column; gap:12px; padding:18px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); cursor:pointer; font:inherit; }
+  .atlas-area strong { overflow-wrap:anywhere; }
+  .atlas-area > span { font-size:12px; }
+  .atlas-area[data-cyclic="true"] { border-left:3px solid var(--c-cycle); background:color-mix(in srgb,var(--c-cycle) 7%,var(--panel)); }
+  .atlas-area:hover { border-color:var(--accent); }
+  .atlas-size { display:block; height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
+  .atlas-size span { display:block; height:100%; background:var(--accent); }
+  #engineering-status { display:inline-block; margin-right:8px; }
+  .inline-help { display:inline-flex; }
+
+  #start-world { max-width:1600px; margin:0 auto; border:1px solid var(--border); border-radius:18px; background:var(--panel); overflow:hidden; }
+  #start-world[hidden], #world-detail[hidden], #world-tip[hidden], .world-pin[hidden] { display:none; }
+  .world-heading { display:flex; align-items:center; justify-content:space-between; padding:20px 24px 10px; }
+  .world-heading h2 { font-size:28px; font-weight:550; letter-spacing:-.8px; margin:0; }
+  .world-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 24px; }
+  .world-bar strong { overflow-wrap:anywhere; min-width:0; margin-right:auto; }
+  .world-bar [aria-pressed="true"] { background:var(--text); color:var(--panel); }
+  .world-bar .muted { font-size:12px; }
+  .world-path { display:flex; align-items:center; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; margin-right:auto; }
+  .world-crumb { padding:5px 7px; min-height:32px; max-width:100%; border:0; border-radius:6px; background:transparent; color:var(--accent); font:inherit; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+  .world-crumb:hover:not(:disabled) { background:var(--panel-2); }
+  .world-crumb[aria-current="page"] { color:var(--text); font-weight:600; cursor:default; }
+  .world-crumb:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .world-legend { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin-left:auto; min-width:0; }
+  .world-legend-item { display:inline-flex; align-items:center; gap:7px; min-height:30px; padding:3px 0; border:0; background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:help; text-align:left; }
+  .world-legend-item:hover { color:var(--text); }
+  .world-legend-item:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:3px; }
+  .world-swatch { display:inline-block; flex-shrink:0; width:10px; height:10px; border-radius:3px; }
+  .world-swatch[data-world-swatch="outline"] { width:16px; }
+  .world-swatch[data-world-swatch="complexity"] { width:56px; }
+  @media(max-width:900px) { .world-legend { flex-basis:100%; margin-left:0; } }
+  .world-stage { position:relative; height:clamp(370px,59vh,660px); background:radial-gradient(ellipse at center,var(--panel-2),var(--panel) 72%); overflow:hidden; }
+  /* Fullscreen dedicates the available workspace to the landscape, without
+     the normal 660px height / 1600px width caps. KPIs remain below the fold. */
+  :root:is(:fullscreen, :-webkit-full-screen) #tab-start { padding:8px; }
+  :root:is(:fullscreen, :-webkit-full-screen) #start-world:not([hidden]) { display:flex; flex-direction:column; height:100%; min-height:480px; max-width:none; border-radius:10px; }
+  :root:is(:fullscreen, :-webkit-full-screen) #start-world > .world-heading,
+  :root:is(:fullscreen, :-webkit-full-screen) #start-world > .world-bar { flex:0 0 auto; }
+  :root:is(:fullscreen, :-webkit-full-screen) #start-world > .world-stage { flex:1 0 180px; height:auto; min-height:180px; }
+  #world-canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; }
+  #world-canvas:active { cursor:grabbing; }
+  #world-canvas:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
+  .world-pin { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; gap:5px; padding:8px 12px; max-width:180px; text-align:left; background:var(--panel); border:1px solid var(--border); border-radius:9px; box-shadow:var(--shadow); cursor:pointer; }
+  .world-pin strong { font-weight:550; overflow:hidden; text-overflow:ellipsis; max-width:100%; white-space:nowrap; }
+  .world-pin small { font-size:11px; color:var(--muted); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .world-pin:hover { border-color:var(--accent); transform:translate(-50%,-50%) translateY(-2px); box-shadow:var(--shadow),0 8px 20px rgba(0,0,0,.14); }
+  .world-pin { transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease; }
+  @media (prefers-reduced-motion: reduce) { .world-pin { transition:none; } .world-pin:hover { transform:translate(-50%,-50%); } }
+  .world-pin[data-world-kind="module"] { padding-right:28px; }
+  .world-pin-next { position:absolute; right:10px; top:7px; color:var(--accent); font-size:20px; line-height:1; }
+  #world-tip { position:absolute; pointer-events:none; z-index:4; width:220px; padding:9px; border:1px solid var(--border); border-radius:8px; background:var(--panel); font-size:12px; overflow-wrap:anywhere; box-shadow:var(--shadow); }
+  .world-controls { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:5px; border:1px solid var(--border); background:var(--panel); border-radius:12px; box-shadow:var(--shadow); white-space:nowrap; }
+  .world-orbit { position:absolute; top:12px; right:12px; display:flex; align-items:center; gap:2px; padding:4px; border:1px solid var(--border); background:var(--panel); border-radius:12px; box-shadow:var(--shadow); }
+  .world-orbit .btn { min-height:36px; padding:6px 10px; }
+  #world-orientation { display:flex; align-items:center; gap:6px; }
+  #world-bearing { width:20px; height:20px; color:var(--accent); }
+  #world-angle { min-width:30px; font-size:11px; font-variant-numeric:tabular-nums; }
+  #world-zoom-value { min-width:44px; text-align:center; font-variant-numeric:tabular-nums; font-size:12px; }
+  .world-footer { justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; padding-bottom:14px; }
+  #world-area { max-width:min(100%,480px); min-width:0; padding:8px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel); }
+  #world-kpi { padding:7px 8px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel); font:inherit; font-size:13px; }
+  #world-kpi:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  #world-kpi:disabled { opacity:.55; cursor:default; }
+  #world-search { max-width:min(100%,280px); min-width:120px; padding:8px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel); }
+  #world-search:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  #world-detail { border-top:1px solid var(--border); padding:20px 24px; overflow-wrap:anywhere; }
+  .world-detail-title { display:flex; align-items:center; gap:16px; justify-content:space-between; }
+  .world-actions { display:flex; flex-wrap:wrap; gap:8px; margin:15px 0; }
+  .world-members { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
+  .world-members button { max-width:100%; overflow-wrap:anywhere; text-align:left; }
+  @media(max-width:600px) { #tab-start {padding:8px;} .world-heading {padding:16px 12px 8px;} .world-heading h2 {font-size:24px;} .world-bar,#world-detail {padding-left:12px;padding-right:12px;} .world-controls {gap:2px;} .world-controls .btn {padding:8px;min-height:40px;} .world-stage {height:400px;} .world-pin {max-width:130px;font-size:12px;} }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="brand" aria-label="ArchGuard">A<span>G</span></div>
+  <div class="project-title"><h1 id="project-name">Project</h1></div>
+  <button id="toggle-explorer" type="button" class="btn btn-secondary" aria-expanded="true" aria-controls="explorer" data-i18n-de="Explorer">Explorer</button>
+  <input id="filter" type="search" placeholder="Search modules or files…" data-i18n-placeholder-de="Module oder Dateien suchen…" aria-label="Search modules or files" data-i18n-aria-label-de="Module oder Dateien suchen">
+  <button id="clear-search" type="button" hidden class="btn btn-quiet" data-i18n-de="Suche löschen">Clear search</button>
+  <span id="spacer"></span>
+  <details id="export-menu" class="export-menu">
+    <summary id="export-summary" class="btn btn-secondary" data-i18n-de="Export">Export</summary>
+    <div>
+      <button id="export-markdown" type="button" class="btn btn-secondary" data-i18n-de="Markdown + Mermaid">Markdown + Mermaid</button>
+      <button id="export-arc42" type="button" class="btn btn-secondary" data-i18n-de="arc42-Dokumentation">arc42 documentation</button>
+      <small id="export-arc42-hint" hidden data-i18n-de="Für arc42 ein Projekt mit Quellanalyse öffnen.">Open a source-analyzed project for arc42.</small>
+      <button id="export-json" type="button" class="btn btn-secondary" data-i18n-de="JSON-Daten + Belege">JSON data + evidence</button>
+      <button id="export-svg" type="button" class="btn btn-secondary" data-i18n-de="SVG-Diagramm">SVG diagram</button>
+      <small id="export-svg-hint" hidden data-i18n-de="SVG ist unter Graph → Baum und Dienste verfügbar.">SVG is available in Graph → Tree and Services.</small>
+      <small data-i18n-de="Exporte enthalten Ausschnitt und Filter. Beschreibungen in Markdown und JSON bleiben auf Englisch. Quelldateien bleiben unverändert.">Exports include scope and filters. Markdown and JSON descriptions stay in English. Source files are unchanged.</small>
+    </div>
+  </details>
+  <details id="refactor-menu" class="workspace-menu">
+    <summary id="refactor-summary" class="btn btn-secondary"><span data-i18n-de="Refactoring">Refactor</span><span id="simulation-indicator" class="badge" hidden></span></summary>
+    <div class="menu-content">
+      <span class="action-with-help"><button id="repair-cycle" type="button" class="btn btn-primary" data-i18n-de="Zyklus auflösen">Resolve a cycle</button><button id="repair-cycle-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+      <span class="action-with-help"><button id="simulation-mode" type="button" class="btn btn-secondary" aria-pressed="false" title="Manual graph experiments. Use Resolve a cycle to compare automatically checked plans." data-i18n-title-de="Manuelle Experimente am Graphen. Unter „Zyklus auflösen“ lassen sich automatisch geprüfte Pläne vergleichen." data-i18n-de="Manuelle Simulation">Manual simulation</button><button id="simulation-mode-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+      <span class="action-with-help"><button id="scenario-open" type="button" class="btn btn-secondary" data-i18n-de="Szenarien">Scenarios</button><button id="scenario-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+    </div>
+  </details>
+  <button id="toggle-inspector" type="button" class="btn btn-secondary" aria-expanded="true" aria-controls="inspector" data-i18n-de="Inspektor">Inspector</button>
+  <!-- U01: Light/Dark/System; the JS pins data-theme from (optionally)
+       stored preference — buttons carry static inline SVG icons. -->
+  <details id="settings-menu" class="workspace-menu">
+    <summary id="settings-summary" class="btn btn-quiet" data-i18n-de="Einstellungen">Settings</summary>
+    <div class="menu-content">
+      <span class="menu-label" data-i18n-de="Sprache">Language</span>
+      <div id="language-switch" role="group" aria-label="Language" data-i18n-aria-label-de="Sprache"><button id="language-de" type="button" aria-label="Deutsch" aria-pressed="false">DE</button><button id="language-en" type="button" aria-label="English" aria-pressed="true">EN</button></div>
+      <span class="menu-label" data-i18n-de="Farbschema">Color theme</span>
+      <div id="theme-switch" role="group" aria-label="Color theme" data-i18n-aria-label-de="Farbschema">
+        <button type="button" data-mode="light" aria-label="Light theme" data-i18n-aria-label-de="Helles Farbschema" aria-pressed="false">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12h2.5M19 12h2.5M5 5l1.8 1.8M17.2 17.2 19 19M19 5l-1.8 1.8M6.8 17.2 5 19"/></svg>
+        </button>
+        <button type="button" data-mode="dark" aria-label="Dark theme" data-i18n-aria-label-de="Dunkles Farbschema" aria-pressed="false">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg>
+        </button>
+        <button type="button" data-mode="system" aria-label="Follow system theme" data-i18n-aria-label-de="System-Farbschema verwenden" aria-pressed="false">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M9 20.5h6M12 16.5v4"/></svg>
+        </button>
+      </div>
+    </div>
+  </details>
+</div>
+<section id="repository-navigation" hidden aria-label="Repository navigation" data-i18n-aria-label-de="Repository-Navigation">
+  <strong id="repository-heading"></strong>
+  <label for="repository-project" data-i18n-de="Projekt">Project</label><select id="repository-project"></select>
+  <a id="repository-open" class="btn btn-primary"></a><button id="repository-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button>
+  <a id="repository-overview" class="btn btn-secondary" data-i18n-de="Monorepo">Monorepo</a>
+  <p id="repository-scope" class="muted"></p>
+  <details id="repository-standalone" hidden><summary data-i18n-de="Anderes Projekt öffnen">Open another project</summary><p id="repository-standalone-note" class="muted"></p><code id="repository-command" class="repository-command"></code><button id="repository-copy" type="button" class="btn btn-secondary" data-i18n-de="Serverbefehl kopieren">Copy server command</button></details>
+</section>
+<div id="summary" aria-label="Current view metrics" data-i18n-aria-label-de="Kennzahlen der aktuellen Ansicht"></div>
+<div id="main">
+  <aside id="explorer" aria-label="Explorer" data-i18n-aria-label-de="Explorer">
+    <div class="panel-heading" data-i18n-de="Explorer">Explorer</div>
+    <div id="explorer-tabs" role="tablist" aria-label="Explore" data-i18n-aria-label-de="Erkunden">
+      <button type="button" data-explorer="modules" role="tab" aria-selected="true" data-i18n-de="Module">Modules</button>
+      <button type="button" data-explorer="cycles" role="tab" aria-selected="false" data-i18n-de="Zyklen">Cycles</button>
+      <button type="button" data-explorer="review" role="tab" aria-selected="false" data-i18n-de="Prüfung">Review</button>
+    </div>
+    <div id="modules-panel"><div class="context-actions" role="group" aria-label="All tree branches" data-i18n-aria-label-de="Alle Baumzweige"><button id="explorer-expand-all" type="button" class="btn btn-secondary" title="Expand all packages in this report and clear search" data-i18n-title-de="Alle Pakete in diesem Bericht aufklappen und die Suche löschen" data-i18n-de="Alles aufklappen">Expand all</button><button id="explorer-collapse-all" type="button" class="btn btn-secondary" title="Collapse all packages in this report and clear search" data-i18n-title-de="Alle Pakete in diesem Bericht zuklappen und die Suche löschen" data-i18n-de="Alles zuklappen">Collapse all</button></div><div id="search-count" class="muted"></div><ul id="module-list" aria-label="Packages and files" data-i18n-aria-label-de="Pakete und Dateien"></ul></div>
+    <div id="tab-cycles" class="panel-hidden"><ul id="cycles-panel"></ul>
+      <button id="cycles-reset" type="button" class="btn btn-secondary" data-i18n-de="Zur Übersicht">Return to overview</button>
+    </div>
+    <div id="review-panel" class="panel-hidden">
+      <details id="quality-review"><summary id="quality-heading" tabindex="-1" data-i18n-de="Importierte Qualitätsbefunde">Imported quality findings</summary>
+        <p id="quality-status" class="muted" role="status"></p>
+        <details><summary data-i18n-de="Herkunft, Abdeckung und Import">Provenance, coverage and import</summary><div id="quality-explanation"></div></details>
+        <label><span data-i18n-de="Befunde suchen">Search findings</span><input id="quality-query" type="search" aria-label="Search imported findings" data-i18n-aria-label-de="Importierte Befunde suchen"></label>
+        <label><span data-i18n-de="Schweregrad">Level</span><select id="quality-level" aria-label="Imported finding level" data-i18n-aria-label-de="Schweregrad importierter Befunde"><option value="all" data-i18n-de="Alle">All</option><option value="error" data-i18n-de="Fehler">Error</option><option value="warning" data-i18n-de="Warnung">Warning</option><option value="note" data-i18n-de="Hinweis">Note</option><option value="none" data-i18n-de="Keine">None</option></select></label>
+        <div id="quality-list" aria-label="Imported quality findings" data-i18n-aria-label-de="Importierte Qualitätsbefunde"></div>
+        <button id="quality-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 anzeigen">Show next 20</button>
+      </details>
+      <details id="coverage-review"><summary id="coverage-heading" tabindex="-1" data-i18n-de="Testabdeckung × Änderungsreichweite">Test coverage × change impact</summary>
+        <p id="coverage-status" class="muted" role="status"></p>
+        <details><summary data-i18n-de="Zählweise, Herkunft und Import">Counting, provenance and import</summary><div id="coverage-explanation"></div></details>
+        <ol id="coverage-list" class="review-list" aria-label="Test coverage and impact candidates" data-i18n-aria-label-de="Kandidaten nach Testabdeckung und Reichweite"></ol>
+        <button id="coverage-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 anzeigen">Show next 20</button>
+      </details>
+      <h2 data-i18n-de="Prüfprioritäten">Review priorities</h2><p id="review-status" class="muted"></p>
+      <p id="review-git" class="muted"></p>
+      <button id="review-orphans" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Nur verwaiste Kandidaten">Orphan candidates only</button>
+      <ol id="review-list" class="review-list" aria-label="Ranked modules to review" data-i18n-aria-label-de="Nach Prüfpriorität sortierte Module"></ol>
+      <div id="performance-panel"></div>
+      <div id="review-insights"></div>
+    </div>
+  </aside>
+  <div id="explorer-resizer" class="panel-resizer" role="separator" aria-orientation="vertical" aria-controls="explorer" aria-label="Resize Explorer" data-i18n-aria-label-de="Explorer-Größe ändern" tabindex="0" title="Drag to resize Explorer. Arrow keys adjust width; Shift uses larger steps. Double-click to reset." data-i18n-title-de="Ziehen, um die Explorer-Breite zu ändern. Pfeiltasten ändern die Breite, Umschalt in größeren Schritten. Doppelklick setzt sie zurück."></div>
+  <section id="workspace" aria-label="Analysis workspace" data-i18n-aria-label-de="Analyse-Arbeitsbereich">
+    <div class="workspace-bar"><div class="workspace-location"><nav id="breadcrumbs" aria-label="Breadcrumb" data-i18n-aria-label-de="Navigationspfad"></nav><button id="workspace-info" type="button" class="context-help-trigger" aria-label="View help" data-i18n-aria-label-de="Hilfe zur Ansicht">?</button><small id="workspace-description" hidden></small><button id="workspace-mcp" type="button" class="btn btn-quiet" aria-label="Copy MCP entry" data-i18n-aria-label-de="MCP-Einstieg kopieren">MCP</button></div>
+      <div id="tabs" role="tablist" aria-label="Workspace" data-i18n-aria-label-de="Arbeitsbereich">
+        <button type="button" data-tab="start" role="tab" aria-selected="false" data-i18n-de="Start">Start</button>
+        <button type="button" data-tab="graph" role="tab" aria-selected="true" class="active" data-i18n-de="Graph">Graph</button>
+        <button type="button" data-tab="dsm" role="tab" aria-selected="false" data-i18n-de="Matrix">Matrix</button>
+        <button type="button" data-tab="calls" role="tab" aria-selected="false" data-i18n-de="Aufrufe">Calls</button>
+        <button type="button" data-tab="services" role="tab" aria-selected="false" data-i18n-de="Dienste">Services</button>
+        <button type="button" data-tab="architecture" role="tab" aria-selected="false" data-i18n-de="Architektur">Architecture</button>
+        <button type="button" data-tab="assessment" role="tab" aria-selected="false" data-i18n-de="Review">Review</button>
+        <button type="button" role="tab" data-tab="quality" aria-selected="false" data-i18n-de="Qualität">Quality</button>
+          <button type="button" data-tab="security" role="tab" aria-selected="false" data-i18n-de="Sicherheit">Security</button>
+          <button type="button" data-tab="review-dashboard" role="tab" aria-selected="false" data-i18n-de="Dashboard">Dashboard</button>
+      </div>
+    </div>
+    <div id="graph-options" aria-label="Graph display options" data-i18n-aria-label-de="Graph-Anzeigeoptionen">
+      <div class="graph-option-buttons">
+        <details id="graph-display-menu" class="workspace-menu">
+          <summary id="graph-display-summary" class="btn btn-secondary">Display: Tree</summary>
+          <div class="menu-content">
+            <span class="menu-label" data-i18n-de="Darstellung">Presentation</span>
+            <div id="diagram-modes" role="group" aria-label="Dependency presentation" data-i18n-aria-label-de="Darstellung der Abhängigkeiten">
+              <button id="diagram-overview" type="button" class="btn btn-secondary" aria-pressed="true" title="Scrollable package tree with directed dependency arrows in separate lanes." data-i18n-title-de="Scrollbarer Paketbaum mit gerichteten Abhängigkeitspfeilen in getrennten Bereichen." data-i18n-de="Baum">Tree</button>
+              <button id="diagram-dependencies" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Abhängigkeiten">Dependencies</button>
+              <button id="diagram-network" type="button" class="btn btn-secondary" aria-pressed="false" title="Advanced network view: draw dependency edges over the package hierarchy." data-i18n-title-de="Erweiterte Netzwerkansicht: Abhängigkeitskanten über der Pakethierarchie anzeigen." data-i18n-de="Netzwerk">Network</button>
+            </div>
+            <span class="menu-label" data-i18n-de="Prüfprioritäten">Review priorities</span>
+            <button id="toggle-priorities" type="button" class="btn btn-secondary" aria-pressed="true" title="Mark high and medium review priorities in the graph and tree. A downward arrow in the tree summarizes prioritized descendants in the current graph scope. Scores combine structural coupling, cycles, impact and available Git history; they are not defect probabilities." data-i18n-title-de="Hohe und mittlere Prüfprioritäten im Graphen und Baum markieren. Ein Abwärtspfeil im Baum fasst priorisierte Nachfahren im aktuellen Ausschnitt zusammen. Die Bewertung kombiniert strukturelle Kopplung, Zyklen, Auswirkungen und verfügbare Git-Historie; sie ist keine Fehlerwahrscheinlichkeit." data-i18n-de="Prioritäten hervorheben">Highlight priorities</button>
+            <button id="review-open" type="button" class="btn btn-secondary" data-i18n-de="Prüfprioritäten">Review priorities</button>
+          </div>
+        </details>
+        <button id="toggle-files" type="button" class="btn btn-secondary" aria-pressed="false">Show files</button>
+        <div id="edge-modes" role="group" aria-label="Dependencies of the selection" data-i18n-aria-label-de="Abhängigkeiten der Auswahl">
+          <button type="button" class="btn btn-secondary" data-edges="incoming" aria-pressed="false">Incoming</button>
+          <button type="button" class="btn btn-secondary" data-edges="outgoing" aria-pressed="false">Outgoing</button>
+          <button type="button" class="btn btn-secondary" data-edges="both" aria-pressed="false">Both</button>
+          <button type="button" class="btn btn-secondary" data-edges="all" aria-pressed="true">All</button>
+        </div>
+        <button id="toggle-cycles" type="button" class="btn btn-secondary" aria-pressed="false" title="Show only dependencies in cycles, including package-level cycle context. Combines with the direction and file filters." data-i18n-title-de="Nur Abhängigkeiten in Zyklen anzeigen, einschließlich Zykluskontext auf Paketebene. Mit Richtungs- und Dateifiltern kombinierbar." data-i18n-de="Nur Zyklen">Cycles only</button>
+      </div>
+      <div class="graph-status">
+        <div id="edge-reference" role="status" aria-live="polite"></div>
+        <div id="graph-status-brief" role="status" aria-live="polite"></div>
+        <details id="graph-scope-details"><summary data-i18n-de="Details">Details</summary><div id="graph-visibility"></div><div id="graph-hint"></div></details>
+        <div id="graph-filter-feedback" role="status" hidden></div>
+      </div>
+    </div>
+    <div id="viewport">
+      <div id="tab-graph"><div id="package-tree" aria-label="Package tree with import arrows" data-i18n-aria-label-de="Paketbaum mit Importpfeilen"></div><div id="dependency-browser" aria-label="Packages and dependencies" data-i18n-aria-label-de="Pakete und Abhängigkeiten" hidden></div><div id="graph"></div><div id="graph-context-tooltip" role="tooltip" hidden></div><div id="edge-legend"></div>
+        <div id="graph-controls" aria-label="Graph navigation" data-i18n-aria-label-de="Graph-Navigation">
+          <button id="zoom-in" type="button" class="btn btn-secondary" aria-label="Zoom in" data-i18n-aria-label-de="Vergrößern">+</button>
+          <button id="zoom-out" type="button" class="btn btn-secondary" aria-label="Zoom out" data-i18n-aria-label-de="Verkleinern">−</button>
+          <button id="fit-view" type="button" class="btn btn-secondary" data-i18n-de="Einpassen">Fit</button>
+          <button id="reset-view" type="button" class="btn btn-secondary" title="Reset scope and selection; keep search and simulation changes" data-i18n-title-de="Ausschnitt und Auswahl zurücksetzen; Suche und simulierte Änderungen beibehalten" data-i18n-de="Ansicht zurücksetzen">Reset view</button>
+          <button id="toggle-fullscreen" type="button" class="btn btn-secondary" aria-pressed="false" title="Show the workspace fullscreen in the browser; Esc leaves it again." data-i18n-title-de="Arbeitsbereich im Browser-Vollbild anzeigen; Esc beendet es wieder." data-i18n-de="Vollbild">Fullscreen</button>
+        </div>
+        <div id="graph-state" role="status">Initializing graph…</div>
+      </div>
+      <section id="tab-start" class="panel-hidden" aria-label="Project entry" data-i18n-aria-label-de="Projekteinstieg">
+        <section id="start-world" hidden>
+          <div class="world-heading"><h2 data-i18n-de="Deine Architektur">Your architecture</h2><button id="world-help" class="btn btn-secondary" aria-label="Landscape help" data-i18n-aria-label-de="Hilfe zur Landschaft">?</button></div>
+          <div class="world-bar" role="group" aria-label="Perspective" data-i18n-aria-label-de="Perspektive"><button id="world-lens-problems" class="btn" data-i18n-de="Probleme">Problems</button><button id="world-lens-complexity" class="btn" data-i18n-de="Erkunden">Explore</button><button id="world-lens-coverage" class="btn" data-i18n-de="Testlücken">Test gaps</button><button id="world-lens-change" class="btn" data-i18n-de="Änderung">Change</button><select id="world-kpi" aria-label="Surface metric" data-i18n-aria-label-de="Flächenkennzahl"><option value="complexity" title="Maximum cyclomatic complexity per method" data-i18n-de="Komplexität" data-i18n-title-de="Maximale zyklomatische Komplexität je Methode">Complexity</option><option value="cbo" title="Coupling Between Objects – number of other classes a class uses" data-i18n-title-de="Coupling Between Objects – Anzahl anderer Klassen, die eine Klasse verwendet">CBO</option><option value="rfc" title="Response For a Class – methods callable from an instance" data-i18n-title-de="Response For a Class – von einer Instanz aufrufbare Methoden">RFC</option><option value="dit" title="Depth of Inheritance Tree – inheritance levels" data-i18n-title-de="Depth of Inheritance Tree – Vererbungstiefe">DIT</option><option value="noc" title="Number of Children – direct subclasses (informational)" data-i18n-title-de="Number of Children – direkte Unterklassen (Information)">NOC</option><option value="wmc" title="Weighted Methods per Class – sum of method complexity" data-i18n-title-de="Weighted Methods per Class – Summe der Methodenkomplexität">WMC</option><option value="lcom4" title="LCOM4 – connected method groups (1 = cohesive)" data-i18n-title-de="LCOM4 – zusammenhängende Methodengruppen (1 = kohäsent)">LCOM4</option></select><button id="world-kpi-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button><div id="world-legend" class="world-legend" role="group" aria-label="Color legend" data-i18n-aria-label-de="Farblegende"></div></div>
+          <div class="world-bar"><button id="world-back" class="btn" data-i18n-de="Zurück">Back</button><nav id="world-scope" class="world-path" tabindex="-1" aria-label="Package path" data-i18n-aria-label-de="Paketpfad"></nav><span id="world-status" class="muted" role="status"></span></div>
+          <div class="world-stage"><canvas id="world-canvas" tabindex="0" role="img" aria-label="Architecture landscape. Wheel to zoom, drag to pan, Shift-drag or Q/E to rotate. Use the area selector for accessible navigation." data-i18n-aria-label-de="Architekturlandschaft. Mausrad zum Zoomen, Ziehen zum Verschieben, Umschalt + Ziehen oder Q/E zum Drehen. Bereichsauswahl für barrierefreie Navigation."></canvas><div id="world-labels"></div><div id="world-tip" hidden></div>
+            <div class="world-orbit" role="group" aria-label="Orientation" data-i18n-aria-label-de="Ausrichtung"><button id="world-rotate-left" class="btn" aria-label="Rotate left" data-i18n-aria-label-de="Links drehen">↶</button><button id="world-orientation" class="btn" aria-label="Restore original orientation" data-i18n-aria-label-de="Ausgangsrichtung wiederherstellen"><svg id="world-bearing" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L19 21L12 17L5 21Z" fill="currentColor"/></svg><output id="world-angle">0°</output></button><button id="world-rotate-right" class="btn" aria-label="Rotate right" data-i18n-aria-label-de="Rechts drehen">↷</button></div>
+            <div class="world-controls"><button id="world-zoom-out" class="btn btn-secondary" aria-label="Zoom out" data-i18n-aria-label-de="Verkleinern">−</button><output id="world-zoom-value">100%</output><button id="world-zoom-in" class="btn btn-secondary" aria-label="Zoom in" data-i18n-aria-label-de="Vergrößern">+</button><button id="world-fit" class="btn btn-secondary" data-i18n-de="Einpassen">Fit</button><button id="world-reset" class="btn btn-secondary" data-i18n-de="Zurücksetzen">Reset</button><button id="world-fullscreen" class="btn btn-secondary" aria-pressed="false" title="Show the workspace fullscreen in the browser; Esc leaves it again." data-i18n-title-de="Arbeitsbereich im Browser-Vollbild anzeigen; Esc beendet es wieder." data-i18n-de="Vollbild">Fullscreen</button></div>
+          </div>
+          <div class="world-bar world-footer"><input id="world-search" type="search" placeholder="Search classes / files…" aria-label="Search surfaces" data-i18n-aria-label-de="Flächen durchsuchen" data-i18n-placeholder-de="Klassen / Dateien suchen…"><select id="world-area" aria-label="Select area" data-i18n-aria-label-de="Bereich auswählen"></select><span id="world-count" class="muted"></span><button id="world-export" class="btn btn-secondary" aria-label="Export the current view as a PNG image" data-i18n-aria-label-de="Aktuelle Ansicht als PNG-Bild exportieren" data-i18n-de="Bild">Image</button></div><div id="world-detail" hidden></div>
+        </section>
+        <div id="start-atlas"></div>
+      </section>
+      <div id="tab-calls" class="panel-hidden">
+        <div class="calls-toolbar">
+          <label><span data-i18n-de="Sprache">Language</span><select id="calls-language" aria-label="Call analysis language" data-i18n-aria-label-de="Analysesprache der Aufrufanalyse"></select></label>
+          <label><span data-i18n-de="Paket">Package</span><select id="calls-package" aria-label="Package or namespace for call analysis" data-i18n-aria-label-de="Paket oder Namensraum für die Aufrufanalyse"></select></label>
+          <label><span data-i18n-de="Suche">Search</span><input id="calls-filter" type="search" placeholder="Filter type, module or function…" data-i18n-placeholder-de="Typ, Modul oder Funktion filtern…" aria-label="Filter call types, modules or functions" data-i18n-aria-label-de="Typen, Module oder Funktionen filtern"></label>
+          <label><span data-i18n-de="Ziele">Targets</span><select id="calls-resolution" aria-label="Call target resolution" data-i18n-aria-label-de="Auflösung der Aufrufziele"><option value="project" data-i18n-de="Projekt">Project</option><option value="external" data-i18n-de="Extern">External</option><option value="unresolved" data-i18n-de="Unaufgelöst">Unresolved</option><option value="all" data-i18n-de="Alle">All</option></select></label>
+          <button id="calls-internal" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Klasseninterne Aufrufe">Within-class calls</button>
+        </div>
+        <div class="calls-description"><p id="calls-status" class="muted" role="status"></p>
+          <details><summary data-i18n-de="Analyse">Analysis</summary><p class="muted" data-i18n-de="Aufrufstellen im Quellcode → vom Compiler deklarierte Methoden. Zur Laufzeit können weitere Implementierungen aufgerufen werden. Konstruktoren sind enthalten; Importbeziehungen werden separat analysiert.">Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis.</p>
+          <p class="muted" data-i18n-de="Pakete → Typen/Module → Funktionen/Methoden der passenden Aufrufbeziehungen.">Packages → types/modules → functions/methods in the matching call connections.</p><div id="calls-diagnostics"></div></details><p id="calls-summary" class="muted"></p>
+        </div>
+        <div class="calls-columns">
+          <section class="calls-outline"><h2 data-i18n-de="Aufrufbaum">Call tree</h2>
+            <div class="calls-tree-controls">
+              <button id="calls-tree-expand" type="button" class="btn btn-secondary" data-i18n-de="Alle aufklappen">Expand all</button>
+              <button id="calls-tree-collapse" type="button" class="btn btn-secondary" data-i18n-de="Alle zuklappen">Collapse all</button>
+              <button id="calls-tree-clear" type="button" class="btn btn-secondary" data-i18n-de="Alle Elemente">All elements</button>
+            </div>
+            <p id="calls-tree-context" class="muted" role="status"></p>
+            <div id="calls-tree" role="group" aria-label="Packages, types/modules and functions/methods" data-i18n-aria-label-de="Pakete, Typen/Module und Funktionen/Methoden"></div>
+          </section>
+          <section class="calls-master"><h2 data-i18n-de="Aufrufübersicht">Call overview</h2>
+            <div class="calls-tree-controls" role="group" aria-label="Call list view" data-i18n-aria-label-de="Aufruflistenansicht">
+              <button id="calls-show-connections" type="button" class="btn btn-secondary" aria-pressed="true" data-i18n-de="Verbindungen">Connections</button>
+              <button id="calls-show-rankings" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Meiste Aufrufe">Most calls</button>
+              <button id="calls-show-cycles" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Zyklen">Cycles</button>
+            </div>
+            <div id="calls-relations" aria-label="Type/module call connections" data-i18n-aria-label-de="Aufrufbeziehungen zwischen Typen/Modulen"></div>
+            <div id="calls-ranking" hidden>
+              <div class="calls-ranking-controls">
+                <label><span data-i18n-de="Elemente">Elements</span><select id="calls-ranking-kind" aria-label="Rank types/modules or functions/methods" data-i18n-aria-label-de="Typen/Module oder Funktionen/Methoden vergleichen"><option value="class" data-i18n-de="Typen / Module">Types / modules</option><option value="method" data-i18n-de="Methoden">Methods</option></select></label>
+                <label><span data-i18n-de="Sortierung">Sort by</span><select id="calls-ranking-sort" aria-label="Call ranking order" data-i18n-aria-label-de="Sortierung der Aufrufrangliste"><option value="incoming" data-i18n-de="Eingehend">Incoming</option><option value="outgoing" data-i18n-de="Ausgehend">Outgoing</option><option value="total" data-i18n-de="Beteiligte Aufrufstellen">Involved call sites</option><option value="cyclomatic" data-method-only="true" data-i18n-de="AST-Komplexität">AST complexity</option><option value="max_nesting" data-method-only="true" data-i18n-de="Max. Verschachtelung">Max. nesting</option></select></label>
+              </div>
+              <p id="calls-ranking-status" class="muted" role="status"></p>
+              <div class="inline-help"><button id="calls-counting-help" type="button" class="context-help-trigger" aria-label="Call counting" data-i18n-aria-label-de="Zählweise der Aufrufe">?</button><div id="calls-counting-note" hidden>
+                <p class="muted" data-i18n-de="Es gelten die obigen Filter einschließlich verbundener Aufrufer und Ziele. Die Elementauswahl verändert diese Rangliste nicht. Jede beteiligte Aufrufstelle zählt einmal, auch bei Selbstaufrufen.">Uses the filters above, including related callers and targets. Selecting an element keeps this ranking unchanged. Each involved site counts once, even for a self-call.</p>
+                <p id="calls-ranking-coverage" class="muted"></p>
+              </div></div>
+              <div id="calls-ranking-list" aria-label="Call rankings" data-i18n-aria-label-de="Aufrufrangliste"></div>
+              <button id="calls-ranking-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 anzeigen">Show next 20</button>
+            </div>
+            <div id="calls-cycles" hidden>
+              <div class="calls-ranking-controls"><label><span data-i18n-de="Zyklusebene">Cycle level</span><select id="calls-cycle-kind" aria-label="Type/module or function/method cycles" data-i18n-aria-label-de="Typ-/Modul- oder Funktions-/Methodenzyklen"><option value="class" data-i18n-de="Typen / Module">Types / modules</option><option value="method" data-i18n-de="Methoden / Rekursion">Methods / recursion</option></select></label></div>
+              <p id="calls-cycles-status" class="muted" role="status"></p>
+              <button id="calls-cycles-show-all" type="button" class="btn btn-secondary" data-i18n-de="Alle Zyklusgruppen">All cycle groups</button>
+              <button id="calls-cycle-help" type="button" class="context-help-trigger" aria-label="Call cycle coverage" data-i18n-aria-label-de="Abdeckung der Aufrufzyklen">?</button><p id="calls-cycles-coverage" hidden></p>
+              <div id="calls-cycles-list" tabindex="-1" aria-label="Cyclic call groups" data-i18n-aria-label-de="Zyklische Aufrufgruppen"></div>
+              <button id="calls-cycles-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 Gruppen">Next 20 groups</button>
+              <section id="calls-cycle-detail" tabindex="-1" hidden>
+                <h3 id="calls-cycle-title"></h3>
+                <p id="calls-cycle-witness" class="path"></p>
+                <div id="calls-cycle-path"></div><button id="calls-cycle-witness-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 Pfadschritte">Next 20 path steps</button>
+                <details><summary id="calls-cycle-members-title"></summary><div id="calls-cycle-members"></div><button id="calls-cycle-members-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 50 Elemente">Next 50 members</button></details>
+                <details open><summary id="calls-cycle-edges-title"></summary><div id="calls-cycle-edges"></div><button id="calls-cycle-edges-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 50 Verbindungen">Next 50 connections</button></details>
+              </section>
+            </div>
+          </section>
+          <section class="calls-detail"><div id="calls-evidence" tabindex="-1" aria-label="Method call evidence" data-i18n-aria-label-de="Belege für Methodenaufrufe"></div><div id="calls-suggestions"></div></section>
+        </div>
+      </div>
+      <div id="tab-services" class="panel-hidden">
+        <div class="services-description">
+          <p id="services-status" role="status" aria-live="polite"></p>
+          <details id="services-help" class="context-note"><summary data-i18n-de="Belege">Evidence</summary><p id="services-limitations" class="muted"></p></details>
+          <details id="services-projects" hidden><summary id="services-projects-summary"></summary><p id="services-projects-note" class="muted"></p><div id="services-project-list" aria-label="Repository project inventory" data-i18n-aria-label-de="Projektinventar des Repositories"></div><button id="services-project-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Projekte anzeigen">Show more projects</button></details>
+          <details id="workspace-panel"><summary id="workspace-heading">Project workspace</summary>
+            <p id="workspace-status" role="status"></p>
+            <p><a id="workspace-analyze" class="btn btn-secondary" hidden data-i18n-de="Projektübergreifende Quellen analysieren">Analyze cross-project sources</a><button id="workspace-analyze-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button> <a id="workspace-back" class="btn btn-quiet" hidden data-i18n-de="Zur Repository-Übersicht">Back to repository overview</a></p>
+            <div id="workspace-controls">
+              <label><span data-i18n-de="Ansicht">View</span><select id="workspace-section"><option value="dependencies" data-i18n-de="Projektabhängigkeiten">Project dependencies</option><option value="sources" data-i18n-de="Dateiabhängigkeiten">File dependencies</option><option value="calls" data-i18n-de="Aufrufe">Calls</option><option value="tests" data-i18n-de="Betroffene Tests">Affected tests</option><option value="unresolved" data-i18n-de="Ungeklärte Beziehungen">Unresolved relations</option></select></label>
+              <label><span data-i18n-de="Projekt">Project</span><select id="workspace-project"></select></label>
+              <label><span data-i18n-de="Richtung">Direction</span><select id="workspace-direction"><option value="all" data-i18n-de="Alle">All</option><option value="incoming" data-i18n-de="Eingehend">Incoming</option><option value="outgoing" data-i18n-de="Ausgehend">Outgoing</option><option value="both" data-i18n-de="Beide">Both</option></select></label>
+              <input id="workspace-query" type="search" aria-label="Filter workspace evidence" data-i18n-aria-label-de="Projektverbund-Belege filtern" placeholder="Filter evidence…" data-i18n-placeholder-de="Belege filtern…">
+              <button id="workspace-cycles-only" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Nur Zyklen">Cycles only</button>
+              <label id="workspace-target-control"><span data-i18n-de="Änderung an">Change to</span><input id="workspace-target-query" type="search" aria-label="Find change target" data-i18n-aria-label-de="Änderungsziel suchen" placeholder="Find file…" data-i18n-placeholder-de="Datei suchen…"><select id="workspace-target" aria-label="Changed file or project" data-i18n-aria-label-de="Geänderte Datei oder Projekt"></select></label>
+            </div>
+            <p id="workspace-note" class="muted"></p><p id="workspace-target-note" class="muted"></p><p id="workspace-count" class="muted"></p>
+            <div id="workspace-list"></div><button id="workspace-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Belege">More evidence</button>
+            <details id="workspace-diagnostics"><summary data-i18n-de="Abdeckung und Einschränkungen">Coverage and limitations</summary><div id="workspace-diagnostics-list"></div></details>
+          </details>
+          <div id="service-patterns"></div><details id="contracts-panel"><summary data-i18n-de="API-Verträge und Änderungen">API contracts and changes</summary><p id="contracts-status"></p><div id="contracts-list"></div><button id="contracts-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Verträge">More contracts</button></details><details class="context-note"><summary data-i18n-de="Diagnosehinweise">Diagnostics</summary><div id="services-diagnostics"></div></details><div id="services-cycles" aria-label="Cyclic service groups" data-i18n-aria-label-de="Zyklische Dienstgruppen"></div>
+          <button id="services-reference-help" type="button" class="context-help-trigger" aria-label="Service graph legend" data-i18n-aria-label-de="Legende des Dienstgraphen">?</button><p id="services-reference" hidden></p>
+        </div>
+        <div id="services-toolbar" class="services-toolbar" aria-label="Service topology controls" data-i18n-aria-label-de="Steuerung der Diensttopologie">
+          <label><span data-i18n-de="Beziehung">Relation</span><select id="services-kind" aria-label="Relation type" data-i18n-aria-label-de="Beziehungsart"><option value="configured_http" data-i18n-de="API-Konfiguration">API configuration</option><option value="startup" data-i18n-de="Startreihenfolge (depends_on)">Startup (depends_on)</option></select></label><button id="services-kind-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button>
+          <label><span data-i18n-de="Richtung">Direction</span><select id="services-direction"><option value="all" data-i18n-de="Alle">All</option><option value="incoming" data-i18n-de="Eingehend">Incoming</option><option value="outgoing" data-i18n-de="Ausgehend">Outgoing</option><option value="both" data-i18n-de="Beide">Both</option></select></label>
+          <button id="services-cycles-only" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Nur Zyklen">Cycles only</button>
+          <button id="services-reset" type="button" class="btn btn-quiet" data-i18n-de="Alle Dienste">All services</button>
+          <button id="services-zoom-out" type="button" class="btn btn-secondary" aria-label="Zoom out service graph" data-i18n-aria-label-de="Dienstgraph verkleinern">−</button>
+          <button id="services-zoom-in" type="button" class="btn btn-secondary" aria-label="Zoom in service graph" data-i18n-aria-label-de="Dienstgraph vergrößern">+</button>
+          <button id="services-zoom-reset" type="button" class="btn btn-quiet">100%</button>
+          <button id="services-fit" type="button" class="btn btn-quiet" data-i18n-de="Einpassen">Fit</button>
+          <output id="services-scale" aria-label="Service graph zoom" data-i18n-aria-label-de="Zoom des Dienstgraphen"></output>
+        </div>
+        <div id="services-tree" aria-label="Service topology tree" data-i18n-aria-label-de="Baum der Diensttopologie"></div><div id="services-tooltip" role="tooltip" hidden></div>
+      </div>
+      <section id="tab-quality" class="panel-hidden" aria-label="Software quality" data-i18n-aria-label-de="Softwarequalität">
+        <h2 id="engineering-heading" class="visually-hidden">Software quality</h2>
+        <div class="engineering-controls">
+          <label><span data-i18n-de="Ansicht">View</span><select id="engineering-section"><option value="heatmap" data-i18n-de="Klassen-Heatmap">Class heatmap</option><option value="classes" data-i18n-de="Klassenmetriken">Class metrics</option><option value="methods" data-i18n-de="Methodenwartbarkeit">Method maintainability</option><option value="knowledge" data-i18n-de="Wissensverteilung">Knowledge concentration</option><option value="measurements" data-i18n-de="Build, Laufzeit und Teststabilität">Build, runtime and test stability</option><option value="cohesion" data-i18n-de="Paketkohäsion">Package cohesion</option><option value="history" data-i18n-de="Qualitätsverlauf">Quality history</option><option value="tests" data-i18n-de="Tests und Änderungsreichweite">Tests and change impact</option><option value="mutations" data-i18n-de="Wirksamkeit der Tests">Test effectiveness</option><option value="duplicates" data-i18n-de="Code-Duplikate">Code duplication</option></select></label>
+          <details id="engineering-scope-options" class="engineering-scope"><summary id="engineering-scope-summary">All packages</summary><div class="engineering-scope-content"><label><span data-i18n-de="Paket oder Datei">Package or file</span><input id="engineering-target-query" type="search" placeholder="Find package or file" data-i18n-placeholder-de="Paket oder Datei finden" aria-label="Find package or file" data-i18n-aria-label-de="Paket oder Datei finden" aria-describedby="engineering-target-note"><select id="engineering-target" aria-label="Package or file" data-i18n-aria-label-de="Paket oder Datei" aria-describedby="engineering-target-note"></select></label><button id="engineering-target-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></div></details>
+          <label><span data-i18n-de="Suchen">Search</span><input id="engineering-query" type="search"></label>
+        </div>
+        <p id="engineering-target-note" class="muted" hidden></p><p id="engineering-status" role="status"></p><button id="engineering-help" type="button" class="context-help-trigger" aria-label="Measurement scope and import" data-i18n-aria-label-de="Messumfang und Datenimport">?</button><div id="engineering-note" hidden></div>
+        <div id="engineering-list"></div><button id="engineering-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Nächste 20 anzeigen">Show next 20</button>
+      </section>
+      <section id="tab-architecture" class="panel-hidden" aria-label="Target architecture" data-i18n-aria-label-de="Sollarchitektur"><div id="architecture-content"></div></section>
+      <section id="tab-assessment" class="panel-hidden" aria-label="Architecture review" data-i18n-aria-label-de="Architekturreview"><div id="assessment-content"></div></section>
+      <section id="tab-security" class="panel-hidden" aria-label="Dependency security" data-i18n-aria-label-de="Sicherheit der Abhängigkeiten">
+        <h2 class="visually-hidden" data-i18n-de="Sicherheit der Abhängigkeiten">Dependency security</h2>
+        <p id="security-status" role="status" aria-live="polite"></p>
+        <div id="security-metrics" aria-label="Original scan totals before filters" data-i18n-aria-label-de="Summen des ursprünglichen Scans vor Filtern"></div>
+        <div id="security-severities" aria-label="Findings by severity before filters" data-i18n-aria-label-de="Befunde nach Schweregrad vor Filtern"></div>
+        <details id="security-coverage"><summary data-i18n-de="Scan">Scan</summary><p id="security-snapshot-note" class="muted"></p><div id="security-coverage-content"></div></details>
+        <div class="security-controls">
+          <label><span data-i18n-de="Paket oder CVE suchen">Search package or CVE</span><input id="security-query" type="search" aria-label="Search package or CVE" data-i18n-aria-label-de="Paket oder CVE suchen" placeholder="Package name or advisory ID" data-i18n-placeholder-de="Paketname oder Advisory-ID"></label>
+          <label><span data-i18n-de="Schweregrad">Severity</span><select id="security-severity" aria-label="Severity" data-i18n-aria-label-de="Schweregrad"><option value="all" data-i18n-de="Alle">All</option><option value="critical" data-i18n-de="Kritisch">Critical</option><option value="high" data-i18n-de="Hoch">High</option><option value="medium" data-i18n-de="Mittel">Medium</option><option value="low" data-i18n-de="Niedrig">Low</option><option value="unknown" data-i18n-de="Unbekannt">Unknown</option></select></label>
+        </div>
+        <p id="security-count" class="muted" role="status" aria-live="polite"></p>
+        <div id="security-findings"></div>
+        <button id="security-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Befunde laden">Load more findings</button>
+      </section>
+      <section id="tab-review-dashboard" class="panel-hidden" aria-label="Review dashboard" data-i18n-aria-label-de="Review-Dashboard">
+        <h2 class="visually-hidden" data-i18n-de="Review-Dashboard">Review dashboard</h2>
+        <p id="dashboard-status" role="status" aria-live="polite"></p>
+        <button id="dashboard-refresh" type="button" class="btn btn-secondary" data-i18n-de="Payload neu laden">Reload payload</button>
+        <div id="dashboard-grid">
+          <div id="dashboard-kpis" class="dash-panel dash-wide"><h3 data-i18n-de="Kennzahlen">KPIs</h3></div>
+          <div id="dashboard-health" class="dash-panel"><h3 data-i18n-de="Gesundheit">Health</h3></div>
+          <div id="dashboard-zones" class="dash-panel"><h3 data-i18n-de="A-I-Zonen">A/I zones</h3></div>
+          <div id="dashboard-decisions" class="dash-panel dash-wide"><h3 data-i18n-de="Entscheidungen">Decisions</h3></div>
+          <div id="dashboard-pr" class="dash-panel dash-wide"><h3 data-i18n-de="PR-Kommentar">PR comment</h3></div>
+        </div>
+      </section>
+      <div id="tab-dsm" class="panel-hidden">
+        <div class="matrix-controls"><span data-i18n-de="Zeilen → Spalten · Zahlen = Abhängigkeitsbelege · ↻ = Zyklus">Rows → columns · numbers = dependency evidence · ↻ = cycle</span>
+          <button id="matrix-density" type="button" class="btn btn-secondary" aria-pressed="false" data-i18n-de="Kompakte Zellen">Compact cells</button>
+          <button id="matrix-prev" type="button" class="btn btn-quiet" data-i18n-de="Zurück">Previous</button>
+          <span id="matrix-page"></span><button id="matrix-next" type="button" class="btn btn-quiet" data-i18n-de="Weiter">Next</button>
+        </div><div id="dsm-tab" tabindex="0" aria-label="Dependency matrix" data-i18n-aria-label-de="Abhängigkeitsmatrix"></div>
+      </div>
+    </div>
+  </section>
+  <div id="inspector-resizer" class="panel-resizer" role="separator" aria-orientation="vertical" aria-controls="inspector" aria-label="Resize Inspector" data-i18n-aria-label-de="Inspektor-Größe ändern" tabindex="0" title="Drag to resize Inspector. Arrow keys adjust width; Shift uses larger steps. Double-click to reset." data-i18n-title-de="Ziehen, um die Inspektor-Breite zu ändern. Pfeiltasten ändern die Breite, Umschalt in größeren Schritten. Doppelklick setzt sie zurück."></div>
+  <aside id="inspector" aria-label="Inspector" data-i18n-aria-label-de="Inspektor"><div class="panel-heading" data-i18n-de="Inspektor">Inspector</div><div id="sidebar" tabindex="-1"></div></aside>
+</div>
+<div id="ops-strip" hidden>
+  <div><strong data-i18n-de="Simulierte Änderungen">Simulated changes</strong><div id="simulation-summary" class="muted"></div></div>
+  <ul id="ops-list"></ul>
+  <p id="repair-result" role="status" hidden></p>
+  <button id="undo-ops" type="button" class="btn btn-secondary" data-i18n-de="Rückgängig">Undo</button>
+  <button id="clear-ops" type="button" class="btn btn-secondary" data-i18n-de="Änderungen verwerfen">Clear changes</button>
+  <button id="export-ops" type="button" class="btn btn-primary" title="Download simulated changes as JSON" data-i18n-title-de="Simulierte Änderungen als JSON herunterladen">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+    <span data-i18n-de="Änderungen exportieren">Export changes</span>
+  </button>
+</div>
+<div id="feedback" role="status" aria-live="polite"></div>
+<dialog id="scenario-dialog" aria-labelledby="scenario-title">
+  <h2 id="scenario-title" data-i18n-de="Refactoring-Szenarien">Refactoring scenarios</h2>
+  <p class="muted" data-i18n-de="Benannte Experimente am Abhängigkeitsgraphen. Laden braucht eine Bestätigung; Quelldateien bleiben unverändert. Die Prüfsumme erfasst Abhängigkeitsstruktur und aufgezeichnete Belege, nicht den gesamten Quelltext.">Named dependency-graph experiments. Loading requires confirmation; source files remain unchanged. The fingerprint covers dependency structure and recorded evidence, not complete source contents.</p>
+  <label class="scenario-field"><span data-i18n-de="Gespeicherte Szenarien">Saved scenarios</span><select id="scenario-list"></select></label>
+  <div class="scenario-actions"><button id="scenario-load" type="button" class="btn btn-secondary" data-i18n-de="Vorschau laden">Load preview</button><button id="scenario-delete" type="button" class="btn btn-quiet" data-i18n-de="Gespeichertes löschen">Delete saved</button></div>
+  <label class="scenario-field"><span data-i18n-de="Name">Name</span><input id="scenario-name" type="text" maxlength="120"></label>
+  <label class="scenario-field"><span data-i18n-de="Beschreibung">Description</span><textarea id="scenario-description" maxlength="4000"></textarea></label>
+  <div class="scenario-actions"><button id="scenario-save" type="button" class="btn btn-primary" data-i18n-de="Aktuelle Vorschau speichern">Save current preview</button><button id="scenario-export" type="button" class="btn btn-secondary" data-i18n-de="Szenario-JSON exportieren">Export scenario JSON</button><button id="scenario-import" type="button" class="btn btn-secondary" data-i18n-de="Szenario-JSON importieren">Import scenario JSON</button><input id="scenario-file" type="file" accept="application/json,.json" hidden></div>
+  <p id="scenario-status" class="muted" role="status" aria-live="polite"></p>
+  <p class="muted" data-i18n-de="Speicherung ist lokal in diesem Browser. Für Versionskontrolle oder einen anderen Browser JSON exportieren. Kennzahlen werden am aktuellen Abhängigkeitsgraphen neu berechnet; Compiler- und Regelbelege beschreiben weiterhin den ursprünglichen Bericht.">Storage is local to this browser. Export JSON for version control or another browser. Metrics are recomputed on the current dependency graph; compiler and policy evidence still describes the original report.</p>
+  <div class="dialog-actions"><button id="scenario-close" type="button" class="btn btn-secondary" data-i18n-de="Schließen">Close</button></div>
+</dialog>
+<dialog id="action-dialog" aria-labelledby="action-title" aria-describedby="action-description">
+  <h2 id="action-title" data-i18n-de="Simulation bestätigen">Confirm simulation</h2><p id="action-description"></p>
+  <div class="dialog-actions"><button id="cancel-action" type="button" class="btn btn-secondary" data-i18n-de="Abbrechen">Cancel</button>
+  <button id="confirm-action" type="button" class="btn btn-primary" data-i18n-de="Simulation anwenden">Apply simulation</button></div>
+</dialog>
+<div id="metric-tooltip" role="tooltip" hidden></div>
+<script id="archguard-data" type="application/json">__PAYLOAD__</script>
+<script>
+__APP_JS__
+</script>
+</body>
+</html>

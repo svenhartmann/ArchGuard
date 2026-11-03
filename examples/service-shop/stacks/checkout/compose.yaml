@@ -1,0 +1,41 @@
+x-build: &build
+  dockerfile: ../../Dockerfile
+  additional_contexts:
+    runtime: ../../runtime
+x-app: &app
+  init: true
+  networks: [shop, data]
+  expose: ["8080"]
+services:
+  orders:
+    <<: *app
+    build: {<<: *build, context: ../../services/orders}
+    environment:
+      PAYMENTS_API: http://payments:8080
+      INVENTORY_API: http://inventory:8080
+      SHIPPING_API: http://shipping:8080
+      NOTIFICATIONS_API: http://notifications:8080
+      # Deployment target; the demo adapter keeps data in memory.
+      DATABASE_URL: postgresql://orders-db:5432/orders
+    depends_on: [orders-db]
+  payments:
+    <<: *app
+    build: {<<: *build, context: ../../services/payments}
+    environment:
+      RISK_API: http://risk:8080
+  risk:
+    <<: *app
+    build: {<<: *build, context: ../../services/risk}
+    environment:
+      ORDERS_API: http://orders:8080
+  orders-db:
+    image: postgres:17-alpine
+    networks: [data]
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_PASSWORD: local-demo-only
+networks:
+  shop:
+    name: archguard-service-shop-demo
+    external: true
+  data: {}

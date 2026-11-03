@@ -1,0 +1,259 @@
+[
+  {
+    "view": "graph",
+    "title": {
+      "en": "System structure",
+      "de": "Systemaufbau"
+    },
+    "help": {
+      "en": "Explore packages, source dependencies and cycles, then inspect the source evidence.",
+      "de": "Pakete, Quellabhängigkeiten und Zyklen erkunden; anschließend die Quellbelege prüfen."
+    },
+    "missions": [
+      "understand"
+    ],
+    "tools": [
+      {
+        "name": "architecture_world",
+        "arguments": {}
+      },
+      {
+        "name": "architecture_atlas",
+        "arguments": {}
+      },
+      {
+        "name": "cycles_list",
+        "arguments": {}
+      },
+      {
+        "name": "edge_evidence",
+        "requires": [
+          "from",
+          "to"
+        ]
+      }
+    ]
+  },
+  {
+    "view": "dsm",
+    "title": {
+      "en": "Coupling",
+      "de": "Kopplung"
+    },
+    "help": {
+      "en": "Inspect dependency directions and tightly connected package groups in a matrix.",
+      "de": "Abhängigkeitsrichtungen und eng verbundene Paketgruppen in der Matrix prüfen."
+    },
+    "missions": [
+      "understand",
+      "improve"
+    ],
+    "tools": [
+      {
+        "name": "dsm",
+        "arguments": {}
+      },
+      {
+        "name": "suggest_cuts",
+        "requires": [
+          "cycle_id"
+        ]
+      },
+      {
+        "name": "simulate",
+        "requires": [
+          "ops"
+        ]
+      }
+    ]
+  },
+  {
+    "view": "calls",
+    "title": {
+      "en": "Calls and classes",
+      "de": "Aufrufe und Klassen"
+    },
+    "help": {
+      "en": "Find declarations, callers and declared targets. Static evidence does not establish runtime dispatch.",
+      "de": "Deklarationen, Aufrufer und deklarierte Ziele finden. Statische Belege zeigen keine vollständige Laufzeitausführung."
+    },
+    "missions": [
+      "understand",
+      "improve"
+    ],
+    "tools": [
+      {
+        "name": "semantic_model",
+        "arguments": {
+          "kind": "classes"
+        }
+      },
+      {
+        "name": "semantic_model",
+        "arguments": {
+          "kind": "calls"
+        }
+      },
+      {
+        "name": "change_context",
+        "requires_one_of": [
+          "targets",
+          "symbols",
+          "base"
+        ]
+      }
+    ]
+  },
+  {
+    "view": "services",
+    "title": {
+      "en": "Projects and services",
+      "de": "Projekte und Dienste"
+    },
+    "help": {
+      "en": "Inspect project boundaries, configured service relationships and API contracts.",
+      "de": "Projektgrenzen, konfigurierte Dienstbeziehungen und API-Verträge prüfen."
+    },
+    "missions": [
+      "understand"
+    ],
+    "tools": [
+      {
+        "name": "workspace_context",
+        "arguments": {}
+      },
+      {
+        "name": "service_topology",
+        "arguments": {}
+      },
+      {
+        "name": "api_contracts",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "view": "architecture",
+    "title": {
+      "en": "Patterns and rules",
+      "de": "Muster und Regeln"
+    },
+    "help": {
+      "en": "Compare observed patterns with declared architecture rules. Pattern candidates need source and domain review.",
+      "de": "Beobachtete Muster und deklarierte Architekturregeln vergleichen. Musterkandidaten anhand von Quellcode und Fachlichkeit prüfen."
+    },
+    "missions": [
+      "understand",
+      "verify"
+    ],
+    "tools": [
+      {
+        "name": "architecture_context",
+        "arguments": {}
+      },
+      {
+        "name": "architecture_patterns",
+        "arguments": {}
+      },
+      {
+        "name": "architecture_document",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "view": "assessment",
+    "title": {
+      "en": "Findings and changes",
+      "de": "Befunde und Änderungen"
+    },
+    "help": {
+      "en": "Inspect findings, evidence gaps and source-backed change context before editing. Re-analyze and compare after changes.",
+      "de": "Vor Änderungen Befunde, Beleglücken und Änderungskontext prüfen. Anschließend neu analysieren und vergleichen."
+    },
+    "missions": [
+      "improve",
+      "verify"
+    ],
+    "tools": [
+      {
+        "name": "architecture_findings",
+        "arguments": {}
+      },
+      {
+        "name": "architecture_finding",
+        "requires": [
+          "finding_id"
+        ]
+      },
+      {
+        "name": "staged_architecture_diff",
+        "arguments": {}
+      },
+      {
+        "name": "compare",
+        "requires": [
+          "base"
+        ]
+      }
+    ]
+  },
+  {
+    "view": "quality",
+    "title": {
+      "en": "Quality and tests",
+      "de": "Qualität und Tests"
+    },
+    "help": {
+      "en": "Inspect measured class quality and imported tests. Unknown measurements stay unknown; test impact does not make other tests safe to skip.",
+      "de": "Gemessene Klassenqualität und importierte Tests prüfen. Unbekannte Messungen bleiben unbekannt; Testreichweite erlaubt kein sicheres Weglassen anderer Tests."
+    },
+    "missions": [
+      "improve",
+      "verify"
+    ],
+    "tools": [
+      {
+        "name": "quality_metrics",
+        "arguments": {}
+      },
+      {
+        "name": "test_impact",
+        "arguments": {}
+      },
+      {
+        "name": "test_coverage",
+        "arguments": {}
+      },
+      {
+        "name": "quality_history",
+        "arguments": {}
+      },
+      {
+        "name": "check",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "view": "security",
+    "title": {
+      "en": "Dependency security",
+      "de": "Sichere Abhängigkeiten"
+    },
+    "help": {
+      "en": "Inspect saved dependency vulnerability evidence and its freshness. Missing scans are not a clean result.",
+      "de": "Gespeicherte Schwachstellenbefunde und ihre Aktualität prüfen. Ein fehlender Scan ist kein unauffälliges Ergebnis."
+    },
+    "missions": [
+      "improve",
+      "verify"
+    ],
+    "tools": [
+      {
+        "name": "security_findings",
+        "arguments": {}
+      }
+    ]
+  }
+]

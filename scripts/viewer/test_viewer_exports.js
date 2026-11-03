@@ -1,0 +1,82 @@
+// Documentation downloads execute the embedded viewer, preserving its actual
+// display filters and keeping import, call and service evidence separate.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const unsafe='B|<script>alert(1)</script>```';
+const nodes=[{id:0,name:'A',kind:'module',parent:null},{id:1,name:unsafe,kind:'module',parent:null},{id:2,name:'A/Hidden.ts',kind:'file',parent:0},{id:3,name:'Other',kind:'module',parent:null}];
+const edge=(from,to,count)=>({from,to,count,refs:[{file:'source|<tag>.ts',line:7,raw:'import "<tag>";'}]});
+const classes=[{id:'A.Class',name:'A.Class',package:'A',file:'A/Class.java',graph_node:'A/Class.java',line:1,kind:'class'},{id:'B.Class',name:'B.Class',package:'B',file:'B/Class.java',graph_node:'B/Class.java',line:1,kind:'class'}];
+const calls={status:'partial',files:2,classes,methods:[],calls:[{from_class:'A.Class',to_class:'B.Class',from_method:'A.Class.run',to_method:'B.Class.fetch',resolution:'project',dispatch:'instance',file:'A/Class.java',line:4,column:1,code:'b.fetch();',target_label:'B.Class.fetch'}],diagnostics:['A dependency is unavailable.']};
+const services={schema_version:1,complete:true,monorepo:true,compose_files:['compose.yaml'],services:['api','worker','db'].map(id=>({id,name:id,compose_file:'compose.yaml',build_context:id,networks:['default'],profiles:[]})),dependencies:[{from:'api',to:'worker',kind:'configured_http',evidence:[{file:'compose.yaml',line:12,description:'WORKER_URL=http://worker'}]},{from:'worker',to:'db',kind:'startup',evidence:[]}],cycles:[],diagnostics:[]};
+const fixture={root:'/tmp/export-demo',nodes,edges:[edge(2,1,12),edge(1,2,2),edge(3,1,5)],findings:[],cyclicEdges:[],view:{depth:0,visible:null},calls,services};
+const app=launch(fixture,{library:false});
+assert.ok(app.ids.has('export-markdown'),'the workspace exposes a documentation export control');
+app.run("selectNode('A');ui.edgeMode='outgoing';renderGraphControls()");
+const before=app.run('JSON.stringify([data,work,view,ops,ui,treeZoom])');
+const read=()=>JSON.parse(app.run('JSON.stringify(exportSnapshot())'));
+const snapshot=read();
+assert.equal(snapshot.kind,'imports');assert.equal(snapshot.filters.direction,'outgoing');
+assert.equal(snapshot.metrics.scope_nodes,app.run('view.nodes.length'));
+assert.equal(snapshot.metrics.shown_nodes,app.run('displayedGraphNodes().length'));
+assert.deepEqual(snapshot.edges.map(e=>[e.from,e.to,e.count]),[['A',unsafe,12]],'export includes exactly the filtered directed connections');
+assert.deepEqual(snapshot.edges[0].evidence,fixture.edges[0].refs,'sampled references are not mistaken for total counts');
+assert.equal(snapshot.edges[0].count_exact,true);
+assert.equal(snapshot.edges[0].cyclic_current_scope,true);
+assert.equal(snapshot.metrics.acd,app.run('currentAcd'));
+const markdown=app.run('exportMarkdown(exportSnapshot())');
+assert.match(markdown,/```mermaid\nflowchart LR/);assert.match(markdown,/Analysis scope/);
+assert.match(markdown,/Shown dependencies.*1/);assert.match(markdown,/source&#124;&lt;tag&gt;\.ts/);
+assert.doesNotMatch(markdown,/<script>|<tag>/,'Markdown does not embed source HTML');
+assert.equal((markdown.match(/^```/gm)||[]).length,2,'untrusted node names cannot break the diagram fence');
+assert.match(markdown,/12/);assert.match(markdown,/Source.*Target/);
+assert.match(markdown,/does not measure runtime performance/);
+const lowerBound=launch({...fixture,edges:[{...edge(2,1,12),count:null}]},{library:false});lowerBound.run("selectNode('A');ui.edgeMode='all'");
+const lowerSnapshot=JSON.parse(lowerBound.run('JSON.stringify(exportSnapshot())'));
+assert.equal(lowerSnapshot.edges[0].count,1);assert.equal(lowerSnapshot.edges[0].count_exact,false,'legacy samples remain explicit lower bounds');
+assert.match(lowerBound.run('exportMarkdown(exportSnapshot())'),/1\+/);
+const simulated=launch(fixture,{library:false});simulated.click('simulation-mode');
+simulated.run('recordOp(encodeCut("A/Hidden.ts",'+JSON.stringify(unsafe)+'))');
+const simulatedSnapshot=JSON.parse(simulated.run('JSON.stringify(exportSnapshot())'));
+assert.equal(simulatedSnapshot.simulation_ops.length,1);assert.equal(simulatedSnapshot.metrics.cyclic_groups,0);
+assert.match(simulated.run('exportMarkdown(exportSnapshot())'),/Simulated changes/);
+assert.equal(simulated.run('data.edges.length'),fixture.edges.length,'export does not rewrite the source snapshot');
+
+// A minimal DOM serializer double checks clone/style preparation, while the
+// browser's XMLSerializer supplies standards-compliant escaping in production.
+const proto=Object.getPrototypeOf(app.document.createElement('g'));
+proto.cloneNode=function(deep){const clone=app.document.createElement(this.tagName);for(const [k,v] of Object.entries(this.attributes))clone.setAttribute(k,v);clone._text=this._text;if(deep)for(const child of this.children)clone.appendChild(child.cloneNode(true));return clone;};
+proto.insertBefore=function(child,prior){const index=prior?this.children.indexOf(prior):-1;this.children.splice(index<0?this.children.length:index,0,child);child.parentElement=this;return child;};
+Object.defineProperty(proto,'firstChild',{get(){return this.children[0]||null;},configurable:true});
+const xml=text=>String(text).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+app.context.XMLSerializer=class {serializeToString(node){if(node.tagName==='#TEXT')return xml(node._text);const tag=node.tagName.toLowerCase();return '<'+tag+Object.entries(node.attributes).map(([k,v])=>' '+k+'="'+xml(v)+'"').join('')+'>'+xml(node._text)+node.children.map(c=>this.serializeToString(c)).join('')+'</'+tag+'>';}};
+app.context.getComputedStyle=node=>({getPropertyValue:key=>key==='--bg'?'#FAFAFA':key==='fill'?node.getAttribute('fill')||'#123456':key==='stroke'?node.getAttribute('stroke')||'none':key==='font-family'?'system-ui':''});
+const svg=app.run('exportSvg()');
+assert.match(svg,/xmlns="http:\/\/www.w3.org\/2000\/svg"/);assert.match(svg,/fill:#123456/,'export resolves CSS text styles into the SVG');
+assert.match(svg,/fill="#FAFAFA"/,'standalone SVG includes the active background');
+assert.match(svg,/data-tree-arrow=/);assert.doesNotMatch(svg,/<script>|<tag>/);
+assert.match(svg,/Red marks cycle edges in both directions/,'SVG carries the active compact-tree legend');
+assert.match(svg,/&quot;direction&quot;:&quot;outgoing&quot;/,'SVG metadata records the actual filters');
+const sourceSvg=app.ids.get('package-tree').querySelector('svg');
+assert.equal(sourceSvg.querySelector('rect').getAttribute('style'),null,'resolved presentation styles are written only to the downloaded clone');
+assert.equal(app.run('JSON.stringify([data,work,view,ops,ui,treeZoom])'),before,'downloads do not change navigation, filters, analysis or simulation');
+app.run("showTab('services');selectService('api');serviceUi.mode='outgoing';renderServices()");
+const service=read();assert.equal(service.kind,'services');assert.equal(service.edges.length,1);assert.equal(service.edges[0].kind,'configured_http');assert.equal(service.edges[0].evidence[0].line,12);
+assert.equal(service.metrics.acd,undefined,'service exports do not relabel import ACD as a service metric');
+assert.match(app.run('exportMarkdown(exportSnapshot())'),/not evidence of executed runtime calls/);
+assert.match(app.run('exportSvg()'),/data-service-arrow=/);
+app.run("showTab('calls');callUi.package='A';renderCalls()");
+const callSnapshot=read();assert.equal(callSnapshot.kind,'calls');assert.equal(callSnapshot.status,'partial');assert.equal(callSnapshot.edges.length,1);assert.equal(callSnapshot.edges[0].count,1);assert.equal(callSnapshot.edges[0].evidence[0].code,'b.fetch();');assert.equal(callSnapshot.edges[0].resolution,'project');
+assert.equal(callSnapshot.filters.language,'all','call exports preserve the chosen source-language filter');
+assert.match(app.run('exportMarkdown(exportSnapshot())'),/A dependency is unavailable/);
+assert.equal(app.run('exportSvg()'),null,'Calls cannot silently download a stale package tree');
+app.run("showTab('dsm')");const matrix=read();assert.equal(matrix.kind,'imports');assert.equal(matrix.filters.workspace,'dsm');assert.equal(matrix.edges.length,app.run('view.edges.length'));assert.match(matrix.coverage,/all matrix tiles/);
+assert.equal(app.run('exportSvg()'),null,'Matrix cannot silently download a hidden package tree');
+app.run("showTab('graph');setDiagram('network')");assert.equal(app.run('exportSvg()'),null);
+
+(async()=>{
+  app.click('export-json');const json=JSON.parse(await app.graph.downloads.at(-1).text());assert.equal(json.schema_version,1);assert.equal(json.kind,'imports');
+  app.click('export-markdown');assert.match(await app.graph.downloads.at(-1).text(),/# Architecture:/);
+  const count=app.graph.downloads.length;app.click('export-svg');assert.equal(app.graph.downloads.length,count,'unsupported SVG view does not create a misleading download');
+  console.log('Documentation exports: scoped Markdown/Mermaid, JSON evidence, standalone styled SVG, service/call separation, escaping and unchanged state passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});

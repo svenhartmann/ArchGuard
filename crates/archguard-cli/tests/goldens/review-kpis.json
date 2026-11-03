@@ -1,0 +1,336 @@
+{
+  "config": {
+    "architecture": "default",
+    "dependency_rules": "default",
+    "layers": "derived",
+    "modules": "declared",
+    "ownership_rules": "default",
+    "performance": "default",
+    "project": "derived",
+    "review": "default",
+    "rules": "default",
+    "semantic": "default",
+    "store": "default"
+  },
+  "findings": [
+    {
+      "cycles_sampled": 0,
+      "edge_count": 2,
+      "id": "metric-max-scc-size-scc-1",
+      "kind": "metric_threshold",
+      "nodes": [
+        "cyc/ping.ts",
+        "cyc/pong.ts"
+      ],
+      "severity": "error",
+      "suggested_cuts": []
+    },
+    {
+      "cycles_sampled": 1,
+      "edge_count": 2,
+      "id": "scc-1",
+      "kind": "cycle",
+      "nodes": [
+        "cyc/ping.ts",
+        "cyc/pong.ts"
+      ],
+      "sampling": {
+        "budget_exhausted": false,
+        "complete": false,
+        "cycle_limit_reached": false,
+        "edge_budget": 10000,
+        "explored_edges": 2,
+        "length_limited": false,
+        "root_search_complete": true,
+        "searched_from": "cyc/ping.ts"
+      },
+      "severity": "error",
+      "suggested_cuts": [
+        {
+          "from": "cyc/ping.ts",
+          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 1.0,
+          "to": "cyc/pong.ts"
+        },
+        {
+          "from": "cyc/pong.ts",
+          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 1.0,
+          "to": "cyc/ping.ts"
+        }
+      ]
+    },
+    {
+      "cycles_sampled": 0,
+      "edge_count": 0,
+      "id": "layers-unranked",
+      "kind": "layer_unranked",
+      "nodes": [
+        "cyc/ping.ts",
+        "cyc/pong.ts"
+      ],
+      "severity": "info",
+      "suggested_cuts": []
+    }
+  ],
+  "metrics": {
+    "app.ts": {
+      "fan_in": 0,
+      "fan_out": 2,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "cyc/ping.ts": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.5
+    },
+    "cyc/pong.ts": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": true,
+      "instability": 0.5
+    },
+    "internal/hidden.ts": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "stable/store.ts": {
+      "fan_in": 4,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.2
+    },
+    "stable/use1.ts": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "stable/use2.ts": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "stable/use3.ts": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "unstable/flow.ts": {
+      "fan_in": 1,
+      "fan_out": 2,
+      "in_cycle": false,
+      "instability": 0.6666667
+    },
+    "unstable/leaf1.ts": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "unstable/leaf2.ts": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    }
+  },
+  "review_kpis": {
+    "api_surface": [
+      {
+        "exported_symbols": 11,
+        "files": 11,
+        "per_file": 1.0,
+        "top": [
+          [
+            "app.ts",
+            1
+          ],
+          [
+            "cyc/ping.ts",
+            1
+          ],
+          [
+            "cyc/pong.ts",
+            1
+          ],
+          [
+            "internal/hidden.ts",
+            1
+          ],
+          [
+            "stable/store.ts",
+            1
+          ]
+        ]
+      }
+    ],
+    "debt": {
+      "by_kind": {
+        "fixme": 2,
+        "hack": 1,
+        "todo": 1,
+        "xxx": 1
+      },
+      "loc": 66,
+      "markers": 5,
+      "per_kloc": 75.75757575757575
+    },
+    "dependencies": null,
+    "health": {
+      "level": "yellow",
+      "parts": {
+        "hubs": 0.4727272727272728,
+        "sdp": 0.9,
+        "tangledness": 0.8181818181818181
+      },
+      "score": 73.03030303030303,
+      "trend": null
+    },
+    "hub_gini": {
+      "gini": 0.5272727272727272,
+      "top_share": 0.8
+    },
+    "layer_drift": null,
+    "leaks": [
+      {
+        "evidence": [
+          "app.ts:2"
+        ],
+        "from_file": "app.ts",
+        "in_file": "internal/hidden.ts",
+        "symbol": "mask"
+      }
+    ],
+    "propagation_cost": [
+      {
+        "affected": 2,
+        "pc": 0.18181818181818185,
+        "scc_id": "scc-1",
+        "size": 2,
+        "total": 11
+      }
+    ],
+    "risk_gaps": [
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 38.0,
+        "path": "cyc/ping.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 38.0,
+        "path": "cyc/pong.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 14.0,
+        "path": "stable/store.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 11.0,
+        "path": "unstable/flow.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 8.0,
+        "path": "unstable/leaf1.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 8.0,
+        "path": "unstable/leaf2.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 4.0,
+        "path": "app.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 3.0,
+        "path": "internal/hidden.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "stable/use1.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "stable/use2.ts"
+      }
+    ],
+    "sdp_violations": [
+      {
+        "evidence": [
+          "stable/store.ts:1"
+        ],
+        "from": "stable/store.ts",
+        "i_from": 0.20000000298023224,
+        "i_to": 0.6666666865348816,
+        "to": "unstable/flow.ts"
+      }
+    ],
+    "tangledness": {
+      "quote": 0.18181818181818185,
+      "tangled_nodes": 2,
+      "total": 11
+    },
+    "zones": null
+  },
+  "schema_version": 1,
+  "semantic": {
+    "analyzers": [
+      {
+        "backend": "typescript",
+        "diagnostics": [
+          "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages."
+        ],
+        "files": 11,
+        "language": "typescript",
+        "project": null,
+        "status": "unavailable",
+        "version": null
+      }
+    ],
+    "diagnostics": [
+      "typescript: No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages."
+    ],
+    "projected_calls": 0,
+    "projected_supertypes": 0,
+    "projected_type_uses": 0,
+    "skipped_project_calls": 0,
+    "skipped_type_uses": 0,
+    "status": "unavailable"
+  },
+  "summary": {
+    "acd": 3.1818181818181817,
+    "ccd": 35,
+    "edges": 10,
+    "largest_scc": 2,
+    "layer_violations": 0,
+    "nccd": 1.0930821948010077,
+    "nodes": 11,
+    "sccs": 1,
+    "status": "fail"
+  }
+}

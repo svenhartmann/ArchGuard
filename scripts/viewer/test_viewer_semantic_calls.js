@@ -1,0 +1,75 @@
+// Mixed compiler reports share the Calls UI without merging symbols by name.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+function languageModel(language,extension){
+  const classes=['Client','Port'].map(name=>({id:language+'::Demo.'+name,name:'Demo.'+name,package:'Demo',file:language+'/Demo/'+name+extension,graph_node:language+'/Demo/'+name+extension,line:1,kind:name==='Port'?'interface':'class',language}));
+  const methods=classes.map((cls,index)=>({id:cls.id+'#'+(index?'Send(string)':'Run()'),class_id:cls.id,name:index?'Send':'Run',signature:index?'Send(string)':'Run()',file:cls.file,line:3,is_static:false}));
+  const call={from_class:classes[0].id,from_method:methods[0].id,to_class:classes[1].id,to_method:methods[1].id,target_label:'port.Send("<img>")',dispatch:'interface',resolution:'project',file:classes[0].file,line:4,column:9,code:'port.Send("<img>");'};
+  return {classes,methods,calls:[call]};
+}
+const java=languageModel('java','.java'),csharp=languageModel('csharp','.cs');
+const classes=[...java.classes,...csharp.classes],methods=[...java.methods,...csharp.methods];
+const fixture={root:'/tmp/Mixed',nodes:classes.map((cls,id)=>({id,name:cls.graph_node,kind:'file',parent:null,lang:cls.language==='csharp'?'cs':'java'})),edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},calls:{status:'partial',java_release:0,files:4,classes,methods,calls:[...java.calls,...csharp.calls],diagnostics:[],analyzers:[
+  {language:'java',backend:'javac',status:'ready',files:2,version:'23',project:'java/pom.xml',diagnostics:[]},
+  {language:'csharp',backend:'Roslyn',status:'partial',files:2,version:'8.0.204',project:'csharp/Demo.csproj',diagnostics:['Missing assembly <img src=x>']}
+]}};
+const app=launch(fixture);app.run("showTab('calls')");
+assert.ok(app.ids.has('calls-language'),'Calls needs an analysis-language filter');
+const relations=()=>app.ids.get('calls-relations').querySelectorAll('button[data-relation]');
+assert.equal(relations().length,2,'same-named Java/C# types remain distinct directed connections');
+assert.match(relations().map(row=>row.textContent).join(' '),/Java.*C#|C#.*Java/,'language badges distinguish same-named connections');
+assert.match(app.ids.get('calls-diagnostics').textContent,/Partial call analysis/);
+assert.doesNotMatch(app.ids.get('calls-status').textContent,/Java 0|Java static|Java API/);
+const details=app.ids.get('calls-diagnostics');
+assert.match(details.textContent,/Java.*javac.*ready.*2 files.*23.*java\/pom\.xml/);
+assert.match(details.textContent,/C#.*Roslyn.*partial.*2 files.*8\.0\.204.*csharp\/Demo\.csproj/);
+assert.match(details.textContent,/Missing assembly <img src=x>/);assert.equal(details.querySelectorAll('img').length,0);
+const chooseLanguage=value=>{app.ids.get('calls-language').value=value;app.ids.get('calls-language').dispatch('change');};
+const state=app.run('JSON.stringify([data,work,view,ops])');chooseLanguage('csharp');
+assert.equal(relations().length,1);assert.match(relations()[0].textContent,/C#/);assert.doesNotMatch(relations()[0].textContent,/Java/);
+relations()[0].click();assert.match(app.ids.get('calls-evidence').textContent,/Run\(\) → Send\(string\)/);
+assert.match(app.ids.get('calls-evidence').textContent,/csharp\/Demo\/Client.cs:4:9/);
+assert.match(app.ids.get('calls-evidence').textContent,/Declared target: Demo.Port#Send\(string\)/);
+assert.doesNotMatch(app.ids.get('calls-evidence').textContent,/csharp::|java::/,'display names do not expose namespaced transport IDs');
+assert.match(app.ids.get('sidebar').textContent,/C#/);
+const callsState=app.run('JSON.stringify(callUi)');app.click('language-de');
+assert.equal(app.ids.get('calls-language').value,'csharp');assert.equal(app.run('JSON.stringify(callUi)'),callsState);
+assert.match(app.ids.get('calls-language').getAttribute('aria-label'),/Analysesprache/);
+assert.match(details.textContent,/C#.*Roslyn.*teilweise.*2 Dateien/);assert.match(details.textContent,/Missing assembly <img src=x>/);
+assert.match(app.ids.get('calls-diagnostics').textContent,/Teilweise Aufrufanalyse/);
+app.click('language-en');chooseLanguage('java');assert.equal(relations().length,1);assert.match(relations()[0].textContent,/Java/);
+app.run("openCallsForNode('csharp/Demo/Client.cs')");assert.equal(app.ids.get('calls-language').value,'csharp','Inspect calls follows the selected source language');
+assert.equal(app.run('JSON.stringify([data,work,view,ops])'),state,'semantic filters never mutate either analysis or import simulation');
+const failed=launch({...fixture,calls:{status:'unavailable',files:1,classes:[],methods:[],calls:[],diagnostics:[],analyzers:[{language:'csharp',backend:'Roslyn',status:'unavailable',files:1,version:null,project:'Project.csproj',diagnostics:['SDK unavailable']}]}});
+failed.run("showTab('calls')");assert.match(failed.ids.get('calls-diagnostics').textContent,/C#.*unavailable.*SDK unavailable/);assert.doesNotMatch(failed.ids.get('calls-status').textContent,/Java/);assert.equal(failed.ids.get('calls-package').disabled,true);
+const empty=launch({...fixture,calls:{status:'not_applicable',files:0,classes:[],methods:[],calls:[],diagnostics:[],analyzers:[]}});empty.run("showTab('calls')");assert.match(empty.ids.get('calls-status').textContent,/No applicable source files/);assert.doesNotMatch(empty.ids.get('calls-status').textContent,/Java/);
+const legacy=launch({...fixture,calls:{status:'ready',java_release:17,files:2,...java,diagnostics:[]}});legacy.run("showTab('calls')");assert.match(legacy.ids.get('calls-diagnostics').textContent,/Java 17 API\/source baseline/);
+const externalClassId='csharp:external:System.Console, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a::System.Console';
+const externalMethodId=externalClassId+'#WriteLine(string)';
+const external=launch({...fixture,calls:{...fixture.calls,calls:[{...csharp.calls[0],resolution:'external',dispatch:'static',to_class:externalClassId,to_method:externalMethodId,target_label:'System.Console.WriteLine(string)'}]}});
+external.run("showTab('calls')");external.ids.get('calls-resolution').value='external';external.ids.get('calls-resolution').dispatch('change');
+assert.match(external.ids.get('calls-evidence').textContent,/System.Console.WriteLine\(string\)/);
+for(const id of ['calls-relations','calls-evidence','sidebar'])assert.doesNotMatch(external.ids.get(id).textContent,/csharp:|external:|Version=|PublicKeyToken=/,'assembly-qualified transport IDs must not leak into external target labels');
+assert.match(external.ids.get('calls-relations').textContent,/Demo.Client → System.Console/);
+assert.equal(external.run('callModel.calls[0].to_class'),externalClassId);
+assert.equal(external.run('callModel.calls[0].to_method'),externalMethodId);
+const externalExport=JSON.parse(external.run('JSON.stringify(exportSnapshot())'));
+assert.equal(externalExport.edges[0].to,externalClassId,'exports keep the stable class identity');
+assert.equal(externalExport.edges[0].evidence[0].to_method,externalMethodId,'exports keep the stable method identity');
+external.click('language-de');
+assert.match(external.ids.get('calls-relations').textContent,/Demo.Client → System.Console/);
+assert.doesNotMatch(external.ids.get('sidebar').textContent,/csharp:|external:|Version=|PublicKeyToken=/);
+const metrics=launch({...fixture,performance:{abstractions:[{scope:'node',name:csharp.classes[0].graph_node,types:2,abstract_types:1,abstractness:.5,instability:0,distance:.5,coverage:'complete',reason:null}],entries:[],cyclic_groups:[],source_findings:[],contract_candidates:[{from_node:csharp.classes[0].graph_node,to_node:csharp.classes[1].graph_node,from_class:csharp.classes[0].id,to_class:csharp.classes[1].id,interfaces:[csharp.classes[1].id,'csharp:System.IFormattable'],message:'Review the concrete dependency.',evidence:[{file:'csharp/Demo/Client.cs',line:4,raw:'port.Send("<img>");'}]}],diagnostics:[]}});
+metrics.run("selectNode('csharp/Demo/Client.cs')");
+assert.match(metrics.ids.get('sidebar').textContent,/1 \/ 2 abstract types/);assert.doesNotMatch(metrics.ids.get('sidebar').textContent,/abstract Java types/);
+assert.match(metrics.ids.get('sidebar').textContent,/Demo.Client → Demo.Port/);
+assert.match(metrics.ids.get('sidebar').textContent,/Existing interface candidates: Demo.Port, System.IFormattable/);
+assert.doesNotMatch(metrics.ids.get('sidebar').textContent,/csharp:/,'refactoring candidates display class and interface names, not transport IDs');
+assert.match(metrics.ids.get('sidebar').textContent,/csharp\/Demo\/Client.cs:4 port.Send\("<img>"\);/);
+assert.equal(metrics.ids.get('sidebar').querySelectorAll('img').length,0);
+assert.match(metrics.run("metricHelp('abstractness')"),/Java\/C#/);
+metrics.click('language-de');assert.match(metrics.ids.get('sidebar').textContent,/1 \/ 2 abstrakte Typen/);assert.match(metrics.run("metricHelp('abstractness')"),/Java\/C#/);
+assert.match(metrics.ids.get('sidebar').textContent,/Vorhandene Interface-Kandidaten: Demo.Port, System.IFormattable/);
+assert.doesNotMatch(metrics.ids.get('sidebar').textContent,/csharp:/);
+console.log('Semantic Calls: per-language coverage, C# evidence, mixed symbol identity, language filters, DE/EN and legacy reports passed');

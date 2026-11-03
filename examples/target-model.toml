@@ -1,0 +1,52 @@
+# Demonstration policy for fixtures/ts-cyclic; not an inferred project policy.
+# Logical components deliberately group files from different package branches.
+# Optional per-component contracts use normalized source names, e.g.:
+# public = ["a/api/**"]       # omitted: all assigned files; []: closed externally
+# max_incoming_components = 2 # distinct observed callers, not import count
+# max_outgoing_components = 1 # distinct observed target components
+derive_layers = false
+
+[project]
+source_roots = ["src"]
+languages = ["ts"]
+
+[modules]
+depth = 1
+
+[architecture.model]
+name = "Demonstration: logical boundaries"
+severity = "error"
+require_assignment = true
+
+[[architecture.model.components]]
+name = "Application"
+include = ["app.ts"]
+
+[[architecture.model.components]]
+name = "Capability A"
+include = ["a/**", "c/**"]
+
+[[architecture.model.components]]
+name = "Capability B"
+include = ["b/**", "d/**", "e/**"]
+
+[[architecture.model.components]]
+name = "Utilities"
+include = ["f/**", "g/**"]
+
+[[architecture.model.allowed_dependencies]]
+from = "Application"
+to = "Capability A"
+
+[[architecture.model.allowed_dependencies]]
+from = "Application"
+to = "Utilities"
+
+[[architecture.model.allowed_dependencies]]
+from = "Capability A"
+to = "Capability B"
+
+# This unused permission demonstrates the difference between policy and code.
+[[architecture.model.allowed_dependencies]]
+from = "Capability B"
+to = "Utilities"

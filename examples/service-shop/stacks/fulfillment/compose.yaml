@@ -1,0 +1,38 @@
+x-build: &build
+  dockerfile: ../../Dockerfile
+  additional_contexts:
+    runtime: ../../runtime
+x-app: &app
+  init: true
+  networks: [shop, data]
+  expose: ["8080"]
+services:
+  inventory:
+    <<: *app
+    build: {<<: *build, context: ../../services/inventory}
+    environment:
+      # Broker integration is a deployment example, not a running demo adapter.
+      EVENTS_URL: amqp://rabbitmq:5672
+    depends_on: [rabbitmq]
+  shipping:
+    <<: *app
+    build: {<<: *build, context: ../../services/shipping}
+    environment:
+      INVENTORY_API: http://inventory:8080
+      NOTIFICATIONS_API: http://notifications:8080
+      EVENTS_URL: amqp://rabbitmq:5672
+    depends_on: [rabbitmq]
+  notifications:
+    <<: *app
+    build: {<<: *build, context: ../../services/notifications}
+    environment:
+      EVENTS_URL: amqp://rabbitmq:5672
+    depends_on: [rabbitmq]
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    networks: [data]
+networks:
+  shop:
+    name: archguard-service-shop-demo
+    external: true
+  data: {}

@@ -1,0 +1,16 @@
+# Apache Commons Collections 4.6.0; see examples/README.md for the pinned checkout.
+# Observe its existing imports without inventing intended architectural layers.
+derive_layers = false
+
+[project]
+source_roots = ["src/main/java"]
+languages = ["java"]
+exclude = ["src/test/**", "target/**"]
+
+[modules]
+# org / apache / commons / collections4 / {map, list, set, ...}
+depth = 4
+
+[rules]
+deny_cycles = "module"
+max_scc_size = 1

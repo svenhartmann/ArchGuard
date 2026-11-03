@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const methods=['one','two'].map((name,i)=>({id:'C#'+name+'()',class_id:'C',name,signature:name+'()',file:'C.java',line:i+2,is_static:false}));
+const metric={class_id:'C',definition:'lcom4-source/v1',status:'ready',methods:2,fields:2,lcom4:2,groups:methods.map(m=>[m.id]),cyclomatic_sum:2,reason:'Measured source state.'};
+const fixture={root:'/tmp/cohesion',nodes:[{id:0,name:'C.java',kind:'file',parent:null}],edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},calls:{status:'ready',files:1,classes:[{id:'C',name:'C',package:'p',file:'C.java',graph_node:'C.java',line:1,kind:'class',language:'java'}],methods,calls:[],diagnostics:[],details:{definition:'source-types-state/v1',type_uses:[],class_states:[{class_id:'C',status:'ready',fields:['left','right'].map(name=>({id:name,name,is_static:false,file:'C.java',line:1})),accesses:methods.map((m,i)=>({method:m.id,field:i?'right':'left',file:'C.java',line:i+2}))}],cohesion:[metric]}}};
+const app=launch(fixture,{library:false});app.run("openCallsForNode('C.java');");
+assert.match(app.ids.get('sidebar').textContent,/2 method groups/i);
+assert.match(app.ids.get('sidebar').textContent,/one\(\)/);assert.match(app.ids.get('sidebar').textContent,/two\(\)/);
+assert.ok(app.ids.get('sidebar').querySelectorAll('svg').length,'state graph explains grouping');
+app.run("setViewerLanguage('de')");assert.match(app.ids.get('sidebar').textContent,/2 Methodengruppen/);
+const unknown=launch({...fixture,calls:{...fixture.calls,details:undefined}},{library:false});unknown.run("showTab('calls');selectCallTreeElement('class','C');");
+assert.match(unknown.ids.get('sidebar').textContent,/unknown|unavailable/i);assert.doesNotMatch(unknown.ids.get('sidebar').textContent,/0 method groups/i);
+console.log('Class cohesion UI: groups, field evidence graph, DE/EN and unknown legacy data passed');

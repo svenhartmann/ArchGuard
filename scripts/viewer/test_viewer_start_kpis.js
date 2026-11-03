@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+let harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+harness=harness.replace("'viewer_development.js'","'viewer_dash_kpis.js','viewer_dash_zones.js','viewer_dash_health.js','viewer_development.js'");
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const fixture={root:'/repo',nodes:[{id:0,name:'p',kind:'module',parent:null}],edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},reviewKpis:{health:{score:53.4,level:'yellow',trend:null},tangledness:{quote:.35,tangled_nodes:7,total:20},debt:{markers:91,loc:1000,per_kloc:91}}};
+const app=launch(fixture,{library:false});app.run("showTab('start')");
+const home=app.run('startUi.kpis');assert.ok(home,'Start contains the KPI overview');
+const cards=home.querySelectorAll('strong');assert.ok(cards.some(n=>n.textContent==='53.4'));assert.ok(cards.some(n=>n.textContent==='35%'));assert.ok(cards.some(n=>n.textContent==='91'));
+assert.equal(app.run('startUi.kpis.querySelectorAll("div").filter(n=>n.classList.contains("dash-card")).length'),8);
+const before=app.run('JSON.stringify(data.reviewKpis)');app.run('renderStart();renderStart()');assert.equal(app.run('JSON.stringify(data.reviewKpis)'),before);assert.equal(app.run('startUi.kpis'),home);
+assert.ok(app.run('Array.from(document.querySelectorAll("#tabs button")).filter(b=>["assessment","review-dashboard"].includes(b.dataset.tab)).every(b=>b.hidden)'));
+app.run('data.reviewKpis.health.score=null;renderStart()');assert.match(home.textContent,/not measured/);assert.doesNotMatch(home.textContent,/53.4/);
+app.run('data.reviewKpis=null;renderStart()');assert.match(home.textContent,/Not measured/);assert.equal(home.querySelectorAll('strong').length,0);
+console.log('Start KPIs: eight measurements, unknowns, immutable payload, repeat rendering and hidden legacy tabs passed');

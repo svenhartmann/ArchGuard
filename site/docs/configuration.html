@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Define source scope and architecture intent without hiding the evidence."><title>Configuration &amp; rules — ArchGuard docs</title><link rel="icon" href="../assets/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="../styles.css"><script src="../site.js" defer></script><script src="../docs.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header class="header wrap"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><nav aria-label="Main navigation"><a href="../index.html#examples">Examples</a><a class="nav-docs" href="index.html">Docs</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub <span aria-hidden="true">↗</span></a><a class="nav-cta" href="getting-started.html">Get started ↗</a></nav></header><div class="docs-layout wrap"><aside class="docs-sidebar"><a class="docs-home" href="index.html">Documentation</a><nav aria-label="Documentation"><a href="overview.html">What is ArchGuard?</a><a href="getting-started.html">Getting started</a><a href="viewer.html">Viewer guide</a><a href="cli.html">CLI reference</a><a href="configuration.html" aria-current="page">Configuration &amp; rules</a><a href="prerequisites.html">Tools &amp; prerequisites</a><a href="languages.html">Languages &amp; measurements</a><a href="services.html">Services &amp; event cycles</a><a href="mcp.html">MCP &amp; coding agents</a><a href="ci.html">CI &amp; quality gates</a><a href="troubleshooting.html">Troubleshooting</a></nav><a class="docs-demo" href="../index.html#explore">See the viewer screenshots ↗</a></aside><main id="main" class="docs-article"><div class="eyebrow">ArchGuard DOCUMENTATION</div><h1>Configuration &amp; rules</h1><p class="docs-lead">Define source scope and architecture intent without hiding the evidence.</p><nav class="docs-toc" aria-label="On this page"><strong>On this page</strong><a href="#precedence">Configuration precedence</a><a href="#scope">A small source-scope example</a><a href="#boundaries">Declare a dependency boundary</a><a href="#layers">Declared and derived layers</a><a href="#verify">Inspect what is actually applied</a><a href="#baseline">Adopt a baseline deliberately</a><a href="#project-files">Keep intentional project data</a></nav>
+<h2 id="precedence">Configuration precedence</h2><ol><li>An explicitly supplied <code>--config</code> file.</li><li><code>.archguard/archguard.toml</code> under the analyzed project root.</li><li>Legacy <code>archguard.toml</code> at the project root.</li><li>Derived values and defaults where no file or section is supplied.</li></ol><p>Relative source roots are resolved against the project root. Invalid configuration fails source analysis instead of silently resetting it. Service inventory reads discovery exclusions independently and reports configuration-reading gaps in its diagnostics.</p>
+<h2 id="scope">A small source-scope example</h2><div class="code"><button class="copy" type="button" aria-label="Copy code example">Copy</button><pre><code>[project]
+source_roots = [&quot;src&quot;]
+languages = [&quot;ts&quot;, &quot;js&quot;]
+exclude = [&quot;**/node_modules/**&quot;, &quot;**/dist/**&quot;, &quot;**/generated/**&quot;, &quot;**/*.spec.*&quot;]
+
+[modules]
+depth = 2
+
+[rules]
+deny_cycles = &quot;module&quot;
+max_scc_size = 1</code></pre></div>
+<p>Adjust languages and source roots to the actual project. <code>languages = ["auto"]</code> enables automatic language selection. An explicit exclude list replaces that field's defaults; retain the patterns you still need. The module depth changes the aggregation boundary used for package analysis.</p>
+<h2 id="boundaries">Declare a dependency boundary</h2><div class="code"><button class="copy" type="button" aria-label="Copy code example">Copy</button><pre><code>[[dependency_rules]]
+name = &quot;ui-no-persistence&quot;
+from = [&quot;ui/**&quot;]
+to = [&quot;persistence/**&quot;]
+severity = &quot;error&quot;
+message = &quot;UI must call the application API.&quot;</code></pre></div>
+<p>Match the module paths that ArchGuard actually reports. A directory named <code>src/ui</code> may appear as <code>ui</code> when <code>src</code> is the source root. Inspect the graph or effective configuration before writing patterns.</p>
+<h2 id="layers">Declared and derived layers</h2><div class="code"><button class="copy" type="button" aria-label="Copy code example">Copy</button><pre><code>[[layers]]
+name = &quot;domain&quot;
+contains = [&quot;domain/**&quot;]
+may_depend_on = []
+
+[[layers]]
+name = &quot;application&quot;
+contains = [&quot;application/**&quot;]
+may_depend_on = [&quot;domain&quot;]</code></pre></div>
+<p>These are example boundaries, not a recommendation for every codebase. Declared rules express intent and can fail the check. Inferred layer rankings are observations, not a substitute for your architecture policy. A module outside the declared patterns may remain unranked.</p>
+<h2 id="verify">Inspect what is actually applied</h2><div class="code"><button class="copy" type="button" aria-label="Copy code example">Copy</button><pre><code>archguard --config /path/to/archguard.toml config /path/to/project --format json
+archguard --config /path/to/archguard.toml check /path/to/project</code></pre></div>
+<p>The effective configuration reports provenance by section. Use it to resolve unexpected exclusions, source roots or derived settings rather than repeatedly changing the displayed view.</p>
+<h2 id="baseline">Adopt a baseline deliberately</h2><div class="code"><button class="copy" type="button" aria-label="Copy code example">Copy</button><pre><code>archguard baseline write .
+archguard check . --baseline
+archguard baseline diff .</code></pre></div>
+<p>Writing a baseline records the current cycle identities in <code>.archguard/baseline.json</code>. It is an explicit decision to accept that starting point. With a baseline, existing cycle identities can be tolerated while new ones fail; other enabled gates still apply. Review the file in version control instead of regenerating it on every CI run.</p>
+<h2 id="project-files">Keep intentional project data</h2><p><code>.archguard/</code> contains both disposable output and intentional inputs. Configuration, baselines, scenarios and imported measurements may belong in version control. Caches and regenerated reports usually do not. Avoid ignoring or deleting the whole directory without deciding which evidence your team needs to retain.</p><div class="docs-next"><a href="index.html">← Documentation home</a><a href="../index.html#examples">Explore examples ↗</a></div></main></div><footer class="footer wrap"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Local analysis. Traceable evidence.</p><a href="../about.html">About these examples</a><a href="#main">Back to top ↑</a></footer><div id="copy-status" role="status" aria-live="polite"></div></body></html>

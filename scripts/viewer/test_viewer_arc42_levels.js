@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const base=fs.readFileSync('scripts/viewer/test_viewer_arc42_diagrams.js','utf8').split('const app=launch')[0];const {launch,fixture}=vm.runInNewContext(base+'\n({launch,fixture})',{require,console,performance,Blob});
+fixture.nodes.push({id:100,name:'org/example/p0/sub',kind:'module',parent:2},{id:101,name:'org/example/p0/sub/deep',kind:'module',parent:100},{id:102,name:'org/example/p0/sub/deep/X.java',kind:'file',parent:101});
+const app=launch(fixture,{library:false});app.run("showTab('architecture')");const content=app.ids.get('architecture-content');
+assert.ok(content.querySelector('nav[data-arc42-levels]'),'building block levels have a dedicated navigation');
+const go=id=>content.querySelectorAll('button[data-arc42-level-scope]').find(b=>b.getAttribute('data-arc42-level-scope')===id).click();
+go('2');assert.equal(app.run('architectureUi.diagramStates.dependencies.scope'),'2');assert.equal(content.querySelector('nav[data-arc42-levels]').getAttribute('data-current-level'),'2');
+go('100');assert.equal(content.querySelector('nav[data-arc42-levels]').getAttribute('data-current-level'),'3');assert.ok(content.querySelectorAll('button[data-arc42-level-scope]').every(b=>b.getAttribute('data-arc42-level-scope')!=='101'));
+const crumbs=content.querySelector('nav[data-arc42-breadcrumb]');assert.equal(crumbs.querySelectorAll('button').length,3);assert.match(crumbs.textContent,/p0.*sub/);
+assert.equal(content.querySelectorAll('g[data-arc42-node]').filter(n=>n.getAttribute('data-arc42-node')==='101').length,1,'deeper building blocks still appear in the level-3 diagram');
+content.querySelectorAll('g[data-arc42-node]').find(n=>n.getAttribute('data-arc42-node')==='101').click();assert.ok(!content.querySelectorAll('button').some(n=>n.textContent==='Open package'),'three-level navigation stops at level 3');
+app.run('renderArchitecture()');assert.equal(content.querySelector('nav[data-arc42-levels]').getAttribute('data-current-level'),'3','chapter rerender preserves the current level');
+go('');assert.equal(app.run('architectureUi.diagramStates.dependencies.scope'),null);assert.equal(content.querySelectorAll('g[data-arc42-node]').length,12,'overview still shows every top-level package');
+console.log('arc42 levels: overview, package, subpackage, breadcrumbs, depth boundary and persistent navigation passed');

@@ -1,0 +1,54 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('crates/archguard-report/src/viewer.js','utf8');
+// Check an actual rendering formatter independently of the viewer harness.
+const statsSource=source.slice(source.indexOf('function repairStats('),source.indexOf('function renderRepairComparison('));
+const germanStats=vm.runInNewContext(statsSource+'\nrepairStats;',{
+  t:(_en,de,params={})=>de.replace(/\{(\w+)\}/g,(token,key)=>Object.hasOwn(params,key)?params[key]:token)
+});
+const before={cyclicNodes:3,cyclicEdges:4,largestScc:3},after={cyclicNodes:0,cyclicEdges:0,largestScc:0};
+assert.match(germanStats('All',before,after),/^All: 3 → 0 zyklische Knoten/,'repair statistics use the selected language and preserve the supplied label');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const nodes=['All.java','External.java','Both.java'].map((name,id)=>({id,name,kind:'file',parent:null,lang:'java'}));
+const edge=(from,to)=>({from,to,count:1,refs:[{file:nodes[from].name,line:7,raw:'import "<untranslated>";'}]});
+const fixture={root:'/tmp/All',nodes,edges:[edge(0,1),edge(1,0),edge(0,2),edge(2,0)],view:{depth:0,visible:null},findings:[{id:'scc-1',kind:'cycle',nodes:nodes.map(n=>n.name),edge_count:4,suggested_cuts:[]}],cyclicEdges:[]};
+const app=launch(fixture),sidebar=app.ids.get('sidebar');
+app.run("setViewerLanguage('de');focusCycle(cyclesForView()[0]);compareCycleSolutions(cyclesForView()[0])");
+assert.match(sidebar.textContent,/Lösungsalternativen/);
+assert.match(sidebar.textContent,/betroffene Quelldateien/);
+assert.match(sidebar.textContent,/Umsetzungsschritte und Belege/);
+assert.match(sidebar.textContent,/Abhängigkeit.*All\.java/);
+assert.match(sidebar.textContent,/import "<untranslated>";/,'source evidence remains unchanged');
+assert.equal(sidebar.querySelectorAll('untranslated').length,0);
+assert.match(app.ids.get('cycles-panel').textContent,/3 Mitglieder · 4 Kanten/);
+const snapshot=app.run('JSON.stringify([data,work,ops,ui.cycle,repairComparison.result])');
+const find=text=>sidebar.querySelectorAll('button').find(button=>button.textContent===text);
+assert.ok(find('Plan als Vorschau anwenden'));
+find('Plan als Vorschau anwenden').click();
+assert.match(app.ids.get('action-description').textContent,/Option 1.*Vorschau/);
+app.click('cancel-action');
+assert.equal(app.run('ops.length'),0);
+find('Lösungsplan exportieren').click();
+assert.match(app.ids.get('feedback').textContent,/Lösungsplan.*exportiert/);
+app.run("setViewerLanguage('en')");
+assert.match(sidebar.textContent,/Repair alternatives/);
+assert.match(sidebar.textContent,/Implementation steps and evidence/);
+assert.equal(app.run('JSON.stringify([data,work,ops,ui.cycle,repairComparison.result])'),snapshot,'language changes preserve the source, simulated graph and computed alternatives');
+app.run("setViewerLanguage('de');showTab('dsm')");
+assert.match(app.ids.get('dsm-tab').textContent,/Abhängigkeitsmatrix: Quellzeilen → Zielspalten/);
+assert.match(app.ids.get('matrix-page').textContent,/Zeilen 1–3 \/ Spalten 1–3 von 3/);
+const deCell=app.ids.get('dsm-tab').querySelectorAll('button[data-edge]')[0];
+assert.match(deCell.getAttribute('aria-label'),/Importreferenzen, zyklisch/);
+const key=deCell.dataset.edge;
+app.run("setViewerLanguage('en')");
+assert.match(app.ids.get('dsm-tab').textContent,/Dependency matrix: source rows → target columns/);
+const enCell=app.ids.get('dsm-tab').querySelectorAll('button').find(button=>button.dataset.edge===key);
+assert.match(enCell.getAttribute('aria-label'),/import references, cyclic/);
+(async()=>{
+  const exported=JSON.parse(await app.graph.downloads.at(-1).text());
+  assert.equal(exported.schema,'archguard-cycle-repair/v1');
+  assert.deepEqual(exported.sourceGraph.nodes,fixture.nodes);
+  assert.ok(exported.plan.ops.every(op=>op.cut_edge),'export retains replayable operation keys');
+  assert.match(exported.steps.join(' '),/Abhängigkeit.*All\.java/);
+  console.log('Repair/Matrix DE/EN: alternatives, evidence, preview, stable planner data and localized accessible cells passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});

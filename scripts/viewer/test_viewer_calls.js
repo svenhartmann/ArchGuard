@@ -1,0 +1,73 @@
+// Exercise Calls UI with the same DOM/ForceGraph doubles as the viewer state suite.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;', {require,console,performance,Blob});
+const cls=(id,packageName,kind='class')=>({id,name:id,package:packageName,file:id.replaceAll('.','/')+'.java',graph_node:id.replaceAll('.','/')+'.java',line:1,kind});
+const method=(classId,name,is_static=false)=>({id:classId+'#'+name+'()',class_id:classId,name,signature:name+'()',file:classId.replaceAll('.','/')+'.java',line:3,is_static});
+const classes=[cls('app.api.Consumer','app/api'),cls('app.impl.Service','app/impl'),cls('app.impl.Port','app/impl','interface')];
+const methods=[method(classes[0].id,'run'),method(classes[0].id,'accept'),method(classes[1].id,'fetch'),method(classes[1].id,'save'),method(classes[1].id,'notify'),method(classes[1].id,'staticHelper',true),method(classes[2].id,'send')];
+const call=(from,to,dispatch='instance',resolution='project',code='service.fetch();')=>({from_class:from.class_id,from_method:from.id,to_class:to?.class_id??null,to_method:to?.id??null,target_label:to?.id??'unknown.call()',dispatch,resolution,file:from.file,line:7,column:5,code});
+const calls={status:'partial',java_release:17,files:3,classes,methods,calls:[
+  call(methods[0],methods[2]),call(methods[0],methods[3],'instance','project','service.save("<img src=x onerror=alert(1)>");'),
+  call(methods[4],methods[1]),call(methods[0],methods[1]),
+  call(methods[0],{class_id:'java.lang.String',id:'java.lang.String#trim()'},'instance','external'),
+  call(methods[0],null,'unknown','unresolved','dynamic.call();'),
+],diagnostics:['Unknown dependency <img src=x onerror=alert(1)>']};
+const nodes=[{id:0,name:'app/api',kind:'module',parent:null},{id:1,name:'app/impl',kind:'module',parent:null},...classes.map((c,i)=>({id:i+2,name:c.graph_node,kind:'file',parent:c.package==='app/api'?0:1,lang:'java'}))];
+const fixture={root:'/tmp/call-project',nodes,edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},calls};
+const app=launch(fixture);
+app.ids.get('tabs').querySelectorAll('button').find(b=>b.dataset.tab==='calls').click();
+assert.equal(app.run('ui.workspace'),'calls','Calls is a real separate workspace');
+assert.equal(app.ids.get('tabs').querySelectorAll('button').find(b=>b.dataset.tab==='calls').getAttribute('aria-selected'),'true');
+assert.equal(app.ids.get('tab-calls').classList.contains('panel-hidden'),false);
+assert.equal(app.ids.get('graph-options').hidden,true);
+assert.match(app.ids.get('workspace-description').textContent,/call|method/i);
+assert.match(app.ids.get('calls-status').textContent,/partial|incomplete/i);
+assert.match(app.ids.get('calls-diagnostics').textContent,/Java 17 API\/source baseline/);
+assert.match(app.ids.get('calls-diagnostics').textContent,/1 unresolved/);
+assert.match(app.ids.get('calls-diagnostics').textContent,/1 external/);
+assert.equal(app.ids.get('calls-package').value,'app/api');
+const relationButtons=()=>app.ids.get('calls-relations').querySelectorAll('button[data-relation]');
+assert.equal(relationButtons().length,2,'show project class pairs including incoming, but hide class-internal calls initially');
+const outgoing=relationButtons().find(b=>b.textContent.startsWith('Consumer → Service'));
+assert.ok(outgoing);outgoing.click();
+assert.match(app.ids.get('calls-evidence').textContent,/run\(\).*fetch\(\)/);
+assert.match(app.ids.get('calls-evidence').textContent,/app\/api\/Consumer.java:7:5/);
+assert.match(app.ids.get('calls-evidence').textContent,/<img src=x onerror=alert\(1\)>/);
+assert.equal(app.ids.get('calls-evidence').querySelectorAll('img').length,0,'call source is rendered as text');
+assert.match(app.ids.get('calls-suggestions').textContent,/interface/i);
+assert.match(app.ids.get('calls-suggestions').textContent,/existing interface/,'review plans check reusable contracts before proposing another abstraction');
+assert.match(app.ids.get('calls-suggestions').textContent,/fetch\(\)/);
+assert.match(app.ids.get('calls-suggestions').textContent,/save\(\)/);
+assert.match(app.ids.get('calls-suggestions').textContent,/unresolved.*ranking|ranking.*unresolved/i,'recommendation limits remain visible with their evidence');
+assert.match(app.ids.get('calls-suggestions').textContent,/does not|do not|review|candidate/i);
+assert.ok(app.ids.get('calls-suggestions').querySelectorAll('button').every(b=>!/^Apply|^Simulate/.test(b.textContent)),'plans never pretend to edit or simulate method calls');
+const baseline=app.run('JSON.stringify([view,work,ops])'),positions=app.run('JSON.stringify(renderedNodes.map(n=>[n.src,n.x,n.y]))');
+app.click('calls-internal');assert.equal(relationButtons().length,3);
+app.ids.get('calls-filter').value='save';app.ids.get('calls-filter').dispatch('input');assert.equal(relationButtons().length,1);
+assert.match(app.ids.get('calls-evidence').textContent,/save\(\)/);assert.doesNotMatch(app.ids.get('calls-evidence').textContent,/run\(\) → fetch\(\)/);
+app.ids.get('calls-filter').value='';app.ids.get('calls-filter').dispatch('input');
+app.ids.get('calls-resolution').value='unresolved';app.ids.get('calls-resolution').dispatch('change');
+assert.equal(relationButtons().length,1);relationButtons()[0].click();
+assert.match(app.ids.get('calls-evidence').textContent,/Unresolved|unresolved/);
+assert.match(app.ids.get('calls-suggestions').textContent,/No .*suggest|not .*suggest/i);
+assert.equal(app.run('JSON.stringify([view,work,ops])'),baseline,'Calls filters never mutate the import graph, scope or simulations');
+app.run("showTab('graph')");assert.equal(app.run('JSON.stringify(renderedNodes.map(n=>[n.src,n.x,n.y]))'),positions);
+app.run("openCallsForNode('app/impl')");assert.equal(app.ids.get('calls-package').value,'app/impl');
+app.run("setSimulation(true);recordOp(encodeMove('app/api/Consumer.java','app/impl'))");
+assert.match(app.ids.get('calls-status').textContent,/original|baseline/i,'import SimOps do not claim to change the call graph');
+const missing=launch({...fixture,calls:{status:'unavailable',files:3,classes:[],methods:[],calls:[],diagnostics:['JDK unavailable']}});missing.run("showTab('calls')");assert.match(missing.ids.get('calls-status').textContent,/JDK unavailable/);
+const legacy=launch({...fixture,calls:undefined});legacy.run("showTab('calls')");assert.match(legacy.ids.get('calls-status').textContent,/not included|unavailable/i);assert.match(legacy.ids.get('calls-status').textContent,/Analyzer version unreported/i);assert.doesNotMatch(legacy.ids.get('calls-status').textContent,/Java/,'missing report metadata cannot imply a Java analysis');
+const noSources=launch({...fixture,calls:{status:'not_applicable',files:0,classes:[],methods:[],calls:[],diagnostics:[]}});noSources.run("showTab('calls')");assert.match(noSources.ids.get('calls-status').textContent,/No applicable source files/);assert.doesNotMatch(noSources.ids.get('calls-status').textContent,/Java/);
+const staticCycle=launch({...fixture,calls:{...calls,calls:[call(methods[0],methods[5],'static'),call(methods[4],methods[1])]}});staticCycle.run("showTab('calls')");staticCycle.ids.get('calls-relations').querySelectorAll('button[data-relation]').find(b=>b.textContent.startsWith('Consumer → Service')).click();assert.doesNotMatch(staticCycle.ids.get('calls-suggestions').textContent,/Extract .*interface/,'static calls are not instance-interface extraction candidates');
+const oneWay=launch({...fixture,calls:{...calls,calls:[call(methods[0],methods[2]),call(methods[0],methods[3])]}});oneWay.run("showTab('calls')");oneWay.ids.get('calls-relations').querySelectorAll('button[data-relation]')[0].click();assert.doesNotMatch(oneWay.ids.get('calls-suggestions').textContent,/break .*cycle|Extract .*interface/,'one-way calls alone do not establish a cycle');assert.match(oneWay.ids.get('calls-suggestions').textContent,/Move candidate/);
+const defaultClasses=[cls('PlainA',''),cls('PlainB','')],defaultMethods=[method('PlainA','run'),method('PlainB','target')];
+const defaultPackage=launch({...fixture,calls:{...calls,status:'ready',classes:defaultClasses,methods:defaultMethods,calls:[call(defaultMethods[0],defaultMethods[1])],diagnostics:[]}});defaultPackage.run("showTab('calls')");assert.equal(defaultPackage.ids.get('calls-relations').querySelectorAll('button[data-relation]').length,1,'the default Java package remains selectable');defaultPackage.run("openCallsForNode('PlainA.java')");assert.equal(defaultPackage.run('callUi.package'),'');
+const manyClasses=Array.from({length:121},(_,i)=>cls('bulk.C'+String(i).padStart(3,'0'),'bulk')),manyMethods=manyClasses.map(c=>method(c.id,'run'));
+const many=launch({...fixture,calls:{...calls,status:'ready',classes:manyClasses,methods:manyMethods,calls:manyMethods.slice(1).map(m=>call(manyMethods[0],m)),diagnostics:[]}});many.run("showTab('calls')");assert.equal(many.ids.get('calls-relations').querySelectorAll('button[data-relation]').length,100);many.ids.get('calls-relations').querySelectorAll('button').find(b=>b.textContent==='Show next 100 type/module connections').click();assert.equal(many.ids.get('calls-relations').querySelectorAll('button[data-relation]').length,120,'large call scopes have explicit bounded paging');
+const nestedClass={...cls('app.api.Consumer.Nested','app/api'),file:classes[0].file,graph_node:classes[0].graph_node},nestedMethods=[method(nestedClass.id,'fetch'),method(nestedClass.id,'notify')];
+const sameFile=launch({...fixture,calls:{...calls,classes:[classes[0],nestedClass],methods:[methods[0],methods[1],...nestedMethods],calls:[call(methods[0],nestedMethods[0]),call(nestedMethods[1],methods[1])]}});sameFile.run("showTab('calls')");sameFile.ids.get('calls-relations').querySelectorAll('button[data-relation]')[0].click();assert.doesNotMatch(sameFile.ids.get('calls-suggestions').textContent,/Interface candidate/,'outer/nested same-file calls do not automatically justify an interface');
+const sameFileConstruction=launch({...fixture,calls:{...calls,classes:[classes[0],nestedClass],methods:[methods[0],methods[1],...nestedMethods],calls:[call(methods[0],nestedMethods[0],'constructor'),call(nestedMethods[1],methods[1])]}});sameFileConstruction.run("showTab('calls')");sameFileConstruction.ids.get('calls-relations').querySelectorAll('button[data-relation]')[0].click();assert.doesNotMatch(sameFileConstruction.ids.get('calls-suggestions').textContent,/Adapter \/ factory candidate/,'same-file helper construction is not an automatic adapter recommendation');assert.match(sameFileConstruction.ids.get('calls-suggestions').textContent,/No supported suggestion/);
+const localClass={...cls('app.api.Consumer$Local@20:5','app/api'),file:classes[0].file,graph_node:classes[0].graph_node},localMethod=method(localClass.id,'run');
+const localMove=launch({...fixture,calls:{...calls,classes:[localClass,classes[1]],methods:[localMethod,methods[2],methods[3]],calls:[call(localMethod,methods[2]),call(localMethod,methods[3])]}});localMove.run("showTab('calls')");localMove.ids.get('calls-relations').querySelectorAll('button[data-relation]')[0].click();assert.doesNotMatch(localMove.ids.get('calls-suggestions').textContent,/Move candidate/,'local and anonymous class identities are not standalone move candidates');
+console.log('Calls view: package/class/method navigation, call evidence, partial coverage, safe text, grounded suggestions and import-model isolation passed');

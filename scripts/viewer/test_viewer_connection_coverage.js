@@ -1,0 +1,43 @@
+// In/Out are recorded graph neighbours, not proof that missing edges do not exist.
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const nodes=['Factory.java','Module.java'].map((name,id)=>({id,name,kind:'file',parent:null,lang:'java'}));
+const semantic={status:'partial',analyzers:[{language:'java',status:'partial',diagnostics:['Missing dependency']}],projected_calls:0,projected_supertypes:0,skipped_project_calls:0,diagnostics:['Missing dependency']};
+const fixture={root:'/tmp/connection-coverage',nodes,edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},semantic};
+const row=(app,name)=>app.ids.get('package-tree').querySelectorAll('g[data-package-node]').find(n=>n.getAttribute('data-package-node')===name);
+const count=(app,name,direction)=>row(app,name).querySelector('text[data-tree-'+direction+']');
+const app=launch(fixture,{library:false});
+assert.equal(count(app,'Factory.java','outgoing').textContent,'Out 0*','partial coverage cannot present zero as an unqualified absence of dependencies');
+assert.equal(count(app,'Factory.java','incoming').textContent,'In 0*');
+assert.equal(count(app,'Factory.java','outgoing').getAttribute('data-tree-outgoing'),'0','raw graph degree remains numeric');
+const notice=app.ids.get('package-tree').querySelector('span[data-connection-coverage]');
+assert.ok(notice,'explanation must be visible alongside tree counts, not hidden in More KPIs');
+assert.match(notice.textContent,/Incomplete/);
+assert.match(notice.getAttribute('data-metric-description'),/recorded.*incomplete/i);
+assert.match(row(app,'Factory.java').querySelector('title').textContent,/0 means none recorded/);
+assert.equal(row(app,'Factory.java').querySelector('title').textContent.split('0 means none recorded').length-1,1,'tree tooltip explains partial coverage once');
+app.run("selectNode('Factory.java')");
+assert.match(app.ids.get('sidebar').textContent,/No recorded dependencies in this direction/);
+const metric=key=>app.ids.get('sidebar').querySelector('div[data-inspector-metrics]').children[key==='incoming'?0:1];
+assert.equal(metric('outgoing').querySelector('strong').textContent,'0*','Inspector and tree use the same qualification');
+assert.match(metric('outgoing').getAttribute('data-metric-description'),/0 means none recorded/);
+const before=app.run('JSON.stringify([data,work,view,ops])');
+app.run("setViewerLanguage('de')");
+assert.equal(count(app,'Factory.java','outgoing').textContent,'Aus 0*');
+assert.match(app.ids.get('package-tree').querySelector('span[data-connection-coverage]').getAttribute('data-metric-description'),/erfasste.*unvollständig/);
+assert.match(metric('incoming').getAttribute('data-metric-description'),/0 bedeutet keine erfassten/);
+assert.equal(app.run('JSON.stringify([data,work,view,ops])'),before);
+const connected=launch({...fixture,edges:[{from:0,to:1,count:9,refs:[]}]},{library:false});
+assert.equal(count(connected,'Factory.java','outgoing').textContent,'Out 1*','multiple references still form one neighbour relation');
+assert.equal(count(connected,'Module.java','incoming').textContent,'In 1*');
+connected.run('ui.cyclesOnly=true;renderGraphControls()');
+assert.equal(count(connected,'Factory.java','outgoing').textContent,'Out 1*','display filters do not change the analysis-scope count');
+for(const status of ['ready','unavailable']){
+  const other=launch({...fixture,semantic:{...semantic,status}},{library:false});
+  assert.equal(count(other,'Factory.java','outgoing').textContent,status==='ready'?'Out 0':'Out 0*');
+  assert.equal(!!other.ids.get('package-tree').querySelector('span[data-connection-coverage]'),status!=='ready');
+}
+const legacy=launch({...fixture,semantic:undefined},{library:false});
+assert.equal(count(legacy,'Factory.java','outgoing').textContent,'Out 0','legacy import-only reports retain their declared scope');
+console.log('Connection coverage: recorded zero, visible partial notice, Inspector parity, exact distinct counts, filters and DE/EN passed');

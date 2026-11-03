@@ -1,0 +1,17 @@
+# Jellyfin v10.11.11; pinned source and analysis limits: examples/jellyfin.md.
+# Observe existing using directives without inventing intended layers.
+derive_layers = false
+
+[project]
+source_roots = ["."]
+languages = ["cs"]
+# Assembly attributes have no namespace and otherwise add directory-based roots.
+exclude = ["tests/**", "fuzz/**", "**/bin/**", "**/obj/**", "**/AssemblyInfo.cs", "SharedVersion.cs"]
+
+[modules]
+# Emby / Jellyfin / MediaBrowser -> application and infrastructure namespaces.
+depth = 1
+
+[rules]
+deny_cycles = "module"
+max_scc_size = 1

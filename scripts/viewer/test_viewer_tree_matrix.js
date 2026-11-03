@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const fixture={root:'/repo',nodes:[{id:0,name:'src',kind:'module',parent:null},{id:1,name:'src/Api',kind:'module',parent:0},{id:2,name:'src/Api/A',kind:'file',parent:1},{id:3,name:'src/Api/B',kind:'file',parent:1},{id:4,name:'src/Domain',kind:'module',parent:0},{id:5,name:'src/Domain/C',kind:'file',parent:4}],edges:[{from:2,to:5,count:3,refs:[{file:'src/Api/A',line:2,raw:'import C'}]},{from:5,to:2,count:2,refs:[]},{from:3,to:5,count:null,refs:[{file:'src/Api/B',line:4,raw:'import C'}]}],findings:[],cyclicEdges:[],view:{depth:2,visible:null}};
+const app=launch(fixture,{library:false});
+assert.equal(app.run('typeof buildTreeMatrix'),'function');
+const model=app.run('buildTreeMatrix(work)');assert.deepEqual(Array.from(model.columns,n=>n.name),['src/Api','src/Domain']);
+assert.equal(model.cells.get(1).get(4).count,4);assert.equal(model.cells.get(1).get(4).exact,false);assert.equal(model.cells.get(2).get(4).count,3);
+assert.equal(model.cycles.length,1);const path=model.cycles[0].path;assert.equal(path[0],path.at(-1));for(let i=1;i<path.length;i++)assert.ok(fixture.edges.some(e=>e.from===path[i-1]&&e.to===path[i]),'every witness step is a real directed edge');
+assert.equal(model.cycleOf.has(3),false,'noncyclic neighbour is never marked as a cycle member');
+const state=app.run('JSON.stringify([data,work,ops])');app.run("showTab('dsm')");const box=app.ids.get('dsm-tab');assert.ok(box.querySelector('table[data-tree-matrix]'));assert.equal(box.querySelectorAll('tr[data-matrix-row]').length,2,'packages begin collapsed');
+box.querySelector('button[data-matrix-expand-all]').click();assert.equal(box.querySelectorAll('tr[data-matrix-row]').length,5);assert.equal(box.querySelectorAll('span[data-matrix-name]').length,2,'expanding rows does not expand columns');
+const cycleSelect=box.querySelector('select[data-matrix-cycle-select]');cycleSelect.value='C1';cycleSelect.dispatch('change');assert.ok(box.querySelector('div[data-matrix-cycle-path]'));assert.match(box.textContent,/closed|geschlossen/);assert.ok(box.querySelectorAll('button[data-matrix-path-edge]').length>=2);
+box.querySelector('button[data-matrix-cell]').click();assert.ok(box.querySelector('section[data-matrix-evidence]'));box.querySelector('button[data-matrix-close]').click();assert.equal(box.querySelector('section[data-matrix-evidence]'),null);
+assert.equal(app.run('JSON.stringify([data,work,ops])'),state,'expansion, cycles and evidence do not rewrite the graph');
+app.run("setViewerLanguage('de')");assert.match(box.textContent,/Abhängigkeiten im Baum/);
+console.log('Tree matrix: stable package columns, exact/lower-bound aggregation, real cycle witness, expansion, evidence and immutable source passed');
+
+const scoped=app.run('buildTreeMatrix(work,1)');assert.ok(scoped.columns.some(c=>c.id==='@outside'));assert.equal(scoped.cells.get(2).get('@outside').count,3);assert.equal(scoped.cycles.length,0,'a scope must not claim a closed cycle through omitted sources');
+app.run("treeMatrixUi.cycle='C1';viewRevision++;renderTreeMatrix()");assert.equal(app.run('treeMatrixUi.cycle'),null,'changed source revisions cannot silently reuse a cycle number for a different SCC');
+const crossed={...fixture,edges:[{from:2,to:5,count:1,refs:[]},{from:5,to:3,count:1,refs:[]}]};const acyclic=launch(crossed,{library:false});assert.equal(acyclic.run('buildTreeMatrix(work).cycles.length'),0,'package-level reciprocity is not a file cycle');
+
+app.run("treeMatrixUi.expanded.clear();treeMatrixUi.query='Api/A';treeMatrixUi.cycle=null;renderTreeMatrix()");
+assert.deepEqual(Array.from(box.querySelectorAll('tr[data-matrix-row]'),r=>r.getAttribute('data-matrix-row')),['1','2'],'search reveals matching files with ancestors, not unrelated siblings');
+assert.equal(app.run('treeMatrixUi.expanded.size'),0,'search leaves manual expansion unchanged');
+app.run("treeMatrixUi.query='';treeMatrixUi.cycle='C1';treeMatrixUi.cycleOnly=true;renderTreeMatrix()");
+assert.deepEqual(Array.from(box.querySelectorAll('tr[data-matrix-row]'),r=>r.getAttribute('data-matrix-row')),['1','2','4','5'],'cycle focus includes cycle members and their package context');
+assert.ok(box.querySelector('input[data-matrix-search]'));
+assert.ok(box.querySelector('select[data-matrix-cycle-select]'));
+assert.ok(box.querySelector('select[data-matrix-target]'));
+assert.equal(app.run('JSON.stringify([data,work,ops])'),state);
+console.log('Matrix usability: contextual search, cycle-only focus and preserved graph/expansion passed');

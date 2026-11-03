@@ -1,0 +1,20 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const base=fs.readFileSync('scripts/viewer/test_viewer_world_overlay.js','utf8').split('const app=launch')[0];
+const {launch,fixture}=vm.runInNewContext(base+'\n({launch,fixture});',{require,console,performance,Blob});
+fixture.calls={status:'partial',classes:[],calls:[],methods:[{id:'A#simple()',class_id:'A',name:'simple',signature:'simple()',file:'p/A.java',line:2,complexity:{cyclomatic:1,max_nesting:0}},{id:'A#branch(int)',class_id:'A',name:'branch',signature:'branch(int)',file:'p/A.java',line:8,complexity:{cyclomatic:9,max_nesting:3}},{id:'B#foreign()',class_id:'B',name:'foreign',file:'p/A.java',line:99,complexity:{cyclomatic:99,max_nesting:9}},{id:'A#unknown()',class_id:'A',name:'unknown',file:'p/A.java',line:20}]};
+fixture.insights.code_metrics={status:'partial',classes:[{class_id:'A',file:'p/A.java',cbo:{value:null,observed:5,status:'partial'},wmc:{value:10,status:'ready'},lcom4:1}],methods:[{method_id:'A#branch(int)',class_id:'A',file:'p/A.java',line:8,cognitive:12,maintainability_index:60,source_lines:10}]};
+fixture.insights.world.entities[0]={...fixture.insights.world.entities[0],max_complexity:9,declared_methods:3,measured_methods:2};
+const app=launch(fixture,{library:false});app.run("showTab('start');worldUi.lens='complexity';worldUi.selection={area:'p',entity:worldUi.model.areas.find(a=>a.name==='p').entities[0]};worldDetails()");
+const panel=app.ids.get('world-detail'),context=()=>panel.querySelector('section[data-world-context]');
+assert.ok(context(),'active perspective leads the overlay');assert.equal(context().getAttribute('data-world-context'),'complexity');
+assert.match(context().textContent,/branch\(int\)/);assert.match(context().textContent,/Cyclomatic: 9/);assert.match(context().textContent,/Cognitive: 12/);assert.doesNotMatch(context().textContent,/foreign/);
+const methods=context().querySelectorAll('details[data-world-method]');assert.equal(methods.length,3);assert.equal(methods[0].getAttribute('data-world-method'),'A#branch(int)');assert.match(methods[2].textContent,/unknown|—/i);
+assert.ok(panel.children.indexOf(context())<panel.children.indexOf(panel.querySelector('details[data-world-background]')));
+const state=app.run('JSON.stringify([worldUi.camera,worldUi.selection,ops,data.calls])');panel.scrollTop=300;
+app.run("worldUi.kpi='cbo';worldDetails()");assert.equal(panel.scrollTop,0);assert.match(context().textContent,/CBO: —/);assert.match(context().textContent,/5/);assert.equal(app.run('JSON.stringify([worldUi.camera,worldUi.selection,ops,data.calls])'),state);
+app.run("worldUi.lens='coverage';worldDetails()");assert.equal(context().getAttribute('data-world-context'),'coverage');assert.match(context().textContent,/unknown/i);
+app.run("worldUi.lens='problems';worldDetails()");assert.equal(context().getAttribute('data-world-context'),'problems');assert.ok(panel.querySelector('details[data-world-background]'));
+// Packed compiler methods must be read without expanding or mutating transport.
+fixture.calls={status:'partial',classes:[],calls:[],compact:{encoding:'string-pool-v1',strings:['A','A#m()','m','m()','p/A.java'],fields:{methods:['class_id','id','name','signature','file']}},methods:[{class_id:0,id:1,name:2,signature:3,file:4,line:4,complexity:{cyclomatic:7,max_nesting:1}}]};
+const packed=launch(fixture,{library:false});packed.run("showTab('start');worldUi.lens='complexity';worldUi.selection={area:'p',entity:worldUi.model.areas.find(a=>a.name==='p').entities[0]};worldDetails()");assert.match(packed.ids.get('world-detail').textContent,/Cyclomatic: 7/);assert.equal(packed.run('data.calls.methods[0].class_id'),0);assert.equal(packed.run('callModelPrepared'),false);
+console.log('World contextual details: exact class/method join, sorted complexity, unknowns, partial KPIs, lens changes and immutable compact compiler data passed');

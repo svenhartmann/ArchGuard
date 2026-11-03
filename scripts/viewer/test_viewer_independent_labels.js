@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const app=launch({root:'/repo',nodes:[],edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null},services:{complete:true,compose_files:[],services:[],dependencies:[],cycles:[],diagnostics:[]}});
+assert.equal(app.run('treeRouting'),'direction');
+app.run("showTab('services')");
+assert.equal(app.run('serviceUi.routing'),'ordered');
+const select=app.run('serviceRoutingControl');
+assert.equal(select.textContent,'Up / downIn/Out','routing controls contain exactly the descriptive mode names');
+assert.equal(select.title,'Up / down: left downward, right upward. In/Out: incoming left and outgoing right for the selected service.');
+assert.equal(select.getAttribute('aria-label'),'Service relation layout');
+app.click('language-de');
+assert.equal(select.textContent,'Auf / abEin/Aus');
+assert.equal(select.title,'Auf / ab: links abwärts, rechts aufwärts. Ein/Aus: eingehend links und ausgehend rechts für den ausgewählten Dienst.');
+assert.equal(select.getAttribute('aria-label'),'Anordnung der Dienstbeziehungen');
+console.log('Independent UI labels: descriptive routing modes in EN/DE, no third-party product branding passed');

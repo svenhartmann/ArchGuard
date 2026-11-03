@@ -1,0 +1,20 @@
+# Fixture for the golden tests: three declared layers with exactly one
+# deliberate lower->upper import (src/domain/ledger.py importing app.service).
+# Layer derivation is switched off so only the declared layers are checked.
+
+derive_layers = false
+
+[[layers]]
+name = "domain"
+contains = ["domain/**"]
+may_depend_on = []
+
+[[layers]]
+name = "app"
+contains = ["app/**"]
+may_depend_on = ["domain"]
+
+[[layers]]
+name = "api"
+contains = ["api/**"]
+may_depend_on = ["app"]

@@ -1,0 +1,23 @@
+[package]
+name = "archguard-mcp"
+description = "L3: MCP server (stdio) and tool registration. Only crate allowed to use tokio/async."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+archguard-engine = { path = "../archguard-engine" }
+# Official Rust MCP SDK (Kap. 10). Features: server role, the #[tool]/
+# #[tool_router] macros and the tokio stdio transport; `schemars` pulls in
+# the schemars re-export `rmcp::schemars` used for the input schemas.
+rmcp = { version = "3.7", features = ["server", "macros", "transport-io", "schemars"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "io-std", "io-util"] }
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+db = ["archguard-engine/db"]

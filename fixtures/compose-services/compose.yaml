@@ -1,0 +1,17 @@
+# Static example only. No containers are started by archguard.
+services:
+  orders:
+    build: ./orders
+    environment:
+      BILLING_API: http://billing:8080/api
+    depends_on: [db]
+  billing:
+    build: ./billing
+    environment:
+      SHIPPING_API: http://shipping:8080/api
+  shipping:
+    build: ./shipping
+    environment:
+      ORDERS_API: http://orders:8080/api
+  db:
+    image: postgres:17

@@ -1,0 +1,211 @@
+[
+  {
+    "id": "ts-cyclic",
+    "root": "fixtures/ts-cyclic",
+    "target": "src/a/alpha.ts",
+    "target_read_index": 1,
+    "commands": [
+      [
+        "rg",
+        "--files",
+        "--hidden",
+        "-g",
+        "archguard.toml",
+        "-g",
+        "AGENTS.md",
+        "-g",
+        "!node_modules",
+        "-g",
+        "!target"
+      ],
+      [
+        "nl",
+        "-ba",
+        "src/a/alpha.ts"
+      ],
+      [
+        "rg",
+        "-n",
+        "(^import|alpha|beta)",
+        "src"
+      ],
+      [
+        "rg",
+        "--files",
+        "--hidden",
+        "--no-ignore",
+        "-g",
+        "archguard.toml",
+        "-g",
+        "!node_modules",
+        "-g",
+        "!target",
+        "-g",
+        "!.git"
+      ],
+      [
+        "rg",
+        "-n",
+        "^",
+        "src/b/beta.ts",
+        "src/app.ts"
+      ]
+    ]
+  },
+  {
+    "id": "commons-collections",
+    "root": "examples/checkouts/commons-collections",
+    "target": "src/main/java/org/apache/commons/collections4/bag/AbstractBagDecorator.java",
+    "target_read_index": 1,
+    "commands": [
+      [
+        "rg",
+        "--files",
+        "--hidden",
+        "--no-ignore",
+        "-g",
+        "archguard.toml",
+        "-g",
+        "AGENTS.md",
+        "-g",
+        "!target",
+        "-g",
+        "!.git"
+      ],
+      [
+        "nl",
+        "-ba",
+        "src/main/java/org/apache/commons/collections4/bag/AbstractBagDecorator.java"
+      ],
+      [
+        "cat",
+        ".archguard/archguard.toml"
+      ],
+      [
+        "rg",
+        "-n",
+        "\\bAbstractBagDecorator\\b",
+        "src/main/java"
+      ],
+      [
+        "rg",
+        "-n",
+        "^(package|import) |(class|interface) (Bag|AbstractCollectionDecorator|AbstractMultiSetDecorator)|AbstractBagDecorator",
+        "src/main/java/org/apache/commons/collections4/Bag.java",
+        "src/main/java/org/apache/commons/collections4/collection/AbstractCollectionDecorator.java",
+        "src/main/java/org/apache/commons/collections4/multiset/AbstractMultiSetDecorator.java",
+        "src/main/java/org/apache/commons/collections4/bag/AbstractSortedBagDecorator.java",
+        "src/main/java/org/apache/commons/collections4/bag/CollectionBag.java",
+        "src/main/java/org/apache/commons/collections4/bag/UnmodifiableBag.java"
+      ]
+    ]
+  },
+  {
+    "id": "jellyfin",
+    "root": "examples/checkouts/jellyfin",
+    "target": "Emby.Naming/Video/ExtraRuleResolver.cs",
+    "target_read_index": 1,
+    "commands": [
+      [
+        "rg",
+        "--files",
+        "--hidden",
+        "--no-ignore",
+        "-g",
+        "archguard.toml",
+        "-g",
+        "AGENTS.md",
+        "-g",
+        "!obj",
+        "-g",
+        "!bin",
+        "-g",
+        "!.git"
+      ],
+      [
+        "nl",
+        "-ba",
+        "Emby.Naming/Video/ExtraRuleResolver.cs"
+      ],
+      [
+        "cat",
+        ".archguard/archguard.toml"
+      ],
+      [
+        "rg",
+        "-n",
+        "-g",
+        "*.cs",
+        "-g",
+        "!tests/**",
+        "-g",
+        "!**/obj/**",
+        "-g",
+        "!**/bin/**",
+        "\\bExtraRuleResolver\\b",
+        "."
+      ],
+      [
+        "rg",
+        "-n",
+        "-g",
+        "*.cs",
+        "-g",
+        "!tests/**",
+        "-g",
+        "!fuzz/**",
+        "-g",
+        "!**/obj/**",
+        "-g",
+        "!**/bin/**",
+        "-g",
+        "!**/AssemblyInfo.cs",
+        "-g",
+        "!SharedVersion.cs",
+        "(class|enum) (ExtraResult|NamingOptions|AudioFileParser|VideoResolver|ExtraRule|MediaType|ExtraRuleType)\\b",
+        "."
+      ],
+      [
+        "rg",
+        "-n",
+        "-C",
+        "4",
+        "\\b(ExtraRuleResolver|GetExtraInfo)\\b",
+        "Emby.Naming/Video/VideoResolver.cs",
+        "Emby.Server.Implementations/Library/Resolvers/ExtraResolver.cs"
+      ],
+      [
+        "rg",
+        "-n",
+        "namespace |bool IsAudioFile\\(|bool IsVideoFile\\(|ExtraRule\\[\\] VideoExtraRules",
+        "Emby.Naming/Audio/AudioFileParser.cs",
+        "Emby.Naming/Common/NamingOptions.cs",
+        "Emby.Naming/Common/MediaType.cs",
+        "Emby.Naming/Video/ExtraResult.cs",
+        "Emby.Naming/Video/ExtraRule.cs",
+        "Emby.Naming/Video/ExtraRuleType.cs",
+        "Emby.Naming/Video/VideoResolver.cs"
+      ],
+      [
+        "rg",
+        "-n",
+        "-g",
+        "*.cs",
+        "-g",
+        "!tests/**",
+        "-g",
+        "!fuzz/**",
+        "-g",
+        "!**/obj/**",
+        "-g",
+        "!**/bin/**",
+        "-g",
+        "!**/AssemblyInfo.cs",
+        "-g",
+        "!SharedVersion.cs",
+        "\\bGetExtraInfo\\s*\\(",
+        "."
+      ]
+    ]
+  }
+]

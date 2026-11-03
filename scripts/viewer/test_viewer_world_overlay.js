@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
+const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
+const nodes=[{id:0,name:'p',kind:'module',parent:null},{id:1,name:'p/A.java',kind:'file',parent:0},{id:2,name:'q',kind:'module',parent:null},{id:3,name:'q/B.java',kind:'file',parent:2}];
+const fixture={root:'/repo',nodes,edges:[{from:1,to:3,count:1,refs:[{file:'p/A.java',line:3,raw:'import q.B;'}]},{from:3,to:1,count:1,refs:[]}],findings:[],cyclicEdges:[],view:{depth:0,visible:null},insights:{world:{definition:'architecture-world/v1',revision:'a'.repeat(64),status:'partial',entities:[{id:'class:A',node:'p/A.java',class_id:'A',max_complexity:3},{id:'class:B',node:'q/B.java',class_id:'B',max_complexity:8}]}}};
+const app=launch(fixture,{library:false});app.run("showTab('start');worldUi.selection={area:'p',entity:worldUi.model.areas.find(a=>a.name==='p').entities[0]};worldDetails()");
+const panel=app.ids.get('world-detail');assert.equal(panel.hidden,false);
+assert.equal(panel.getAttribute('role'),'dialog');assert.equal(panel.getAttribute('aria-modal'),'false');
+assert.ok(panel.querySelector('div[data-inspector-metrics]'));assert.match(panel.textContent,/import q.B/);
+const state=app.run('JSON.stringify([worldUi.camera,worldUi.selection,ui.selection,ops])');
+app.run('setWorldDetailsOpen(false,true)');assert.equal(panel.hidden,true);assert.equal(app.run('JSON.stringify([worldUi.camera,worldUi.selection,ui.selection,ops])'),state);
+app.run('worldDetails()');assert.equal(panel.hidden,true,'rerender does not reopen dismissed selection');
+app.run('setWorldDetailsOpen(true)');assert.equal(panel.hidden,false);
+app.run("worldUi.selection={area:'q',entity:worldUi.model.areas.find(a=>a.name==='q').entities[0]};worldDetails()");assert.match(panel.textContent,/B/);
+const original=app.run('JSON.stringify(data)');app.run("ops.push({kind:'test'});work.nodes[1].name='moved/A.java';worldDetails()");assert.equal(app.run('JSON.stringify(data)'),original);assert.doesNotMatch(panel.textContent,/moved\/A/);app.run("work.nodes[1].name='p/A.java';ops.pop()");
+app.run("showTab('graph');setInspectorOpen(false);selectNode('p/A.java')");assert.equal(app.run('inspectorIsOpen()'),true,'clicking a class/file opens graph details');
+console.log('World overlay: explicit close preserves state, selected classes open details, original evidence and shared metrics remain available; graph file click opens inspector');

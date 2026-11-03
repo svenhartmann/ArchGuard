@@ -1,0 +1,9 @@
+{
+  "name": "archguard/php-psr4-fixture",
+  "description": "Fixture for the golden tests: PSR-4 autoload mapping with one deliberate namespace cycle.",
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  }
+}

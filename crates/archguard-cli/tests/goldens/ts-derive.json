@@ -1,0 +1,214 @@
+{
+  "config": {
+    "architecture": "default",
+    "dependency_rules": "default",
+    "layers": "derived",
+    "modules": "derived",
+    "ownership_rules": "default",
+    "performance": "default",
+    "project": "derived",
+    "review": "default",
+    "rules": "default",
+    "semantic": "default",
+    "store": "default"
+  },
+  "findings": [],
+  "metrics": {
+    "api/cli.ts": {
+      "fan_in": 0,
+      "fan_out": 2,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "api/http.ts": {
+      "fan_in": 0,
+      "fan_out": 2,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "app/catalog.ts": {
+      "fan_in": 0,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 1.0
+    },
+    "app/service.ts": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.5
+    },
+    "app/usecase.ts": {
+      "fan_in": 1,
+      "fan_out": 1,
+      "in_cycle": false,
+      "instability": 0.5
+    },
+    "domain/customer.ts": {
+      "fan_in": 2,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "domain/order.ts": {
+      "fan_in": 2,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    },
+    "domain/product.ts": {
+      "fan_in": 1,
+      "fan_out": 0,
+      "in_cycle": false,
+      "instability": 0.0
+    }
+  },
+  "review_kpis": {
+    "api_surface": [
+      {
+        "exported_symbols": 11,
+        "files": 8,
+        "per_file": 1.375,
+        "top": [
+          [
+            "domain/customer.ts",
+            2
+          ],
+          [
+            "domain/order.ts",
+            2
+          ],
+          [
+            "domain/product.ts",
+            2
+          ],
+          [
+            "api/cli.ts",
+            1
+          ],
+          [
+            "api/http.ts",
+            1
+          ]
+        ]
+      }
+    ],
+    "debt": {
+      "by_kind": {},
+      "loc": 51,
+      "markers": 0,
+      "per_kloc": 0.0
+    },
+    "dependencies": null,
+    "health": {
+      "level": "green",
+      "parts": {
+        "hubs": 0.5178571428571428,
+        "sdp": 1.0,
+        "tangledness": 1.0
+      },
+      "score": 83.92857142857143,
+      "trend": null
+    },
+    "hub_gini": {
+      "gini": 0.4821428571428571,
+      "top_share": 1.0
+    },
+    "layer_drift": null,
+    "leaks": [],
+    "propagation_cost": [],
+    "risk_gaps": [
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 6.0,
+        "path": "domain/customer.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 6.0,
+        "path": "domain/order.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 5.0,
+        "path": "app/service.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 5.0,
+        "path": "app/usecase.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 4.0,
+        "path": "api/cli.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 4.0,
+        "path": "api/http.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 3.0,
+        "path": "domain/product.ts"
+      },
+      {
+        "coverage": null,
+        "gap": null,
+        "hotspot": 2.0,
+        "path": "app/catalog.ts"
+      }
+    ],
+    "sdp_violations": [],
+    "tangledness": {
+      "quote": 0.0,
+      "tangled_nodes": 0,
+      "total": 8
+    },
+    "zones": null
+  },
+  "schema_version": 1,
+  "semantic": {
+    "analyzers": [
+      {
+        "backend": "typescript",
+        "diagnostics": [
+          "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages."
+        ],
+        "files": 8,
+        "language": "typescript",
+        "project": null,
+        "status": "unavailable",
+        "version": null
+      }
+    ],
+    "diagnostics": [
+      "typescript: No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages."
+    ],
+    "projected_calls": 0,
+    "projected_supertypes": 0,
+    "projected_type_uses": 0,
+    "skipped_project_calls": 0,
+    "skipped_type_uses": 0,
+    "status": "unavailable"
+  },
+  "summary": {
+    "acd": 1.875,
+    "ccd": 15,
+    "edges": 7,
+    "largest_scc": 0,
+    "layer_violations": 0,
+    "nccd": 0.7306621133678489,
+    "nodes": 8,
+    "sccs": 0,
+    "status": "pass"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "archguard-service-shop-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node dev.js"
+  },
+  "engines": { "node": ">=20" }
+}
