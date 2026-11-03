@@ -185,15 +185,15 @@ function preserveTreeRowPosition(source,action,attribute='data-tree-source') {
 }
 // Keep secondary controls available without covering the graph with permanent buttons.
 const TREE_TOOLBAR_STYLE=`
-  #package-tree .package-tree-legend { gap: 8px; padding: 8px 12px; background: var(--panel); }
-  #package-tree .package-tree-legend > .package-tree-zoom { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 10px; padding: 2px; background: var(--panel-2); }
+  #package-tree .package-tree-legend { gap: 4px; padding: 4px; background: var(--panel); }
+  #package-tree .package-tree-legend > .package-tree-zoom { display: inline-flex; gap: 0; padding: 0; }
   #package-tree .package-tree-legend > .package-tree-zoom button { min-width: 32px; min-height: 32px; padding: 4px 8px; border: 0; background: transparent; box-shadow: none; border-radius: 7px; }
   #package-tree .package-tree-legend > .package-tree-zoom button:hover { background: var(--panel); }
-  #package-tree .tree-options-details > summary { list-style: none; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); color: var(--text); }
+  #package-tree .tree-options-details > summary { list-style: none; min-height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-left: 1px solid var(--border); border-radius: 0 8px 8px 0; color: var(--text); }
   #package-tree .tree-options-details > summary::after { content: '⌄'; color: var(--muted); }
   #package-tree .tree-options-details > summary::-webkit-details-marker { display: none; }
   #package-tree .tree-options-details[open] > summary { border-color: var(--accent); }
-  #package-tree .tree-options-content { left: 12px; top: calc(100% + 6px); width: 320px; max-width: calc(100% - 24px); max-height: min(65vh, 540px); overflow-y: auto; padding: 16px; border-radius: 14px; box-sizing: border-box; gap: 10px; }
+  #package-tree .tree-options-content { left: 12px; top: calc(100% + 6px); width: 320px; max-width: calc(100% - 24px); max-height: min(65vh, 540px); overflow-y: auto; padding: 12px; border-radius: var(--radius); box-shadow: var(--shadow-overlay); box-sizing: border-box; gap: 10px; animation: overlay-in .12s ease-out; }
   #package-tree .tree-options-content .package-tree-zoom { display: flex; flex-wrap: wrap; gap: 6px; }
   #package-tree .tree-options-content button { min-height: 34px; }
   #package-tree .tree-menu-label { margin-top: 4px; color: var(--muted); font-size: 11px; }

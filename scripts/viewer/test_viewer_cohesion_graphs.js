@@ -9,6 +9,7 @@ const list=app.ids.get('engineering-list');
 assert.ok(list.querySelector('figure[data-detail-graph]'),'cohesion must show actual file dependencies');
 assert.equal(list.querySelectorAll('button[data-cohesion-group]').length,3,'disconnected groups are visible without nested evidence clicks');
 assert.match(list.textContent,/2 connected groups.*1 isolated file/s);
+assert.match(list.textContent,/Group 3 · 1 file(?!s)/,'a single file is singular');assert.doesNotMatch(list.textContent,/(?:^|\D)1 (?:files|isolated files|connections)/,'counts of one are singular');
 assert.match(list.textContent,/Co-change not checked/,'zero unchecked history must not be presented as independent changes');
 assert.match(list.querySelector('figure[data-detail-graph]').textContent,/A.ts.*B.ts/s);
 assert.equal(list.querySelector('figure[data-detail-graph]').querySelectorAll('path[data-detail-edge]').length,1);

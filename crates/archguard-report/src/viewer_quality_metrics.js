@@ -466,6 +466,7 @@ function renderKpiHelp() {
 }
 function closeKpiHelp() {kpiHelpUi.dialog?.close();kpiHelpUi.previousFocus?.focus({preventScroll:true});}
 function openKpiHelp() {
+  closeWorkspaceMenu('settings-menu');
   if(!kpiHelpUi.language){
     const aliases={cs:'csharp','c#':'csharp',rust:'rs',typescript:'ts',javascript:'js',python:'py'},counts=new Map(),known=new Set(kpiLanguageHelp().map(row=>row.id));
     for(const node of data.nodes){const source=String(node.lang||'').toLowerCase(),lang=aliases[source]||source;if(known.has(lang))counts.set(lang,(counts.get(lang)||0)+1);}
@@ -508,8 +509,8 @@ function initKpiHelp() {
   const de=button('DE',()=>setViewerLanguage('de'),'btn btn-secondary'),en=button('EN',()=>setViewerLanguage('en'),'btn btn-secondary');de.setAttribute('aria-label','Deutsch');en.setAttribute('aria-label','English');header.appendChild(de);header.appendChild(en);
   const close=button(t('Close','Schließen'),closeKpiHelp,'btn btn-secondary');close.setAttribute('data-kpi-help-close','true');header.appendChild(close);dialog.appendChild(header);
   const body=element('div',undefined,'kpi-help-body');dialog.appendChild(body);document.getElementById('main').appendChild(dialog);
-  const action=button(t('KPI help','KPI-Hilfe'),openKpiHelp,'btn btn-quiet');action.setAttribute('id','kpi-help-open');action.setAttribute('aria-haspopup','dialog');document.getElementById('topbar').appendChild(action);
+  const action=button(t('KPI help','KPI-Hilfe'),openKpiHelp,'btn btn-secondary');action.setAttribute('id','kpi-help-open');action.setAttribute('aria-haspopup','dialog');document.getElementById('settings-content').appendChild(action);
   Object.assign(kpiHelpUi,{action,dialog,body,title,close,de,en});
   dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation();});
-  dialog.addEventListener('close',()=>kpiHelpUi.previousFocus?.focus({preventScroll:true}));
+  dialog.addEventListener('close',()=>{const opener=kpiHelpUi.previousFocus,menu=opener?.closest?.('details');(menu&&!menu.open?document.getElementById(WORKSPACE_MENUS[menu.id])||opener:opener)?.focus({preventScroll:true});});
 }

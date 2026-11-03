@@ -180,7 +180,7 @@ function renderWorld(){
     b.appendChild(element('strong',area.name.split('/').pop()));
     if(area.kind==='module'){const arrow=element('span','›','world-pin-next');arrow.setAttribute('aria-hidden','true');b.appendChild(arrow);}
     const marks=[area.cyclic?t('Package cycle','Paketzyklus'):null,area.findings.length?area.findings.length+' '+t('findings','Befunde'):null,worldUi.lens==='complexity'&&areaMax.has(area.name)?(worldKpiActive()?t('{kpi} max. {value}','{kpi} max. {value}',{kpi:worldKpiLabel(),value:areaMax.get(area.name)}):t('max {value}','max. {value}',{value:areaMax.get(area.name)})):null].filter(Boolean);
-    b.appendChild(element('small',marks.length?marks.join(' · '):area.entities.length+' '+t('entries','Einträge')));
+    b.appendChild(element('small',marks.length?marks.join(' · '):plural(area.entities.length,'{count} entry','{count} entries','{count} Eintrag','{count} Einträge')));
     const purpose=area.kind==='module'?t('Open package','Paket öffnen'):t('Show details','Details anzeigen'),description=[area.name,...marks,purpose].join(' · ');b.setAttribute('aria-label',description);explainAction(b,()=>description);labels.appendChild(b);
   }
   const scope=document.getElementById('world-area');scope.textContent='';let option=element('option',t('Select area…','Bereich wählen…'));option.value='';scope.appendChild(option);

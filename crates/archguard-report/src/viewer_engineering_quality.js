@@ -58,7 +58,7 @@ function renderCohesionCard(container,p){
   const card=element('article',undefined,'engineering-card cohesion-card'),heading=element('div',undefined,'cohesion-heading'),title=element('h3',p.node.split('/').pop()||p.node);title.setAttribute('title',p.node);heading.appendChild(title);container.appendChild(card);card.appendChild(heading);
   const selected=engineeringUi.cohesionPackage===p.node,choose=button(selected?t('Selected','Ausgewählt'):t('Inspect groups','Gruppen untersuchen'),()=>{engineeringUi.cohesionPackage=p.node;engineeringUi.cohesionGroup=null;engineeringUi.cohesionLimit=20;renderEngineeringQuality();},'btn btn-quiet');choose.setAttribute('aria-pressed',String(selected));choose.setAttribute('data-cohesion-package',p.node);heading.appendChild(choose);
   const connected=p.groups.filter(g=>g.internal_dependencies>0).length,isolated=p.groups.filter(g=>g.files.length===1&&g.internal_dependencies===0).length;
-  engineeringText(card,t('{files} files · {groups} connected groups · {isolated} isolated files','{files} Dateien · {groups} zusammenhängende Gruppen · {isolated} isolierte Dateien',{files:p.files,groups:connected,isolated}));
+  engineeringText(card,[plural(p.files,'{count} file','{count} files','{count} Datei','{count} Dateien'),plural(connected,'{count} connected group','{count} connected groups','{count} zusammenhängende Gruppe','{count} zusammenhängende Gruppen'),plural(isolated,'{count} isolated file','{count} isolated files','{count} isolierte Datei','{count} isolierte Dateien')].join(' · '));
   if(p.split_candidate)engineeringText(card,t('Review package split: check the responsibilities of these groups.','Paketaufteilung prüfen: Verantwortlichkeiten der Gruppen vergleichen.'),'p','detail-verdict');
   else if(!p.internal_dependencies)engineeringText(card,t('Too few internal connections to assess a package split.','Zu wenige interne Verbindungen, um eine Paketaufteilung zu bewerten.'),'p','muted');
   if(!selected)return;
@@ -76,7 +76,7 @@ function renderCohesionCard(container,p){
   const ordered=p.groups.map((g,index)=>({g,index})).sort((a,b)=>Number(b.g.internal_dependencies>0)-Number(a.g.internal_dependencies>0)||b.g.files.length-a.g.files.length),visibleGroups=ordered.slice(0,engineeringUi.cohesionLimit||20);
   if(!visibleGroups.some(row=>row.index===active))visibleGroups.push(ordered.find(row=>row.index===active));
   for(const {index,g}of visibleGroups){
-    const action=button(t('Group {number} · {count} files','Gruppe {number} · {count} Dateien',{number:index+1,count:g.files.length}),()=>{engineeringUi.cohesionGroup=index;renderEngineeringQuality();document.getElementById('engineering-list').querySelectorAll('button[data-cohesion-group]').find(b=>b.getAttribute('data-cohesion-group')===String(index))?.focus();},'cohesion-group');
+    const action=button(t('Group {number}','Gruppe {number}',{number:index+1})+' · '+plural(g.files.length,'{count} file','{count} files','{count} Datei','{count} Dateien'),()=>{engineeringUi.cohesionGroup=index;renderEngineeringQuality();document.getElementById('engineering-list').querySelectorAll('button[data-cohesion-group]').find(b=>b.getAttribute('data-cohesion-group')===String(index))?.focus();},'cohesion-group');
     action.setAttribute('data-cohesion-group',String(index));action.setAttribute('aria-pressed',String(index===active));
     action.appendChild(element('span',g.files.slice(0,2).map(f=>f.split('/').pop()).join(', ')+(g.files.length>2?' +'+(g.files.length-2):'')));groups.appendChild(action);
   }

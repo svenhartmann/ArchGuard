@@ -470,7 +470,7 @@ function setSimulation(enabled) {
   ui.simulation=enabled;document.getElementById('simulation-mode').setAttribute('aria-pressed',String(enabled));
   renderSidebar();renderOpsStrip();feedback(enabled?t('Simulation enabled. Proposed actions require confirmation.','Simulation aktiviert. Vorgeschlagene Aktionen müssen bestätigt werden.'):t('Browse mode. Simulated changes are preserved until you undo or clear them.','Ansichtsmodus. Simulierte Änderungen bleiben erhalten, bis du sie rückgängig machst oder löschst.'));
 }
-const WORKSPACE_MENUS={'export-menu':'export-summary','refactor-menu':'refactor-summary','settings-menu':'settings-summary','graph-display-menu':'graph-display-summary'};
+const WORKSPACE_MENUS={'project-menu':'project-summary','export-menu':'export-summary','refactor-menu':'refactor-summary','settings-menu':'settings-summary','graph-display-menu':'graph-display-summary'};
 function closeWorkspaceMenu(id,restoreFocus=false) {
   const menu=document.getElementById(id),wasOpen=menu.open;
   hideMetricTooltip(menu);menu.open=false;
@@ -3094,8 +3094,8 @@ function initViewerNavigation(){
   if(!window.location?.href||!window.history?.replaceState)return;
   applyViewerRoute(parseViewerRoute(window.location.hash));
   viewerNavigation.ready=true;syncViewerNavigation(true);
-  const host=document.getElementById('workspace-mcp')?.parentElement;
-  if(host){const link=button(t('Copy link','Link kopieren'),()=>{syncViewerNavigation();copyText(window.location.protocol==='file:'?window.location.hash:window.location.href);},'btn btn-secondary');link.setAttribute('data-view-link','true');host.appendChild(link);viewerNavigation.button=link;}
+  const host=document.getElementById('share-actions');
+  if(host){const link=button(t('Copy link','Link kopieren'),()=>{closeWorkspaceMenu('export-menu');syncViewerNavigation();copyText(window.location.protocol==='file:'?window.location.hash:window.location.href);},'btn btn-secondary');link.setAttribute('data-view-link','true');host.appendChild(link);viewerNavigation.button=link;}
   const restore=()=>{if(window.location.hash===viewerNavigation.last)return;const route=parseViewerRoute(window.location.hash);if(route)applyViewerRoute(route);viewerNavigation.last='';syncViewerNavigation(true);};
   window.addEventListener('popstate',restore);window.addEventListener('hashchange',restore);
   // Capture before bubbling, synchronize after the renderer has handled the event.
@@ -3103,7 +3103,7 @@ function initViewerNavigation(){
 }
 
 const rootName=(data.root||'Project').replace(/\\/g,'/').split('/').filter(Boolean).pop()||'Project';
-document.getElementById('project-name').textContent=rootName;document.getElementById('project-name').title=data.root||rootName;
+document.getElementById('project-name').textContent=rootName;document.getElementById('project-name').title=data.root||rootName;document.getElementById('project-path').textContent=data.root||rootName;
 if(window.innerWidth<=1100){document.getElementById('main').classList.add('explorer-closed','inspector-closed');for(const id of ['toggle-explorer','toggle-inspector'])document.getElementById(id).setAttribute('aria-expanded','false');}
 initPanelResize();
 initRepository();

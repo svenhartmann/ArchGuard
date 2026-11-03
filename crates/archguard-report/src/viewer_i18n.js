@@ -7,6 +7,8 @@ try { const saved=localStorage.getItem(LANGUAGE_KEY);if(saved==='de'||saved==='e
 function t(en,de,values={}) {
   return String(viewerLanguage==='de'?de:en).replace(/\{(\w+)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(values,key)?String(values[key]):match);
 }
+// Counts of one take the singular form: plural(1,'{count} file','{count} files','{count} Datei','{count} Dateien').
+function plural(count,en,enMany,de,deMany) {return count===1?t(en,de,{count}):t(enMany,deMany,{count});}
 const originalUiText=new WeakMap();
 function applyStaticLanguage() {
   for(const attribute of ['text','title','aria-label','placeholder']){

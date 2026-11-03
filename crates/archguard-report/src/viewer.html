@@ -30,6 +30,7 @@
     /* class-metric tones (heatmap cells and world canvas share these) */
     --m-low: #16845b; --m-medium: #c58a23; --m-high: #db4c4c;
     --shadow: 0 1px 2px rgba(23,32,51,.05), 0 2px 6px rgba(23,32,51,.08);
+    --shadow-overlay: 0 12px 32px rgba(23,32,51,.18), 0 2px 6px rgba(23,32,51,.08);
     --radius: 10px; --radius-sm: 8px;
     --gap-1: 8px; --gap-2: 12px; --gap-3: 16px;
     --font: -apple-system, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -48,6 +49,7 @@
     --c-package-border: #BFA16A; --c-package-selected: #20374F;
     --c-priority: #FFC267; --c-priority-fill: #805017; --c-priority-text: #FFF2D5;
     --shadow: 0 1px 2px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.45);
+    --shadow-overlay: 0 14px 36px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.45);
     color-scheme: dark;
   }
   @media (prefers-color-scheme: dark) {
@@ -105,7 +107,7 @@
   #tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--panel-2);
           border: 1px solid var(--border); border-radius: var(--radius); }
   #tabs button { border: none; background: none; border-radius: var(--radius-sm);
-                 padding: 6px 14px; font-size: 14px; color: var(--muted);
+                 padding: 6px 11px; font-size: 14px; color: var(--muted);
                  cursor: pointer; }
   #tabs button.active { background: var(--panel); color: var(--accent);
                         font-weight: 600; box-shadow: var(--shadow); }
@@ -115,6 +117,18 @@
             -webkit-appearance: none; appearance: none; }
   #filter::placeholder { color: var(--muted); }
   #spacer { flex: 1 1 auto; }
+  #topbar #tabs { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+  #tabs button[hidden] { display: none; }
+  .tab-divider { flex: 0 0 1px; align-self: stretch; margin: 4px 3px; background: var(--border); }
+  #project-menu > summary { display: flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 8px; border-radius: var(--radius-sm); }
+  #project-menu > summary:hover { background: var(--panel-2); }
+  #project-menu > .menu-content { left: 0; right: auto; width: 380px; }
+  #project-menu #repository-navigation { padding: 8px 0 0; border: 0; border-top: 1px solid var(--border); max-height: none; overflow: visible; }
+  #project-menu #repository-navigation[hidden] { display: none; }
+  .share-actions { display: grid; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  #refactor-menu > .menu-content { left: 0; right: auto; }
+  .workspace-bar #summary { flex: 0 1 auto; gap: 4px 16px; padding: 0; border: 0; max-height: none; overflow: visible; }
+  .workspace-bar .metric strong { font-size: 15px; margin-right: 5px; }
   #language-switch { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; }
   #language-switch button { background: transparent; border: 0; border-radius: 5px; padding: 6px 8px; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 650; }
   #language-switch button[aria-pressed='true'] { background: var(--panel-2); color: var(--accent); }
@@ -201,10 +215,10 @@
   * { box-sizing: border-box; }
   [hidden], .panel-hidden { display: none !important; }
   body { overflow: hidden; }
-  #topbar { position: relative; z-index: 10; min-height: 56px; padding: 8px 16px; flex-wrap: wrap; }
+  #topbar { position: relative; z-index: 10; min-height: 56px; padding: 8px 16px; flex-wrap: nowrap; gap: 8px; }
   .brand { font-size: 24px; letter-spacing: -4px; font-weight: 800; padding-right: 8px; color: var(--accent); }
   .brand span { color: var(--text); }
-  .project-title { min-width: 100px; max-width: 240px; flex: 1; }
+  .project-title { min-width: 80px; max-width: 260px; flex: 0 0 auto; }
   h1 { font-size: 18px; line-height: 1.3; margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--muted); }
   #filter { flex: 1; min-width: 120px; max-width: 240px; }
@@ -241,20 +255,19 @@
   .panel-heading { font-weight: 650; font-size: 15px; margin: 0 0 16px; }
   #workspace { grid-column: 3; grid-row: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .workspace-bar { position: relative; z-index: 3; min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 4px 10px; }
-  .workspace-bar #tabs { max-width: 100%; overflow-x: auto; box-sizing: border-box; }
-  .workspace-location { min-width: min(120px, 100%); flex: 1 1 120px; display: flex; align-items: center; gap: 8px; }
+  .workspace-location { min-width: min(260px, 100%); flex: 1 1 260px; display: flex; align-items: center; gap: 8px; }
   .workspace-location #breadcrumbs { flex: 1; min-width: 0; }
   .workspace-help, .tree-legend-details { position: static; flex: 0 0 auto; font-size: 12px; }
   .workspace-help summary, .tree-legend-details summary, #graph-scope-details summary { cursor: pointer; color: var(--muted); min-height: 32px; line-height: 20px; padding: 6px 4px; white-space: nowrap; }
   .workspace-help > small, .tree-legend-content { position: absolute; top: calc(100% + 4px); z-index: 4; display: block; width: 320px; max-width: min(320px, calc(100% - 20px)); padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); box-shadow: var(--shadow); font-size: 12px; line-height: 1.5; }
   .workspace-help > small { right: 10px; }
   .tree-legend-content { left: 10px; }
-  #graph-options { position: relative; z-index: 2; flex: 0 0 auto; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #graph-options { position: relative; z-index: 2; flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--panel); }
   .graph-option-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
   #edge-modes { display: inline-flex; gap: 3px; flex-wrap: wrap; }
   #edge-modes button, #toggle-cycles { padding: 5px 8px; font-size: 11px; }
   #edge-modes [aria-pressed=true], #toggle-cycles[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
-  .graph-status { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; }
+  .graph-status { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 12px; flex: 1 1 260px; min-width: 0; }
   #edge-reference, #graph-visibility, #graph-hint { font-size: 12px; color: var(--muted); line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
   #edge-reference { max-width: min(480px, 50%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #graph-status-brief, #graph-filter-feedback { font-size: 12px; line-height: 1.4; color: var(--muted); }
@@ -361,7 +374,7 @@
   #dependency-browser { position: absolute; inset: 0; overflow: auto; padding: 20px; background: var(--bg); }
   #package-tree { position: absolute; inset: 0; overflow: auto; background: var(--bg); }
   #package-tree > svg { display: block; max-width: none; }
-  .package-tree-legend { position: sticky; top: 0; left: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; box-sizing: border-box; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  .package-tree-legend { position: sticky; top: 10px; left: 10px; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: max-content; max-width: calc(100% - 20px); margin: 28px 0 -74px 10px; box-sizing: border-box; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); color: var(--muted); font-size: 12px; }
   .package-tree-zoom { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
   .package-tree-zoom .btn { font-size: 12px; padding: 4px 8px; }
   .tree-scale { min-width: 38px; font-variant-numeric: tabular-nums; }
@@ -507,7 +520,11 @@
   .evidence pre, .path { font: 12px/1.6 var(--mono); overflow: auto; max-width: 100%; white-space: pre; }
   .evidence .path { color: var(--muted); }
   .neighbor { display: block; width: 100%; text-align: left; overflow-wrap: anywhere; }
-  #graph-controls { position: absolute; bottom: 16px; left: 16px; display: flex; flex-wrap: wrap; gap: 5px; z-index: 2; max-width: calc(100% - 170px); }
+  #graph-controls { position: absolute; bottom: 16px; left: 16px; display: flex; flex-wrap: wrap; gap: 2px; z-index: 2; max-width: calc(100% - 170px); }
+  /* One floating zoom bar look for network, tree and world views. */
+  #graph-controls, .world-controls { padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+  #graph-controls .btn, .world-controls .btn { border-color: transparent; background: transparent; box-shadow: none; }
+  #graph-controls .btn:hover, .world-controls .btn:hover { background: var(--panel-2); }
   #graph-state { position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 24px; max-width: 85%; text-align: center; pointer-events: none; }
   #graph-state button { pointer-events: auto; margin-top: 8px; }
   #edge-legend { font-size: 10px; bottom: 16px; right: 16px; }
@@ -614,7 +631,7 @@
   #feedback { min-height: 24px; padding: 4px 20px; font-size: 12px; background: var(--panel); color: var(--muted); }
   #feedback:empty { display: none; }
   dialog { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: min(480px,90vw); box-shadow: var(--shadow); }
-  dialog::backdrop { background: rgba(10,20,35,.4); }
+  dialog::backdrop { background: rgba(10,20,35,.45); backdrop-filter: blur(2px); }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
   #scenario-dialog { width: min(600px, 90vw); max-width: 90vw; max-height: 85vh; overflow: auto; }
   .scenario-field { display: grid; gap: 5px; margin: 12px 0; }
@@ -625,9 +642,9 @@
   @media (max-width: 1100px) {
     #main, #main.explorer-closed, #main.inspector-closed, #main.explorer-closed.inspector-closed { display: block; }
     #workspace { height: 100%; }
-    #explorer, #inspector { position: absolute; top: 0; bottom: 0; z-index: 5; box-shadow: var(--shadow); }
+    #explorer, #inspector { position: absolute; top: 0; bottom: 0; z-index: 8; box-shadow: var(--shadow); }
     #explorer { left: 0; width: var(--explorer-width); } #inspector { right: 0; width: var(--inspector-width); }
-    .panel-resizer { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 6; }
+    .panel-resizer { position: absolute; top: 0; bottom: 0; width: 6px; z-index: 9; }
     #explorer-resizer { left: var(--explorer-width); } #inspector-resizer { right: var(--inspector-width); }
     .explorer-closed #explorer, .inspector-closed #inspector { display: none; }
     #topbar { padding: 8px 12px; gap: 6px; } .eyebrow { display: none; }
@@ -635,9 +652,15 @@
     #summary { gap: 6px 12px; padding: 6px 12px; } .metric strong { font-size: 17px; }
   }
   @media (max-width: 600px) {
+    #topbar { flex-wrap: wrap; row-gap: 6px; }
+    #topbar #tabs { order: 10; flex: 1 1 100%; }
+    #topbar #filter { order: 11; flex: 1 1 120px; }
+    #topbar #clear-search { order: 12; }
+    #topbar #export-menu { order: 13; }
+    #topbar .project-title { flex: 1 1 0; min-width: 0; max-width: none; }
     .export-menu > div { position: static; width: min(240px, 70vw); }
     #topbar .workspace-menu > .menu-content { position: static; margin-top: 6px; max-height: none; }
-    #topbar { max-height: 35vh; overflow: auto; } .project-title { flex-basis: calc(100% - 60px); max-width: none; }
+    #topbar { max-height: 35vh; overflow: auto; }
     #summary { gap: 8px; max-height: 20vh; } .report-status { width: 100%; margin: 0; }
     .workspace-bar { flex-wrap: wrap; } .workspace-location { flex-basis: 100%; }
     #graph-controls { max-width: 90%; } #edge-legend { top: 10px; bottom: auto; }
@@ -695,7 +718,8 @@
   .class-heatmap button:focus-visible,.class-heatmap-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   [data-heatmap-detail] { scroll-margin:12px; }
   .report-workspace #main { --explorer-track: 0px; --inspector-track: 0px; --explorer-divider: 0px; --inspector-divider: 0px; }
-  .report-workspace #explorer, .report-workspace #inspector, .report-workspace .panel-resizer, .report-workspace #summary, .report-workspace #toggle-explorer, .report-workspace #toggle-inspector, .report-workspace #filter, .report-workspace #clear-search, .report-workspace #refactor-menu { display: none; }
+  .report-workspace #explorer, .report-workspace #inspector, .report-workspace .panel-resizer, .report-workspace #summary, .report-workspace #refactor-menu { display: none; }
+  .report-workspace #toggle-explorer, .report-workspace #toggle-inspector, .report-workspace #filter, .report-workspace #clear-search { visibility: hidden; }
   .cycle-explanation .detail-verdict { margin: 10px 0; }
   .cycle-explanation > small { display: block; font-size: 11px; line-height: 1.5; }
   .cycle-explanation pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -768,7 +792,8 @@
   /* Keep each workspace focused; secondary explanations stay on demand. */
   .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
   .context-workspace #main { --explorer-track:0px; --explorer-divider:0px; }
-  .context-workspace #explorer, .context-workspace #explorer-resizer, .context-workspace #summary, .context-workspace #toggle-explorer, .context-workspace #filter, .context-workspace #clear-search, .context-workspace #refactor-menu { display:none; }
+  .context-workspace #explorer, .context-workspace #explorer-resizer, .context-workspace #summary, .context-workspace #refactor-menu { display:none; }
+  .context-workspace #toggle-explorer, .context-workspace #filter, .context-workspace #clear-search { visibility:hidden; }
   .engineering-scope { max-width:100%; min-width:180px; }
   .engineering-scope > summary { cursor:pointer; padding:7px 10px; border:1px solid var(--border); border-radius:6px; overflow-wrap:anywhere; }
   .engineering-scope-content { display:flex; align-items:end; gap:6px; padding-top:8px; }
@@ -852,19 +877,62 @@
   .world-members { display:flex; flex-wrap:wrap; gap:8px; margin-top:15px; }
   .world-members button { max-width:100%; overflow-wrap:anywhere; text-align:left; }
   @media(max-width:600px) { #tab-start {padding:8px;} .world-heading {padding:16px 12px 8px;} .world-heading h2 {font-size:24px;} .world-bar,#world-detail {padding-left:12px;padding-right:12px;} .world-controls {gap:2px;} .world-controls .btn {padding:8px;min-height:40px;} .world-stage {height:400px;} .world-pin {max-width:130px;font-size:12px;} }
+  /* ── Overlays: menus, tooltips and dialogs share elevation and radius ── */
+  .workspace-menu > .menu-content, .export-menu > div, #metric-tooltip, #services-tooltip, #graph-context-tooltip, #world-tip, dialog { border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-overlay); }
+  .workspace-menu > .menu-content, .export-menu > div { gap: 2px; padding: 6px; animation: overlay-in .12s ease-out; }
+  @keyframes overlay-in { from { opacity: 0; transform: translateY(-4px); } }
+  .menu-content .btn-secondary, .export-menu > div > .btn-secondary, .share-actions .btn-secondary { width: 100%; justify-content: flex-start; text-align: left; border-color: transparent; background: transparent; box-shadow: none; }
+  .menu-content .btn-secondary:hover, .export-menu > div > .btn-secondary:hover, .share-actions .btn-secondary:hover { background: var(--panel-2); }
+  .menu-content .btn-secondary[aria-pressed='true'] { color: var(--accent); background: var(--panel-2); }
+  .menu-content .action-with-help { display: flex; align-items: center; gap: 4px; }
+  .menu-content > .menu-label, .export-menu > div > .menu-label { padding: 8px 10px 2px; text-transform: uppercase; letter-spacing: .05em; }
+  .export-menu > div > small { padding: 2px 10px 6px; }
+  .export-menu > summary::after { content: '⌄'; color: var(--muted); margin-left: 4px; }
+  .workspace-menu[open] > summary, .export-menu[open] > summary { border-color: var(--accent); }
+  .share-actions { margin-bottom: 2px; }
+  dialog input:not([type=checkbox]):not([type=radio]), dialog select, dialog textarea, .menu-content select { box-sizing: border-box; min-height: 34px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--text); font: inherit; font-size: 14px; }
 </style>
 </head>
 <body>
 <div id="topbar">
   <div class="brand" aria-label="ArchGuard">A<span>G</span></div>
-  <div class="project-title"><h1 id="project-name">Project</h1></div>
-  <button id="toggle-explorer" type="button" class="btn btn-secondary" aria-expanded="true" aria-controls="explorer" data-i18n-de="Explorer">Explorer</button>
+  <details id="project-menu" class="workspace-menu project-title">
+    <summary id="project-summary"><h1 id="project-name">Project</h1></summary>
+    <div class="menu-content">
+      <span class="menu-label" data-i18n-de="Analysiertes Verzeichnis">Analyzed root</span>
+      <code id="project-path" class="repository-command"></code>
+      <section id="repository-navigation" hidden aria-label="Repository navigation" data-i18n-aria-label-de="Repository-Navigation">
+        <strong id="repository-heading"></strong>
+        <label for="repository-project" data-i18n-de="Projekt">Project</label><select id="repository-project"></select>
+        <a id="repository-open" class="btn btn-primary"></a><button id="repository-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button>
+        <a id="repository-overview" class="btn btn-secondary" data-i18n-de="Monorepo">Monorepo</a>
+        <p id="repository-scope" class="muted"></p>
+        <details id="repository-standalone" hidden><summary data-i18n-de="Anderes Projekt öffnen">Open another project</summary><p id="repository-standalone-note" class="muted"></p><code id="repository-command" class="repository-command"></code><button id="repository-copy" type="button" class="btn btn-secondary" data-i18n-de="Serverbefehl kopieren">Copy server command</button></details>
+      </section>
+    </div>
+  </details>
+  <div id="tabs" role="tablist" aria-label="Workspace" data-i18n-aria-label-de="Arbeitsbereich">
+    <button type="button" data-tab="start" role="tab" aria-selected="false" data-i18n-de="Start">Start</button>
+    <button type="button" data-tab="architecture" role="tab" aria-selected="false" data-i18n-de="Architektur">Architecture</button>
+    <button type="button" data-tab="review-dashboard" role="tab" aria-selected="false" data-i18n-de="Dashboard">Dashboard</button>
+    <span class="tab-divider" aria-hidden="true"></span>
+    <button type="button" data-tab="graph" role="tab" aria-selected="true" class="active" data-i18n-de="Graph">Graph</button>
+    <button type="button" data-tab="dsm" role="tab" aria-selected="false" data-i18n-de="Matrix">Matrix</button>
+    <button type="button" data-tab="calls" role="tab" aria-selected="false" data-i18n-de="Aufrufe">Calls</button>
+    <button type="button" data-tab="services" role="tab" aria-selected="false" data-i18n-de="Dienste">Services</button>
+    <span class="tab-divider" aria-hidden="true"></span>
+    <button type="button" role="tab" data-tab="quality" aria-selected="false" data-i18n-de="Qualität">Quality</button>
+    <button type="button" data-tab="security" role="tab" aria-selected="false" data-i18n-de="Sicherheit">Security</button>
+    <button type="button" data-tab="assessment" role="tab" aria-selected="false" data-i18n-de="Review">Review</button>
+  </div>
+  <span id="spacer"></span>
   <input id="filter" type="search" placeholder="Search modules or files…" data-i18n-placeholder-de="Module oder Dateien suchen…" aria-label="Search modules or files" data-i18n-aria-label-de="Module oder Dateien suchen">
   <button id="clear-search" type="button" hidden class="btn btn-quiet" data-i18n-de="Suche löschen">Clear search</button>
-  <span id="spacer"></span>
   <details id="export-menu" class="export-menu">
-    <summary id="export-summary" class="btn btn-secondary" data-i18n-de="Export">Export</summary>
+    <summary id="export-summary" class="btn btn-secondary" data-i18n-de="Teilen &amp; Export">Share &amp; export</summary>
     <div>
+      <div id="share-actions" class="share-actions" role="group" aria-label="Share this view" data-i18n-aria-label-de="Diese Ansicht teilen"><button id="workspace-mcp" type="button" class="btn btn-secondary" data-i18n-de="MCP-Einstieg kopieren">Copy MCP entry</button></div>
+      <span class="menu-label" data-i18n-de="Exportieren">Export</span>
       <button id="export-markdown" type="button" class="btn btn-secondary" data-i18n-de="Markdown + Mermaid">Markdown + Mermaid</button>
       <button id="export-arc42" type="button" class="btn btn-secondary" data-i18n-de="arc42-Dokumentation">arc42 documentation</button>
       <small id="export-arc42-hint" hidden data-i18n-de="Für arc42 ein Projekt mit Quellanalyse öffnen.">Open a source-analyzed project for arc42.</small>
@@ -874,20 +942,13 @@
       <small data-i18n-de="Exporte enthalten Ausschnitt und Filter. Beschreibungen in Markdown und JSON bleiben auf Englisch. Quelldateien bleiben unverändert.">Exports include scope and filters. Markdown and JSON descriptions stay in English. Source files are unchanged.</small>
     </div>
   </details>
-  <details id="refactor-menu" class="workspace-menu">
-    <summary id="refactor-summary" class="btn btn-secondary"><span data-i18n-de="Refactoring">Refactor</span><span id="simulation-indicator" class="badge" hidden></span></summary>
-    <div class="menu-content">
-      <span class="action-with-help"><button id="repair-cycle" type="button" class="btn btn-primary" data-i18n-de="Zyklus auflösen">Resolve a cycle</button><button id="repair-cycle-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
-      <span class="action-with-help"><button id="simulation-mode" type="button" class="btn btn-secondary" aria-pressed="false" title="Manual graph experiments. Use Resolve a cycle to compare automatically checked plans." data-i18n-title-de="Manuelle Experimente am Graphen. Unter „Zyklus auflösen“ lassen sich automatisch geprüfte Pläne vergleichen." data-i18n-de="Manuelle Simulation">Manual simulation</button><button id="simulation-mode-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
-      <span class="action-with-help"><button id="scenario-open" type="button" class="btn btn-secondary" data-i18n-de="Szenarien">Scenarios</button><button id="scenario-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
-    </div>
-  </details>
+  <button id="toggle-explorer" type="button" class="btn btn-secondary" aria-expanded="true" aria-controls="explorer" data-i18n-de="Explorer">Explorer</button>
   <button id="toggle-inspector" type="button" class="btn btn-secondary" aria-expanded="true" aria-controls="inspector" data-i18n-de="Inspektor">Inspector</button>
   <!-- U01: Light/Dark/System; the JS pins data-theme from (optionally)
        stored preference — buttons carry static inline SVG icons. -->
   <details id="settings-menu" class="workspace-menu">
-    <summary id="settings-summary" class="btn btn-quiet" data-i18n-de="Einstellungen">Settings</summary>
-    <div class="menu-content">
+    <summary id="settings-summary" class="btn btn-quiet" aria-label="Settings" data-i18n-aria-label-de="Einstellungen" title="Settings: language, color theme, help" data-i18n-title-de="Einstellungen: Sprache, Farbschema, Hilfe"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></summary>
+    <div id="settings-content" class="menu-content">
       <span class="menu-label" data-i18n-de="Sprache">Language</span>
       <div id="language-switch" role="group" aria-label="Language" data-i18n-aria-label-de="Sprache"><button id="language-de" type="button" aria-label="Deutsch" aria-pressed="false">DE</button><button id="language-en" type="button" aria-label="English" aria-pressed="true">EN</button></div>
       <span class="menu-label" data-i18n-de="Farbschema">Color theme</span>
@@ -905,15 +966,6 @@
     </div>
   </details>
 </div>
-<section id="repository-navigation" hidden aria-label="Repository navigation" data-i18n-aria-label-de="Repository-Navigation">
-  <strong id="repository-heading"></strong>
-  <label for="repository-project" data-i18n-de="Projekt">Project</label><select id="repository-project"></select>
-  <a id="repository-open" class="btn btn-primary"></a><button id="repository-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button>
-  <a id="repository-overview" class="btn btn-secondary" data-i18n-de="Monorepo">Monorepo</a>
-  <p id="repository-scope" class="muted"></p>
-  <details id="repository-standalone" hidden><summary data-i18n-de="Anderes Projekt öffnen">Open another project</summary><p id="repository-standalone-note" class="muted"></p><code id="repository-command" class="repository-command"></code><button id="repository-copy" type="button" class="btn btn-secondary" data-i18n-de="Serverbefehl kopieren">Copy server command</button></details>
-</section>
-<div id="summary" aria-label="Current view metrics" data-i18n-aria-label-de="Kennzahlen der aktuellen Ansicht"></div>
 <div id="main">
   <aside id="explorer" aria-label="Explorer" data-i18n-aria-label-de="Explorer">
     <div class="panel-heading" data-i18n-de="Explorer">Explorer</div>
@@ -951,19 +1003,8 @@
   </aside>
   <div id="explorer-resizer" class="panel-resizer" role="separator" aria-orientation="vertical" aria-controls="explorer" aria-label="Resize Explorer" data-i18n-aria-label-de="Explorer-Größe ändern" tabindex="0" title="Drag to resize Explorer. Arrow keys adjust width; Shift uses larger steps. Double-click to reset." data-i18n-title-de="Ziehen, um die Explorer-Breite zu ändern. Pfeiltasten ändern die Breite, Umschalt in größeren Schritten. Doppelklick setzt sie zurück."></div>
   <section id="workspace" aria-label="Analysis workspace" data-i18n-aria-label-de="Analyse-Arbeitsbereich">
-    <div class="workspace-bar"><div class="workspace-location"><nav id="breadcrumbs" aria-label="Breadcrumb" data-i18n-aria-label-de="Navigationspfad"></nav><button id="workspace-info" type="button" class="context-help-trigger" aria-label="View help" data-i18n-aria-label-de="Hilfe zur Ansicht">?</button><small id="workspace-description" hidden></small><button id="workspace-mcp" type="button" class="btn btn-quiet" aria-label="Copy MCP entry" data-i18n-aria-label-de="MCP-Einstieg kopieren">MCP</button></div>
-      <div id="tabs" role="tablist" aria-label="Workspace" data-i18n-aria-label-de="Arbeitsbereich">
-        <button type="button" data-tab="start" role="tab" aria-selected="false" data-i18n-de="Start">Start</button>
-        <button type="button" data-tab="graph" role="tab" aria-selected="true" class="active" data-i18n-de="Graph">Graph</button>
-        <button type="button" data-tab="dsm" role="tab" aria-selected="false" data-i18n-de="Matrix">Matrix</button>
-        <button type="button" data-tab="calls" role="tab" aria-selected="false" data-i18n-de="Aufrufe">Calls</button>
-        <button type="button" data-tab="services" role="tab" aria-selected="false" data-i18n-de="Dienste">Services</button>
-        <button type="button" data-tab="architecture" role="tab" aria-selected="false" data-i18n-de="Architektur">Architecture</button>
-        <button type="button" data-tab="assessment" role="tab" aria-selected="false" data-i18n-de="Review">Review</button>
-        <button type="button" role="tab" data-tab="quality" aria-selected="false" data-i18n-de="Qualität">Quality</button>
-          <button type="button" data-tab="security" role="tab" aria-selected="false" data-i18n-de="Sicherheit">Security</button>
-          <button type="button" data-tab="review-dashboard" role="tab" aria-selected="false" data-i18n-de="Dashboard">Dashboard</button>
-      </div>
+    <div class="workspace-bar"><div class="workspace-location"><nav id="breadcrumbs" aria-label="Breadcrumb" data-i18n-aria-label-de="Navigationspfad"></nav><button id="workspace-info" type="button" class="context-help-trigger" aria-label="View help" data-i18n-aria-label-de="Hilfe zur Ansicht">?</button><small id="workspace-description" hidden></small></div>
+      <div id="summary" aria-label="Current view metrics" data-i18n-aria-label-de="Kennzahlen der aktuellen Ansicht"></div>
     </div>
     <div id="graph-options" aria-label="Graph display options" data-i18n-aria-label-de="Graph-Anzeigeoptionen">
       <div class="graph-option-buttons">
@@ -989,6 +1030,14 @@
           <button type="button" class="btn btn-secondary" data-edges="all" aria-pressed="true">All</button>
         </div>
         <button id="toggle-cycles" type="button" class="btn btn-secondary" aria-pressed="false" title="Show only dependencies in cycles, including package-level cycle context. Combines with the direction and file filters." data-i18n-title-de="Nur Abhängigkeiten in Zyklen anzeigen, einschließlich Zykluskontext auf Paketebene. Mit Richtungs- und Dateifiltern kombinierbar." data-i18n-de="Nur Zyklen">Cycles only</button>
+        <details id="refactor-menu" class="workspace-menu">
+          <summary id="refactor-summary" class="btn btn-secondary"><span data-i18n-de="Refactoring">Refactor</span><span id="simulation-indicator" class="badge" hidden></span></summary>
+          <div class="menu-content">
+            <span class="action-with-help"><button id="repair-cycle" type="button" class="btn btn-primary" data-i18n-de="Zyklus auflösen">Resolve a cycle</button><button id="repair-cycle-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+            <span class="action-with-help"><button id="simulation-mode" type="button" class="btn btn-secondary" aria-pressed="false" title="Manual graph experiments. Use Resolve a cycle to compare automatically checked plans." data-i18n-title-de="Manuelle Experimente am Graphen. Unter „Zyklus auflösen“ lassen sich automatisch geprüfte Pläne vergleichen." data-i18n-de="Manuelle Simulation">Manual simulation</button><button id="simulation-mode-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+            <span class="action-with-help"><button id="scenario-open" type="button" class="btn btn-secondary" data-i18n-de="Szenarien">Scenarios</button><button id="scenario-open-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button></span>
+          </div>
+        </details>
       </div>
       <div class="graph-status">
         <div id="edge-reference" role="status" aria-live="polite"></div>

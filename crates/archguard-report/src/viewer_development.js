@@ -58,7 +58,7 @@ function initDevelopment(){
   for(const [help,source]of [['workspace-info','workspace-description'],['engineering-help','engineering-note'],['services-reference-help','services-reference'],['calls-counting-help','calls-counting-note'],['calls-cycle-help','calls-cycles-coverage']])bindExplanation(help,source);
   const mcp=document.getElementById('workspace-mcp');
   explainAction(mcp,()=>t('Copy the MCP entry for this project and view. The guide links source evidence, change planning and verification tools.','MCP-Einstieg für dieses Projekt und diese Ansicht kopieren. Der Wegweiser verbindet Quellbelege, Änderungsplanung und Prüfwerkzeuge.'));
-  mcp.addEventListener('click',()=>copyText(JSON.stringify({name:'development_guide',arguments:{path:data.root,...(ui.workspace==='start'?{}:{view:ui.workspace})}},null,2)));
+  mcp.addEventListener('click',()=>{closeWorkspaceMenu('export-menu');copyText(JSON.stringify({name:'development_guide',arguments:{path:data.root,...(ui.workspace==='start'?{}:{view:ui.workspace})}},null,2));});
 }
 
 // Project-wide measurements share the dashboard renderer and its evidence links.

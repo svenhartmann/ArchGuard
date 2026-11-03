@@ -9,7 +9,7 @@ try{
  for(const width of [1500,390]){
   await page.setViewport({width,height:1000});await page.goto(pathToFileURL(path.resolve(report)).href,{waitUntil:'load'});
   const before=await page.evaluate(()=>JSON.stringify([data.nodes,data.edges,work,ops,ui.selection,ui.workspace])),requests=external.length;
-  await page.click('#kpi-help-open');assert.equal(await page.$eval('#kpi-help-dialog',node=>node.open),true);
+  await page.click('#settings-summary');await page.click('#kpi-help-open');assert.equal(await page.$eval('#kpi-help-dialog',node=>node.open),true);assert.equal(await page.$eval('#settings-menu',node=>node.open),false,'the settings menu closes behind the dialog');
   assert.equal(await page.evaluate(()=>window.archguardCanReload()),false,'live refresh waits while help is open');
   await page.click('#kpi-help-dialog [aria-label=Deutsch]');
   assert.match(await page.$eval('#kpi-help-title',node=>node.textContent),/Sprachen/);
@@ -32,10 +32,10 @@ try{
   const links=await page.$$eval('#kpi-help-dialog a',nodes=>nodes.map(node=>({href:node.href,rel:node.rel,target:node.target})));
   assert.ok(links.every(link=>link.href.startsWith('https://')&&link.rel==='noopener noreferrer'&&link.target==='_blank'));
   await page.keyboard.press('Escape');assert.equal(await page.$eval('#kpi-help-dialog',node=>node.open),false);
-  assert.equal(await page.evaluate(()=>document.activeElement.id),'kpi-help-open','Escape restores focus to the opener');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'settings-summary','Escape restores focus to the visible menu that opened help');
   assert.equal(await page.evaluate(()=>JSON.stringify([data.nodes,data.edges,work,ops,ui.selection,ui.workspace])),before);
   assert.equal(external.length,requests,'reading help works offline without external requests');
-  await page.click('#kpi-help-open');await page.click('[data-kpi-help-close]');assert.equal(await page.$eval('#kpi-help-dialog',node=>node.open),false);
+  await page.click('#settings-summary');await page.click('#kpi-help-open');await page.click('[data-kpi-help-close]');assert.equal(await page.$eval('#kpi-help-dialog',node=>node.open),false);
   checks.push({width,languages:8,translation:true,copy:true,keyboard:true,offline:true});
  }
  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'browser.json'),JSON.stringify({checks,errors},null,2));console.log(JSON.stringify({checks,errors}));
