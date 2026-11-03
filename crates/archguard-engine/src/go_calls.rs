@@ -12,6 +12,7 @@ use std::{
 };
 
 const HELPER: &str = include_str!("ArchguardCallScanner.go");
+const GO_HINT: &str = "Install the Go SDK or set ARCHGUARD_GO to its executable.";
 static BUILD_CACHE: OnceLock<tempfile::TempDir> = OnceLock::new();
 type CachedAnalysis = ([u8; 32], CallAnalysis);
 static CACHE: OnceLock<Mutex<Option<CachedAnalysis>>> = OnceLock::new();
@@ -119,11 +120,14 @@ pub(crate) fn analyze_go_calls(root: &Path, config: &Config) -> CallAnalysis {
     }
     result
 }
-fn execute(
+/// Run a bundled helper with a 120 s and 64 MiB output budget; `hint` tells
+/// how to provide a missing toolchain.
+pub(crate) fn execute(
     command: &mut Command,
     dir: &Path,
     input: Option<&Path>,
     label: &str,
+    hint: &str,
 ) -> Result<Vec<u8>, String> {
     let output = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
     let error = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
@@ -136,9 +140,9 @@ fn execute(
     } else {
         command.stdin(Stdio::null());
     }
-    let mut child = command.spawn().map_err(|e| {
-        format!("{label}: {e}. Install the Go SDK or set ARCHGUARD_GO to its executable.")
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("{label}: {e}. {hint}"))?;
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
@@ -166,7 +170,7 @@ fn execute(
     }
     let metadata = fs::metadata(output.path()).map_err(|e| e.to_string())?;
     if metadata.len() > 64 * 1024 * 1024 {
-        return Err("Go output budget exceeded".into());
+        return Err(format!("{label}: output budget exceeded"));
     }
     fs::read(output.path()).map_err(|e| e.to_string())
 }
@@ -204,7 +208,13 @@ fn run(files: &[serde_json::Value]) -> Result<CallAnalysis, String> {
         .env("CGO_ENABLED", "0")
         .env("GOFLAGS", "")
         .env("GOCACHE", build_cache);
-    execute(&mut compile, dir.path(), None, "Go helper compilation")?;
+    execute(
+        &mut compile,
+        dir.path(),
+        None,
+        "Go helper compilation",
+        GO_HINT,
+    )?;
     let input = dir.path().join("input.json");
     fs::write(
         &input,
@@ -238,6 +248,12 @@ fn run(files: &[serde_json::Value]) -> Result<CallAnalysis, String> {
             std::env::join_paths(paths).map_err(|e| e.to_string())?,
         );
     }
-    let bytes = execute(&mut scanner, dir.path(), Some(&input), "Go source analysis")?;
+    let bytes = execute(
+        &mut scanner,
+        dir.path(),
+        Some(&input),
+        "Go source analysis",
+        GO_HINT,
+    )?;
     serde_json::from_slice(&bytes).map_err(|e| format!("Invalid Go analysis: {e}"))
 }

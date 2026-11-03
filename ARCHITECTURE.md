@@ -324,6 +324,8 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 | **PHP** | `namespace A\B;` plus PSR-4 from `composer.json` (logical) | `use A\B\C;` including grouped syntax and `use function/const`, `require`/`include`, fully qualified names `\A\B\C` in code | PSR-4 → file; otherwise pseudo-node; `require` as path |
 | **Rust** | Module tree (`mod`/file, physical) | `use crate::…`, `use super::…`, `mod x;`, paths in code such as `crate::a::B::new()` | Module-path match; workspace crates through local `Cargo.toml` dependencies |
 
+Python adds a syntax-only helper on the standard `ast` module (`archguard-engine/src/python_calls.rs`), run with `-I -S`; its counting rules mirror the Rust syntax analyzer.
+
 Go additionally uses module/package imports and a Go SDK parser/type helper.
 Its semantic model includes packages, structs, interfaces and function groups,
 with complexity and WMC measurements. Dynamic/external unresolved calls retain

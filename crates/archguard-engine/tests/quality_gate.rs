@@ -215,7 +215,7 @@ fn deletion_only_and_empty_changes_have_no_fabricated_coverage_percentage() {
     assert_eq!(report.coverage.unwrap().status, "not_applicable");
 }
 #[test]
-fn unsupported_changed_language_is_incomplete_for_method_limits() {
+fn syntax_only_language_is_incomplete_for_method_limits() {
     let (root, config, graph) = project();
     fs::write(
         root.path().join("src/a.py"),
@@ -227,8 +227,18 @@ fn unsupported_changed_language_is_incomplete_for_method_limits() {
         ..Default::default()
     };
     let report = evaluate_quality_gate(root.path(), &config, &graph, "HEAD", &options).unwrap();
+    // Python is measured from syntax only, which never counts as a complete
+    // compiler analysis: the measured method is listed, the gate stays open.
     assert_eq!(report.status, "incomplete");
-    assert!(report.methods.is_empty());
+    assert!(report.findings.iter().any(|finding| {
+        finding.kind == "methods_unavailable" && finding.message.contains("python")
+    }));
+    assert!(
+        report
+            .methods
+            .iter()
+            .any(|method| method.id.ends_with("#answer@1"))
+    );
 }
 #[test]
 fn invalid_thresholds_and_refs_are_errors_without_command_execution() {

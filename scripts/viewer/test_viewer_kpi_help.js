@@ -13,7 +13,8 @@ for(const id of languages){
  app.run(`kpiHelpUi.language='${id}';renderKpiHelp()`);
  const text=app.run('kpiHelpUi.detail.textContent');
  assert.match(text,/archguard coverage \. --report/,'every supported language has an import example');
- if(['py','php','rs'].includes(id))assert.match(text,/no compiler-backed class\/method metrics/i,'installing a tool must not promise an unsupported adapter');
+ if(id==='php')assert.match(text,/no compiler-backed class\/method metrics/i,'installing a tool must not promise an unsupported adapter');
+ else if(['py','rs'].includes(id))assert.match(text,/calls and types stay unresolved, so CBO, RFC, DIT and NOC are not measured/i,'syntax-only languages state what they cannot measure');
  else assert.match(text,/archguard calls \. --format json/);
 }
 app.run("kpiHelpUi.language='js';renderKpiHelp()");assert.match(app.run('kpiHelpUi.detail.textContent'),/allowJs/);

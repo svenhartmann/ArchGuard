@@ -55,6 +55,11 @@ fn install_hint(os: &str, tool: &str) -> String {
             "winget install Microsoft.DotNet.SDK.8",
             "install dotnet-sdk from the official Microsoft package feed",
         ),
+        "python3" => (
+            "brew install python",
+            "winget install Python.Python.3.12",
+            "apt install python3 (Debian/Ubuntu) or dnf install python3",
+        ),
         _ => (
             "brew install node",
             "winget install OpenJS.NodeJS.LTS",
@@ -74,7 +79,7 @@ pub(crate) fn run(cli: &Cli) -> i32 {
         return usage("doctor supports text and json");
     }
     let os = std::env::consts::OS;
-    let checks: [(&str, &[&str], &str); 4] = [
+    let checks: [(&str, &[&str], &str); 5] = [
         (
             "git",
             &["--version"],
@@ -94,6 +99,11 @@ pub(crate) fn run(cli: &Cli) -> i32 {
             "node",
             &["--version"],
             "TypeScript/JavaScript call analysis; the analyzed project also needs npm install --save-dev typescript, and running it needs ARCHGUARD_TRUST_PROJECT_COMPILER=1",
+        ),
+        (
+            "python3",
+            &["--version"],
+            "Python class, function and complexity measurements from syntax (3.9+, or set ARCHGUARD_PYTHON); without it Python imports are still analyzed",
         ),
     ];
     let tools: Vec<ToolReport> = checks

@@ -95,6 +95,7 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
             Lang::CSharp => crate::csharp_calls::analyze_csharp_calls(root, config),
             Lang::Go => crate::go_calls::analyze_go_calls(root, config),
             Lang::Rust => crate::rust_calls::analyze_rust_calls(root, config),
+            Lang::Py => crate::python_calls::analyze_python_calls(root, config),
             Lang::Ts | Lang::Js => {
                 if typescript_analyzed {
                     continue;

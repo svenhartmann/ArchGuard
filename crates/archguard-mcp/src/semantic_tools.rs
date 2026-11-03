@@ -490,8 +490,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("src")).unwrap();
         std::fs::write(
-            dir.path().join("src/main.py"),
-            "def run():\n    print('hello')\n",
+            dir.path().join("src/Main.kt"),
+            "fun run() {\n    println(\"hello\")\n}\n",
         )
         .unwrap();
         let handler = ArchguardTools::new(dir.path().into());
@@ -503,7 +503,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reply["status"], "unavailable");
-        assert_eq!(reply["analyzers"][0]["language"], "python");
+        assert_eq!(reply["analyzers"][0]["language"], "kotlin");
         assert_eq!(reply["total"], 0);
     }
 }

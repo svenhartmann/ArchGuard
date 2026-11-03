@@ -48,6 +48,7 @@ mod patterns;
 mod performance;
 mod pipeline;
 mod project_files;
+mod python_calls;
 mod quality_findings;
 mod quality_gate;
 mod quality_history;

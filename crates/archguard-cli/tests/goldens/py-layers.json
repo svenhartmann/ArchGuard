@@ -206,26 +206,26 @@
   "semantic": {
     "analyzers": [
       {
-        "backend": "none",
+        "backend": "python ast",
         "diagnostics": [
-          "Semantic analysis for python is not implemented; import analysis remains available."
+          "Syntax-only analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
         ],
         "files": 8,
         "language": "python",
         "project": null,
-        "status": "unavailable",
-        "version": null
+        "status": "partial",
+        "version": "<COMPILER_VERSION>"
       }
     ],
     "diagnostics": [
-      "python: Semantic analysis for python is not implemented; import analysis remains available."
+      "python: Syntax-only analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
     ],
     "projected_calls": 0,
     "projected_supertypes": 0,
     "projected_type_uses": 0,
     "skipped_project_calls": 0,
     "skipped_type_uses": 0,
-    "status": "unavailable"
+    "status": "partial"
   },
   "summary": {
     "acd": 3.25,
