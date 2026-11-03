@@ -7,6 +7,7 @@ fn paths(data: archguard_extract::Extraction) -> Vec<String> {
             TargetSpec::Symbol { path, stem } => {
                 stem.map_or(path.clone(), |s| format!("{path}:{s}"))
             }
+            TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
         })
         .collect()
 }

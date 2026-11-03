@@ -388,6 +388,72 @@ fn flush(current: &mut Vec<&Token>, lines: &[&str], source: &str, out: &mut Vec<
     current.clear();
 }
 
+/// Dotted identifier chains `a.b.C` in code with their line, outside literals,
+/// comments and statements opened by one of `skip` (`import`, `using`, …;
+/// a two-word entry such as `global using` matches the first two tokens).
+/// Segments must touch their dots, so builder calls split across lines stay
+/// apart; a chain never starts right after a `.`.
+pub(crate) fn dotted_chains(
+    source: &str,
+    flavor: Flavor,
+    skip: &[&str],
+) -> Vec<(u32, Vec<String>)> {
+    let tokens: Vec<_> = tokens(source, flavor)
+        .into_iter()
+        .filter(|token| token.text != "\n")
+        .collect();
+    let is_name = |token: &Token| {
+        !token.literal
+            && token
+                .text
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+    };
+    let mut out = Vec::new();
+    let mut statement_start = true;
+    let mut skip_statement = false;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if statement_start && !token.literal {
+            let pair = tokens
+                .get(index + 1)
+                .map(|next| format!("{} {}", token.text, next.text));
+            skip_statement = skip.contains(&token.text.as_str())
+                || pair.is_some_and(|pair| skip.contains(&pair.as_str()));
+        }
+        statement_start = !token.literal && matches!(token.text.as_str(), ";" | "{" | "}");
+        let after_dot = index > 0 && {
+            let previous = &tokens[index - 1];
+            previous.text == "." && previous.end == token.start
+        };
+        index += 1;
+        if skip_statement || after_dot || !is_name(token) {
+            continue;
+        }
+        let mut segments = vec![token.text.clone()];
+        let mut end = token.end;
+        while let (Some(dot), Some(name)) = (tokens.get(index), tokens.get(index + 1)) {
+            if dot.literal
+                || dot.text != "."
+                || dot.start != end
+                || name.start != dot.end
+                || !is_name(name)
+            {
+                break;
+            }
+            segments.push(name.text.clone());
+            end = name.end;
+            index += 2;
+        }
+        if segments.len() > 1 {
+            out.push((token.line, segments));
+        }
+    }
+    out
+}
+
 /// Preserve source positions while hiding comments and literal contents from visibility scans.
 pub(crate) fn code_only(source: &str, flavor: Flavor) -> String {
     let mut bytes: Vec<_> = source

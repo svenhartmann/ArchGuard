@@ -24,6 +24,12 @@ pub enum TargetSpec {
     /// (`Some("C")` for `import a.b.C;`), `None` when only the module is
     /// known (`import a.b.*;`, `using A.B;`).
     Symbol { path: String, stem: Option<String> },
+    /// A dotted name written in code without an import (`com.a.B` in Java,
+    /// `A.B.C` in C#), split into its segments. Resolution links it only when
+    /// a prefix is a declared package/namespace and the next segment names a
+    /// unique file there; anything else is dropped without a warning, since
+    /// such a chain may just as well be a field or member access.
+    Qualified(Vec<String>),
 }
 
 /// One raw import found by a scanner, still unresolved.

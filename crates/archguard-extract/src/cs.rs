@@ -52,7 +52,35 @@ impl Extractor for CsExtractor {
             }
         }
         extraction
+            .imports
+            .extend(qualified_names(rel_path, content));
+        extraction
     }
+}
+
+/// Dotted names in code that start like a namespace (`B.Repo`,
+/// `Lib.Tools.Helper.Run()`); camel-case locals (`repo.Items`), `this` and
+/// `base` never do. The resolver keeps only those naming a declared type.
+fn qualified_names(rel_path: &str, content: &str) -> Vec<RawImport> {
+    let lines: Vec<&str> = content.lines().collect();
+    crate::lex::dotted_chains(
+        content,
+        crate::lex::Flavor::C,
+        &["using", "namespace", "global using"],
+    )
+    .into_iter()
+    .filter(|(_, segments)| segments[0].starts_with(char::is_uppercase))
+    .map(|(line, segments)| RawImport {
+        source: rel_path.to_string(),
+        target: TargetSpec::Qualified(segments),
+        line,
+        raw: lines
+            .get((line - 1) as usize)
+            .copied()
+            .unwrap_or("")
+            .to_string(),
+    })
+    .collect()
 }
 
 /// The [`Declaration`] of a comment-stripped `namespace A.B;` (file-scoped)
@@ -358,8 +386,36 @@ using App.Swallowed;
                     None => path.clone(),
                 },
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
             })
             .collect()
+    }
+
+    #[test]
+    fn dotted_names_in_code_are_qualified_candidates() {
+        let content = "\
+using System;
+namespace App;
+public class User {
+    public B.Repo Repo = new B.Repo();
+    public void Run() {
+        Console.WriteLine(\"A.B.C\");
+        repo.Items.Count();
+        this.Repo.Save();
+        global::Lib.Tools.Helper.Run();
+        // C.Gone
+    }
+}
+";
+        assert_eq!(
+            targets(&extract(content)),
+            [
+                "q:B.Repo",
+                "q:B.Repo",
+                "q:Console.WriteLine",
+                "q:Lib.Tools.Helper.Run",
+            ]
+        );
     }
 
     #[test]
@@ -458,7 +514,12 @@ using App.Swallowed;
     #[test]
     fn using_table_yields_exactly_the_expected_targets() {
         for &(source, expected) in USING_TABLE {
-            let extraction = extract(&format!("{source}\n"));
+            let mut extraction = extract(&format!("{source}\n"));
+            // This table covers statement parsing; a malformed statement may
+            // still yield a dotted-name candidate, which has its own test.
+            extraction
+                .imports
+                .retain(|import| !matches!(import.target, TargetSpec::Qualified(_)));
             let actual = targets(&extraction);
             let expected: Vec<String> = expected
                 .map(|(path, stem)| match stem {

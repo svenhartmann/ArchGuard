@@ -376,6 +376,7 @@ import \"side-effect-pkg\";
             .iter()
             .map(|import| match &import.target {
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
                 TargetSpec::Symbol { path, .. } => path.clone(),
             })
             .collect()

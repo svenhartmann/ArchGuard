@@ -113,6 +113,9 @@ fn file_stem(path: &str) -> &str {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeclMap {
     modules: BTreeSet<String>,
+    /// Module paths a `package`/`namespace` declaration names, without the
+    /// path-derived directory chain.
+    declared: BTreeSet<String>,
     files: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -130,6 +133,7 @@ impl DeclMap {
         }
         for declaration in declarations {
             map.modules.insert(declaration.module_path.clone());
+            map.declared.insert(declaration.module_path.clone());
             map.files
                 .entry(declaration.module_path.clone())
                 .or_default()
@@ -155,6 +159,20 @@ impl DeclMap {
             .entry(dir.to_string())
             .or_default()
             .insert(path.to_string());
+    }
+
+    /// The unique file named `stem` inside the **declared** module
+    /// `module_path`, `None` for directory-only modules, ambiguous stems and
+    /// unknown modules. Dotted names in code use this stricter rule because
+    /// a chain such as `repo.Items` may just as well be a member access.
+    pub fn declared_file(&self, module_path: &str, stem: &str) -> Option<String> {
+        if !self.declared.contains(module_path) {
+            return None;
+        }
+        match self.resolve_symbol(module_path, Some(stem)) {
+            SymbolTarget::File(file) => Some(file),
+            _ => None,
+        }
     }
 
     /// Resolve a symbolic import (`TargetSpec::Symbol { path, stem }`).

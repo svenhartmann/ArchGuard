@@ -249,7 +249,10 @@ pub(crate) fn build_graph(
                 )
             };
             let Some(to) = resolved else {
-                warnings.push(external_warning(raw_import));
+                // A dotted name in code may be a member access, not a dependency.
+                if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
+                    warnings.push(external_warning(raw_import));
+                }
                 continue;
             };
             builder.edge(
@@ -536,6 +539,7 @@ fn resolve_python(
             .copied()
     };
     let (target, fallback) = match &raw.target {
+        TargetSpec::Qualified(_) => return None,
         TargetSpec::Path(path) => {
             let mut parts: Vec<_> = parent_dir(&raw.source)
                 .split('/')
@@ -619,6 +623,14 @@ fn resolve_target(
             }
             SymbolTarget::External => None,
         },
+        // Longest declared prefix first, so `a.b.Outer.Inner` reaches the
+        // `Outer` file and `a.b.C.method()` the `C` file.
+        TargetSpec::Qualified(segments) => (1..segments.len())
+            .rev()
+            .find_map(|split| {
+                decl_map.declared_file(&segments[..split].join("/"), &segments[split])
+            })
+            .and_then(|file| node_of.get(&file).copied()),
     }
 }
 
@@ -631,6 +643,7 @@ fn external_warning(raw_import: &RawImport) -> String {
             Some(stem) => format!("{path}/{stem}"),
             None => path.clone(),
         },
+        TargetSpec::Qualified(segments) => segments.join("."),
     };
     format!(
         "unresolved external import `{spec}` in {} (line {}): {}",
@@ -783,5 +796,76 @@ mod go_graph_tests {
         let (graph, warnings) = build_graph(d.path(), &files, &config).unwrap();
         assert!(graph.edges.is_empty());
         assert_eq!(warnings.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod qualified_name_tests {
+    use super::*;
+
+    fn graph_of(files: &[(&str, &str)]) -> (Graph, Vec<String>) {
+        let d = tempfile::tempdir().unwrap();
+        for (rel, content) in files {
+            let path = d.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        let files = walk_files(d.path(), &config).unwrap();
+        build_graph(d.path(), &files, &config).unwrap()
+    }
+
+    fn targets(graph: &Graph, from: &str) -> Vec<String> {
+        let from = graph.nodes.iter().find(|n| n.name == from).unwrap().id;
+        let mut names: Vec<_> = graph
+            .out_edges(from)
+            .map(|edge| graph.node_name(edge.to).unwrap().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn java_qualified_names_link_only_declared_package_types() {
+        let (graph, warnings) = graph_of(&[
+            (
+                "src/a/User.java",
+                "package a;\npublic class User {\n    b.Repo r = new b.Repo();\n    b.Outer.Inner i;\n    void f() { order.items(); repo.Items.size(); java.util.List.of(); }\n}\n",
+            ),
+            ("src/b/Repo.java", "package b;\npublic class Repo {}\n"),
+            (
+                "src/b/Outer.java",
+                "package b;\npublic class Outer { public static class Inner {} }\n",
+            ),
+            // `repo` is only a directory, not a declared package.
+            (
+                "src/repo/Items.java",
+                "package storage;\npublic class Items {}\n",
+            ),
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            targets(&graph, "a/User.java"),
+            ["b/Outer.java", "b/Repo.java"]
+        );
+    }
+
+    #[test]
+    fn csharp_qualified_names_link_only_declared_namespace_types() {
+        let (graph, warnings) = graph_of(&[
+            (
+                "src/A/User.cs",
+                "namespace A;\npublic class User {\n    public B.Repo R = new B.Repo();\n    public void F() { Console.WriteLine(1); Repo.Items.Count(); }\n}\n",
+            ),
+            ("src/B/Repo.cs", "namespace B;\npublic class Repo {}\n"),
+            // `Repo` is only a directory, not a declared namespace.
+            (
+                "src/Repo/Items.cs",
+                "namespace Storage;\npublic class Items {}\n",
+            ),
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(targets(&graph, "A/User.cs"), ["B/Repo.cs"]);
     }
 }

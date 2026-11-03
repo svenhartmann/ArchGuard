@@ -31,7 +31,37 @@ impl Extractor for JavaExtractor {
             }
         }
         extraction
+            .imports
+            .extend(qualified_names(rel_path, content));
+        extraction
     }
+}
+
+/// Fully qualified type names in code such as `com.example.Order` (a
+/// lowercase package segment first, a capitalized type later). Field chains
+/// like `order.items.size()` and `System.out` never match this shape.
+fn qualified_names(rel_path: &str, content: &str) -> Vec<RawImport> {
+    let lines: Vec<&str> = content.lines().collect();
+    crate::lex::dotted_chains(content, crate::lex::Flavor::C, &["package", "import"])
+        .into_iter()
+        .filter(|(_, segments)| {
+            segments[0].starts_with(char::is_lowercase)
+                && !matches!(segments[0].as_str(), "this" | "super")
+                && segments[1..]
+                    .iter()
+                    .any(|segment| segment.starts_with(char::is_uppercase))
+        })
+        .map(|(line, segments)| RawImport {
+            source: rel_path.to_string(),
+            target: TargetSpec::Qualified(segments),
+            line,
+            raw: lines
+                .get((line - 1) as usize)
+                .copied()
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect()
 }
 
 /// The [`Declaration`] of a comment-stripped `package a.b.c;` line, `None`
@@ -338,6 +368,7 @@ import com.example.swallowed.Gone;
                     None => path.clone(),
                 },
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
             })
             .collect()
     }
@@ -354,6 +385,18 @@ import com.example.swallowed.Gone;
                 symbol(14, "com/example/after", Some("Block")),
                 symbol(15, "com/example/Deep/Nested/Path", Some("Class")),
                 symbol(21, "com/example/Ws", Some("Gap")),
+                // The `imports` lookalike is no statement, but its dotted
+                // name is a candidate the resolver drops unless declared.
+                RawImport {
+                    source: "src/main/java/app/Main.java".to_string(),
+                    target: TargetSpec::Qualified(
+                        ["com", "example", "lookalike", "Gone"]
+                            .map(String::from)
+                            .to_vec(),
+                    ),
+                    line: 18,
+                    raw: fixture_line(18),
+                },
             ],
             "imports: {:#?}",
             extraction.imports
@@ -422,7 +465,12 @@ import com.example.swallowed.Gone;
     #[test]
     fn import_table_yields_exactly_the_expected_targets() {
         for &(source, expected) in IMPORT_TABLE {
-            let extraction = extract(&format!("{source}\n"));
+            let mut extraction = extract(&format!("{source}\n"));
+            // This table covers statement parsing; a malformed statement may
+            // still yield a dotted-name candidate, which has its own test.
+            extraction
+                .imports
+                .retain(|import| !matches!(import.target, TargetSpec::Qualified(_)));
             let actual = targets(&extraction);
             let expected: Vec<String> = expected
                 .map(|(path, stem)| match stem {
@@ -546,6 +594,39 @@ int importer = import_like();
         let extraction = extract(content);
         assert!(extraction.imports.is_empty());
         assert!(extraction.declarations.is_empty());
+    }
+
+    #[test]
+    fn dotted_names_in_code_are_qualified_candidates() {
+        let content = "\
+package app;
+import a.b.C;
+class Main {
+    com.example.domain.Order order = new com.example.domain.Order();
+    void run() {
+        order.items.size();
+        System.out.println(\"x.y.Z\");
+        this.repo.Find();
+        // com.example.Gone
+        com.example.util.Calc.sum(1, 2);
+    }
+}
+";
+        let extraction = extract(content);
+        assert_eq!(
+            targets(&extraction),
+            [
+                "a/b:C",
+                "q:com.example.domain.Order",
+                "q:com.example.domain.Order",
+                "q:com.example.util.Calc.sum",
+            ]
+        );
+        assert_eq!(extraction.imports[1].line, 4);
+        assert_eq!(
+            extraction.imports[3].raw,
+            "        com.example.util.Calc.sum(1, 2);"
+        );
     }
 
     #[test]

@@ -365,13 +365,15 @@ mod tests {
     #[test]
     fn resolved_calls_close_file_and_package_cycles_without_imports() {
         let (_root, files, config, mut graph) = fixture(&[
+            // The peers are reached through variables, so no import or
+            // qualified name reveals the dependency to the scanner.
             (
                 "A.cs",
-                "namespace Left;\nclass A { void Run() { Right.B.Run(); } }",
+                "namespace Left;\nclass A { void Run() { var peer = Peer(); peer.Run(); } }",
             ),
             (
                 "B.cs",
-                "namespace Right;\nclass B { void Run() { Left.A.Run(); } }",
+                "namespace Right;\nclass B { void Run() { var peer = Peer(); peer.Run(); } }",
             ),
         ]);
         assert!(graph.edges.is_empty());

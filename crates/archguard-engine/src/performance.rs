@@ -105,6 +105,8 @@ pub fn analyze_performance(
                 TargetSpec::Symbol { path, stem } => {
                     stem.map_or(path.clone(), |stem| format!("{path}/{stem}"))
                 }
+                // A name used in code is no import statement and loads nothing.
+                TargetSpec::Qualified(_) => continue,
             };
             for prefix in &config.performance.heavy_imports {
                 let normalized = if file.lang == Lang::Py {

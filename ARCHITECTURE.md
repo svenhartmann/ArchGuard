@@ -316,8 +316,8 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 
 | Language | Hierarchy source | Captured imports | Resolution |
 | --- | --- | --- | --- |
-| **Java** | `package a.b;` (logical) | `import a.b.C;`, `import static`, `import a.b.*;` | Match class name within package; otherwise pseudo-node `a/b/*` |
-| **C#** | `namespace A.B;` / `namespace A.B { }` (logical; may differ from directory) | `using A.B;`, `using static`, alias `using X = A.B.C;`, `global using` | Namespace pseudo-node `A/B/*`; unique file when possible |
+| **Java** | `package a.b;` (logical) | `import a.b.C;`, `import static`, `import a.b.*;`, qualified names `com.a.B` in code | Match class name within package; otherwise pseudo-node `a/b/*`; qualified names only to a type file of a declared package |
+| **C#** | `namespace A.B;` / `namespace A.B { }` (logical; may differ from directory) | `using A.B;`, `using static`, alias `using X = A.B.C;`, `global using`, qualified names `A.B.C` in code | Namespace pseudo-node `A/B/*`; unique file when possible; qualified names only to a type file of a declared namespace |
 | **Python** | Directory/file (physical, `__init__.py` packages) | `import a.b`, `from a.b import x`, relative `from . import y` | Absolute: module-path match (`a/b.py`, `a/b/__init__.py`); relative: path |
 | **TypeScript/JS** | Directory (physical) | `import … from`, `export … from`, `require()`, dynamic `import()` | Relative paths (tsconfig path aliases: v1.1) |
 | **PHP** | `namespace A\B;` plus PSR-4 from `composer.json` (logical) | `use A\B\C;` including grouped syntax and `use function/const`, `require`/`include` | PSR-4 → file; otherwise pseudo-node; `require` as path |

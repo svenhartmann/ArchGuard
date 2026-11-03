@@ -669,6 +669,7 @@ require 'swallowed.php';
                     None => path.clone(),
                 },
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
             })
             .collect()
     }

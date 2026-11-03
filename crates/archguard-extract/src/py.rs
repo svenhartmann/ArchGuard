@@ -379,6 +379,7 @@ import swallowed_by_open_block.gone
                     None => path.clone(),
                 },
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
             })
             .collect()
     }

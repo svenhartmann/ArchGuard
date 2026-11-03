@@ -414,6 +414,7 @@ fn run() { let v = crate::not::an::import(); }
             .map(|import| match &import.target {
                 TargetSpec::Symbol { path, .. } => path.clone(),
                 TargetSpec::Path(spec) => spec.clone(),
+                TargetSpec::Qualified(segments) => format!("q:{}", segments.join(".")),
             })
             .collect()
     }
