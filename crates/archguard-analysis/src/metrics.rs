@@ -383,4 +383,14 @@ mod tests {
         assert_eq!(summary.layer_violations, 2);
         assert_eq!(summary.status, Status::Fail);
     }
+
+    #[test]
+    fn summarize_carries_the_lakos_triple() {
+        // Chain of 3 again: the summary must carry the same numbers.
+        let g = graph(&["a", "b", "c"], &[("a", "b"), ("b", "c")]);
+        let summary = summarize(&g, &find_sccs(&g), &[]);
+        assert_eq!(summary.ccd, 6);
+        assert_eq!(summary.acd, 2.0);
+        assert!((summary.nccd - 6.0 / 5.0).abs() < 1e-12);
+    }
 }

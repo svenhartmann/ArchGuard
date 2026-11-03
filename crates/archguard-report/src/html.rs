@@ -1002,14 +1002,14 @@ mod tests {
         // R40/R39/R42 inputs: what the caller provides reaches the client.
         let register = archguard_core::ReviewRegister::default();
         let history = serde_json::json!([{"tag": "snap-1"}]);
-        let page = crate::to_html_with_context(
+        let page = super::to_html_with_context(
             &graph,
             None,
             0,
             &cyclic_edges(),
             &findings(),
             None,
-            &crate::HtmlContext {
+            &super::HtmlContext {
                 review_register: Some(&register),
                 review_history: Some(&history),
                 pr_comment_markdown: Some("## Architektur-Review"),
