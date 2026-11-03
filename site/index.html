@@ -31,6 +31,16 @@
   <article><span class="number">02</span><h2>Follow the evidence.</h2><p>Inspect source references and cycle groups. Keep declared dependencies separate from observed runtime calls.</p></article>
   <article><span class="number">03</span><h2>Make it actionable.</h2><p>Add architecture rules, check them in CI, or ask your coding agent to investigate through the MCP server.</p></article>
 </section>
+<section id="flow" class="section wrap" aria-labelledby="flow-title">
+ <div class="section-heading"><div><div class="eyebrow">THE FLOW IN 30 SECONDS</div><h2 id="flow-title">From the map<br>to the evidence.</h2></div><p>One pass through Apache Commons Collections: switch to the coupling metric, open the map package, follow its dependencies in the graph, check the calls and class metrics, then open the export menu.</p></div>
+ <figure class="gallery flow-video">
+  <video data-flow-video controls muted loop playsinline preload="none" poster="assets/flow-poster.jpg" width="1440" height="960" aria-label="ArchGuard viewer flow: World View coupling metric, the map package, its dependency graph, call evidence, class metrics and the export menu">
+   <source src="assets/flow.mp4" type="video/mp4">
+   <p>Your browser cannot play this video. <a href="assets/flow.mp4">Download the MP4</a>.</p>
+  </video>
+  <figcaption><div><h3>Real viewer recording.</h3><p>No sound. The blue dot shows where the next step happens. The video starts when it scrolls into view, unless your system asks for reduced motion.</p></div><span>Apache Commons Collections · Java</span></figcaption>
+ </figure>
+</section>
 <section id="metrics" class="section wrap">
  <div class="section-heading"><div><div class="eyebrow">METRICS ON THE MAP</div><h2>Where complexity<br>and coupling pile up.</h2></div><p>World View draws every class as a surface inside its package. Choose a metric and the surfaces take its colour; each label shows the highest value inside.</p></div>
  <div class="gallery-block" data-gallery>

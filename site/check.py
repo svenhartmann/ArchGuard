@@ -21,7 +21,10 @@ class Document(HTMLParser):
         if tag == 'img':
             assert values.get('alt'), f'{self.path}: missing image description'
             assert values.get('width') and values.get('height'), f'{self.path}: missing image dimensions'
-        for attr in ('href', 'src'):
+        if tag == 'video':
+            assert values.get('aria-label'), f'{self.path}: missing video description'
+            assert values.get('width') and values.get('height'), f'{self.path}: missing video dimensions'
+        for attr in ('href', 'src', 'poster'):
             if values.get(attr):
                 self.links.append(values[attr])
 

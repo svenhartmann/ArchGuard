@@ -68,6 +68,24 @@ The script fails when the eShop cycle or its source evidence is missing. Review
 the images before committing: keep partial-evidence indicators visible and update
 `about.html` with the capture date and scope.
 
+## Update the flow video
+
+`assets/flow.mp4` is a silent, roughly 30-second recording of one path through
+Commons Collections: World View, Explore lens with CBO, the `map` package, its
+dependencies in the graph, Calls, Quality and the export menu. A drawn pointer
+marks each step because headless capture has no system cursor. With the
+Commons Collections viewer from above running and `ffmpeg` on `PATH`:
+
+```sh
+node site/media/record-flow.cjs http://127.0.0.1:8816 /tmp/flow.webm
+ffmpeg -i /tmp/flow.webm -an -vf fps=30 -c:v libx264 -preset slow -crf 30 \
+  -pix_fmt yuv420p -movflags +faststart site/assets/flow.mp4
+ffmpeg -ss 0.5 -i site/assets/flow.mp4 -frames:v 1 -q:v 3 site/assets/flow-poster.jpg
+```
+
+The page loads the video only on demand, plays it while it is visible and
+leaves it paused for visitors who ask for reduced motion.
+
 The source checkout and any generated analysis outputs are intentionally absent
 from the published site. Upstream projects keep their own licenses and notices.
 

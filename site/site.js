@@ -31,3 +31,11 @@ for(const button of document.querySelectorAll('.copy'))button.addEventListener('
  clearTimeout(statusTimeout);statusTimeout=setTimeout(()=>{status.textContent='';},3500);
 });
 
+// The flow video plays only while visible, never with reduced motion, and stays paused once a visitor pauses it.
+const flow=document.querySelector('[data-flow-video]');
+if(flow&&'IntersectionObserver' in window&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+ let visible=false,paused=false;
+ flow.addEventListener('pause',()=>{if(visible&&!flow.ended)paused=true;});
+ flow.addEventListener('play',()=>{paused=false;});
+ new IntersectionObserver(([entry])=>{visible=entry.isIntersecting;if(visible&&!paused)flow.play().catch(()=>{});else if(!visible)flow.pause();},{threshold:.4}).observe(flow);
+}
