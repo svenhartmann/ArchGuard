@@ -78,7 +78,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "archguard-analysis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-core",
  "globset",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-engine",
  "archguard-mcp",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-analysis",
  "archguard-core",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-extract"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-core",
  "globset",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "archguard-engine",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-report"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-core",
  "serde",
@@ -168,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "archguard-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "archguard-core",
  "cxx-build",
