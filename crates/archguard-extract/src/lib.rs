@@ -14,6 +14,7 @@ pub mod extract;
 pub mod go;
 pub mod java;
 mod lex;
+pub mod memory;
 pub mod php;
 pub mod py;
 pub mod resolve;
@@ -29,6 +30,7 @@ pub use extract::{
 };
 pub use go::GoExtractor;
 pub use java::JavaExtractor;
+pub use memory::{MemoryCandidate, MemoryKind, scan_memory};
 pub use php::{PhpExtractor, parse_psr4};
 pub use py::PyExtractor;
 pub use resolve::{DeclMap, SymbolTarget, resolve_relative, strip_root};
