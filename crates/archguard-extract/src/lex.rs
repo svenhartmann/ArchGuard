@@ -13,8 +13,8 @@ pub(crate) struct Token {
     pub literal: bool,
     pub line: u32,
     pub end_line: u32,
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 pub(crate) fn tokens(source: &str, flavor: Flavor) -> Vec<Token> {
     let chars: Vec<_> = source.char_indices().collect();

@@ -195,3 +195,74 @@ fn configured_source_roots_that_merge_files_are_reported() {
         run.warnings
     );
 }
+
+#[test]
+fn rust_paths_in_code_link_their_crate_local_target() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, content) in [
+        (
+            "archguard.toml",
+            "derive_layers = false\n[project]\nsource_roots = []\n",
+        ),
+        ("src/lib.rs", "mod a;\nmod b;\n"),
+        (
+            "src/a.rs",
+            "pub fn make() {\n    let _ = crate::b::Repo::new();\n    let _ = Vec::<u8>::new();\n}\n",
+        ),
+        (
+            "src/b.rs",
+            "pub struct Repo;\nimpl Repo {\n    pub fn new() -> Self {\n        Repo\n    }\n}\n",
+        ),
+    ] {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let loaded = archguard_engine::load_config(None, dir.path()).unwrap();
+    let run =
+        archguard_engine::analyze_run_quiet(dir.path(), &loaded, archguard_engine::Level::File)
+            .unwrap();
+    let name = |id: archguard_core::NodeId| run.graph.nodes[id.0 as usize].name.clone();
+    let edges: Vec<_> = run
+        .graph
+        .edges
+        .iter()
+        .map(|edge| (name(edge.from), name(edge.to), edge.refs[0].line))
+        .collect();
+    assert!(
+        edges.contains(&("src/a.rs".into(), "src/b.rs".into(), 2)),
+        "edges: {edges:?}"
+    );
+}
+
+#[test]
+fn external_rust_paths_never_link_a_same_named_reexport() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, content) in [
+        (
+            "archguard.toml",
+            "derive_layers = false\n[project]\nsource_roots = []\n",
+        ),
+        ("src/lib.rs", "mod drift;\npub use drift::drift;\n"),
+        (
+            "src/drift.rs",
+            "use std::collections::BTreeMap;\npub fn drift() {\n    let _ = BTreeMap::<u8, u8>::new();\n}\n",
+        ),
+    ] {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let loaded = archguard_engine::load_config(None, dir.path()).unwrap();
+    let run =
+        archguard_engine::analyze_run_quiet(dir.path(), &loaded, archguard_engine::Level::File)
+            .unwrap();
+    let name = |id: archguard_core::NodeId| run.graph.nodes[id.0 as usize].name.clone();
+    let edges: Vec<_> = run
+        .graph
+        .edges
+        .iter()
+        .map(|edge| (name(edge.from), name(edge.to)))
+        .collect();
+    assert_eq!(edges, [("src/lib.rs".into(), "src/drift.rs".into())]);
+}

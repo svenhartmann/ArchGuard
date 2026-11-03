@@ -91,15 +91,15 @@
     "health": {
       "level": "green",
       "parts": {
-        "hubs": 0.6904761904761905,
+        "hubs": 0.7083333333333333,
         "sdp": 1.0,
         "tangledness": 1.0
       },
-      "score": 89.68253968253968,
+      "score": 90.27777777777776,
       "trend": null
     },
     "hub_gini": {
-      "gini": 0.30952380952380953,
+      "gini": 0.2916666666666667,
       "top_share": 1.0
     },
     "layer_drift": null,

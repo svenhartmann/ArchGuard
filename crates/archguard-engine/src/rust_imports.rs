@@ -271,7 +271,9 @@ fn module_directory(file: &str) -> PathBuf {
         parent.join(path.file_stem().unwrap_or_default())
     }
 }
-fn absolute_path(unit: &Unit<'_>, import: &Import) -> Option<Vec<String>> {
+/// The crate-absolute path of `import` plus the length of its scope prefix
+/// (the module a `self`/`super`/bare path starts in), which is not written.
+fn absolute_path(unit: &Unit<'_>, import: &Import) -> Option<(Vec<String>, usize)> {
     let mut path = import.path.clone();
     let mut base = Vec::new();
     match path.first().map(String::as_str) {
@@ -305,15 +307,16 @@ fn absolute_path(unit: &Unit<'_>, import: &Import) -> Option<Vec<String>> {
         }
         None => {}
     }
+    let scope = base.len();
     base.extend(path);
     let glob = base.last().is_some_and(|p| p == "*");
     if glob {
         base.pop();
     }
-    Some(base)
+    Some((base, scope))
 }
 fn resolve(unit: &Unit<'_>, import: &Import) -> Option<String> {
-    let mut base = absolute_path(unit, import)?;
+    let (mut base, scope) = absolute_path(unit, import)?;
     let matches = unit.names.get(&base).or_else(|| unit.modules.get(&base));
     if let Some(files) = matches {
         return (files.len() == 1).then(|| files.first().unwrap().clone());
@@ -324,8 +327,9 @@ fn resolve(unit: &Unit<'_>, import: &Import) -> Option<String> {
     {
         return files.first().cloned();
     }
-    // Associated items and enum variants belong to their declared type's file.
-    while base.len() > 1 {
+    // Associated items and enum variants belong to their declared type's file;
+    // the walk keeps the first written segment, never the bare scope module.
+    while base.len() > (scope + 1).max(1) {
         base.pop();
         if let Some(files) = unit.aliases.get(&base)
             && files.len() == 1
@@ -521,7 +525,7 @@ pub(super) fn edges(
                 if !import.path.last().is_some_and(|p| p == "*") {
                     continue;
                 }
-                let Some(module) = absolute_path(&unit, import) else {
+                let Some((module, _)) = absolute_path(&unit, import) else {
                     continue;
                 };
                 if !unit.modules.contains_key(&module) {
@@ -571,6 +575,25 @@ pub(super) fn edges(
                     names[&import.file],
                     import.line,
                     import.raw
+                ));
+            }
+        }
+        // Qualified paths in code (`crate::b::Repo::new()`) link without a `use`;
+        // unresolved ones are mostly external (`Vec::new`) and stay silent.
+        let mut seen = BTreeSet::new();
+        for path in &unit.crate_paths {
+            if let Some(target) = resolve(&unit, path)
+                && target != path.file
+                && seen.insert((path.file.clone(), target.clone(), path.line))
+            {
+                unit.edges.push((
+                    path.file.clone(),
+                    target,
+                    Ref {
+                        file: path.file.clone(),
+                        line: path.line,
+                        raw: path.raw.clone(),
+                    },
                 ));
             }
         }

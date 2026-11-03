@@ -45,7 +45,7 @@ pub(crate) const CACHE_DIR: &str = crate::project_files::PROJECT_DIR;
 /// The single cache entry inside [`CACHE_DIR`]: [`CacheEntry`] as JSON.
 pub(crate) const CACHE_FILE: &str = "cache.json";
 // Increment when extractor semantics or the cache contract change.
-const CACHE_SCHEMA: u32 = 5;
+const CACHE_SCHEMA: u32 = 6;
 
 /// On-disk shape of [`CACHE_FILE`]: graph and fingerprint are
 /// serialised as one unit and committed via one atomic replacement,
@@ -449,6 +449,44 @@ mod tests {
         let (warm, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(hit, "the rebuilt current-version cache is reusable");
         assert_eq!(warm, graph);
+    }
+
+    #[test]
+    fn schema_five_php_cache_is_rebuilt_with_qualified_names() {
+        let dir = fixture(&[
+            (
+                "src/A/User.php",
+                "<?php\nnamespace A;\nclass User { function f() { return new \\B\\Repo(); } }\n",
+            ),
+            ("src/B/Repo.php", "<?php\nnamespace B;\nclass Repo {}\n"),
+        ]);
+        let mut config = Config::default();
+        config.project.source_roots = vec!["src".into()];
+        config.project.languages = vec!["php".into()];
+        let files = pipeline::walk_files(dir.path(), &config).unwrap();
+
+        // Schema 5 ignored fully-qualified names in code: the same sources
+        // produced no edge. Its entry must not be served after the fix.
+        let mut builder = archguard_core::GraphBuilder::new();
+        builder.ensure_path("A/User.php", Some("php"));
+        builder.ensure_path("B/Repo.php", Some("php"));
+        let old_graph = builder.build(dir.path().to_string_lossy().into_owned());
+        fs::create_dir(dir.path().join(CACHE_DIR)).unwrap();
+        fs::write(
+            dir.path().join(CACHE_DIR).join(CACHE_FILE),
+            serde_json::to_vec(&CacheEntryRef {
+                schema_version: 5,
+                fingerprint: &extraction_fingerprint(dir.path(), &files, &config).unwrap(),
+                graph: &old_graph,
+                warnings: &[],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let (graph, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        assert!(!hit, "schema 5 results lack qualified-name edges");
+        assert_eq!(graph.edges.len(), 1);
     }
 
     #[test]

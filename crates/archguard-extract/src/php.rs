@@ -42,8 +42,79 @@ impl Extractor for PhpExtractor {
                 ));
             }
         }
+        let lines: Vec<&str> = content.lines().collect();
+        extraction
+            .imports
+            .extend(
+                qualified_names(content)
+                    .into_iter()
+                    .map(|(line, target)| RawImport {
+                        source: rel_path.into(),
+                        target,
+                        line,
+                        raw: lines.get((line - 1) as usize).copied().unwrap_or("").into(),
+                    }),
+            );
         extraction
     }
+}
+
+/// Fully-qualified names `\A\B\C` in code outside `use`/`namespace`
+/// statements (`new \A\B()`, type hints, static calls), with their line.
+/// Single-segment names (`\Exception`) name the global namespace and are
+/// dropped like their `use` form; relative names (`A\B`, `namespace\A`)
+/// need alias resolution and are not reported.
+fn qualified_names(content: &str) -> Vec<(u32, TargetSpec)> {
+    let tokens: Vec<_> = crate::lex::tokens(content, crate::lex::Flavor::Php)
+        .into_iter()
+        .filter(|token| token.text != "\n")
+        .collect();
+    let mut out = Vec::new();
+    let mut statement_start = true;
+    let mut skip_statement = false;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        index += 1;
+        if token.literal {
+            statement_start = false;
+            continue;
+        }
+        if statement_start {
+            skip_statement = matches!(token.text.as_str(), "use" | "namespace");
+        }
+        statement_start = matches!(token.text.as_str(), ";" | "{" | "}");
+        let glued_to_name = index >= 2 && {
+            let previous = &tokens[index - 2];
+            previous.end == token.start && !previous.literal && is_identifier(&previous.text)
+        };
+        if skip_statement || token.text != "\\" || glued_to_name {
+            continue;
+        }
+        let mut segments = Vec::new();
+        let mut end = token.end;
+        while let Some(name) = tokens
+            .get(index)
+            .filter(|name| !name.literal && name.start == end && is_identifier(&name.text))
+        {
+            segments.push(name.text.as_str());
+            index += 1;
+            end = name.end;
+            match tokens.get(index) {
+                Some(next) if next.text == "\\" && next.start == end => {
+                    end = next.end;
+                    index += 1;
+                }
+                _ => break,
+            }
+        }
+        if let Some((stem, path)) = segments.split_last()
+            && let Some(target) = symbol(path, Some(stem))
+        {
+            out.push((token.line, target));
+        }
+    }
+    out
 }
 
 /// The [`Declaration`] of a comment-stripped `namespace A\B;` or
@@ -903,6 +974,42 @@ $requires = include_thing();
         let extraction = extract(content);
         assert!(extraction.imports.is_empty());
         assert!(extraction.declarations.is_empty());
+    }
+
+    #[test]
+    fn fully_qualified_names_in_code_are_imports() {
+        let content = "\
+<?php
+namespace App;
+use \\Lib\\Used;
+class User extends \\Base\\Model {
+    public function f(\\Repo\\Store $s): \\Repo\\Item {
+        $a = new \\B\\Repo();
+        \\B\\helper();
+        $b = \\Exception::class;
+        $c = Rel\\Name::X;
+        $d = namespace\\Local::X;
+        $e = \"\\\\Str\\\\Gone\";
+        // \\Comment\\Gone
+        return \\B\\Repo::make();
+    }
+}
+";
+        let extraction = extract(content);
+        assert_eq!(
+            targets(&extraction),
+            [
+                "Lib:Used",
+                "Base:Model",
+                "Repo:Store",
+                "Repo:Item",
+                "B:Repo",
+                "B:helper",
+                "B:Repo",
+            ]
+        );
+        assert_eq!(extraction.imports[4].line, 6);
+        assert_eq!(extraction.imports[4].raw, "        $a = new \\B\\Repo();");
     }
 
     #[test]
