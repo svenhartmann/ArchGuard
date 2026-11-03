@@ -332,6 +332,13 @@ const worldNow=()=>typeof performance!=='undefined'&&performance.now?performance
 const worldEase=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
 function worldMotion(){return typeof requestAnimationFrame!=='undefined'&&!reducedMotion;}
 const worldCameraAnim={token:0};
+// Pointer and wheel events can outpace the display; they update the camera at
+// once and paint at most once per frame. Without frames the paint is immediate.
+let worldDrawFrame=null;
+function worldRequestDraw(){
+  if(typeof requestAnimationFrame==='undefined'){worldDraw();return;}
+  if(worldDrawFrame==null)worldDrawFrame=requestAnimationFrame(()=>{worldDrawFrame=null;worldDraw();});
+}
 function worldCameraTo(target,duration=320){
   const from={...worldUi.camera},to={...worldUi.camera,...target},start=worldNow(),token=++worldCameraAnim.token;
   if(!worldMotion()||duration<=0){worldUi.camera=to;worldDraw();return;}
@@ -408,11 +415,11 @@ function worldDraw(){
     ctx.globalAlpha=1;poly(ps,bg,null);ctx.globalAlpha=selected?.95:.64;poly(ps,tone,null);ctx.globalAlpha=1;
     const peak=project(x+.5,y+.5,z);
     // A soft light pool at the summit reads as a lit roof under the same
-    // rotation as the facets; it carries no measurement of its own.
+    // rotation as the facets; it carries no measurement of its own. Filling the
+    // outline directly matches a clip without a viewport-sized pass per surface.
     try{const glow=ctx.createRadialGradient(peak.x,peak.y,0,peak.x,peak.y,Math.max(6,base*cam.zoom));
       if(glow&&glow.addColorStop){glow.addColorStop(0,'rgba(255,255,255,.18)');glow.addColorStop(1,'rgba(255,255,255,0)');
-        ctx.save();ctx.beginPath();ps.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.clip();
-        ctx.globalAlpha=(selected?.95:.64)*fog;ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);ctx.restore();ctx.globalAlpha=1;}}catch{}
+        ctx.globalAlpha=(selected?.95:.64)*fog;poly(ps,glow,null);ctx.globalAlpha=1;}}catch{}
     for(let i=0;i<4;i++){const triangle=[ps[i],ps[(i+1)%4],peak],light=Math.cos(rotation+(i-.5)*Math.PI/2);poly(triangle,tone,null);poly(triangle,light>0?`rgba(255,255,255,${.05+.14*light})`:`rgba(0,0,0,${.05-.18*light})`,line);}
     if(selected||cell===worldUi.hover){ctx.lineWidth=2;ctx.strokeStyle=color('--text');ctx.beginPath();ps.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.stroke();}
     worldUi.hits.push({cell,ps,triangles:ps.map((p,i)=>[p,ps[(i+1)%4],peak])});
@@ -482,7 +489,7 @@ function initWorld(){
     // view back like Back does. Opening always stores the parent fitted
     // (zoom 1), so the next wheel-out above the minimum cannot cascade.
     const pop=factor<1&&zoomed.zoom<=.4&&!drag&&(worldUi.within||repositoryModel()?.mode==='project');
-    worldUi.camera=zoomed;tip.hidden=true;worldDraw();
+    worldUi.camera=zoomed;tip.hidden=true;worldRequestDraw();
     if(drill)worldOpenArea(drill.name);
     else if(pop)back();
   };
@@ -555,17 +562,17 @@ function initWorld(){
     if(pointers.has(e.pointerId)){
       pointers.set(e.pointerId,contact(e));
       const next=touchPair();
-      if(next&&pair){worldUi.camera=worldGesture(worldUi.camera,pair,next,worldUi.groundLift||0);pair=next;setGestureLabelsHidden(true);worldDraw();return;}
+      if(next&&pair){worldUi.camera=worldGesture(worldUi.camera,pair,next,worldUi.groundLift||0);pair=next;setGestureLabelsHidden(true);worldRequestDraw();return;}
       if(drag&&e.pointerId===drag.id){
         const x=e.clientX-drag.x,y=e.clientY-drag.y;if(Math.hypot(x,y)>4)drag.moved=true;
         // Rotation keeps package names available for orientation; worldDraw
         // reprojects their pins together with the terrain on every move.
-        if(drag.moved){suppressDoubleClick=true;setGestureLabelsHidden(!drag.rotate);worldUi.camera=drag.rotate?worldRotate(drag.camera,x*.008):{...drag.camera,x:drag.camera.x+x,y:drag.camera.y+y};worldDraw();}
+        if(drag.moved){suppressDoubleClick=true;setGestureLabelsHidden(!drag.rotate);worldUi.camera=drag.rotate?worldRotate(drag.camera,x*.008):{...drag.camera,x:drag.camera.x+x,y:drag.camera.y+y};worldRequestDraw();}
       }
       return;
     }
     if(pointers.size||e.pointerType==='touch')return;
-    const cell=hit(e);if(cell!==worldUi.hover){worldUi.hover=cell;worldDraw();}tip.hidden=!cell;if(cell){const b=canvas.getBoundingClientRect(),row=cell.entities[0];tip.textContent=isRepositoryOverview()?cell.area+' · '+serviceProjectKind(row.project.kind):(cell.entities.length>1?cell.entities.length+' '+t('grouped entries','gebündelte Einträge'):row.class_id||row.node)+' · '+(worldUi.lens==='complexity'?worldKpiLabel():t('Complexity','Komplexität'))+': '+(cell.value??t('unknown','unbekannt'));tip.style.left=Math.max(8,Math.min(b.width-240,e.clientX-b.left+12))+'px';tip.style.top=Math.max(8,e.clientY-b.top-55)+'px';}
+    const cell=hit(e);if(cell!==worldUi.hover){worldUi.hover=cell;worldRequestDraw();}tip.hidden=!cell;if(cell){const b=canvas.getBoundingClientRect(),row=cell.entities[0];tip.textContent=isRepositoryOverview()?cell.area+' · '+serviceProjectKind(row.project.kind):(cell.entities.length>1?cell.entities.length+' '+t('grouped entries','gebündelte Einträge'):row.class_id||row.node)+' · '+(worldUi.lens==='complexity'?worldKpiLabel():t('Complexity','Komplexität'))+': '+(cell.value??t('unknown','unbekannt'));tip.style.left=Math.max(8,Math.min(b.width-240,e.clientX-b.left+12))+'px';tip.style.top=Math.max(8,e.clientY-b.top-55)+'px';}
   };
   canvas.addEventListener('dblclick',e=>{if(e.button!==0||suppressDoubleClick)return;const cell=hit(e);if(cell){e.preventDefault();worldOpenArea(cell.area);}});
   canvas.addEventListener('contextmenu',e=>e.preventDefault());
