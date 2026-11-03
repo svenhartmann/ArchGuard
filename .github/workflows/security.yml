@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Literal prefix: as a reusable workflow, github.workflow is the caller's name.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   malware:
     name: Malware / ClamAV
@@ -48,6 +53,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build the default CLI artifact
         run: cargo build -p archguard-cli --release --locked

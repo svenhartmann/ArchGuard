@@ -1,10 +1,9 @@
 name: Release builds
 
+# Native builds are expensive (macOS/Windows runners): only tags and manual runs.
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
 
 permissions:

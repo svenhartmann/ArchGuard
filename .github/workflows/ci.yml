@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Literal prefix: as a reusable workflow, github.workflow is the caller's name.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -28,6 +33,11 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+
+      # Only main writes the cache; PRs restore it without filling the quota.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:

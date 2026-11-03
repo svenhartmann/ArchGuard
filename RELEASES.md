@@ -18,7 +18,9 @@ systems can therefore show an unrecognized-publisher warning.
 
 ## Build and security flow
 
-Pushes to `main`, pull requests, manual runs and `v*` tags build all variants.
+Only `v*` tags and manual runs build all variants; pushes to `main` and pull
+requests run CI and Security only, because the macOS and Windows runners are
+slow and expensive.
 Every native binary must pass its version/help, real dependency-analysis and
 HTML-export smoke test. Packaging includes the binary, README, this guide,
 project licenses, Cargo.lock and `release-info.json` (version, target, commit,
@@ -40,9 +42,10 @@ secret scanning). The release job requires **all** of these gates. It downloads
 the scanned bundle and re-verifies its contents and checksums before uploading;
 it never rebuilds binaries after the scan.
 
-For merge protection, require **Verify and scan all release artifacts** alongside
-the existing CI/security checks in the repository ruleset. The workflow does not
-change GitHub branch-protection settings.
+For merge protection, require the CI and Security checks in the repository
+ruleset. **Verify and scan all release artifacts** does not run on pull requests,
+so it cannot be a required merge check. The workflow does not change GitHub
+branch-protection settings.
 
 ## Create a version
 
@@ -53,7 +56,7 @@ change GitHub branch-protection settings.
    release with the five scanned archives, `SHA256SUMS`, and the report ZIP.
 4. Review the draft's notes and assets, then publish it in GitHub.
 
-Manual/branch/PR builds only produce workflow artifacts; they do not create a
+Manual builds only produce workflow artifacts; they do not create a
 GitHub release. Only the final tag-release job has `contents: write`; scanners
 and build jobs have read-only permissions. Re-running a tag whose draft/release
 already exists fails instead of silently replacing its assets. Deliberately
@@ -90,7 +93,7 @@ failed matrix runs require inspecting their linked job logs for individual resul
 ClamAV scans the platform archives and extracted binaries before the report ZIP
 is assembled; the report states this scope explicitly.
 
-On branch/PR/manual runs, the tag-only CI/security jobs are explicitly marked
+On manual runs, the tag-only CI/security jobs are explicitly marked
 **not run**, not passed. If any gate failed/cancelled, the ZIP contains only a
 diagnostic report and available logs, without binaries. A failed scan before log
 creation is recorded as failed without inventing a scan result. Release creation
