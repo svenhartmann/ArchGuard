@@ -328,7 +328,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 | **PHP** | `namespace A\B;` + PSR-4-Mapping aus `composer.json` (logisch) | `use A\B\C;` (auch Gruppen-Syntax, `use function/const`), `require`/`include`, voll qualifizierte Namen `\A\B\C` im Code | PSR-4 → Datei; sonst Pseudoknoten; `require` als Pfad |
 | **Rust** | Modulbaum (`mod`/Datei, physisch) | `use crate::…`, `use super::…`, `mod x;`, Pfade im Code wie `crate::a::B::new()` | Modulpfad-Match; Workspace-Crates über lokale `Cargo.toml`-Abhängigkeiten |
 
-Python ergänzt einen reinen Syntax-Helfer auf dem Standardmodul `ast` (`archguard-engine/src/python_calls.rs`), gestartet mit `-I -S`; die Zählregeln entsprechen dem Rust-Syntaxanalyzer.
+Python ergänzt einen reinen Syntax-Helfer auf dem Standardmodul `ast` (`archguard-engine/src/python_calls.rs`), gestartet mit `-I -S`; die Zählregeln entsprechen dem Rust-Syntaxanalyzer. PHP nutzt mit denselben Regeln den Token-Scanner `archguard-extract/src/php_structure.rs` und braucht keine PHP-Installation.
 
 Go ergänzt Modul-/Paketimporte mit einem Parser-/Typ-Helper des Go SDK.
 Das semantische Modell enthält Pakete, Structs, Interfaces und Funktionsgruppen

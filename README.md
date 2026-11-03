@@ -57,14 +57,14 @@ Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/
 | Go | Yes | Packages, structs, interfaces, receiver methods, function groups and source metrics | Go SDK on `PATH`, or `ARCHGUARD_GO` pointing to its executable |
 | Rust | Yes | Complexity, Cognitive and Halstead per function from syntax; calls and types stay unresolved | None |
 | Python | Yes | Classes, functions, Complexity, Cognitive and Halstead per function from syntax; calls and types stay unresolved | Python 3.9+ on `PATH`, or `ARCHGUARD_PYTHON` pointing to it; imports need nothing |
-| PHP | Yes | Import-graph analysis; no compiler-backed class metrics | No language compiler required for imports |
+| PHP | Yes | Classes, functions, Complexity, Cognitive and Halstead per function from ArchGuard's token scanner; calls and types stay unresolved | None |
 | Kotlin (`.kt`) | Yes, resolved together with Java | Import-graph analysis; no class metrics; Gradle `.kts` scripts are not scanned | None |
 
 Dependencies written as fully qualified names without an import also count: PHP `\A\B\C`, Rust `crate::`, `self::` and `super::` paths, and Java/Kotlin/C# dotted names such as `com.a.B` or `A.B.C`. For Java, Kotlin and C#, the scanner links such a name only to a type file of a declared package or namespace; the compiler helpers additionally resolve names hidden behind variables.
 
 Go uses the bundled `go/parser` and `go/types` helper without executing project code or downloading modules. Embedding is composition: DIT/NOC are not applicable. Dynamic calls, missing references, and combined build variants remain explicit analysis gaps.
 
-Python uses a bundled helper on the standard `ast` module, run isolated (`-I -S`) so that no project code is imported or executed. It parses with the grammar of the local interpreter: a file using newer syntax than that Python (for example `match` on 3.9) is reported as a syntax diagnostic, not measured. A class counts as abstract when it lists `ABC` or `Protocol` as a base, uses `metaclass=ABCMeta` or declares an `@abstractmethod`. Method-limit quality gates stay incomplete for Python, as for Rust, because syntax alone is no complete compiler analysis.
+Python uses a bundled helper on the standard `ast` module, run isolated (`-I -S`) so that no project code is imported or executed. It parses with the grammar of the local interpreter: a file using newer syntax than that Python (for example `match` on 3.9) is reported as a syntax diagnostic, not measured. A class counts as abstract when it lists `ABC` or `Protocol` as a base, uses `metaclass=ABCMeta` or declares an `@abstractmethod`. PHP is measured by ArchGuard's own token scanner without a PHP installation; interfaces and `abstract` classes count as abstract. Method-limit quality gates stay incomplete for Python and PHP, as for Rust, because syntax alone is no complete compiler analysis.
 
 **KPI help** in the viewer lists setup, supported measurements, and import examples for each language. Coverage and runtime measurements require actual reports; missing data is not treated as zero.
 

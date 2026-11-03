@@ -233,26 +233,26 @@
   "semantic": {
     "analyzers": [
       {
-        "backend": "none",
+        "backend": "archguard tokens",
         "diagnostics": [
-          "Semantic analysis for php is not implemented; import analysis remains available."
+          "Token-based analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from interface and abstract class declarations."
         ],
         "files": 6,
         "language": "php",
         "project": null,
-        "status": "unavailable",
+        "status": "partial",
         "version": null
       }
     ],
     "diagnostics": [
-      "php: Semantic analysis for php is not implemented; import analysis remains available."
+      "php: Token-based analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from interface and abstract class declarations."
     ],
     "projected_calls": 0,
     "projected_supertypes": 0,
     "projected_type_uses": 0,
     "skipped_project_calls": 0,
     "skipped_type_uses": 0,
-    "status": "unavailable"
+    "status": "partial"
   },
   "summary": {
     "acd": 2.1666666666666665,

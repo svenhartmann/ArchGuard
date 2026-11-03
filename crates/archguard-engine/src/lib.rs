@@ -46,6 +46,7 @@ mod mutation_report;
 mod ownership;
 mod patterns;
 mod performance;
+mod php_calls;
 mod pipeline;
 mod project_files;
 mod python_calls;
