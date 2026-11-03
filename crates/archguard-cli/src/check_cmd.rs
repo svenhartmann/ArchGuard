@@ -1,8 +1,14 @@
 //! Optional Git diff and relative ACD gate around the existing check command.
-use crate::args::Cli;
-use crate::output::{analysis_error, usage};
+use crate::args::{Cli, Format};
+use crate::output::{EXIT_FOUND, EXIT_OK, analysis_error, emit, usage};
+use crate::sarif::to_sarif;
+use archguard_engine::analysis::{Baseline, cycle_hash};
 use archguard_engine::core::{Finding, FindingKind, Ref, Report, Severity};
+use archguard_engine::report::{to_json, to_text};
 use archguard_engine::{LoadedConfig, compare_to_ref, read_trend};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 #[expect(
     clippy::too_many_arguments,
@@ -75,7 +81,7 @@ pub(crate) fn run(
     } else {
         Default::default()
     };
-    crate::check(cli, baseline, &checked, comparison.as_ref(), &paths)
+    check(cli, baseline, &checked, comparison.as_ref(), &paths)
 }
 
 /// How many per-violation evidence strings a gate finding samples at most.
@@ -189,6 +195,93 @@ fn gate_finding(id: String, nodes: Vec<String>, evidence: Vec<Ref>, message: Str
         evidence,
         message: Some(message),
     }
+}
+
+/// Gate semantics: `check` fails (exit 1) as soon as one [`Finding`]
+/// has severity `Error` — the same rule that sets
+/// [`Report::summary`] to `Fail` (Kap. 5). With `--baseline <DATEI>`
+/// (default `.archguard/baseline.json`), **cycle** findings whose
+/// membership hash — Kap. 7's [`cycle_hash`] over the finding's sorted
+/// member names, the same identity [`Baseline`] stores — is present in
+/// the baseline are accepted and no longer fail the gate; every other
+/// Error finding (declared layer violations, metric thresholds) fails
+/// regardless. The full report is still printed either way; a missing
+/// or unparsable baseline file is an IO error (exit 3).
+pub(crate) fn check(
+    cli: &Cli,
+    baseline: Option<&Path>,
+    report: &Report,
+    comparison: Option<&archguard_engine::Comparison>,
+    source_paths: &BTreeMap<String, String>,
+) -> i32 {
+    if matches!(
+        cli.format,
+        Format::Mermaid
+            | Format::Dot
+            | Format::Html
+            | Format::Graphml
+            | Format::Gexf
+            | Format::Table
+    ) {
+        return usage(format!(
+            "invalid value '{}' for '--format': check supports text, json and sarif",
+            cli.format_name()
+        ));
+    }
+    let baseline = match baseline {
+        None => None,
+        Some(path) => match read_baseline(path) {
+            Ok(baseline) => Some(baseline),
+            Err(err) => return analysis_error(err),
+        },
+    };
+    let fails = report.findings.iter().any(|finding| {
+        finding.severity == Severity::Error
+            && match (&baseline, finding.kind) {
+                (Some(baseline), FindingKind::Cycle) => {
+                    !baseline.hashes.contains(&cycle_hash(&finding.nodes))
+                }
+                _ => true,
+            }
+    });
+    let mut report = report.clone();
+    report.summary.status = if fails {
+        archguard_engine::core::Status::Fail
+    } else {
+        archguard_engine::core::Status::Pass
+    };
+    if !cli.quiet {
+        match cli.format {
+            Format::Json => {
+                let json = to_json(&report, true);
+                if let Some(comparison) = comparison {
+                    // Preserve the canonical report's f32 number representation.
+                    let mut value: Value = serde_json::from_str(&json).expect("valid report JSON");
+                    value["comparison"] =
+                        serde_json::to_value(comparison).expect("comparison serializes");
+                    emit(&serde_json::to_string_pretty(&value).unwrap());
+                } else {
+                    emit(&json);
+                }
+            }
+            Format::Sarif => emit(&to_sarif(&report, source_paths)),
+            _ => emit(&to_text(&report)),
+        }
+    }
+    if fails { EXIT_FOUND } else { EXIT_OK }
+}
+
+/// Read and parse a baseline JSON (Kap. 7); any IO or parse problem is
+/// surfaced as a displayable error for exit 3.
+pub(crate) fn read_baseline(path: &Path) -> Result<Baseline, std::io::Error> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| std::io::Error::other(format!("baseline {}: {err}", path.display())))?;
+    serde_json::from_str(&text).map_err(|err| {
+        std::io::Error::other(format!(
+            "baseline {}: invalid baseline JSON: {err}",
+            path.display()
+        ))
+    })
 }
 
 #[cfg(test)]

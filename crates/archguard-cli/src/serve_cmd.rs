@@ -143,8 +143,8 @@ impl Page {
                 self.inputs = Some(input_key);
                 return Ok(None);
             }
-            let findings: Vec<_> = crate::cycle_findings(&run.report).collect();
-            let cyclic = crate::cyclic_edges(&run.graph, &findings);
+            let findings: Vec<_> = crate::cycle_view::cycle_findings(&run.report).collect();
+            let cyclic = crate::cycle_view::cyclic_edges(&run.graph, &findings);
             let effective = run.effective_config();
             let html = crate::review_cmd::html_with_services(
                 &run.graph,

@@ -12,15 +12,13 @@
 //! parse failures) · `3` analysis, IO or config error.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use archguard_engine::analysis::{Baseline, cycle_hash};
-use archguard_engine::core::{
-    Finding, FindingKind, Graph, ModuleMetrics, NodeId, Report, Severity,
-};
+use archguard_engine::core::{Finding, FindingKind, Graph, ModuleMetrics, Report};
 use archguard_engine::report::{to_dot, to_gexf, to_graphml, to_json, to_mermaid, to_text};
 use archguard_engine::{
     Level, LoadedConfig, analyze_run, default_config_string, effective_config_string, load_config,
@@ -31,6 +29,8 @@ use serde_json::{Value, json};
 mod args;
 mod output;
 use args::{BaselineAction, Cli, Command, DbAction, Format, LevelArg};
+use check_cmd::read_baseline;
+use cycle_view::{cycle_findings, cyclic_edges};
 use output::{
     EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, format_label, to_pretty_json, usage,
 };
@@ -38,6 +38,7 @@ mod architecture_cmd;
 mod assessment_cmd;
 mod check_cmd;
 mod coverage_cmd;
+mod cycle_view;
 mod db;
 mod doctor_cmd;
 mod dsm_cmd;
@@ -47,6 +48,7 @@ mod project_files;
 mod quality_cmd;
 mod review_cmd;
 mod review_session_cmd;
+mod sarif;
 mod security_cmd;
 mod serve_cmd;
 mod service_cmd;
@@ -652,80 +654,6 @@ fn cycles(
 
 /// The CI command (Kap. 9): the full report plus the quality gate.
 ///
-/// Gate semantics: `check` fails (exit 1) as soon as one [`Finding`]
-/// has severity `Error` — the same rule that sets
-/// [`Report::summary`] to `Fail` (Kap. 5). With `--baseline <DATEI>`
-/// (default `.archguard/baseline.json`), **cycle** findings whose
-/// membership hash — Kap. 7's [`cycle_hash`] over the finding's sorted
-/// member names, the same identity [`Baseline`] stores — is present in
-/// the baseline are accepted and no longer fail the gate; every other
-/// Error finding (declared layer violations, metric thresholds) fails
-/// regardless. The full report is still printed either way; a missing
-/// or unparsable baseline file is an IO error (exit 3).
-fn check(
-    cli: &Cli,
-    baseline: Option<&Path>,
-    report: &Report,
-    comparison: Option<&archguard_engine::Comparison>,
-    source_paths: &BTreeMap<String, String>,
-) -> i32 {
-    if matches!(
-        cli.format,
-        Format::Mermaid
-            | Format::Dot
-            | Format::Html
-            | Format::Graphml
-            | Format::Gexf
-            | Format::Table
-    ) {
-        return usage(format!(
-            "invalid value '{}' for '--format': check supports text, json and sarif",
-            cli.format_name()
-        ));
-    }
-    let baseline = match baseline {
-        None => None,
-        Some(path) => match read_baseline(path) {
-            Ok(baseline) => Some(baseline),
-            Err(err) => return analysis_error(err),
-        },
-    };
-    let fails = report.findings.iter().any(|finding| {
-        finding.severity == Severity::Error
-            && match (&baseline, finding.kind) {
-                (Some(baseline), FindingKind::Cycle) => {
-                    !baseline.hashes.contains(&cycle_hash(&finding.nodes))
-                }
-                _ => true,
-            }
-    });
-    let mut report = report.clone();
-    report.summary.status = if fails {
-        archguard_engine::core::Status::Fail
-    } else {
-        archguard_engine::core::Status::Pass
-    };
-    if !cli.quiet {
-        match cli.format {
-            Format::Json => {
-                let json = to_json(&report, true);
-                if let Some(comparison) = comparison {
-                    // Preserve the canonical report's f32 number representation.
-                    let mut value: Value = serde_json::from_str(&json).expect("valid report JSON");
-                    value["comparison"] =
-                        serde_json::to_value(comparison).expect("comparison serializes");
-                    emit(&serde_json::to_string_pretty(&value).unwrap());
-                } else {
-                    emit(&json);
-                }
-            }
-            Format::Sarif => emit(&to_sarif(&report, source_paths)),
-            _ => emit(&to_text(&report)),
-        }
-    }
-    if fails { EXIT_FOUND } else { EXIT_OK }
-}
-
 /// `metrics`: one row per module, sorted by instability (descending),
 /// then by fan-in + fan-out, then by name. `--module` filters to a
 /// single module (an unknown name is a usage error, exit 2); `--top N`
@@ -894,7 +822,7 @@ fn graph_export(
                     loaded,
                     focus,
                     depth,
-                    &crate::cyclic_edges(graph, &shown),
+                    &cycle_view::cyclic_edges(graph, &shown),
                     &report.findings,
                     None,
                     expanded_cut.as_ref(),
@@ -1146,14 +1074,6 @@ fn config(cli: &Cli, report: &Report, loaded: &LoadedConfig) -> i32 {
     EXIT_OK
 }
 
-/// The cycle findings of a report, in the report's stable order.
-fn cycle_findings(report: &Report) -> impl Iterator<Item = &Finding> {
-    report
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == FindingKind::Cycle)
-}
-
 /// `scc-N` id → [`cycle_hash`] of the finding's member names, for every
 /// cycle finding (the identity [`Baseline`] stores, Kap. 7).
 fn cycle_hashes(report: &Report) -> BTreeMap<String, String> {
@@ -1168,19 +1088,6 @@ fn capped_cuts(finding: &Finding, max: Option<usize>) -> &[archguard_engine::cor
         Some(max) => &finding.suggested_cuts[..finding.suggested_cuts.len().min(max)],
         None => &finding.suggested_cuts,
     }
-}
-
-/// Read and parse a baseline JSON (Kap. 7); any IO or parse problem is
-/// surfaced as a displayable error for exit 3.
-fn read_baseline(path: &Path) -> Result<Baseline, std::io::Error> {
-    let text = fs::read_to_string(path)
-        .map_err(|err| std::io::Error::other(format!("baseline {}: {err}", path.display())))?;
-    serde_json::from_str(&text).map_err(|err| {
-        std::io::Error::other(format!(
-            "baseline {}: invalid baseline JSON: {err}",
-            path.display()
-        ))
-    })
 }
 
 /// Write `json` (plus trailing newline) to `path`, creating parent
@@ -1205,134 +1112,6 @@ fn cycle_report(report: &Report, shown: &[&Finding]) -> Report {
         config: report.config.clone(),
         findings: shown.iter().map(|finding| (*finding).clone()).collect(),
         metrics: report.metrics.clone(),
-    }
-}
-
-/// The `(from, to)` [`NodeId`] pairs of every edge whose endpoints are
-/// both members of one of the shown cycle findings — the set
-/// [`to_mermaid`] styles red.
-fn cyclic_edges(graph: &Graph, shown: &[&Finding]) -> HashSet<(NodeId, NodeId)> {
-    let name_of: HashMap<NodeId, &str> = graph
-        .nodes
-        .iter()
-        .map(|node| (node.id, node.name.as_str()))
-        .collect();
-    let mut edges = HashSet::new();
-    for finding in shown {
-        let members: HashSet<&str> = finding.nodes.iter().map(String::as_str).collect();
-        for edge in &graph.edges {
-            let inside = |id: NodeId| name_of.get(&id).is_some_and(|name| members.contains(name));
-            if inside(edge.from) && inside(edge.to) {
-                edges.insert((edge.from, edge.to));
-            }
-        }
-    }
-    edges
-}
-
-// ------------------------------------------------------------- sarif (Kap. 9)
-
-/// Minimal inline SARIF 2.1.0 serializer over the report's findings
-/// (T25 — deliberately hand-rolled, no third-party SARIF crate): one
-/// run, one driver rule per distinct [`FindingKind`], one result per
-/// finding. Findings name modules, not files, so members become
-/// `logicalLocations` rather than physical artifact locations.
-fn to_sarif(report: &Report, source_paths: &BTreeMap<String, String>) -> String {
-    let mut rule_ids: Vec<&'static str> = Vec::new();
-    let results: Vec<Value> = report
-        .findings
-        .iter()
-        .map(|finding| {
-            let id = rule_id(finding.kind);
-            if !rule_ids.contains(&id) {
-                rule_ids.push(id);
-            }
-            let mut locations:Vec<_>=finding.evidence.iter().filter_map(|reference|source_paths.get(&reference.file).map(|path|{
-                let uri:String=path.bytes().map(|byte|if byte.is_ascii_alphanumeric()||b"-._~/".contains(&byte){(byte as char).to_string()}else{format!("%{byte:02X}")}).collect();
-                json!({"physicalLocation":{"artifactLocation":{"uri":uri},"region":{"startLine":reference.line.max(1)}},"message":{"text":reference.raw}})
-            })).collect();
-            if locations.is_empty(){locations=finding.nodes.iter().map(|node|json!({"logicalLocations":[{"name":node,"kind":"module"}]})).collect();}
-            json!({
-                "ruleId": id,
-                "level": sarif_level(finding.severity),
-                "message": {
-                    "text": finding.message.clone().unwrap_or_else(||format!(
-                        "{} {}: {}",
-                        finding.id,
-                        kind_name(finding.kind),
-                        finding.nodes.join(", "),
-                    )),
-                },
-                "locations": locations,
-            })
-        })
-        .collect();
-    let rules: Vec<Value> = rule_ids
-        .iter()
-        .map(|id| {
-            json!({
-                "id": id,
-                "name": id.rsplit('/').next().unwrap_or(id),
-                "shortDescription": { "text": id },
-            })
-        })
-        .collect();
-    let doc = json!({
-        "version": "2.1.0",
-        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
-        "runs": [{
-            "properties": {
-                "semantic": report.semantic,
-                "absence_of_cycles_proven": false,
-                "dependency_scope": "Imports plus compiler-resolved calls and inheritance; type-only references are not covered. No detected cycles is not proof of an acyclic codebase.",
-            },
-            "tool": {
-                "driver": {
-                    "name": "archguard",
-                    "version": env!("CARGO_PKG_VERSION"),
-                    "rules": rules,
-                },
-            },
-            "results": results,
-        }],
-    });
-    to_pretty_json(&doc)
-}
-
-/// The SARIF rule id for a finding kind.
-fn rule_id(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "archguard/cycle",
-        FindingKind::LayerViolation => "archguard/layer-violation",
-        FindingKind::MetricThreshold => "archguard/metric-threshold",
-        FindingKind::LayerUnranked => "archguard/layer-unranked",
-        FindingKind::DependencyRule => "archguard/dependency-rule",
-        FindingKind::OwnershipRule => "archguard/ownership-rule",
-        FindingKind::Orphan => "archguard/orphan",
-        FindingKind::TargetArchitecture => "archguard/target-architecture",
-    }
-}
-
-/// Severity → SARIF result level.
-fn sarif_level(severity: Severity) -> &'static str {
-    match severity {
-        Severity::Error => "error",
-        Severity::Warning => "warning",
-        Severity::Info => "note",
-    }
-}
-
-/// The snake_case name of a finding kind (as in the report JSON).
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
     }
 }
 

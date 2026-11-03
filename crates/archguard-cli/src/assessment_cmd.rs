@@ -51,7 +51,7 @@ pub(crate) fn run(
                     &run.graph,
                     None,
                     run.config.modules.depth,
-                    &crate::cyclic_edges(
+                    &crate::cycle_view::cyclic_edges(
                         &run.graph,
                         &run.report.findings.iter().collect::<Vec<_>>(),
                     ),
