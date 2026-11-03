@@ -32,7 +32,7 @@ fn arc42_populates_twelve_chapters_and_preserves_manual_text_on_update() {
     for text in [
         "Bausteinsicht",
         "Modifiability",
-        "ADR\\-1",
+        "ADR-1",
         "ACD",
         "statische",
         "CC BY-SA 4.0",

@@ -52,20 +52,89 @@ pub struct Arc42Inputs<'a> {
     pub source_paths: &'a BTreeMap<String, String>,
 }
 
+/// Escapes only what changes Markdown structure inside a line, so paths and
+/// sentences stay readable in the hand-edited file.
 fn cell(text: &str) -> String {
     let short: String = text.chars().take(512).collect();
-    crate::architecture_doc::md(&if text.chars().count() > 512 {
+    let text = if text.chars().count() > 512 {
         short + " … [gekürzt]"
     } else {
         short
-    })
+    };
+    let mut out = String::new();
+    for (i, ch) in text.chars().enumerate() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\r' | '\n' | '\t' => out.push(' '),
+            '\\' | '`' | '*' | '_' | '[' | ']' | '|' | '~' | '!' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '#' | '+' | '-' | '=' if i == 0 => {
+                out.push('\\');
+                out.push(ch);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 fn val(value: &Value) -> String {
     match value {
         Value::Null => "unbekannt".into(),
+        Value::Bool(b) => yes(*b).into(),
         Value::String(s) => cell(s),
         other => cell(&other.to_string()),
     }
+}
+fn yes(value: bool) -> &'static str {
+    if value { "ja" } else { "nein" }
+}
+/// Producer status codes in German; unknown codes stay visible as code.
+fn status(value: &Value) -> String {
+    let Some(code) = value.as_str() else {
+        return val(value);
+    };
+    let label = match code {
+        "ready" => "verfügbar",
+        "partial" => "teilweise",
+        "unavailable" => "nicht verfügbar",
+        "not_imported" => "nicht importiert",
+        "not_scanned" => "nicht gescannt",
+        "not_applicable" => "nicht anwendbar",
+        "not_recorded" => "nicht erfasst",
+        "error" => "Fehler",
+        "stale" => "veraltet",
+        "current" => "aktuell",
+        "changed_since_import" => "seit Import geändert",
+        "unchanged_since_import" => "seit Import unverändert",
+        "changed_since_report" => "seit Bericht geändert",
+        "analyzed" => "analysiert",
+        "measured" => "gemessen",
+        "incomplete" => "unvollständig",
+        "unmapped" => "nicht zugeordnet",
+        "mixed" => "gemischt",
+        "unverified" => "ungeprüft",
+        _ => return format!("`{}`", code.replace('`', "'")),
+    };
+    label.into()
+}
+/// Writes header and alignment lines plus rows, or one sentence when there
+/// is nothing to show (no output for an empty sentence).
+fn table(out: &mut String, head: &str, rows: Vec<String>, empty: &str) {
+    if rows.is_empty() {
+        if !empty.is_empty() {
+            let _ = writeln!(out, "{empty}\n");
+        }
+        return;
+    }
+    let _ = writeln!(out, "{head}");
+    for row in rows {
+        let _ = writeln!(out, "{row}");
+    }
+    out.push('\n');
 }
 fn rows(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or_default()
@@ -140,7 +209,13 @@ impl Arc42Document {
     pub fn markdown(&self, chapter: Option<u8>) -> String {
         let mut out = format!(
             "# arc42 – Architekturdokumentation\n\n{NOTICE}\nAnalysierter Umfang: **{}**. Statische Beobachtungen, deklarierte Absichten und importierte Messwerte bleiben getrennt. Keine simulierten Graphänderungen. Keine Aussage über Vollständigkeit der Architektur.\n\nListen enthalten höchstens {LIMIT} Einträge; lange Texte werden sichtbar gekürzt. Eigene Erläuterungen außerhalb der archguard-Blöcke bleiben bei Aktualisierungen erhalten.\n",
-            cell(&self.scope)
+            // The header is written once and committed; a machine path means nothing to readers.
+            cell(
+                std::path::Path::new(&self.scope)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&self.scope)
+            )
         );
         for c in &self.chapters {
             if chapter.is_none_or(|n| n == c.number) {
@@ -296,17 +371,25 @@ fn package_markdown(graph: &Graph) -> String {
         }
         out.push_str("```\n\n");
     }
-    out.push_str("Die Übersicht bündelt alle erfassten Quellen. Weitere Pakete, Unterpakete und einzelne Beziehungen sind im Viewer auswählbar. Paketzyklen beschreiben die aggregierte Paketsicht, nicht automatisch einen Zyklus zwischen einzelnen Dateien.\n\n| Paket | Datei-/Symbolknoten | Quellverbindungen eingehend | Quellverbindungen ausgehend |\n| --- | ---: | ---: | ---: |\n");
-    for &i in order.iter().take(LIMIT) {
-        let _ = writeln!(
-            out,
-            "| {} | {} | {} | {} |",
-            cell(&names[i]),
-            files[i],
-            incoming[i],
-            outgoing[i]
-        );
-    }
+    out.push_str("Die Übersicht bündelt alle erfassten Quellen. Weitere Pakete, Unterpakete und einzelne Beziehungen sind im Viewer auswählbar. Paketzyklen beschreiben die aggregierte Paketsicht, nicht automatisch einen Zyklus zwischen einzelnen Dateien.\n\n");
+    table(
+        &mut out,
+        "| Paket | Datei-/Symbolknoten | Quellverbindungen eingehend | Quellverbindungen ausgehend |\n| --- | ---: | ---: | ---: |",
+        order
+            .iter()
+            .take(LIMIT)
+            .map(|&i| {
+                format!(
+                    "| {} | {} | {} | {} |",
+                    cell(&names[i]),
+                    files[i],
+                    incoming[i],
+                    outgoing[i]
+                )
+            })
+            .collect(),
+        "Keine Pakete im Quellgraph erfasst.",
+    );
     note(&mut out, names.len());
     out
 }
@@ -332,16 +415,26 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         })
         .collect();
     let c = &mut chapters[0];
-    c.markdown.push_str("### Deklarierte Qualitätsziele\n\nQuelle: `architecture.goals` in der wirksamen Konfiguration.\n\n| Ziel | Priorität | Begründung |\n| --- | --- | --- |\n");
-    for g in config.architecture.goals.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} |",
-            cell(&g.name),
-            cell(&g.priority),
-            cell(&g.rationale)
-        );
-    }
+    c.markdown.push_str("### Deklarierte Qualitätsziele\n\nQuelle: `architecture.goals` in der wirksamen Konfiguration.\n\n");
+    table(
+        &mut c.markdown,
+        "| Ziel | Priorität | Begründung |\n| --- | --- | --- |",
+        config
+            .architecture
+            .goals
+            .iter()
+            .take(LIMIT)
+            .map(|g| {
+                format!(
+                    "| {} | {} | {} |",
+                    cell(&g.name),
+                    cell(&g.priority),
+                    cell(&g.rationale)
+                )
+            })
+            .collect(),
+        "Keine Qualitätsziele deklariert.",
+    );
     note(&mut c.markdown, config.architecture.goals.len());
     if config.architecture.goals.is_empty() {
         c.questions
@@ -360,33 +453,44 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         );
     }
     note(&mut c.markdown, config.architecture.constraints.len());
+    if config.architecture.constraints.is_empty() {
+        c.markdown.push_str("Keine Randbedingungen deklariert.\n");
+    }
     c.questions.push(
         "Nicht erfasste organisatorische, regulatorische und technische Vorgaben ergänzen.".into(),
     );
 
     let c = &mut chapters[2];
-    c.markdown.push_str("### Konfigurierte technische Beziehungen\n\nDiese Beziehungen stammen aus Deployment-Konfiguration. Sie belegen weder tatsächlich ausgeführte Kommunikation noch eine vollständige Systemgrenze.\n\n| Quelle | Ziel | Beleg |\n| --- | --- | --- |\n");
+    c.markdown.push_str("### Konfigurierte technische Beziehungen\n\nDiese Beziehungen stammen aus Deployment-Konfiguration. Sie belegen weder tatsächlich ausgeführte Kommunikation noch eine vollständige Systemgrenze.\n\n");
     let http: Vec<_> = services
         .dependencies
         .iter()
         .filter(|d| d.kind == ServiceDependencyKind::ConfiguredHttp)
         .collect();
-    for d in http.iter().take(LIMIT) {
-        let e = d.evidence.first();
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} |",
-            cell(&d.from),
-            cell(&d.to),
-            e.map(|e| format!("{} · {}", cell(&e.file), cell(&e.pointer)))
-                .unwrap_or_else(|| "unbekannt".into())
-        );
-    }
+    table(
+        &mut c.markdown,
+        "| Quelle | Ziel | Beleg |\n| --- | --- | --- |",
+        http.iter()
+            .take(LIMIT)
+            .map(|d| {
+                format!(
+                    "| {} | {} | {} |",
+                    cell(&d.from),
+                    cell(&d.to),
+                    d.evidence
+                        .first()
+                        .map(|e| format!("{} · {}", cell(&e.file), cell(&e.pointer)))
+                        .unwrap_or_else(|| "unbekannt".into())
+                )
+            })
+            .collect(),
+        "Keine konfigurierten HTTP-Beziehungen erfasst.",
+    );
     note(&mut c.markdown, http.len());
     let _ = writeln!(
         c.markdown,
-        "\nAPI-Vertragsimport: **{}**. Verträge sind deklarierte Schnittstellen; Nutzung und Erreichbarkeit sind damit nicht nachgewiesen.\n",
-        val(&insights["contracts"]["status"])
+        "API-Vertragsimport: **{}**. Verträge sind deklarierte Schnittstellen; Nutzung und Erreichbarkeit sind damit nicht nachgewiesen.\n",
+        status(&insights["contracts"]["status"])
     );
     for contract in rows(&insights["contracts"]["contracts"]).iter().take(LIMIT) {
         let _ = writeln!(
@@ -394,7 +498,7 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
             "- Provider {} · Quelle {} · Quellstatus {} · {} deklarierte Operationen.",
             val(&contract["provider"]),
             val(&contract["source_path"]),
-            val(&contract["source_status"]),
+            status(&contract["source_status"]),
             rows(&contract["operations"]).len()
         );
     }
@@ -433,57 +537,75 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     let c = &mut chapters[5];
     let _ = writeln!(
         c.markdown,
-        "### Statische Aufrufbelege\n\nCompilerstatus: **{}**. {} erfasste Aufrufstellen. Dies ist kein Laufzeittrace und keine Ausführungsreihenfolge.\n\n| Aufrufer | Ziel | Auflösung | Quellbeleg |\n| --- | --- | --- | --- |",
-        cell(&calls.status),
+        "### Statische Aufrufbelege\n\nCompilerstatus: **{}**. {} erfasste Aufrufstellen. Dies ist kein Laufzeittrace und keine Ausführungsreihenfolge.\n",
+        status(&Value::from(calls.status.as_str())),
         calls.calls.len()
     );
     let mut sites: Vec<_> = calls.calls.iter().collect();
     sites.sort_by_key(|s| (&s.file, s.line, s.column, &s.target_label));
-    for s in sites.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} | {} |",
-            cell(s.from_method.as_deref().unwrap_or(&s.from_class)),
-            cell(&s.target_label),
-            cell(&s.resolution),
-            source(&input, &s.file, s.line)
-        );
-    }
+    table(
+        &mut c.markdown,
+        "| Aufrufer | Ziel | Auflösung | Quellbeleg |\n| --- | --- | --- | --- |",
+        sites
+            .iter()
+            .take(LIMIT)
+            .map(|s| {
+                format!(
+                    "| {} | {} | {} | {} |",
+                    cell(s.from_method.as_deref().unwrap_or(&s.from_class)),
+                    cell(&s.target_label),
+                    cell(&s.resolution),
+                    source(&input, &s.file, s.line)
+                )
+            })
+            .collect(),
+        "Keine Aufrufstellen erfasst.",
+    );
     note(&mut c.markdown, sites.len());
     c.questions.push("Relevante Ablauf- und Fehlerszenarien mit Auslöser, Reihenfolge, Nebenläufigkeit und Ergebnis beschreiben; mit Laufzeitbelegen prüfen.".into());
 
     let c = &mut chapters[6];
     let _ = writeln!(
         c.markdown,
-        "### Gelesene Deployment-Konfiguration\n\nKonfigurationsleser vollständig: **{}**. Keine Aussage über tatsächlichen Betrieb.\n\n| Dienst | Quelle | Build-Kontext | Netzwerke / Profile |\n| --- | --- | --- | --- |",
-        services.complete
+        "### Gelesene Deployment-Konfiguration\n\nKonfigurationsleser vollständig: **{}**. Keine Aussage über tatsächlichen Betrieb.\n",
+        yes(services.complete)
     );
     let deployments: Vec<_> = services
         .services
         .iter()
         .filter(|s| !s.compose_file.is_empty())
         .collect();
-    for s in deployments.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} | {} / {} |",
-            cell(&s.name),
-            cell(&s.compose_file),
-            s.build_context
-                .as_deref()
-                .map(cell)
-                .unwrap_or_else(|| "unbekannt".into()),
-            cell(&s.networks.join(", ")),
-            cell(&s.profiles.join(", "))
-        );
-    }
+    let list = |items: &[String]| {
+        if items.is_empty() {
+            "–".into()
+        } else {
+            cell(&items.join(", "))
+        }
+    };
+    table(
+        &mut c.markdown,
+        "| Dienst | Quelle | Build-Kontext | Netzwerke | Profile |\n| --- | --- | --- | --- | --- |",
+        deployments
+            .iter()
+            .take(LIMIT)
+            .map(|s| {
+                format!(
+                    "| {} | {} | {} | {} | {} |",
+                    cell(&s.name),
+                    cell(&s.compose_file),
+                    s.build_context
+                        .as_deref()
+                        .map(cell)
+                        .unwrap_or_else(|| "–".into()),
+                    list(&s.networks),
+                    list(&s.profiles)
+                )
+            })
+            .collect(),
+        "Keine Compose-Dienstdeklarationen erfasst. Manifest-Projekte folgen separat.",
+    );
     note(&mut c.markdown, deployments.len());
-    if deployments.is_empty() {
-        c.markdown.push_str(
-            "\nKeine Compose-Dienstdeklarationen erfasst. Manifest-Projekte folgen separat.\n",
-        );
-    }
-    c.markdown.push_str("\n### Build- und Projekteinteilung\n\nManifest-Einheiten sind nicht automatisch eigenständige Laufzeitdienste.\n\n");
+    c.markdown.push_str("### Build- und Projekteinteilung\n\nManifest-Einheiten sind nicht automatisch eigenständige Laufzeitdienste.\n\n");
     for p in services.projects.iter().take(LIMIT) {
         let _ = writeln!(
             c.markdown,
@@ -499,17 +621,32 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
 
     let c = &mut chapters[7];
     c.markdown.push_str("### Deklarierte Abhängigkeitskonventionen\n\nQuelle: wirksame `layers`, `dependency_rules` und `ownership_rules`. Regeln beschreiben Vorgaben; ihre bloße Existenz beweist keine Einhaltung.\n\n");
-    for l in config.layers.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- Schicht {} · Ursprung {:?} · enthält {} · darf abhängen von {}",
-            cell(&l.name),
-            l.origin,
-            cell(&l.contains.join(", ")),
-            cell(&l.may_depend_on.join(", "))
-        );
+    let (declared, derived): (Vec<_>, Vec<_>) = config
+        .layers
+        .iter()
+        .partition(|l| l.origin == archguard_core::LayerOrigin::Declared);
+    let layers = |out: &mut String, layers: &[&archguard_core::LayerConfig]| {
+        for l in layers.iter().take(LIMIT) {
+            let _ = writeln!(
+                out,
+                "- Schicht {} · enthält {} · darf abhängen von {}",
+                cell(&l.name),
+                cell(&l.contains.join(", ")),
+                if l.may_depend_on.is_empty() {
+                    "keiner anderen Schicht".into()
+                } else {
+                    cell(&l.may_depend_on.join(", "))
+                }
+            );
+        }
+        note(out, layers.len());
+    };
+    layers(&mut c.markdown, &declared);
+    let rules = config.dependency_rules.len() + config.ownership_rules.len();
+    if declared.is_empty() && rules == 0 {
+        c.markdown
+            .push_str("Keine Schichten oder Abhängigkeitsregeln deklariert.\n");
     }
-    note(&mut c.markdown, config.layers.len());
     for r in config.dependency_rules.iter().take(LIMIT) {
         let _ = writeln!(
             c.markdown,
@@ -529,6 +666,10 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         );
     }
     note(&mut c.markdown, config.ownership_rules.len());
+    if !derived.is_empty() {
+        c.markdown.push_str("\n### Abgeleitete Schichten\n\nVon ArchGuard aus den beobachteten Abhängigkeiten berechnet. Das ist eine Beobachtung, keine Vorgabe; Verstöße gegen diese Schichten sind nur Hinweise.\n\n");
+        layers(&mut c.markdown, &derived);
+    }
     c.questions.push("Sicherheits-, Fehlerbehandlungs-, Persistenz-, Transaktions- und Observability-Konzepte anhand zusätzlicher Belege beschreiben.".into());
 
     let c = &mut chapters[8];
@@ -547,6 +688,10 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         );
     }
     note(&mut c.markdown, config.architecture.decisions.len());
+    if config.architecture.decisions.is_empty() {
+        c.markdown
+            .push_str("Keine Architekturentscheidungen deklariert.\n");
+    }
     c.questions.push("Fehlende Entscheidungen, Begründungen und Konsequenzen ergänzen; erkannte Muster sind keine automatisch akzeptierten ADRs.".into());
 
     let c = &mut chapters[9];
@@ -558,43 +703,67 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     );
     let _ = writeln!(
         c.markdown,
-        "Konfigurierte Prüfkriterien: Zyklenregel {:?}, maximale SCC-Größe {}, ACD-Grenze {} (0 = deaktiviert). Quelle: `rules`.\n",
-        config.rules.deny_cycles, config.rules.max_scc_size, config.rules.max_acd
+        "Konfigurierte Prüfkriterien: Zyklen verboten {}, maximale SCC-Größe {}, ACD-Grenze {} (0 = deaktiviert). Quelle: `rules`.\n",
+        match config.rules.deny_cycles {
+            archguard_core::DenyCycles::Module => "zwischen Modulen",
+            archguard_core::DenyCycles::File => "auch zwischen Dateien",
+            archguard_core::DenyCycles::Off => "nicht",
+        },
+        config.rules.max_scc_size,
+        config.rules.max_acd
     );
     let code = &insights["code_metrics"];
     let _ = writeln!(
         c.markdown,
-        "### Quellcodemessung und Abdeckung\n\nStatus: {} · Definition: {}. Nicht anwendbare oder unbekannte Werte werden nicht als 0 interpretiert.\n\n| Metrik | Gemessen | Deklarationen insgesamt |\n| --- | ---: | ---: |",
-        val(&code["status"]),
+        "### Quellcodemessung und Abdeckung\n\nStatus: **{}** · Definition: {}. Nicht anwendbare oder unbekannte Werte werden nicht als 0 interpretiert.\n",
+        status(&code["status"]),
         val(&code["definition"])
     );
-    if let Some(coverage) = code["coverage"].as_object() {
-        for (metric, counts) in coverage {
-            let _ = writeln!(
-                c.markdown,
+    // Without any declaration there is nothing a metric could have measured.
+    let coverage: Vec<_> = code["coverage"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, counts)| counts[1].as_u64().is_some_and(|total| total > 0))
+        .map(|(metric, counts)| {
+            format!(
                 "| {} | {} | {} |",
                 cell(metric),
                 val(&counts[0]),
                 val(&counts[1])
-            );
-        }
-    }
-    c.markdown.push_str("\n### Gemessene Klassenwerte\n\n| Klasse | CBO | RFC | DIT | NOC | WMC | LCOM4 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    for row in rows(&code["classes"]).iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} | {} | {} | {} | {} |",
-            val(&row["class_id"]),
-            val(&row["cbo"]["value"]),
-            val(&row["rfc"]["value"]),
-            val(&row["dit"]["value"]),
-            val(&row["noc"]["value"]),
-            val(&row["wmc"]["value"]),
-            val(&row["lcom4"])
-        );
-    }
+            )
+        })
+        .collect();
+    table(
+        &mut c.markdown,
+        "| Metrik | Gemessen | Deklarationen insgesamt |\n| --- | ---: | ---: |",
+        coverage,
+        "Keine Deklarationen gemessen.",
+    );
+    c.markdown.push_str("### Gemessene Klassenwerte\n\n");
+    table(
+        &mut c.markdown,
+        "| Klasse | CBO | RFC | DIT | NOC | WMC | LCOM4 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        rows(&code["classes"])
+            .iter()
+            .take(LIMIT)
+            .map(|row| {
+                format!(
+                    "| {} | {} | {} | {} | {} | {} | {} |",
+                    val(&row["class_id"]),
+                    val(&row["cbo"]["value"]),
+                    val(&row["rfc"]["value"]),
+                    val(&row["dit"]["value"]),
+                    val(&row["noc"]["value"]),
+                    val(&row["wmc"]["value"]),
+                    val(&row["lcom4"])
+                )
+            })
+            .collect(),
+        "Keine Klassenwerte gemessen.",
+    );
     note(&mut c.markdown, rows(&code["classes"]).len());
-    c.markdown.push_str("\n### Methodenwartbarkeit\n\nNach Cognitive-Wert absteigend. Cognitive und Halstead verwenden die versionierten ArchGuard-Quellcode-/AST-Zählregeln; MI verwendet dieses Halstead-Volumen.\n\n| Methode | Cognitive | Halstead-Volumen | MI | Quellbeleg |\n| --- | ---: | ---: | ---: | --- |\n");
+    c.markdown.push_str("### Methodenwartbarkeit\n\nNach Cognitive-Wert absteigend. Cognitive und Halstead verwenden die versionierten ArchGuard-Quellcode-/AST-Zählregeln; MI verwendet dieses Halstead-Volumen.\n\n");
     let mut methods: Vec<_> = rows(&code["methods"]).iter().collect();
     methods.sort_by(|a, b| {
         b["cognitive"]
@@ -602,22 +771,31 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
             .cmp(&a["cognitive"].as_u64())
             .then_with(|| a["method_id"].as_str().cmp(&b["method_id"].as_str()))
     });
-    for row in methods.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} | {} | {} |",
-            val(&row["method_id"]),
-            val(&row["cognitive"]),
-            val(&row["halstead"]["volume"]),
-            val(&row["maintainability_index"]),
-            source(
-                &input,
-                row["file"].as_str().unwrap_or(""),
-                row["line"].as_u64().unwrap_or(0) as u32
-            )
-        );
-    }
+    table(
+        &mut c.markdown,
+        "| Methode | Cognitive | Halstead-Volumen | MI | Quellbeleg |\n| --- | ---: | ---: | ---: | --- |",
+        methods
+            .iter()
+            .take(LIMIT)
+            .map(|row| {
+                format!(
+                    "| {} | {} | {} | {} | {} |",
+                    val(&row["method_id"]),
+                    val(&row["cognitive"]),
+                    val(&row["halstead"]["volume"]),
+                    val(&row["maintainability_index"]),
+                    source(
+                        &input,
+                        row["file"].as_str().unwrap_or(""),
+                        row["line"].as_u64().unwrap_or(0) as u32
+                    )
+                )
+            })
+            .collect(),
+        "Keine Methodenwerte gemessen.",
+    );
     note(&mut c.markdown, methods.len());
+    c.markdown.push_str("### Importierte Berichte\n\nAktualität und Messumfang der gespeicherten Berichte sind separat zu prüfen.\n\n");
     for (key, label) in [
         ("test_coverage", "Testabdeckung"),
         ("measurement_runs", "Build-/Laufzeit-/Testmessungen"),
@@ -626,63 +804,80 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     ] {
         let _ = writeln!(
             c.markdown,
-            "\n{}: Status **{}**. Quelle: gespeicherter {}-Bericht; Aktualität und Messumfang sind separat zu prüfen.",
-            label,
-            val(&insights[key]["status"]),
-            cell(key)
+            "- {label}: **{}** (`{key}`)",
+            status(&insights[key]["status"])
         );
     }
-    c.markdown.push_str("\n| Coverage-Datei | Quellstatus | Berichtete gedeckte Zeilen | Berichtete ausführbare Zeilen |\n| --- | --- | ---: | ---: |\n");
-    for row in rows(&insights["test_coverage"]["files"]).iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "| {} | {} | {} | {} |",
-            val(&row["path"]),
-            val(&row["status"]),
-            val(&row["lines"]["covered"]),
-            val(&row["lines"]["total"])
-        );
+    c.markdown.push('\n');
+    let files = rows(&insights["test_coverage"]["files"]);
+    if !files.is_empty() {
+        c.markdown.push_str("### Testabdeckung je Datei\n\n");
     }
-    note(
+    table(
         &mut c.markdown,
-        rows(&insights["test_coverage"]["files"]).len(),
+        "| Coverage-Datei | Quellstatus | Berichtete gedeckte Zeilen | Berichtete ausführbare Zeilen |\n| --- | --- | ---: | ---: |",
+        files
+            .iter()
+            .take(LIMIT)
+            .map(|row| {
+                format!(
+                    "| {} | {} | {} | {} |",
+                    val(&row["path"]),
+                    status(&row["status"]),
+                    val(&row["lines"]["covered"]),
+                    val(&row["lines"]["total"])
+                )
+            })
+            .collect(),
+        "",
     );
-    c.markdown.push_str("\n### Importierte Laufmessungen\n\nNur gleichartige Revision, Umgebung und Producer bilden eine Messgruppe. Median/p95 sind Sekunden erfolgreicher Läufe; wechselnde Testergebnisse sind ein Hinweis, keine Ursachenanalyse.\n\n| Messung | Revision / Umgebung / Producer | Erfolgreiche Zeitmessungen | Median | p95 | Wechselnde Ergebnisse |\n| --- | --- | ---: | ---: | ---: | --- |\n");
-    for row in rows(&insights["measurement_runs"]["groups"])
-        .iter()
-        .take(LIMIT)
-    {
-        let _ = writeln!(
-            c.markdown,
-            "| {} · {} | {} / {} / {} | {} | {} | {} | {} |",
-            val(&row["kind"]),
-            val(&row["name"]),
-            val(&row["revision"]),
-            val(&row["environment"]),
-            val(&row["producer"]),
-            val(&row["duration_samples"]),
-            val(&row["median_seconds"]),
-            val(&row["p95_seconds"]),
-            val(&row["inconsistent"])
-        );
+    note(&mut c.markdown, files.len());
+    let groups = rows(&insights["measurement_runs"]["groups"]);
+    if !groups.is_empty() {
+        c.markdown.push_str("### Importierte Laufmessungen\n\nNur gleichartige Revision, Umgebung und Producer bilden eine Messgruppe. Median/p95 sind Sekunden erfolgreicher Läufe; wechselnde Testergebnisse sind ein Hinweis, keine Ursachenanalyse.\n\n");
     }
-    note(
+    table(
         &mut c.markdown,
-        rows(&insights["measurement_runs"]["groups"]).len(),
+        "| Messung | Revision / Umgebung / Producer | Erfolgreiche Zeitmessungen | Median | p95 | Wechselnde Ergebnisse |\n| --- | --- | ---: | ---: | ---: | --- |",
+        groups
+            .iter()
+            .take(LIMIT)
+            .map(|row| {
+                format!(
+                    "| {} · {} | {} / {} / {} | {} | {} | {} | {} |",
+                    val(&row["kind"]),
+                    val(&row["name"]),
+                    val(&row["revision"]),
+                    val(&row["environment"]),
+                    val(&row["producer"]),
+                    val(&row["duration_samples"]),
+                    val(&row["median_seconds"]),
+                    val(&row["p95_seconds"]),
+                    val(&row["inconsistent"])
+                )
+            })
+            .collect(),
+        "",
     );
+    note(&mut c.markdown, groups.len());
     c.questions.push("Messbare Qualitätsszenarien mit Kontext, Auslöser, Reaktion und Akzeptanzgrenze festlegen. Laufzeitziele nicht aus statischen Kennzahlen ableiten.".into());
 
     let c = &mut chapters[10];
     c.markdown.push_str("### Befunde zur Prüfung\n\nQuelle: Analysebericht. Statische Befunde sind keine automatisch akzeptierten technischen Schulden. Fehlende Befunde beweisen keine Fehlerfreiheit; Compilerabdeckung siehe Kapitel 6 und 10.\n\n");
     let mut findings: Vec<_> = report.findings.iter().collect();
     findings.sort_by(|a, b| a.id.cmp(&b.id));
+    let ident = |value: Value| value.as_str().map(str::to_owned).unwrap_or_default();
     for f in findings.iter().take(LIMIT) {
         let _ = writeln!(
             c.markdown,
-            "- {} · {:?} · {:?} · {} · {}",
+            "- {} · `{}` · {} · {} · {}",
             cell(&f.id),
-            f.kind,
-            f.severity,
+            ident(serde_json::to_value(f.kind).unwrap_or_default()),
+            match f.severity {
+                archguard_core::Severity::Error => "Fehler",
+                archguard_core::Severity::Warning => "Warnung",
+                archguard_core::Severity::Info => "Hinweis",
+            },
             cell(&f.nodes.join(", ")),
             cell(f.message.as_deref().unwrap_or(""))
         );
@@ -691,6 +886,10 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         }
     }
     note(&mut c.markdown, findings.len());
+    if findings.is_empty() {
+        c.markdown
+            .push_str("Die Analyse hat keine Befunde gemeldet.\n");
+    }
     for (key, label) in [
         ("quality", "Importierte Qualitätsbefunde"),
         ("security", "Sicherheitsbefunde"),
@@ -698,22 +897,26 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         let model = &insights[key];
         let _ = writeln!(
             c.markdown,
-            "\n### {label}\n\nImportstatus: **{}**. Aufgelistete Einträge behalten ihren ursprünglichen Status; veraltete oder unterdrückte Einträge sind nicht automatisch aktive Probleme.\n",
-            val(&model["status"])
+            "\n### {label}\n\nImportstatus: **{}**.",
+            status(&model["status"])
         );
-        for f in rows(&model["findings"]).iter().take(LIMIT) {
+        let found = rows(&model["findings"]);
+        if !found.is_empty() {
+            c.markdown.push_str("Aufgelistete Einträge behalten ihren ursprünglichen Status; veraltete oder unterdrückte Einträge sind nicht automatisch aktive Probleme.\n\n");
+        }
+        for f in found.iter().take(LIMIT) {
             let _ = writeln!(
                 c.markdown,
                 "- {} · {} · {} · Quellstatus {} · unterdrückt {} · Baseline {}",
                 val(&f["id"]),
                 val(f.get("severity").unwrap_or(&f["level"])),
                 val(f.get("message").unwrap_or(&f["title"])),
-                val(&f["status"]),
+                status(&f["status"]),
                 val(&f["suppressed"]),
-                val(&f["baseline_state"])
+                status(&f["baseline_state"])
             );
         }
-        note(&mut c.markdown, rows(&model["findings"]).len());
+        note(&mut c.markdown, found.len());
     }
     c.questions.push("Risikoauswirkung, Verantwortliche, Priorität, akzeptierte Schulden und Maßnahmen mit dem Team bewerten.".into());
 
@@ -724,8 +927,9 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     );
     for c in &mut chapters {
         c.markdown.push_str("\n### Offen zu ergänzen\n\n");
+        // Questions are fixed prose from this file, not project data.
         for q in &c.questions {
-            let _ = writeln!(c.markdown, "- {}", cell(q));
+            let _ = writeln!(c.markdown, "- {q}");
         }
     }
     Arc42Document {
@@ -777,13 +981,13 @@ mod tests {
             !configured.contains("ManifestApp"),
             "manifest-only projects must not appear as deployment declarations"
         );
-        assert!(projects.contains("ManifestApp") && projects.contains("pom\\.xml"));
+        assert!(projects.contains("ManifestApp") && projects.contains("pom.xml"));
         assert!(
             doc.chapters[2]
                 .markdown
                 .contains("Auszug: 30 von 32 Einträgen")
         );
-        assert!(!doc.chapters[2].markdown.contains("provider\\-30"));
+        assert!(!doc.chapters[2].markdown.contains("provider-30"));
     }
     #[test]
     fn package_overview_retains_all_sources_without_file_nodes_in_the_diagram() {
@@ -839,6 +1043,102 @@ mod tests {
         assert!(chapter.contains("40 Paketgruppen"));
         assert!(chapter.contains("40 Quellverbindungen"));
         assert!(diagram.contains("Weitere 32 Pakete"));
+    }
+
+    #[test]
+    fn missing_evidence_reads_as_german_prose_instead_of_empty_tables() {
+        let graph = archguard_core::GraphBuilder::new().build("/home/someone/shop".into());
+        let report: Report = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"summary":{"nodes":0,"edges":0,"sccs":0,"largest_scc":0,"layer_violations":0,"status":"pass"},
+            "findings":[],"metrics":{}
+        })).unwrap();
+        let services: ServiceTopology = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"root":"test","monorepo":false,"monorepo_reason":"","compose_files":["stacks/a/compose.yaml"],
+            "services":[{"id":"w","name":"worker|x","compose_file":"stacks/a/compose.yaml","build_context":"services/worker","networks":["data"],"profiles":[]}],
+            "projects":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true
+        })).unwrap();
+        let layer = |name: &str, origin| archguard_core::LayerConfig {
+            name: name.into(),
+            contains: vec![format!("{name}/**")],
+            may_depend_on: vec![],
+            origin,
+        };
+        let config = Config {
+            layers: vec![
+                layer("core", archguard_core::LayerOrigin::Derived),
+                layer("app", archguard_core::LayerOrigin::Declared),
+            ],
+            ..Default::default()
+        };
+        let calls = CallAnalysis {
+            status: "unavailable".into(),
+            ..Default::default()
+        };
+        let doc = render_arc42(Arc42Inputs {
+            source_graph: &graph,
+            view: &graph,
+            report: &report,
+            config: &config,
+            calls: &calls,
+            services: &services,
+            insights: &serde_json::json!({
+                "contracts":{"status":"not_imported","contracts":[]},
+                "code_metrics":{"status":"unavailable","definition":"source-metrics/v1","coverage":{"cbo":[0,0]},"classes":[],"methods":[]},
+                "test_coverage":{"status":"not_imported","files":[]},
+                "measurement_runs":{"status":"not_imported","groups":[]},
+                "mutations":{"status":"not_imported"},"duplicates":{"status":"not_imported"},
+                "quality":{"status":"not_imported","findings":[]},"security":{"status":"not_scanned","findings":[]}
+            }),
+            source_paths: &BTreeMap::new(),
+        });
+        let all = doc.markdown(None);
+        let lines: Vec<_> = all.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("| ---") {
+                assert!(
+                    lines.get(i + 1).is_some_and(|next| next.starts_with('|')),
+                    "table without rows before line {}: {}",
+                    i + 1,
+                    lines[i - 1]
+                );
+            }
+        }
+        for raw in [
+            "not_imported",
+            "not\\_imported",
+            "unavailable",
+            "not\\_scanned",
+            "Derived",
+            "Module,",
+            ": **true**",
+        ] {
+            assert!(
+                !all.contains(raw),
+                "raw identifier {raw:?} leaked into the document"
+            );
+        }
+        assert!(all.contains("nicht importiert") && all.contains("nicht verfügbar"));
+        assert!(
+            !all.contains("| cbo | 0 | 0 |"),
+            "unmeasured metrics must not read as zero"
+        );
+        assert!(
+            all.contains("Fachlicher Zweck, wesentliche Anforderungen"),
+            "fixed prose is not escaped"
+        );
+        assert!(
+            all.contains("| stacks/a/compose.yaml | services/worker |"),
+            "paths stay readable"
+        );
+        assert!(
+            all.contains("worker\\|x"),
+            "table separators in data stay escaped"
+        );
+        let rules = &doc.chapters[7].markdown;
+        let (declared, derived) = rules.split_once("### Abgeleitete Schichten").unwrap();
+        assert!(declared.contains("Schicht app") && !declared.contains("Schicht core"));
+        assert!(derived.contains("Schicht core"));
+        assert!(!all.contains("/home/someone") && all.contains("Analysierter Umfang: **shop**"));
     }
 
     fn document() -> Arc42Document {

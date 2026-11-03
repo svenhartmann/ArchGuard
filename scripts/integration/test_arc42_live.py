@@ -35,7 +35,7 @@ def main():
         full = run('doc', '--arc42', '--stdout')
         (out / 'example.arc42.md').write_text(full)
         assert full.count('\n## ') == 12
-        assert r'src\/app\/Use\.java:1' in full and 'statische' in full
+        assert 'src/app/Use.java:1' in full and 'statische' in full
         assert 'Modifiability' in full and 'proposed' in full
         assert 'Gemessene Klassenwerte' in full and 'Mermaid' not in full  # diagram uses a language fence
         assert '```mermaid' in full and 'compose' in full
