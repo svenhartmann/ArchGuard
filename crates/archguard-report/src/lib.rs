@@ -31,7 +31,9 @@ pub use dot::to_dot;
 pub use dsm::{to_dsm_json, to_dsm_text};
 pub use gexf::to_gexf;
 pub use graphml::to_graphml;
-pub use html::{HtmlContext, HtmlPage, to_html, to_html_page, to_html_with_calls, to_html_with_context};
+pub use html::{
+    HtmlContext, HtmlPage, to_html, to_html_page, to_html_with_calls, to_html_with_context,
+};
 pub use json::to_json;
 pub use mermaid::to_mermaid;
 pub use pr_comment::render_pr_comment;
