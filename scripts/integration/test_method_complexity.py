@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from test_java_calls import HELPER as JAVA_HELPER, analyze as analyze_java
+from test_java_calls import HELPER as JAVA_HELPER, JAVAC_API, analyze as analyze_java
 from test_csharp_calls import compile_helper, analyze as analyze_csharp
 
 
@@ -128,7 +128,7 @@ def java21():
         context = root / "context"
         context.write_text("21\0\0")
         result = subprocess.run(
-            ["java", "-Xmx512m", "--class-path", str(empty), str(JAVA_HELPER), str(manifest), str(empty), str(context)],
+            ["java", "-Xmx512m", "--add-exports", JAVAC_API, "--class-path", str(empty), str(JAVA_HELPER), str(manifest), str(empty), str(context)],
             check=True, capture_output=True, text=True, timeout=45,
             env={k: v for k, v in os.environ.items() if k not in ("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH")},
         )
