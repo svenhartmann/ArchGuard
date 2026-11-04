@@ -356,17 +356,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codespan-reporting"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
-dependencies = [
- "serde",
- "termcolor",
- "unicode-width",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -447,17 +436,16 @@ dependencies = [
 
 [[package]]
 name = "cxx-build"
-version = "1.0.205"
+version = "1.0.138"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc2ac76997619d2d888b58ad79488f1c835de41ca4dd3dd7082acf4ecb0a50f"
+checksum = "9a4b7522f539fe056f1d6fc8577d8ab731451f6f33a89b1e5912e22b76c553e7"
 dependencies = [
  "cc",
- "codespan-reporting 0.13.1",
- "indexmap",
+ "codespan-reporting",
  "proc-macro2",
  "quote",
  "scratch",
- "syn 3.0.9",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -467,7 +455,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f01e92ab4ce9fd4d16e3bb11b158d98cbdcca803c1417aa43130a6526fbf208"
 dependencies = [
  "clap",
- "codespan-reporting 0.11.1",
+ "codespan-reporting",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
