@@ -24,11 +24,16 @@ for name in ('index.html', 'about.html', 'styles.css', 'site.js', 'assets', 'exa
         shutil.copytree(item, out / name)
     else:
         shutil.copy2(item, out / name)
-# Repository links appear only when the repository is known; otherwise they are removed.
+# Repository links and the release install commands appear only when the repository
+# is known; otherwise they are removed and <!--norepo--> blocks (source build) stay.
+keep, drop = ('repo', 'norepo') if args.repository else ('norepo', 'repo')
 for page in out.rglob('*.html'):
     text = page.read_text()
+    text = re.sub(rf'<!--{drop}-->.*?<!--/{drop}-->', '', text, flags=re.S)
+    text = re.sub(rf'<!--/?{keep}-->', '', text)
     if args.repository:
         text = text.replace('href="@@REPOSITORY_URL@@" hidden', 'href="https://github.com/' + args.repository + '"')
+        text = text.replace('@@REPOSITORY@@', args.repository)
     else:
         text = re.sub(r'<a class="[^"]*repo-link[^"]*" href="@@REPOSITORY_URL@@" hidden>.*?</a>', '', text)
     page.write_text(text)

@@ -22,12 +22,19 @@ for(const block of document.querySelectorAll('[data-gallery]'))for(const button 
  part('description').textContent=view.description;
  part('project').textContent=view.project;
 });
+// Quickstart OS switch: shows one command set, preselected from the visitor's OS.
+for(const group of document.querySelectorAll('.os-tabs')){
+ const box=group.closest('.terminal'),buttons=[...group.querySelectorAll('button')];
+ const show=os=>{for(const b of buttons)b.setAttribute('aria-pressed',String(b.dataset.os===os));for(const pre of box.querySelectorAll('pre[data-os]'))pre.hidden=pre.dataset.os!==os;};
+ for(const b of buttons)b.addEventListener('click',()=>show(b.dataset.os));
+ if(/Windows/.test(navigator.userAgent))show('windows');
+}
 let statusTimeout;
 for(const button of document.querySelectorAll('.copy'))button.addEventListener('click',async()=>{
- const text=button.closest('.code,.terminal').querySelector('code').innerText;
+ const code=button.closest('.code,.terminal').querySelector('pre:not([hidden]) code');const text=code.innerText;
  const status=document.getElementById('copy-status');
  try{await navigator.clipboard.writeText(text);status.textContent='Command copied.';}
- catch{const code=button.closest('.code,.terminal').querySelector('code');const range=document.createRange();range.selectNodeContents(code);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);status.textContent='Command selected. Press Ctrl+C or ⌘C to copy.';}
+ catch{const range=document.createRange();range.selectNodeContents(code);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);status.textContent='Command selected. Press Ctrl+C or ⌘C to copy.';}
  clearTimeout(statusTimeout);statusTimeout=setTimeout(()=>{status.textContent='';},3500);
 });
 

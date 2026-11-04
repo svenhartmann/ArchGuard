@@ -19,7 +19,21 @@ Der Viewer trennt statische Beobachtungen, deklarierte Absichten, importierte Me
 
 ## Installation
 
-Aus dem Repository mit einer Rust-Toolchain bauen:
+Das neueste Release-Binary installieren (macOS, Linux, Git Bash), nach `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/svenhartmann/ArchGuard/main/scripts/install/install.sh | sh
+```
+
+Windows (PowerShell), nach `%LOCALAPPDATA%\Programs\archguard`, wird dem Benutzer-`PATH` hinzugefügt:
+
+```powershell
+irm https://raw.githubusercontent.com/svenhartmann/ArchGuard/main/scripts/install/install.ps1 | iex
+```
+
+Beide prüfen das Archiv gegen `SHA256SUMS`. `ARCHGUARD_VERSION` legt eine Version fest, `ARCHGUARD_INSTALL_DIR` ändert das Ziel. Später aktualisieren mit `archguard update`.
+
+Oder aus dem Repository mit einer Rust-Toolchain bauen:
 
 ```sh
 cargo install --path crates/archguard-cli --locked

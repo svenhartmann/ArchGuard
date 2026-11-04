@@ -19,7 +19,21 @@ The viewer keeps static observations, declared intent, imported measurements, an
 
 ## Install
 
-Build from the repository with a Rust toolchain:
+Install the latest release binary (macOS, Linux, Git Bash) into `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/svenhartmann/ArchGuard/main/scripts/install/install.sh | sh
+```
+
+Windows (PowerShell), into `%LOCALAPPDATA%\Programs\archguard`, added to the user `PATH`:
+
+```powershell
+irm https://raw.githubusercontent.com/svenhartmann/ArchGuard/main/scripts/install/install.ps1 | iex
+```
+
+Both verify the archive against `SHA256SUMS`. `ARCHGUARD_VERSION` pins a version, `ARCHGUARD_INSTALL_DIR` changes the target. Update later with `archguard update`.
+
+Or build from the repository with a Rust toolchain:
 
 ```sh
 cargo install --path crates/archguard-cli --locked
