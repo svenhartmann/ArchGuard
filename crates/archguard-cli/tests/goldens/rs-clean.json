@@ -157,7 +157,8 @@
       {
         "backend": "syn",
         "diagnostics": [
-          "Syntax-only analysis: complexity and Halstead per function. Calls and types are not resolved, and macro bodies that are not expressions stay opaque."
+          "Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.",
+          "Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
         ],
         "files": 6,
         "language": "rust",
@@ -167,7 +168,8 @@
       }
     ],
     "diagnostics": [
-      "rust: Syntax-only analysis: complexity and Halstead per function. Calls and types are not resolved, and macro bodies that are not expressions stay opaque."
+      "rust: Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.",
+      "rust: Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
     ],
     "projected_calls": 0,
     "projected_supertypes": 0,

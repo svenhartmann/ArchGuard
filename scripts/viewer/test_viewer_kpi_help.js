@@ -13,7 +13,8 @@ for(const id of languages){
  app.run(`kpiHelpUi.language='${id}';renderKpiHelp()`);
  const text=app.run('kpiHelpUi.detail.textContent');
  assert.match(text,/archguard coverage \. --report/,'every supported language has an import example');
- if(['php','py','rs'].includes(id))assert.match(text,/calls and types stay unresolved, so CBO, RFC, DIT and NOC are not measured/i,'syntax-only languages state what they cannot measure');
+ if(id==='rs')assert.match(text,/rust-analyzer.*ARCHGUARD_TRUST_PROJECT_COMPILER=1.*CBO, RFC, DIT and NOC are not measured/is,'Rust names the opt-in call resolution and what stays unmeasured');
+ else if(['php','py'].includes(id))assert.match(text,/calls and types stay unresolved, so CBO, RFC, DIT and NOC are not measured/i,'syntax-only languages state what they cannot measure');
  else assert.match(text,/archguard calls \. --format json/);
 }
 app.run("kpiHelpUi.language='js';renderKpiHelp()");assert.match(app.run('kpiHelpUi.detail.textContent'),/allowJs/);

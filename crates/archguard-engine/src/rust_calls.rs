@@ -1,6 +1,6 @@
-//! Syntax-only Rust measurements: declarations and per-function complexity from `syn`.
-//! Nothing is compiled or executed, so calls and types stay unresolved and the
-//! report is `partial`. The counts follow `ast-decisions-v1` and
+//! Rust measurements: declarations and per-function complexity from `syn`, and
+//! call targets from rust-analyzer once the repository is trusted (`rust_scip`).
+//! Nothing is compiled and no project code runs; the report stays `partial`. The counts follow `ast-decisions-v1` and
 //! `source-maintainability/v1` of the compiler-backed scanners, mapped to Rust:
 //! - cyclomatic: `if`, `for`, `while`, `loop`, `let … else`, each `match` arm except
 //!   a final `_`, each arm guard, `&&`, `||` and `?` (the counterpart of `?.`).
@@ -9,6 +9,7 @@
 //!   and `#[cfg(test)]`/`#[test]` code are not measured.
 //! - macro arguments count when they parse as expressions; other bodies stay opaque.
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::Path;
 
 use archguard_core::{
@@ -23,7 +24,7 @@ use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, ImplItem, Item, Signature, TraitItem, Visibility};
 
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
-const LIMITATION: &str = "Syntax-only analysis: complexity and Halstead per function. Calls and types are not resolved, and macro bodies that are not expressions stay opaque.";
+const LIMITATION: &str = "Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.";
 
 #[derive(Default)]
 struct Measure {
@@ -36,6 +37,17 @@ struct Measure {
     operator_count: u32,
     operand_count: u32,
     lines: BTreeSet<usize>,
+    calls: Vec<CallSite>,
+}
+
+/// A call expression in a measured body, located at its callee name.
+pub(crate) struct CallSite {
+    /// 1-based line and 0-based character column of the callee identifier.
+    pub line: u32,
+    pub column: u32,
+    /// The callee as written: `Cart::new`, `shop::audit` or a method name.
+    pub label: String,
+    pub method_call: bool,
 }
 
 impl Measure {
@@ -137,6 +149,38 @@ impl<'ast> Visit<'ast> for Measure {
     fn visit_expr(&mut self, node: &'ast Expr) {
         let line = node.span().start().line;
         match node {
+            Expr::Call(call) => {
+                if let Expr::Path(path) = call.func.as_ref()
+                    && let Some(last) = path.path.segments.last()
+                {
+                    let start = last.ident.span().start();
+                    let label = path
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    self.calls.push(CallSite {
+                        line: start.line as u32,
+                        column: start.column as u32,
+                        label,
+                        method_call: false,
+                    });
+                }
+            }
+            Expr::MethodCall(call) => {
+                let start = call.method.span().start();
+                self.calls.push(CallSite {
+                    line: start.line as u32,
+                    column: start.column as u32,
+                    label: call.method.to_string(),
+                    method_call: true,
+                });
+            }
+            _ => {}
+        }
+        match node {
             Expr::If(branch) => return self.branch(branch, false),
             Expr::Paren(inner) => return self.visit_expr(&inner.expr),
             Expr::Path(_) | Expr::Lit(_) => return visit::visit_expr(self, node),
@@ -231,6 +275,7 @@ struct Collector<'a> {
     package: &'a str,
     report: &'a mut CallAnalysis,
     metrics: &'a mut Vec<SourceMethodMetrics>,
+    sites: &'a mut Vec<(String, String, CallSite)>,
 }
 
 impl Collector<'_> {
@@ -269,6 +314,9 @@ impl Collector<'_> {
             ..Default::default()
         };
         measure.visit_block(block);
+        for site in std::mem::take(&mut measure.calls) {
+            self.sites.push((class_id.into(), id.clone(), site));
+        }
         self.report.methods.push(CallMethod {
             id: id.clone(),
             class_id: class_id.into(),
@@ -388,7 +436,20 @@ fn visibility_name(visibility: &Visibility) -> String {
     }
 }
 
+/// Set to `1` outside the repository to let rust-analyzer load it and resolve calls.
+const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
+const UNTRUSTED: &str = "Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
+const RESOLVED: &str = "Calls are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
+
 pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
+    let trusted = std::env::var_os(TRUST_ENV).is_some_and(|value| value == "1");
+    let executable =
+        std::env::var_os("ARCHGUARD_RUST_ANALYZER").unwrap_or_else(|| "rust-analyzer".into());
+    analyze_with(root, config, trusted.then_some(executable.as_os_str()))
+}
+
+/// `analyzer` is the rust-analyzer executable once the repository is trusted.
+fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr>) -> CallAnalysis {
     let mut report = CallAnalysis {
         java_release: 0,
         ..Default::default()
@@ -402,16 +463,22 @@ pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
         }
     };
     let mut metrics = Vec::new();
+    let mut sites = Vec::new();
+    let mut sources = Vec::new();
     for file in files.iter().filter(|file| file.lang == Lang::Rust) {
         report.files += 1;
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let parsed =
+        let text =
             crate::project_files::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
                 .map_err(|error| error.to_string())
-                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
-                .and_then(|text| syn::parse_file(&text).map_err(|error| error.to_string()));
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()));
+        let parsed = text.and_then(|text| {
+            syn::parse_file(&text)
+                .map(|syntax| (syntax, text))
+                .map_err(|error| error.to_string())
+        });
         match parsed {
-            Ok(syntax) => {
+            Ok((syntax, text)) => {
                 let package = stripped
                     .rsplit_once('/')
                     .map_or("", |(dir, _)| dir)
@@ -421,8 +488,14 @@ pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
                     package: &package,
                     report: &mut report,
                     metrics: &mut metrics,
+                    sites: &mut sites,
                 }
                 .items(&syntax.items, "");
+                sources.push(crate::rust_scip::Source {
+                    rel_path: file.rel_path.clone(),
+                    stripped,
+                    text,
+                });
             }
             Err(error) => report.diagnostics.push(format!("{stripped}: {error}")),
         }
@@ -430,16 +503,31 @@ pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     if report.files == 0 {
         return report;
     }
+    let mut backend = "syn";
+    let mut version = None;
+    let mut notes = vec![LIMITATION.to_string()];
+    match analyzer {
+        None => notes.push(UNTRUSTED.into()),
+        Some(executable) => match crate::rust_scip::index(root, executable, &sources) {
+            Ok(index) => {
+                report.calls = crate::rust_scip::resolve(&index, &report, &sources, &sites);
+                backend = "syn + rust-analyzer scip";
+                version = Some(index.version);
+                notes.push(RESOLVED.into());
+            }
+            Err(error) => notes.push(format!("rust-analyzer: {error}")),
+        },
+    }
     report.status = "partial".into();
-    report.diagnostics.push(LIMITATION.into());
+    report.diagnostics.extend(notes.iter().cloned());
     report.analyzers.push(CallAnalyzer {
         language: "rust".into(),
-        backend: "syn".into(),
+        backend: backend.into(),
         status: "partial".into(),
         files: report.files,
-        version: None,
+        version,
         project: None,
-        diagnostics: vec![LIMITATION.into()],
+        diagnostics: notes,
     });
     report.details = Some(SemanticDetails {
         enumeration_complete: Some(false),
@@ -456,7 +544,7 @@ mod tests {
     fn analyze(source: &str) -> CallAnalysis {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.rs"), source).unwrap();
-        analyze_rust_calls(dir.path(), &Config::default())
+        analyze_with(dir.path(), &Config::default(), None)
     }
     fn complexity(report: &CallAnalysis, name: &str) -> (u32, u32, u32) {
         let method = report.methods.iter().find(|m| m.name == name).unwrap();
@@ -594,6 +682,133 @@ fn also_ignored() {}
         assert_eq!(
             analyze_rust_calls(dir.path(), &Config::default()).status,
             "not_applicable"
+        );
+    }
+
+    /// A crate whose `build.rs` would leave a marker file if it ever ran.
+    fn cargo_project() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("BUILD_RS_RAN");
+        let files = [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"shopcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n".to_string(),
+            ),
+            (
+                "build.rs",
+                format!("fn main() {{ std::fs::write({:?}, \"x\").unwrap(); }}\n", marker),
+            ),
+            (
+                "src/lib.rs",
+                "mod shop;\npub struct Cart { items: Vec<u32> }\nimpl Cart {\n    pub fn new() -> Self { Cart { items: Vec::new() } }\n    pub fn add(&mut self, n: u32) { self.items.push(n); shop::audit(n); }\n}\npub fn checkout() -> usize { let mut c = Cart::new(); c.add(2); c.items.len() }\n".to_string(),
+            ),
+            ("src/shop.rs", "pub fn audit(n: u32) { let _ = n; }\n".to_string()),
+        ];
+        for (path, content) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn rust_analyzer_resolves_calls_without_running_build_scripts() {
+        let dir = cargo_project();
+        let report = analyze_with(
+            dir.path(),
+            &Config::default(),
+            Some(std::ffi::OsStr::new("rust-analyzer")),
+        );
+        assert!(
+            !dir.path().join("BUILD_RS_RAN").exists(),
+            "build.rs must never run"
+        );
+        let call = |from: &str, label: &str| {
+            report
+                .calls
+                .iter()
+                .find(|call| {
+                    call.from_method
+                        .as_deref()
+                        .is_some_and(|m| m.contains(&format!("#{from}@")))
+                        && call.target_label == label
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no call {from} -> {label}: {:?} {:?}",
+                        report.calls, report.diagnostics
+                    )
+                })
+        };
+        let new = call("checkout", "Cart::new");
+        assert_eq!(
+            (new.resolution.as_str(), new.dispatch.as_str()),
+            ("project", "static")
+        );
+        assert!(
+            new.to_method
+                .as_deref()
+                .is_some_and(|m| m.contains("#new@"))
+        );
+        // A method call needs the receiver's type: rust-analyzer supplies it.
+        let add = call("checkout", "add");
+        assert_eq!(
+            (add.resolution.as_str(), add.dispatch.as_str()),
+            ("project", "instance")
+        );
+        assert!(
+            add.to_method
+                .as_deref()
+                .is_some_and(|m| m.contains("::Cart#add@"))
+        );
+        let audit = call("add", "shop::audit");
+        assert!(
+            audit
+                .to_method
+                .as_deref()
+                .is_some_and(|m| m.contains("shop.rs::(module)#audit@"))
+        );
+        assert_eq!(call("add", "push").resolution, "external");
+        let analyzer = &report.analyzers[0];
+        assert!(analyzer.backend.contains("rust-analyzer"), "{analyzer:?}");
+        assert!(analyzer.version.is_some());
+        assert_eq!(analyzer.status, "partial");
+    }
+
+    #[test]
+    fn without_trust_calls_stay_unresolved_with_a_hint() {
+        let dir = cargo_project();
+        let report = analyze_with(dir.path(), &Config::default(), None);
+        assert!(report.calls.is_empty());
+        assert!(!report.methods.is_empty());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("ARCHGUARD_TRUST_PROJECT_COMPILER")),
+            "{:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_missing_rust_analyzer_keeps_the_syntax_report() {
+        let dir = cargo_project();
+        let report = analyze_with(
+            dir.path(),
+            &Config::default(),
+            Some(std::ffi::OsStr::new("/nonexistent/rust-analyzer")),
+        );
+        assert!(report.calls.is_empty());
+        assert!(!report.methods.is_empty(), "syntax measurements survive");
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.contains("rust-analyzer")),
+            "{:?}",
+            report.diagnostics
         );
     }
 }

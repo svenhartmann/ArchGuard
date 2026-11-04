@@ -55,6 +55,11 @@ fn install_hint(os: &str, tool: &str) -> String {
             "winget install Microsoft.DotNet.SDK.8",
             "install dotnet-sdk from the official Microsoft package feed",
         ),
+        "rust-analyzer" => (
+            "brew install rust-analyzer (or: rustup component add rust-analyzer)",
+            "rustup component add rust-analyzer",
+            "rustup component add rust-analyzer",
+        ),
         "python3" => (
             "brew install python",
             "winget install Python.Python.3.12",
@@ -79,7 +84,7 @@ pub(crate) fn run(cli: &Cli) -> i32 {
         return usage("doctor supports text and json");
     }
     let os = std::env::consts::OS;
-    let checks: [(&str, &[&str], &str); 5] = [
+    let checks: [(&str, &[&str], &str); 6] = [
         (
             "git",
             &["--version"],
@@ -104,6 +109,11 @@ pub(crate) fn run(cli: &Cli) -> i32 {
             "python3",
             &["--version"],
             "Python class, function and complexity measurements from syntax (3.9+, or set ARCHGUARD_PYTHON); without it Python imports are still analyzed",
+        ),
+        (
+            "rust-analyzer",
+            &["--version"],
+            "Rust call targets; running it needs ARCHGUARD_TRUST_PROJECT_COMPILER=1, and without it Rust complexity is still measured",
         ),
     ];
     let tools: Vec<ToolReport> = checks

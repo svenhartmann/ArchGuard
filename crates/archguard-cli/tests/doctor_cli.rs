@@ -24,7 +24,7 @@ fn doctor_json_reports_every_required_tool_with_status_and_hint() {
         .iter()
         .map(|tool| tool["name"].as_str().expect("tool name"))
         .collect();
-    for required in ["git", "java", "dotnet", "node", "python3"] {
+    for required in ["git", "java", "dotnet", "node", "python3", "rust-analyzer"] {
         assert!(names.contains(&required), "{required} must be reported");
     }
     for tool in tools {
@@ -60,7 +60,7 @@ fn doctor_text_exits_zero_even_with_missing_optional_tools() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8_lossy(&out.stdout);
-    for required in ["git", "java", "dotnet", "node", "python3"] {
+    for required in ["git", "java", "dotnet", "node", "python3", "rust-analyzer"] {
         assert!(text.contains(required), "{required} missing from: {text}");
     }
 }

@@ -60,6 +60,7 @@ mod review_session;
 mod review_sources;
 mod risk_gap;
 mod rust_calls;
+mod rust_scip;
 mod security;
 // Declared here, not in their modules: a test file that imports its parent
 // back would close a file cycle.

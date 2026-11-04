@@ -362,7 +362,7 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
         "java"=>"Java: supply existing dependencies via [semantic.java].classpath or .archguard/java-classpath.txt (one platform-separated path list), and the matching Java release. ArchGuard reads dependencies without running Maven/Gradle or annotation processors.",
         "csharp"=>"C#: use the project target framework's installed .NET reference pack and existing restored obj/project.assets.json. Configure [semantic.csharp].project/target_framework when selection is ambiguous. ArchGuard never restores packages or runs MSBuild.",
         "typescript"|"javascript"=>"TypeScript/JavaScript: supply the project's installed compiler and tsconfig via [semantic.typescript].compiler/project and set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for trusted repositories. Missing dependencies and compiler errors remain explicit.",
-        "rust"=>"Rust: complexity, cognitive and Halstead come from syntax only. Calls and types are not resolved, so CBO, RFC, DIT and NOC stay unmeasured.",
+        "rust"=>"Rust: complexity, cognitive and Halstead come from syntax. Calls are resolved only with rust-analyzer and miss code from build scripts and proc macros; types are not resolved, so CBO, RFC, DIT and NOC stay unmeasured.",
         _=>"This language has no compiler-backed class/method metrics. Import/dependency and Git measurements remain available."
     }.to_owned());
         }
