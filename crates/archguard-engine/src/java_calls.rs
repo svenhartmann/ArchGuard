@@ -20,7 +20,16 @@ const HELPER: &str = include_str!("ArchguardCallScanner.java");
 // Large source snapshots include calls, type uses and method metrics. Keep a
 // hard bound while allowing their streamed output beyond the former 64 MiB cap.
 const MAX_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_PROCESS_TIME: Duration = Duration::from_secs(45);
+// Elasticsearch (16,714 files) needed 43 s on a 16-core laptop; 10 ms per
+// file keeps that headroom on slower machines.
+const MIN_PROCESS_SECS: u64 = 45;
+// javac keeps every attributed tree: Elasticsearch (16,714 files) exhausted
+// 512 MiB and reached 3.7 GiB RSS. -Xmx caps the heap without reserving it.
+const MIN_HEAP_MIB: usize = 512;
+const MAX_HEAP_MIB: usize = 8192;
+// The helper analyzes one top-level type at a time to isolate javac crashes;
+// only the internal JavacTaskImpl offers that.
+const JAVAC_API_EXPORT: &str = "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED";
 const JAVA_ENV: [&str; 4] = [
     "JDK_JAVA_OPTIONS",
     "JAVA_TOOL_OPTIONS",
@@ -182,7 +191,14 @@ fn prepare_sources(
     }
     let mut directories = BTreeSet::from([root.clone()]);
     for file in files {
-        if file.lang != Lang::Java {
+        // Module descriptors hold no calls, and several of them in one
+        // classpath compilation crash javac (Enter.moduleEnv assertion).
+        if file.lang != Lang::Java
+            || file
+                .path
+                .file_name()
+                .is_some_and(|n| n == "module-info.java")
+        {
             continue;
         }
         let content = fs::read_to_string(&file.path).map_err(|e| e.to_string())?;
@@ -393,6 +409,14 @@ fn read_bounded(path: &Path, maximum: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn heap_mib(files: usize) -> usize {
+    (files / 4).clamp(MIN_HEAP_MIB, MAX_HEAP_MIB)
+}
+
+fn process_time(files: usize) -> Duration {
+    Duration::from_secs((files as u64 / 100).max(MIN_PROCESS_SECS))
+}
+
 fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> {
     let directory = WorkingDirectory::create().map_err(|e| e.to_string())?;
     let helper = directory.0.join("ArchguardCallScanner.java");
@@ -417,7 +441,9 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
         .map_err(|e| e.to_string())?;
     let mut command = Command::new(executable);
     command
-        .arg("-Xmx512m")
+        .arg(format!("-Xmx{}m", heap_mib(input.files)))
+        .arg("--add-exports")
+        .arg(JAVAC_API_EXPORT)
         .arg("--class-path")
         .arg(&empty)
         .arg(&helper)
@@ -435,6 +461,7 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
         format!("Java call analysis requires JDK 17+ available as java on PATH: {e}")
     })?;
     let start = Instant::now();
+    let limit = process_time(input.files);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -445,10 +472,13 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
                 return Err(format!("Java call analysis process failed: {error}"));
             }
         }
-        if start.elapsed() > MAX_PROCESS_TIME {
+        if start.elapsed() > limit {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("Java call analysis exceeded its 45 second limit; import analysis remains available.".into());
+            return Err(format!(
+                "Java call analysis exceeded its {} second limit; import analysis remains available.",
+                limit.as_secs()
+            ));
         }
         if fs::metadata(&output).is_ok_and(|m| m.len() > MAX_OUTPUT_BYTES)
             || fs::metadata(&errors).is_ok_and(|m| m.len() > MAX_OUTPUT_BYTES)
@@ -468,9 +498,14 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
             .chars()
             .take(1500)
             .collect();
-        return Err(format!(
-            "Java call analysis failed; JDK 17+ is required. {detail}"
-        ));
+        if detail.contains("java.lang.OutOfMemoryError") {
+            return Err(format!(
+                "Java call analysis ran out of its {} MiB heap for {} files; import analysis remains available.",
+                heap_mib(input.files),
+                input.files
+            ));
+        }
+        return Err(format!("Java call analysis failed: {detail}"));
     }
     let bytes = read_bounded(&output, MAX_OUTPUT_BYTES).map_err(|e| e.to_string())?;
     let result: CallAnalysis = serde_json::from_slice(&bytes)
@@ -598,6 +633,67 @@ mod tests {
         );
         config.project.languages = vec!["ts".into()];
         assert_eq!(prepare(root.path(), &config).unwrap().files, 0);
+    }
+
+    #[test]
+    fn module_descriptors_stay_out_of_the_single_module_compiler_run() {
+        // javac asserts in Enter.moduleEnv when several module-info.java files
+        // share one classpath compilation (Elasticsearch has 115).
+        let root = tempfile::tempdir().unwrap();
+        for module in ["a", "b"] {
+            let dir = root.path().join(module);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("module-info.java"),
+                format!("module {module} {{}}"),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("A.java"),
+                format!("package {module};\nclass A {{}}"),
+            )
+            .unwrap();
+        }
+        let input = prepare(root.path(), &Config::default()).unwrap();
+        assert_eq!(input.files, 2);
+        assert!(
+            !String::from_utf8(input.manifest)
+                .unwrap()
+                .contains("module-info")
+        );
+    }
+
+    #[test]
+    fn heap_and_time_limits_grow_with_the_source_count() {
+        assert_eq!((heap_mib(367), process_time(367).as_secs()), (512, 45));
+        assert_eq!(
+            (heap_mib(16_714), process_time(16_714).as_secs()),
+            (4_178, 167)
+        );
+        assert_eq!(heap_mib(1_000_000), MAX_HEAP_MIB);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heap_exhaustion_is_reported_as_memory_not_as_a_missing_jdk() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let java = root.path().join("java");
+        fs::write(
+            &java,
+            "#!/bin/sh\necho 'java.lang.OutOfMemoryError: Java heap space' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&java, fs::Permissions::from_mode(0o755)).unwrap();
+        let input = Input {
+            manifest: Vec::new(),
+            context: Vec::new(),
+            fingerprint: [0; 32],
+            files: 20_000,
+        };
+        let error = run_helper(&input, &java).unwrap_err();
+        assert!(!error.contains("JDK 17+"), "{error}");
+        assert!(error.contains("MiB heap"), "{error}");
     }
 
     #[test]

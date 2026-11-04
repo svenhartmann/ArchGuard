@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 HELPER = Path(__file__).resolve().parents[2] / "crates/archguard-engine/src/ArchguardCallScanner.java"
+JAVAC_API = "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
 ENV = {k: v for k, v in os.environ.items() if k not in ("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH")}
 
 
@@ -23,7 +24,7 @@ def main():
 
         def analyze(release="auto", classpath=(), descriptors=()):
             settings.write_text("\0".join((str(release), os.pathsep.join(map(str, classpath)), *map(str, descriptors))) + "\0")
-            result = subprocess.run(["java", "-Xmx512m", "--class-path", str(empty), str(HELPER), str(manifest), str(empty), str(settings)], capture_output=True, text=True, env=ENV, timeout=45, check=True)
+            result = subprocess.run(["java", "-Xmx512m", "--add-exports", JAVAC_API, "--class-path", str(empty), str(HELPER), str(manifest), str(empty), str(settings)], capture_output=True, text=True, env=ENV, timeout=45, check=True)
             assert not (root / "Client.class").exists(), "analysis must not generate project classes"
             return json.loads(result.stdout)
 

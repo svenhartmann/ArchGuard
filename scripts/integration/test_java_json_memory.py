@@ -8,6 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "crates/archguard-engine/src/ArchguardCallScanner.java"
+JAVAC_API = "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
 ENV = {k: v for k, v in os.environ.items() if k not in ("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH")}
 PROBE = r'''
 import java.io.*;
@@ -36,7 +37,7 @@ def main():
         temp = Path(directory)
         probe = temp / "JsonMemoryProbe.java"
         probe.write_text(PROBE)
-        subprocess.run(["javac", "-encoding", "UTF-8", "-d", str(temp), str(HELPER), str(probe)], check=True, capture_output=True, env=ENV, timeout=45)
+        subprocess.run(["javac", "--add-exports", JAVAC_API, "-encoding", "UTF-8", "-d", str(temp), str(HELPER), str(probe)], check=True, capture_output=True, env=ENV, timeout=45)
         output = temp / "result.json"
         with output.open("wb") as stream:
             result = subprocess.run(["java", "-Xmx64m", "-cp", str(temp), "JsonMemoryProbe"], stdout=stream, stderr=subprocess.PIPE, env=ENV, timeout=45)

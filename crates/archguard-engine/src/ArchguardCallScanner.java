@@ -80,6 +80,7 @@ class ArchguardCallScanner {
         }
     }
     Trees trees;
+    final Set<CompilationUnitTree> unresolvedCrashes = new LinkedHashSet<>();
     JavacTask task;
     boolean partial;
     int release = 17;
@@ -131,8 +132,30 @@ class ArchguardCallScanner {
             }
             for (Diagnostic<? extends JavaFileObject> problem : problems.getDiagnostics())
                 if (problem.getKind() == Diagnostic.Kind.ERROR) syntaxErrors.add(problem);
-            task.analyze();
+            // One analyze call per top-level type in todo order: a javac crash
+            // (JDK 17-25 assert in Attr.visitYield under a missing anonymous
+            // supertype) then costs that file instead of every call. In todo
+            // order javac's class filter has nothing to defer and lose. Only
+            // JavacTaskImpl offers per-type analysis (launched with
+            // --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED).
+            var compilation = (com.sun.tools.javac.api.JavacTaskImpl) task;
             trees = Trees.instance(task);
+            Set<CompilationUnitTree> crashed = new LinkedHashSet<>();
+            for (javax.lang.model.element.Element type : compilation.enter()) {
+                TreePath path = type instanceof TypeElement ? trees.getPath(type) : null;
+                if (path == null || crashed.contains(path.getCompilationUnit())) continue;
+                try {
+                    compilation.analyze(List.of(type));
+                } catch (RuntimeException | AssertionError crash) {
+                    crashed.add(path.getCompilationUnit());
+                }
+            }
+            units.removeAll(crashed);
+            for (CompilationUnitTree unit : crashed) {
+                partial = true;
+                diagnostics.add(source(unit).file
+                    + ": javac crashed while attributing this file; its classes, methods and calls are omitted.");
+            }
             for (Diagnostic<? extends JavaFileObject> problem : problems.getDiagnostics()) {
                 if (problem.getKind() == Diagnostic.Kind.ERROR) errors.add(problem);
             }
@@ -147,6 +170,11 @@ class ArchguardCallScanner {
             invocations.allocate();
             invocations.counting = false;
             for (CompilationUnitTree unit : units) invocations.scan(unit, null);
+            for (CompilationUnitTree unit : unresolvedCrashes) {
+                partial = true;
+                diagnostics.add(source(unit).file
+                    + ": javac crashed while resolving part of this file; the affected symbols stay unresolved.");
+            }
         }
         for (Diagnostic<? extends JavaFileObject> diagnostic : problems.getDiagnostics()) {
             if (diagnostic.getKind() != Diagnostic.Kind.ERROR) continue;
@@ -402,10 +430,21 @@ class ArchguardCallScanner {
             return null;
         }
     }
+    // getElement attributes lazily and can hit the same javac crashes as
+    // analyze; the symbol then stays unresolved and its file is partial.
+    javax.lang.model.element.Element element(TreePath path) {
+        try {
+            return trees.getElement(path);
+        } catch (RuntimeException | AssertionError crash) {
+            unresolvedCrashes.add(path.getCompilationUnit());
+            return null;
+        }
+    }
+
     final class Declarations extends TreePathScanner<Void, Void> {
         String parentClass;
         @Override public Void visitClass(ClassTree node, Void ignored) {
-            javax.lang.model.element.Element element = trees.getElement(getCurrentPath());
+            javax.lang.model.element.Element element = element(getCurrentPath());
             CompilationUnitTree unit = getCurrentPath().getCompilationUnit();
             Source source = source(unit);
             if (!(element instanceof TypeElement type) || source == null || !explicit(unit, node)) return null;
@@ -446,7 +485,7 @@ class ArchguardCallScanner {
             return null;
         }
         @Override public Void visitMethod(MethodTree node, Void ignored) {
-            javax.lang.model.element.Element element = trees.getElement(getCurrentPath());
+            javax.lang.model.element.Element element = element(getCurrentPath());
             CompilationUnitTree unit = getCurrentPath().getCompilationUnit();
             Source source = source(unit);
             if (!(element instanceof ExecutableElement method) || source == null || !explicit(unit, node)) return null;
@@ -522,7 +561,7 @@ class ArchguardCallScanner {
         Map<String, Object> state;
         @Override public Void visitClass(ClassTree node, Void unused) {
             String oldOwner=owner, oldMethod=method; Map<String,Object> oldState=state;
-            owner=classIds.get(trees.getElement(getCurrentPath())); method=null;
+            owner=classIds.get(element(getCurrentPath())); method=null;
             if(owner!=null) {
                 state=map("class_id",owner,"status",erroneous(getCurrentPath().getCompilationUnit(),node)?"partial":"ready","fields",new ArrayList<Map<String,Object>>(),"accesses",new ArrayList<Map<String,Object>>());
                 classStates.put(owner,state);
@@ -531,14 +570,14 @@ class ArchguardCallScanner {
             owner=oldOwner;method=oldMethod;state=oldState;return null;
         }
         @Override public Void visitMethod(MethodTree node, Void unused) {
-            String old=method;method=methodIds.get(trees.getElement(getCurrentPath()));
+            String old=method;method=methodIds.get(element(getCurrentPath()));
             types(node.getReturnType(),"return");
             for(VariableTree parameter:node.getParameters()) types(parameter.getType(),"parameter");
             super.visitMethod(node,unused);method=old;return null;
         }
         @SuppressWarnings("unchecked")
         @Override public Void visitVariable(VariableTree node, Void unused) {
-            var element=trees.getElement(getCurrentPath());
+            var element=element(getCurrentPath());
             if(owner!=null && element instanceof VariableElement field && field.getKind().isField()) {
                 String id=owner+"#field:"+field.getSimpleName();fieldIds.put(field,id);
                 ((List<Map<String,Object>>)state.get("fields")).add(map("id",id,"name",field.getSimpleName().toString(),"is_static",field.getModifiers().contains(Modifier.STATIC),"file",source(getCurrentPath().getCompilationUnit()).file,"line",line(getCurrentPath().getCompilationUnit(),node)));
@@ -557,7 +596,7 @@ class ArchguardCallScanner {
             if(path==null)return;
             new TreePathScanner<Void,Void>() {
                 void capture(Tree node) {
-                    var element=trees.getElement(getCurrentPath());
+                    var element=element(getCurrentPath());
                     var unit=getCurrentPath().getCompilationUnit();
                     if(!(element instanceof TypeElement target)||!explicit(unit,node)||erroneous(unit,node)||target.asType().getKind()==javax.lang.model.type.TypeKind.ERROR)return;
                     String id=classId(target);
@@ -609,7 +648,7 @@ class ArchguardCallScanner {
             }
         }
         @Override public Void visitClass(ClassTree node, Void ignored) {
-            javax.lang.model.element.Element element = trees.getElement(getCurrentPath());
+            javax.lang.model.element.Element element = element(getCurrentPath());
             String oldClass = currentClass, oldMethod = currentMethod;
             currentClass = classIds.get(element);
             currentMethod = null;
@@ -618,7 +657,7 @@ class ArchguardCallScanner {
             return null;
         }
         @Override public Void visitMethod(MethodTree node, Void ignored) {
-            javax.lang.model.element.Element element = trees.getElement(getCurrentPath());
+            javax.lang.model.element.Element element = element(getCurrentPath());
             String previous = currentMethod;
             currentMethod = methodIds.get(element);
             if (currentMethod != null) super.visitMethod(node, ignored);
@@ -627,12 +666,12 @@ class ArchguardCallScanner {
         }
         @Override public Void visitMethodInvocation(MethodInvocationTree node, Void ignored) {
             if (counting) count(node);
-            else record(node, trees.getElement(new TreePath(getCurrentPath(), node.getMethodSelect())), node.getMethodSelect().toString());
+            else record(node, element(new TreePath(getCurrentPath(), node.getMethodSelect())), node.getMethodSelect().toString());
             return super.visitMethodInvocation(node, ignored);
         }
         @Override public Void visitNewClass(NewClassTree node, Void ignored) {
             if (counting) count(node);
-            else record(node, trees.getElement(getCurrentPath()), node.getIdentifier().toString() + " constructor");
+            else record(node, element(getCurrentPath()), node.getIdentifier().toString() + " constructor");
             return super.visitNewClass(node, ignored);
         }
         void count(Tree node) {
@@ -650,7 +689,7 @@ class ArchguardCallScanner {
         @SuppressWarnings("unchecked")
         void field(Tree node) {
             var unit=getCurrentPath().getCompilationUnit();
-            String id=fieldIds.get(trees.getElement(getCurrentPath()));
+            String id=fieldIds.get(element(getCurrentPath()));
             if(currentClass==null||currentMethod==null||id==null||!explicit(unit,node)||erroneous(unit,node))return;
             var state=classStates.get(currentClass);if(state==null)return;
             var accesses=(List<Map<String,Object>>)state.get("accesses");

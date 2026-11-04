@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 HELPER = Path(__file__).resolve().parents[2] / "crates/archguard-engine/src/ArchguardCallScanner.java"
+JAVAC_API = "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
 
 
 def analyze(sources, max_calls=None):
@@ -22,7 +23,7 @@ def analyze(sources, max_calls=None):
             manifest.extend((str(path), name, name))
         manifest_path = root / "sources"
         manifest_path.write_text("\0".join(manifest) + "\0")
-        command = ["java", "-Xmx512m", "--class-path", str(empty), str(HELPER), str(manifest_path), str(empty)]
+        command = ["java", "-Xmx512m", "--add-exports", JAVAC_API, "--class-path", str(empty), str(HELPER), str(manifest_path), str(empty)]
         if max_calls is not None:
             context_path = root / "context"
             context_path.write_text("auto\0\0")
@@ -130,6 +131,32 @@ def test_many_missing_types_do_not_time_out_other_resolved_calls():
     ambiguous = next(c for c in result["calls"] if c["from_class"] == "p.Ambiguous")
     assert ambiguous["resolution"] == "unresolved" and ambiguous["to_method"] is None
     assert len(result["diagnostics"]) <= 20
+
+
+def test_compiler_crash_in_one_file_keeps_calls_of_the_others():
+    # javac 17-25 asserts in Attr.visitYield for a switch expression inside an
+    # anonymous class of a missing supertype (Elasticsearch has 22 such roots).
+    # JDK 26 attributes this file, so there the test only checks resolved calls.
+    result = analyze({
+        "p/Crash.java": """package p;
+class Crash {
+    Object f() { return new Missing() { Status g() { return switch (x.type) { case A -> Status.Y; default -> { yield Status.N; } }; } }; }
+}
+""",
+        "p/Healthy.java": "package p; class Healthy { void a() {} void run() { a(); } }",
+    })
+    assert result["status"] == "partial", result["diagnostics"]
+    healthy = [c for c in result["calls"] if c["from_class"] == "p.Healthy"]
+    assert [(c["resolution"], c["to_method"]) for c in healthy] == [("project", "p.Healthy#a()")], \
+        "one compiler crash must not discard the calls of every other file"
+    crashed = [m for m in result["diagnostics"] if "javac crashed" in m]
+    if java_feature_version() < 26:
+        assert crashed and crashed[0].startswith("p/Crash.java"), result["diagnostics"]
+
+
+def java_feature_version():
+    version = subprocess.run(["java", "-version"], capture_output=True, text=True).stderr
+    return int(version.split('"')[1].split(".")[0])
 
 
 def main():
@@ -240,6 +267,9 @@ class A {
     assert len(set(local_targets)) == 2, local_targets
     assert all(c["resolution"] == "project" for c in locals_result["calls"])
     print("Java calls: local classes retain distinct enclosing/source identities")
+
+    test_compiler_crash_in_one_file_keeps_calls_of_the_others()
+    print("Java calls: a javac crash in one file leaves the other files' calls resolved")
 
     test_local_constructor_survives_unrelated_type_errors()
     print("Java calls: unrelated missing types preserve resolved local constructors and bounded diagnostics")
