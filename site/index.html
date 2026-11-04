@@ -38,7 +38,7 @@
    <source src="assets/flow.mp4" type="video/mp4">
    <p>Your browser cannot play this video. <a href="assets/flow.mp4">Download the MP4</a>.</p>
   </video>
-  <figcaption><div><h3>Real viewer recording.</h3><p>No sound. The blue dot shows where the next step happens. The video starts when it scrolls into view, unless your system asks for reduced motion.</p></div><span>Apache Commons Collections · Java</span></figcaption>
+  <figcaption><div><h3>Real viewer recording.</h3><p>No sound. The blue dot marks each click. With reduced motion turned on, the video waits for you to press play.</p></div><span>Apache Commons Collections · Java</span></figcaption>
  </figure>
 </section>
 <section id="metrics" class="section wrap">
@@ -94,14 +94,16 @@
  <div class="wrap agent-grid"><div><div class="eyebrow">BUILT FOR YOUR WORKFLOW</div><h2>A visual workspace.<br>A terminal command.<br>An agent conversation.</h2><p>Use the viewer to explore, the CLI to automate, and MCP to let a coding agent query the same analysis.</p><div class="code"><button type="button" class="copy" aria-label="Copy MCP server command">Copy</button><pre><code>archguard mcp --root /path/to/project</code></pre></div><p class="small">Register this command as a stdio MCP server in your agent client.</p></div><div class="agent-prompts"><span class="tag">ASK YOUR AGENT</span><blockquote>“Show me the largest dependency cycle and the source references that establish it.”</blockquote><blockquote>“Which services call orders, and is that connection configured or observed?”</blockquote><blockquote>“Explain the architecture findings in this change before suggesting a fix.”</blockquote><p>Answers depend on the available source, configuration and imported evidence.</p></div></div>
 </section>
 <section id="languages" class="section wrap">
- <div class="section-heading"><div><div class="eyebrow">KNOW WHAT IS MEASURED</div><h2>Eight languages.<br>Explicit analysis boundaries.</h2></div><p>Import graphs work out of the box. Richer class, method and call analysis uses the language's own tooling where supported.</p></div>
+ <div class="section-heading"><div><div class="eyebrow">KNOW WHAT IS MEASURED</div><h2>Nine languages.<br>Explicit analysis boundaries.</h2></div><p>Import graphs work out of the box. Class, method and call analysis uses the language's own tooling where supported; syntax-based analysis needs no compiler.</p></div>
  <div class="table-wrap"><table><caption class="sr-only">Language support and prerequisites</caption><thead><tr><th scope="col">Language</th><th scope="col">Import graph</th><th scope="col">Additional analysis</th><th scope="col">Tools for additional analysis</th></tr></thead><tbody>
  <tr><th scope="row">Java</th><td>Included</td><td>Types, methods, calls and supported metrics</td><td>JDK 17+ and the project classpath</td></tr>
  <tr><th scope="row">C#</th><td>Included</td><td>Types, methods, calls and supported metrics</td><td>.NET SDK 8+ and restored packages</td></tr>
  <tr><th scope="row">TypeScript / JavaScript</th><td>Included</td><td>Types, calls and supported metrics</td><td>Node.js and the project's TypeScript compiler</td></tr>
  <tr><th scope="row">Go</th><td>Included</td><td>Packages, types, methods, functions and source metrics</td><td>Go SDK</td></tr>
- <tr><th scope="row">Rust</th><td>Included</td><td>Per-function complexity and Halstead metrics from syntax</td><td>None</td></tr>
- <tr><th scope="row">Python / PHP</th><td>Included</td><td>Import-graph analysis</td><td>None</td></tr>
+ <tr><th scope="row">Rust</th><td>Included</td><td>Per-function metrics from syntax; call targets from rust-analyzer after opt-in</td><td>None; rust-analyzer for calls</td></tr>
+ <tr><th scope="row">Python</th><td>Included</td><td>Classes, functions and per-function metrics from syntax; calls and types unresolved</td><td>Python 3.9+</td></tr>
+ <tr><th scope="row">PHP</th><td>Included</td><td>Classes, functions and per-function metrics from ArchGuard's token scanner; calls and types unresolved</td><td>None</td></tr>
+ <tr><th scope="row">Kotlin</th><td>Included, together with Java</td><td>Import graph only</td><td>None</td></tr>
  </tbody></table></div>
  <div class="evidence-note"><span aria-hidden="true">↳</span><p><strong>Missing evidence is not a zero.</strong> Dynamic calls, generated code and unavailable dependencies can leave gaps. Coverage, runtime activity and other imported measurements require actual reports. A static graph does not prove the complete runtime architecture. <a href="docs/prerequisites.html">What to install for each language, framework and report ↗</a></p></div>
 </section>
@@ -115,7 +117,7 @@ archguard serve /path/to/project --port 8787
 archguard check /path/to/project</code></pre><p>Viewer: <code>http://127.0.0.1:8787/</code><br>Rules and detected violations determine the check result.</p></div></div></section>
 <section class="section documentation-entry wrap" id="documentation"><div class="section-heading"><div><div class="eyebrow">FROM FIRST RUN TO CI</div><h2>Go deeper with the docs.</h2><p><a class="text-link" href="docs/overview.html">What is ArchGuard? Capabilities, evidence &amp; limits ↗</a></p></div><a class="text-link" href="docs/index.html">Browse all eleven guides ↗</a></div><div class="docs-cards"><a class="doc-card" href="docs/getting-started.html"><span class="tag">START HERE</span><h2>Run your first analysis</h2><p>Install ArchGuard, choose your source scope and explore the viewer.</p></a><a class="doc-card" href="docs/services.html"><span class="tag">FOLLOW THE EVIDENCE</span><h2>Understand service cycles</h2><p>Trace HTTP and event relationships, inspect evidence and zoom into a service.</p></a><a class="doc-card" href="docs/mcp.html"><span class="tag">ASK YOUR AGENT</span><h2>Use MCP in practice</h2><p>Connect your coding agent and start with natural-language investigation prompts.</p></a></div></section>
 </main>
-<footer class="wrap footer"><a class="brand" href="#"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Non-commercial open-source project.<br>MIT OR Apache-2.0 · Examples retain their own licenses.</p><a href="about.html">About these examples</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Source on GitHub ↗</a><a href="#main">Back to top ↑</a></footer>
+<footer class="wrap footer"><a class="brand" href="#"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Non-commercial open-source project.<br>MIT OR Apache-2.0 · Third-party projects retain their own licenses.</p><a href="about.html">About these examples</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Source on GitHub ↗</a><a href="#main">Back to top ↑</a></footer>
 <div id="copy-status" role="status" aria-live="polite"></div>
 </body>
 </html>

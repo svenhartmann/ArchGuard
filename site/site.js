@@ -39,3 +39,9 @@ if(flow&&'IntersectionObserver' in window&&!matchMedia('(prefers-reduced-motion:
  flow.addEventListener('play',()=>{paused=false;});
  new IntersectionObserver(([entry])=>{visible=entry.isIntersecting;if(visible&&!paused)flow.play().catch(()=>{});else if(!visible)flow.pause();},{threshold:.4}).observe(flow);
 }
+// On narrow screens tables stack into one block per row; each cell names its column.
+for(const table of document.querySelectorAll('.table-wrap table')){
+ const heads=[...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+ for(const row of table.querySelectorAll('tbody tr'))[...row.children].forEach((cell,i)=>{if(i&&heads[i])cell.dataset.label=heads[i];});
+ table.classList.add('stackable');
+}

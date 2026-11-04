@@ -80,7 +80,7 @@ Commons Collections viewer from above running and `ffmpeg` on `PATH`:
 node site/media/record-flow.cjs http://127.0.0.1:8816 /tmp/flow.webm
 ffmpeg -i /tmp/flow.webm -an -vf fps=30 -c:v libx264 -preset slow -crf 30 \
   -pix_fmt yuv420p -movflags +faststart site/assets/flow.mp4
-ffmpeg -ss 0.5 -i site/assets/flow.mp4 -frames:v 1 -q:v 3 site/assets/flow-poster.jpg
+ffmpeg -ss 6.2 -i site/assets/flow.mp4 -frames:v 1 -q:v 3 site/assets/flow-poster.jpg
 ```
 
 The page loads the video only on demand, plays it while it is visible and

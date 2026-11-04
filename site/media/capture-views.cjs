@@ -26,7 +26,14 @@ const path=require('node:path');const {pathToFileURL}=require('node:url');
   await page.evaluate(()=>document.getElementById('language-en')?.click());
   // Allow analysis results and canvas layout to settle before capturing.
   await pause(4000);if(act){await act(page);await pause(1500);}
-  await page.screenshot({path:path.join(out,name+'.png')});
+  // Periodic source checks show a transient status line; keep a capture taken while it is absent before and after.
+  const busy=()=>page.evaluate(()=>/Updating analysis/.test(document.body.innerText));
+  for(let attempt=1;;attempt++){
+   await page.waitForFunction(()=>!/Updating analysis/.test(document.body.innerText),{timeout:180000,polling:200});
+   const image=await page.screenshot();
+   if(!(await busy())){require('node:fs').writeFileSync(path.join(out,name+'.png'),image);break;}
+   if(attempt>=20)throw new Error(name+': the viewer kept updating its analysis');
+  }
   if(errors.length)throw new Error(name+': '+errors.join('\n'));
   console.log('captured',name);await page.close();
  }}finally{await browser.close()}
