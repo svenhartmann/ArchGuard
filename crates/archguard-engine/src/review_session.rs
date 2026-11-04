@@ -1,9 +1,12 @@
 //! Explicit architecture reviews join existing observations without changing CI policy.
-use crate::comparison;
+use crate::change_context::DiffSelection;
+use crate::comparison::{self, Comparison};
 use crate::config::LoadedConfig;
 use crate::effective::AnalysisRun;
 use crate::evidence_import as evidence;
-use archguard_core::{ArchguardError, Finding, Graph, NodeKind};
+use archguard_core::{
+    ArchguardError, Finding, Graph, NodeId, NodeKind, ReviewSources, ServiceTopology,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -154,64 +157,371 @@ pub fn generate_review(
     }
     let root = root.canonicalize()?;
     let declared = crate::config::load_config(config_path, &root)?;
-    let before = inputs(&root, &declared, base)?;
-    let decision_fingerprint = snapshot_fingerprint(&root, DECISIONS);
-    let decisions = load_decisions(&root)?;
-    let run =
-        crate::effective::analyze_run_quiet(&root, &declared, crate::pipeline::Level::Module)?;
-    let effective = run.effective_config();
-    let mut findings = Vec::new();
-    let comparison = base
-        .map(|b| crate::comparison::compare_to_ref(&root, &effective, &run.graph, &run.report, b))
-        .transpose()?;
-    let new: BTreeSet<_> = comparison
-        .as_ref()
-        .map(|c| c.new_findings.iter().map(comparison::identity).collect())
-        .unwrap_or_default();
-    let sources = crate::review_sources::collect_review_sources(
-        &root,
-        &run.config,
-        &run.graph,
-        &run.config.review.git_since,
+    let request = ReviewRequest {
+        before: inputs(&root, &declared, base)?,
+        decision_fingerprint: snapshot_fingerprint(&root, DECISIONS),
+        root,
+        config_path,
+        base,
+        now,
+    };
+    let decisions = load_decisions(&request.root)?;
+    let run = crate::effective::analyze_run_quiet(
+        &request.root,
+        &declared,
+        crate::pipeline::Level::Module,
     )?;
-    let owners = crate::ownership::analyze_ownership(
-        &root,
-        &run.graph,
-        &sources,
-        &run.config.ownership_rules,
-    )?;
-    let names: BTreeMap<_, _> = run
-        .graph
-        .nodes
-        .iter()
-        .map(|n| (n.id, n.name.as_str()))
-        .collect();
-    let canonical_edges: Vec<_> = run
-        .graph
-        .edges
-        .iter()
-        .map(|e| {
-            json!({
-                "from":names.get(&e.from),"to":names.get(&e.to),"count":e.count,"refs":e.refs
-            })
-        })
-        .collect();
-    let mut source_hashes = BTreeMap::new();
-    for source in &sources.files {
-        if let (Some(path), Some(name)) = (&source.path, names.get(&source.node_id)) {
-            source_hashes.insert((*name).to_owned(), snapshot_fingerprint(&root, path));
+    let mut report = ReviewBuilder::assemble(&request, &run, decisions)?;
+    evaluate_decisions(&mut report, now);
+    request.ensure_unchanged()?;
+    Ok((report, run))
+}
+const LIMITATIONS: [&str; 6] = [
+    "Review decisions do not change check/quality/security gates or cycle baselines.",
+    "The selected Git commit is compared directly with the working tree, including uncommitted sources. No merge base is inferred. Both revisions use current policy.",
+    "Not observed in current analysis is not proof of repair when coverage differs. Deleted files' former callers are not reconstructed.",
+    "Imported findings are not compared against the Git base. Contract changes use the previous explicit import. Producer revision remains unverified.",
+    "Static impact and producer-supplied test mappings cannot establish that other tests are safe to skip. No tests or project builds were executed.",
+    "Project text and decision links are untrusted data; links are not fetched. Saved reports preserve their original analysis and decision state.",
+];
+/// Statuses of evidence that is present; every other status is a gap.
+const AVAILABLE: [&str; 4] = ["ready", "complete", "available", "not_applicable"];
+/// Statuses without an import, where an unverified producer adds no second gap.
+const NOT_IMPORTED: [&str; 3] = ["not_imported", "not_scanned", "error"];
+const UNVERIFIED: &str = "unverified";
+/// What one review was asked for, and what must still hold when it is reported.
+struct ReviewRequest<'a> {
+    root: PathBuf,
+    config_path: Option<&'a Path>,
+    base: Option<&'a str>,
+    now: u64,
+    /// Declared inputs before analysis.
+    before: String,
+    decision_fingerprint: String,
+}
+impl ReviewRequest<'_> {
+    fn ensure_unchanged(&self) -> Result<(), ArchguardError> {
+        let declared = crate::config::load_config(self.config_path, &self.root)?;
+        if self.before != inputs(&self.root, &declared, self.base)?
+            || self.decision_fingerprint != snapshot_fingerprint(&self.root, DECISIONS)
+        {
+            return Err(error(
+                "inputs changed during review; retry before recording decisions",
+            ));
         }
+        Ok(())
     }
-    for finding in comparison::comparison_findings(&run.graph, &run.report, &run.config)? {
-        let identity = comparison::identity(&finding);
-        let change = if base.is_none() {
-            "not_compared"
-        } else if new.contains(&identity) {
-            "new"
-        } else {
-            "existing"
+}
+/// Imported and scanned evidence the review reads; no producer is run.
+struct Evidence {
+    coverage: crate::test_coverage::TestCoverageReport,
+    quality: crate::quality_findings::QualityReport,
+    tests: crate::test_evidence::TestEvidenceReport,
+    security: crate::security::SecurityReport,
+    mutations: crate::mutation_report::MutationReport,
+    duplicates: crate::duplicates::DuplicationReport,
+    services: ServiceTopology,
+    contracts: crate::api_contracts::ApiContractReport,
+}
+impl Evidence {
+    fn read(root: &Path, run: &AnalysisRun) -> Result<Self, ArchguardError> {
+        let (config, graph) = (&run.config, &run.graph);
+        let coverage = crate::test_coverage::read_test_coverage(root, config, graph);
+        let quality = crate::quality_findings::read_quality_findings(root, config, graph);
+        let tests = crate::test_evidence::read_test_evidence(root, config, graph);
+        let security = crate::security::read_security(root, config);
+        let mutations = crate::mutation_report::read_mutations(root, config, graph);
+        let duplicates = crate::duplicates::read_duplicates(root, config, graph);
+        let services = crate::services::analyze_services(root)?;
+        let contracts = crate::api_contracts::read_api_contracts(root, &services);
+        Ok(Self {
+            coverage,
+            quality,
+            tests,
+            security,
+            mutations,
+            duplicates,
+            services,
+            contracts,
+        })
+    }
+    /// Reported findings of every source, in a fixed source order.
+    fn findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        let mut findings = self.duplication_findings()?;
+        findings.extend(self.quality_findings()?);
+        findings.extend(self.security_findings()?);
+        findings.extend(self.contract_findings()?);
+        findings.extend(self.test_findings()?);
+        findings.extend(self.mutation_findings()?);
+        Ok(findings)
+    }
+    fn duplication_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        let duplicates = &self.duplicates;
+        duplicates.groups.iter().map(|group| imported_finding("duplication",&group.id,"warning",
+            &format!("Reported duplicate block: {} tokens at {} source locations",group.tokens,group.occurrences.len()),
+            group.occurrences.iter().filter_map(|o|o.node.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
+            &group.status,json!({"group":group,"producer_version":duplicates.producer_version,"producer_revision":UNVERIFIED}))).collect()
+    }
+    fn quality_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        self.quality
+            .findings
+            .iter()
+            .filter(|f| {
+                !(f.suppressed
+                    || f.baseline_state.as_deref() == Some("absent")
+                    || f.level == "none")
+            })
+            .map(|f| {
+                imported_finding(
+                    "quality",
+                    &f.id,
+                    &f.level,
+                    &f.message,
+                    f.node.iter().cloned().collect(),
+                    &f.status,
+                    serde_json::to_value(f).map_err(error)?,
+                )
+            })
+            .collect()
+    }
+    fn security_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        let identity = |f: &crate::security::SecurityFinding| {
+            hash(&(
+                f.id.as_str(),
+                f.package.as_str(),
+                f.installed_version.as_str(),
+                f.ecosystem.as_str(),
+                &f.targets,
+            ))
         };
-        let mut item = structural_finding(&finding, change)?;
+        self.security
+            .findings
+            .iter()
+            .map(|f| {
+                imported_finding(
+                    "security",
+                    &identity(f)?,
+                    &f.severity,
+                    &f.title,
+                    vec![],
+                    &self.security.status,
+                    serde_json::to_value(f).map_err(error)?,
+                )
+            })
+            .collect()
+    }
+    fn contract_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        self.contracts.contracts.iter()
+            .flat_map(|contract| contract.changes.iter().map(move |change| (contract, change)))
+            .map(|(contract, change)| imported_finding("contract",&hash(&(&contract.provider,&change.operation,&change.kind))?,&change.severity,&change.message,vec![],&contract.source_status,json!({"provider":contract.provider,"change":change,"comparison_status":contract.comparison_status,"compared_with":"previous_explicit_import"})))
+            .collect()
+    }
+    fn test_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        let tests = &self.tests;
+        tests
+            .tests
+            .iter()
+            .filter(|test| matches!(test.outcome.as_str(), "failed" | "error"))
+            .map(|test| {
+                imported_finding(
+                    "tests",
+                    &test.id,
+                    "error",
+                    &format!(
+                        "Reported test {}: {} / {}",
+                        test.outcome, test.suite, test.name
+                    ),
+                    test.mappings
+                        .iter()
+                        .filter_map(|m| m.node.clone())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                    &tests.status,
+                    json!({"test":test,"producer_revision":UNVERIFIED,"report_path":tests.report_path}),
+                )
+            })
+            .collect()
+    }
+    fn mutation_findings(&self) -> Result<Vec<ReviewFinding>, ArchguardError> {
+        let mutations = &self.mutations;
+        mutations
+            .files
+            .iter()
+            .flat_map(|file| file.mutants.iter().map(move |mutation| (file, mutation)))
+            .filter(|(_, mutation)| matches!(mutation.status.as_str(), "Survived" | "NoCoverage"))
+            .map(|(file, mutation)| imported_finding(
+                "mutations", &hash(&(&file.path,&mutation.id))?, "warning",
+                &format!("Reported undetected mutation ({}) at {}:{}",mutation.status,file.path,mutation.location.start.line),
+                file.node.iter().cloned().collect(), &file.status,
+                json!({"path":file.path,"source_sha256":file.source_sha256,"mutation":mutation,"producer":mutations.producer,"producer_version":mutations.producer_version,"producer_revision":UNVERIFIED,"interpretation":"Review the reported mutation and test assertions. An undetected mutation is not proof of a production bug; it may be equivalent."}),
+            ))
+            .collect()
+    }
+}
+/// One review being assembled: shared analysis state and the rows each phase adds.
+struct ReviewBuilder<'a> {
+    request: &'a ReviewRequest<'a>,
+    run: &'a AnalysisRun,
+    sources: ReviewSources,
+    owners: crate::ownership::OwnershipReport,
+    names: BTreeMap<NodeId, &'a str>,
+    /// Current content hash per mapped source node name.
+    source_hashes: BTreeMap<String, String>,
+    findings: Vec<ReviewFinding>,
+    evidence: Vec<Value>,
+    gaps: Vec<Value>,
+}
+impl<'a> ReviewBuilder<'a> {
+    /// The review phases in order; decisions are evaluated by the caller.
+    fn assemble(
+        request: &'a ReviewRequest<'a>,
+        run: &'a AnalysisRun,
+        decisions: ReviewDecisions,
+    ) -> Result<ReviewReport, ArchguardError> {
+        let (root, base) = (request.root.as_path(), request.base);
+        let effective = run.effective_config();
+        let compared = base
+            .map(|b| {
+                crate::comparison::compare_to_ref(root, &effective, &run.graph, &run.report, b)
+            })
+            .transpose()?;
+        let mut review = Self::new(request, run)?;
+        review.structural_findings(compared.as_ref())?;
+        let evidence = Evidence::read(root, run)?;
+        review.record_evidence(&evidence);
+        review.findings.extend(evidence.findings()?);
+        review.bind_current_sources()?;
+        let diff = base
+            .map(|b| crate::change_context::changed_files(root, b))
+            .transpose()?;
+        let (changes, impact, architecture) = review.impact(diff.as_ref(), &evidence)?;
+        review.findings.sort_by(|a, b| {
+            priority(&a.severity)
+                .cmp(&priority(&b.severity))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let input_fingerprint = inputs(root, &effective, base)?;
+        // Unanalyzed files (including an exported decision document) are context,
+        // not analysis inputs. Adding a decision file cannot invalidate itself.
+        let revision = hash(
+            &json!({"inputs":input_fingerprint,"findings":review.findings,"owners":review.owners,"architecture":architecture}),
+        )?;
+        let selected_config = request.config_path.map(std::fs::canonicalize).transpose()?;
+        Ok(ReviewReport {
+            recording_guard: Some(ReviewGuard {
+                config_path: selected_config.clone(),
+                declared_inputs: request.before.clone(),
+            }),
+            schema_version: 1,
+            revision,
+            input_fingerprint,
+            decision_fingerprint: request.decision_fingerprint.clone(),
+            generated_at_unix: request.now,
+            project_root: root.to_string_lossy().into_owned(),
+            base_ref: base.map(str::to_owned),
+            config_path: selected_config.map(|p| p.to_string_lossy().into_owned()),
+            status: String::new(),
+            summary: Value::Null,
+            comparison: compared
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(error)?,
+            changes,
+            impact,
+            findings: review.findings,
+            evidence: review.evidence,
+            gaps: review.gaps,
+            decisions,
+            unmatched_decisions: vec![],
+            architecture,
+            limitations: LIMITATIONS.map(String::from).to_vec(),
+        })
+    }
+    fn new(request: &'a ReviewRequest<'a>, run: &'a AnalysisRun) -> Result<Self, ArchguardError> {
+        let root = request.root.as_path();
+        let sources = crate::review_sources::collect_review_sources(
+            root,
+            &run.config,
+            &run.graph,
+            &run.config.review.git_since,
+        )?;
+        let owners = crate::ownership::analyze_ownership(
+            root,
+            &run.graph,
+            &sources,
+            &run.config.ownership_rules,
+        )?;
+        let names: BTreeMap<_, _> = run
+            .graph
+            .nodes
+            .iter()
+            .map(|n| (n.id, n.name.as_str()))
+            .collect();
+        let mut source_hashes = BTreeMap::new();
+        for source in &sources.files {
+            if let (Some(path), Some(name)) = (&source.path, names.get(&source.node_id)) {
+                source_hashes.insert((*name).to_owned(), snapshot_fingerprint(root, path));
+            }
+        }
+        Ok(Self {
+            request,
+            run,
+            sources,
+            owners,
+            names,
+            source_hashes,
+            findings: Vec::new(),
+            evidence: Vec::new(),
+            gaps: Vec::new(),
+        })
+    }
+    /// Current architecture findings, marked new or existing against the base;
+    /// base findings no longer observed follow them.
+    fn structural_findings(&mut self, compared: Option<&Comparison>) -> Result<(), ArchguardError> {
+        let new: BTreeSet<_> = compared
+            .map(|c| c.new_findings.iter().map(comparison::identity).collect())
+            .unwrap_or_default();
+        let edges = self.canonical_edges();
+        let run = self.run;
+        for finding in comparison::comparison_findings(&run.graph, &run.report, &run.config)? {
+            let change = if self.request.base.is_none() {
+                "not_compared"
+            } else if new.contains(&comparison::identity(&finding)) {
+                "new"
+            } else {
+                "existing"
+            };
+            let item = self.bound_finding(&finding, change, &edges)?;
+            self.findings.push(item);
+        }
+        for f in compared.iter().flat_map(|c| &c.resolved_findings) {
+            self.findings
+                .push(structural_finding(f, "not_observed_in_current")?);
+        }
+        Ok(())
+    }
+    /// Graph edges by node name, so fingerprints survive renumbered node ids.
+    fn canonical_edges(&self) -> Vec<Value> {
+        self.run
+            .graph
+            .edges
+            .iter()
+            .map(|e| {
+                json!({
+                    "from":self.names.get(&e.from),"to":self.names.get(&e.to),"count":e.count,"refs":e.refs
+                })
+            })
+            .collect()
+    }
+    /// An architecture finding with the edges, sources and owners of its nodes.
+    fn bound_finding(
+        &self,
+        finding: &Finding,
+        change: &str,
+        edges: &[Value],
+    ) -> Result<ReviewFinding, ArchguardError> {
+        let mut item = structural_finding(finding, change)?;
         let related = |name: &str| {
             finding.nodes.iter().any(|n| {
                 name == n
@@ -220,22 +530,24 @@ pub fn generate_review(
                         .is_some_and(|rest| rest.starts_with('/'))
             })
         };
-        let edges: Vec<_> = canonical_edges
+        let edges: Vec<_> = edges
             .iter()
             .filter(|e| {
                 related(e["from"].as_str().unwrap_or("")) || related(e["to"].as_str().unwrap_or(""))
             })
             .collect();
-        let hashes: BTreeMap<_, _> = source_hashes
+        let hashes: BTreeMap<_, _> = self
+            .source_hashes
             .iter()
             .filter(|(name, _)| related(name))
             .collect();
         // Full stored edges and source contents bind acceptance: unchanged SCC
         // membership must not hide a denser cycle or changed source evidence.
         item.fingerprint = hash(
-            &json!({"finding":item.evidence,"edges":edges,"sources":hashes,"policy":run.config}),
+            &json!({"finding":item.evidence,"edges":edges,"sources":hashes,"policy":self.run.config}),
         )?;
-        item.suggested_owners = owners
+        item.suggested_owners = self
+            .owners
             .assignments
             .iter()
             .filter(|o| related(&o.name))
@@ -243,198 +555,102 @@ pub fn generate_review(
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        findings.push(item);
+        Ok(item)
     }
-    if let Some(c) = &comparison {
-        for f in &c.resolved_findings {
-            findings.push(structural_finding(f, "not_observed_in_current")?);
+    /// One evidence row; missing, incomplete or unverified evidence is also a gap.
+    fn record(
+        &mut self,
+        source: &str,
+        status: &str,
+        unverified: bool,
+        count: usize,
+        diagnostics: &[String],
+    ) {
+        self.evidence.push(json!({"source":source,"status":status,"records":count,"producer_revision":if unverified {UNVERIFIED} else {"analyzed_inputs"},"diagnostics":diagnostics}));
+        if !AVAILABLE.contains(&status) {
+            self.gaps.push(json!({"source":source,"status":status,"reason":"Evidence is missing, incomplete, stale or unavailable; absence of findings is not a clean result."}));
+        }
+        if unverified && !NOT_IMPORTED.contains(&status) {
+            self.gaps.push(json!({"source":source,"status":UNVERIFIED,"reason":"Producer revision, tool configuration and tests are not verified by this import."}));
         }
     }
-    let coverage = crate::test_coverage::read_test_coverage(&root, &run.config, &run.graph);
-    let quality = crate::quality_findings::read_quality_findings(&root, &run.config, &run.graph);
-    let tests = crate::test_evidence::read_test_evidence(&root, &run.config, &run.graph);
-    let security = crate::security::read_security(&root, &run.config);
-    let mutations = crate::mutation_report::read_mutations(&root, &run.config, &run.graph);
-    let duplicates = crate::duplicates::read_duplicates(&root, &run.config, &run.graph);
-    let services = crate::services::analyze_services(&root)?;
-    let contracts = crate::api_contracts::read_api_contracts(&root, &services);
-    let mut evidence_rows = vec![];
-    let mut gaps = vec![];
-    let mut record = |source: &str,
-                      status: &str,
-                      unverified: bool,
-                      count: usize,
-                      diagnostics: &[String]| {
-        evidence_rows.push(json!({"source":source,"status":status,"records":count,"producer_revision":if unverified {"unverified"} else {"analyzed_inputs"},"diagnostics":diagnostics}));
-        if !matches!(
-            status,
-            "ready" | "complete" | "available" | "not_applicable"
-        ) {
-            gaps.push(json!({"source":source,"status":status,"reason":"Evidence is missing, incomplete, stale or unavailable; absence of findings is not a clean result."}));
-        }
-        if unverified && !matches!(status, "not_imported" | "not_scanned" | "error") {
-            gaps.push(json!({"source":source,"status":"unverified","reason":"Producer revision, tool configuration and tests are not verified by this import."}));
-        }
-    };
-    let semantic = run.graph.semantic.as_ref();
-    record(
-        "semantic",
-        semantic.map_or("unavailable", |s| s.status.as_str()),
-        false,
-        run.graph.nodes.len(),
-        &semantic.map(|s| s.diagnostics.clone()).unwrap_or_default(),
-    );
-    record(
-        "coverage",
-        &coverage.status,
-        true,
-        coverage.files.len(),
-        &coverage.diagnostics,
-    );
-    record(
-        "quality",
-        &quality.status,
-        true,
-        quality.findings.len(),
-        &quality.diagnostics,
-    );
-    record(
-        "tests",
-        &tests.status,
-        true,
-        tests.tests.len(),
-        &tests.diagnostics,
-    );
-    record(
-        "security",
-        &security.status,
-        false,
-        security.findings.len(),
-        &security.diagnostics,
-    );
-    record(
-        "mutations",
-        &mutations.status,
-        true,
-        mutations.files.len(),
-        &mutations.diagnostics,
-    );
-    record(
-        "contracts",
-        &contracts.status,
-        true,
-        contracts.contracts.len(),
-        &contracts.diagnostics,
-    );
-    record(
-        "duplicates",
-        &duplicates.status,
-        true,
-        duplicates.groups.len(),
-        &duplicates.diagnostics,
-    );
-    for group in &duplicates.groups {
-        findings.push(imported_finding("duplication",&group.id,"warning",
-            &format!("Reported duplicate block: {} tokens at {} source locations",group.tokens,group.occurrences.len()),
-            group.occurrences.iter().filter_map(|o|o.node.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
-            &group.status,json!({"group":group,"producer_version":duplicates.producer_version,"producer_revision":"unverified"}))?);
-    }
-    for f in &quality.findings {
-        if f.suppressed || f.baseline_state.as_deref() == Some("absent") || f.level == "none" {
-            continue;
-        }
-        findings.push(imported_finding(
-            "quality",
-            &f.id,
-            &f.level,
-            &f.message,
-            f.node.iter().cloned().collect(),
-            &f.status,
-            serde_json::to_value(f).map_err(error)?,
-        )?);
-    }
-    for f in &security.findings {
-        findings.push(imported_finding(
+    fn record_evidence(&mut self, e: &Evidence) {
+        let graph = &self.run.graph;
+        let semantic = graph.semantic.as_ref();
+        self.record(
+            "semantic",
+            semantic.map_or("unavailable", |s| s.status.as_str()),
+            false,
+            graph.nodes.len(),
+            &semantic.map(|s| s.diagnostics.clone()).unwrap_or_default(),
+        );
+        let (c, q, t, s) = (&e.coverage, &e.quality, &e.tests, &e.security);
+        self.record("coverage", &c.status, true, c.files.len(), &c.diagnostics);
+        self.record("quality", &q.status, true, q.findings.len(), &q.diagnostics);
+        self.record("tests", &t.status, true, t.tests.len(), &t.diagnostics);
+        self.record(
             "security",
-            &hash(&(
-                f.id.as_str(),
-                f.package.as_str(),
-                f.installed_version.as_str(),
-                f.ecosystem.as_str(),
-                &f.targets,
-            ))?,
-            &f.severity,
-            &f.title,
-            vec![],
-            &security.status,
-            serde_json::to_value(f).map_err(error)?,
-        )?);
+            &s.status,
+            false,
+            s.findings.len(),
+            &s.diagnostics,
+        );
+        let (m, a, d) = (&e.mutations, &e.contracts, &e.duplicates);
+        self.record("mutations", &m.status, true, m.files.len(), &m.diagnostics);
+        self.record(
+            "contracts",
+            &a.status,
+            true,
+            a.contracts.len(),
+            &a.diagnostics,
+        );
+        self.record(
+            "duplicates",
+            &d.status,
+            true,
+            d.groups.len(),
+            &d.diagnostics,
+        );
     }
-    for contract in &contracts.contracts {
-        for change in &contract.changes {
-            findings.push(imported_finding("contract",&hash(&(&contract.provider,&change.operation,&change.kind))?,&change.severity,&change.message,vec![],&contract.source_status,json!({"provider":contract.provider,"change":change,"comparison_status":contract.comparison_status,"compared_with":"previous_explicit_import"}))?);
-        }
-    }
-    for test in &tests.tests {
-        if !matches!(test.outcome.as_str(), "failed" | "error") {
-            continue;
-        }
-        findings.push(imported_finding(
-            "tests",
-            &test.id,
-            "error",
-            &format!(
-                "Reported test {}: {} / {}",
-                test.outcome, test.suite, test.name
-            ),
-            test.mappings
+    /// A report may already be stale when accepted. Its stale flag and imported
+    /// hashes do not change on a second edit; bind decisions to current mapped
+    /// source contents as well, without claiming that the producer was rerun.
+    fn bind_current_sources(&mut self) -> Result<(), ArchguardError> {
+        let source_hashes = &self.source_hashes;
+        for finding in self
+            .findings
+            .iter_mut()
+            .filter(|f| f.category != "architecture")
+        {
+            let current_sources: BTreeMap<_, _> = finding
+                .nodes
                 .iter()
-                .filter_map(|m| m.node.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect(),
-            &tests.status,
-            json!({"test":test,"producer_revision":"unverified","report_path":tests.report_path}),
-        )?);
-    }
-    for file in &mutations.files {
-        for mutation in &file.mutants {
-            if !matches!(mutation.status.as_str(), "Survived" | "NoCoverage") {
-                continue;
-            }
-            findings.push(imported_finding(
-                "mutations", &hash(&(&file.path,&mutation.id))?, "warning",
-                &format!("Reported undetected mutation ({}) at {}:{}",mutation.status,file.path,mutation.location.start.line),
-                file.node.iter().cloned().collect(), &file.status,
-                json!({"path":file.path,"source_sha256":file.source_sha256,"mutation":mutation,"producer":mutations.producer,"producer_version":mutations.producer_version,"producer_revision":"unverified","interpretation":"Review the reported mutation and test assertions. An undetected mutation is not proof of a production bug; it may be equivalent."}),
-            )?);
+                .map(|name| (name, source_hashes.get(name)))
+                .collect();
+            finding.evidence["current_source_hashes"] =
+                serde_json::to_value(current_sources).map_err(error)?;
+            finding.fingerprint = hash(&(&finding.source_status, &finding.evidence))?;
         }
+        Ok(())
     }
-    // A report may already be stale when accepted. Its stale flag and imported
-    // hashes do not change on a second edit; bind decisions to current mapped
-    // source contents as well, without claiming that the producer was rerun.
-    for finding in findings.iter_mut().filter(|f| f.category != "architecture") {
-        let current_sources: BTreeMap<_, _> = finding
-            .nodes
-            .iter()
-            .map(|name| (name, source_hashes.get(name)))
-            .collect();
-        finding.evidence["current_source_hashes"] =
-            serde_json::to_value(current_sources).map_err(error)?;
-        finding.fingerprint = hash(&(&finding.source_status, &finding.evidence))?;
-    }
-    let diff = base
-        .map(|b| crate::change_context::changed_files(&root, b))
-        .transpose()?;
-    let mut targets = BTreeSet::new();
-    let mut unresolved = Vec::new();
-    if let Some(diff) = &diff {
+    /// Changed sources with one current identity; without a base, the finding nodes.
+    /// Returns the targets and the changed files that could not be mapped.
+    fn targets(&self, diff: Option<&DiffSelection>) -> (BTreeSet<String>, Vec<Value>) {
+        let mut targets = BTreeSet::new();
+        let mut unresolved = Vec::new();
+        let Some(diff) = diff else {
+            for f in &self.findings {
+                targets.extend(f.nodes.clone());
+            }
+            return (targets, unresolved);
+        };
         for (path, status) in &diff.files {
-            let matches: Vec<_> = sources
+            let matches: Vec<_> = self
+                .sources
                 .files
                 .iter()
                 .filter(|f| f.path.as_deref() == Some(path))
-                .filter_map(|f| names.get(&f.node_id).copied())
+                .filter_map(|f| self.names.get(&f.node_id).copied())
                 .collect();
             if status != "D" && matches.len() == 1 {
                 targets.insert(matches[0].to_owned());
@@ -442,92 +658,67 @@ pub fn generate_review(
                 unresolved.push(json!({"path":path,"status":status,"reason":if status=="D" {"deleted_source_former_callers_not_reconstructed"} else {"not_uniquely_mapped_source"}}));
             }
         }
-    } else {
-        for f in &findings {
-            targets.extend(f.nodes.clone());
+        (targets, unresolved)
+    }
+    /// Change impact on files, tests and modeled components. Returns the
+    /// `changes`, `impact` and `architecture` report sections.
+    fn impact(
+        &mut self,
+        diff: Option<&DiffSelection>,
+        evidence: &Evidence,
+    ) -> Result<(Option<Value>, Value, Value), ArchguardError> {
+        let (targets, unresolved) = self.targets(diff);
+        let affected = affected_files(&self.run.graph, &targets);
+        let target_list: Vec<_> = targets.iter().take(256).cloned().collect();
+        let test_impact =
+            crate::test_evidence::test_impact(&self.run.graph, &evidence.tests, &target_list);
+        if targets.len() > 256 {
+            self.gaps.push(json!({"source":"impact","status":"partial","reason":"Test recommendations are limited to the first 256 targets.","targets_total":targets.len()}));
         }
+        if !unresolved.is_empty() {
+            self.gaps.push(json!({"source":"changes","status":"partial","reason":"Some changed files have no current source identity. Former callers of deletions are not reconstructed.","files":unresolved}));
+        }
+        let (architecture, affected_components) =
+            self.architecture(&affected, &evidence.services)?;
+        let changes =
+            diff.map(|d| json!({"base_commit":d.commit,"files":d.files,"unresolved":unresolved}));
+        let impact = json!({"selection":if self.request.base.is_some() {"changed_sources"} else {"finding_sources"},"targets":targets,"affected_files":affected,"affected_components":affected_components,"tests":test_impact,"safe_to_skip_other_tests":false});
+        Ok((changes, impact, architecture))
     }
-    let affected = affected_files(&run.graph, &targets);
-    let target_list: Vec<_> = targets.iter().take(256).cloned().collect();
-    let test_impact = crate::test_evidence::test_impact(&run.graph, &tests, &target_list);
-    if targets.len() > 256 {
-        gaps.push(json!({"source":"impact","status":"partial","reason":"Test recommendations are limited to the first 256 targets.","targets_total":targets.len()}));
+    /// Architecture context with pattern assessment, and the modeled
+    /// components that contain an affected file.
+    fn architecture(
+        &self,
+        affected: &BTreeSet<String>,
+        services: &ServiceTopology,
+    ) -> Result<(Value, Vec<String>), ArchguardError> {
+        let (root, run) = (self.request.root.as_path(), self.run);
+        let context =
+            crate::architecture::architecture_context(root, &run.config, &run.graph, &run.report);
+        let affected_components: Vec<_> = context
+            .observed
+            .target_model
+            .as_ref()
+            .map(|m| {
+                m.components
+                    .iter()
+                    .filter(|c| c.nodes.iter().any(|n| affected.contains(n)))
+                    .map(|c| c.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut architecture = serde_json::to_value(context).map_err(error)?;
+        architecture["patterns"] =
+            serde_json::to_value(crate::patterns::analyze_architecture_patterns(
+                root,
+                &run.config,
+                &run.graph,
+                &crate::semantic_calls::analyze_calls(root, &run.config),
+                services,
+            ))
+            .map_err(error)?;
+        Ok((architecture, affected_components))
     }
-    if !unresolved.is_empty() {
-        gaps.push(json!({"source":"changes","status":"partial","reason":"Some changed files have no current source identity. Former callers of deletions are not reconstructed.","files":unresolved}));
-    }
-    let architecture =
-        crate::architecture::architecture_context(&root, &run.config, &run.graph, &run.report);
-    let affected_components: Vec<_> = architecture
-        .observed
-        .target_model
-        .as_ref()
-        .map(|m| {
-            m.components
-                .iter()
-                .filter(|c| c.nodes.iter().any(|n| affected.contains(n)))
-                .map(|c| c.name.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut architecture = serde_json::to_value(architecture).map_err(error)?;
-    architecture["patterns"] =
-        serde_json::to_value(crate::patterns::analyze_architecture_patterns(
-            &root,
-            &run.config,
-            &run.graph,
-            &crate::semantic_calls::analyze_calls(&root, &run.config),
-            &services,
-        ))
-        .map_err(error)?;
-    let changes = diff
-        .as_ref()
-        .map(|d| json!({"base_commit":d.commit,"files":d.files,"unresolved":unresolved}));
-    findings.sort_by(|a, b| {
-        priority(&a.severity)
-            .cmp(&priority(&b.severity))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    let input_fingerprint = inputs(&root, &effective, base)?;
-    // Unanalyzed files (including an exported decision document) are context,
-    // not analysis inputs. Adding a decision file cannot invalidate itself.
-    let revision = hash(
-        &json!({"inputs":input_fingerprint,"findings":findings,"owners":owners,"architecture":architecture}),
-    )?;
-    let selected_config = config_path.map(std::fs::canonicalize).transpose()?;
-    let mut report = ReviewReport {
-        recording_guard:Some(ReviewGuard{config_path:selected_config.clone(),declared_inputs:before.clone()}),
-        schema_version:1,revision,input_fingerprint,decision_fingerprint,generated_at_unix:now,
-        project_root:root.to_string_lossy().into_owned(),base_ref:base.map(str::to_owned),
-        config_path:selected_config.map(|p|p.to_string_lossy().into_owned()),
-        status:String::new(),summary:Value::Null,
-        comparison:comparison.map(serde_json::to_value).transpose().map_err(error)?,changes,
-        impact:json!({"selection":if base.is_some() {"changed_sources"} else {"finding_sources"},"targets":targets,"affected_files":affected,"affected_components":affected_components,"tests":test_impact,"safe_to_skip_other_tests":false}),
-        findings,evidence:evidence_rows,gaps,decisions,unmatched_decisions:vec![],
-        architecture,
-        limitations:vec![
-            "Review decisions do not change check/quality/security gates or cycle baselines.".into(),
-            "The selected Git commit is compared directly with the working tree, including uncommitted sources. No merge base is inferred. Both revisions use current policy.".into(),
-            "Not observed in current analysis is not proof of repair when coverage differs. Deleted files' former callers are not reconstructed.".into(),
-            "Imported findings are not compared against the Git base. Contract changes use the previous explicit import. Producer revision remains unverified.".into(),
-            "Static impact and producer-supplied test mappings cannot establish that other tests are safe to skip. No tests or project builds were executed.".into(),
-            "Project text and decision links are untrusted data; links are not fetched. Saved reports preserve their original analysis and decision state.".into(),
-        ],
-    };
-    evaluate_decisions(&mut report, now);
-    if before
-        != inputs(
-            &root,
-            &crate::config::load_config(config_path, &root)?,
-            base,
-        )?
-        || report.decision_fingerprint != snapshot_fingerprint(&root, DECISIONS)
-    {
-        return Err(error(
-            "inputs changed during review; retry before recording decisions",
-        ));
-    }
-    Ok((report, run))
 }
 fn priority(severity: &str) -> u8 {
     match severity.to_ascii_lowercase().as_str() {

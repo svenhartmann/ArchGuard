@@ -2,7 +2,8 @@
 use super::service_communications::{Token, arguments, is, lex, scopes};
 use super::support::{diagnostic, relative};
 use archguard_core::{
-    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology,
+    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
+    ServiceTopology,
 };
 use serde::Deserialize;
 use serde_yaml_ng::Value;
@@ -458,6 +459,22 @@ fn service_scope(report: &ServiceTopology, id: &str) -> String {
         })
         .unwrap_or_default()
 }
+type Edges = BTreeMap<(String, String, Kind), BTreeSet<ServiceEvidence>>;
+const CLIENT_TYPES: [&str; 3] = ["WebClient", "RestClient", "RestTemplate"];
+const CLIENT_CALLS: [&str; 7] = [
+    "uri",
+    "baseUrl",
+    "getForObject",
+    "getForEntity",
+    "postForObject",
+    "postForEntity",
+    "exchange",
+];
+const ROUTE: &str = "Literal Spring Gateway/Zuul route. Union of declared profiles; not evidence of a runtime request. URL path and query omitted.";
+const REFERENCE: &str = "Spring configuration/discovery-server reference; not an application API call. Profiles are not evaluated.";
+const CLIENT_CALL: &str = "Spring HTTP client destination resolved from a literal, unique local string or literal DiscoveryClient helper or pure String parameter helper. Static source candidate; execution is not proven. URL values omitted.";
+const FEIGN: &str = "Literal Feign client declaration; runtime execution is not proven.";
+
 pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
     let projects: Vec<_> = report
         .projects
@@ -468,95 +485,123 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
     if projects.is_empty() {
         return;
     }
-    let mut files = BTreeMap::new();
-    let mut names = BTreeMap::new();
-    let mut budget = 0;
-    for project in &projects {
-        let mut source = Vec::new();
-        inputs(
-            root,
-            &root.join(&project.path).join("src/main"),
-            &mut source,
-            0,
-            &mut budget,
-        );
-        let found: BTreeSet<_> = source
+    let mut spring = Spring {
+        root,
+        report,
+        files: BTreeMap::new(),
+        names: BTreeMap::new(),
+        owners: BTreeMap::new(),
+        edges: BTreeMap::new(),
+        publications: Vec::new(),
+        subscriptions: Vec::new(),
+        budget: 0,
+    };
+    spring.read_sources(&projects);
+    spring.name_from_compose_images(&projects);
+    spring.map_owners(&projects);
+    spring.share_configuration(&projects);
+    spring.collect_dependencies(&projects);
+    spring.match_messages();
+    spring.finish();
+}
+
+/// State of one Spring scan: sources and identities per project id, then the found edges.
+struct Spring<'a> {
+    root: &'a Path,
+    report: &'a mut ServiceTopology,
+    files: BTreeMap<String, Vec<Input>>,
+    names: BTreeMap<String, String>,
+    owners: BTreeMap<String, Vec<String>>,
+    edges: Edges,
+    publications: Vec<MessageEndpoint>,
+    subscriptions: Vec<MessageEndpoint>,
+    budget: usize,
+}
+
+impl Spring<'_> {
+    fn read_sources(&mut self, projects: &[ServiceProject]) {
+        for project in projects {
+            let mut source = Vec::new();
+            inputs(
+                self.root,
+                &self.root.join(&project.path).join("src/main"),
+                &mut source,
+                0,
+                &mut self.budget,
+            );
+            let found = Self::application_names(&source);
+            if found.len() == 1 {
+                self.names
+                    .insert(project.id.clone(), found.into_iter().next().unwrap());
+            } else if found.len() > 1 {
+                diagnostic(
+                    self.report,
+                    &project.manifest,
+                    None,
+                    "Multiple Spring application names across profiles; service identity left unresolved.",
+                );
+            }
+            self.files.insert(project.id.clone(), source);
+        }
+    }
+
+    fn application_names(source: &[Input]) -> BTreeSet<String> {
+        source
             .iter()
             .filter(|s| local_configuration(&s.file))
             .flat_map(settings)
             .filter(|(k, _)| k == "spring.application.name")
             .map(|(_, v)| v)
             .filter(|v| !v.contains("${"))
-            .collect();
-        if found.len() == 1 {
-            names.insert(project.id.clone(), found.into_iter().next().unwrap());
-        } else if found.len() > 1 {
-            diagnostic(
-                report,
-                &project.manifest,
-                None,
-                "Multiple Spring application names across profiles; service identity left unresolved.",
-            );
-        }
-        files.insert(project.id.clone(), source);
+            .collect()
     }
+
     // Compose image identity supplies a project mapping only when the artifact name matches exactly.
-    let mut images = BTreeMap::<String, BTreeSet<String>>::new();
-    for file in &report.compose_files {
-        if fs::symlink_metadata(root.join(file))
-            .map_or(true, |m| m.file_type().is_symlink() || m.len() > 1_048_576)
-        {
-            continue;
+    fn name_from_compose_images(&mut self, projects: &[ServiceProject]) {
+        let mut images = BTreeMap::<String, BTreeSet<String>>::new();
+        for file in &self.report.compose_files {
+            for (name, artifact) in compose_artifacts(self.root, file) {
+                images.entry(artifact).or_default().insert(name);
+            }
         }
-        if let Ok(text) = fs::read_to_string(root.join(file))
-            && let Ok(doc) = serde_yaml_ng::from_str::<Value>(&text)
-            && let Some(services) = doc.get("services").and_then(Value::as_mapping)
-        {
-            for (name, service) in services {
-                if let (Some(name), Some(image)) =
-                    (name.as_str(), service.get("image").and_then(Value::as_str))
-                {
-                    let artifact = image
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or("")
-                        .split([':', '@'])
-                        .next()
-                        .unwrap_or("");
-                    images
-                        .entry(artifact.into())
-                        .or_default()
-                        .insert(name.into());
-                }
+        for project in projects {
+            if !self.names.contains_key(&project.id)
+                && let Some(matches) = images.get(&project.name)
+                && matches.len() == 1
+            {
+                self.names
+                    .insert(project.id.clone(), matches.first().unwrap().clone());
             }
         }
     }
-    for project in &projects {
-        if !names.contains_key(&project.id)
-            && let Some(matches) = images.get(&project.name)
-            && matches.len() == 1
-        {
-            names.insert(project.id.clone(), matches.first().unwrap().clone());
+
+    fn map_owners(&mut self, projects: &[ServiceProject]) {
+        for project in projects {
+            let Some(name) = self.names.get(&project.id) else {
+                continue;
+            };
+            if self.names.values().filter(|v| *v == name).count() != 1 {
+                diagnostic(
+                    self.report,
+                    &project.manifest,
+                    None,
+                    "Duplicate Spring service identity; project mapping omitted.",
+                );
+                continue;
+            }
+            let name = name.clone();
+            let mapped = self.map_services(project, &name);
+            self.owners.insert(project.id.clone(), mapped);
         }
     }
-    let mut owners = BTreeMap::new();
-    for project in &projects {
-        let Some(name) = names.get(&project.id) else {
-            continue;
-        };
-        if names.values().filter(|v| *v == name).count() != 1 {
-            diagnostic(
-                report,
-                &project.manifest,
-                None,
-                "Duplicate Spring service identity; project mapping omitted.",
-            );
-            continue;
-        }
-        let existing: Vec<_> = report
+
+    /// Attach the project to its Compose services, or add a Spring service for it.
+    fn map_services(&mut self, project: &ServiceProject, name: &str) -> Vec<String> {
+        let existing: Vec<_> = self
+            .report
             .services
             .iter()
-            .filter(|s| s.name == *name && !s.compose_file.is_empty())
+            .filter(|s| s.name == name && !s.compose_file.is_empty())
             .map(|s| s.id.clone())
             .collect();
         let ids = if existing.is_empty() {
@@ -566,15 +611,15 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
         };
         let mut mapped = Vec::new();
         for id in ids {
-            if let Some(service) = report.services.iter_mut().find(|s| s.id == id) {
+            if let Some(service) = self.report.services.iter_mut().find(|s| s.id == id) {
                 if service.project.is_some() && service.project.as_ref() != Some(&project.id) {
                     continue;
                 }
                 service.project = Some(project.id.clone());
             } else {
-                report.services.push(Service {
+                self.report.services.push(Service {
                     id: id.clone(),
-                    name: name.clone(),
+                    name: name.into(),
                     compose_file: String::new(),
                     build_context: Some(project.path.clone()),
                     networks: vec![],
@@ -584,414 +629,520 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
             }
             mapped.push(id);
         }
-        report.services.retain(|s| s.id != project.id);
-        if let Some(p) = report.projects.iter_mut().find(|p| p.id == project.id) {
+        self.report.services.retain(|s| s.id != project.id);
+        if let Some(p) = self.report.projects.iter_mut().find(|p| p.id == project.id) {
             p.kind = "application".into();
             p.runtime = Some("spring".into());
         }
-        owners.insert(project.id.clone(), mapped);
+        mapped
     }
+
     // Only explicitly configured classpath native repositories are considered.
     // Filename application identity is the Spring Config naming contract, not a directory guess.
-    let mut shared = BTreeMap::<String, Vec<Input>>::new();
-    for project in &projects {
-        let prefix = if project.path == "." {
-            String::new()
-        } else {
-            format!("{}/", project.path)
-        };
-        let resources = format!("{prefix}src/main/resources/");
-        for input in files[&project.id]
+    fn share_configuration(&mut self, projects: &[ServiceProject]) {
+        let mut shared = BTreeMap::<String, Vec<Input>>::new();
+        for project in projects {
+            let source = &self.files[&project.id];
+            for directory in native_directories(project, source) {
+                for candidate in source {
+                    if let Some(owner) = self.shared_owner(candidate, &directory) {
+                        shared.entry(owner).or_default().push(candidate.clone());
+                    }
+                }
+            }
+        }
+        for (id, source) in &mut self.files {
+            source.retain(|i| i.file.ends_with(".java") || local_configuration(&i.file));
+            source.extend(shared.remove(id).unwrap_or_default());
+        }
+    }
+
+    /// The project id whose application name alone matches a file directly in `directory`.
+    fn shared_owner(&self, candidate: &Input, directory: &str) -> Option<String> {
+        let filename = candidate.file.strip_prefix(directory)?;
+        if filename.contains('/') || filename.ends_with(".java") {
+            return None;
+        }
+        let stem = Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let matches: Vec<_> = self
+            .names
             .iter()
-            .filter(|i| local_configuration(&i.file))
-        {
-            for (key, value) in settings(input) {
-                if !matches!(
-                    key.as_str(),
-                    "spring.cloud.config.server.native.search-locations"
-                        | "spring.cloud.config.server.native.searchLocations"
-                ) {
-                    continue;
-                }
-                for location in value.split(',') {
-                    let Some(location) = location.trim().strip_prefix("classpath:") else {
-                        continue;
-                    };
-                    let location = location.trim_matches('/');
-                    if location.contains("..") || location.contains(['$', '*', '\\']) {
-                        continue;
-                    }
-                    let directory = format!("{resources}{location}/");
-                    for candidate in &files[&project.id] {
-                        let Some(filename) = candidate.file.strip_prefix(&directory) else {
-                            continue;
-                        };
-                        if filename.contains('/') || filename.ends_with(".java") {
-                            continue;
-                        }
-                        let stem = Path::new(filename)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        let matches: Vec<_> = names
-                            .iter()
-                            .filter(|(_, name)| {
-                                stem == *name
-                                    || stem
-                                        .strip_prefix(name.as_str())
-                                        .is_some_and(|tail| tail.starts_with('-'))
-                            })
-                            .collect();
-                        if matches.len() == 1 {
-                            shared
-                                .entry(matches[0].0.clone())
-                                .or_default()
-                                .push(candidate.clone());
-                        }
+            .filter(|(_, name)| {
+                stem == *name
+                    || stem
+                        .strip_prefix(name.as_str())
+                        .is_some_and(|tail| tail.starts_with('-'))
+            })
+            .collect();
+        (matches.len() == 1).then(|| matches[0].0.clone())
+    }
+
+    fn collect_dependencies(&mut self, projects: &[ServiceProject]) {
+        let files = std::mem::take(&mut self.files);
+        for project in projects {
+            let Some(owner_ids) = self.owners.get(&project.id).cloned() else {
+                continue;
+            };
+            let source = &files[&project.id];
+            for from in &owner_ids {
+                let targets = self.targets(from);
+                for input in source {
+                    if input.file.ends_with(".java") {
+                        self.java_dependencies(input, source, from, &targets);
+                    } else {
+                        self.configuration_dependencies(input, from, &targets);
                     }
                 }
             }
         }
     }
-    for (id, source) in &mut files {
-        source.retain(|i| i.file.ends_with(".java") || local_configuration(&i.file));
-        source.extend(shared.remove(id).unwrap_or_default());
-    }
-    let mut edges = BTreeMap::new();
-    let mut publications = Vec::new();
-    let mut subscriptions = Vec::new();
-    for project in &projects {
-        let Some(owner_ids) = owners.get(&project.id) else {
-            continue;
-        };
-        for from in owner_ids {
-            let scope = service_scope(report, from);
-            let mut targets = BTreeMap::<String, Vec<String>>::new();
-            for service in &report.services {
-                if scope.is_empty() || service_scope(report, &service.id) == scope {
-                    targets
-                        .entry(service.name.to_lowercase())
-                        .or_default()
-                        .push(service.id.clone());
-                }
+
+    /// Service ids by lowercase name in the scope of `from`; unscoped names prefer deployed services.
+    fn targets(&self, from: &str) -> BTreeMap<String, Vec<String>> {
+        let scope = service_scope(self.report, from);
+        let mut targets = BTreeMap::<String, Vec<String>>::new();
+        for service in &self.report.services {
+            if scope.is_empty() || service_scope(self.report, &service.id) == scope {
+                targets
+                    .entry(service.name.to_lowercase())
+                    .or_default()
+                    .push(service.id.clone());
             }
-            if scope.is_empty() {
-                for ids in targets.values_mut() {
-                    let deployed: Vec<_> = ids
-                        .iter()
-                        .filter(|id| {
-                            report
-                                .services
-                                .iter()
-                                .any(|s| s.id == **id && !s.compose_file.is_empty())
-                        })
-                        .cloned()
-                        .collect();
-                    if !deployed.is_empty() {
-                        *ids = deployed;
-                    }
-                }
-            }
-            for input in &files[&project.id] {
-                if !input.file.ends_with(".java") {
-                    for (key, value) in settings(input) {
-                        let zuul = key.starts_with("zuul.routes.")
-                            && (key.ends_with(".url")
-                                || key.ends_with(".serviceId")
-                                || key.ends_with(".service-id"));
-                        let route = zuul
-                            || key.starts_with("spring.cloud.gateway.")
-                                && key.contains(".routes.")
-                                && key.ends_with(".uri");
-                        let reference = key == "spring.config.import"
-                            || key == "spring.cloud.config.uri"
-                            || key.to_lowercase().starts_with("eureka.client.serviceurl.");
-                        if key == "spring.cloud.config.server.git.uri" {
-                            diagnostic(
-                                report,
-                                &input.file,
-                                Some(from),
-                                "External Spring Config repository is not fetched; remote properties are not covered.",
-                            );
-                        }
-                        if !route && !reference {
-                            continue;
-                        }
-                        if value.contains("${") {
-                            diagnostic(
-                                report,
-                                &input.file,
-                                Some(from),
-                                "Dynamic Spring endpoint/property is not expanded; runtime configuration may add dependencies.",
-                            );
-                            continue;
-                        }
-                        for value in value.split(',') {
-                            let value = value
-                                .trim()
-                                .trim_start_matches("optional:")
-                                .trim_start_matches("configserver:");
-                            if let Some(name) = host(value).or_else(|| {
-                                (zuul && !key.ends_with(".url") && !value.contains(['/', '$']))
-                                    .then(|| value.to_lowercase())
-                            }) && let Some(to) = unique(&targets, &name)
-                            {
-                                insert(
-                                    &mut edges,
-                                    from,
-                                    &to,
-                                    if route {
-                                        Kind::ConfiguredHttp
-                                    } else {
-                                        Kind::ConfiguredReference
-                                    },
-                                    proof(
-                                        input,
-                                        &key,
-                                        None,
-                                        if route {
-                                            "Literal Spring Gateway/Zuul route. Union of declared profiles; not evidence of a runtime request. URL path and query omitted."
-                                        } else {
-                                            "Spring configuration/discovery-server reference; not an application API call. Profiles are not evaluated."
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                    continue;
-                }
-                let tokens = lex(&input.text);
-                collect_messaging(
-                    input,
-                    &tokens,
-                    &files[&project.id],
-                    from,
-                    &mut publications,
-                    &mut subscriptions,
-                );
-                let parameter_helpers = parameter_helpers(&tokens);
-                let token_scope = scopes(&tokens);
-                let spring_client = input.text.contains("import org.springframework.web.")
-                    && tokens.iter().any(|t| {
-                        ["WebClient", "RestClient", "RestTemplate"]
+        }
+        if scope.is_empty() {
+            for ids in targets.values_mut() {
+                let deployed: Vec<_> = ids
+                    .iter()
+                    .filter(|id| {
+                        self.report
+                            .services
                             .iter()
-                            .any(|n| is(t, n))
-                    });
-                let mut clients = BTreeSet::new();
-                let mut literals = BTreeMap::<String, Option<String>>::new();
-                let mut helpers = BTreeMap::new();
-                for (i, t) in tokens.iter().enumerate() {
-                    if ["WebClient", "RestClient", "RestTemplate"]
-                        .iter()
-                        .any(|n| is(t, n))
-                    {
-                        let j = if tokens.get(i + 2).is_some_and(|t| is(t, "Builder")) {
-                            i + 3
-                        } else {
-                            i + 1
-                        };
-                        if let Some(name) = tokens.get(j)
-                            && !tokens.get(j + 1).is_some_and(|t| is(t, "("))
-                        {
-                            clients.insert(name.text.clone());
-                        }
-                    }
-                    if is(t, "=") && i > 0 {
-                        let key = tokens[i - 1].text.clone();
-                        let value = literal_expression(&tokens[i + 1..], &parameter_helpers);
-                        literals
-                            .entry(key)
-                            .and_modify(|v| *v = None)
-                            .or_insert(value);
-                    }
-                    if is(t, "getInstances")
-                        && let Some(arg) = arguments(&tokens, i)
-                            .and_then(|a| a.first())
-                            .filter(|t| t.string)
-                    {
-                        let scope = token_scope[i].0;
-                        if scope >= 3 && is(&tokens[scope - 1], ")") && is(&tokens[scope - 2], "(")
-                        {
-                            helpers.insert(tokens[scope - 3].text.clone(), arg.text.clone());
-                        }
-                    }
-                }
-                if spring_client {
-                    let mut offset = 0;
-                    for stmt in tokens.split(|t| is(t, ";")) {
-                        for (i, t) in stmt.iter().enumerate() {
-                            if ![
-                                "uri",
-                                "baseUrl",
-                                "getForObject",
-                                "getForEntity",
-                                "postForObject",
-                                "postForEntity",
-                                "exchange",
-                            ]
-                            .iter()
-                            .any(|n| is(t, n))
-                            {
-                                continue;
-                            }
-                            if !stmt[..i]
-                                .iter()
-                                .any(|t| !t.string && clients.contains(&t.text))
-                            {
-                                continue;
-                            }
-                            let Some(args) = arguments(stmt, i) else {
-                                continue;
-                            };
-                            let Some(first) = args.first() else {
-                                continue;
-                            };
-                            let target =
-                                if let Some(value) = literal_expression(args, &parameter_helpers) {
-                                    host(&value)
-                                } else if let Some(Some(value)) = literals.get(&first.text) {
-                                    host(value)
-                                } else if args.get(1).is_some_and(|t| is(t, "(")) {
-                                    helpers.get(&first.text).map(|s| s.to_lowercase())
-                                } else {
-                                    None
-                                };
-                            if let Some(name) = target
-                                && let Some(to) = unique(&targets, &name)
-                            {
-                                insert(
-                                    &mut edges,
-                                    from,
-                                    &to,
-                                    Kind::HttpCall,
-                                    proof(
-                                        input,
-                                        "spring-client",
-                                        Some(tokens[offset + i].line),
-                                        "Spring HTTP client destination resolved from a literal, unique local string or literal DiscoveryClient helper or pure String parameter helper. Static source candidate; execution is not proven. URL values omitted.",
-                                    ),
-                                );
-                            }
-                        }
-                        offset += stmt.len() + 1;
-                    }
-                }
-                // Feign declarations are static clients, including service-discovery names.
-                for (i, t) in tokens.iter().enumerate() {
-                    if !(is(t, "@FeignClient")
-                        || is(t, "FeignClient") && i > 0 && is(&tokens[i - 1], "@"))
-                    {
-                        continue;
-                    }
-                    let Some(args) = arguments(&tokens, i) else {
-                        continue;
-                    };
-                    let name = args
-                        .iter()
-                        .enumerate()
-                        .find(|(j, t)| {
-                            t.string
-                                && (*j == 0
-                                    || *j >= 2
-                                        && ["name", "value", "url"]
-                                            .contains(&args[*j - 2].text.as_str()))
-                        })
-                        .map(|(_, t)| t.text.clone());
-                    if let Some(name) = name {
-                        let name = host(&name).unwrap_or(name);
-                        if let Some(to) = unique(&targets, &name) {
-                            insert(
-                                &mut edges,
-                                from,
-                                &to,
-                                Kind::HttpCall,
-                                proof(
-                                    input,
-                                    "FeignClient",
-                                    Some(t.line),
-                                    "Literal Feign client declaration; runtime execution is not proven.",
-                                ),
-                            );
-                        }
-                    }
+                            .any(|s| s.id == **id && !s.compose_file.is_empty())
+                    })
+                    .cloned()
+                    .collect();
+                if !deployed.is_empty() {
+                    *ids = deployed;
                 }
             }
         }
+        targets
     }
-    if publications.len() + subscriptions.len() >= 10_000 {
-        diagnostic(
-            report,
-            "",
-            None,
-            "Spring messaging endpoint limit reached; remaining endpoints omitted.",
-        );
-    }
-    let mut matched = 0;
-    let mut listeners = BTreeMap::<_, Vec<_>>::new();
-    for consumer in &subscriptions {
-        listeners
-            .entry((&consumer.protocol, &consumer.broker, &consumer.channel))
-            .or_default()
-            .push(consumer);
-    }
-    'messages: for producer in &publications {
-        let Some(consumers) =
-            listeners.get(&(&producer.protocol, &producer.broker, &producer.channel))
-        else {
-            continue;
-        };
-        for consumer in consumers {
-            matched += 1;
-            if matched > 100_000 {
+
+    fn configuration_dependencies(
+        &mut self,
+        input: &Input,
+        from: &str,
+        targets: &BTreeMap<String, Vec<String>>,
+    ) {
+        for (key, value) in settings(input) {
+            let (zuul, route, reference) = property_kind(&key);
+            if key == "spring.cloud.config.server.git.uri" {
                 diagnostic(
-                    report,
-                    "",
-                    None,
-                    "Spring messaging match limit reached; remaining relationships omitted.",
+                    self.report,
+                    &input.file,
+                    Some(from),
+                    "External Spring Config repository is not fetched; remote properties are not covered.",
                 );
-                break 'messages;
             }
-            if service_scope(report, &producer.owner) == service_scope(report, &consumer.owner)
-                && producer.broker == consumer.broker
-                && producer.channel == consumer.channel
-                && producer.protocol == consumer.protocol
-            {
-                insert(
-                    &mut edges,
-                    &producer.owner,
-                    &consumer.owner,
-                    Kind::Event,
-                    producer.evidence.clone(),
+            if !route && !reference {
+                continue;
+            }
+            if value.contains("${") {
+                diagnostic(
+                    self.report,
+                    &input.file,
+                    Some(from),
+                    "Dynamic Spring endpoint/property is not expanded; runtime configuration may add dependencies.",
                 );
-                insert(
-                    &mut edges,
-                    &producer.owner,
-                    &consumer.owner,
-                    Kind::Event,
-                    consumer.evidence.clone(),
+                continue;
+            }
+            let (kind, description) = if route {
+                (Kind::ConfiguredHttp, ROUTE)
+            } else {
+                (Kind::ConfiguredReference, REFERENCE)
+            };
+            for name in configured_names(&key, &value, zuul) {
+                self.link(
+                    from,
+                    targets,
+                    &name,
+                    kind,
+                    proof(input, &key, None, description),
                 );
             }
         }
     }
-    for ((from, to, kind), evidence) in edges {
-        report.dependencies.push(ServiceDependency {
+
+    fn java_dependencies(
+        &mut self,
+        input: &Input,
+        source: &[Input],
+        from: &str,
+        targets: &BTreeMap<String, Vec<String>>,
+    ) {
+        let tokens = lex(&input.text);
+        collect_messaging(
+            input,
+            &tokens,
+            source,
             from,
-            to,
-            kind,
-            evidence: evidence.into_iter().collect(),
-        });
-    }
-    if !owners.is_empty() {
-        diagnostic(
-            report,
-            "",
-            None,
-            "Spring coverage is partial: literal Gateway/Zuul routes, supported HTTP clients, configuration references and matching literal Kafka topics/Rabbit queues only. Profiles are combined; external configuration, dynamic endpoints and other messaging patterns are not evaluated.",
+            &mut self.publications,
+            &mut self.subscriptions,
         );
+        let clients = JavaClients::new(&tokens);
+        let spring_client = input.text.contains("import org.springframework.web.")
+            && tokens.iter().any(|t| CLIENT_TYPES.iter().any(|n| is(t, n)));
+        if spring_client {
+            for (name, line) in clients.http_calls() {
+                let evidence = proof(input, "spring-client", Some(line), CLIENT_CALL);
+                self.link(from, targets, &name, Kind::HttpCall, evidence);
+            }
+        }
+        // Feign declarations are static clients, including service-discovery names.
+        for (name, line) in JavaClients::feign_calls(&tokens) {
+            let evidence = proof(input, "FeignClient", Some(line), FEIGN);
+            self.link(from, targets, &name, Kind::HttpCall, evidence);
+        }
     }
-    if budget > 32_000_000 {
-        diagnostic(report, "", None, "Spring source scan byte budget reached.");
+
+    fn link(
+        &mut self,
+        from: &str,
+        targets: &BTreeMap<String, Vec<String>>,
+        name: &str,
+        kind: Kind,
+        evidence: ServiceEvidence,
+    ) {
+        if let Some(to) = unique(targets, name) {
+            insert(&mut self.edges, from, &to, kind, evidence);
+        }
     }
-    report.services.sort_by(|a, b| a.id.cmp(&b.id));
+
+    fn match_messages(&mut self) {
+        let publications = std::mem::take(&mut self.publications);
+        let subscriptions = std::mem::take(&mut self.subscriptions);
+        if publications.len() + subscriptions.len() >= 10_000 {
+            diagnostic(
+                self.report,
+                "",
+                None,
+                "Spring messaging endpoint limit reached; remaining endpoints omitted.",
+            );
+        }
+        let mut matched = 0;
+        let mut listeners = BTreeMap::<_, Vec<_>>::new();
+        for consumer in &subscriptions {
+            listeners
+                .entry((&consumer.protocol, &consumer.broker, &consumer.channel))
+                .or_default()
+                .push(consumer);
+        }
+        for producer in &publications {
+            let Some(consumers) =
+                listeners.get(&(&producer.protocol, &producer.broker, &producer.channel))
+            else {
+                continue;
+            };
+            for consumer in consumers {
+                matched += 1;
+                if matched > 100_000 {
+                    diagnostic(
+                        self.report,
+                        "",
+                        None,
+                        "Spring messaging match limit reached; remaining relationships omitted.",
+                    );
+                    return;
+                }
+                self.message_edge(producer, consumer);
+            }
+        }
+    }
+
+    fn message_edge(&mut self, producer: &MessageEndpoint, consumer: &MessageEndpoint) {
+        if service_scope(self.report, &producer.owner)
+            == service_scope(self.report, &consumer.owner)
+            && producer.broker == consumer.broker
+            && producer.channel == consumer.channel
+            && producer.protocol == consumer.protocol
+        {
+            for evidence in [&producer.evidence, &consumer.evidence] {
+                insert(
+                    &mut self.edges,
+                    &producer.owner,
+                    &consumer.owner,
+                    Kind::Event,
+                    evidence.clone(),
+                );
+            }
+        }
+    }
+
+    fn finish(self) {
+        for ((from, to, kind), evidence) in self.edges {
+            self.report.dependencies.push(ServiceDependency {
+                from,
+                to,
+                kind,
+                evidence: evidence.into_iter().collect(),
+            });
+        }
+        if !self.owners.is_empty() {
+            diagnostic(
+                self.report,
+                "",
+                None,
+                "Spring coverage is partial: literal Gateway/Zuul routes, supported HTTP clients, configuration references and matching literal Kafka topics/Rabbit queues only. Profiles are combined; external configuration, dynamic endpoints and other messaging patterns are not evaluated.",
+            );
+        }
+        if self.budget > 32_000_000 {
+            diagnostic(
+                self.report,
+                "",
+                None,
+                "Spring source scan byte budget reached.",
+            );
+        }
+        self.report.services.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+}
+
+/// (Compose service name, image artifact name) pairs of one Compose file.
+fn compose_artifacts(root: &Path, file: &str) -> Vec<(String, String)> {
+    if fs::symlink_metadata(root.join(file))
+        .map_or(true, |m| m.file_type().is_symlink() || m.len() > 1_048_576)
+    {
+        return Vec::new();
+    }
+    let Ok(text) = fs::read_to_string(root.join(file)) else {
+        return Vec::new();
+    };
+    let Ok(doc) = serde_yaml_ng::from_str::<Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(services) = doc.get("services").and_then(Value::as_mapping) else {
+        return Vec::new();
+    };
+    services
+        .iter()
+        .filter_map(|(name, service)| {
+            let name = name.as_str()?;
+            let image = service.get("image").and_then(Value::as_str)?;
+            let artifact = image
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .split([':', '@'])
+                .next()
+                .unwrap_or("");
+            Some((name.to_owned(), artifact.to_owned()))
+        })
+        .collect()
+}
+
+/// Directories named by classpath native Config Server search locations of one project.
+fn native_directories(project: &ServiceProject, source: &[Input]) -> Vec<String> {
+    let prefix = if project.path == "." {
+        String::new()
+    } else {
+        format!("{}/", project.path)
+    };
+    let resources = format!("{prefix}src/main/resources/");
+    source
+        .iter()
+        .filter(|i| local_configuration(&i.file))
+        .flat_map(settings)
+        .filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "spring.cloud.config.server.native.search-locations"
+                    | "spring.cloud.config.server.native.searchLocations"
+            )
+        })
+        .flat_map(|(_, value)| {
+            value
+                .split(',')
+                .filter_map(|location| {
+                    let location = location.trim().strip_prefix("classpath:")?;
+                    let location = location.trim_matches('/');
+                    (!location.contains("..") && !location.contains(['$', '*', '\\']))
+                        .then(|| format!("{resources}{location}/"))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// (Zuul route, any route, configuration reference) classification of a property key.
+fn property_kind(key: &str) -> (bool, bool, bool) {
+    let zuul = key.starts_with("zuul.routes.")
+        && (key.ends_with(".url") || key.ends_with(".serviceId") || key.ends_with(".service-id"));
+    let route = zuul
+        || key.starts_with("spring.cloud.gateway.")
+            && key.contains(".routes.")
+            && key.ends_with(".uri");
+    let reference = key == "spring.config.import"
+        || key == "spring.cloud.config.uri"
+        || key.to_lowercase().starts_with("eureka.client.serviceurl.");
+    (zuul, route, reference)
+}
+
+/// Host names, or literal Zuul service ids, of a comma-separated property value.
+fn configured_names(key: &str, value: &str, zuul: bool) -> Vec<String> {
+    value
+        .split(',')
+        .filter_map(|value| {
+            let value = value
+                .trim()
+                .trim_start_matches("optional:")
+                .trim_start_matches("configserver:");
+            host(value).or_else(|| {
+                (zuul && !key.ends_with(".url") && !value.contains(['/', '$']))
+                    .then(|| value.to_lowercase())
+            })
+        })
+        .collect()
+}
+
+/// Literal HTTP client facts of one Java source file.
+struct JavaClients<'t> {
+    tokens: &'t [Token],
+    parameter_helpers: BTreeMap<String, String>,
+    clients: BTreeSet<String>,
+    literals: BTreeMap<String, Option<String>>,
+    discovery_helpers: BTreeMap<String, String>,
+}
+
+impl<'t> JavaClients<'t> {
+    fn new(tokens: &'t [Token]) -> Self {
+        let mut facts = JavaClients {
+            tokens,
+            parameter_helpers: parameter_helpers(tokens),
+            clients: BTreeSet::new(),
+            literals: BTreeMap::new(),
+            discovery_helpers: BTreeMap::new(),
+        };
+        let token_scope = scopes(tokens);
+        for (i, t) in tokens.iter().enumerate() {
+            if let Some(name) = facts.client_field(i) {
+                facts.clients.insert(name);
+            }
+            if is(t, "=") && i > 0 {
+                let key = tokens[i - 1].text.clone();
+                let value = literal_expression(&tokens[i + 1..], &facts.parameter_helpers);
+                facts
+                    .literals
+                    .entry(key)
+                    .and_modify(|v| *v = None)
+                    .or_insert(value);
+            }
+            if let Some((helper, name)) = facts.discovery_helper(i, &token_scope) {
+                facts.discovery_helpers.insert(helper, name);
+            }
+        }
+        facts
+    }
+
+    /// The variable declared with a client type at token `i`.
+    fn client_field(&self, i: usize) -> Option<String> {
+        let tokens = self.tokens;
+        if !CLIENT_TYPES.iter().any(|n| is(&tokens[i], n)) {
+            return None;
+        }
+        let j = if tokens.get(i + 2).is_some_and(|t| is(t, "Builder")) {
+            i + 3
+        } else {
+            i + 1
+        };
+        let name = tokens.get(j)?;
+        (!tokens.get(j + 1).is_some_and(|t| is(t, "("))).then(|| name.text.clone())
+    }
+
+    /// (method name, service name) for a no-argument method returning `getInstances("literal")`.
+    fn discovery_helper(
+        &self,
+        i: usize,
+        token_scope: &[(usize, bool)],
+    ) -> Option<(String, String)> {
+        let tokens = self.tokens;
+        if !is(&tokens[i], "getInstances") {
+            return None;
+        }
+        let arg = arguments(tokens, i)
+            .and_then(|a| a.first())
+            .filter(|t| t.string)?;
+        let scope = token_scope[i].0;
+        (scope >= 3 && is(&tokens[scope - 1], ")") && is(&tokens[scope - 2], "("))
+            .then(|| (tokens[scope - 3].text.clone(), arg.text.clone()))
+    }
+
+    /// (host name, line) of every client call with a resolvable destination.
+    fn http_calls(&self) -> Vec<(String, u32)> {
+        let mut calls = Vec::new();
+        let mut offset = 0;
+        for stmt in self.tokens.split(|t| is(t, ";")) {
+            for i in 0..stmt.len() {
+                if let Some(name) = self.call_target(stmt, i) {
+                    calls.push((name, self.tokens[offset + i].line));
+                }
+            }
+            offset += stmt.len() + 1;
+        }
+        calls
+    }
+
+    fn call_target(&self, stmt: &[Token], i: usize) -> Option<String> {
+        if !CLIENT_CALLS.iter().any(|n| is(&stmt[i], n))
+            || !stmt[..i]
+                .iter()
+                .any(|t| !t.string && self.clients.contains(&t.text))
+        {
+            return None;
+        }
+        let args = arguments(stmt, i)?;
+        let first = args.first()?;
+        if let Some(value) = literal_expression(args, &self.parameter_helpers) {
+            host(&value)
+        } else if let Some(Some(value)) = self.literals.get(&first.text) {
+            host(value)
+        } else if args.get(1).is_some_and(|t| is(t, "(")) {
+            self.discovery_helpers
+                .get(&first.text)
+                .map(|s| s.to_lowercase())
+        } else {
+            None
+        }
+    }
+
+    /// (service name, line) of every `@FeignClient` with a literal name, value or url.
+    fn feign_calls(tokens: &[Token]) -> Vec<(String, u32)> {
+        let mut calls = Vec::new();
+        for (i, t) in tokens.iter().enumerate() {
+            if !(is(t, "@FeignClient") || is(t, "FeignClient") && i > 0 && is(&tokens[i - 1], "@"))
+            {
+                continue;
+            }
+            let Some(args) = arguments(tokens, i) else {
+                continue;
+            };
+            let name = args
+                .iter()
+                .enumerate()
+                .find(|(j, t)| {
+                    t.string
+                        && (*j == 0
+                            || *j >= 2
+                                && ["name", "value", "url"].contains(&args[*j - 2].text.as_str()))
+                })
+                .map(|(_, t)| t.text.clone());
+            if let Some(name) = name {
+                calls.push((host(&name).unwrap_or(name), t.line));
+            }
+        }
+        calls
+    }
 }

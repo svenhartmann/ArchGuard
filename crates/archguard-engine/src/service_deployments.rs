@@ -1,7 +1,8 @@
 //! Bounded static deployment declarations. Never contacts a cluster or executes interpolation.
 use super::support::{diagnostic, relative};
 use archguard_core::{
-    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology,
+    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
+    ServiceTopology,
 };
 use serde::Deserialize;
 use serde_yaml_ng::Value;
@@ -189,222 +190,374 @@ fn labels(v: &Value) -> BTreeMap<String, String> {
         .filter_map(|(k, v)| Some((k.as_str()?.into(), v.as_str()?.into())))
         .collect()
 }
-pub(super) fn augment(
-    root: &Path,
-    discovery: &super::support::Discovery,
-    report: &mut ServiceTopology,
-) -> Vec<Deployment> {
-    let mut out = Vec::new();
-    for file in report.compose_files.clone() {
-        let base = root.join(&file).parent().unwrap().to_path_buf();
-        let vars = defaults(root, &base);
-        for mut doc in yaml(root, &file, report) {
-            let _ = doc.apply_merge();
-            for (key, value) in doc["services"].as_mapping().into_iter().flatten() {
-                let Some(name) = key.as_str() else { continue };
-                let id = format!("{file}::{name}");
-                let Some(index) = report.services.iter().position(|s| s.id == id) else {
-                    continue;
-                };
-                if let Some(dockerfile) = value["build"]["dockerfile"]
-                    .as_str()
-                    .and_then(|s| expand(s, &vars))
-                    && let Some(context) = report.services[index].build_context.as_ref()
-                {
-                    let path = root.join(context).join(&dockerfile);
-                    if let Ok(path) = fs::canonicalize(&path)
-                        && path.starts_with(root)
-                        && read(root, &path).is_some()
-                    {
-                        let mut candidates: Vec<_> = report
-                            .projects
-                            .iter()
-                            .filter(|p| {
-                                !matches!(p.kind.as_str(), "workspace" | "tooling")
-                                    && p.path != "."
-                                    && path.starts_with(root.join(&p.path))
-                            })
-                            .collect();
-                        candidates.sort_by_key(|p| std::cmp::Reverse(p.path.len()));
-                        if let Some(p) = candidates.first().filter(|p| {
-                            candidates
-                                .get(1)
-                                .is_none_or(|q| q.path.len() < p.path.len())
-                        }) {
-                            report.services[index].project = Some(p.id.clone());
-                        }
-                    }
-                }
-                if report.services[index].project.is_none()
-                    && report.services[index].build_context.is_none()
-                {
-                    let candidates: Vec<_> = report
-                        .projects
-                        .iter()
-                        .filter(|p| p.kind == "application" && p.name == name)
-                        .map(|p| p.id.clone())
-                        .collect();
-                    if candidates.len() == 1 {
-                        report.services[index].project = Some(candidates[0].clone());
-                        diagnostic(
-                            report,
-                            &file,
-                            Some(name),
-                            "Source navigation is inferred from a unique application/service name match; image contents are not verified.",
-                        );
-                    }
-                }
-                let mut env = BTreeMap::new();
-                let raw = &value["environment"];
-                if let Some(mapping) = raw.as_mapping() {
-                    for (k, v) in mapping {
-                        if let Some(k) = k.as_str().filter(|k| endpoint_key(k))
-                            && let Some(v) = v
-                                .as_str()
-                                .or_else(|| vars.get(k).map(String::as_str))
-                                .and_then(|v| expand(v, &vars))
-                        {
-                            env.insert(k.into(), v);
-                        }
-                    }
-                }
-                if let Some(list) = raw.as_sequence() {
-                    for entry in list.iter().filter_map(string) {
-                        let (k, v) = entry
-                            .split_once('=')
-                            .map_or((entry, None), |(k, v)| (k, Some(v)));
-                        if endpoint_key(k)
-                            && let Some(v) = v
-                                .or_else(|| vars.get(k).map(String::as_str))
-                                .and_then(|v| expand(v, &vars))
-                        {
-                            env.insert(k.into(), v);
-                        }
-                    }
-                }
-                out.push(Deployment {
-                    id,
-                    scope: file.clone(),
-                    file: file.clone(),
-                    env,
-                    aliases: BTreeSet::from([name.to_ascii_lowercase()]),
-                });
-            }
-        }
-    }
-    // Workloads and selectors, never Helm evaluation, Secret reads or cluster queries.
-    let mut documents = Vec::new();
-    let mut budget = 0usize;
-    let walker = discovery.walk(root);
-    for entry in walker.take(50_000).flatten() {
-        if !entry.file_type().is_some_and(|t| t.is_file())
-            || !matches!(
-                entry.path().extension().and_then(|e| e.to_str()),
-                Some("yaml" | "yml")
-            )
+const KUBERNETES: &str = "kubernetes:";
+const DEFAULT_NAMESPACE: &str = "default";
+const WORKLOAD_KINDS: [&str; 6] = [
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "Pod",
+];
+const LINK_EVIDENCE: &str = "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read.";
+/// Resolves an environment value, falling back to the local `.env` default for its key.
+fn resolve(key: &str, value: Option<&str>, vars: &BTreeMap<String, String>) -> Option<String> {
+    value
+        .or_else(|| vars.get(key).map(String::as_str))
+        .and_then(|v| expand(v, vars))
+}
+/// Endpoint-like Compose `environment` entries, in mapping or `KEY=value` list form.
+fn compose_env(raw: &Value, vars: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (k, v) in raw.as_mapping().into_iter().flatten() {
+        if let Some(k) = k.as_str().filter(|k| endpoint_key(k))
+            && let Some(v) = resolve(k, v.as_str(), vars)
         {
-            continue;
-        }
-        let file = relative(root, entry.path());
-        if report.compose_files.contains(&file) {
-            continue;
-        }
-        budget += entry.metadata().map(|m| m.len() as usize).unwrap_or(0);
-        if budget > 32_000_000 || documents.len() >= 2000 {
-            diagnostic(
-                report,
-                &file,
-                None,
-                "Deployment discovery input limit reached.",
-            );
-            break;
-        }
-        for doc in yaml(root, &file, report) {
-            if doc["kind"].as_str() == Some("List") {
-                if let Some(items) = doc["items"].as_sequence() {
-                    documents.extend(items.iter().cloned().map(|d| (file.clone(), d)));
-                }
-            } else {
-                documents.push((file.clone(), doc));
-            }
+            env.insert(k.into(), v);
         }
     }
-    let mut workloads = BTreeMap::new();
-    for (file, doc) in &documents {
-        if !matches!(
-            doc["kind"].as_str(),
-            Some("Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "CronJob" | "Pod")
-        ) {
-            continue;
+    for entry in raw.as_sequence().into_iter().flatten().filter_map(string) {
+        let (k, v) = entry
+            .split_once('=')
+            .map_or((entry, None), |(k, v)| (k, Some(v)));
+        if endpoint_key(k)
+            && let Some(v) = resolve(k, v, vars)
+        {
+            env.insert(k.into(), v);
         }
-        let Some(name) = doc["metadata"]["name"].as_str() else {
-            continue;
-        };
-        let namespace = doc["metadata"]["namespace"].as_str().unwrap_or("default");
+    }
+    env
+}
+/// The deepest non-root source project containing `path`, unless another is equally deep.
+fn enclosing_project(projects: &[ServiceProject], root: &Path, path: &Path) -> Option<String> {
+    let mut candidates: Vec<_> = projects
+        .iter()
+        .filter(|p| {
+            !matches!(p.kind.as_str(), "workspace" | "tooling")
+                && p.path != "."
+                && path.starts_with(root.join(&p.path))
+        })
+        .collect();
+    candidates.sort_by_key(|p| std::cmp::Reverse(p.path.len()));
+    candidates
+        .first()
+        .filter(|p| {
+            candidates
+                .get(1)
+                .is_none_or(|q| q.path.len() < p.path.len())
+        })
+        .map(|p| p.id.clone())
+}
+fn is_yaml_file(entry: &ignore::DirEntry) -> bool {
+    entry.file_type().is_some_and(|t| t.is_file())
+        && matches!(
+            entry.path().extension().and_then(|e| e.to_str()),
+            Some("yaml" | "yml")
+        )
+}
+/// Adds a manifest document, flattening the items of a Kubernetes `List`.
+fn push_document(documents: &mut Vec<(String, Value)>, file: &str, doc: Value) {
+    if doc["kind"].as_str() != Some("List") {
+        documents.push((file.to_owned(), doc));
+    } else if let Some(items) = doc["items"].as_sequence() {
+        documents.extend(items.iter().cloned().map(|d| (file.to_owned(), d)));
+    }
+}
+impl Deployment {
+    /// Pointer to the environment entry that declares `key`.
+    fn pointer(&self, key: &str) -> String {
+        if self.scope.starts_with(KUBERNETES) {
+            return format!("/spec/template/spec/containers/env/{key}");
+        }
+        let service = self
+            .id
+            .rsplit("::")
+            .next()
+            .unwrap_or("")
+            .replace('~', "~0")
+            .replace('/', "~1");
+        format!("/services/{service}/environment/{key}")
+    }
+}
+/// One statically named Kubernetes workload and the deployment scope it belongs to.
+struct Workload<'d> {
+    file: &'d str,
+    name: &'d str,
+    namespace: &'d str,
+    scope: String,
+    id: String,
+    pod: &'d Value,
+}
+impl<'d> Workload<'d> {
+    fn parse(file: &'d str, doc: &'d Value) -> Option<Self> {
+        let kind = doc["kind"]
+            .as_str()
+            .filter(|kind| WORKLOAD_KINDS.contains(kind))?;
+        let name = doc["metadata"]["name"].as_str()?;
+        let namespace = doc["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or(DEFAULT_NAMESPACE);
         if name.contains(['$', '{']) || namespace.contains(['$', '{']) {
-            continue;
+            return None;
         }
-        let pod = match doc["kind"].as_str() {
-            Some("Pod") => doc,
-            Some("CronJob") => &doc["spec"]["jobTemplate"]["spec"]["template"],
+        let pod = match kind {
+            "Pod" => doc,
+            "CronJob" => &doc["spec"]["jobTemplate"]["spec"]["template"],
             _ => &doc["spec"]["template"],
         };
         let bundle = Path::new(file)
             .parent()
             .and_then(Path::to_str)
             .unwrap_or("");
-        let scope = format!("kubernetes:{bundle}:{namespace}");
-        let id = format!("{scope}:{}:{name}", doc["kind"].as_str().unwrap());
+        let scope = format!("{KUBERNETES}{bundle}:{namespace}");
+        let id = format!("{scope}:{kind}:{name}");
+        Some(Self {
+            file,
+            name,
+            namespace,
+            scope,
+            id,
+            pod,
+        })
+    }
+    /// Cluster hostnames of the Services that select this workload's pod labels.
+    fn aliases(&self, documents: &[(String, Value)]) -> BTreeSet<String> {
+        let pod_labels = labels(&self.pod["metadata"]["labels"]);
+        let namespace = self.namespace;
+        let mut aliases = BTreeSet::new();
+        for (file, service) in documents {
+            if let Some(host) = self.selecting_service(file, service, &pod_labels) {
+                aliases.extend([
+                    host.to_lowercase(),
+                    format!("{host}.{namespace}"),
+                    format!("{host}.{namespace}.svc"),
+                    format!("{host}.{namespace}.svc.cluster.local"),
+                ]);
+            }
+        }
+        aliases
+    }
+    /// The name of `service` if it is a Service in the same bundle and namespace whose
+    /// non-empty selector matches `pod_labels`.
+    fn selecting_service<'v>(
+        &self,
+        file: &str,
+        service: &'v Value,
+        pod_labels: &BTreeMap<String, String>,
+    ) -> Option<&'v str> {
+        if Path::new(file).parent() != Path::new(self.file).parent()
+            || service["kind"].as_str() != Some("Service")
+            || service["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or(DEFAULT_NAMESPACE)
+                != self.namespace
+        {
+            return None;
+        }
+        let selector = labels(&service["spec"]["selector"]);
+        if selector.is_empty() || !selector.iter().all(|(k, v)| pod_labels.get(k) == Some(v)) {
+            return None;
+        }
+        service["metadata"]["name"].as_str()
+    }
+}
+/// Shared state while deriving deployments: Compose services first, then Kubernetes workloads.
+struct Deployments<'a> {
+    root: &'a Path,
+    report: &'a mut ServiceTopology,
+    out: Vec<Deployment>,
+}
+impl Deployments<'_> {
+    fn compose_file(&mut self, file: &str) {
+        let base = self.root.join(file).parent().unwrap().to_path_buf();
+        let vars = defaults(self.root, &base);
+        for mut doc in yaml(self.root, file, self.report) {
+            let _ = doc.apply_merge();
+            for (key, value) in doc["services"].as_mapping().into_iter().flatten() {
+                if let Some(name) = key.as_str() {
+                    self.compose_service(file, name, value, &vars);
+                }
+            }
+        }
+    }
+    fn compose_service(
+        &mut self,
+        file: &str,
+        name: &str,
+        value: &Value,
+        vars: &BTreeMap<String, String>,
+    ) {
+        let id = format!("{file}::{name}");
+        let Some(index) = self.report.services.iter().position(|s| s.id == id) else {
+            return;
+        };
+        if let Some(project) = self.dockerfile_project(index, value, vars) {
+            self.report.services[index].project = Some(project);
+        }
+        let service = &self.report.services[index];
+        if service.project.is_none() && service.build_context.is_none() {
+            self.infer_project_by_name(index, file, name);
+        }
+        self.out.push(Deployment {
+            id,
+            scope: file.to_owned(),
+            file: file.to_owned(),
+            env: compose_env(&value["environment"], vars),
+            aliases: BTreeSet::from([name.to_ascii_lowercase()]),
+        });
+    }
+    /// The source project holding the service's readable, in-root Dockerfile.
+    fn dockerfile_project(
+        &self,
+        index: usize,
+        value: &Value,
+        vars: &BTreeMap<String, String>,
+    ) -> Option<String> {
+        let dockerfile = value["build"]["dockerfile"]
+            .as_str()
+            .and_then(|s| expand(s, vars))?;
+        let context = self.report.services[index].build_context.as_ref()?;
+        let path = fs::canonicalize(self.root.join(context).join(&dockerfile)).ok()?;
+        if !path.starts_with(self.root) || read(self.root, &path).is_none() {
+            return None;
+        }
+        enclosing_project(&self.report.projects, self.root, &path)
+    }
+    fn infer_project_by_name(&mut self, index: usize, file: &str, name: &str) {
+        let candidates: Vec<_> = self
+            .report
+            .projects
+            .iter()
+            .filter(|p| p.kind == "application" && p.name == name)
+            .map(|p| p.id.clone())
+            .collect();
+        if candidates.len() == 1 {
+            self.report.services[index].project = Some(candidates[0].clone());
+            diagnostic(
+                self.report,
+                file,
+                Some(name),
+                "Source navigation is inferred from a unique application/service name match; image contents are not verified.",
+            );
+        }
+    }
+    /// Non-Compose YAML documents within the discovery input limits.
+    fn manifests(&mut self, discovery: &super::support::Discovery) -> Vec<(String, Value)> {
+        let mut documents = Vec::new();
+        let mut budget = 0usize;
+        for entry in discovery.walk(self.root).take(50_000).flatten() {
+            if !is_yaml_file(&entry) {
+                continue;
+            }
+            let file = relative(self.root, entry.path());
+            if self.report.compose_files.contains(&file) {
+                continue;
+            }
+            budget += entry.metadata().map(|m| m.len() as usize).unwrap_or(0);
+            if budget > 32_000_000 || documents.len() >= 2000 {
+                diagnostic(
+                    self.report,
+                    &file,
+                    None,
+                    "Deployment discovery input limit reached.",
+                );
+                break;
+            }
+            for doc in yaml(self.root, &file, self.report) {
+                push_document(&mut documents, &file, doc);
+            }
+        }
+        documents
+    }
+    fn workloads(&mut self, documents: &[(String, Value)]) {
+        let mut seen = BTreeMap::new();
+        for (file, doc) in documents {
+            if let Some(workload) = Workload::parse(file, doc) {
+                self.workload(&workload, doc, documents, &mut seen);
+            }
+        }
+    }
+    fn workload(
+        &mut self,
+        workload: &Workload,
+        doc: &Value,
+        documents: &[(String, Value)],
+        seen: &mut BTreeMap<String, Value>,
+    ) {
         // Repeated manifests may be variants: only identical declarations are merged.
-        if let Some(previous) = workloads.get(&id) {
+        if let Some(previous) = seen.get(&workload.id) {
             if previous != doc {
                 diagnostic(
-                    report,
-                    file,
+                    self.report,
+                    workload.file,
                     None,
                     "Conflicting Kubernetes workload variants; environment from these variants is not merged.",
                 );
-                out.retain(|d| d.id != id);
+                self.out.retain(|d| d.id != workload.id);
             }
-            continue;
+            return;
         }
-        workloads.insert(id.clone(), doc.clone());
-        let containers = pod["spec"]["containers"]
+        seen.insert(workload.id.clone(), doc.clone());
+        let containers = workload.pod["spec"]["containers"]
             .as_sequence()
             .cloned()
             .unwrap_or_default();
-        let project = if containers.len() == 1 {
-            project_for(report, containers[0]["image"].as_str().unwrap_or(""), name)
-        } else {
-            None
+        self.register(workload, &containers);
+        let env = self.workload_env(workload, &containers);
+        self.out.push(Deployment {
+            id: workload.id.clone(),
+            scope: workload.scope.clone(),
+            file: workload.file.to_owned(),
+            env,
+            aliases: workload.aliases(documents),
+        });
+    }
+    /// Adds the workload as a service unless it is already known.
+    fn register(&mut self, workload: &Workload, containers: &[Value]) {
+        let project = match containers {
+            [container] => project_for(
+                self.report,
+                container["image"].as_str().unwrap_or(""),
+                workload.name,
+            ),
+            _ => None,
         };
-        if !report.services.iter().any(|s| s.id == id) {
-            report.services.push(Service {
-                id: id.clone(),
-                name: name.into(),
-                compose_file: file.clone(),
+        if !self.report.services.iter().any(|s| s.id == workload.id) {
+            self.report.services.push(Service {
+                id: workload.id.clone(),
+                name: workload.name.into(),
+                compose_file: workload.file.into(),
                 build_context: None,
-                networks: vec![scope.clone()],
+                networks: vec![workload.scope.clone()],
                 profiles: vec![],
                 project,
             });
         }
+    }
+    /// Literal, public endpoint values; unresolved references are diagnosed, never read.
+    fn workload_env(
+        &mut self,
+        workload: &Workload,
+        containers: &[Value],
+    ) -> BTreeMap<String, String> {
+        let (file, name) = (workload.file, Some(workload.name));
         let mut env = BTreeMap::new();
-        for container in &containers {
+        for container in containers {
             if container["envFrom"].is_sequence() {
                 diagnostic(
-                    report,
+                    self.report,
                     file,
-                    Some(name),
+                    name,
                     "Kubernetes envFrom is unresolved; ConfigMap/Secret content is not loaded.",
                 );
             }
             for e in container["env"].as_sequence().into_iter().flatten() {
                 if !e["valueFrom"].is_null() {
                     diagnostic(
-                        report,
+                        self.report,
                         file,
-                        Some(name),
+                        name,
                         "Kubernetes valueFrom is unresolved; Secret/ConfigMap contents are not read.",
                     );
                 }
@@ -417,87 +570,64 @@ pub(super) fn augment(
                 }
             }
         }
-        let workload_labels = labels(&pod["metadata"]["labels"]);
-        let mut aliases = BTreeSet::new();
-        for (service_file, service) in &documents {
-            if Path::new(service_file).parent() != Path::new(file).parent()
-                || service["kind"].as_str() != Some("Service")
-                || service["metadata"]["namespace"]
-                    .as_str()
-                    .unwrap_or("default")
-                    != namespace
-            {
-                continue;
-            }
-            let selector = labels(&service["spec"]["selector"]);
-            if !selector.is_empty()
-                && selector
+        env
+    }
+    /// Removes project services that a deployment already maps to.
+    fn drop_mapped_project_services(&mut self) {
+        let mapped: BTreeSet<_> = self
+            .report
+            .services
+            .iter()
+            .filter(|s| s.id != s.project.as_deref().unwrap_or(""))
+            .filter_map(|s| s.project.clone())
+            .collect();
+        self.report
+            .services
+            .retain(|s| !(s.id == s.project.as_deref().unwrap_or("") && mapped.contains(&s.id)));
+    }
+    /// An endpoint naming exactly one deployment in the same scope becomes a dependency.
+    fn link(&mut self) {
+        for d in &self.out {
+            for (key, value) in &d.env {
+                let Some(host) = host(value) else { continue };
+                let targets: Vec<_> = self
+                    .out
                     .iter()
-                    .all(|(k, v)| workload_labels.get(k) == Some(v))
-                && let Some(host) = service["metadata"]["name"].as_str()
-            {
-                aliases.extend([
-                    host.to_lowercase(),
-                    format!("{host}.{namespace}"),
-                    format!("{host}.{namespace}.svc"),
-                    format!("{host}.{namespace}.svc.cluster.local"),
-                ]);
-            }
-        }
-        out.push(Deployment {
-            id,
-            scope,
-            file: file.clone(),
-            env,
-            aliases,
-        });
-    }
-    let mapped: BTreeSet<_> = report
-        .services
-        .iter()
-        .filter(|s| s.id != s.project.as_deref().unwrap_or(""))
-        .filter_map(|s| s.project.clone())
-        .collect();
-    report
-        .services
-        .retain(|s| !(s.id == s.project.as_deref().unwrap_or("") && mapped.contains(&s.id)));
-    for d in &out {
-        for (key, value) in &d.env {
-            let Some(host) = host(value) else { continue };
-            let targets: Vec<_> = out
-                .iter()
-                .filter(|t| t.scope == d.scope && t.aliases.contains(&host))
-                .collect();
-            if targets.len() == 1 {
-                add(
-                    report,
-                    &d.id,
-                    &targets[0].id,
-                    if value.starts_with("http://") || value.starts_with("https://") {
-                        Kind::ConfiguredHttp
-                    } else {
-                        Kind::ConfiguredReference
-                    },
-                    vec![proof(
-                        &d.file,
-                        &if d.scope.starts_with("kubernetes:") {
-                            format!("/spec/template/spec/containers/env/{key}")
-                        } else {
-                            format!(
-                                "/services/{}/environment/{key}",
-                                d.id.rsplit("::")
-                                    .next()
-                                    .unwrap_or("")
-                                    .replace('~', "~0")
-                                    .replace('/', "~1")
-                            )
-                        },
-                        "Declared endpoint maps to a service in the same deployment scope. Local public defaults only; no process environment, credentials or runtime traffic read.",
-                    )],
-                );
+                    .filter(|t| t.scope == d.scope && t.aliases.contains(&host))
+                    .collect();
+                let [target] = targets.as_slice() else {
+                    continue;
+                };
+                let kind = if value.starts_with("http://") || value.starts_with("https://") {
+                    Kind::ConfiguredHttp
+                } else {
+                    Kind::ConfiguredReference
+                };
+                let evidence = vec![proof(&d.file, &d.pointer(key), LINK_EVIDENCE)];
+                add(self.report, &d.id, &target.id, kind, evidence);
             }
         }
     }
-    report.services.sort_by(|a, b| a.id.cmp(&b.id));
-    out
+}
+pub(super) fn augment(
+    root: &Path,
+    discovery: &super::support::Discovery,
+    report: &mut ServiceTopology,
+) -> Vec<Deployment> {
+    let compose_files = report.compose_files.clone();
+    let mut deployments = Deployments {
+        root,
+        report,
+        out: Vec::new(),
+    };
+    for file in &compose_files {
+        deployments.compose_file(file);
+    }
+    // Workloads and selectors, never Helm evaluation, Secret reads or cluster queries.
+    let documents = deployments.manifests(discovery);
+    deployments.workloads(&documents);
+    deployments.drop_mapped_project_services();
+    deployments.link();
+    deployments.report.services.sort_by(|a, b| a.id.cmp(&b.id));
+    deployments.out
 }

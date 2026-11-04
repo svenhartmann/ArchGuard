@@ -462,211 +462,28 @@ struct Measure {
 impl Measure {
     /// Measure the body tokens `from..to` (exclusive of its braces).
     fn of(toks: &[Tok], pairs: &BTreeMap<usize, usize>, from: usize, to: usize) -> Self {
-        let mut blocks: BTreeMap<usize, Block> = BTreeMap::new();
-        let mut skip: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut arrows: BTreeSet<usize> = BTreeSet::new();
-        let is = |i: usize, word: &str| toks.get(i).is_some_and(|t| t.is(word));
-        let text = |i: usize| {
-            toks.get(i)
-                .filter(|t| !t.literal)
-                .map_or("", |t| t.text.as_str())
+        let body = Body {
+            toks,
+            pairs,
+            from,
+            to,
         };
-        let brace_after = |i: usize| (i..to).find(|&k| text(k) == "{" || text(k) == ";");
-        for i in from..to {
-            let conditioned = [
-                "if", "elseif", "for", "foreach", "while", "switch", "catch", "match",
-            ];
-            if conditioned.iter().any(|w| is(i, w)) && text(i + 1) == "(" {
-                let close = pairs[&(i + 1)];
-                if text(close + 1) == "{" {
-                    let kind = if is(i, "match") {
-                        Block::Match
-                    } else {
-                        Block::Nest
-                    };
-                    blocks.insert(close + 1, kind);
-                }
-            } else if (is(i, "else") || is(i, "do")) && text(i + 1) == "{" {
-                blocks.insert(i + 1, if is(i, "do") { Block::Do } else { Block::Nest });
-            } else if is(i, "function") {
-                let paren = if text(i + 1) == "&" { i + 2 } else { i + 1 };
-                if text(paren) == "(" {
-                    // Closure: optional `use (…)` and return type before the body.
-                    let mut at = pairs[&paren] + 1;
-                    if is(at, "use") && text(at + 1) == "(" {
-                        at = pairs[&(at + 1)] + 1;
-                    }
-                    if let Some(open) = brace_after(at).filter(|&k| text(k) == "{") {
-                        blocks.insert(open, Block::Nest);
-                    }
-                } else if text(paren + 1) == "(" {
-                    // Named function declared inside a body: its own scope.
-                    let end = brace_after(pairs[&(paren + 1)] + 1)
-                        .map_or(to, |k| if text(k) == "{" { pairs[&k] + 1 } else { k + 1 });
-                    skip.insert(i, end);
-                }
-            } else if is(i, "fn") && text(i + 1) == "(" {
-                if let Some(arrow) = (pairs[&(i + 1)] + 1..to).find(|&k| text(k) == "=>") {
-                    arrows.insert(arrow);
-                }
-            } else if is(i, "new") && is(i + 1, "class") {
-                let mut at = i + 2;
-                if text(at) == "(" {
-                    at = pairs[&at] + 1;
-                }
-                if let Some(open) = (at..to).find(|&k| text(k) == "{") {
-                    skip.insert(i, pairs[&open] + 1);
-                }
-            } else if class_kind(&toks[i]).is_some()
-                && toks.get(i + 1).is_some_and(Tok::is_name)
-                && !matches!(text(i.wrapping_sub(1)), "::" | "->" | "?->")
-                && let Some(open) = (i..to).find(|&k| text(k) == "{")
-            {
-                skip.insert(i, pairs[&open] + 1);
-            }
+        let marks = Marks::of(&body);
+        Walk {
+            body,
+            marks,
+            m: Measure {
+                cyclomatic: 1,
+                ..Default::default()
+            },
+            stack: Vec::new(),
+            arms: Vec::new(),
+            open_arrows: Vec::new(),
+            level: 0,
+            logic: None,
+            closed_do: None,
         }
-
-        let mut m = Measure {
-            cyclomatic: 1,
-            ..Default::default()
-        };
-        let mut stack: Vec<Block> = Vec::new();
-        let mut arms: Vec<Arm> = Vec::new();
-        let mut open_arrows: Vec<(usize, usize)> = Vec::new();
-        let mut level = 0usize;
-        let mut logic: Option<(usize, bool)> = None;
-        let mut closed_do = None;
-        let mut i = from;
-        while i < to {
-            if let Some(&end) = skip.get(&i) {
-                i = end;
-                continue;
-            }
-            let token = &toks[i];
-            let word = if token.literal {
-                ""
-            } else {
-                token.text.as_str()
-            };
-            while let Some(&(lv, depth)) = open_arrows.last() {
-                let ends = (matches!(word, ";" | ",") && level == lv && stack.len() == depth)
-                    || (matches!(word, ")" | "]") && level == lv)
-                    || (word == "}" && stack.len() == depth);
-                if !ends {
-                    break;
-                }
-                open_arrows.pop();
-                m.depth -= 1;
-            }
-            if let Some(arm) = arms.last_mut()
-                && arm.level == level
-                && stack.last() == Some(&Block::Match)
-                && arm.expect
-                && !matches!(word, "{" | "}")
-            {
-                arm.default = token.is("default");
-                arm.expect = false;
-            }
-            m.halstead(token);
-            let lower = word.to_ascii_lowercase();
-            match lower.as_str() {
-                "(" | "[" | "#[" => level += 1,
-                ")" | "]" => {
-                    level = level.saturating_sub(1);
-                    logic = logic.filter(|(lv, _)| *lv <= level);
-                }
-                "{" => {
-                    let block = blocks.get(&i).copied().unwrap_or(Block::Plain);
-                    if block != Block::Plain {
-                        m.nest(1);
-                    }
-                    if block == Block::Match {
-                        arms.push(Arm {
-                            level,
-                            expect: true,
-                            default: false,
-                        });
-                    }
-                    stack.push(block);
-                    logic = None;
-                }
-                "}" => {
-                    let block = stack.pop().unwrap_or(Block::Plain);
-                    if block != Block::Plain {
-                        m.depth -= 1;
-                    }
-                    if block == Block::Match {
-                        arms.pop();
-                    }
-                    closed_do = (block == Block::Do).then_some(i);
-                    logic = None;
-                }
-                ";" => logic = None,
-                "," => {
-                    logic = None;
-                    if let Some(arm) = arms.last_mut()
-                        && arm.level == level
-                        && stack.last() == Some(&Block::Match)
-                    {
-                        arm.expect = true;
-                    }
-                }
-                "if" => {
-                    let ladder = i > from && toks[i - 1].is("else");
-                    m.decision(!ladder);
-                }
-                "elseif" => m.decision(false),
-                "else" if !is(i + 1, "if") => m.cognitive += 1,
-                "while" if closed_do == Some(i.wrapping_sub(1)) => {}
-                "for" | "foreach" | "while" | "do" | "catch" => m.decision(true),
-                "switch" | "match" if text(i + 1) == "(" => {
-                    m.cognitive += 1 + m.depth;
-                    m.max_nesting = m.max_nesting.max(m.depth + 1);
-                }
-                "case" => m.cyclomatic += 1,
-                "?" if !matches!(text(i.wrapping_sub(1)), "(" | "," | ":" | "|") => {
-                    m.decision(true);
-                    logic = None;
-                }
-                "?:" => {
-                    m.decision(true);
-                    logic = None;
-                }
-                "??" | "??=" | "?->" => m.cyclomatic += 1,
-                "&&" | "||" | "and" | "or" => {
-                    m.cyclomatic += 1;
-                    let and = matches!(lower.as_str(), "&&" | "and");
-                    m.cognitive += match logic {
-                        Some((lv, previous)) if lv == level => u32::from(previous != and),
-                        _ => 1,
-                    };
-                    logic = Some((level, and));
-                }
-                "break" | "continue"
-                    if toks
-                        .get(i + 1)
-                        .is_some_and(|t| t.text.parse::<u32>().is_ok_and(|n| n > 1)) =>
-                {
-                    m.cognitive += 1;
-                }
-                "=>" if arrows.contains(&i) => {
-                    m.nest(1);
-                    open_arrows.push((level, stack.len()));
-                }
-                "=>" => {
-                    if let Some(arm) = arms.last()
-                        && arm.level == level
-                        && stack.last() == Some(&Block::Match)
-                        && !arm.default
-                    {
-                        m.cyclomatic += 1;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        m
+        .run()
     }
 
     /// A decision that counts once and adds cognitive load: with nesting
@@ -674,6 +491,13 @@ impl Measure {
     fn decision(&mut self, nested: bool) {
         self.cyclomatic += 1;
         self.cognitive += if nested { 1 + self.depth } else { 1 };
+        self.max_nesting = self.max_nesting.max(self.depth + 1);
+    }
+
+    /// `switch` / `match`: cognitive load with nesting, but no decision of its
+    /// own (its cases and arms count).
+    fn branch(&mut self) {
+        self.cognitive += 1 + self.depth;
         self.max_nesting = self.max_nesting.max(self.depth + 1);
     }
 
@@ -704,6 +528,327 @@ impl Measure {
             self.operator_count += 1;
         }
         self.lines.insert(token.line);
+    }
+}
+
+/// Control keywords whose `( … )` condition may be followed by a braced body.
+const CONDITIONED: [&str; 8] = [
+    "if", "elseif", "for", "foreach", "while", "switch", "catch", "match",
+];
+
+/// A measured body: the tokens `from..to` and the bracket pairs of the file.
+struct Body<'a> {
+    toks: &'a [Tok],
+    pairs: &'a BTreeMap<usize, usize>,
+    from: usize,
+    to: usize,
+}
+
+impl Body<'_> {
+    fn is(&self, i: usize, word: &str) -> bool {
+        self.toks.get(i).is_some_and(|t| t.is(word))
+    }
+    /// The code text at `i`; empty for literals and past the end.
+    fn text(&self, i: usize) -> &str {
+        self.toks
+            .get(i)
+            .filter(|t| !t.literal)
+            .map_or("", |t| t.text.as_str())
+    }
+    /// The first `want` token in `at..to`.
+    fn find(&self, at: usize, want: &str) -> Option<usize> {
+        (at..self.to).find(|&k| self.text(k) == want)
+    }
+    /// The first `{` or `;` in `at..to`.
+    fn brace_after(&self, at: usize) -> Option<usize> {
+        (at..self.to).find(|&k| matches!(self.text(k), "{" | ";"))
+    }
+    /// A named class-like declaration at `i` (not `Foo::class` or `$o->enum`).
+    fn names_class(&self, i: usize) -> bool {
+        class_kind(&self.toks[i]).is_some()
+            && self.toks.get(i + 1).is_some_and(Tok::is_name)
+            && !matches!(self.text(i.wrapping_sub(1)), "::" | "->" | "?->")
+    }
+}
+
+/// What a pre-pass over a body finds: how each brace nests, nested scopes
+/// to skip (start index to the index after them) and arrow-function `=>`s.
+#[derive(Default)]
+struct Marks {
+    blocks: BTreeMap<usize, Block>,
+    skip: BTreeMap<usize, usize>,
+    arrows: BTreeSet<usize>,
+}
+
+impl Marks {
+    fn of(body: &Body) -> Self {
+        let mut marks = Marks::default();
+        for i in body.from..body.to {
+            marks.mark(body, i);
+        }
+        marks
+    }
+
+    fn mark(&mut self, b: &Body, i: usize) {
+        if CONDITIONED.iter().any(|w| b.is(i, w)) && b.text(i + 1) == "(" {
+            let kind = if b.is(i, "match") {
+                Block::Match
+            } else {
+                Block::Nest
+            };
+            self.block(b, b.pairs[&(i + 1)] + 1, kind);
+        } else if (b.is(i, "else") || b.is(i, "do")) && b.text(i + 1) == "{" {
+            let kind = if b.is(i, "do") {
+                Block::Do
+            } else {
+                Block::Nest
+            };
+            self.blocks.insert(i + 1, kind);
+        } else if b.is(i, "function") {
+            self.function(b, i);
+        } else if b.is(i, "fn") && b.text(i + 1) == "(" {
+            self.arrows.extend(b.find(b.pairs[&(i + 1)] + 1, "=>"));
+        } else if b.is(i, "new") && b.is(i + 1, "class") {
+            self.anonymous(b, i);
+        } else if b.names_class(i) {
+            self.skip_body(b, i, i);
+        }
+    }
+
+    /// Mark `open` as a `kind` block if it is a brace.
+    fn block(&mut self, b: &Body, open: usize, kind: Block) {
+        if b.text(open) == "{" {
+            self.blocks.insert(open, kind);
+        }
+    }
+
+    /// Skip an anonymous class, from `new` past its body.
+    fn anonymous(&mut self, b: &Body, new: usize) {
+        let mut at = new + 2;
+        if b.text(at) == "(" {
+            at = b.pairs[&at] + 1;
+        }
+        self.skip_body(b, new, at);
+    }
+
+    /// Skip from `i` past the braced body that starts at or after `at`.
+    fn skip_body(&mut self, b: &Body, i: usize, at: usize) {
+        if let Some(open) = b.find(at, "{") {
+            self.skip.insert(i, b.pairs[&open] + 1);
+        }
+    }
+
+    /// A closure nests its body; a named function inside a body is skipped.
+    fn function(&mut self, b: &Body, i: usize) {
+        let paren = if b.text(i + 1) == "&" { i + 2 } else { i + 1 };
+        if b.text(paren) == "(" {
+            // Closure: optional `use (…)` and return type before the body.
+            let mut at = b.pairs[&paren] + 1;
+            if b.is(at, "use") && b.text(at + 1) == "(" {
+                at = b.pairs[&(at + 1)] + 1;
+            }
+            if let Some(open) = b.brace_after(at).filter(|&k| b.text(k) == "{") {
+                self.blocks.insert(open, Block::Nest);
+            }
+        } else if b.text(paren + 1) == "(" {
+            let end = b.brace_after(b.pairs[&(paren + 1)] + 1).map_or(b.to, |k| {
+                if b.text(k) == "{" {
+                    b.pairs[&k] + 1
+                } else {
+                    k + 1
+                }
+            });
+            self.skip.insert(i, end);
+        }
+    }
+}
+
+/// The measuring pass over a body, token by token.
+struct Walk<'a> {
+    body: Body<'a>,
+    marks: Marks,
+    m: Measure,
+    stack: Vec<Block>,
+    arms: Vec<Arm>,
+    /// Open arrow functions: bracket level and brace depth at their `=>`.
+    open_arrows: Vec<(usize, usize)>,
+    level: usize,
+    /// The current run of logical operators: its level and whether it is `&&`.
+    logic: Option<(usize, bool)>,
+    closed_do: Option<usize>,
+}
+
+impl Walk<'_> {
+    fn run(mut self) -> Measure {
+        let mut i = self.body.from;
+        while i < self.body.to {
+            if let Some(&end) = self.marks.skip.get(&i) {
+                i = end;
+                continue;
+            }
+            self.step(i);
+            i += 1;
+        }
+        self.m
+    }
+
+    fn step(&mut self, i: usize) {
+        let token = &self.body.toks[i];
+        let word = if token.literal {
+            ""
+        } else {
+            token.text.as_str()
+        };
+        self.close_arrows(word);
+        if let Some(arm) = self.arm()
+            && arm.expect
+            && !matches!(word, "{" | "}")
+        {
+            arm.default = token.is("default");
+            arm.expect = false;
+        }
+        self.m.halstead(token);
+        let lower = word.to_ascii_lowercase();
+        if !self.bracket(i, &lower) && !self.keyword(i, &lower) {
+            self.operator(i, &lower);
+        }
+    }
+
+    /// End the arrow functions that `word` closes.
+    fn close_arrows(&mut self, word: &str) {
+        while let Some(&(level, depth)) = self.open_arrows.last() {
+            let here = level == self.level;
+            let same_block = self.stack.len() == depth;
+            let ends = (matches!(word, ";" | ",") && here && same_block)
+                || (matches!(word, ")" | "]") && here)
+                || (word == "}" && same_block);
+            if !ends {
+                break;
+            }
+            self.open_arrows.pop();
+            self.m.depth -= 1;
+        }
+    }
+
+    /// The innermost `match` arm, if the walk is directly in its body.
+    fn arm(&mut self) -> Option<&mut Arm> {
+        let in_match = self.stack.last() == Some(&Block::Match);
+        let level = self.level;
+        self.arms
+            .last_mut()
+            .filter(|arm| in_match && arm.level == level)
+    }
+
+    /// Brackets and separators; false for any other word.
+    fn bracket(&mut self, i: usize, word: &str) -> bool {
+        match word {
+            "(" | "[" | "#[" => self.level += 1,
+            ")" | "]" => {
+                self.level = self.level.saturating_sub(1);
+                self.logic = self.logic.filter(|(lv, _)| *lv <= self.level);
+            }
+            "{" => self.open_brace(i),
+            "}" => self.close_brace(i),
+            ";" => self.logic = None,
+            "," => {
+                self.logic = None;
+                if let Some(arm) = self.arm() {
+                    arm.expect = true;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn open_brace(&mut self, i: usize) {
+        let block = self.marks.blocks.get(&i).copied().unwrap_or(Block::Plain);
+        if block != Block::Plain {
+            self.m.nest(1);
+        }
+        if block == Block::Match {
+            self.arms.push(Arm {
+                level: self.level,
+                expect: true,
+                default: false,
+            });
+        }
+        self.stack.push(block);
+        self.logic = None;
+    }
+
+    fn close_brace(&mut self, i: usize) {
+        let block = self.stack.pop().unwrap_or(Block::Plain);
+        if block != Block::Plain {
+            self.m.depth -= 1;
+        }
+        if block == Block::Match {
+            self.arms.pop();
+        }
+        self.closed_do = (block == Block::Do).then_some(i);
+        self.logic = None;
+    }
+
+    /// Control keywords; false for any other word.
+    fn keyword(&mut self, i: usize, word: &str) -> bool {
+        let b = &self.body;
+        match word {
+            "if" => {
+                let ladder = i > b.from && b.toks[i - 1].is("else");
+                self.m.decision(!ladder);
+            }
+            "elseif" => self.m.decision(false),
+            "else" if !b.is(i + 1, "if") => self.m.cognitive += 1,
+            "while" if self.closed_do == Some(i.wrapping_sub(1)) => {}
+            "for" | "foreach" | "while" | "do" | "catch" => self.m.decision(true),
+            "switch" | "match" if b.text(i + 1) == "(" => self.m.branch(),
+            "case" => self.m.cyclomatic += 1,
+            "break" | "continue" if self.jumps_out(i) => self.m.cognitive += 1,
+            _ => return false,
+        }
+        true
+    }
+
+    /// `break n` / `continue n` with `n > 1`.
+    fn jumps_out(&self, i: usize) -> bool {
+        self.body
+            .toks
+            .get(i + 1)
+            .is_some_and(|t| t.text.parse::<u32>().is_ok_and(|n| n > 1))
+    }
+
+    /// Ternaries, null-safe and logical operators and `=>`.
+    fn operator(&mut self, i: usize, word: &str) {
+        match word {
+            "?" if !matches!(self.body.text(i.wrapping_sub(1)), "(" | "," | ":" | "|") => {
+                self.ternary();
+            }
+            "?:" => self.ternary(),
+            "??" | "??=" | "?->" => self.m.cyclomatic += 1,
+            "&&" | "and" => self.logical(true),
+            "||" | "or" => self.logical(false),
+            "=>" if self.marks.arrows.contains(&i) => {
+                self.m.nest(1);
+                self.open_arrows.push((self.level, self.stack.len()));
+            }
+            "=>" if self.arm().is_some_and(|arm| !arm.default) => self.m.cyclomatic += 1,
+            _ => {}
+        }
+    }
+
+    fn ternary(&mut self) {
+        self.m.decision(true);
+        self.logic = None;
+    }
+
+    /// One logical operator: a decision; cognitive per run and change of operator.
+    fn logical(&mut self, and: bool) {
+        self.m.cyclomatic += 1;
+        self.m.cognitive += match self.logic {
+            Some((level, previous)) if level == self.level => u32::from(previous != and),
+            _ => 1,
+        };
+        self.logic = Some((self.level, and));
     }
 }
 

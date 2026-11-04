@@ -19,272 +19,366 @@ pub(crate) struct Token {
     pub end: usize,
 }
 pub(crate) fn tokens(source: &str, flavor: Flavor) -> Vec<Token> {
-    let chars: Vec<_> = source.char_indices().collect();
-    let mut out: Vec<Token> = Vec::new();
-    let mut i = 0;
-    let mut line = 1;
-    let mut control_parens = Vec::new();
-    let mut after_control = false;
-    let mut php = flavor != Flavor::Php || !source.contains("<?");
-    while i < chars.len() {
-        let start = i;
-        let start_line = line;
-        let c = chars[i].1;
-        let at = |n: usize| chars.get(n).map(|p| p.1);
-        if flavor == Flavor::Php {
-            let tail = &source[chars[i].0..];
-            if tail.starts_with("<?php") {
-                php = true;
-                i += 5;
-                continue;
-            }
-            if tail.starts_with("<?") {
-                php = true;
-                i += 2;
-                continue;
-            }
-            if tail.starts_with("?>") {
-                php = false;
-                i += 2;
-                continue;
-            }
-            if !php {
-                if c == '\n' {
-                    line += 1;
-                }
-                i += 1;
-                continue;
-            }
+    let mut lexer = Lexer {
+        source,
+        chars: source.char_indices().collect(),
+        flavor,
+        i: 0,
+        line: 1,
+        out: Vec::new(),
+        control_parens: Vec::new(),
+        after_control: false,
+        php: flavor != Flavor::Php || !source.contains("<?"),
+    };
+    while lexer.i < lexer.chars.len() {
+        lexer.step();
+    }
+    lexer.out
+}
+
+/// Cursor over `source`; `i` indexes `chars`, `line` is the 1-based line at `i`.
+struct Lexer<'a> {
+    source: &'a str,
+    chars: Vec<(usize, char)>,
+    flavor: Flavor,
+    i: usize,
+    line: u32,
+    out: Vec<Token>,
+    /// One entry per open JS paren: whether it follows a control keyword.
+    control_parens: Vec<bool>,
+    after_control: bool,
+    /// Inside PHP code (as opposed to inline HTML).
+    php: bool,
+}
+
+impl Lexer<'_> {
+    fn peek(&self, offset: usize) -> Option<char> {
+        self.chars.get(self.i + offset).map(|p| p.1)
+    }
+
+    /// Advance one char, counting a newline.
+    fn bump(&mut self) {
+        if self.peek(0) == Some('\n') {
+            self.line += 1;
         }
+        self.i += 1;
+    }
+
+    fn last_code_token(&self) -> Option<&Token> {
+        self.out.iter().rev().find(|t| t.text != "\n")
+    }
+
+    fn step(&mut self) {
+        if self.skip_php_markup() || self.skip_layout() || self.skip_comment() {
+            return;
+        }
+        let start = self.i;
+        let start_line = self.line;
+        let literal = self.scan_token();
+        self.emit(start, start_line, literal);
+    }
+
+    /// Skip PHP open/close tags and everything outside them.
+    fn skip_php_markup(&mut self) -> bool {
+        if self.flavor != Flavor::Php {
+            return false;
+        }
+        let tail = &self.source[self.chars[self.i].0..];
+        let (width, php) = if tail.starts_with("<?php") {
+            (5, true)
+        } else if tail.starts_with("<?") {
+            (2, true)
+        } else if tail.starts_with("?>") {
+            (2, false)
+        } else if !self.php {
+            self.bump();
+            return true;
+        } else {
+            return false;
+        };
+        self.php = php;
+        self.i += width;
+        true
+    }
+
+    /// Emit newline tokens and skip other whitespace.
+    fn skip_layout(&mut self) -> bool {
+        let (at, c) = self.chars[self.i];
         if c == '\n' {
-            out.push(Token {
+            self.out.push(Token {
                 text: "\n".into(),
                 literal: false,
-                line,
-                end_line: line,
-                start: chars[i].0,
-                end: chars[i].0 + 1,
+                line: self.line,
+                end_line: self.line,
+                start: at,
+                end: at + 1,
             });
-            line += 1;
-            i += 1;
-            continue;
+            self.bump();
+            return true;
         }
         if c.is_whitespace() {
-            i += 1;
-            continue;
+            self.i += 1;
+            return true;
         }
-        let hash =
-            matches!(flavor, Flavor::Python | Flavor::Php) && c == '#' && at(i + 1) != Some('[');
-        if hash || (flavor != Flavor::Python && c == '/' && at(i + 1) == Some('/')) {
-            while i < chars.len() && at(i) != Some('\n') {
-                i += 1;
-            }
-            continue;
-        }
-        if flavor != Flavor::Python && c == '/' && at(i + 1) == Some('*') {
-            i += 2;
-            let mut depth = 1usize;
-            while i < chars.len() {
-                if matches!(flavor, Flavor::Rust | Flavor::Kotlin)
-                    && at(i) == Some('/')
-                    && at(i + 1) == Some('*')
-                {
-                    depth += 1;
-                    i += 2;
-                    continue;
-                }
-                if at(i) == Some('*') && at(i + 1) == Some('/') {
-                    i += 2;
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                    continue;
-                }
-                if at(i) == Some('\n') {
-                    line += 1;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        let mut literal = false;
-        let raw_start = if flavor == Flavor::Rust {
-            let mut q = i;
-            if matches!(at(q), Some('b' | 'c')) {
-                q += 1;
-            }
-            if at(q) == Some('r') {
-                q += 1;
-                let hash_start = q;
-                while at(q) == Some('#') {
-                    q += 1;
-                }
-                (at(q) == Some('"')).then_some((q, q - hash_start))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        false
+    }
 
-        if let Some((quote, hashes)) = raw_start {
-            literal = true;
-            i = quote + 1;
-            while i < chars.len() {
-                if at(i) == Some('"') && (0..hashes).all(|n| at(i + 1 + n) == Some('#')) {
-                    i += 1 + hashes;
+    fn skip_comment(&mut self) -> bool {
+        let (c, next) = (self.chars[self.i].1, self.peek(1));
+        let hash =
+            matches!(self.flavor, Flavor::Python | Flavor::Php) && c == '#' && next != Some('[');
+        let slash = self.flavor != Flavor::Python && c == '/';
+        if hash || (slash && next == Some('/')) {
+            while self.i < self.chars.len() && self.peek(0) != Some('\n') {
+                self.i += 1;
+            }
+            return true;
+        }
+        if slash && next == Some('*') {
+            self.block_comment();
+            return true;
+        }
+        false
+    }
+
+    /// Skip `/* ... */`; Rust and Kotlin block comments nest.
+    fn block_comment(&mut self) {
+        let nests = matches!(self.flavor, Flavor::Rust | Flavor::Kotlin);
+        self.i += 2;
+        let mut depth = 1usize;
+        while self.i < self.chars.len() {
+            if nests && self.peek(0) == Some('/') && self.peek(1) == Some('*') {
+                depth += 1;
+                self.i += 2;
+                continue;
+            }
+            if self.peek(0) == Some('*') && self.peek(1) == Some('/') {
+                self.i += 2;
+                depth -= 1;
+                if depth == 0 {
                     break;
                 }
-                if at(i) == Some('\n') {
-                    line += 1;
-                }
-                i += 1;
+                continue;
             }
-        } else if flavor == Flavor::Php
-            && c == '<'
-            && at(i + 1) == Some('<')
-            && at(i + 2) == Some('<')
+            self.bump();
+        }
+    }
+
+    /// Consume one token and return whether it is a literal.
+    fn scan_token(&mut self) -> bool {
+        if let Some((quote, hashes)) = self.raw_string_start() {
+            self.raw_string(quote, hashes);
+        } else if self.flavor == Flavor::Php
+            && self.peek(0) == Some('<')
+            && self.peek(1) == Some('<')
+            && self.peek(2) == Some('<')
         {
-            literal = true;
-            let tail = &source[chars[i].0 + 3..];
-            let label = tail
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .trim_matches(['\'', '"']);
-            let mut consumed = 0;
-            for (index, part) in tail.split_inclusive('\n').enumerate() {
-                consumed += part.len();
-                if index > 0
-                    && part.trim_start().strip_prefix(label).is_some_and(|s| {
-                        s.trim().is_empty() || s.trim_start().starts_with([';', ',', ')'])
-                    })
-                {
-                    break;
-                }
+            self.heredoc();
+        } else if self.at_quote() {
+            self.quoted();
+        } else if self.at_regex() {
+            self.regex();
+        } else {
+            self.word_or_punct();
+            return false;
+        }
+        true
+    }
+
+    /// Rust `r"`, `r#"`, `br"`, `cr"`: the quote's index and the number of hashes.
+    fn raw_string_start(&self) -> Option<(usize, usize)> {
+        if self.flavor != Flavor::Rust {
+            return None;
+        }
+        let mut q = usize::from(matches!(self.peek(0), Some('b' | 'c')));
+        if self.peek(q) != Some('r') {
+            return None;
+        }
+        q += 1;
+        let hash_start = q;
+        while self.peek(q) == Some('#') {
+            q += 1;
+        }
+        (self.peek(q) == Some('"')).then_some((self.i + q, q - hash_start))
+    }
+
+    fn raw_string(&mut self, quote: usize, hashes: usize) {
+        self.i = quote + 1;
+        while self.i < self.chars.len() {
+            if self.peek(0) == Some('"') && (0..hashes).all(|n| self.peek(1 + n) == Some('#')) {
+                self.i += 1 + hashes;
+                break;
             }
-            let end = chars[i].0 + 3 + consumed;
-            while i < chars.len() && chars[i].0 < end {
-                if at(i) == Some('\n') {
-                    line += 1;
-                }
-                i += 1;
-            }
-        } else if matches!(c, '\'' | '"' | '`')
-            && !(flavor == Flavor::Rust
+            self.bump();
+        }
+    }
+
+    /// PHP heredoc or nowdoc up to and including its closing label line.
+    fn heredoc(&mut self) {
+        let end = self.chars[self.i].0 + 3 + heredoc_len(&self.source[self.chars[self.i].0 + 3..]);
+        while self.i < self.chars.len() && self.chars[self.i].0 < end {
+            self.bump();
+        }
+    }
+
+    /// A string quote; a Rust `'a` lifetime is not one.
+    fn at_quote(&self) -> bool {
+        let c = self.chars[self.i].1;
+        matches!(c, '\'' | '"' | '`')
+            && !(self.flavor == Flavor::Rust
                 && c == '\''
-                && at(i + 1).is_some_and(|c| c.is_alphabetic() || c == '_')
-                && at(i + 2) != Some('\''))
-        {
-            literal = true;
-            let run = chars[i..].iter().take_while(|p| p.1 == c).count();
-            let width = if c != '`' && run >= 3 {
-                if matches!(flavor, Flavor::C | Flavor::Kotlin) {
-                    run
-                } else {
-                    3
+                && self.peek(1).is_some_and(|c| c.is_alphabetic() || c == '_')
+                && self.peek(2) != Some('\''))
+    }
+
+    /// String with single or triple quotes; C and Kotlin also accept longer quote runs.
+    fn quoted(&mut self) {
+        let c = self.chars[self.i].1;
+        let run = self.chars[self.i..].iter().take_while(|p| p.1 == c).count();
+        let width = match (c != '`' && run >= 3, self.flavor) {
+            (true, Flavor::C | Flavor::Kotlin) => run,
+            (true, _) => 3,
+            (false, _) => 1,
+        };
+        self.i += width;
+        while self.i < self.chars.len() {
+            if self.peek(0) == Some('\\') {
+                self.i += 1;
+                if self.i < self.chars.len() {
+                    self.bump();
                 }
-            } else {
-                1
-            };
-            i += width;
-            while i < chars.len() {
-                if at(i) == Some('\\') {
-                    i += 1;
-                    if at(i) == Some('\n') {
-                        line += 1;
-                    }
-                    i = (i + 1).min(chars.len());
-                    continue;
-                }
-                if at(i) == Some('\n') {
-                    line += 1;
-                }
-                if chars[i..].iter().take(width).filter(|p| p.1 == c).count() == width {
-                    i += width;
-                    break;
-                }
-                i += 1;
+                continue;
             }
-        } else if flavor == Flavor::Js
-            && c == '/'
-            && (after_control
-                || out.iter().rev().find(|t| t.text != "\n").is_none_or(|t| {
+            if self.chars[self.i..]
+                .iter()
+                .take(width)
+                .filter(|p| p.1 == c)
+                .count()
+                == width
+            {
+                self.i += width;
+                break;
+            }
+            self.bump();
+        }
+    }
+
+    /// A JS `/` starts a regex after a control condition or an operator-like token.
+    fn at_regex(&self) -> bool {
+        self.flavor == Flavor::Js
+            && self.peek(0) == Some('/')
+            && (self.after_control
+                || self.last_code_token().is_none_or(|t| {
                     matches!(
                         t.text.as_str(),
                         "=" | "(" | "[" | ":" | "," | ";" | "!" | "return" | ">" | "{"
                     )
                 }))
-        {
-            literal = true;
-            i += 1;
-            let mut class = false;
-            while i < chars.len() && at(i) != Some('\n') {
-                match at(i) {
-                    Some('\\') => {
-                        i = (i + 2).min(chars.len());
-                        continue;
-                    }
-                    Some('[') => class = true,
-                    Some(']') => class = false,
-                    Some('/') if !class => {
-                        i += 1;
-                        break;
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-        } else if c.is_alphanumeric() || c == '_' || c == '$' {
-            i += 1;
-            while i < chars.len()
-                && (chars[i].1.is_alphanumeric() || matches!(chars[i].1, '_' | '$'))
-            {
-                i += 1;
-            }
-        } else {
-            i += 1;
-        }
-        let end = chars.get(i).map_or(source.len(), |p| p.0);
-        let text = &source[chars[start].0..end];
-        if flavor == Flavor::Js {
-            if !literal && text == "(" {
-                control_parens.push(out.iter().rev().find(|t| t.text != "\n").is_some_and(|t| {
-                    matches!(
-                        t.text.as_str(),
-                        "if" | "while" | "for" | "with" | "catch" | "switch"
-                    )
-                }));
-                after_control = false;
-            } else if !literal && text == ")" {
-                after_control = control_parens.pop().unwrap_or(false);
-            } else {
-                after_control = false;
-            }
-        }
+    }
 
-        out.push(Token {
+    /// JS regex literal up to its closing `/` outside a character class, or the line end.
+    fn regex(&mut self) {
+        self.i += 1;
+        let mut class = false;
+        while self.i < self.chars.len() && self.peek(0) != Some('\n') {
+            match self.peek(0) {
+                Some('\\') => {
+                    self.i = (self.i + 2).min(self.chars.len());
+                    continue;
+                }
+                Some('[') => class = true,
+                Some(']') => class = false,
+                Some('/') if !class => {
+                    self.i += 1;
+                    break;
+                }
+                _ => {}
+            }
+            self.i += 1;
+        }
+    }
+
+    /// Identifier or number run, otherwise a single punctuation char.
+    fn word_or_punct(&mut self) {
+        let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+        self.i += 1;
+        if !word(self.chars[self.i - 1].1) {
+            return;
+        }
+        while self.i < self.chars.len() && word(self.chars[self.i].1) {
+            self.i += 1;
+        }
+    }
+
+    fn emit(&mut self, start: usize, start_line: u32, literal: bool) {
+        let source = self.source;
+        let start = self.chars[start].0;
+        let end = self.chars.get(self.i).map_or(source.len(), |p| p.0);
+        let text = &source[start..end];
+        if self.flavor == Flavor::Js {
+            self.track_control(text, literal);
+        }
+        self.out.push(Token {
             text: text.into(),
-            start: chars[start].0,
+            start,
             end,
             literal,
             line: start_line,
-            end_line: line,
+            end_line: self.line,
         });
-        if flavor == Flavor::Php && text.starts_with("<<<") && text.trim_end().ends_with(';') {
-            out.push(Token {
+        if self.flavor == Flavor::Php && text.starts_with("<<<") && text.trim_end().ends_with(';') {
+            let line = self.line.saturating_sub(1);
+            self.out.push(Token {
                 text: ";".into(),
                 literal: false,
-                line: line.saturating_sub(1),
-                end_line: line.saturating_sub(1),
+                line,
+                end_line: line,
                 start: end,
                 end,
             });
         }
     }
-    out
+
+    /// Remember whether a JS `)` closes an `if (...)`-style condition, after which `/` is a regex.
+    fn track_control(&mut self, text: &str, literal: bool) {
+        if !literal && text == "(" {
+            let control = self.last_code_token().is_some_and(|t| {
+                matches!(
+                    t.text.as_str(),
+                    "if" | "while" | "for" | "with" | "catch" | "switch"
+                )
+            });
+            self.control_parens.push(control);
+            self.after_control = false;
+        } else if !literal && text == ")" {
+            self.after_control = self.control_parens.pop().unwrap_or(false);
+        } else {
+            self.after_control = false;
+        }
+    }
+}
+
+/// Byte length of a heredoc body after `<<<`, through the line holding the closing label.
+fn heredoc_len(tail: &str) -> usize {
+    let label = tail
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(['\'', '"']);
+    let mut consumed = 0;
+    for (index, part) in tail.split_inclusive('\n').enumerate() {
+        consumed += part.len();
+        if index > 0
+            && part
+                .trim_start()
+                .strip_prefix(label)
+                .is_some_and(|s| s.trim().is_empty() || s.trim_start().starts_with([';', ',', ')']))
+        {
+            break;
+        }
+    }
+    consumed
 }
 
 pub(crate) struct Statement {
@@ -296,64 +390,107 @@ pub(crate) struct Statement {
 /// Split statement boundaries outside literals and Python continuations. Keep PHP group-use braces.
 pub(crate) fn statements(source: &str, flavor: Flavor) -> Vec<Statement> {
     let ts = tokens(source, flavor);
-    let lines: Vec<_> = source.lines().collect();
-    let mut out = Vec::new();
-    let mut current: Vec<&Token> = Vec::new();
-    let mut depth = 0usize;
-    let mut group = 0usize;
+    let mut splitter = Splitter {
+        flavor,
+        source,
+        lines: source.lines().collect(),
+        out: Vec::new(),
+        current: Vec::new(),
+        depth: 0,
+        group: 0,
+    };
     for token in &ts {
-        if !token.literal
-            && matches!(token.text.as_str(), "using" | "namespace")
-            && current
-                .first()
-                .is_some_and(|t| t.text == "namespace" && t.line < token.line)
-            && depth == 0
-        {
-            current.clear();
-        }
-        if token.text == "\n" {
-            if flavor == Flavor::Python
-                && depth == 0
-                && !current.last().is_some_and(|t| t.text == "\\")
-            {
-                flush(&mut current, &lines, source, &mut out);
-            } else if flavor == Flavor::Python && current.last().is_some_and(|t| t.text == "\\") {
-                current.pop();
-            }
-            continue;
-        }
-        if !token.literal {
-            if matches!(token.text.as_str(), "(" | "[") {
-                depth += 1;
-            }
-            if matches!(token.text.as_str(), ")" | "]") {
-                depth = depth.saturating_sub(1);
-            }
-            if flavor == Flavor::Php
-                && token.text == "{"
-                && current.first().is_some_and(|t| t.text == "use")
-            {
-                group += 1;
-            } else if flavor == Flavor::Php && token.text == "}" && group > 0 {
-                group -= 1;
-                current.push(token);
-                continue;
-            }
-        }
-        current.push(token);
-        if !token.literal
-            && depth == 0
-            && group == 0
-            && (token.text == ";"
-                || (flavor != Flavor::Python && matches!(token.text.as_str(), "{" | "}")))
-        {
-            flush(&mut current, &lines, source, &mut out);
-        }
+        splitter.push(token);
     }
     if matches!(flavor, Flavor::Python | Flavor::Php) {
-        flush(&mut current, &lines, source, &mut out);
+        splitter.flush();
     }
-    out
+    splitter.out
+}
+
+/// Statement being collected, plus paren depth and open PHP group-use braces.
+struct Splitter<'s, 't> {
+    flavor: Flavor,
+    source: &'s str,
+    lines: Vec<&'s str>,
+    out: Vec<Statement>,
+    current: Vec<&'t Token>,
+    depth: usize,
+    group: usize,
+}
+
+impl<'t> Splitter<'_, 't> {
+    fn push(&mut self, token: &'t Token) {
+        if self.starts_nested_namespace(token) {
+            self.current.clear();
+        }
+        if token.text == "\n" {
+            self.newline();
+            return;
+        }
+        if !token.literal && self.closes_group(token) {
+            return;
+        }
+        self.current.push(token);
+        if self.ends_statement(token) {
+            self.flush();
+        }
+    }
+
+    /// `using`/`namespace` on a later line than a pending `namespace` starts a new statement.
+    fn starts_nested_namespace(&self, token: &Token) -> bool {
+        !token.literal
+            && matches!(token.text.as_str(), "using" | "namespace")
+            && self
+                .current
+                .first()
+                .is_some_and(|t| t.text == "namespace" && t.line < token.line)
+            && self.depth == 0
+    }
+
+    /// Python ends a statement at a newline outside brackets unless a `\` continues it.
+    fn newline(&mut self) {
+        if self.flavor != Flavor::Python {
+            return;
+        }
+        if self.current.last().is_some_and(|t| t.text == "\\") {
+            self.current.pop();
+        } else if self.depth == 0 {
+            self.flush();
+        }
+    }
+
+    /// Track brackets and PHP group-use braces; true when `token` closed a group and was taken.
+    fn closes_group(&mut self, token: &'t Token) -> bool {
+        match token.text.as_str() {
+            "(" | "[" => self.depth += 1,
+            ")" | "]" => self.depth = self.depth.saturating_sub(1),
+            _ => {}
+        }
+        if self.flavor != Flavor::Php {
+            return false;
+        }
+        if token.text == "{" && self.current.first().is_some_and(|t| t.text == "use") {
+            self.group += 1;
+        } else if token.text == "}" && self.group > 0 {
+            self.group -= 1;
+            self.current.push(token);
+            return true;
+        }
+        false
+    }
+
+    fn ends_statement(&self, token: &Token) -> bool {
+        !token.literal
+            && self.depth == 0
+            && self.group == 0
+            && (token.text == ";"
+                || (self.flavor != Flavor::Python && matches!(token.text.as_str(), "{" | "}")))
+    }
+
+    fn flush(&mut self) {
+        flush(&mut self.current, &self.lines, self.source, &mut self.out);
+    }
 }
 fn flush(current: &mut Vec<&Token>, lines: &[&str], source: &str, out: &mut Vec<Statement>) {
     if current.is_empty() {
@@ -411,14 +548,6 @@ pub(crate) fn dotted_chains(
         .into_iter()
         .filter(|token| token.text != "\n")
         .collect();
-    let is_name = |token: &Token| {
-        !token.literal
-            && token
-                .text
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphabetic() || c == '_')
-    };
     let mut out = Vec::new();
     let mut statement_start = true;
     let mut skip_statement = false;
@@ -426,11 +555,7 @@ pub(crate) fn dotted_chains(
     while index < tokens.len() {
         let token = &tokens[index];
         if statement_start && !token.literal {
-            let pair = tokens
-                .get(index + 1)
-                .map(|next| format!("{} {}", token.text, next.text));
-            skip_statement = skip.contains(&token.text.as_str())
-                || pair.is_some_and(|pair| skip.contains(&pair.as_str()));
+            skip_statement = opens_skipped(&tokens, index, skip);
         }
         statement_start = !token.literal && matches!(token.text.as_str(), ";" | "{" | "}");
         let after_dot = index > 0 && {
@@ -441,26 +566,51 @@ pub(crate) fn dotted_chains(
         if skip_statement || after_dot || !is_name(token) {
             continue;
         }
-        let mut segments = vec![token.text.clone()];
-        let mut end = token.end;
-        while let (Some(dot), Some(name)) = (tokens.get(index), tokens.get(index + 1)) {
-            if dot.literal
-                || dot.text != "."
-                || dot.start != end
-                || name.start != dot.end
-                || !is_name(name)
-            {
-                break;
-            }
-            segments.push(name.text.clone());
-            end = name.end;
-            index += 2;
-        }
+        let segments = chain_from(&tokens, &mut index);
         if segments.len() > 1 {
             out.push((token.line, segments));
         }
     }
     out
+}
+
+/// The statement at `tokens[index]` starts with a `skip` word or two-word pair.
+fn opens_skipped(tokens: &[Token], index: usize, skip: &[&str]) -> bool {
+    let token = &tokens[index];
+    let pair = tokens
+        .get(index + 1)
+        .map(|next| format!("{} {}", token.text, next.text));
+    skip.contains(&token.text.as_str()) || pair.is_some_and(|pair| skip.contains(&pair.as_str()))
+}
+
+/// Segments of the chain whose first name is `tokens[*index - 1]`; moves `index` past it.
+fn chain_from(tokens: &[Token], index: &mut usize) -> Vec<String> {
+    let first = &tokens[*index - 1];
+    let mut segments = vec![first.text.clone()];
+    let mut end = first.end;
+    while let (Some(dot), Some(name)) = (tokens.get(*index), tokens.get(*index + 1)) {
+        if !links(dot, name, end) {
+            break;
+        }
+        segments.push(name.text.clone());
+        end = name.end;
+        *index += 2;
+    }
+    segments
+}
+
+/// `dot` is a `.` touching the chain end at `end` and the following `name`.
+fn links(dot: &Token, name: &Token, end: usize) -> bool {
+    !dot.literal && dot.text == "." && dot.start == end && name.start == dot.end && is_name(name)
+}
+
+fn is_name(token: &Token) -> bool {
+    !token.literal
+        && token
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
 }
 
 /// Preserve source positions while hiding comments and literal contents from visibility scans.

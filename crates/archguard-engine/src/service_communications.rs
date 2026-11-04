@@ -2,7 +2,8 @@
 //! These are static candidates, not traces. Dynamic expressions stay unknown.
 use super::support::{diagnostic, relative};
 use archguard_core::{
-    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology,
+    Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
+    ServiceTopology,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -262,425 +263,601 @@ struct Deployment {
     waits: Vec<String>,
     proof: ServiceEvidence,
 }
+const PROJECT_CALLS: [&str; 2] = ["AddDotnetProject", "AddProject"];
+const INFRASTRUCTURE_CALLS: [&str; 9] = [
+    "AddRedis",
+    "AddRabbitMQ",
+    "AddSqlServer",
+    "AddPostgres",
+    "AddMySql",
+    "AddMongoDB",
+    "AddKafka",
+    "AddDatabase",
+    "AddHealthChecksUI",
+];
+const DEPENDENCY_CALLS: [&str; 3] = ["WithReference", "WaitFor", "WaitForCompletion"];
+const CLIENT_CALLS: [&str; 2] = ["AddHttpClient", "AddGrpcClient"];
+const ADDRESS_NAMES: [&str; 2] = ["BaseAddress", "Address"];
+const PUBLISH_CALLS: [&str; 3] = [
+    "PublishAsync",
+    "PublishThroughEventBusAsync",
+    "AddAndSaveEventAsync",
+];
+/// AppHost file and resource variable that name a registration.
+type Binding = (String, String);
+/// Deployment id, shared bus, event name and the evidence for one side of an event route.
+type Message = (String, String, String, ServiceEvidence);
+/// Event types last assigned to a local, keyed by method scope and local name.
+type Assignments = BTreeMap<(usize, String), BTreeSet<String>>;
+fn is_any(t: &Token, names: &[&str]) -> bool {
+    names.iter().any(|name| is(t, name))
+}
+fn binding(stmt: &[Token]) -> Option<String> {
+    stmt.windows(3)
+        .find(|w| is(&w[0], "var") && is(&w[2], "="))
+        .map(|w| w[1].text.clone())
+}
+/// Variables passed to `WithReference` (first) and `WaitFor*` (second).
+fn dependencies(stmt: &[Token]) -> (Vec<String>, Vec<String>) {
+    let mut refs = Vec::new();
+    let mut waits = Vec::new();
+    for (i, t) in stmt.iter().enumerate() {
+        if !is_any(t, &DEPENDENCY_CALLS) {
+            continue;
+        }
+        let Some(arg) = arguments(stmt, i)
+            .and_then(|a| a.first())
+            .filter(|t| !t.string)
+        else {
+            continue;
+        };
+        if is(t, "WithReference") {
+            refs.push(arg.text.clone());
+        } else {
+            waits.push(arg.text.clone());
+        }
+    }
+    (refs, waits)
+}
+fn bus_names(sources: &[&Source]) -> BTreeSet<String> {
+    sources
+        .iter()
+        .flat_map(|s| {
+            s.tokens
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| is(t, "AddRabbitMqEventBus"))
+                .filter_map(|(i, _)| {
+                    arguments(&s.tokens, i)
+                        .and_then(|a| a.first())
+                        .filter(|t| t.string)
+                        .map(|t| t.text.to_lowercase())
+                })
+        })
+        .collect()
+}
+/// Locals declared once as `var x = new Uri("...")`, mapped to their literal.
+fn uri_constants(tokens: &[Token]) -> BTreeMap<String, Token> {
+    let mut constants = BTreeMap::new();
+    for stmt in tokens.split(|t| is(t, ";")) {
+        for w in stmt.windows(7).filter(|w| {
+            is(&w[0], "var")
+                && is(&w[2], "=")
+                && is(&w[3], "new")
+                && is(&w[4], "Uri")
+                && is(&w[5], "(")
+                && w[6].string
+        }) {
+            let writes = tokens
+                .windows(2)
+                .filter(|a| a[0].text == w[1].text && is(&a[1], "="))
+                .count();
+            if writes == 1 {
+                constants.insert(w[1].text.clone(), w[6].clone());
+            }
+        }
+    }
+    constants
+}
+/// Tokens with constant URIs substituted where they are assigned to a client address.
+fn resolve_addresses(tokens: &[Token]) -> Vec<Token> {
+    let constants = uri_constants(tokens);
+    let mut resolved = tokens.to_vec();
+    for i in 2..resolved.len() {
+        if is(&resolved[i - 1], "=")
+            && is_any(&resolved[i - 2], &ADDRESS_NAMES)
+            && let Some(value) = constants.get(&resolved[i].text)
+        {
+            resolved[i] = value.clone();
+        }
+    }
+    resolved
+}
+/// Whether a literal after `before` is assigned to a client address.
+fn is_destination(before: &[Token]) -> bool {
+    before
+        .iter()
+        .rposition(|t| is(t, "="))
+        .is_some_and(|i| i > 0 && is_any(&before[i - 1], &ADDRESS_NAMES))
+}
+/// Host of an http(s) URL without user information.
+fn hostname(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !["http", "https", "https+http"].contains(&scheme) {
+        return None;
+    }
+    let hostname = rest.split(['/', ':', '?', '#']).next().unwrap_or_default();
+    (!hostname.contains('@')).then_some(hostname)
+}
+fn constructions(stmt: &[Token]) -> BTreeSet<String> {
+    stmt.windows(3)
+        .filter(|w| is(&w[0], "new") && w[1].text.ends_with("IntegrationEvent") && is(&w[2], "("))
+        .map(|w| w[1].text.clone())
+        .collect()
+}
+fn assign(
+    assigned: &mut Assignments,
+    key: (usize, String),
+    events: &BTreeSet<String>,
+    conditional: bool,
+) {
+    if conditional {
+        assigned.entry(key).or_default().extend(events.clone());
+    } else {
+        assigned.insert(key, events.clone());
+    }
+}
+/// Events that reach a publish call: constructed inline or held by its first argument.
+fn published(
+    args: &[Token],
+    constructed: &BTreeSet<String>,
+    assigned: &Assignments,
+    method: usize,
+) -> BTreeSet<String> {
+    let mut events = BTreeSet::new();
+    if args.first().is_some_and(|t| is(t, "new")) {
+        events.extend(constructed.clone());
+    }
+    if let Some(arg) = args.first()
+        && let Some(values) = assigned.get(&(method, arg.text.clone()))
+    {
+        events.extend(values.clone());
+    }
+    events
+}
+/// AppHost registrations read from literal Aspire calls.
+struct Aspire<'a> {
+    root: &'a Path,
+    report: &'a mut ServiceTopology,
+    deployments: Vec<Deployment>,
+    variables: BTreeMap<Binding, String>,
+    brokers: BTreeMap<Binding, String>,
+}
+impl Aspire<'_> {
+    fn read(&mut self, files: &[Source]) {
+        for src in files {
+            if src.tokens.iter().any(|t| is_any(t, &PROJECT_CALLS)) {
+                for stmt in src.tokens.split(|t| is(t, ";")) {
+                    self.statement(src, stmt);
+                }
+            }
+        }
+    }
+    fn statement(&mut self, src: &Source, stmt: &[Token]) {
+        let binding = binding(stmt);
+        if let Some(at) = stmt.iter().position(|t| is(t, "AddRabbitMQ"))
+            && let (Some(var), Some(name)) = (
+                binding.clone(),
+                arguments(stmt, at).and_then(|a| a.iter().find(|t| t.string)),
+            )
+        {
+            self.brokers
+                .insert((src.file.clone(), var), name.text.to_lowercase());
+        }
+        if let Some(at) = stmt.iter().position(|t| is_any(t, &INFRASTRUCTURE_CALLS)) {
+            self.infrastructure(src, stmt, at, binding);
+        } else if let Some(at) = stmt.iter().position(|t| is_any(t, &PROJECT_CALLS)) {
+            self.project(src, stmt, at, binding);
+        }
+    }
+    /// Explicit Aspire infrastructure registration, scoped to this AppHost.
+    fn infrastructure(&mut self, src: &Source, stmt: &[Token], at: usize, binding: Option<String>) {
+        let Some(name) = arguments(stmt, at)
+            .and_then(|a| a.first())
+            .filter(|t| t.string)
+        else {
+            return;
+        };
+        let id = self.bind(src, name, binding);
+        let (mut refs, waits) = dependencies(stmt);
+        if is(&stmt[at], "AddDatabase") && at >= 2 {
+            refs.insert(0, stmt[at - 2].text.clone());
+        }
+        let proof = evidence(
+            &src.file,
+            &stmt[at],
+            "Explicit Aspire infrastructure registration; no local source project inferred.".into(),
+        );
+        self.deployments.push(Deployment {
+            id,
+            project: String::new(),
+            host: src.file.clone(),
+            name: name.text.clone(),
+            refs,
+            waits,
+            proof,
+        });
+    }
+    fn project(&mut self, src: &Source, stmt: &[Token], at: usize, binding: Option<String>) {
+        let Some(args) = arguments(stmt, at) else {
+            return;
+        };
+        let literals: Vec<_> = args.iter().filter(|t| t.string).collect();
+        let Some(name) = literals.first() else {
+            return;
+        };
+        let candidates = if is(&stmt[at], "AddDotnetProject") {
+            literals
+                .get(1)
+                .and_then(|path| self.projects_at(&src.file, &path.text))
+        } else {
+            self.projects_of_type(&stmt[at..])
+        };
+        let Some(candidates) = candidates else {
+            return;
+        };
+        if candidates.len() != 1 {
+            diagnostic(
+                self.report,
+                &src.file,
+                None,
+                "Aspire project registration is ambiguous or unsupported; no service mapping inferred.",
+            );
+            return;
+        }
+        let id = self.bind(src, name, binding);
+        let (refs, waits) = dependencies(stmt);
+        let proof = evidence(
+            &src.file,
+            &stmt[at],
+            "Literal Aspire registration maps a deployment to its project; configuration is not executed."
+                .into(),
+        );
+        self.deployments.push(Deployment {
+            id,
+            project: candidates[0].clone(),
+            host: src.file.clone(),
+            name: name.text.clone(),
+            refs,
+            waits,
+            proof,
+        });
+    }
+    /// Projects whose path or manifest is the `AddDotnetProject` path relative to the AppHost.
+    fn projects_at(&self, file: &str, path: &str) -> Option<Vec<String>> {
+        let base = self.root.join(file);
+        let target = base.parent().unwrap().join(path.replace('\\', "/"));
+        let target = fs::canonicalize(target).ok()?;
+        if !target.starts_with(self.root) {
+            return None;
+        }
+        let at_target = |p: &&ServiceProject| {
+            self.root.join(&p.path) == target || self.root.join(&p.manifest) == target
+        };
+        Some(
+            self.report
+                .projects
+                .iter()
+                .filter(at_target)
+                .map(|p| p.id.clone())
+                .collect(),
+        )
+    }
+    /// Projects whose name matches the generic argument of `AddProject<...>`.
+    fn projects_of_type(&self, call: &[Token]) -> Option<Vec<String>> {
+        let end = call.iter().position(|t| is(t, ">"))?;
+        let typename = call.get(end - 1)?;
+        Some(
+            self.report
+                .projects
+                .iter()
+                .filter(|p| p.name.replace(['.', '-'], "_") == typename.text)
+                .map(|p| p.id.clone())
+                .collect(),
+        )
+    }
+    /// The deployment id for `name`, remembered under its AppHost variable.
+    fn bind(&mut self, src: &Source, name: &Token, binding: Option<String>) -> String {
+        let id = format!("aspire:{}::{}", src.file, name.text);
+        if let Some(var) = binding {
+            self.variables.insert((src.file.clone(), var), id.clone());
+        }
+        id
+    }
+    /// Aspire deployments replace the plain project services they deploy.
+    fn replace_services(&mut self) {
+        let deployed: BTreeSet<_> = self.deployments.iter().map(|d| d.project.clone()).collect();
+        self.report.services.retain(|s| {
+            !s.compose_file.is_empty() || !s.project.as_ref().is_some_and(|p| deployed.contains(p))
+        });
+        for d in &self.deployments {
+            let build_context = self
+                .report
+                .projects
+                .iter()
+                .find(|p| p.id == d.project)
+                .map(|p| p.path.clone());
+            self.report.services.push(Service {
+                id: d.id.clone(),
+                name: d.name.clone(),
+                compose_file: String::new(),
+                build_context,
+                networks: vec![],
+                profiles: vec![],
+                project: (!d.project.is_empty()).then(|| d.project.clone()),
+            });
+        }
+    }
+    fn configured_edges(&self) -> Edges {
+        let mut edges = Edges::new();
+        for d in &self.deployments {
+            for (names, kind) in [
+                (&d.refs, Kind::ConfiguredReference),
+                (&d.waits, Kind::Startup),
+            ] {
+                for var in names {
+                    if let Some(to) = self.variables.get(&(d.host.clone(), var.clone())) {
+                        edge(&mut edges, &d.id, to, kind, [d.proof.clone()]);
+                    }
+                }
+            }
+        }
+        edges
+    }
+    fn finish(self, edges: Edges) {
+        let report = self.report;
+        report
+            .dependencies
+            .extend(
+                edges
+                    .into_iter()
+                    .map(|((from, to, kind), evidence)| ServiceDependency {
+                        from,
+                        to,
+                        kind,
+                        evidence: evidence.into_iter().collect(),
+                    }),
+            );
+        report.services.sort_by(|a, b| a.id.cmp(&b.id));
+        report.services.dedup_by(|a, b| a.id == b.id);
+        diagnostic(
+            report,
+            "",
+            None,
+            "Aspire/.NET communication coverage is partial: literal project registrations, typed HTTP/gRPC clients and conventional RabbitMQ publisher/subscription candidates only. Branches, dynamic routing, custom brokers and runtime execution are not evaluated. Event cycles may describe intended workflows, not defects.",
+        );
+    }
+}
+/// One deployment's source file and the RabbitMQ resources it shares with its AppHost.
+struct Scan<'s> {
+    deployment: &'s Deployment,
+    file: &'s str,
+    shared: &'s BTreeSet<String>,
+}
+/// Client calls and event routes found in the sources of deployed projects.
+struct Flows<'a> {
+    deployments: &'a [Deployment],
+    projects: &'a [ServiceProject],
+    brokers: &'a BTreeMap<Binding, String>,
+    edges: Edges,
+    publishers: Vec<Message>,
+    subscribers: Vec<Message>,
+}
+impl Flows<'_> {
+    fn deployment(&mut self, files: &[Source], d: &Deployment) {
+        let Some(project) = self.projects.iter().find(|p| p.id == d.project) else {
+            return;
+        };
+        let sources = self.sources(files, project);
+        let bus_names = bus_names(&sources);
+        let shared: BTreeSet<_> = d
+            .refs
+            .iter()
+            .filter_map(|r| self.brokers.get(&(d.host.clone(), r.clone())))
+            .filter(|n| bus_names.contains(*n))
+            .cloned()
+            .collect();
+        for src in sources {
+            let scan = Scan {
+                deployment: d,
+                file: &src.file,
+                shared: &shared,
+            };
+            let tokens = resolve_addresses(&src.tokens);
+            for at in 0..tokens.len() {
+                self.client(&scan, &tokens, at);
+                self.subscription(&scan, &tokens, at);
+            }
+            self.publications(&scan, &tokens);
+        }
+    }
+    /// Sources inside `project` that do not belong to a project nested within it.
+    fn sources<'f>(&self, files: &'f [Source], project: &ServiceProject) -> Vec<&'f Source> {
+        let prefix = project.path.clone() + "/";
+        let nested = |file: &str| {
+            self.projects.iter().any(|p| {
+                p.path != project.path
+                    && p.path.starts_with(&prefix)
+                    && file.starts_with(&(p.path.clone() + "/"))
+            })
+        };
+        files
+            .iter()
+            .filter(|s| s.file.starts_with(&prefix) && !nested(&s.file))
+            .collect()
+    }
+    fn client(&mut self, scan: &Scan, ts: &[Token], at: usize) {
+        let t = &ts[at];
+        if !is_any(t, &CLIENT_CALLS) {
+            return;
+        }
+        let Some(args) = arguments(ts, at) else {
+            return;
+        };
+        let d = scan.deployment;
+        let kind = if is(t, "AddGrpcClient") {
+            Kind::GrpcCall
+        } else {
+            Kind::HttpCall
+        };
+        for (endpoint_at, endpoint) in args.iter().enumerate().filter(|(_, t)| t.string) {
+            if !is_destination(&args[..endpoint_at]) {
+                continue;
+            }
+            let Some(hostname) = hostname(&endpoint.text) else {
+                continue;
+            };
+            let targets: Vec<_> = self
+                .deployments
+                .iter()
+                .filter(|target| {
+                    target.host == d.host && target.name.eq_ignore_ascii_case(hostname)
+                })
+                .collect();
+            if targets.len() == 1 {
+                let proof = evidence(
+                    scan.file,
+                    t,
+                    "Literal typed-client destination mapped to an Aspire service. Static client configuration; execution is not proven. URL values omitted."
+                        .into(),
+                );
+                let target = targets[0];
+                edge(
+                    &mut self.edges,
+                    &d.id,
+                    &target.id,
+                    kind,
+                    [proof, target.proof.clone()],
+                );
+            }
+        }
+    }
+    fn subscription(&mut self, scan: &Scan, ts: &[Token], at: usize) {
+        let t = &ts[at];
+        if !(is(t, "AddSubscription") && ts.get(at + 1).is_some_and(|t| is(t, "<"))) {
+            return;
+        }
+        let Some(event) = ts.get(at + 2) else {
+            return;
+        };
+        let d = scan.deployment;
+        for bus in scan.shared {
+            self.subscribers.push((
+                d.id.clone(),
+                format!("{}::{bus}", d.host),
+                event.text.clone(),
+                evidence(
+                    scan.file,
+                    t,
+                    format!(
+                        "Subscription to {} on shared RabbitMQ resource {bus}.",
+                        event.text
+                    ),
+                ),
+            ));
+        }
+    }
+    // Track event construction assigned to a local that reaches a publish/outbox call.
+    // No edge is inferred from a matching class declaration alone.
+    fn publications(&mut self, scan: &Scan, ts: &[Token]) {
+        let mut assigned = Assignments::new();
+        let scope = scopes(ts);
+        let mut offset = 0;
+        for stmt in ts.split(|t| is(t, ";")) {
+            let constructed = constructions(stmt);
+            if let Some(eq) = stmt.iter().position(|t| is(t, "="))
+                && eq > 0
+            {
+                let (method, conditional) = scope[offset + eq];
+                let key = (method, stmt[eq - 1].text.clone());
+                assign(&mut assigned, key, &constructed, conditional);
+            }
+            for (i, t) in stmt
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| is_any(t, &PUBLISH_CALLS))
+            {
+                if let Some(args) = arguments(stmt, i) {
+                    let events = published(args, &constructed, &assigned, scope[offset + i].0);
+                    self.publish(scan, t, events);
+                }
+            }
+            offset += stmt.len() + 1;
+        }
+    }
+    fn publish(&mut self, scan: &Scan, t: &Token, events: BTreeSet<String>) {
+        let d = scan.deployment;
+        for event in events {
+            for bus in scan.shared {
+                let description = format!(
+                    "Constructed {event} reaches {} on shared RabbitMQ resource {bus}. Inferred event-name route; static candidate, not a runtime trace.",
+                    t.text
+                );
+                self.publishers.push((
+                    d.id.clone(),
+                    format!("{}::{bus}", d.host),
+                    event.clone(),
+                    evidence(scan.file, t, description),
+                ));
+            }
+        }
+    }
+    fn link_events(&mut self) {
+        for (from, bus, event, proof) in &self.publishers {
+            for (to, target_bus, target_event, subscription) in &self.subscribers {
+                if bus == target_bus && event == target_event {
+                    edge(
+                        &mut self.edges,
+                        from,
+                        to,
+                        Kind::Event,
+                        [proof.clone(), subscription.clone()],
+                    );
+                }
+            }
+        }
+    }
+}
 pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
     if !report.projects.iter().any(|p| p.ecosystem == "dotnet") {
         return;
     }
     let mut files = Vec::new();
     collect(root, root, 0, &mut files, report, &mut (0, 0));
-    let mut deployments = Vec::new();
-    let mut variables = BTreeMap::new();
-    let mut brokers = BTreeMap::new();
-    for src in &files {
-        if !src
-            .tokens
-            .iter()
-            .any(|t| is(t, "AddDotnetProject") || is(t, "AddProject"))
-        {
-            continue;
-        }
-        for stmt in src.tokens.split(|t| is(t, ";")) {
-            let binding = stmt
-                .windows(3)
-                .find(|w| is(&w[0], "var") && is(&w[2], "="))
-                .map(|w| w[1].text.clone());
-            if let Some(at) = stmt.iter().position(|t| is(t, "AddRabbitMQ"))
-                && let (Some(var), Some(name)) = (
-                    binding.clone(),
-                    arguments(stmt, at).and_then(|a| a.iter().find(|t| t.string)),
-                )
-            {
-                brokers.insert((src.file.clone(), var), name.text.to_lowercase());
-            }
-            // Explicit Aspire infrastructure registration, scoped to this AppHost.
-            if let Some(at) = stmt.iter().position(|t| {
-                [
-                    "AddRedis",
-                    "AddRabbitMQ",
-                    "AddSqlServer",
-                    "AddPostgres",
-                    "AddMySql",
-                    "AddMongoDB",
-                    "AddKafka",
-                    "AddDatabase",
-                    "AddHealthChecksUI",
-                ]
-                .iter()
-                .any(|name| is(t, name))
-            }) {
-                if let Some(name) = arguments(stmt, at)
-                    .and_then(|a| a.first())
-                    .filter(|t| t.string)
-                {
-                    let id = format!("aspire:{}::{}", src.file, name.text);
-                    if let Some(var) = binding.clone() {
-                        variables.insert((src.file.clone(), var), id.clone());
-                    }
-                    let mut refs = Vec::new();
-                    let mut waits = Vec::new();
-                    if is(&stmt[at], "AddDatabase") && at >= 2 {
-                        refs.push(stmt[at - 2].text.clone());
-                    }
-                    for (i, t) in stmt.iter().enumerate() {
-                        if (is(t, "WithReference")
-                            || is(t, "WaitFor")
-                            || is(t, "WaitForCompletion"))
-                            && let Some(arg) = arguments(stmt, i)
-                                .and_then(|a| a.first())
-                                .filter(|t| !t.string)
-                        {
-                            if is(t, "WithReference") {
-                                refs.push(arg.text.clone());
-                            } else {
-                                waits.push(arg.text.clone());
-                            }
-                        }
-                    }
-                    deployments.push(Deployment {id,project:String::new(),host:src.file.clone(),name:name.text.clone(),refs,waits,proof:evidence(&src.file,&stmt[at],"Explicit Aspire infrastructure registration; no local source project inferred.".into())});
-                }
-                continue;
-            }
-            let Some(at) = stmt
-                .iter()
-                .position(|t| is(t, "AddDotnetProject") || is(t, "AddProject"))
-            else {
-                continue;
-            };
-            let Some(args) = arguments(stmt, at) else {
-                continue;
-            };
-            let literals: Vec<_> = args.iter().filter(|t| t.string).collect();
-            let Some(name) = literals.first() else {
-                continue;
-            };
-            let candidates: Vec<_> = if is(&stmt[at], "AddDotnetProject") {
-                let Some(path) = literals.get(1) else {
-                    continue;
-                };
-                let base = root.join(&src.file);
-                let target = base.parent().unwrap().join(path.text.replace('\\', "/"));
-                let Ok(target) = fs::canonicalize(target) else {
-                    continue;
-                };
-                if !target.starts_with(root) {
-                    continue;
-                }
-                report
-                    .projects
-                    .iter()
-                    .filter(|p| root.join(&p.path) == target || root.join(&p.manifest) == target)
-                    .collect()
-            } else {
-                let Some(end) = stmt[at..].iter().position(|t| is(t, ">")) else {
-                    continue;
-                };
-                let Some(typename) = stmt.get(at + end - 1) else {
-                    continue;
-                };
-                report
-                    .projects
-                    .iter()
-                    .filter(|p| p.name.replace(['.', '-'], "_") == typename.text)
-                    .collect()
-            };
-            if candidates.len() != 1 {
-                diagnostic(
-                    report,
-                    &src.file,
-                    None,
-                    "Aspire project registration is ambiguous or unsupported; no service mapping inferred.",
-                );
-                continue;
-            }
-            let project = candidates[0].clone();
-            let id = format!("aspire:{}::{}", src.file, name.text);
-            if let Some(var) = binding {
-                variables.insert((src.file.clone(), var), id.clone());
-            }
-            let mut refs = Vec::new();
-            let mut waits = Vec::new();
-            for (i, t) in stmt.iter().enumerate() {
-                if (is(t, "WithReference") || is(t, "WaitFor") || is(t, "WaitForCompletion"))
-                    && let Some(arg) = arguments(stmt, i).and_then(|a| a.first())
-                    && !arg.string
-                {
-                    if is(t, "WithReference") {
-                        refs.push(arg.text.clone());
-                    } else {
-                        waits.push(arg.text.clone());
-                    }
-                }
-            }
-            let proof=evidence(&src.file,&stmt[at],"Literal Aspire registration maps a deployment to its project; configuration is not executed.".into());
-            deployments.push(Deployment {
-                id,
-                project: project.id.clone(),
-                host: src.file.clone(),
-                name: name.text.clone(),
-                refs,
-                waits,
-                proof,
-            });
-        }
-    }
-    if deployments.is_empty() {
+    let mut aspire = Aspire {
+        root,
+        report,
+        deployments: Vec::new(),
+        variables: BTreeMap::new(),
+        brokers: BTreeMap::new(),
+    };
+    aspire.read(&files);
+    if aspire.deployments.is_empty() {
         return;
     }
-    let deployed: BTreeSet<_> = deployments.iter().map(|d| d.project.clone()).collect();
-    report.services.retain(|s| {
-        !s.compose_file.is_empty() || !s.project.as_ref().is_some_and(|p| deployed.contains(p))
-    });
-    for d in &deployments {
-        report.services.push(Service {
-            id: d.id.clone(),
-            name: d.name.clone(),
-            compose_file: String::new(),
-            build_context: report
-                .projects
-                .iter()
-                .find(|p| p.id == d.project)
-                .map(|p| p.path.clone()),
-            networks: vec![],
-            profiles: vec![],
-            project: (!d.project.is_empty()).then(|| d.project.clone()),
-        });
+    aspire.replace_services();
+    let mut flows = Flows {
+        deployments: &aspire.deployments,
+        projects: &aspire.report.projects,
+        brokers: &aspire.brokers,
+        edges: aspire.configured_edges(),
+        publishers: Vec::new(),
+        subscribers: Vec::new(),
+    };
+    for d in &aspire.deployments {
+        flows.deployment(&files, d);
     }
-    let mut edges = Edges::new();
-    for d in &deployments {
-        for (names, kind) in [
-            (&d.refs, Kind::ConfiguredReference),
-            (&d.waits, Kind::Startup),
-        ] {
-            for var in names {
-                if let Some(to) = variables.get(&(d.host.clone(), var.clone())) {
-                    edge(&mut edges, &d.id, to, kind, [d.proof.clone()]);
-                }
-            }
-        }
-    }
-    let mut publishers: Vec<(String, String, String, ServiceEvidence)> = Vec::new();
-    let mut subscribers = Vec::new();
-    for d in &deployments {
-        let Some(project) = report.projects.iter().find(|p| p.id == d.project) else {
-            continue;
-        };
-        let sources: Vec<_> = files
-            .iter()
-            .filter(|s| {
-                s.file.starts_with(&(project.path.clone() + "/"))
-                    && !report.projects.iter().any(|p| {
-                        p.path != project.path
-                            && p.path.starts_with(&(project.path.clone() + "/"))
-                            && s.file.starts_with(&(p.path.clone() + "/"))
-                    })
-            })
-            .collect();
-        let bus_names: BTreeSet<_> = sources
-            .iter()
-            .flat_map(|s| {
-                s.tokens
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| is(t, "AddRabbitMqEventBus"))
-                    .filter_map(|(i, _)| {
-                        arguments(&s.tokens, i)
-                            .and_then(|a| a.first())
-                            .filter(|t| t.string)
-                            .map(|t| t.text.to_lowercase())
-                    })
-            })
-            .collect();
-        let shared: BTreeSet<_> = d
-            .refs
-            .iter()
-            .filter_map(|r| brokers.get(&(d.host.clone(), r.clone())))
-            .filter(|n| bus_names.contains(*n))
-            .cloned()
-            .collect();
-        for src in sources {
-            let mut resolved = src.tokens.clone();
-            let mut uri_constants = BTreeMap::new();
-            for stmt in src.tokens.split(|t| is(t, ";")) {
-                for w in stmt.windows(7) {
-                    if is(&w[0], "var")
-                        && is(&w[2], "=")
-                        && is(&w[3], "new")
-                        && is(&w[4], "Uri")
-                        && is(&w[5], "(")
-                        && w[6].string
-                    {
-                        let writes = src
-                            .tokens
-                            .windows(2)
-                            .filter(|a| a[0].text == w[1].text && is(&a[1], "="))
-                            .count();
-                        if writes == 1 {
-                            uri_constants.insert(w[1].text.clone(), w[6].clone());
-                        }
-                    }
-                }
-            }
-            for i in 2..resolved.len() {
-                if is(&resolved[i - 1], "=")
-                    && (is(&resolved[i - 2], "BaseAddress") || is(&resolved[i - 2], "Address"))
-                    && let Some(value) = uri_constants.get(&resolved[i].text)
-                {
-                    resolved[i] = value.clone();
-                }
-            }
-            let ts = &resolved;
-            for (at, t) in ts.iter().enumerate() {
-                if (is(t, "AddHttpClient") || is(t, "AddGrpcClient"))
-                    && let Some(args) = arguments(ts, at)
-                {
-                    for (endpoint_at, endpoint) in args.iter().enumerate().filter(|(_, t)| t.string)
-                    {
-                        let destination = args[..endpoint_at]
-                            .iter()
-                            .rposition(|t| is(t, "="))
-                            .filter(|&i| {
-                                i > 0
-                                    && ["BaseAddress", "Address"]
-                                        .iter()
-                                        .any(|name| is(&args[i - 1], name))
-                            });
-                        if destination.is_none() {
-                            continue;
-                        }
-
-                        let Some((scheme, rest)) = endpoint.text.split_once("://") else {
-                            continue;
-                        };
-                        if !["http", "https", "https+http"].contains(&scheme) {
-                            continue;
-                        }
-                        let hostname = rest.split(['/', ':', '?', '#']).next().unwrap_or_default();
-                        if hostname.contains('@') {
-                            continue;
-                        }
-                        let targets: Vec<_> = deployments
-                            .iter()
-                            .filter(|target| {
-                                target.host == d.host && target.name.eq_ignore_ascii_case(hostname)
-                            })
-                            .collect();
-                        if targets.len() == 1 {
-                            edge(&mut edges,&d.id,&targets[0].id,if is(t,"AddGrpcClient"){Kind::GrpcCall}else{Kind::HttpCall},[evidence(&src.file,t,"Literal typed-client destination mapped to an Aspire service. Static client configuration; execution is not proven. URL values omitted.".into()),targets[0].proof.clone()]);
-                        }
-                    }
-                }
-                if is(t, "AddSubscription")
-                    && ts.get(at + 1).is_some_and(|t| is(t, "<"))
-                    && let Some(event) = ts.get(at + 2)
-                {
-                    for bus in &shared {
-                        subscribers.push((
-                            d.id.clone(),
-                            format!("{}::{bus}", d.host),
-                            event.text.clone(),
-                            evidence(
-                                &src.file,
-                                t,
-                                format!(
-                                    "Subscription to {} on shared RabbitMQ resource {bus}.",
-                                    event.text
-                                ),
-                            ),
-                        ));
-                    }
-                }
-            }
-            // Track event construction assigned to a local that reaches a publish/outbox call.
-            // No edge is inferred from a matching class declaration alone.
-            let mut assigned: BTreeMap<(usize, String), BTreeSet<String>> = BTreeMap::new();
-            let scope = scopes(ts);
-            let mut offset = 0;
-            for stmt in ts.split(|t| is(t, ";")) {
-                let constructions: BTreeSet<_> = stmt
-                    .windows(3)
-                    .filter(|w| {
-                        is(&w[0], "new")
-                            && w[1].text.ends_with("IntegrationEvent")
-                            && is(&w[2], "(")
-                    })
-                    .map(|w| w[1].text.clone())
-                    .collect();
-                if let Some(eq) = stmt.iter().position(|t| is(t, "="))
-                    && eq > 0
-                {
-                    let (method, conditional) = scope[offset + eq];
-                    let key = (method, stmt[eq - 1].text.clone());
-                    if conditional {
-                        assigned
-                            .entry(key)
-                            .or_default()
-                            .extend(constructions.clone());
-                    } else {
-                        assigned.insert(key, constructions.clone());
-                    }
-                }
-                for (i, t) in stmt.iter().enumerate().filter(|(_, t)| {
-                    [
-                        "PublishAsync",
-                        "PublishThroughEventBusAsync",
-                        "AddAndSaveEventAsync",
-                    ]
-                    .iter()
-                    .any(|n| is(t, n))
-                }) {
-                    let Some(args) = arguments(stmt, i) else {
-                        continue;
-                    };
-                    let mut events = BTreeSet::new();
-                    if args.first().is_some_and(|t| is(t, "new")) {
-                        events.extend(constructions.clone());
-                    }
-                    if let Some(arg) = args.first()
-                        && let Some(values) = assigned.get(&(scope[offset + i].0, arg.text.clone()))
-                    {
-                        events.extend(values.clone());
-                    }
-                    for event in events {
-                        for bus in &shared {
-                            publishers.push((d.id.clone(),format!("{}::{bus}",d.host),event.clone(),evidence(&src.file,t,format!("Constructed {event} reaches {} on shared RabbitMQ resource {bus}. Inferred event-name route; static candidate, not a runtime trace.",t.text))));
-                        }
-                    }
-                }
-                offset += stmt.len() + 1;
-            }
-        }
-    }
-    for (from, bus, event, proof) in &publishers {
-        for (to, target_bus, target_event, subscription) in &subscribers {
-            if bus == target_bus && event == target_event {
-                edge(
-                    &mut edges,
-                    from,
-                    to,
-                    Kind::Event,
-                    [proof.clone(), subscription.clone()],
-                );
-            }
-        }
-    }
-    report
-        .dependencies
-        .extend(
-            edges
-                .into_iter()
-                .map(|((from, to, kind), evidence)| ServiceDependency {
-                    from,
-                    to,
-                    kind,
-                    evidence: evidence.into_iter().collect(),
-                }),
-        );
-    report.services.sort_by(|a, b| a.id.cmp(&b.id));
-    report.services.dedup_by(|a, b| a.id == b.id);
-    diagnostic(
-        report,
-        "",
-        None,
-        "Aspire/.NET communication coverage is partial: literal project registrations, typed HTTP/gRPC clients and conventional RabbitMQ publisher/subscription candidates only. Branches, dynamic routing, custom brokers and runtime execution are not evaluated. Event cycles may describe intended workflows, not defects.",
-    );
+    flows.link_events();
+    let edges = flows.edges;
+    aspire.finish(edges);
 }

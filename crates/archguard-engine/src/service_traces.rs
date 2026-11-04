@@ -18,6 +18,10 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SPANS: usize = 100_000;
 const MAX_LINKS_PER_SPAN: usize = 128;
 const MAX_LINKS: usize = 1_000_000;
+const INVALID_SPAN: &str = "spans with invalid IDs or timestamps";
+const MALFORMED_LINKS: &str = "spans with malformed links rejected";
+/// A span identity or a correlation context: (trace id, span id).
+type Key = (String, String);
 fn diagnostic(report: &mut ServiceTopology, message: impl Into<String>) {
     report.complete = false;
     report.diagnostics.push(ServiceDiagnostic {
@@ -226,322 +230,382 @@ fn service_id(report: &mut ServiceTopology, name: &str) -> Option<String> {
     });
     Some(id)
 }
-pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
+fn link_context(link: &Value) -> Option<Key> {
+    Some((
+        link.get("traceId").and_then(|v| identifier(v, 32))?,
+        link.get("spanId").and_then(|v| identifier(v, 16))?,
+    ))
+}
+/// Why a span was not imported: counted and skipped, or the whole import is rejected.
+enum Rejection {
+    Skip(&'static str),
+    Abort(&'static str),
+}
+impl Span {
+    fn parse(
+        value: &Value,
+        service: &str,
+        namespace: &str,
+        total_links: &mut usize,
+    ) -> Result<Self, Rejection> {
+        let kind = value
+            .get("kind")
+            .and_then(span_kind)
+            .ok_or(Rejection::Skip("unsupported span kinds"))?;
+        let (trace, id, parent) = Self::ids(value).ok_or(Rejection::Skip(INVALID_SPAN))?;
+        let (start, end) = Self::times(value).ok_or(Rejection::Skip(INVALID_SPAN))?;
+        let links = Self::links(value, total_links)?;
+        let status = value.get("status").and_then(|v| v.get("code"));
+        let error = status
+            .is_some_and(|v| v.as_u64() == Some(2) || v.as_str() == Some("STATUS_CODE_ERROR"));
+        Ok(Span {
+            trace,
+            id,
+            parent,
+            service: service.into(),
+            namespace: namespace.into(),
+            kind,
+            protocol: protocol(value),
+            messaging: messaging(value),
+            links,
+            start,
+            end,
+            error,
+        })
+    }
+    fn ids(value: &Value) -> Option<(String, String, Option<String>)> {
+        let trace = value.get("traceId").and_then(|v| identifier(v, 32))?;
+        let id = value.get("spanId").and_then(|v| identifier(v, 16))?;
+        let raw = value.get("parentSpanId");
+        let parent = match raw.and_then(Value::as_str) {
+            None | Some("") => None,
+            Some(_) => Some(raw.and_then(|v| identifier(v, 16))?),
+        };
+        Some((trace, id, parent))
+    }
+    fn times(value: &Value) -> Option<(u64, u64)> {
+        let start = value.get("startTimeUnixNano").and_then(nanos);
+        let end = value.get("endTimeUnixNano").and_then(nanos);
+        let (start, end) = (start?, end?);
+        (end >= start && start != 0).then_some((start, end))
+    }
+    fn links(value: &Value, total_links: &mut usize) -> Result<BTreeSet<Key>, Rejection> {
+        let Some(raw) = value.get("links") else {
+            return Ok(BTreeSet::new());
+        };
+        let raw = raw.as_array().ok_or(Rejection::Skip(MALFORMED_LINKS))?;
+        *total_links += raw.len();
+        if raw.len() > MAX_LINKS_PER_SPAN || *total_links > MAX_LINKS {
+            return Err(Rejection::Abort(
+                "Trace link limit exceeded (128 per span, 1000000 total); import rejected rather than truncating correlations.",
+            ));
+        }
+        raw.iter()
+            .map(link_context)
+            .collect::<Option<_>>()
+            .ok_or(Rejection::Skip(MALFORMED_LINKS))
+    }
+    fn is_consumer(&self) -> bool {
+        self.kind == 5
+            || (self.kind == 3
+                && self
+                    .messaging
+                    .as_ref()
+                    .is_some_and(|m| m.operation.as_deref() == Some("receive")))
+    }
+}
+impl Observation {
+    fn add(&mut self, duration: u64, error: bool, (start, end): (u64, u64), pointer: &str) {
+        self.calls += 1;
+        self.errors += u64::from(error);
+        self.duration += u128::from(duration);
+        self.max_duration = self.max_duration.max(duration);
+        self.start = if self.start == 0 {
+            start
+        } else {
+            self.start.min(start)
+        };
+        self.end = self.end.max(end);
+        if self.pointer.is_empty() {
+            self.pointer = pointer.into();
+        }
+    }
+    fn description(&self, kind: Kind) -> String {
+        let mean = self.duration as f64 / self.calls as f64 / 1_000_000.0;
+        let max = self.max_duration as f64 / 1_000_000.0;
+        if kind == Kind::Event {
+            format!(
+                "Observed OTLP producer/consumer correlations via parent context or span links: correlations={}; errors={} (recorded ERROR status on either span); mean_consumer_duration_ms={:.3}; max_consumer_duration_ms={:.3}; window_unix_ns={}..{}. Counts are matched span pairs, not unique messages or end-to-end delivery latency. Shared topics without correlated contexts do not establish an edge; this sample does not prove complete traffic or an execution loop.",
+                self.calls, self.errors, mean, max, self.start, self.end
+            )
+        } else {
+            format!(
+                "Observed matched OTLP CLIENT/SERVER pairs: calls={}; errors={} (recorded ERROR status on either span); mean_client_duration_ms={:.3}; max_client_duration_ms={:.3}; window_unix_ns={}..{}. Counts describe this imported sample only, not total traffic or an infinite execution loop.",
+                self.calls, self.errors, mean, max, self.start, self.end
+            )
+        }
+    }
+}
+/// Counted reasons for skipped trace data, reported as diagnostics in key order.
+#[derive(Default)]
+struct Reasons(BTreeMap<&'static str, usize>);
+impl Reasons {
+    fn add(&mut self, reason: &'static str, count: usize) {
+        *self.0.entry(reason).or_default() += count;
+    }
+}
+fn read_document(root: &Path) -> Result<Option<Value>, &'static str> {
     let file = match open_input(root) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => {
-            diagnostic(
-                report,
+            return Err(
                 "Trace import refused: input must be a readable regular local file without symlinks.",
             );
-            return;
         }
     };
     if file
         .metadata()
         .map_or(true, |m| !m.is_file() || m.len() > MAX_BYTES)
     {
-        diagnostic(
-            report,
+        return Err(
             "Trace import refused: expected a regular OTLP JSON file no larger than 16 MiB.",
         );
-        return;
     }
     let mut bytes = Vec::new();
     if file.take(MAX_BYTES + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > MAX_BYTES {
-        diagnostic(report, "Trace import failed or exceeded its 16 MiB limit.");
-        return;
+        return Err("Trace import failed or exceeded its 16 MiB limit.");
     }
-    let root: Value = match serde_json::from_slice(&bytes) {
-        Ok(value) => value,
-        Err(_) => {
-            diagnostic(
-                report,
-                "Invalid OTLP JSON trace document; no trace evidence imported.",
-            );
-            return;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| "Invalid OTLP JSON trace document; no trace evidence imported.")
+}
+/// Phase 1: validated, deduplicated spans and the namespaces seen per service name.
+#[derive(Default)]
+struct Collector {
+    entries: BTreeMap<Key, Entry>,
+    conflicts: BTreeSet<Key>,
+    reasons: Reasons,
+    total: usize,
+    total_links: usize,
+    namespaces: BTreeMap<String, BTreeSet<String>>,
+}
+impl Collector {
+    fn collect(&mut self, resources: &[Value]) -> Result<(), &'static str> {
+        for (ri, resource) in resources.iter().enumerate() {
+            self.resource(ri, resource)?;
         }
-    };
-    let Some(resources) = root.get("resourceSpans").and_then(Value::as_array) else {
-        diagnostic(
-            report,
-            "Expected OTLP JSON resourceSpans with scopeSpans/spans; other trace export formats are not supported.",
-        );
-        return;
-    };
-    let mut entries: BTreeMap<(String, String), Entry> = BTreeMap::new();
-    let mut conflicts = BTreeSet::new();
-    let mut reasons: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut total = 0usize;
-    let mut total_links = 0usize;
-    let mut namespaces: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (ri, resource) in resources.iter().enumerate() {
-        let Some(name) = resource
-            .get("resource")
+        Ok(())
+    }
+    fn resource(&mut self, ri: usize, resource: &Value) -> Result<(), &'static str> {
+        let attributes = resource.get("resource");
+        let Some(name) = attributes
             .and_then(|r| string_attribute(r, "service.name"))
             .filter(|name| safe_service_name(name))
         else {
-            *reasons
-                .entry("resources without a safe, unique service.name")
-                .or_default() += 1;
-            continue;
+            self.reasons
+                .add("resources without a safe, unique service.name", 1);
+            return Ok(());
         };
-        let namespace = resource
-            .get("resource")
+        let namespace = attributes
             .and_then(|r| string_attribute(r, "service.namespace"))
             .unwrap_or("");
         if !namespace.is_empty() && !safe_service_name(namespace) {
-            *reasons
-                .entry("resources with unsupported service.namespace")
-                .or_default() += 1;
-            continue;
+            self.reasons
+                .add("resources with unsupported service.namespace", 1);
+            return Ok(());
         }
-        namespaces
+        self.namespaces
             .entry(name.into())
             .or_default()
             .insert(namespace.into());
         let Some(scopes) = resource.get("scopeSpans").and_then(Value::as_array) else {
-            *reasons.entry("resources without scopeSpans").or_default() += 1;
-            continue;
+            self.reasons.add("resources without scopeSpans", 1);
+            return Ok(());
         };
         for (si, scope) in scopes.iter().enumerate() {
             let Some(spans) = scope.get("spans").and_then(Value::as_array) else {
-                *reasons.entry("scopes without spans").or_default() += 1;
+                self.reasons.add("scopes without spans", 1);
                 continue;
             };
             for (pi, value) in spans.iter().enumerate() {
-                total += 1;
-                if total > MAX_SPANS {
-                    diagnostic(
-                        report,
-                        "Trace span limit exceeded (100000); import rejected rather than using a truncated graph.",
-                    );
-                    return;
-                }
-                let Some(kind) = value.get("kind").and_then(span_kind) else {
-                    *reasons.entry("unsupported span kinds").or_default() += 1;
-                    continue;
-                };
-                let Some(trace) = value.get("traceId").and_then(|v| identifier(v, 32)) else {
-                    *reasons
-                        .entry("spans with invalid IDs or timestamps")
-                        .or_default() += 1;
-                    continue;
-                };
-                let Some(id) = value.get("spanId").and_then(|v| identifier(v, 16)) else {
-                    *reasons
-                        .entry("spans with invalid IDs or timestamps")
-                        .or_default() += 1;
-                    continue;
-                };
-                let parent = match value.get("parentSpanId").and_then(Value::as_str) {
-                    None | Some("") => None,
-                    Some(_) => match value.get("parentSpanId").and_then(|v| identifier(v, 16)) {
-                        Some(id) => Some(id),
-                        None => {
-                            *reasons
-                                .entry("spans with invalid IDs or timestamps")
-                                .or_default() += 1;
-                            continue;
-                        }
-                    },
-                };
-                let (Some(start), Some(end)) = (
-                    value.get("startTimeUnixNano").and_then(nanos),
-                    value.get("endTimeUnixNano").and_then(nanos),
-                ) else {
-                    *reasons
-                        .entry("spans with invalid IDs or timestamps")
-                        .or_default() += 1;
-                    continue;
-                };
-                if end < start || start == 0 {
-                    *reasons
-                        .entry("spans with invalid IDs or timestamps")
-                        .or_default() += 1;
-                    continue;
-                }
-                let mut links = BTreeSet::new();
-                let mut invalid_links = false;
-                if let Some(raw) = value.get("links") {
-                    if let Some(raw) = raw.as_array() {
-                        total_links += raw.len();
-                        if raw.len() > MAX_LINKS_PER_SPAN || total_links > MAX_LINKS {
-                            diagnostic(
-                                report,
-                                "Trace link limit exceeded (128 per span, 1000000 total); import rejected rather than truncating correlations.",
-                            );
-                            return;
-                        }
-                        for link in raw {
-                            match (
-                                link.get("traceId").and_then(|v| identifier(v, 32)),
-                                link.get("spanId").and_then(|v| identifier(v, 16)),
-                            ) {
-                                (Some(trace), Some(id)) => {
-                                    links.insert((trace, id));
-                                }
-                                _ => {
-                                    invalid_links = true;
-                                }
-                            }
-                        }
-                    } else {
-                        invalid_links = true;
-                    }
-                }
-                if invalid_links {
-                    *reasons
-                        .entry("spans with malformed links rejected")
-                        .or_default() += 1;
-                    continue;
-                }
-                let status = value.get("status").and_then(|v| v.get("code"));
-                let error = status.is_some_and(|v| {
-                    v.as_u64() == Some(2) || v.as_str() == Some("STATUS_CODE_ERROR")
-                });
-                let span = Span {
-                    trace: trace.clone(),
-                    id: id.clone(),
-                    parent,
-                    service: name.into(),
-                    namespace: namespace.into(),
-                    kind,
-                    protocol: protocol(value),
-                    messaging: messaging(value),
-                    links,
-                    start,
-                    end,
-                    error,
-                };
-                let key = (trace, id);
-                if conflicts.contains(&key) {
-                    continue;
-                }
-                if let Some(existing) = entries.get(&key) {
-                    if existing.span != span {
-                        entries.remove(&key);
-                        conflicts.insert(key);
-                        *reasons
-                            .entry("conflicting duplicate span identities")
-                            .or_default() += 1;
-                    } else {
-                        *reasons.entry("duplicate spans deduplicated").or_default() += 1;
-                    }
-                    continue;
-                }
-                entries.insert(
-                    key,
-                    Entry {
-                        span,
-                        pointer: format!("/resourceSpans/{ri}/scopeSpans/{si}/spans/{pi}"),
-                    },
-                );
+                self.span(value, name, namespace, [ri, si, pi])?;
+            }
+        }
+        Ok(())
+    }
+    fn span(
+        &mut self,
+        value: &Value,
+        service: &str,
+        namespace: &str,
+        at: [usize; 3],
+    ) -> Result<(), &'static str> {
+        self.total += 1;
+        if self.total > MAX_SPANS {
+            return Err(
+                "Trace span limit exceeded (100000); import rejected rather than using a truncated graph.",
+            );
+        }
+        match Span::parse(value, service, namespace, &mut self.total_links) {
+            Ok(span) => self.insert(span, at),
+            Err(Rejection::Skip(reason)) => self.reasons.add(reason, 1),
+            Err(Rejection::Abort(message)) => return Err(message),
+        }
+        Ok(())
+    }
+    fn insert(&mut self, span: Span, [ri, si, pi]: [usize; 3]) {
+        let key = (span.trace.clone(), span.id.clone());
+        if self.conflicts.contains(&key) {
+            return;
+        }
+        match self.entries.get(&key).map(|existing| existing.span == span) {
+            Some(true) => self.reasons.add("duplicate spans deduplicated", 1),
+            Some(false) => {
+                self.entries.remove(&key);
+                self.conflicts.insert(key);
+                self.reasons.add("conflicting duplicate span identities", 1);
+            }
+            None => {
+                let pointer = format!("/resourceSpans/{ri}/scopeSpans/{si}/spans/{pi}");
+                self.entries.insert(key, Entry { span, pointer });
             }
         }
     }
-    let mut mappings = BTreeMap::new();
-    for (name, spaces) in namespaces {
-        if spaces.len() != 1 {
-            *reasons
-                .entry("service names ambiguous across namespaces")
-                .or_default() += 1;
-            continue;
-        }
-        if let Some(id) = service_id(report, &name) {
-            mappings.insert(name, id);
-        } else {
-            *reasons
-                .entry("service names ambiguous in the repository")
-                .or_default() += 1;
-        }
-    }
-    let mut children: BTreeMap<(String, String), Vec<&Entry>> = BTreeMap::new();
-    for entry in entries.values().filter(|e| e.span.kind == 2) {
-        if let Some(parent) = &entry.span.parent {
-            children
-                .entry((entry.span.trace.clone(), parent.clone()))
-                .or_default()
-                .push(entry);
-        } else {
-            *reasons.entry("orphan SERVER spans").or_default() += 1;
-        }
-    }
-    let mut observed: BTreeMap<(String, String, Kind), Observation> = BTreeMap::new();
-    let mut used_servers = BTreeSet::new();
-    for (key, client) in entries
-        .iter()
-        .filter(|(_, e)| e.span.kind == 3 && e.span.messaging.is_none())
+}
+fn record_dependency(
+    report: &mut ServiceTopology,
+    (from, to, kind): (String, String, Kind),
+    proof: ServiceEvidence,
+) {
+    if let Some(existing) = report
+        .dependencies
+        .iter_mut()
+        .find(|e| e.from == from && e.to == to && e.kind == kind)
     {
-        let Some(servers) = children.get(key) else {
-            *reasons.entry("orphan CLIENT spans").or_default() += 1;
-            continue;
+        existing.evidence.push(proof);
+        existing.evidence.sort();
+        existing.evidence.dedup();
+    } else {
+        report.dependencies.push(ServiceDependency {
+            from,
+            to,
+            kind,
+            evidence: vec![proof],
+        });
+    }
+}
+/// Phase 2: map trace services to repository services and aggregate correlated span pairs.
+struct Correlation<'a> {
+    entries: &'a BTreeMap<Key, Entry>,
+    mappings: BTreeMap<String, String>,
+    reasons: Reasons,
+    observed: BTreeMap<(String, String, Kind), Observation>,
+    used_servers: BTreeSet<Key>,
+}
+impl<'a> Correlation<'a> {
+    fn new(collector: &'a Collector, reasons: Reasons, report: &mut ServiceTopology) -> Self {
+        let mut correlation = Self {
+            entries: &collector.entries,
+            mappings: BTreeMap::new(),
+            reasons,
+            observed: BTreeMap::new(),
+            used_servers: BTreeSet::new(),
         };
-        if servers.len() != 1 {
-            *reasons
-                .entry("CLIENT spans with ambiguous multiple SERVER children")
-                .or_default() += 1;
-            continue;
+        for (name, spaces) in &collector.namespaces {
+            if spaces.len() != 1 {
+                correlation
+                    .reasons
+                    .add("service names ambiguous across namespaces", 1);
+            } else if let Some(id) = service_id(report, name) {
+                correlation.mappings.insert(name.clone(), id);
+            } else {
+                correlation
+                    .reasons
+                    .add("service names ambiguous in the repository", 1);
+            }
         }
-        let server = servers[0];
-        used_servers.insert((server.span.trace.clone(), server.span.id.clone()));
-        let (Some(from), Some(to)) = (
-            mappings.get(&client.span.service),
-            mappings.get(&server.span.service),
-        ) else {
-            continue;
-        };
-        if from == to {
-            continue;
+        correlation
+    }
+    fn endpoints(&self, source: &Span, target: &Span) -> Option<(String, String)> {
+        Some((
+            self.mappings.get(&source.service)?.clone(),
+            self.mappings.get(&target.service)?.clone(),
+        ))
+    }
+    fn server_children(&mut self) -> BTreeMap<Key, Vec<&'a Entry>> {
+        let mut children: BTreeMap<Key, Vec<&Entry>> = BTreeMap::new();
+        let entries = self.entries;
+        for entry in entries.values().filter(|e| e.span.kind == 2) {
+            match &entry.span.parent {
+                Some(parent) => children
+                    .entry((entry.span.trace.clone(), parent.clone()))
+                    .or_default()
+                    .push(entry),
+                None => self.reasons.add("orphan SERVER spans", 1),
+            }
         }
-        let Some(kind) = client.span.protocol.or(server.span.protocol) else {
-            *reasons
-                .entry("matched pairs without HTTP/gRPC protocol attributes")
-                .or_default() += 1;
-            continue;
-        };
-        let sample = observed
-            .entry((from.clone(), to.clone(), kind))
-            .or_default();
-        let duration = client.span.end - client.span.start;
-        sample.calls += 1;
-        sample.errors += u64::from(client.span.error || server.span.error);
-        sample.duration += u128::from(duration);
-        sample.max_duration = sample.max_duration.max(duration);
-        sample.start = if sample.start == 0 {
-            client.span.start
-        } else {
-            sample.start.min(client.span.start)
-        };
-        sample.end = sample.end.max(client.span.end);
-        if sample.pointer.is_empty() {
-            sample.pointer = client.pointer.clone();
+        children
+    }
+    fn pair_clients(&mut self) {
+        let children = self.server_children();
+        let entries = self.entries;
+        for (key, client) in entries
+            .iter()
+            .filter(|(_, e)| e.span.kind == 3 && e.span.messaging.is_none())
+        {
+            self.pair_client(client, children.get(key).map(Vec::as_slice));
         }
     }
-    for consumer in entries.values().filter(|e| {
-        e.span.kind == 5
-            || (e.span.kind == 3
-                && e.span
-                    .messaging
-                    .as_ref()
-                    .is_some_and(|m| m.operation.as_deref() == Some("receive")))
-    }) {
+    fn pair_client(&mut self, client: &Entry, servers: Option<&[&Entry]>) {
+        let Some(servers) = servers else {
+            self.reasons.add("orphan CLIENT spans", 1);
+            return;
+        };
+        let [server] = servers else {
+            self.reasons
+                .add("CLIENT spans with ambiguous multiple SERVER children", 1);
+            return;
+        };
+        let pointer = &client.pointer;
+        let (client, server) = (&client.span, &server.span);
+        self.used_servers
+            .insert((server.trace.clone(), server.id.clone()));
+        let Some((from, to)) = self.endpoints(client, server).filter(|(f, t)| f != t) else {
+            return;
+        };
+        let Some(kind) = client.protocol.or(server.protocol) else {
+            self.reasons
+                .add("matched pairs without HTTP/gRPC protocol attributes", 1);
+            return;
+        };
+        self.observed.entry((from, to, kind)).or_default().add(
+            client.end - client.start,
+            client.error || server.error,
+            (client.start, client.end),
+            pointer,
+        );
+    }
+    fn pair_consumers(&mut self) {
+        let entries = self.entries;
+        for consumer in entries.values().filter(|e| e.span.is_consumer()) {
+            self.pair_consumer(consumer);
+        }
+    }
+    fn pair_consumer(&mut self, consumer: &Entry) {
         let Some(message) = &consumer.span.messaging else {
-            *reasons
-                .entry("messaging spans without system/destination metadata")
-                .or_default() += 1;
-            continue;
+            self.reasons
+                .add("messaging spans without system/destination metadata", 1);
+            return;
         };
         if message
             .operation
             .as_deref()
             .is_some_and(|op| !matches!(op, "receive" | "process"))
         {
-            *reasons
-                .entry("unsupported messaging consumer operations")
-                .or_default() += 1;
-            continue;
+            self.reasons
+                .add("unsupported messaging consumer operations", 1);
+            return;
         }
         let mut contexts = consumer.span.links.clone();
         if let Some(parent) = &consumer.span.parent {
@@ -549,117 +613,113 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
         }
         let mut paired = false;
         for context in contexts {
-            let Some(producer) = entries.get(&context).filter(|p| p.span.kind == 4) else {
-                continue;
-            };
-            let Some(sent) = &producer.span.messaging else {
-                continue;
-            };
-            if !compatible(sent, message)
-                || sent
-                    .operation
-                    .as_deref()
-                    .is_some_and(|op| !matches!(op, "send" | "publish" | "create"))
-            {
-                *reasons
-                    .entry("messaging correlations with incompatible metadata")
-                    .or_default() += 1;
-                continue;
-            }
-            let (Some(from), Some(to)) = (
-                mappings.get(&producer.span.service),
-                mappings.get(&consumer.span.service),
-            ) else {
-                continue;
-            };
-            paired = true;
-            if from == to {
-                continue;
-            }
-            let sample = observed
-                .entry((from.clone(), to.clone(), Kind::Event))
-                .or_default();
-            let duration = consumer.span.end - consumer.span.start;
-            sample.calls += 1;
-            sample.errors += u64::from(producer.span.error || consumer.span.error);
-            sample.duration += u128::from(duration);
-            sample.max_duration = sample.max_duration.max(duration);
-            let start = producer.span.start.min(consumer.span.start);
-            sample.start = if sample.start == 0 {
-                start
-            } else {
-                sample.start.min(start)
-            };
-            sample.end = sample.end.max(producer.span.end.max(consumer.span.end));
-            if sample.pointer.is_empty() {
-                sample.pointer = consumer.pointer.clone();
-            }
+            paired |= self.pair_producer(&context, consumer, message);
         }
         if !paired {
-            *reasons
-                .entry("messaging consumers without a compatible correlated producer")
-                .or_default() += 1;
+            self.reasons.add(
+                "messaging consumers without a compatible correlated producer",
+                1,
+            );
         }
     }
-    let orphan_servers = entries
-        .values()
-        .filter(|e| {
-            e.span.kind == 2
-                && e.span.parent.is_some()
-                && !used_servers.contains(&(e.span.trace.clone(), e.span.id.clone()))
-        })
-        .count();
-    if orphan_servers > 0 {
-        *reasons.entry("unpaired SERVER spans").or_default() += orphan_servers;
-    }
-    for ((from, to, kind), sample) in observed {
-        let description = if kind == Kind::Event {
-            format!(
-                "Observed OTLP producer/consumer correlations via parent context or span links: correlations={}; errors={} (recorded ERROR status on either span); mean_consumer_duration_ms={:.3}; max_consumer_duration_ms={:.3}; window_unix_ns={}..{}. Counts are matched span pairs, not unique messages or end-to-end delivery latency. Shared topics without correlated contexts do not establish an edge; this sample does not prove complete traffic or an execution loop.",
-                sample.calls,
-                sample.errors,
-                sample.duration as f64 / sample.calls as f64 / 1_000_000.0,
-                sample.max_duration as f64 / 1_000_000.0,
-                sample.start,
-                sample.end
-            )
-        } else {
-            format!(
-                "Observed matched OTLP CLIENT/SERVER pairs: calls={}; errors={} (recorded ERROR status on either span); mean_client_duration_ms={:.3}; max_client_duration_ms={:.3}; window_unix_ns={}..{}. Counts describe this imported sample only, not total traffic or an infinite execution loop.",
-                sample.calls,
-                sample.errors,
-                sample.duration as f64 / sample.calls as f64 / 1_000_000.0,
-                sample.max_duration as f64 / 1_000_000.0,
-                sample.start,
-                sample.end
-            )
+    /// Returns whether the context is a compatible producer of mapped services.
+    fn pair_producer(&mut self, context: &Key, consumer: &Entry, message: &Messaging) -> bool {
+        let entries = self.entries;
+        let Some(producer) = entries.get(context).filter(|p| p.span.kind == 4) else {
+            return false;
         };
-        let proof = ServiceEvidence {
-            file: INPUT.into(),
-            pointer: sample.pointer,
-            line: None,
-            description,
+        let Some(sent) = &producer.span.messaging else {
+            return false;
         };
-        if let Some(existing) = report
-            .dependencies
-            .iter_mut()
-            .find(|e| e.from == from && e.to == to && e.kind == kind)
+        if !compatible(sent, message)
+            || sent
+                .operation
+                .as_deref()
+                .is_some_and(|op| !matches!(op, "send" | "publish" | "create"))
         {
-            existing.evidence.push(proof);
-            existing.evidence.sort();
-            existing.evidence.dedup();
-        } else {
-            report.dependencies.push(ServiceDependency {
-                from,
-                to,
-                kind,
-                evidence: vec![proof],
-            });
+            self.reasons
+                .add("messaging correlations with incompatible metadata", 1);
+            return false;
+        }
+        let (producer, received) = (&producer.span, &consumer.span);
+        let Some((from, to)) = self.endpoints(producer, received) else {
+            return false;
+        };
+        if from != to {
+            self.observed
+                .entry((from, to, Kind::Event))
+                .or_default()
+                .add(
+                    received.end - received.start,
+                    producer.error || received.error,
+                    (
+                        producer.start.min(received.start),
+                        producer.end.max(received.end),
+                    ),
+                    &consumer.pointer,
+                );
+        }
+        true
+    }
+    fn count_unpaired_servers(&mut self) {
+        let unpaired = self
+            .entries
+            .values()
+            .filter(|e| {
+                e.span.kind == 2
+                    && e.span.parent.is_some()
+                    && !self
+                        .used_servers
+                        .contains(&(e.span.trace.clone(), e.span.id.clone()))
+            })
+            .count();
+        if unpaired > 0 {
+            self.reasons.add("unpaired SERVER spans", unpaired);
         }
     }
-    for (reason, count) in reasons {
-        diagnostic(report, format!("Trace import: {count} {reason}."));
+    fn publish(self, report: &mut ServiceTopology) {
+        for (key, sample) in self.observed {
+            let description = sample.description(key.2);
+            let proof = ServiceEvidence {
+                file: INPUT.into(),
+                pointer: sample.pointer,
+                line: None,
+                description,
+            };
+            record_dependency(report, key, proof);
+        }
+        for (reason, count) in self.reasons.0 {
+            diagnostic(report, format!("Trace import: {count} {reason}."));
+        }
     }
+}
+pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
+    let document = match read_document(root) {
+        Ok(Some(document)) => document,
+        Ok(None) => return,
+        Err(message) => {
+            diagnostic(report, message);
+            return;
+        }
+    };
+    let Some(resources) = document.get("resourceSpans").and_then(Value::as_array) else {
+        diagnostic(
+            report,
+            "Expected OTLP JSON resourceSpans with scopeSpans/spans; other trace export formats are not supported.",
+        );
+        return;
+    };
+    let mut collector = Collector::default();
+    if let Err(message) = collector.collect(resources) {
+        diagnostic(report, message);
+        return;
+    }
+    let reasons = std::mem::take(&mut collector.reasons);
+    let mut correlation = Correlation::new(&collector, reasons, report);
+    correlation.pair_clients();
+    correlation.pair_consumers();
+    correlation.count_unpaired_servers();
+    correlation.publish(report);
     diagnostic(
         report,
         "Trace coverage is partial: only matched HTTP/gRPC CLIENT/SERVER pairs and explicitly correlated messaging producer/consumer spans in this local export are observed. Sampling, missing instrumentation and absent spans hide connections; database, unsupported messaging operations and destination-only edges are not imported. Cycles aggregate across the export window and do not prove a loop within one request.",
