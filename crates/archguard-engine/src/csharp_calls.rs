@@ -15,8 +15,29 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const HELPER: &str = include_str!("ArchguardCallScanner.cs");
-const LIMIT: u64 = 64 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(45);
+/// Bounds for one helper process, grown with the analyzed source text. File
+/// counts mislead: dotnet/roslyn averages 8 KB per file, its C# compiler 21 KB.
+/// Both took 1.2-1.3 s per MB and produced 2-3.5x their size as transport; the
+/// factors keep at least twice that headroom.
+#[derive(Clone, Copy)]
+struct Limits {
+    time: Duration,
+    output: u64,
+    expanded: usize,
+}
+
+impl Limits {
+    fn for_source_bytes(bytes: u64) -> Self {
+        Self {
+            time: Duration::from_millis((bytes * 3 / 1000).max(45_000)),
+            output: (bytes * 8).clamp(64 << 20, 1 << 30),
+            expanded: (bytes * 16).clamp(256 << 20, 4 << 30) as usize,
+        }
+    }
+}
+// 1 GiB in hex for every runtime thread: dotnet/roslyn's long `or` patterns
+// overflow the default stack while binding. Only the used depth is committed.
+const HELPER_STACK: &str = "40000000";
 /// Larger package assemblies are identified by their size alone.
 const REFERENCE_LIMIT: u64 = 256 * 1024 * 1024;
 type CacheEntry = Option<([u8; 32], CallAnalysis)>;
@@ -26,6 +47,7 @@ struct Input {
     manifest: Value,
     fingerprint: [u8; 32],
     files: usize,
+    source_bytes: u64,
 }
 #[derive(Debug)]
 struct Sdk {
@@ -138,6 +160,7 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
             .iter()
             .any(|s| s == "auto" || s == "cs" || s == "csharp");
     let mut sources = Vec::new();
+    let mut source_bytes = 0;
     if enabled {
         for file in crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())? {
             if file.lang != Lang::CSharp {
@@ -155,6 +178,7 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
             part(&mut hash, stripped.as_bytes());
             part(&mut hash, node.as_bytes());
             part(&mut hash, content.as_bytes());
+            source_bytes += content.len() as u64;
             sources.push(json!({"path":path,"file":stripped,"graph_node":node}));
         }
     }
@@ -180,6 +204,7 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
     }
     Ok(Input {
         files: sources.len(),
+        source_bytes,
         manifest: json!({"root":root, "sources":sources,
             "project":config.semantic.csharp.project,
             "configuration":config.semantic.csharp.configuration,
@@ -324,7 +349,12 @@ fn sdk() -> Result<Sdk, String> {
     let temporary = tempfile::tempdir().map_err(|e| e.to_string())?;
     let mut command = Command::new(&executable);
     command.arg("--list-sdks");
-    let output = bounded(&mut command, temporary.path(), "sdks")?;
+    let output = bounded(
+        &mut command,
+        temporary.path(),
+        "sdks",
+        Limits::for_source_bytes(0),
+    )?;
     let mut choices = Vec::new();
     for line in String::from_utf8_lossy(&output).lines() {
         let Some((name, parent)) = line.split_once(" [") else {
@@ -385,7 +415,12 @@ fn with_sdk(input: [u8; 32], sdk: &Sdk) -> [u8; 32] {
     hash.finalize().into()
 }
 
-fn bounded(command: &mut Command, directory: &Path, phase: &str) -> Result<Vec<u8>, String> {
+fn bounded(
+    command: &mut Command,
+    directory: &Path,
+    phase: &str,
+    limits: Limits,
+) -> Result<Vec<u8>, String> {
     let stdout = directory.join(format!("{phase}.out"));
     let stderr = directory.join(format!("{phase}.err"));
     command
@@ -417,15 +452,17 @@ fn bounded(command: &mut Command, directory: &Path, phase: &str) -> Result<Vec<u
                 return Err(error.to_string());
             }
         }
-        if start.elapsed() > TIMEOUT
+        if start.elapsed() > limits.time
             || [&stdout, &stderr]
                 .iter()
-                .any(|path| fs::metadata(path).is_ok_and(|m| m.len() > LIMIT))
+                .any(|path| fs::metadata(path).is_ok_and(|m| m.len() > limits.output))
         {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "C# {phase} exceeded its 45 second or 64 MiB output limit; import analysis remains available"
+                "C# {phase} exceeded its {} second or {} MiB output limit; import analysis remains available",
+                limits.time.as_secs(),
+                limits.output >> 20
             ));
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -433,11 +470,14 @@ fn bounded(command: &mut Command, directory: &Path, phase: &str) -> Result<Vec<u
     let mut bytes = Vec::new();
     File::open(&stdout)
         .map_err(|e| e.to_string())?
-        .take(LIMIT + 1)
+        .take(limits.output + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > LIMIT {
-        return Err("C# helper output exceeds 64 MiB".into());
+    if bytes.len() as u64 > limits.output {
+        return Err(format!(
+            "C# helper output exceeds {} MiB",
+            limits.output >> 20
+        ));
     }
     if !status.success() {
         let mut errors = String::new();
@@ -498,20 +538,28 @@ fn run_helper(input: &Input, sdk: &Sdk) -> Result<CallAnalysis, String> {
         compile.arg(format!("/reference:{}", reference.display()));
     }
     compile.arg(&helper);
-    bounded(&mut compile, directory.path(), "compile-helper")?;
+    bounded(
+        &mut compile,
+        directory.path(),
+        "compile-helper",
+        Limits::for_source_bytes(0),
+    )?;
     fs::write(binary.with_extension("runtimeconfig.json"), serde_json::to_vec(&json!({
         "runtimeOptions":{"tfm":format!("net{}.0",sdk.major),"framework":{"name":"Microsoft.NETCore.App","version":format!("{}.0.0",sdk.major)}}})).unwrap()).map_err(|e| e.to_string())?;
     let mut run = Command::new(&sdk.executable);
-    run.arg(&binary).arg(&manifest);
-    let bytes = bounded(&mut run, directory.path(), "analyze")?;
-    let result = decode_helper(&bytes)?;
+    run.arg(&binary)
+        .arg(&manifest)
+        .env("DOTNET_DefaultStackSize", HELPER_STACK);
+    let limits = Limits::for_source_bytes(input.source_bytes);
+    let bytes = bounded(&mut run, directory.path(), "analyze", limits)?;
+    let result = decode_helper(&bytes, limits.expanded)?;
     if result.files > input.files || !matches!(result.status.as_str(), "ready" | "partial") {
         return Err("Inconsistent C# source coverage".into());
     }
     Ok(result)
 }
 
-fn decode_helper(bytes: &[u8]) -> Result<CallAnalysis, String> {
+fn decode_helper(bytes: &[u8], expanded_limit: usize) -> Result<CallAnalysis, String> {
     let mut value: Value =
         serde_json::from_slice(bytes).map_err(|e| format!("Invalid C# helper result: {e}"))?;
     if value.get("encoding").is_some() {
@@ -527,6 +575,7 @@ fn decode_helper(bytes: &[u8]) -> Result<CallAnalysis, String> {
             value: &mut Value,
             strings: &[Value],
             expanded: &mut usize,
+            limit: usize,
         ) -> Result<(), String> {
             match value {
                 Value::Object(object) if object.len() == 1 && object.contains_key("$str") => {
@@ -539,26 +588,26 @@ fn decode_helper(bytes: &[u8]) -> Result<CallAnalysis, String> {
                         .and_then(Value::as_str)
                         .ok_or("Invalid C# string reference")?;
                     *expanded = expanded.saturating_add(text.len());
-                    if *expanded > 256 * 1024 * 1024 {
-                        return Err("Expanded C# transport exceeds 256 MiB".into());
+                    if *expanded > limit {
+                        return Err(format!("Expanded C# transport exceeds {} MiB", limit >> 20));
                     }
                     *value = Value::String(text.into());
                 }
                 Value::Object(object) => {
                     for child in object.values_mut() {
-                        expand(child, strings, expanded)?;
+                        expand(child, strings, expanded, limit)?;
                     }
                 }
                 Value::Array(items) => {
                     for child in items {
-                        expand(child, strings, expanded)?;
+                        expand(child, strings, expanded, limit)?;
                     }
                 }
                 _ => {}
             }
             Ok(())
         }
-        expand(&mut analysis, strings, &mut expanded)?;
+        expand(&mut analysis, strings, &mut expanded, expanded_limit)?;
         value = analysis;
     }
     serde_json::from_value(value).map_err(|e| format!("Invalid C# helper analysis: {e}"))
@@ -568,18 +617,55 @@ fn decode_helper(bytes: &[u8]) -> Result<CallAnalysis, String> {
 mod tests {
     use super::*;
     #[test]
+    fn limits_grow_with_the_source_text() {
+        let small = Limits::for_source_bytes(1 << 20);
+        assert_eq!(
+            (
+                small.time.as_secs(),
+                small.output >> 20,
+                small.expanded >> 20
+            ),
+            (45, 64, 256)
+        );
+        // dotnet/roslyn Microsoft.CodeAnalysis.CSharp: 25 MB, 33 s, 87 MB out.
+        let compiler = Limits::for_source_bytes(25_000_000);
+        assert_eq!(
+            (
+                compiler.time.as_secs(),
+                compiler.output >> 20,
+                compiler.expanded >> 20
+            ),
+            (75, 190, 381)
+        );
+        // Whole repository: 112 MB, 134 s, 225 MB transport, 600 MB expanded.
+        let roslyn = Limits::for_source_bytes(112_000_000);
+        assert_eq!(
+            (
+                roslyn.time.as_secs(),
+                roslyn.output >> 20,
+                roslyn.expanded >> 20
+            ),
+            (336, 854, 1_708)
+        );
+        let huge = Limits::for_source_bytes(1 << 40);
+        assert_eq!((huge.output >> 20, huge.expanded >> 20), (1_024, 4_096));
+    }
+
+    #[test]
     fn compact_helper_transport_preserves_source_strings_and_rejects_invalid_indices() {
         let report = json!({"status":"ready","files":1,"classes":[],"methods":[],"calls":[],"diagnostics":[{"$str":0}]});
         let bytes=serde_json::to_vec(&json!({"encoding":"string-references-v1","strings":["source </script> with Unicode ä"],"analysis":report})).unwrap();
         assert_eq!(
-            decode_helper(&bytes).unwrap().diagnostics,
+            decode_helper(&bytes, Limits::for_source_bytes(1).expanded)
+                .unwrap()
+                .diagnostics,
             vec!["source </script> with Unicode ä"]
         );
         let invalid = serde_json::to_vec(
             &json!({"encoding":"string-references-v1","strings":[],"analysis":report}),
         )
         .unwrap();
-        assert!(decode_helper(&invalid).is_err());
+        assert!(decode_helper(&invalid, Limits::for_source_bytes(1).expanded).is_err());
     }
 
     #[cfg(unix)]

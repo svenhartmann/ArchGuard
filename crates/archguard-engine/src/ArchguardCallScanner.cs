@@ -18,6 +18,11 @@ sealed class ArchguardCallScanner
     readonly List<string> diagnostics = new();
     readonly Dictionary<string, Source> sources = new(StringComparer.Ordinal);
     readonly Dictionary<string, Project> projects = new(StringComparer.Ordinal);
+    // Every parsed tree belongs to exactly one project. ClassId runs for each
+    // type reference; scanning all projects' trees there was quadratic and
+    // took minutes on dotnet/roslyn (13,600 files in 411 projects).
+    readonly Dictionary<SyntaxTree, Project> treeOwners = new();
+    readonly Dictionary<ITypeSymbol, string> classIds = new(SymbolEqualityComparer.Default);
     readonly Dictionary<string, Dictionary<string, object?>> classes = new(StringComparer.Ordinal);
     readonly Dictionary<string, Dictionary<string, object?>> methods = new(StringComparer.Ordinal);
     readonly List<Dictionary<string, object?>> calls = new();
@@ -102,8 +107,18 @@ sealed class ArchguardCallScanner
     public static int Main(string[] args)
     {
         Console.OutputEncoding = new System.Text.UTF8Encoding(false);
-        try { new ArchguardCallScanner().Run(args[0]); return 0; }
-        catch (Exception error) { Console.Error.WriteLine("C# analysis failed: " + error); return 1; }
+        // Roslyn binds `or` patterns and walks syntax recursively, partly on
+        // pool threads. The launcher's DOTNET_DefaultStackSize sizes those and
+        // this worker; the OS-sized main thread would overflow on long chains.
+        int exit = 1;
+        var worker = new System.Threading.Thread(() =>
+        {
+            try { new ArchguardCallScanner().Run(args[0]); exit = 0; }
+            catch (Exception error) { Console.Error.WriteLine("C# analysis failed: " + error); }
+        });
+        worker.Start();
+        worker.Join();
+        return exit;
     }
     void Run(string manifest)
     {
@@ -406,6 +421,7 @@ sealed class ArchguardCallScanner
         {
             var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(source.Path), parse, source.Path);
             p.Trees[tree] = source;
+            treeOwners[tree] = p;
         }
         var trees = p.Trees.Keys.ToList();
         if (Get(p, "ImplicitUsings") is "enable" or "true")
@@ -421,14 +437,21 @@ sealed class ArchguardCallScanner
         return p.Compilation;
     }
     string TypeName(INamedTypeSymbol type) => type.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+    // Called only after every project compiled, so the cached ids are final.
     string ClassId(INamedTypeSymbol type)
     {
         type = type.OriginalDefinition;
+        if (classIds.TryGetValue(type, out var cached)) return cached;
+        return classIds[type] = ComputeClassId(type);
+    }
+    string ComputeClassId(INamedTypeSymbol type)
+    {
         if (type.TypeKind == TypeKind.Error || type.ContainingAssembly == null) return "unresolved::" + TypeName(type);
         // Source declarations distinguish independent projects even when their
         // assembly identities and qualified names happen to be equal.
-        var trees = type.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).ToHashSet();
-        var declarations = projects.Values.Where(p => p.Trees.Keys.Any(trees.Contains)).ToArray();
+        var declarations = type.DeclaringSyntaxReferences
+            .Select(r => treeOwners.TryGetValue(r.SyntaxTree, out var owner) ? owner : null)
+            .OfType<Project>().Distinct().ToArray();
         if (declarations.Length == 1) return declarations[0].Id + "::" + TypeName(type);
         var matches = projects.Values.Where(p => p.Compilation?.Assembly.Identity.Equals(type.ContainingAssembly.Identity) == true).ToArray();
         var project = matches.Length == 1 ? matches[0].Id : "external:" + type.ContainingAssembly.Identity.ToString();

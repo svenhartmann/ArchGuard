@@ -54,7 +54,8 @@ def analyze(executable, home, root, sources, project=None, raw_output=False):
     manifest = root / "manifest.json"
     manifest.write_text(json.dumps({"root": str(root), "dotnet_root": str(home), "sdk_version": (executable.parent / "sdk-version").read_text(), "configuration": "Debug", "target_framework": None, "project": project,
         "sources": [{"path": str(root / name), "file": name, "graph_node": "mapped/" + name} for name in sources]}))
-    result = subprocess.run(["dotnet", str(executable), str(manifest)], check=True, capture_output=True, text=True, timeout=45)
+    result = subprocess.run(["dotnet", str(executable), str(manifest)], check=True, capture_output=True, text=True, timeout=45,
+                            env={**os.environ, "DOTNET_DefaultStackSize": "40000000"})
     return result.stdout if raw_output else decode_transport(result.stdout)
 
 
@@ -181,6 +182,16 @@ public class Client {
         local_calls = [c for c in local["calls"] if c["code"].startswith("B.")]
         assert len({c["from_method"] for c in local_calls}) == 2, "local callers cannot be merged"
         print("C# calls: local function identities retain declaring method context")
+
+        # Roslyn binds `or` patterns recursively; dotnet/roslyn's own long
+        # SyntaxKind chains overflowed the default stack and killed the helper.
+        deep = temp / "deep"
+        deep.mkdir()
+        chain = " or ".join(str(i) for i in range(2_000))
+        (deep / "Deep.cs").write_text("namespace D; class Deep { static void Target() {} static bool Run(int x) { Target(); return x is " + chain + "; } }")
+        result = analyze(binary, home, deep, ["Deep.cs"])
+        assert [(c["resolution"], c["to_method"]) for c in result["calls"]] == [("project", "source-only::D.Deep#Target()")], result["calls"]
+        print("C# calls: deeply nested patterns bind without exhausting the stack")
 
 
 if __name__ == "__main__":
