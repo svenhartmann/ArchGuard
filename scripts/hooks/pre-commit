@@ -1,0 +1,54 @@
+#!/bin/sh
+# Dogfooding gate: runs `archguard check` on the staged tree, the same check as
+# the CI step "Source analysis". It fails on cycles, layer violations and the
+# [review] ceilings in .archguard/archguard.toml. Then compact_metrics.py
+# compares method and class metrics of HEAD and the staged tree: new or grown
+# methods and classes must stay under its ceilings.
+#
+# Install:  git config core.hooksPath scripts/hooks
+# Binary:   $ARCHGUARD_BIN, else target/release, target/debug, then PATH.
+# Skip:     git commit --no-verify
+set -eu
+
+top=$(git rev-parse --show-toplevel)
+
+if [ -n "${ARCHGUARD_BIN:-}" ]; then
+    bin=$ARCHGUARD_BIN
+    if [ ! -x "$bin" ]; then
+        echo "pre-commit: ARCHGUARD_BIN=$bin is not executable" >&2
+        exit 2
+    fi
+elif [ -x "$top/target/release/archguard" ]; then
+    bin=$top/target/release/archguard
+elif [ -x "$top/target/debug/archguard" ]; then
+    bin=$top/target/debug/archguard
+elif command -v archguard >/dev/null 2>&1; then
+    bin=$(command -v archguard)
+else
+    echo "pre-commit: no archguard binary; run cargo build or set ARCHGUARD_BIN" >&2
+    exit 2
+fi
+
+# Check the index, not the worktree: unstaged edits must not decide the commit.
+staged=$(mktemp -d "${TMPDIR:-/tmp}/archguard-pre-commit.XXXXXX")
+trap 'rm -rf "$staged"' EXIT
+git checkout-index --all --prefix="$staged/"
+
+# Git exports GIT_DIR and GIT_INDEX_FILE to hooks; archguard must not see them
+# while it analyzes the export.
+if ! env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE \
+    "$bin" check "$staged" --format text; then
+    echo "pre-commit: archguard check failed for the staged files ($bin)." >&2
+    echo "pre-commit: fix the findings above or commit with --no-verify." >&2
+    exit 1
+fi
+
+# The ratchet baseline is HEAD; the first commit has none.
+head_tree=-
+if git rev-parse --verify --quiet HEAD >/dev/null; then
+    head_tree="$staged.head"
+    mkdir "$head_tree"
+    trap 'rm -rf "$staged" "$head_tree"' EXIT
+    git archive HEAD | tar -x -C "$head_tree"
+fi
+python3 "$(dirname "$0")/compact_metrics.py" "$bin" "$head_tree" "$staged"
