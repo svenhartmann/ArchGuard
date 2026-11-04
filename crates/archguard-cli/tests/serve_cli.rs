@@ -639,6 +639,17 @@ fn serve_only_exposes_its_loopback_report_routes() {
     assert_eq!(server.request("GET", "/", Some("untrusted.example")).0, 403);
     // Query parameters now select analysis scopes; unsupported parameters fail explicitly.
     assert_eq!(server.request("GET", "/?fresh=1", None).0, 400);
+    // Deferred payload sections: only known names of the current revision.
+    assert_eq!(
+        server
+            .request("GET", "/__archguard/payload/../Cargo.toml/x", None)
+            .0,
+        404
+    );
+    assert_eq!(
+        server.request("GET", "/__archguard/payload/calls", None).0,
+        404
+    );
     assert_eq!(
         server
             .request(

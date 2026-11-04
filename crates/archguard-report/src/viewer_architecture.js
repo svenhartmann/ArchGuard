@@ -433,6 +433,7 @@ function renderArc42Deployment(parent){
 }
 function renderArc42Derived(parent,number){
   if(number===5&&data.nodes.length){renderArc42PackageMap(parent);return true;}
+  if(number===6&&awaitDeferred(parent,['calls'],()=>{if(ui.workspace==='architecture')renderArchitecture();}))return true;
   if(number===6&&data.calls?.calls?.length){renderArc42PackageMap(parent,'calls');return true;}
   if(number===7)return renderArc42Deployment(parent);
   if(number===11&&data.edges.length){renderArc42PackageMap(parent,'cycles');return true;}
@@ -446,6 +447,8 @@ function renderArc42Derived(parent,number){
   return false;
 }
 // Standard diagram vocabulary; the layout engine runs in the browser, never on a remote renderer.
+// Edge counts are external labels: Graphviz places them after layout, whereas
+// edge labels join the layout as nodes and dense package maps then take minutes.
 let arc42VizPromise=null;
 function arc42LayoutEngine(){
   if(arc42VizPromise)return arc42VizPromise;
@@ -461,7 +464,7 @@ function arc42LayoutEngine(){
 function arc42StandardGraph(model,selected){
   const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i]));
   const deployment=model.nodes.some(n=>n.kind==='deployment');
-  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:'#b6c4d8'},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:'#1c2b42',fontcolor:'#ecf2fa',color:'#607796',penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:'#c3cfe2',arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:(n.name.split('/').pop()||n.name)+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?'#a7c4ff':n.cycle?'#ee7d87':'#607796',penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map(e=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{label:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?'#45556c':e.cycle?'#ee7d87':'#92b6ef',style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
+  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:'#b6c4d8'},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:'#1c2b42',fontcolor:'#ecf2fa',color:'#607796',penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:'#c3cfe2',arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:(n.name.split('/').pop()||n.name)+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?'#a7c4ff':n.cycle?'#ee7d87':'#607796',penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map((e,i)=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{id:'arc42-standard-edge-'+i,xlabel:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?'#45556c':e.cycle?'#ee7d87':'#92b6ef',style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
   if(deployment){graph.subgraphs=[{name:'cluster_deployment',graphAttributes:{label:t('Deployment configuration · ','Deployment-Konfiguration · ')+model.scope,style:'dashed',color:'#607796',fontcolor:'#b6c4d8',labelloc:'t'},nodes:graph.nodes}];graph.nodes=[];}
   return graph;
 }
@@ -479,6 +482,18 @@ function arc42PlantUml(model){
   }
   lines.push('@enduml');return lines.join('\n');
 }
+// Selection only changes colours: the layout of the unselected graph is cached
+// and a copy is restyled, so selecting in a dense package map never reruns Graphviz.
+const arc42LayoutCache=new Map();
+function arc42LayoutSvg(viz,model,selected){
+  const graph=arc42StandardGraph(model,null),key=JSON.stringify(graph);let layout=arc42LayoutCache.get(key);
+  if(!layout){layout=viz.renderSVGElement(graph);arc42LayoutCache.set(key,layout);if(arc42LayoutCache.size>12)arc42LayoutCache.delete(arc42LayoutCache.keys().next().value);}
+  const svg=layout.cloneNode(true);if(selected==null)return svg;
+  const styled=arc42StandardGraph(model,selected),paint=(id,{color,penwidth},fill)=>{for(const shape of svg.querySelector('#'+id)?.querySelectorAll('path,polygon,ellipse,polyline')||[]){if(shape.getAttribute('stroke')&&shape.getAttribute('stroke')!=='transparent')shape.setAttribute('stroke',color);if(fill&&shape.tagName.toLowerCase()==='polygon')shape.setAttribute('fill',color);shape.setAttribute('stroke-width',penwidth);}};
+  for(const node of [...styled.nodes,...(styled.subgraphs||[]).flatMap(s=>s.nodes)])paint(node.attributes.id,node.attributes,false);
+  for(const edge of styled.edges)paint(edge.attributes.id,edge.attributes,true);
+  return svg;
+}
 function arc42UpgradeDiagram(box,model,{title,onNode,selected}={}){
   const toolbar=element('div',undefined,'arc42-map-controls');if(box.parentElement.insertBefore)box.parentElement.insertBefore(toolbar,box);else box.parentElement.appendChild(toolbar);
   const status=element('span',t('Automatic layout is loading…','Automatisches Layout wird geladen…'),'arc42-map-note');toolbar.appendChild(status);
@@ -486,7 +501,7 @@ function arc42UpgradeDiagram(box,model,{title,onNode,selected}={}){
   toolbar.appendChild(button('PlantUML ↓',()=>{const blob=new Blob([source],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),link=element('a');link.href=url;link.download='arc42-'+(model.kind||'diagram')+'.puml';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},'btn btn-secondary'));
   arc42LayoutEngine().then(viz=>{
     if(!box.isConnected)return;
-    const svg=viz.renderSVGElement(arc42StandardGraph(model,selected));svg.setAttribute('data-arc42-graph','true');svg.setAttribute('data-arc42-layout','graphviz');svg.setAttribute('role','group');svg.setAttribute('aria-label',title||t('UML package diagram','UML-Paketdiagramm'));
+    const svg=arc42LayoutSvg(viz,model,selected);svg.setAttribute('data-arc42-graph','true');svg.setAttribute('data-arc42-layout','graphviz');svg.setAttribute('role','group');svg.setAttribute('aria-label',title||t('UML package diagram','UML-Paketdiagramm'));
     svg.style.minWidth='0';svg.style.maxWidth='none';svg.style.height='auto';
     const fit=()=>{const bounds=svg.viewBox.baseVal;svg.style.width=Math.min(box.clientWidth||bounds.width,bounds.width,560*bounds.width/bounds.height)+'px';};fit();
     model.nodes.forEach((n,i)=>{const group=svg.querySelector('#arc42-standard-node-'+i);if(!group)return;group.setAttribute('data-arc42-node',n.id);group.setAttribute('class','node arc42-map-node');group.setAttribute('aria-label',n.name);if(onNode){group.setAttribute('role','button');group.setAttribute('tabindex','0');group.setAttribute('aria-pressed',String(selected===n.id));group.addEventListener('click',()=>onNode(n));group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onNode(n);}});}});

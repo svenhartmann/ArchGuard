@@ -3,7 +3,7 @@ use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
 use archguard_engine::analysis::{analyze_review, match_review_entry_points};
 use archguard_engine::core::{ArchguardError, Cut, Finding, Graph, NodeId, aggregate};
-use archguard_engine::report::{HtmlContext, to_html_with_context};
+use archguard_engine::report::{HtmlContext, HtmlPage, to_html_page, to_html_with_context};
 use archguard_engine::{LoadedConfig, collect_review_sources};
 use std::path::Path;
 
@@ -155,7 +155,7 @@ pub(crate) fn html(
 ) -> Result<String, ArchguardError> {
     let services = archguard_engine::analyze_services(Path::new(&graph.root))?;
     let security = archguard_engine::read_security(Path::new(&graph.root), &loaded.config);
-    html_with_services(
+    html_page_with_services(
         graph,
         loaded,
         focus,
@@ -167,14 +167,18 @@ pub(crate) fn html(
         &services,
         &security,
         None,
+        None,
     )
+    .map(|page| page.html)
 }
 
 #[expect(
     clippy::too_many_arguments,
     reason = "same view inputs plus the live probe's precomputed service evidence"
 )]
-pub(crate) fn html_with_services(
+/// `defer_above` lets `serve` move payload sections above that many bytes out
+/// of the page (see [`archguard_engine::report::to_html_page`]).
+pub(crate) fn html_page_with_services(
     graph: &Graph,
     loaded: &LoadedConfig,
     focus: Option<&str>,
@@ -186,7 +190,8 @@ pub(crate) fn html_with_services(
     services: &archguard_engine::core::ServiceTopology,
     security: &archguard_engine::SecurityReport,
     repository: Option<&serde_json::Value>,
-) -> Result<String, ArchguardError> {
+    defer_above: Option<usize>,
+) -> Result<HtmlPage, ArchguardError> {
     let root = Path::new(&graph.root);
     let sources =
         collect_review_sources(root, &loaded.config, graph, &loaded.config.review.git_since)?;
@@ -311,7 +316,7 @@ pub(crate) fn html_with_services(
         &insights,
     )?;
     insights["arc42"] = serde_json::json!({"schema_version":arc42.schema_version,"scope":arc42.scope,"markdown":arc42.markdown(None),"chapters":arc42.chapters.iter().map(|c|serde_json::json!({"number":c.number,"title":c.title,"questions":c.questions,"markdown":arc42.markdown(Some(c.number))})).collect::<Vec<_>>()});
-    Ok(to_html_with_context(
+    Ok(to_html_page(
         graph,
         focus,
         depth,
@@ -332,6 +337,7 @@ pub(crate) fn html_with_services(
             pr_comment_markdown: pr_comment_markdown.as_deref(),
             review_kpis: review_kpis.as_ref(),
         },
+        defer_above,
     ))
 }
 

@@ -634,11 +634,23 @@ function subtree(g, id) {
 // ── Cut mirror (archguard-core/src/view.rs) ───────────────────────────────────
 // at_depth — mirrors Cut::at_depth (view.rs:74): every node at depth d
 // plus every shallower childless node.
+// ancestorsOf for many ids of one unchanged graph: index the nodes once.
+// Per-node scans made the start cut of large reports quadratic.
+function ancestorLookup(g) {
+  const byId = new Map(g.nodes.map(n => [n.id, n]));
+  return id => {
+    const out = [], seen = new Set();
+    let cur = byId.get(id)?.parent ?? null;
+    while (cur !== null && !seen.has(cur)) { seen.add(cur); out.push(cur); cur = byId.get(cur)?.parent ?? null; }
+    return out;
+  };
+}
 function atDepth(g, d) {
+  const ancestors = ancestorLookup(g), parents = new Set(g.nodes.map(n => n.parent));
   const out = new Set();
   for (const n of g.nodes) {
-    const depth = ancestorsOf(g, n.id).length;
-    if (depth === d || (depth < d && childrenOf(g, n.id).length === 0)) out.add(n.id);
+    const depth = ancestors(n.id).length;
+    if (depth === d || (depth < d && !parents.has(n.id))) out.add(n.id);
   }
   return out;
 }
@@ -916,7 +928,8 @@ function startCut(graph) {
   // A saved post-move cut can contain a node beneath another selected node
   // after Undo or when comparing the baseline. Its ancestor already represents
   // the complete subtree; keep that coverage without counting the child twice.
-  cut=new Set([...cut].filter(id=>!ancestorsOf(graph,id).some(parent=>cut.has(parent))));
+  const ancestors=ancestorLookup(graph);
+  cut=new Set([...cut].filter(id=>!ancestors(id).some(parent=>cut.has(parent))));
   // Parent collapses dominate child collapses. Only already represented
   // descendants are replaced, so a focused report gains no unrelated roots.
   const collapsed=[...treeBaseCollapses].sort((a,b)=>ancestorsOf(graph,a).length-ancestorsOf(graph,b).length);
@@ -2457,7 +2470,31 @@ function renderDsm() {
 // Import aggregation/SimOps do not rewrite compiler-resolved method calls.
 let callModel=data.calls||{status:'unavailable',files:0,classes:[],methods:[],calls:[],diagnostics:['Call analysis was not included in this report. Generate a new report or use the live viewer.']};
 const callClasses=new Map(),callMethods=new Map();
-const callAnalyzers=Array.isArray(callModel.analyzers)?callModel.analyzers:[];
+let callAnalyzers=Array.isArray(callModel.analyzers)?callModel.analyzers:[];
+// `archguard serve` can leave the largest payload sections out of the page as
+// {"deferred":name}. Views that need one fetch it once, for exactly this page
+// revision; a newer analysis on the server reloads the page instead.
+const deferredLoads=new Map();
+function deferredSection(name){const value=name==='calls'?data.calls:data.insights?.[name];return value?.deferred===name;}
+function loadDeferredSection(name){
+  if(!deferredSection(name))return Promise.resolve();
+  if(!deferredLoads.has(name))deferredLoads.set(name,fetch('/__archguard/payload/'+encodeURIComponent(name)+'/'+encodeURIComponent(window.archguardLiveVersion||'')+(window.location?.search||''),{headers:{accept:'application/json'}}).then(async response=>{
+    if(response.status===409){window.location.reload();return new Promise(()=>{});}
+    if(!response.ok)throw Error(await response.text());
+    const value=await response.json();
+    if(name==='calls'){data.calls=callModel=value;callAnalyzers=Array.isArray(value.analyzers)?value.analyzers:[];callModelPrepared=false;callClasses.clear();callMethods.clear();}
+    else data.insights[name]=value;
+  }).catch(error=>{deferredLoads.delete(name);throw error;}));
+  return deferredLoads.get(name);
+}
+// While a named section is missing, show a loading note in `host`, fetch it and
+// call `render` again; returns true when the caller must not render yet.
+function awaitDeferred(host,names,render){
+  const missing=names.filter(deferredSection);if(!missing.length)return false;
+  host.appendChild(element('p',t('Loading measurements from the live viewer…','Messdaten werden vom Live-Viewer geladen…'),'muted'));
+  Promise.all(missing.map(loadDeferredSection)).then(render,error=>{host.textContent='';host.appendChild(element('p',t('The measurements could not be loaded: {error}','Die Messdaten konnten nicht geladen werden: {error}',{error:error.message}),'muted'));});
+  return true;
+}
 const callUi={language:'all',package:null,query:'',resolution:'project',internal:false,relation:null,element:null,limit:100,siteLimit:100};
 const callRelationsCache={key:null,scope:null,rows:[]};
 let callClassCycles=[],callModelPrepared=false;
@@ -2668,9 +2705,10 @@ function renderCallEvidence(relation) {
   }
 }
 function renderCalls() {
-  prepareCallModel();
   const status=document.getElementById('calls-status'),list=document.getElementById('calls-relations'),details=document.getElementById('calls-diagnostics');
   list.textContent='';details.textContent='';
+  if(awaitDeferred(list,['calls'],()=>{if(ui.workspace==='calls')renderCalls();})){status.textContent='';return;}
+  prepareCallModel();
   const diagnostics=data.calls?(callModel.diagnostics||[]):[t(callModel.diagnostics[0],'Dieser Bericht enthält keine Aufrufanalyse. Einen neuen Bericht erstellen oder den Live-Viewer verwenden.')];
   const calls=callModel.calls||[],counts={project:0,external:0,unresolved:0};for(const c of calls)counts[c.resolution]=(counts[c.resolution]||0)+1;
   const unavailable=callModel.status==='unavailable',none=callModel.status==='not_applicable';

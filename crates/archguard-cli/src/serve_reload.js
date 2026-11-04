@@ -4,6 +4,8 @@
   if(typeof renderRepositoryNavigation==='function')renderRepositoryNavigation();
   if(typeof renderSidebar==='function')renderSidebar();
   const version = __ARCHGUARD_VERSION__;
+  // Deferred payload sections are requested for exactly this revision.
+  window.archguardLiveVersion=version;
   const versionPath = __ARCHGUARD_VERSION_PATH__;
   let disconnected=false,inFlight=false,reloading=false,timer=null,refreshState=null;
   const hidden=()=>document.hidden===true;

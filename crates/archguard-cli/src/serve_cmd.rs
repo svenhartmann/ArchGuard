@@ -27,10 +27,16 @@ const HTTP_WORKERS: usize = 4;
 const RELOAD_JS: &str = include_str!("serve_reload.js");
 // This internal cache key cannot be supplied through a project path.
 const WORKSPACE_KEY: &str = "\0workspace";
+// Payload sections above this size are fetched by the open page on demand.
+// Parsing hundreds of megabytes of inline JSON froze the browser on load
+// (Elasticsearch: 264 MB, mostly calls and code metrics).
+const DEFER_PAYLOAD_ABOVE: usize = 4 * 1024 * 1024;
 
 #[derive(Default, Clone)]
 struct Page {
     html: Arc<str>,
+    /// Payload sections the page fetches from `/__archguard/payload`.
+    deferred: Arc<BTreeMap<&'static str, Arc<str>>>,
     revision: String,
     warnings: Vec<String>,
     rendered: Option<(u64, Instant)>,
@@ -115,7 +121,7 @@ impl Page {
                     warnings.push(format!("could not save effective project config: {error}"));
                 }
                 self.rendered = Some((key, Instant::now()));
-                return Ok(Some((html, warnings)));
+                return Ok(Some((html, Vec::new(), warnings)));
             }
             let input_key = source_inputs(scope, depth, &loaded, services)?;
             if self.inputs == Some(input_key)
@@ -146,7 +152,7 @@ impl Page {
             let findings: Vec<_> = crate::cycle_view::cycle_findings(&run.report).collect();
             let cyclic = crate::cycle_view::cyclic_edges(&run.graph, &findings);
             let effective = run.effective_config();
-            let html = crate::review_cmd::html_with_services(
+            let page = crate::review_cmd::html_page_with_services(
                 &run.graph,
                 &effective,
                 None,
@@ -158,10 +164,13 @@ impl Page {
                 services,
                 &security,
                 scope.repository.as_ref(),
+                Some(DEFER_PAYLOAD_ABOVE),
             )?;
             let mut warnings = Vec::new();
+            // The saved report stays one self-contained file.
+            let saved = page.complete.as_deref().unwrap_or(&page.html);
             if let Err(error) =
-                crate::project_files::write_project_graph(root, &run.graph, Some(&html))
+                crate::project_files::write_project_graph(root, &run.graph, Some(saved))
             {
                 warnings.push(format!("could not save project graph: {error}"));
             }
@@ -171,21 +180,34 @@ impl Page {
             warnings.extend(run.warnings);
             self.rendered = Some((key, Instant::now()));
             self.inputs = Some(input_key);
-            Ok(Some((html, warnings)))
+            Ok(Some((page.html, page.deferred, warnings)))
         });
-        let (html, warnings) = match result {
+        let (html, deferred, warnings) = match result {
             Ok(Some(page)) => page,
             Ok(None) => return,
             Err(error) => {
                 self.rendered = None;
                 let message = error.to_string();
-                (error_html(&message), vec![message])
+                (error_html(&message), Vec::new(), vec![message])
             }
         };
-        self.publish(&scope.root, scope.project.as_deref(), html, warnings);
+        self.publish(
+            &scope.root,
+            scope.project.as_deref(),
+            html,
+            deferred,
+            warnings,
+        );
     }
 
-    fn publish(&mut self, root: &Path, project: Option<&str>, html: String, warnings: Vec<String>) {
+    fn publish(
+        &mut self,
+        root: &Path,
+        project: Option<&str>,
+        html: String,
+        deferred: Vec<(&'static str, String)>,
+        warnings: Vec<String>,
+    ) {
         if warnings != self.warnings {
             for warning in warnings.iter().take(20) {
                 eprintln!("warning: {warning}");
@@ -198,15 +220,22 @@ impl Page {
             }
             self.warnings = warnings;
         }
-        if html != self.html.as_ref() {
+        let deferred: BTreeMap<_, Arc<str>> = deferred
+            .into_iter()
+            .map(|(name, json)| (name, json.into()))
+            .collect();
+        if html != self.html.as_ref() || deferred != *self.deferred {
             // Content identity also detects edits made while this process was
             // stopped. A counter restarted at 1 could leave an open page stale.
+            // Deferred sections count: they can change under an identical page.
             let mut hash = DefaultHasher::new();
             root.hash(&mut hash);
             project.hash(&mut hash);
             html.hash(&mut hash);
+            deferred.hash(&mut hash);
             self.revision = format!("{:016x}", hash.finish());
             self.html = html.into();
+            self.deferred = Arc::new(deferred);
         }
     }
 
@@ -226,6 +255,19 @@ impl Page {
                 &serde_json::to_string(&version_path).expect("version URL serializes"),
             )
     }
+}
+
+/// `GET /__archguard/payload/<section>/<revision>`: one deferred section of
+/// the page the browser holds. A newer revision answers 409; the live
+/// script then reloads the page instead of mixing two analyses.
+fn payload_response(page: &Page, section: &str, version: &str) -> (u16, String) {
+    let Some(json) = page.deferred.get(section) else {
+        return (404, "No deferred payload section with this name".into());
+    };
+    if version != page.revision {
+        return (409, "The analysis changed; reload the page".into());
+    }
+    (200, json.to_string())
 }
 
 fn error_html(message: &str) -> String {
@@ -447,7 +489,7 @@ impl BackgroundPages {
                 };
                 if let Some(error) = error {
                     page.rendered = None;
-                    page.publish(&root, selected, error_html(&error), vec![error]);
+                    page.publish(&root, selected, error_html(&error), Vec::new(), vec![error]);
                 }
                 page.scheduled = None;
                 page.completed = ticket;
@@ -620,7 +662,7 @@ fn refresh_project(
         if let Err(error) = crate::project_files::write_report(root, "workspace.html", &html) {
             warnings.push(format!("could not save workspace report: {error}"));
         }
-        page.publish(root, selected, html, warnings);
+        page.publish(root, selected, html, Vec::new(), warnings);
         page.inputs = Some(key);
         page.rendered = Some((key, Instant::now()));
         return Ok(());
@@ -772,7 +814,10 @@ fn handle(
     if path == "/api/review-dashboard" && query.is_none() {
         return handle_review_dashboard(stream, root, config);
     }
-    if !matches!(path, "/" | "/__archguard/version" | "/__archguard/check") {
+    let payload_section = path.strip_prefix("/__archguard/payload/");
+    if payload_section.is_none()
+        && !matches!(path, "/" | "/__archguard/version" | "/__archguard/check")
+    {
         return respond(stream, 404, "text/plain", "Not found");
     }
     let selected = match parse_project_query(query) {
@@ -805,6 +850,18 @@ fn handle(
         Ok(page) => page,
         Err(error) => return respond(stream, 503, "text/plain", &error.to_string()),
     };
+    if let Some(rest) = payload_section {
+        let Some((section, version)) = rest.split_once('/') else {
+            return respond(stream, 404, "text/plain", "Not found");
+        };
+        let (status, body) = payload_response(&page, section, version);
+        let kind = if status == 200 {
+            "application/json"
+        } else {
+            "text/plain"
+        };
+        return respond(stream, status, kind, &body);
+    }
     if path == "/" {
         let loading = page.revision.is_empty();
         let html = if loading { LOADING_HTML } else { &page.html };
@@ -1267,6 +1324,36 @@ fn valid_project_path(value: &str) -> bool {
 #[cfg(test)]
 mod workspace_route_tests {
     use super::*;
+    #[test]
+    fn deferred_payload_sections_follow_the_page_revision() {
+        let root = Path::new("/project");
+        let mut page = Page::default();
+        let sections = |calls: &str| vec![("calls", calls.to_owned())];
+        page.publish(root, None, "<html>".into(), sections("[1]"), Vec::new());
+        let first = page.revision.clone();
+        assert_eq!(
+            payload_response(&page, "calls", &first),
+            (200, "[1]".to_owned())
+        );
+        // A section can change while the light page stays byte-identical;
+        // the revision must still move so open pages reload and refetch.
+        page.publish(root, None, "<html>".into(), sections("[2]"), Vec::new());
+        assert_ne!(page.revision, first);
+        assert_eq!(payload_response(&page, "calls", &first).0, 409);
+        assert_eq!(
+            payload_response(&page, "calls", &page.revision.clone()),
+            (200, "[2]".to_owned())
+        );
+        assert_eq!(
+            payload_response(&page, "code_metrics", &page.revision.clone()).0,
+            404
+        );
+        page.publish(root, None, "<html>".into(), Vec::new(), Vec::new());
+        assert_eq!(
+            payload_response(&page, "calls", &page.revision.clone()).0,
+            404
+        );
+    }
     #[test]
     fn explicit_workspace_sources_has_separate_route_and_reload_scope() {
         assert_eq!(

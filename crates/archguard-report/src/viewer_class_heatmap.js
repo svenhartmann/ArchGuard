@@ -45,12 +45,14 @@ function classHeatmapRows(rows){
   return rows.filter(row=>{
     const states=CLASS_METRICS.filter(k=>k!=='noc').map(k=>classMetricAssessment(row,k).state);
     return classHeatmapUi.filter==='high'?states.includes('high'):classHeatmapUi.filter==='low'?states.every(s=>s==='low'):classHeatmapUi.filter==='unknown'?CLASS_METRICS.some(k=>classMetricAssessment(row,k).state==='unknown'):true;
-  }).slice().sort((a,b)=>{
+  }).map(row=>[row,classHeatmapUi.sort==='priority'?classHeatmapPriority(row):0]).sort(([a,pa],[b,pb])=>{
+    // Priorities are rated once per class above, not in every comparison.
     const key=classHeatmapUi.sort;
-    return (key==='name'?0:key==='priority'?classHeatmapPriority(b)-classHeatmapPriority(a):(classMetricValue(b,key)??-1)-(classMetricValue(a,key)??-1))||compareNames(a.class_id,b.class_id);
-  });
+    return (key==='name'?0:key==='priority'?pb-pa:(classMetricValue(b,key)??-1)-(classMetricValue(a,key)??-1))||compareNames(a.class_id,b.class_id);
+  }).map(([row])=>row);
 }
 function openClassMetricCalls(row){
+  if(deferredSection('calls')){loadDeferredSection('calls').then(()=>openClassMetricCalls(row),error=>feedback(t('Calls could not be loaded: {error}','Aufrufe konnten nicht geladen werden: {error}',{error:error.message})));return;}
   prepareCallModel();const cls=callClasses.get(row.class_id);
   if(!cls){feedback(t('No call declaration available for this class.','Keine Aufrufdeklaration für diese Klasse verfügbar.'));return;}
   callUi.language=callClassLanguage(cls)||'all';callUi.package=cls.package;callUi.query='';callUi.resolution='all';callUi.internal=true;callUi.relation=null;callUi.element={kind:'class',id:cls.id};callUi.limit=100;callUi.siteLimit=100;

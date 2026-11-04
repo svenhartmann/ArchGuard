@@ -34,4 +34,14 @@ app.run('resetView();treeRenders=0;toggleTreeBranch(0,true)');
 assert.equal(app.run('treeRenders'),1,'inline branch navigation renders only its final scope');
 app.run('treeRenders=0;navigateExplorerNode(2,true)');
 assert.equal(app.run('treeRenders'),1,'Explorer navigation does not rebuild the old graph before the requested scope');
+// The start cut looks up every node's depth. Per-node ancestor and child
+// scans over the whole node list made opening a large report quadratic.
+app.run(`var lookups=0,originalNodeById=nodeById,originalChildrenOf=childrenOf;nodeById=function(...a){lookups++;return originalNodeById(...a);};childrenOf=function(...a){lookups++;return originalChildrenOf(...a);};
+var deep={nodes:[]};for(let i=0;i<400;i++)deep.nodes.push({id:i,name:'n'+i,parent:i<4?null:i<40?i%4:i<400?4+i%36:null});deep.nodes.push({id:500,name:'orphan',parent:999},{id:501,name:'loop-a',parent:502},{id:502,name:'loop-b',parent:501});`);
+const depths=[0,1,2,3].map(d=>JSON.parse(app.run(`JSON.stringify([...atDepth(deep,${d})].sort((a,b)=>a-b))`)));
+assert.equal(app.run('lookups'),0,'depth selection indexes nodes once instead of scanning per node');
+const expectedDepth=d=>{const byId=new Map(),parents=new Set();const g=JSON.parse(app.run('JSON.stringify(deep)'));for(const n of g.nodes){byId.set(n.id,n);parents.add(n.parent);}
+  return g.nodes.filter(n=>{let depth=0,cur=n.parent;const seen=new Set();while(cur!=null&&!seen.has(cur)){seen.add(cur);depth++;cur=byId.get(cur)?.parent;}return depth===d||depth<d&&!parents.has(n.id);}).map(n=>n.id).sort((a,b)=>a-b);};
+depths.forEach((ids,d)=>assert.deepEqual(ids,expectedDepth(d),'depth '+d+' keeps leaves above it, unknown parents and parent loops'));
+app.run('nodeById=originalNodeById;childrenOf=originalChildrenOf');
 console.log('Viewer work reuse: one visible tree render, no hidden tree rebuilds, navigation cache and simulation/undo invalidation passed');

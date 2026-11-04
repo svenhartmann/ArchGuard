@@ -194,6 +194,113 @@ pub fn to_html_with_context(
     initial_tab: Option<&str>,
     context: &HtmlContext<'_>,
 ) -> String {
+    page_html(&payload_value(
+        g,
+        focus,
+        depth,
+        cyclic_edges,
+        findings,
+        initial_tab,
+        context,
+    ))
+}
+
+/// Payload sections `archguard serve` can deliver on request instead of
+/// inline: compiler calls and class/method metrics dominate large reports.
+const DEFERRED_SECTIONS: [&str; 2] = ["calls", "code_metrics"];
+
+/// A viewer page whose largest payload sections may be fetched on demand.
+pub struct HtmlPage {
+    /// The page to serve; deferred sections hold `{"deferred": name}`.
+    pub html: String,
+    /// `(name, JSON)` of every deferred section, in [`DEFERRED_SECTIONS`] order.
+    pub deferred: Vec<(&'static str, String)>,
+    /// The self-contained page for saved reports, when anything was deferred.
+    pub complete: Option<String>,
+}
+
+/// Like [`to_html_with_context`], but sections whose JSON exceeds
+/// `defer_above` bytes move out of the page (`None` keeps everything inline).
+/// Exported reports stay single files: `complete` embeds every section.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the renderer inputs plus the deferral threshold"
+)]
+pub fn to_html_page(
+    g: &Graph,
+    focus: Option<&str>,
+    depth: u32,
+    cyclic_edges: &HashSet<(NodeId, NodeId)>,
+    findings: &[Finding],
+    initial_tab: Option<&str>,
+    context: &HtmlContext<'_>,
+    defer_above: Option<usize>,
+) -> HtmlPage {
+    let mut payload = payload_value(
+        g,
+        focus,
+        depth,
+        cyclic_edges,
+        findings,
+        initial_tab,
+        context,
+    );
+    let Some(limit) = defer_above else {
+        return HtmlPage {
+            html: page_html(&payload),
+            deferred: Vec::new(),
+            complete: None,
+        };
+    };
+    let mut deferred = Vec::new();
+    for name in DEFERRED_SECTIONS {
+        let slot = if name == "calls" {
+            payload.get_mut("calls")
+        } else {
+            payload
+                .get_mut("insights")
+                .and_then(|insights| insights.get_mut(name))
+        };
+        let Some(slot) = slot.filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let json = serde_json::to_string(slot).expect("payload sections serialize");
+        if json.len() > limit {
+            deferred.push((name, json));
+        }
+    }
+    if deferred.is_empty() {
+        return HtmlPage {
+            html: page_html(&payload),
+            deferred,
+            complete: None,
+        };
+    }
+    let complete = page_html(&payload);
+    for (name, _) in &deferred {
+        let placeholder = json!({ "deferred": name });
+        if *name == "calls" {
+            payload["calls"] = placeholder;
+        } else {
+            payload["insights"][*name] = placeholder;
+        }
+    }
+    HtmlPage {
+        html: page_html(&payload),
+        deferred,
+        complete: Some(complete),
+    }
+}
+
+fn payload_value(
+    g: &Graph,
+    focus: Option<&str>,
+    depth: u32,
+    cyclic_edges: &HashSet<(NodeId, NodeId)>,
+    findings: &[Finding],
+    initial_tab: Option<&str>,
+    context: &HtmlContext<'_>,
+) -> serde_json::Value {
     let keep = if let Some(cut) = context.initial_cut {
         let view = archguard_core::aggregate(g, cut);
         let focused = focus_subset(&view, focus, depth);
@@ -219,7 +326,7 @@ pub fn to_html_with_context(
         .collect();
     cyclic.sort_unstable();
 
-    let payload = json!({
+    json!({
         "root": g.root,
         "semantic": g.semantic,
         "nodes": g.nodes.iter().map(|n| json!({
@@ -271,8 +378,11 @@ pub fn to_html_with_context(
                 ids
             }),
         },
-    });
-    let payload = serde_json::to_string(&payload)
+    })
+}
+
+fn page_html(payload: &serde_json::Value) -> String {
+    let payload = serde_json::to_string(payload)
         .expect("the payload is plain serde_json data and always serializable");
     // A literal `</` inside the JSON (e.g. in a node name) would end the
     // `<script>` element early; `<\/` is the equivalent JSON escape and
@@ -362,6 +472,66 @@ mod tests {
                 edge(3, 4),
             ],
         }
+    }
+
+    #[test]
+    fn served_page_defers_large_sections_and_keeps_the_complete_report() {
+        let calls = archguard_core::CallAnalysis {
+            status: "partial".into(),
+            files: 1,
+            ..Default::default()
+        };
+        let insights = serde_json::json!({"code_metrics":{"classes":[{"class_id":"A"}]},"cohesion":{"kept":true}});
+        let context = super::HtmlContext {
+            calls: Some(&calls),
+            insights: Some(&insights),
+            ..Default::default()
+        };
+        let render = |defer_above| {
+            super::to_html_page(
+                &sample_graph(),
+                None,
+                0,
+                &cyclic_edges(),
+                &findings(),
+                None,
+                &context,
+                defer_above,
+            )
+        };
+        let complete = super::to_html_with_context(
+            &sample_graph(),
+            None,
+            0,
+            &cyclic_edges(),
+            &findings(),
+            None,
+            &context,
+        );
+        let page = render(Some(0));
+        let data = payload(&page.html);
+        assert_eq!(data["calls"], serde_json::json!({"deferred":"calls"}));
+        assert_eq!(
+            data["insights"]["code_metrics"],
+            serde_json::json!({"deferred":"code_metrics"})
+        );
+        assert_eq!(data["insights"]["cohesion"], insights["cohesion"]);
+        let sections: std::collections::BTreeMap<_, _> = page.deferred.iter().cloned().collect();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&sections["calls"]).unwrap(),
+            payload(&complete)["calls"]
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&sections["code_metrics"]).unwrap(),
+            insights["code_metrics"]
+        );
+        assert_eq!(page.complete.as_deref(), Some(complete.as_str()));
+        // Below the threshold nothing changes: one complete page, no requests.
+        let small = render(None);
+        assert_eq!(small.html, complete);
+        assert!(small.deferred.is_empty() && small.complete.is_none());
+        let large_only = render(Some(1 << 20));
+        assert_eq!(large_only.html, complete);
     }
 
     #[test]

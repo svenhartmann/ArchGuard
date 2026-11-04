@@ -150,6 +150,9 @@ function renderWorld(){
   if(!worldUi.bound)initWorld();
   document.getElementById('world-canvas').setAttribute('aria-label',t('Architecture landscape. Wheel or pinch to zoom. Drag to pan. Right-drag, Shift-drag, Q/E or twist two fingers to rotate. Use the area selector for accessible navigation.','Architekturlandschaft. Mausrad oder Zwei-Finger-Geste zum Zoomen. Ziehen zum Verschieben. Rechtsziehen, Umschalt + Ziehen, Q/E oder zwei Finger drehen zum Drehen. Bereichsauswahl für barrierefreie Navigation.'));
   worldUi.model=worldScope();
+  // Class metrics may still be on the live server; colour them once they arrive.
+  const kpiPending=worldKpiActive()&&deferredSection('code_metrics');
+  if(kpiPending)loadDeferredSection('code_metrics').then(()=>{if(ui.workspace==='start')renderWorld();},error=>{document.getElementById('world-status').textContent=t('Class metrics could not be loaded: {error}','Klassenkennzahlen konnten nicht geladen werden: {error}',{error:error.message});});
   // Heights in the metric lenses are normalised to the highest value visible in
   // this scope, so a package of small-valued classes still reads as a relief.
   const kpiViewMax=worldKpiActive()?Math.max(0,...worldUi.model.areas.flatMap(a=>a.entities).map(worldEntityValue).filter(Number.isFinite)):0;
@@ -185,7 +188,9 @@ function renderWorld(){
   }
   const scope=document.getElementById('world-area');scope.textContent='';let option=element('option',t('Select area…','Bereich wählen…'));option.value='';scope.appendChild(option);
   for(const area of worldUi.model.areas){option=element('option',area.name);option.value=area.name;scope.appendChild(option);}scope.value=worldUi.selection?.area||'';
-  worldDetails();worldDraw();return true;
+  worldDetails();worldDraw();
+  if(kpiPending)document.getElementById('world-status').textContent=t('Loading class metrics from the live viewer…','Klassenkennzahlen werden vom Live-Viewer geladen…');
+  return true;
 }
 // The status line depends on the selection, so every detail refresh updates it;
 // selecting through the canvas, the list or the picker must not leave it stale.
@@ -245,7 +250,9 @@ function renderWorldContext(panel,selection,area){
   const entity=selection.entity,members=entity?[entity]:(selection.members||area.entities),section=element('section');section.setAttribute('data-world-context',worldUi.lens);panel.appendChild(section);
   const heading=worldUi.lens==='complexity'?worldKpiLabel():worldUi.lens==='coverage'?t('Test gaps','Testlücken'):t('Problems and cycles','Probleme und Zyklen');section.appendChild(element('h3',heading));
   if(worldUi.lens==='complexity'){
-    if(entity){
+    // Class metrics and method records may still be on the live server.
+    if(entity&&awaitDeferred(section,['calls','code_metrics'],()=>worldDetails())){/* loading note shown */}
+    else if(entity){
       section.appendChild(element('p',entity.class_id?t('Class: {name}','Klasse: {name}',{name:entity.class_id}):t('File · no class assignment','Datei · keine Klassenzuordnung'),'path'));
       if(worldKpiActive()){
         const row=worldKpiRow(entity),value=row?classMetricValue(row,worldUi.kpi):null;

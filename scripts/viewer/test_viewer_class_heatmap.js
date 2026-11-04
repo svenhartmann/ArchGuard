@@ -38,6 +38,13 @@ app.ids.get('engineering-target').value='p/Shared.java';app.ids.get('engineering
 assert.equal(list().querySelectorAll('tr[data-heatmap-class]').length,0,'file scope combines with the heatmap filter');
 for(const key of ['cbo','rfc','dit','noc','wmc','lcom4','cognitive','maintainability','halsteadVolume','halsteadDifficulty','halsteadEffort'])assert.ok(app.run(`metricHelp(${JSON.stringify(key)})`).length>60,key+' needs a definition');
 const old=launch({...fixture,insights:{},calls:undefined},{library:false});old.run("showTab('quality');engineeringUi.section='heatmap';renderEngineeringQuality()");assert.match(old.ids.get('engineering-list').textContent,/No matching|Keine passenden/);
+// Priority sorting rates each class once, not again in every comparison
+// (a large codebase has tens of thousands of classes).
+app.run(`classHeatmapUi.sort='priority';classHeatmapUi.filter='all';var assessments=0,originalAssessment=classMetricAssessment;classMetricAssessment=function(...a){assessments++;return originalAssessment(...a);};var priorityOrder=JSON.stringify(classHeatmapRows(engineeringData('code_metrics').classes).map(r=>r.class_id));`);
+const rated=app.run('assessments'),classes=app.run("engineeringData('code_metrics').classes.length");
+assert.ok(rated<=12*classes,`priority sorting rates each class a bounded number of times: ${rated} for ${classes}`);
+app.run('classMetricAssessment=originalAssessment');
+assert.deepEqual(JSON.parse(app.run('priorityOrder')),JSON.parse(app.run("JSON.stringify(engineeringData('code_metrics').classes.slice().sort((a,b)=>classHeatmapPriority(b)-classHeatmapPriority(a)||compareNames(a.class_id,b.class_id)).map(r=>r.class_id))")),'precomputed priorities keep the order');
 console.log('Class heatmap: honest comparison, stable filters, paging, exact class navigation, safe text and DE/EN tooltips passed');
 assert.match(app.run("classMetricInterpretation({file:'api.go',dit:{value:null,observed:0,status:'not_applicable'}},'dit')"),/Not applicable|Nicht anwendbar/,'Go inheritance is not an incomplete zero measurement');
 assert.equal(app.run("classMetricLanguage({file:'api.go'})"),'go');

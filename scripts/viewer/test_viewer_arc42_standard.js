@@ -4,7 +4,10 @@ const {launch,fixture}=vm.runInNewContext(base+'\n({launch,fixture})',{require,c
 const app=launch(fixture,{library:false});
 assert.equal(app.run('typeof arc42StandardGraph'),'function','standard diagram model replaces hand-positioned rows');
 const model=JSON.parse(app.run('JSON.stringify(arc42StandardGraph(arc42PackageProjection(),null))'));
-assert.equal(model.graphAttributes.rankdir,'TB');assert.equal(model.nodes.length,12);assert.ok(model.nodes.some(n=>n.attributes.shape==='folder'));assert.ok(model.edges.some(e=>e.attributes.color==='#ee7d87'));assert.ok(model.edges.every(e=>e.attributes.label));
+assert.equal(model.graphAttributes.rankdir,'TB');assert.equal(model.nodes.length,12);assert.ok(model.nodes.some(n=>n.attributes.shape==='folder'));assert.ok(model.edges.some(e=>e.attributes.color==='#ee7d87'));
+// Counts stay on every edge as external labels: Graphviz places those after
+// layout, while edge `label`s become layout nodes (Elasticsearch: 41 s vs 1.8 s).
+assert.ok(model.edges.every(e=>e.attributes.xlabel&&!('label' in e.attributes)),'edge counts are external labels');
 const puml=app.run('arc42PlantUml(arc42PackageProjection())');assert.match(puml,/@startuml/);assert.match(puml,/package "/);assert.match(puml,/#ee7d87/);assert.doesNotMatch(puml,/!include/);
 const deployment=app.run("arc42PlantUml(arc42DeploymentProjection('dev.yml'))");assert.match(deployment,/Deployment_Node/);assert.match(deployment,/Container/);assert.match(deployment,/startup/);assert.doesNotMatch(deployment,/prod.yml/);
 app.run('let evil={nodes:[{id:"x",name:\'quote"\\n!include https://evil.test\\n@enduml\',kind:"package"}],edges:[]};');

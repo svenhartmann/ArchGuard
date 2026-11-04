@@ -1,7 +1,8 @@
 'use strict';
 // Measurements stay attached to the original source snapshot, never to virtual moves.
 const engineeringUi={section:null,query:'',target:'',targetQuery:'',limit:20,contractsLimit:20,cohesionPackage:null,cohesionGroup:null,cohesionLimit:20};
-function engineeringData(key){return data.insights?.[key]||null;}
+// A section `serve` left out of the page is not data until it was fetched.
+function engineeringData(key){const value=data.insights?.[key];return value&&!deferredSection(key)?value:null;}
 function engineeringStatus(status){return ({unchanged_since_import:t('unchanged since import','seit Import unverändert'),changed_since_import:t('changed since import','seit Import geändert'),unmapped:t('unmapped','nicht zugeordnet'),not_recorded:t('not recorded','nicht aufgezeichnet'),compared:t('compared','verglichen'),no_baseline:t('no previous import','kein vorheriger Import'),unverified:t('unverified','nicht verifiziert'),comparable:t('comparable','vergleichbar'),incomparable:t('not comparable','nicht vergleichbar'),present:t('present','vorhanden'),added:t('added','hinzugefügt'),removed:t('removed','entfernt')})[status]||coverageStatusText(status||'not_imported');}
 function engineeringText(container,text,tag='p',className=''){const raw=String(text??'');container.appendChild(element(tag,raw.length>4096?raw.slice(0,4096)+'…':raw,className));if(raw.length>4096)container.appendChild(element('small',t('Text shortened; full evidence is included in the export.','Text gekürzt; vollständige Belege stehen im Export.'),'muted'));}
 function engineeringLocate(container,name,label){
@@ -188,6 +189,7 @@ function renderEngineeringTargets(){
 }
 function renderEngineeringQuality(){
   if(ui.workspace!=='quality')return;
+  if(deferredSection('code_metrics')){const host=document.getElementById('engineering-list');host.textContent='';awaitDeferred(host,['code_metrics'],renderEngineeringQuality);return;}
   if(!engineeringUi.section)engineeringUi.section=engineeringData('code_metrics')?.classes?.length?'heatmap':'cohesion';
   const keys={heatmap:'code_metrics',classes:'code_metrics',methods:'code_metrics',knowledge:'knowledge_metrics',measurements:'measurement_runs',cohesion:'cohesion',history:'quality_history',tests:'test_evidence',mutations:'mutations',duplicates:'duplicates'},source=engineeringData(keys[engineeringUi.section]),rows=engineeringUi.section==='heatmap'?classHeatmapRows(engineeringRows()):engineeringRows();
   document.getElementById('engineering-heading').textContent=t('Software quality','Softwarequalität');
