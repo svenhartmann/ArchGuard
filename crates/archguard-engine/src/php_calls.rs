@@ -105,14 +105,7 @@ mod tests {
         );
         let user = report.classes.iter().find(|c| c.name == "User").unwrap();
         assert_eq!(user.is_abstract, Some(true));
-        let (graph, _) =
-            crate::analyze(dir.path(), &Config::default(), crate::Level::File).unwrap();
-        assert!(
-            graph.nodes.iter().any(|node| node.name == user.graph_node),
-            "{} is not a graph node: {:?}",
-            user.graph_node,
-            graph.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
-        );
+        // tests/php.rs checks `graph_node` against the full pipeline graph.
         let name = report.methods.iter().find(|m| m.name == "name").unwrap();
         assert_eq!(name.complexity.as_ref().unwrap().cyclomatic, 2);
         assert!(

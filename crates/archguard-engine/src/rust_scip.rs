@@ -17,11 +17,19 @@ use protobuf::Message;
 use scip::types::{Index, PositionEncoding};
 use sha2::{Digest, Sha256};
 
-use crate::rust_calls::CallSite;
-
 const HINT: &str = "Install rust-analyzer (rustup component add rust-analyzer, or brew install rust-analyzer) or set ARCHGUARD_RUST_ANALYZER to its executable.";
 /// SCIP `SymbolRole::Definition`.
 const DEFINITION: i32 = 1;
+
+/// A call expression in a measured body, located at its callee name.
+pub(crate) struct CallSite {
+    /// 1-based line and 0-based character column of the callee identifier.
+    pub line: u32,
+    pub column: u32,
+    /// The callee as written: `Cart::new`, `shop::audit` or a method name.
+    pub label: String,
+    pub method_call: bool,
+}
 
 /// One parsed Rust source: walked path, graph-relative path and text.
 pub(crate) struct Source {

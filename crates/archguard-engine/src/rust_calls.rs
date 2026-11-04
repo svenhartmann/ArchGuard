@@ -23,6 +23,8 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, ImplItem, Item, Signature, TraitItem, Visibility};
 
+use crate::rust_scip::CallSite;
+
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
 const LIMITATION: &str = "Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.";
 
@@ -38,16 +40,6 @@ struct Measure {
     operand_count: u32,
     lines: BTreeSet<usize>,
     calls: Vec<CallSite>,
-}
-
-/// A call expression in a measured body, located at its callee name.
-pub(crate) struct CallSite {
-    /// 1-based line and 0-based character column of the callee identifier.
-    pub line: u32,
-    pub column: u32,
-    /// The callee as written: `Cart::new`, `shop::audit` or a method name.
-    pub label: String,
-    pub method_call: bool,
 }
 
 impl Measure {
