@@ -14,11 +14,10 @@ mod scene;
 mod state;
 mod view;
 
-use std::cell::RefCell;
-
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use scene::Camera;
@@ -26,10 +25,6 @@ use state::from_evidence;
 pub use state::{Lens, Selection, StartState};
 
 pub use view::push;
-
-thread_local! {
-    static STATE: RefCell<Option<StartState>> = const { RefCell::new(None) };
-}
 
 /// Build the tab state for an analysis: the same engine calls as the
 /// CLI's report (`review_cmd.rs`).
@@ -149,11 +144,9 @@ fn action<A: 'static>(
     let w = ui.as_weak();
     move |arg| {
         let Some(ui) = w.upgrade() else { return };
-        STATE.with_borrow_mut(|s| {
-            if let Some(s) = s {
-                f(s, &ui, arg);
-                push(&ui, s);
-            }
+        documents::with_active_state(|s: &mut StartState| {
+            f(s, &ui, arg);
+            push(&ui, s);
         });
     }
 }
@@ -177,6 +170,13 @@ fn action2<A: 'static, B: 'static>(
 /// Fill the tab after an analysis finished. The call analysis runs on a
 /// worker thread; snapshot runs build in place so the PNG shows the world.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    // A document keeps its state; switching back only shows it again.
+    if documents::with_active_state(|s: &mut StartState| push(ui, s)).is_some() {
+        return;
+    }
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     let d = ui.global::<StartData>();
     let old = d.get_model();
     d.set_model(StartModel {
@@ -187,7 +187,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
         let mut state = build(data);
         snapshot_overrides(&mut state);
-        return install(ui, state);
+        return install(ui, doc, state);
     }
     let (root, config, graph, findings) = (
         data.root.to_path_buf(),
@@ -203,21 +203,23 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let ev = Evidence::new(graph, findings, &calls, world);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, from_evidence(ev));
+                install(&ui, doc, from_evidence(ev));
             }
         });
     });
 }
 
-fn install(ui: &AppWindow, state: StartState) {
+/// Store the state for `doc`; show it only if `doc` is still active.
+fn install(ui: &AppWindow, doc: documents::DocId, state: StartState) {
     // The view may have reported its size before the state existed.
     let m = ui.global::<StartData>().get_model();
     let mut state = state;
     if m.canvas_w > 1.0 && m.canvas_h > 1.0 {
         state.canvas = (f64::from(m.canvas_w), f64::from(m.canvas_h));
     }
-    push(ui, &state);
-    STATE.set(Some(state));
+    if documents::set_state(doc, state) {
+        documents::with_active_state(|s: &mut StartState| push(ui, s));
+    }
 }
 
 /// `ARCHGUARD_DESKTOP_WORLD=<package>`, `ARCHGUARD_DESKTOP_LENS=<0..2>`,
@@ -295,11 +297,16 @@ mod tests {
         let entities: usize = s.layout.cells.iter().map(|c| c.entities.len()).sum();
         let in_scope: usize = s.scope.areas.iter().map(|a| a.entities.len()).sum();
         assert_eq!(entities, in_scope);
-        assert_eq!(
-            s.layout.cells.len(),
-            in_scope,
-            "one surface per entity below 750"
-        );
+        // One surface per entity up to 750; above that the web batches
+        // ceil(total / 750) entities per surface, per area.
+        let batch = in_scope.div_ceil(750).max(1);
+        let expected: usize = s
+            .scope
+            .areas
+            .iter()
+            .map(|a| a.entities.len().div_ceil(batch))
+            .sum();
+        assert_eq!(s.layout.cells.len(), expected, "batch {batch}");
         assert_eq!(s.crumbs("repo"), vec![("repo".to_string(), None)]);
 
         let engine = s
@@ -345,7 +352,10 @@ mod tests {
         s.accept_search();
         let sel = s.selection.clone().expect("a match");
         assert!(s.scope.areas[sel.area].name.ends_with("archguard-desktop"));
-        assert!(s.details_open);
+        // As the web: details open for a single entity or a file area, not
+        // for a batched surface inside a package.
+        let module = s.scope.areas[sel.area].module;
+        assert_eq!(s.details_open, sel.entity.is_some() || !module);
         s.reset();
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
         assert_eq!(s.selection, None);

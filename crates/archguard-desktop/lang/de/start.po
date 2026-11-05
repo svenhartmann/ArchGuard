@@ -25,9 +25,6 @@ msgstr "Abgedeckt"
 msgid "Cycle / finding"
 msgstr "Zyklus / Befund"
 
-msgid "Elevated"
-msgstr "Erhöht"
-
 msgid "Explore"
 msgstr "Erkunden"
 
@@ -40,20 +37,11 @@ msgstr "Dateiabdeckung: {}/{} Zeilen · {} nicht abgedeckt"
 msgid "File · no class assignment"
 msgstr "Datei · keine Klassenzuordnung"
 
-msgid "High"
-msgstr "Hoch"
-
 msgid "Highest recorded {}: {} · {}"
 msgstr "Höchster erfasster {}: {} · {}"
 
-msgid "Informational"
-msgstr "Information"
-
 msgid "Low → high"
 msgstr "Gering → hoch"
-
-msgid "Low"
-msgstr "Niedrig"
 
 msgid "Maximum cyclomatic complexity: {}"
 msgstr "Maximale zyklomatische Komplexität: {}"
@@ -114,9 +102,6 @@ msgstr "Das zugehörige Paket liegt in einem Paketzyklus. Das belegt keinen Zykl
 
 msgid "Unknown · no usable coverage"
 msgstr "Unbekannt · keine nutzbare Abdeckung"
-
-msgid "Unknown"
-msgstr "Unbekannt"
 
 msgid "Your architecture"
 msgstr "Deine Architektur"

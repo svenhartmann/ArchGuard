@@ -26,14 +26,38 @@ fn merge_translations(src: &Path, out: &Path) {
         let mut merged = format!(
             "msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\"Language: {code}\\n\"\n\n"
         );
+        let mut seen = std::collections::BTreeMap::new();
         for part in parts {
             println!("cargo:rerun-if-changed={}", part.display());
-            merged.push_str(&fs::read_to_string(&part).expect("po part is readable"));
+            let text = fs::read_to_string(&part).expect("po part is readable");
+            check_unique(&text, &part, &mut seen);
+            merged.push_str(&text);
             merged.push('\n');
         }
         let dir = out.join(&code).join("LC_MESSAGES");
         fs::create_dir_all(&dir).expect("out dir is writable");
         fs::write(dir.join("archguard-desktop.po"), merged).expect("po is writable");
+    }
+}
+
+/// Fail the build when two parts define the same (context, msgid): gettext
+/// would keep only one, silently. Shared words belong in `core.po`.
+fn check_unique(text: &str, part: &Path, seen: &mut std::collections::BTreeMap<String, PathBuf>) {
+    let mut context = String::new();
+    for line in text.lines() {
+        if let Some(c) = line.strip_prefix("msgctxt ") {
+            context = c.to_string();
+        } else if let Some(id) = line.strip_prefix("msgid ") {
+            let key = format!("{context}\u{4}{id}");
+            context.clear();
+            if let Some(other) = seen.insert(key, part.to_path_buf()) {
+                panic!(
+                    "translation {id} is defined in both {} and {}; move it to core.po",
+                    other.display(),
+                    part.display()
+                );
+            }
+        }
     }
 }
 

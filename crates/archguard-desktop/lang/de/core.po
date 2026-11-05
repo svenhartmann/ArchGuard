@@ -225,3 +225,18 @@ msgstr "Abhängigkeitsbelege"
 msgid "Project overview"
 msgstr "Projektübersicht"
 
+msgid "Low"
+msgstr "Niedrig"
+
+msgid "Elevated"
+msgstr "Erhöht"
+
+msgid "High"
+msgstr "Hoch"
+
+msgid "Unknown"
+msgstr "Unbekannt"
+
+msgid "Informational"
+msgstr "Information"
+
