@@ -1,0 +1,335 @@
+// The call overview column: connections, "Most calls" and cycles
+// (renderCalls, renderCallRankings, renderCallCycles in the web viewer).
+import { ScrollView, ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button } from "widgets.slint";
+import { CallsData, CallsModel, CallsStep } from "calls_data.slint";
+import { CallsColumn, Heading, Muted, Badge, Card, Summary, LineButton } from "calls_parts.slint";
+
+component Connections inherits VerticalLayout {
+    property <CallsModel> m: CallsData.model;
+    spacing: 8px;
+    for r[i] in m.relations: Card {
+        selected: r.selected;
+        clicked => { CallsData.select-relation(i); }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: r.title;
+                color: r.selected ? Theme.accent : Theme.text;
+                font-size: 14px;
+                font-weight: 500;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if r.language != "": Badge { text: r.language; y: (parent.height - self.height) / 2; }
+        }
+        Muted {
+            text: @tr("{} call sites · {} target methods · {}", r.sites, r.methods, CallsData.resolution-label(r.resolution));
+        }
+        Muted { text: r.full; }
+    }
+    if m.relations.length == 0: Text {
+        text: m.status == "unavailable" || m.status == "not_applicable"
+            ? @tr("No call relations available.")
+            : @tr("No matching call relations. Change the package, search, target filter or internal-call setting.");
+        color: Theme.text;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+    if m.relations-more: HorizontalLayout {
+        alignment: start;
+        Button {
+            compact: true;
+            text: @tr("Show next 100 type/module connections");
+            clicked => { CallsData.relations-more(); }
+        }
+    }
+}
+
+component Labeled inherits VerticalLayout {
+    in property <string> label;
+    spacing: 4px;
+    Text { text: root.label; color: Theme.muted; font-size: 11px; }
+    @children
+}
+
+component Rankings inherits VerticalLayout {
+    property <CallsModel> m: CallsData.model;
+    property <bool> measured: m.rank-sort >= 3;
+    // ComboBox keeps its own index once used; follow the model's.
+    property <int> kind-index: m.rank-method ? 1 : 0;
+    property <int> sort-index: m.rank-sort;
+    changed kind-index => { kind.current-index = self.kind-index; }
+    changed sort-index => { sort.current-index = self.sort-index; }
+    spacing: 8px;
+    HorizontalLayout {
+        spacing: 8px;
+        Labeled {
+            label: @tr("Elements");
+            horizontal-stretch: 1;
+            kind := ComboBox {
+                model: [@tr("Types / modules"), @tr("Methods")];
+                current-index: root.kind-index;
+                selected => { CallsData.set-rank-method(self.current-index == 1); }
+            }
+        }
+        Labeled {
+            label: @tr("Sort by");
+            horizontal-stretch: 1;
+            sort := ComboBox {
+                model: m.rank-method
+                    ? [@tr("Incoming"), @tr("Outgoing"), @tr("Involved call sites"), @tr("AST complexity"), @tr("Max. nesting")]
+                    : [@tr("Incoming"), @tr("Outgoing"), @tr("Involved call sites")];
+                current-index: root.sort-index;
+                selected => { CallsData.set-rank-sort(self.current-index); }
+            }
+        }
+    }
+    Muted {
+        text: @tr("{} / {} · ", m.ranks.length, m.rank-total)
+            + (root.measured
+                ? @tr("AST complexity and nesting of declared methods, including methods without recorded calls.")
+                : @tr("Static call sites, not runtime frequency."))
+            + " " + @tr("Coverage: {}.", CallsData.coverage(m.status));
+    }
+    HorizontalLayout {
+        alignment: start;
+        Button {
+            compact: true;
+            text: "?";
+            pressed-state: m.rank-help;
+            clicked => { CallsData.toggle-rank-help(); }
+        }
+    }
+    if m.rank-help: VerticalLayout {
+        spacing: 6px;
+        Muted { text: @tr("Uses the filters above, including related callers and targets. Selecting an element keeps this ranking unchanged. Each involved site counts once, even for a self-call."); }
+        Muted {
+            text: @tr("Coverage: {}.", CallsData.coverage(m.status))
+                + (m.status == "partial" ? " " + @tr("Counts are incomplete and may change when missing dependencies are resolved.") : "")
+                + (m.rank-unresolved > 0 ? " " + @tr("{} unresolved target sites in this scope.", m.rank-unresolved) : "")
+                + (m.rank-missing-callers > 0 ? " " + @tr("{} sites without a declared caller method (including initializers).", m.rank-missing-callers) : "")
+                + (m.rank-missing-targets > 0 ? " " + @tr("{} project target sites without a declared method.", m.rank-missing-targets) : "")
+                + " " + @tr("Project types, module owners and declared functions/methods are ranked. Module owners group top-level functions and initializers; they are not declared classes. Calls to external or unknown targets can count as outgoing; no target is invented.")
+                + (root.measured ? " " + @tr("Language, package and search select declarations. Target and internal-call filters only affect the accompanying In/Out counts. {} declarations in scope have no measurement.", m.rank-unmeasured) : "");
+        }
+    }
+    for r[i] in m.ranks: Card {
+        selected: r.pressed;
+        clicked => { CallsData.rank-select(i); }
+        Text {
+            text: (i + 1) + ". " + r.label;
+            color: Theme.text;
+            font-size: 12px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Muted { text: @tr("Incoming {} · Outgoing {} · Involved sites {}", r.incoming, r.outgoing, r.total); }
+        if r.method: Muted {
+            text: r.measured
+                ? @tr("AST complexity {} · max. nesting {}", r.cyclomatic, r.nesting)
+                : @tr("AST complexity {} · max. nesting {}", "—", "—");
+        }
+        if r.language != "": Muted { text: r.language; }
+        if r.module: Muted { text: @tr("Module · top-level functions"); }
+    }
+    if m.ranks.length == 0: Text {
+        text: root.measured
+            ? @tr("No measured method bodies in this declaration scope. Missing metrics are unknown, not zero.")
+            : @tr("No recorded call sites for this direction and these filters.");
+        color: Theme.text;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+    if m.rank-more: HorizontalLayout {
+        alignment: start;
+        Button {
+            compact: true;
+            text: @tr("Show next 20");
+            clicked => { CallsData.rank-more(); }
+        }
+    }
+}
+
+component Steps inherits VerticalLayout {
+    in property <[CallsStep]> steps;
+    in property <bool> more;
+    in property <string> more-text;
+    callback select(int);
+    callback load-more();
+    spacing: 5px;
+    for s[i] in root.steps: LineButton {
+        text: s.label + (s.sites >= 0 ? @tr(" · {} call sites", s.sites) : "");
+        pressed-state: s.pressed;
+        clicked => { root.select(i); }
+    }
+    if root.more: HorizontalLayout {
+        alignment: start;
+        Button {
+            compact: true;
+            text: root.more-text;
+            clicked => { root.load-more(); }
+        }
+    }
+}
+
+component Cycles inherits VerticalLayout {
+    property <CallsModel> m: CallsData.model;
+    property <int> kind-index: m.cycle-method ? 1 : 0;
+    changed kind-index => { kind.current-index = self.kind-index; }
+    property <bool> members-open;
+    property <bool> edges-open: true;
+    spacing: 8px;
+    Labeled {
+        label: @tr("Cycle level");
+        kind := ComboBox {
+            model: [@tr("Types / modules"), @tr("Methods / recursion")];
+            current-index: root.kind-index;
+            selected => { CallsData.set-cycle-method(self.current-index == 1); }
+        }
+    }
+    Muted {
+        text: @tr("{} / {} recorded cyclic groups", m.cycle-count, m.cycle-total) + " · "
+            + (m.cycle-method ? @tr("functions / methods / recursion") : @tr("types / modules")) + " · "
+            + @tr("Coverage: {}.", CallsData.coverage(m.status))
+            + (m.cycle-count == 0 ? " " + @tr("No recorded cyclic group matches this scope.") : "")
+            + (m.status != "ready" ? " " + @tr("Incomplete analysis cannot rule out further cycles.") : "");
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 6px;
+        Button {
+            compact: true;
+            text: @tr("All cycle groups");
+            clicked => { CallsData.cycles-show-all(); }
+        }
+        Button {
+            compact: true;
+            text: "?";
+            pressed-state: m.cycle-help;
+            clicked => { CallsData.toggle-cycle-help(); }
+        }
+    }
+    if m.cycle-help: Muted {
+        text: @tr("Each group is a strongly connected component (SCC), shown with all its internal connections and one closed example path. This does not enumerate every possible elementary cycle. Type/module cycles aggregate calls; they do not necessarily form a function/method cycle. Module owners group top-level functions, not declared classes. Function/method cycles include direct and mutual recursion within one owner. ")
+            + @tr("Language, package and search select complete groups when a member matches. Target and internal-call controls are paused here to preserve return paths. Static compiler targets do not prove that a loop occurs at runtime. ")
+            + @tr("{} unresolved target sites; {} project sites without complete method identities in the source snapshot.", m.cycle-unresolved, m.cycle-missing);
+    }
+    for g in m.cycle-rows: Card {
+        selected: g.selected;
+        clicked => { CallsData.cycle-select(g.number - 1); }
+        Text {
+            text: g.number + ". ↻ " + g.preview;
+            color: g.selected ? Theme.accent : Theme.text;
+            font-size: 12px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Muted { text: @tr("{} elements · {} connections · {} call sites", g.members, g.edges, g.sites); }
+    }
+    if m.cycles-more: HorizontalLayout {
+        alignment: start;
+        Button {
+            compact: true;
+            text: @tr("Next 20 groups");
+            clicked => { CallsData.cycles-more(); }
+        }
+    }
+    if m.has-group: VerticalLayout {
+        spacing: 8px;
+        padding-top: 10px;
+        Rectangle { height: 1px; background: Theme.border; }
+        Text {
+            text: @tr("Selected group · {} elements · {} connections", m.group-members, m.group-edges);
+            color: Theme.cycle;
+            font-size: 12px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            text: @tr("Closed example path: ") + (m.witness != "" ? m.witness
+                : @tr("{} directed steps. Follow the numbered connections below; the full closed path is included in the export.", m.witness-steps));
+            color: Theme.text;
+            font-size: 11px;
+            font-family: "Menlo";
+            wrap: word-wrap;
+        }
+        Steps {
+            steps: m.path;
+            more: m.path-more;
+            more-text: @tr("Next 20 path steps");
+            select(i) => { CallsData.path-select(i); }
+            load-more => { CallsData.path-more(); }
+        }
+        Summary {
+            text: @tr("All {} members", m.group-members);
+            open: root.members-open;
+            tint: Theme.text;
+            clicked => { root.members-open = !root.members-open; }
+        }
+        if root.members-open: Steps {
+            steps: m.members;
+            more: m.members-more;
+            more-text: @tr("Next 50 members");
+            select(i) => { CallsData.member-select(i); }
+            load-more => { CallsData.members-more(); }
+        }
+        Summary {
+            text: @tr("All {} internal connections", m.group-edges);
+            open: root.edges-open;
+            tint: Theme.text;
+            clicked => { root.edges-open = !root.edges-open; }
+        }
+        if root.edges-open: Steps {
+            steps: m.edges;
+            more: m.edges-more;
+            more-text: @tr("Next 50 connections");
+            select(i) => { CallsData.edge-select(i); }
+            load-more => { CallsData.edges-more(); }
+        }
+    }
+}
+
+export component CallsOverview inherits CallsColumn {
+    property <CallsModel> m: CallsData.model;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+        Heading { text: @tr("CALL OVERVIEW"); }
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+            Button {
+                compact: true;
+                text: @tr("Connections");
+                pressed-state: m.mode == 0;
+                clicked => { CallsData.set-mode(0); }
+            }
+            Button {
+                compact: true;
+                text: @tr("Most calls");
+                pressed-state: m.mode == 1;
+                clicked => { CallsData.set-mode(1); }
+            }
+            Button {
+                compact: true;
+                text: @tr("Cycles");
+                pressed-state: m.mode == 2;
+                clicked => { CallsData.set-mode(2); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding-right: 4px;
+                padding-bottom: 8px;
+                if m.mode == 0: Connections { }
+                if m.mode == 1: Rankings { }
+                if m.mode == 2: Cycles { }
+            }
+        }
+    }
+}
