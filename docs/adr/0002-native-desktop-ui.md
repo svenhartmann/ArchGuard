@@ -132,3 +132,10 @@ comparison of the native view against the web view on the same project
      dashboard designer.
   Revised order: documents, panes, settings, configuration editor,
   dashboard with designer, then Calls, Services, Security, World.
+- **2026-11-05:** Renderer measured (release build, this repository,
+  `SLINT_DEBUG_PERFORMANCE=refresh_full_speed`, 120 Hz display): FemtoVG
+  over OpenGL (Slint's default, GPU) 120 fps on the Start world and on
+  the Graph tree with `archguard-engine/src` open; Skia over Metal
+  112–120 fps. Decision: keep FemtoVG. Skia (`slint/renderer-skia`) stays
+  an option if large repositories hit the limit; it adds ~10 MB and a
+  prebuilt-binary download to the build. Interaction cost is CPU-side.
