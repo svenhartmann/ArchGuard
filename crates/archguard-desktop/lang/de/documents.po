@@ -1,0 +1,14 @@
+msgid "No project open"
+msgstr "Kein Projekt geöffnet"
+
+msgid "Open a project folder to analyze its architecture."
+msgstr "Öffne einen Projektordner, um seine Architektur zu analysieren."
+
+msgid "Open project"
+msgstr "Projekt öffnen"
+
+msgid "Open project folder"
+msgstr "Projektordner öffnen"
+
+msgid "Projects in this repository ({})"
+msgstr "Projekte in diesem Repository ({})"

@@ -2,8 +2,9 @@
 //! and the derived package maps in viewer_architecture.js). The document
 //! comes from `archguard_engine::arc42_document`, as in the CLI's report.
 //!
-//! All tab state is one [`ArchitectureState`], built by [`build`] and shown
-//! by [`push`] as one `ArchitectureModel` value.
+//! All tab state is one [`ArchitectureState`] per document (in
+//! [`documents`]), built by [`build`] and shown by [`push`] as one
+//! `ArchitectureModel` value.
 
 mod blocks;
 mod diagram;
@@ -12,7 +13,6 @@ mod projection;
 mod view;
 mod visual;
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,7 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::tree::Tree;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
@@ -45,10 +46,6 @@ pub struct ArchitectureState {
     maps: [MapState; 3],
     /// Path of the last export, or its error.
     saved: String,
-}
-
-thread_local! {
-    static STATE: RefCell<Option<ArchitectureState>> = const { RefCell::new(None) };
 }
 
 /// Build the tab state for an analysis (writes the arc42 document).
@@ -138,23 +135,32 @@ fn action<A: 'static>(
     let w = ui.as_weak();
     move |arg| {
         let Some(ui) = w.upgrade() else { return };
-        STATE.with_borrow_mut(|s| {
-            if let Some(s) = s {
-                f(s, &ui, arg);
-                push(&ui, s);
-            }
+        documents::with_active_state(|s: &mut ArchitectureState| {
+            f(s, &ui, arg);
+            push(&ui, s);
         });
     }
 }
 
-/// Fill the tab after an analysis finished. The document is written on a
-/// worker thread; snapshot runs build it in place so the PNG shows it.
+/// Show the active document's tab. Its state is built once per document,
+/// on a worker thread; snapshot runs build it in place so the PNG shows it.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    if documents::with_active_state(|s: &mut ArchitectureState| push(ui, s)).is_some() {
+        return;
+    }
     ui.global::<ArchitectureData>()
         .set_model(ArchitectureModel::default());
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, build(data));
+        return install(ui, doc, build(data));
     }
+    // One worker per document, even if it is shown again meanwhile.
+    if documents::with_active_state(|_: &mut Building| ()).is_some() {
+        return;
+    }
+    documents::set_state(doc, Building);
     let (root, config, graph, report) = (
         data.root.to_path_buf(),
         data.run.config.clone(),
@@ -166,15 +172,20 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let state = build_from(&root, &config, graph, &report);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, state);
+                install(&ui, doc, state);
             }
         });
     });
 }
 
-fn install(ui: &AppWindow, state: ArchitectureState) {
-    push(ui, &state);
-    STATE.set(Some(state));
+/// Marks a document whose state is being built on a worker thread.
+struct Building;
+
+/// Keep `state` for document `doc`; show it if that document is active.
+fn install(ui: &AppWindow, doc: documents::DocId, state: ArchitectureState) {
+    if documents::set_state(doc, state) {
+        documents::with_active_state(|s: &mut ArchitectureState| push(ui, s));
+    }
 }
 
 /// `ARCHGUARD_DESKTOP_CHAPTER=<n>` and `ARCHGUARD_DESKTOP_ARC_SCOPE=<package>`

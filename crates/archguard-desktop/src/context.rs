@@ -1,6 +1,6 @@
 //! What a tab receives after an analysis.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use archguard_engine::AnalysisRun;
 use archguard_engine::core::ReviewSources;
@@ -11,4 +11,22 @@ pub struct Loaded<'a> {
     pub root: &'a Path,
     pub run: &'a AnalysisRun,
     pub sources: &'a ReviewSources,
+}
+
+/// A document's finished analysis, kept so that switching documents can
+/// show it again without analysing.
+pub struct Analysis {
+    pub root: PathBuf,
+    pub run: AnalysisRun,
+    pub sources: ReviewSources,
+}
+
+impl Analysis {
+    pub fn loaded(&self) -> Loaded<'_> {
+        Loaded {
+            root: &self.root,
+            run: &self.run,
+            sources: &self.sources,
+        }
+    }
 }

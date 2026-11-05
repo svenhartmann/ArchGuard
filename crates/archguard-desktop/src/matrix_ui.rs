@@ -1,10 +1,11 @@
-//! Matrix tab state and its push into the window.
+//! Matrix tab state (one per document) and its push into the window.
 
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
+use crate::context::Loaded;
+use crate::documents;
 use crate::matrix::{Matrix, Target};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
@@ -28,10 +29,6 @@ pub struct MatrixState {
     only: bool,
     page: usize,
     evidence: Option<(usize, usize)>,
-}
-
-thread_local! {
-    static MATRIX: RefCell<Option<MatrixState>> = const { RefCell::new(None) };
 }
 
 impl MatrixState {
@@ -67,22 +64,19 @@ impl MatrixState {
     }
 }
 
-/// Build the matrix for a fresh analysis and show it.
-pub fn show(ui: &AppWindow, tree: Tree, project: String) {
-    MATRIX.set(Some(MatrixState::new(tree, project)));
-    MATRIX.with_borrow(|m| {
-        if let Some(m) = m {
-            push(ui, m);
-        }
-    });
+/// Show the active document's matrix, building it on first use.
+pub fn show(ui: &AppWindow, data: &Loaded) {
+    let project = ui.get_project().to_string();
+    documents::with_active_state_or(
+        || MatrixState::new(Tree::from_graph(&data.run.graph), project),
+        |m: &mut MatrixState| push(ui, m),
+    );
 }
 
 fn update(ui: &AppWindow, f: impl FnOnce(&mut MatrixState)) {
-    MATRIX.with_borrow_mut(|m| {
-        if let Some(m) = m {
-            f(m);
-            push(ui, m);
-        }
+    documents::with_active_state(|m: &mut MatrixState| {
+        f(m);
+        push(ui, m);
     });
 }
 
