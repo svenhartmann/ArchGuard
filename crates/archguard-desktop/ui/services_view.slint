@@ -1,14 +1,394 @@
-// Services tab. Owned by the task that implements it: put its data in
-// ServicesData (set from src/services_ui.rs) and its layout in ServicesView.
-import { TabPlaceholder } from "widgets.slint";
+// Services tab: the web viewer's service topology (renderServices in
+// viewer_services.js). Data and callbacks live in ServicesData, set from
+// src/services_ui.rs.
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons, Button } from "widgets.slint";
+import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
+import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
+
+export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink }
+
+export struct SvcProject {
+    path: string,
+    name: string,
+    kind: int,
+    ecosystem: string,
+    pressed: bool,
+}
+
+export struct SvcCycle {
+    names: string,
+}
+
+// Everything the tab shows, set from Rust as one value.
+export struct ServicesModel {
+    // 0 loading, 1 ready, 2 topology unavailable, 3 no manifests or Compose files.
+    state: int,
+    error: string,
+    complete: bool,
+    // Status line.
+    projects: int,
+    applications: int,
+    containers: int,
+    services: int,
+    compose-files: int,
+    shown: int,
+    all: int,
+    monorepo: bool,
+    monorepo-reason: string,
+    // Controls.
+    kind: int,
+    mode: int,
+    routing: int,
+    cycles-only: bool,
+    has-selection: bool,
+    reference: string,
+    zoom: float,
+    // Description.
+    project-list: [SvcProject],
+    more-projects: bool,
+    diagnostics: [string],
+    cycles: [SvcCycle],
+    // Tree.
+    rows: [SvcRow],
+    edges: [SvcEdge],
+    hierarchy: string,
+    width: float,
+    height: float,
+    inspector: SvcInspector,
+}
 
 export global ServicesData {
+    in-out property <ServicesModel> model;
+
+    // Group name of a service without project and Compose file.
+    out property <string> label-unmapped: @tr("Unmapped service");
+
+    callback select-kind(int);
+    callback select-mode(int);
+    callback select-routing(int);
+    callback toggle-cycles-only();
+    callback show-all();
+    callback select-service(int);
+    callback select-project(int);
+    callback select-edge(int);
+    callback select-cycle(int);
+    callback close-details();
+    callback show-more-projects();
+    // Factor; 0 resets to 100 %.
+    callback zoom-by(float);
+    callback fit(float, float);
+    callback resized(float);
+
+    // serviceKindLabel; index as the relation list.
+    public pure function kind-label(k: int) -> string {
+        return k == 0 ? @tr("Configured HTTP route / endpoint")
+            : k == 1 ? @tr("Startup dependency (depends_on)")
+            : k == 2 ? @tr("HTTP client")
+            : k == 3 ? @tr("gRPC client")
+            : k == 4 ? @tr("Event flow (inferred)")
+            : @tr("Configuration reference");
+    }
+
+    // serviceProjectKind: application, library, tooling, workspace, unknown.
+    public pure function project-kind(k: int) -> string {
+        return k == 0 ? @tr("Application")
+            : k == 1 ? @tr("Library")
+            : k == 2 ? @tr("Test / tooling")
+            : k == 3 ? @tr("Workspace")
+            : @tr("Unclassified project");
+    }
+}
+
+// A collapsible section like the web's <details>.
+component Details inherits VerticalLayout {
+    in property <string> text;
+    in property <bool> strong;
+    in-out property <bool> open;
+    TouchArea {
+        height: 26px;
+        mouse-cursor: pointer;
+        clicked => { root.open = !root.open; }
+        Text {
+            x: 0;
+            text: (root.open ? "▾ " : "▸ ") + root.text;
+            color: root.strong ? Theme.text : Theme.muted;
+            font-size: root.strong ? 14px : 12px;
+            font-weight: root.strong ? 650 : 400;
+            vertical-alignment: center;
+        }
+    }
+    @children
+}
+
+component Note inherits Text {
+    in property <bool> muted: true;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+
+component ProjectRow inherits Rectangle {
+    in property <SvcProject> project;
+    callback clicked();
+    height: 30px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: project.pressed ? Theme.accent : touch.has-hover ? Theme.border : transparent;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+        Text { text: project.path; color: Theme.text; font-family: "Menlo"; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        Text { text: project.name; color: Theme.text; font-size: 12px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+        Text { text: ServicesData.project-kind(project.kind) + " · " + project.ecosystem; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Label inherits Text {
+    color: Theme.text;
+    font-size: 12px;
+    vertical-alignment: center;
+}
+
+// Section of the web's Services tab that is not native yet.
+component WebOnly inherits Details {
+    callback open-web();
+    if root.open: HorizontalLayout {
+        alignment: start;
+        spacing: 10px;
+        Note { text: @tr("This section is not native yet. The web viewer shows it for the same project."); vertical-alignment: center; }
+        Button { compact: true; text: @tr("Open in web viewer"); icon: Icons.external; clicked => { root.open-web(); } }
+    }
+}
+
+component Toolbar inherits HorizontalLayout {
+    property <ServicesModel> m: ServicesData.model;
+    // ComboBoxes keep their own index once used; follow the model's.
+    changed m => {
+        kind-box.current-index = m.kind;
+        mode-box.current-index = m.mode;
+        routing-box.current-index = m.routing;
+    }
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    spacing: 8px;
+    alignment: start;
+    Label { text: @tr("Relation"); }
+    kind-box := ComboBox {
+        width: 190px;
+        model: [@tr("API configuration"), @tr("Startup (depends_on)"), @tr("HTTP client"), @tr("gRPC client"), @tr("Event flow (inferred)"), @tr("Configuration reference")];
+        current-index: m.kind;
+        selected => { ServicesData.select-kind(self.current-index); }
+    }
+    Label { text: @tr("Direction"); }
+    mode-box := ComboBox {
+        width: 110px;
+        enabled: m.has-selection;
+        model: [@tr("direction" => "All"), @tr("Incoming"), @tr("Outgoing"), @tr("Both")];
+        current-index: m.mode;
+        selected => { ServicesData.select-mode(self.current-index); }
+    }
+    Button { text: @tr("Cycles only"); pressed-state: m.cycles-only; clicked => { ServicesData.toggle-cycles-only(); } }
+    Button { text: @tr("All services"); clicked => { ServicesData.show-all(); } }
+    Button { icon: Icons.minus; clicked => { ServicesData.zoom-by(1 / 1.25); } }
+    Button { icon: Icons.plus; clicked => { ServicesData.zoom-by(1.25); } }
+    Button { text: "100%"; clicked => { ServicesData.zoom-by(0); } }
+    Button { text: @tr("Fit"); clicked => { root.fit(); } }
+    Label { text: round(m.zoom * 100) + "%"; font-weight: 700; font-size: 14px; }
+    Label { text: @tr("Relations"); }
+    routing-box := ComboBox {
+        width: 120px;
+        model: [@tr("Up / down"), @tr("In/Out")];
+        current-index: m.routing;
+        selected => { ServicesData.select-routing(self.current-index); }
+    }
+    callback fit();
 }
 
 export component ServicesView inherits Rectangle {
     callback open-web();
-    TabPlaceholder {
-        title: @tr("Services");
-        open-web => { root.open-web(); }
+    property <ServicesModel> m: ServicesData.model;
+    property <bool> evidence-open;
+    property <bool> projects-open;
+    property <bool> workspace-open;
+    property <bool> patterns-open;
+    property <bool> contracts-open;
+    property <bool> diagnostics-open;
+    property <bool> legend-open;
+    background: Theme.bg;
+    // Tabs must not change the window's preferred size.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state == 0: Text {
+        text: @tr("Reading the service topology …");
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if m.state > 0: HorizontalLayout {
+        VerticalLayout {
+            horizontal-stretch: 1;
+            ScrollView {
+                height: min(desc.preferred-height, root.height * 0.35);
+                desc := VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 12px;
+                    padding-bottom: 6px;
+                    spacing: 4px;
+                    Note { text: root.status(); muted: false; }
+                    Details {
+                        text: @tr("Evidence");
+                        open <=> root.evidence-open;
+                        if root.evidence-open: Note { text: root.limitations(); }
+                    }
+                    if m.projects > 0: Details {
+                        text: @tr("{} projects · applications, libraries and tools", m.projects);
+                        open <=> root.projects-open;
+                        if root.projects-open: Note {
+                            text: @tr("Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections.");
+                        }
+                        if root.projects-open: VerticalLayout {
+                            spacing: 3px;
+                            for p[i] in m.project-list: ProjectRow {
+                                project: p;
+                                clicked => { ServicesData.select-project(i); }
+                            }
+                        }
+                        if root.projects-open && m.more-projects: HorizontalLayout {
+                            alignment: start;
+                            Button { compact: true; text: @tr("Show more projects"); clicked => { ServicesData.show-more-projects(); } }
+                        }
+                    }
+                    WebOnly { text: @tr("Project workspace"); strong: true; open <=> root.workspace-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("Architecture pattern candidates"); strong: true; open <=> root.patterns-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("API contracts and changes"); open <=> root.contracts-open; open-web => { root.open-web(); } }
+                    if m.diagnostics.length > 0: Details {
+                        text: @tr("Diagnostics");
+                        open <=> root.diagnostics-open;
+                        if root.diagnostics-open: Note { text: @tr("Diagnostic messages (original wording)"); }
+                        if root.diagnostics-open: VerticalLayout {
+                            for d in m.diagnostics: Note { text: d; }
+                        }
+                    }
+                    for c[i] in m.cycles: Rectangle {
+                        border-radius: 6px;
+                        background: cycle-touch.has-hover ? Theme.panel-2 : transparent;
+                        HorizontalLayout {
+                            padding: 5px;
+                            Text {
+                                text: @tr("Cyclic group: {}", c.names);
+                                color: Theme.cycle;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                        cycle-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { ServicesData.select-cycle(i); }
+                        }
+                    }
+                    Details {
+                        text: @tr("Legend");
+                        open <=> root.legend-open;
+                        if root.legend-open: Note { text: root.reference(); }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            // Scrolls instead of widening the window when the labels are long.
+            Flickable {
+                height: toolbar.preferred-height;
+                content-width: max(self.width, toolbar.preferred-width);
+                toolbar := Toolbar {
+                    width: max(parent.width, self.preferred-width);
+                    fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            if m.state != 1 || m.rows.length == 0: HorizontalLayout {
+                padding-left: 4px;
+                height: 40px;
+                Text {
+                    text: m.state == 2 ? m.error
+                        : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
+                        : @tr("No service declarations were found.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            tree := ServicesTree {
+                vertical-stretch: 1;
+                rows: m.rows;
+                edges: m.edges;
+                hierarchy: m.hierarchy;
+                canvas-w: m.width;
+                canvas-h: m.height;
+                zoom: m.zoom;
+                select-service(i) => { ServicesData.select-service(i); }
+                select-edge(i) => { ServicesData.select-edge(i); }
+                resized(w) => { ServicesData.resized(w); }
+                zoom-by(f) => { ServicesData.zoom-by(f); }
+            }
+        }
+        if m.inspector.mode > 0: ServicesInspector {
+            width: 360px;
+            data: m.inspector;
+            kind-text: ServicesData.kind-label(m.inspector.kind);
+            project-kind-text: ServicesData.project-kind(m.inspector.project-kind);
+            select-edge(i) => { ServicesData.select-edge(i); }
+            select-service(i) => { ServicesData.select-service(i); }
+            close => { ServicesData.close-details(); }
+        }
+    }
+
+    // The status line (services-status).
+    function status() -> string {
+        if (m.state == 2) {
+            return m.error;
+        }
+        if (m.state == 3) {
+            return @tr("No supported project manifests or Docker Compose files found.") + (m.complete ? "" : @tr(" Analysis incomplete – missing connections do not establish isolation; see diagnostics."));
+        }
+        return (m.projects > 0
+                ? @tr("{} projects · {} applications · {} containers · ", m.projects, m.applications, m.containers)
+                : @tr("{} services in {} Compose files · ", m.services, m.compose-files))
+            + @tr("{} / {} connections shown · {} cyclic groups · ", m.shown, m.all, m.cycles.length)
+            + (m.monorepo ? @tr("Monorepo detected: {}", m.monorepo-reason) : @tr("Monorepo not established: {}", m.monorepo-reason))
+            + (m.complete ? "" : @tr(" · Analysis incomplete – missing connections do not establish isolation"));
+    }
+
+    // services-limitations for the chosen relation kind.
+    function limitations() -> string {
+        if (m.kind == 1) {
+            return @tr("Startup dependencies describe depends_on order, not API calls. Cycles are computed only among startup edges.");
+        }
+        if (m.kind == 0) {
+            return @tr("HTTP(S) endpoints found in Compose configuration are potential service dependencies, not observed runtime calls. Cycles use only these configured HTTP edges.");
+        }
+        return @tr("Static source candidates; execution is not proven. Event cycles can represent intended workflows. Aspire references are configuration, not calls.");
+    }
+
+    // services-reference: the arc legend.
+    function reference() -> string {
+        return (m.has-selection ? @tr("Reference: {} · ", m.reference) : "")
+            + (m.routing == 0 ? @tr("Left arcs go down, right arcs go up. Incoming blue, outgoing violet.")
+                : m.has-selection ? @tr("In/Out: Incoming left (blue), outgoing right (violet).")
+                : @tr("In/Out: select a service for incoming / outgoing sides. Context connections stay left."))
+            + " " + @tr("Red marks only right-hand cyclic edges; left-hand edges keep their direction color.");
     }
 }
