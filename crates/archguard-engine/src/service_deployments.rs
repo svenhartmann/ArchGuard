@@ -18,6 +18,8 @@ pub(super) struct Deployment {
     pub scope: String,
     pub file: String,
     pub env: BTreeMap<String, String>,
+    /// Evidence for endpoint values declared outside the deployment, e.g. in a ConfigMap.
+    pub origins: BTreeMap<String, Vec<ServiceEvidence>>,
     pub aliases: BTreeSet<String>,
 }
 pub(super) fn read(root: &Path, path: &Path) -> Option<String> {
@@ -191,6 +193,35 @@ fn labels(v: &Value) -> BTreeMap<String, String> {
         .collect()
 }
 const KUBERNETES: &str = "kubernetes:";
+const CONFIG_MAP_EVIDENCE: &str = "Declared endpoint from a ConfigMap of the same manifest directory and namespace maps to a service in this deployment scope. No Secret, cluster or runtime traffic read.";
+/// Evidence for a value read from a ConfigMap: the workload reference and the `data` key.
+fn config_map_origin(workload: &str, via: &str, file: &str, key: &str) -> Vec<ServiceEvidence> {
+    let key = key.replace('~', "~0").replace('/', "~1");
+    vec![
+        proof(workload, via, CONFIG_MAP_EVIDENCE),
+        proof(file, &format!("/data/{key}"), CONFIG_MAP_EVIDENCE),
+    ]
+}
+/// Endpoint environment of one workload and the evidence of values taken from ConfigMaps.
+#[derive(Default)]
+struct Env {
+    values: BTreeMap<String, String>,
+    origins: BTreeMap<String, Vec<ServiceEvidence>>,
+}
+impl Env {
+    /// Keeps only public endpoint values; a later entry replaces an earlier one.
+    fn insert(&mut self, key: String, value: &str, origin: Vec<ServiceEvidence>) {
+        self.origins.remove(&key);
+        if !(endpoint_key(&key) && public_value(value) && !value.contains('$')) {
+            self.values.remove(&key);
+            return;
+        }
+        self.values.insert(key.clone(), value.into());
+        if !origin.is_empty() {
+            self.origins.insert(key, origin);
+        }
+    }
+}
 const DEFAULT_NAMESPACE: &str = "default";
 const WORKLOAD_KINDS: [&str; 6] = [
     "Deployment",
@@ -338,6 +369,30 @@ impl<'d> Workload<'d> {
         }
         aliases
     }
+    /// The file and `data` of the one ConfigMap `name` in the same bundle and namespace.
+    /// Differing declarations under that name are ambiguous and resolve to nothing.
+    fn config_map<'v>(
+        &self,
+        documents: &'v [(String, Value)],
+        name: &str,
+    ) -> Option<(&'v str, &'v Value)> {
+        let mut found = documents.iter().filter(|(file, doc)| {
+            self.same_bundle(file, doc)
+                && doc["kind"].as_str() == Some("ConfigMap")
+                && doc["metadata"]["name"].as_str() == Some(name)
+        });
+        let (file, doc) = found.next()?;
+        found
+            .all(|(_, other)| other == doc)
+            .then_some((file.as_str(), &doc["data"]))
+    }
+    fn same_bundle(&self, file: &str, doc: &Value) -> bool {
+        Path::new(file).parent() == Path::new(self.file).parent()
+            && doc["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or(DEFAULT_NAMESPACE)
+                == self.namespace
+    }
     /// The name of `service` if it is a Service in the same bundle and namespace whose
     /// non-empty selector matches `pod_labels`.
     fn selecting_service<'v>(
@@ -346,13 +401,7 @@ impl<'d> Workload<'d> {
         service: &'v Value,
         pod_labels: &BTreeMap<String, String>,
     ) -> Option<&'v str> {
-        if Path::new(file).parent() != Path::new(self.file).parent()
-            || service["kind"].as_str() != Some("Service")
-            || service["metadata"]["namespace"]
-                .as_str()
-                .unwrap_or(DEFAULT_NAMESPACE)
-                != self.namespace
-        {
+        if !self.same_bundle(file, service) || service["kind"].as_str() != Some("Service") {
             return None;
         }
         let selector = labels(&service["spec"]["selector"]);
@@ -404,6 +453,7 @@ impl Deployments<'_> {
             scope: file.to_owned(),
             file: file.to_owned(),
             env: compose_env(&value["environment"], vars),
+            origins: BTreeMap::new(),
             aliases: BTreeSet::from([name.to_ascii_lowercase()]),
         });
     }
@@ -504,12 +554,13 @@ impl Deployments<'_> {
             .cloned()
             .unwrap_or_default();
         self.register(workload, &containers);
-        let env = self.workload_env(workload, &containers);
+        let (env, origins) = self.workload_env(workload, &containers, documents);
         self.out.push(Deployment {
             id: workload.id.clone(),
             scope: workload.scope.clone(),
             file: workload.file.to_owned(),
             env,
+            origins,
             aliases: workload.aliases(documents),
         });
     }
@@ -535,42 +586,94 @@ impl Deployments<'_> {
             });
         }
     }
-    /// Literal, public endpoint values; unresolved references are diagnosed, never read.
+    /// Literal, public endpoint values, also from ConfigMaps of the same bundle and
+    /// namespace. Secrets and other unresolved references are diagnosed, never read.
+    /// `env` entries override `envFrom`, as in Kubernetes.
     fn workload_env(
         &mut self,
         workload: &Workload,
         containers: &[Value],
-    ) -> BTreeMap<String, String> {
-        let (file, name) = (workload.file, Some(workload.name));
-        let mut env = BTreeMap::new();
+        documents: &[(String, Value)],
+    ) -> (
+        BTreeMap<String, String>,
+        BTreeMap<String, Vec<ServiceEvidence>>,
+    ) {
+        let mut env = Env::default();
         for container in containers {
-            if container["envFrom"].is_sequence() {
-                diagnostic(
-                    self.report,
-                    file,
-                    name,
-                    "Kubernetes envFrom is unresolved; ConfigMap/Secret content is not loaded.",
-                );
+            for source in container["envFrom"].as_sequence().into_iter().flatten() {
+                self.env_from(workload, source, documents, &mut env);
             }
-            for e in container["env"].as_sequence().into_iter().flatten() {
-                if !e["valueFrom"].is_null() {
-                    diagnostic(
-                        self.report,
-                        file,
-                        name,
-                        "Kubernetes valueFrom is unresolved; Secret/ConfigMap contents are not read.",
-                    );
-                }
-                if let (Some(k), Some(v)) = (e["name"].as_str(), e["value"].as_str())
-                    && endpoint_key(k)
-                    && public_value(v)
-                    && !v.contains('$')
-                {
-                    env.insert(k.into(), v.into());
-                }
+            for entry in container["env"].as_sequence().into_iter().flatten() {
+                self.env_entry(workload, entry, documents, &mut env);
             }
         }
-        env
+        (env.values, env.origins)
+    }
+    /// All keys of an `envFrom` ConfigMap, each with an optional `prefix`.
+    fn env_from(
+        &mut self,
+        workload: &Workload,
+        source: &Value,
+        documents: &[(String, Value)],
+        env: &mut Env,
+    ) {
+        let found = source["configMapRef"]["name"]
+            .as_str()
+            .and_then(|name| workload.config_map(documents, name));
+        let Some((file, data)) = found else {
+            self.unresolved(workload, "Kubernetes envFrom is unresolved; only ConfigMaps declared in the same manifest directory and namespace are loaded, Secrets are never read.");
+            return;
+        };
+        let prefix = source["prefix"].as_str().unwrap_or("");
+        let entries = data.as_mapping().into_iter().flatten();
+        for (k, v) in entries.filter_map(|(k, v)| k.as_str().zip(v.as_str())) {
+            let via = "/spec/template/spec/containers/envFrom";
+            env.insert(
+                format!("{prefix}{k}"),
+                v,
+                config_map_origin(workload.file, via, file, k),
+            );
+        }
+    }
+    /// One `env` entry: a literal `value` or a `configMapKeyRef`.
+    fn env_entry(
+        &mut self,
+        workload: &Workload,
+        entry: &Value,
+        documents: &[(String, Value)],
+        env: &mut Env,
+    ) {
+        let Some(name) = entry["name"].as_str() else {
+            return;
+        };
+        if let Some(value) = entry["value"].as_str() {
+            env.insert(name.into(), value, vec![]);
+            return;
+        }
+        if entry["valueFrom"].is_null() {
+            return;
+        }
+        let reference = &entry["valueFrom"]["configMapKeyRef"];
+        let found = reference["name"]
+            .as_str()
+            .zip(reference["key"].as_str())
+            .and_then(|(map, key)| {
+                let (file, data) = workload.config_map(documents, map)?;
+                Some((file, key, data[key].as_str()?))
+            });
+        let Some((file, key, value)) = found else {
+            self.unresolved(workload, "Kubernetes valueFrom is unresolved; only ConfigMap keys declared in the same manifest directory and namespace are loaded, Secrets are never read.");
+            return;
+        };
+        let via = format!("/spec/template/spec/containers/env/{name}");
+        env.insert(
+            name.into(),
+            value,
+            config_map_origin(workload.file, &via, file, key),
+        );
+    }
+    fn unresolved(&mut self, workload: &Workload, message: &str) {
+        diagnostic(self.report, workload.file, Some(workload.name), message);
     }
     /// Removes project services that a deployment already maps to.
     fn drop_mapped_project_services(&mut self) {
@@ -603,7 +706,10 @@ impl Deployments<'_> {
                 } else {
                     Kind::ConfiguredReference
                 };
-                let evidence = vec![proof(&d.file, &d.pointer(key), LINK_EVIDENCE)];
+                let evidence = match d.origins.get(key) {
+                    Some(origin) => origin.clone(),
+                    None => vec![proof(&d.file, &d.pointer(key), LINK_EVIDENCE)],
+                };
                 add(self.report, &d.id, &target.id, kind, evidence);
             }
         }

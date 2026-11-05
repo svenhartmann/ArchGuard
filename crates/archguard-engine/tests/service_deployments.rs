@@ -88,6 +88,85 @@ fn kubernetes_namespaces_do_not_merge_short_hostnames() {
     assert!(analyze_services(d.path()).unwrap().dependencies.is_empty());
 }
 
+const CONFIGMAP_BACKENDS: &str = "kind: Deployment\nmetadata: {name: orders, namespace: shop}\nspec:\n  template:\n    metadata: {labels: {app: orders}}\n    spec: {containers: [{name: api, image: orders}]}\n---\nkind: Service\nmetadata: {name: orders-svc, namespace: shop}\nspec: {selector: {app: orders}}\n---\nkind: Deployment\nmetadata: {name: stock, namespace: shop}\nspec:\n  template:\n    metadata: {labels: {app: stock}}\n    spec: {containers: [{name: api, image: stock}]}\n---\nkind: Service\nmetadata: {name: stock-svc, namespace: shop}\nspec: {selector: {app: stock}}\n";
+
+#[test]
+fn kubernetes_configmaps_in_the_same_bundle_resolve_endpoints() {
+    let d = tempdir().unwrap();
+    put(
+        d.path(),
+        "k8s/config.yaml",
+        "kind: ConfigMap\nmetadata: {name: web-config, namespace: shop}\ndata:\n  ORDERS_URL: 'http://orders-svc:8080'\n  API_TOKEN: do-not-display\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: web-hosts, namespace: shop}\ndata: {stock: 'stock-svc.shop.svc.cluster.local:9000'}\n",
+    );
+    put(d.path(), "k8s/backends.yaml", CONFIGMAP_BACKENDS);
+    put(
+        d.path(),
+        "k8s/web.yaml",
+        "kind: Deployment\nmetadata: {name: web, namespace: shop}\nspec:\n  template:\n    spec:\n      containers:\n      - name: web\n        image: web\n        envFrom: [{configMapRef: {name: web-config}}]\n        env:\n        - name: STOCK_ADDR\n          valueFrom: {configMapKeyRef: {name: web-hosts, key: stock}}\n",
+    );
+    let r = analyze_services(d.path()).unwrap();
+    let id = |name: &str| {
+        r.services
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap()
+            .id
+            .clone()
+    };
+    let edge = |to: &str| {
+        r.dependencies
+            .iter()
+            .find(|e| e.from == id("web") && e.to == id(to))
+            .unwrap_or_else(|| panic!("web -> {to} missing: {:?}", r.dependencies))
+    };
+    let orders = edge("orders");
+    assert_eq!(orders.kind, Kind::ConfiguredHttp);
+    assert!(
+        orders
+            .evidence
+            .iter()
+            .any(|p| p.file == "k8s/config.yaml" && p.pointer == "/data/ORDERS_URL")
+    );
+    assert!(orders.evidence.iter().any(|p| p.file == "k8s/web.yaml"));
+    let stock = edge("stock");
+    assert_eq!(stock.kind, Kind::ConfiguredReference);
+    assert!(
+        stock
+            .evidence
+            .iter()
+            .any(|p| p.file == "k8s/config.yaml" && p.pointer == "/data/stock")
+    );
+    assert!(
+        !serde_json::to_string(&r)
+            .unwrap()
+            .contains("do-not-display")
+    );
+}
+
+#[test]
+fn kubernetes_configmaps_from_other_namespaces_or_bundles_stay_unresolved() {
+    let d = tempdir().unwrap();
+    put(
+        d.path(),
+        "k8s/config.yaml",
+        "kind: ConfigMap\nmetadata: {name: web-config, namespace: other}\ndata: {ORDERS_URL: 'http://orders-svc:8080'}\n",
+    );
+    put(
+        d.path(),
+        "elsewhere/config.yaml",
+        "kind: ConfigMap\nmetadata: {name: web-config, namespace: shop}\ndata: {ORDERS_URL: 'http://orders-svc:8080'}\n",
+    );
+    put(d.path(), "k8s/backends.yaml", CONFIGMAP_BACKENDS);
+    put(
+        d.path(),
+        "k8s/web.yaml",
+        "kind: Deployment\nmetadata: {name: web, namespace: shop}\nspec:\n  template:\n    spec: {containers: [{name: web, image: web, envFrom: [{configMapRef: {name: web-config}}]}]}\n",
+    );
+    let r = analyze_services(d.path()).unwrap();
+    assert!(r.dependencies.is_empty(), "{:?}", r.dependencies);
+    assert!(!r.complete);
+}
+
 #[test]
 fn malformed_yaml_templates_terminate_without_inventing_services() {
     let d = tempdir().unwrap();

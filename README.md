@@ -61,6 +61,8 @@ In World View, use the wheel to zoom, drag to pan, and right-drag or Shift-drag 
 
 Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/`, `fixtures/`, agent worktrees and generated build/report directories are excluded; open a sample directory directly to analyze it. A Rust binary is an application project, not automatically a service: deployment evidence is required.
 
+Deployment evidence comes from Compose files and plain Kubernetes manifests. For Kubernetes, ArchGuard reads Deployment, StatefulSet, DaemonSet, Job, CronJob and Pod workloads, matches Services to them by selector, and links literal endpoint variables such as `ORDERS_URL` to the selected workload. Values from `envFrom` and `configMapKeyRef` count when the ConfigMap is declared in the same manifest directory and namespace. Secrets are never read, Helm templates are not rendered, Kustomize overlays are not applied, and no cluster is contacted; such references are reported as analysis gaps.
+
 ## Languages and source metrics
 
 | Language | Import graph | Additional source analysis | Required external tools |

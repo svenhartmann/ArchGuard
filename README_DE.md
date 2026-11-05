@@ -61,6 +61,8 @@ In der World View zoomt das Mausrad; Ziehen verschiebt die Ansicht. Ziehen mit r
 
 Die Diensterkennung berücksichtigt `.gitignore` und `project.exclude`. Untergeordnete `examples/`, `fixtures/`, Agent-Worktrees sowie erzeugte Build- und Berichtsverzeichnisse bleiben außen vor; Beispiele lassen sich direkt als Analyseverzeichnis öffnen. Ein Rust-Binary ist ein Anwendungsprojekt und wird erst durch Deployment-Belege als Service eingeordnet.
 
+Deployment-Belege stammen aus Compose-Dateien und einfachen Kubernetes-Manifesten. Bei Kubernetes liest ArchGuard Deployment-, StatefulSet-, DaemonSet-, Job-, CronJob- und Pod-Workloads, ordnet ihnen Services über den Selektor zu und verbindet feste Endpunkt-Variablen wie `ORDERS_URL` mit dem ausgewählten Workload. Werte aus `envFrom` und `configMapKeyRef` zählen, wenn die ConfigMap im selben Manifest-Verzeichnis und Namespace deklariert ist. Secrets werden nie gelesen, Helm-Templates nicht gerendert, Kustomize-Overlays nicht angewendet, und es wird kein Cluster abgefragt; solche Verweise erscheinen als Analyselücken.
+
 ## Sprachen und Quellmetriken
 
 | Sprache | Importgraph | Zusätzliche Quellanalyse | Benötigte externe Werkzeuge |
