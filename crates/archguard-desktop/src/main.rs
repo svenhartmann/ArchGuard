@@ -53,6 +53,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .unwrap_or_else(|| root.display().to_string());
 
     let ui = AppWindow::new()?;
+    set_dock_icon();
     // Slint selects bundled translations only after the first component.
     select_language();
     ui.set_project(project.clone().into());
@@ -394,6 +395,28 @@ fn push_selection(ui: &AppWindow, g: &GraphState) {
     ui.set_incoming(neighbors(inc));
     ui.set_outgoing(neighbors(out));
 }
+
+/// macOS ignores window icons; without an app bundle the Dock shows the
+/// application icon set here.
+#[cfg(target_os = "macos")]
+fn set_dock_icon() {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(include_bytes!("../assets/icon.png"));
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: called on the main thread (checked by `mtm`) with a valid image.
+    unsafe { app.setApplicationIconImage(Some(&image)) };
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_dock_icon() {}
 
 /// German when the system language is German, else English.
 /// Call after creating the window.

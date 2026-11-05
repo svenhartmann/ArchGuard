@@ -180,7 +180,9 @@ impl Matrix {
         for (from, to, _) in tree.edges() {
             if let (Some(&a), Some(&b)) = (index.get(&from), index.get(&to)) {
                 g.add_edge(ids[a], ids[b], ());
-                adj.get_mut(&from).map(|v| v.push(to));
+                if let Some(v) = adj.get_mut(&from) {
+                    v.push(to);
+                }
             }
         }
         let mut groups: Vec<Vec<usize>> = petgraph::algo::tarjan_scc(&g)
