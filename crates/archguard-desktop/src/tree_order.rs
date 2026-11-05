@@ -81,7 +81,9 @@ fn construction_order(
     }
 }
 
-fn level_order(
+/// Siblings in the web's dependency construction order (also used by the
+/// Services tree, which lays out its rows with the same rule).
+pub(crate) fn level_order(
     siblings: &[usize],
     pairs: &[(usize, usize)],
     rank: &BTreeMap<usize, usize>,

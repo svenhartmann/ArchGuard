@@ -6,8 +6,6 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
 
-use petgraph::graph::DiGraph;
-
 /// One tree node in input order; `id` is the web's `src` key.
 pub struct Node {
     pub id: String,
@@ -89,7 +87,11 @@ pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
     let grouped = group_edges(nodes, links, &deps);
     for (parent, siblings) in children.iter_mut() {
         let pairs = grouped.get(parent).map(Vec::as_slice).unwrap_or(&[]);
-        *siblings = construction_order(nodes, siblings, pairs);
+        let mut sorted = siblings.clone();
+        sorted.sort_by(|&a, &b| compare(nodes, a, b));
+        let rank: BTreeMap<usize, usize> =
+            sorted.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+        *siblings = crate::tree_order::level_order(&sorted, pairs, &rank);
     }
     let ordered = preorder(&children);
     place(nodes, links, &deps, &ordered, width)
@@ -136,66 +138,6 @@ fn group_edges(
         out.entry(key).or_default().push((a, b));
     }
     out
-}
-
-/// Strongly connected sibling groups, dependents before their
-/// dependencies by longest path, ties by the groups' first member.
-fn construction_order(nodes: &[Node], siblings: &[usize], pairs: &[(usize, usize)]) -> Vec<usize> {
-    let mut g = DiGraph::<usize, ()>::new();
-    let idx: BTreeMap<usize, _> = siblings.iter().map(|&s| (s, g.add_node(s))).collect();
-    for (a, b) in pairs {
-        if let (Some(&x), Some(&y)) = (idx.get(a), idx.get(b)) {
-            g.update_edge(x, y, ());
-        }
-    }
-    let mut groups: Vec<Vec<usize>> = petgraph::algo::tarjan_scc(&g)
-        .into_iter()
-        .map(|c| {
-            let mut m: Vec<usize> = c.iter().map(|&i| g[i]).collect();
-            m.sort_by(|&a, &b| compare(nodes, a, b));
-            m
-        })
-        .collect();
-    groups.sort_by(|a, b| compare(nodes, a[0], b[0]));
-    let group_of: BTreeMap<usize, usize> = groups
-        .iter()
-        .enumerate()
-        .flat_map(|(gi, m)| m.iter().map(move |&n| (n, gi)))
-        .collect();
-    let mut next: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
-    for (a, b) in pairs {
-        if let (Some(&ga), Some(&gb)) = (group_of.get(a), group_of.get(b))
-            && ga != gb
-            && !next[ga].contains(&gb)
-        {
-            next[ga].push(gb);
-        }
-    }
-    let mut level = vec![None; groups.len()];
-    for gi in 0..groups.len() {
-        longest(gi, &next, &mut level);
-    }
-    let mut order: Vec<usize> = (0..groups.len()).collect();
-    order.sort_by_key(|&gi| Reverse(level[gi].unwrap_or(0)));
-    order
-        .into_iter()
-        .flat_map(|gi| groups[gi].clone())
-        .collect()
-}
-
-/// Longest path from group `gi` to a sink (the groups form a DAG).
-fn longest(gi: usize, next: &[Vec<usize>], level: &mut [Option<usize>]) -> usize {
-    if let Some(l) = level[gi] {
-        return l;
-    }
-    level[gi] = Some(0);
-    let l = next[gi]
-        .iter()
-        .map(|&n| longest(n, next, level) + 1)
-        .max()
-        .unwrap_or(0);
-    level[gi] = Some(l);
-    l
 }
 
 /// Depth-first order of the forest with each node's depth.

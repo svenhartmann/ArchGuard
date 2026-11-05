@@ -10,18 +10,13 @@ mod paths;
 mod state;
 mod view;
 
-use std::cell::RefCell;
-
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
-
-thread_local! {
-    static STATE: RefCell<Option<ServicesState>> = const { RefCell::new(None) };
-}
 
 /// Build the tab state for an analysis (reads the service topology).
 pub fn build(data: &Loaded) -> ServicesState {
@@ -88,11 +83,9 @@ fn action<A: 'static>(
     let w = ui.as_weak();
     move |arg| {
         let Some(ui) = w.upgrade() else { return };
-        STATE.with_borrow_mut(|s| {
-            if let Some(s) = s {
-                f(s, &ui, arg);
-                push(&ui, s);
-            }
+        documents::with_active_state(|s: &mut ServicesState| {
+            f(s, &ui, arg);
+            push(&ui, s);
         });
     }
 }
@@ -108,10 +101,17 @@ fn action2<A: 'static, B: 'static>(
 /// Fill the tab after an analysis finished. The topology is read on a
 /// worker thread; snapshot runs build it in place so the PNG shows it.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    // A document keeps its state; switching back only shows it again.
+    if documents::with_active_state(|s: &mut ServicesState| push(ui, s)).is_some() {
+        return;
+    }
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     ui.global::<ServicesData>()
         .set_model(ServicesModel::default());
     if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, build(data));
+        return install(ui, doc, build(data));
     }
     let root = data.root.to_path_buf();
     let weak = ui.as_weak();
@@ -119,19 +119,21 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let state = state::build_from(&root);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, state);
+                install(&ui, doc, state);
             }
         });
     });
 }
 
-fn install(ui: &AppWindow, mut state: ServicesState) {
+/// Store the state for `doc`; show it only if `doc` is still active.
+fn install(ui: &AppWindow, doc: documents::DocId, mut state: ServicesState) {
     if state.viewport == 0.0 {
         let window = ui.window();
         state.viewport = (window.size().width as f32 / window.scale_factor()).floor();
     }
-    push(ui, &state);
-    STATE.set(Some(state));
+    if documents::set_state(doc, state) {
+        documents::with_active_state(|s: &mut ServicesState| push(ui, s));
+    }
 }
 
 /// Show the state in the window.
