@@ -1,0 +1,129 @@
+name: ArchGuard
+description: Install ArchGuard, gate the architecture with `archguard check` (SARIF) and post one sticky PR review comment.
+author: Sven Hartmann
+branding:
+  icon: layers
+  color: blue
+
+inputs:
+  version:
+    description: ArchGuard release to install, e.g. 0.2.1, or latest.
+    required: false
+    default: latest
+  path:
+    description: Project path to analyze, relative to the workspace. SARIF file locations are relative to it, so keep the repository root (.) when you upload SARIF.
+    required: false
+    default: .
+  base:
+    description: Git ref or commit for `review --base`. Default on pull_request is the PR base commit.
+    required: false
+    default: ''
+  comment:
+    description: On pull_request, create or update one sticky ArchGuard review comment (true or false).
+    required: false
+    default: 'true'
+  fail-on-violation:
+    description: Fail the step when `archguard check` finds gate violations (exit 1). Exit codes 2 and 3 always fail.
+    required: false
+    default: 'true'
+  sarif-file:
+    description: Where to write the SARIF report. Default is archguard.sarif in the runner's temp directory.
+    required: false
+    default: ''
+  token:
+    description: Token for the PR comment and the release lookup; needs pull-requests write for the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report, for github/codeql-action/upload-sarif.
+    value: ${{ steps.check.outputs.sarif-file }}
+  exit-code:
+    description: Exit code of `archguard check` (0 ok, 1 gate violations, 2 usage error, 3 analysis/IO/config error).
+    value: ${{ steps.check.outputs.exit-code }}
+  comment-file:
+    description: Path of the rendered PR comment Markdown (pull_request only).
+    value: ${{ steps.review.outputs.comment-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        RUNNER_OS_NAME: ${{ runner.os }}
+        COMMENT: ${{ inputs.comment }}
+      run: |
+        if [ "$RUNNER_OS_NAME" = Windows ]; then
+          echo "::error title=ArchGuard::this action supports Linux and macOS runners only"
+          exit 2
+        fi
+        case "$COMMENT" in
+          true | false) ;;
+          *) echo "::error title=ArchGuard::comment must be true or false, got '$COMMENT'"; exit 2 ;;
+        esac
+
+    - name: Install ArchGuard
+      id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+        ARCHGUARD_INSTALL_DIR: ${{ runner.temp }}/archguard-bin
+      run: |
+        if [ "$VERSION" = latest ]; then
+          # Authenticated lookup avoids the anonymous API rate limit; if it
+          # fails, the installer resolves the latest release itself.
+          VERSION="$(gh api repos/svenhartmann/ArchGuard/releases/latest --jq .tag_name 2>/dev/null || true)"
+        fi
+        # The installer verifies the archive against the release's SHA256SUMS.
+        ARCHGUARD_VERSION="$VERSION" sh "$GITHUB_ACTION_PATH/scripts/install/install.sh"
+        echo "$ARCHGUARD_INSTALL_DIR" >> "$GITHUB_PATH"
+        echo "bin=$ARCHGUARD_INSTALL_DIR/archguard" >> "$GITHUB_OUTPUT"
+        "$ARCHGUARD_INSTALL_DIR/archguard" --version
+
+    - name: Run archguard check
+      id: check
+      shell: bash
+      env:
+        ARCHGUARD_BIN: ${{ steps.install.outputs.bin }}
+        ARCHGUARD_PATH: ${{ inputs.path }}
+        ARCHGUARD_SARIF: ${{ inputs.sarif-file || format('{0}/archguard.sarif', runner.temp) }}
+        ARCHGUARD_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+      run: sh "$GITHUB_ACTION_PATH/scripts/action/check.sh" run
+
+    - name: Render PR comment
+      id: review
+      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      shell: bash
+      env:
+        ARCHGUARD_BIN: ${{ steps.install.outputs.bin }}
+        ARCHGUARD_PATH: ${{ inputs.path }}
+        ARCHGUARD_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+        ARCHGUARD_COMMENT_FILE: ${{ runner.temp }}/archguard-pr-comment.md
+      run: sh "$GITHUB_ACTION_PATH/scripts/action/review.sh"
+
+    - name: Post sticky PR comment
+      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        PR: ${{ github.event.pull_request.number }}
+        BODY: ${{ steps.review.outputs.comment-file }}
+      run: |
+        if [ "$HEAD_REPO" != "$REPO" ]; then
+          # GITHUB_TOKEN is read-only for pull requests from forks.
+          echo "::notice title=ArchGuard::PR from a fork; comment not posted, see the job summary"
+          exit 0
+        fi
+        python3 "$GITHUB_ACTION_PATH/scripts/action/pr_comment.py" --repo "$REPO" --pr "$PR" --body "$BODY"
+
+    - name: Gate on archguard check
+      shell: bash
+      env:
+        ARCHGUARD_EXIT_CODE: ${{ steps.check.outputs.exit-code }}
+        ARCHGUARD_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+      run: sh "$GITHUB_ACTION_PATH/scripts/action/check.sh" gate

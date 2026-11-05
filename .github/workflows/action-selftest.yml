@@ -1,0 +1,71 @@
+name: Action self-test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action-selftest-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scripts:
+    name: action scripts / unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests with fake gh and archguard
+        run: python3 -m unittest discover -s scripts/action -p 'test_*.py' -v
+
+  action:
+    name: uses ./ on ${{ matrix.os }}
+    needs: scripts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Only one leg comments and uploads, so the sticky comment and the
+          # code-scanning category stay unique.
+          - os: ubuntu-24.04
+            primary: true
+          - os: macos-15
+            primary: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Default depth 1 on purpose: the action must fetch the PR base itself.
+          persist-credentials: true
+
+      - name: Run ArchGuard action
+        id: archguard
+        uses: ./
+        with:
+          comment: ${{ matrix.primary && github.event_name == 'pull_request' }}
+
+      - name: Check action outputs
+        if: success() || failure()
+        env:
+          SARIF: ${{ steps.archguard.outputs.sarif-file }}
+          EXIT_CODE: ${{ steps.archguard.outputs.exit-code }}
+        run: |
+          echo "exit-code=$EXIT_CODE sarif-file=$SARIF"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["version"]=="2.1.0", d.get("version")' "$SARIF"
+
+      - name: Upload SARIF
+        if: matrix.primary && (success() || failure()) && steps.archguard.outputs.sarif-file != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ steps.archguard.outputs.sarif-file }}
+          category: archguard
