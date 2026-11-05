@@ -344,13 +344,13 @@ fn example_path(members: &[usize], adj: &BTreeMap<usize, Vec<usize>>) -> Vec<usi
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use archguard_engine::core::{Edge, Graph, Node, NodeId, NodeKind};
 
     /// lib/src/{a.rs, b.rs}, app/{ui/{v.rs}, main.rs}, top.rs; a→b, b→a,
     /// v.rs→a, main.rs→top.rs.
-    fn tree() -> Tree {
+    pub(crate) fn tree() -> Tree {
         let node = |id: u32, name: &str, kind, parent: Option<u32>| Node {
             id: NodeId(id),
             name: name.into(),

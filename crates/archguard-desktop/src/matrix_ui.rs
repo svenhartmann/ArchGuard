@@ -2,12 +2,12 @@
 
 use std::collections::BTreeSet;
 
-use slint::{ModelRc, SharedString};
+use slint::SharedString;
 
 use crate::context::Loaded;
 use crate::documents;
 use crate::graph_ui::tab_support::{self, Actions, TabState, index, model};
-use crate::matrix::{Matrix, Target};
+use crate::matrix::{Matrix, MatrixRow, Target};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
 use std::rc::Rc;
@@ -56,6 +56,20 @@ impl MatrixState {
         }
     }
 
+    /// The rows the filters leave; keeps `page` within them, so paging
+    /// back works after a toggle, search or scope shrank the list.
+    fn visible_rows(&mut self) -> Vec<MatrixRow> {
+        let rows = self.matrix.rows(
+            &self.tree,
+            &self.expanded,
+            &self.query,
+            self.cycle,
+            self.only,
+        );
+        self.page = self.page.min(rows.len().div_ceil(PAGE).max(1) - 1);
+        rows
+    }
+
     fn set_scope(&mut self, scope: Option<usize>) {
         self.scope = scope;
         self.matrix = Matrix::build(&self.tree, scope, &self.project);
@@ -72,13 +86,14 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     let project = ui.get_project().to_string();
     documents::with_active_state_or(
         || MatrixState::new(tab_support::tree(data), project),
-        |m: &mut MatrixState| push(ui, m),
+        |m: &mut MatrixState| m.push(ui),
     );
 }
 
 impl TabState for MatrixState {
     fn push(&mut self, ui: &AppWindow) {
-        push(ui, self);
+        let rows = self.visible_rows();
+        push(ui, self, &rows);
     }
 }
 
@@ -143,18 +158,14 @@ fn choose_cycle(m: &mut MatrixState, cycle: Option<usize>) {
     }
 }
 
-fn push(ui: &AppWindow, m: &MatrixState) {
+fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
     let mx = &m.matrix;
-    let rows = mx.rows(&m.tree, &m.expanded, &m.query, m.cycle, m.only);
-    let pages = rows.len().div_ceil(PAGE).max(1);
-    let page = m.page.min(pages - 1);
+    let page = m.page;
     let path: BTreeSet<usize> = m
         .cycle
         .map(|c| mx.cycles[c].path.iter().copied().collect())
         .unwrap_or_default();
-    ui.set_m_columns(model(
-        mx.columns.iter().map(|c| column(m, &c.target, &c.name)),
-    ));
+    ui.set_m_columns(model(mx.columns.iter().map(|c| column(&c.target, &c.name))));
     ui.set_m_rows(model(rows.iter().skip(page * PAGE).take(PAGE).map(|r| {
         let n = &m.tree.nodes[r.node];
         let cells = mx.cells.get(&r.node);
@@ -199,7 +210,7 @@ fn push(ui: &AppWindow, m: &MatrixState) {
     push_evidence(ui, m);
 }
 
-fn column(m: &MatrixState, target: &Target, name: &str) -> MatrixColumn {
+fn column(target: &Target, name: &str) -> MatrixColumn {
     let (label, context) = match name.trim_end_matches('/').rsplit_once('/') {
         Some((ctx, last)) => (last.to_string(), ctx.to_string()),
         None => (name.to_string(), String::new()),
@@ -215,14 +226,11 @@ fn column(m: &MatrixState, target: &Target, name: &str) -> MatrixColumn {
             context: "".into(),
             kind: 1,
         },
-        Target::Outside => {
-            let _ = m;
-            MatrixColumn {
-                label: "".into(),
-                context: "".into(),
-                kind: 2,
-            }
-        }
+        Target::Outside => MatrixColumn {
+            label: "".into(),
+            context: "".into(),
+            kind: 2,
+        },
     }
 }
 
@@ -255,16 +263,17 @@ fn cycle_path(m: &MatrixState) -> String {
     format!("{} · {} · {}", c.id, c.path.len() - 1, steps.join(" → "))
 }
 
+/// Title and list of the open cell; both empty when no cell with
+/// dependencies is open.
 fn push_evidence(ui: &AppWindow, m: &MatrixState) {
-    let Some((row, col)) = m.evidence else {
-        ui.set_m_evidence_title("".into());
-        ui.set_m_evidence(ModelRc::default());
-        return;
-    };
-    let Some(cell) = m.matrix.cells.get(&row).and_then(|r| r.get(&col)) else {
-        ui.set_m_evidence_title("".into());
-        return;
-    };
+    let (title, lines) = evidence(m).unwrap_or_default();
+    ui.set_m_evidence_title(title.into());
+    ui.set_m_evidence(model(lines));
+}
+
+fn evidence(m: &MatrixState) -> Option<(String, Vec<SharedString>)> {
+    let (row, col) = m.evidence?;
+    let cell = m.matrix.cells.get(&row)?.get(&col)?;
     let name = |n: usize| m.tree.nodes[n].name.as_str();
     let full = &m.tree.full;
     let index: std::collections::BTreeMap<_, usize> = full
@@ -286,6 +295,37 @@ fn push_evidence(ui: &AppWindow, m: &MatrixState) {
     if more > 0 {
         lines.push(format!("… +{more}").into());
     }
-    ui.set_m_evidence_title(format!("{} · {}", name(row), cell.count).into());
-    ui.set_m_evidence(model(lines));
+    Some((format!("{} · {}", name(row), cell.count), lines))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> MatrixState {
+        MatrixState::new(Rc::new(crate::matrix::tests::tree()), "p".into())
+    }
+
+    /// A page beyond the rows (after collapsing or a search) is pulled
+    /// back, so "Previous" moves from the page that is shown.
+    #[test]
+    fn the_page_stays_within_the_rows() {
+        let mut m = state();
+        m.page = 3;
+        let rows = m.visible_rows();
+        assert!(rows.len() <= PAGE);
+        assert_eq!(m.page, 0);
+    }
+
+    /// A cell without dependencies opens no evidence, not the last one's.
+    #[test]
+    fn an_empty_cell_has_no_evidence() {
+        let mut m = state();
+        let (&row, cols) = m.matrix.cells.iter().next().expect("a cell");
+        let col = *cols.keys().next().expect("a column");
+        m.evidence = Some((row, col));
+        assert!(evidence(&m).is_some());
+        m.evidence = Some((row, m.matrix.columns.len() + 1));
+        assert_eq!(evidence(&m), None);
+    }
 }
