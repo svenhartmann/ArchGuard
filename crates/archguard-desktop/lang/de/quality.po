@@ -1,0 +1,102 @@
+msgctxt "QualityData"
+msgid "en"
+msgstr "de"
+
+msgid "View"
+msgstr "Ansicht"
+
+msgid "Class heatmap"
+msgstr "Klassen-Heatmap"
+
+msgid "Class metrics"
+msgstr "Klassenmetriken"
+
+msgid "Method maintainability"
+msgstr "Methodenwartbarkeit"
+
+msgid "Knowledge concentration"
+msgstr "Wissensverteilung"
+
+msgid "Build, runtime and test stability"
+msgstr "Build, Laufzeit und Teststabilität"
+
+msgid "Package cohesion"
+msgstr "Paketkohäsion"
+
+msgid "Quality history"
+msgstr "Qualitätsverlauf"
+
+msgid "Tests and change impact"
+msgstr "Tests und Änderungsreichweite"
+
+msgid "Test effectiveness"
+msgstr "Wirksamkeit der Tests"
+
+msgid "Code duplication"
+msgstr "Code-Duplikate"
+
+msgid "Search"
+msgstr "Suchen"
+
+msgid "Package or file"
+msgstr "Paket oder Datei"
+
+msgid "Find package or file"
+msgstr "Paket oder Datei finden"
+
+msgid "Measuring classes, methods and Git history…"
+msgstr "Klassen, Methoden und Git-Verlauf werden gemessen …"
+
+msgid "Show"
+msgstr "Zeigen"
+
+msgid "All classes"
+msgstr "Alle Klassen"
+
+msgid "High values"
+msgstr "Hohe Werte"
+
+msgid "Low values throughout"
+msgstr "Durchgehend niedrige Werte"
+
+msgid "Missing measurements"
+msgstr "Fehlende Messwerte"
+
+msgid "Sort"
+msgstr "Sortierung"
+
+msgid "Review first"
+msgstr "Zuerst prüfen"
+
+msgid "Class name"
+msgstr "Klassenname"
+
+msgid "Low"
+msgstr "Niedrig"
+
+msgid "Elevated"
+msgstr "Erhöht"
+
+msgid "High"
+msgstr "Hoch"
+
+msgid "Unknown"
+msgstr "Unbekannt"
+
+msgid "Informational"
+msgstr "Information"
+
+msgid "Relative comparison within the original project and source language: low below the 50% rank, elevated from 50%, high from 80%. Equal values share a rank; fewer than five measurements or a constant nonzero population are neutral. Zero and one connected LCOM4 group are low. NOC is informational. Colors guide review; they do not prove class quality."
+msgstr "Relativer Vergleich im ursprünglichen Projekt und derselben Quellsprache: niedrig unter Rang 50%, erhöht ab 50%, hoch ab 80%. Gleiche Werte erhalten denselben Rang; weniger als fünf Messwerte oder identische Nichtnullwerte bleiben neutral. Null und eine zusammenhängende LCOM4-Gruppe gelten als niedrig. NOC dient zur Information. Farben unterstützen die Prüfung; sie beweisen keine Klassenqualität."
+
+msgid "Back to heatmap"
+msgstr "Zur Heatmap"
+
+msgid "Class"
+msgstr "Klasse"
+
+msgid "Show next 20"
+msgstr "Nächste 20 anzeigen"
+
+msgid "Show next 20 groups"
+msgstr "Nächste 20 Gruppen"
