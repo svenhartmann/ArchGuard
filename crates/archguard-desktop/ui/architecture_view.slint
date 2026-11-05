@@ -1,0 +1,14 @@
+// Architecture tab. Owned by the task that implements it: put its data in
+// ArchitectureData (set from src/architecture_ui.rs) and its layout in ArchitectureView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global ArchitectureData {
+}
+
+export component ArchitectureView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Architecture");
+        open-web => { root.open-web(); }
+    }
+}

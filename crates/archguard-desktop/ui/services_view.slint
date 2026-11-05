@@ -1,0 +1,14 @@
+// Services tab. Owned by the task that implements it: put its data in
+// ServicesData (set from src/services_ui.rs) and its layout in ServicesView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global ServicesData {
+}
+
+export component ServicesView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Services");
+        open-web => { root.open-web(); }
+    }
+}

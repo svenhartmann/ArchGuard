@@ -172,3 +172,35 @@ export component SearchField inherits Rectangle {
         }
     }
 }
+
+// Shown by a tab that is not native yet: the web viewer has it.
+export component TabPlaceholder inherits Rectangle {
+    in property <string> title;
+    callback open-web();
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: 22px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: @tr("This view is not native yet. The web viewer shows it for the same project.");
+            color: Theme.muted;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Open in web viewer");
+                icon: Icons.external;
+                primary: true;
+                clicked => { root.open-web(); }
+            }
+        }
+    }
+}

@@ -1,0 +1,14 @@
+// Quality tab. Owned by the task that implements it: put its data in
+// QualityData (set from src/quality_ui.rs) and its layout in QualityView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global QualityData {
+}
+
+export component QualityView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Quality");
+        open-web => { root.open-web(); }
+    }
+}

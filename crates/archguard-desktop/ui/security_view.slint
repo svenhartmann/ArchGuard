@@ -1,0 +1,14 @@
+// Security tab. Owned by the task that implements it: put its data in
+// SecurityData (set from src/security_ui.rs) and its layout in SecurityView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global SecurityData {
+}
+
+export component SecurityView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Security");
+        open-web => { root.open-web(); }
+    }
+}

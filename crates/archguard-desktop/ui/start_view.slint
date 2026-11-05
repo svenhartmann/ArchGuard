@@ -1,0 +1,14 @@
+// Start tab. Owned by the task that implements it: put its data in
+// StartData (set from src/start_ui.rs) and its layout in StartView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global StartData {
+}
+
+export component StartView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Start");
+        open-web => { root.open-web(); }
+    }
+}

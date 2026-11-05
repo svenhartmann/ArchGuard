@@ -4,12 +4,20 @@
 //! directory). The analysis runs on a worker thread with the same
 //! cached pipeline as the CLI; the window fills once it is done.
 
+mod architecture_ui;
+mod calls_ui;
+mod context;
 mod matrix;
 mod matrix_ui;
 mod network;
+mod quality_ui;
+mod security_ui;
+mod services_ui;
+mod start_ui;
 mod state;
 mod tree;
 mod tree_order;
+mod ui;
 mod web;
 
 use std::cell::RefCell;
@@ -25,7 +33,8 @@ use slint::{ModelRc, SharedString, VecModel};
 use state::GraphState;
 use tree::{EdgeMode, Sort, Tree};
 
-slint::include_modules!();
+use context::Loaded;
+use ui::*;
 
 thread_local! {
     static APP: RefCell<Option<GraphState>> = const { RefCell::new(None) };
@@ -65,7 +74,9 @@ fn main() -> Result<(), slint::PlatformError> {
     wire(&ui, &root);
 
     let weak = ui.as_weak();
+    let thread_root = root.clone();
     std::thread::spawn(move || {
+        let root = thread_root;
         let result = load_config(None, &root)
             .and_then(|loaded| analyze_run_quiet(&root, &loaded, Level::Module))
             .map(|run| {
@@ -84,7 +95,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = weak.upgrade() else { return };
             match result {
-                Ok((run, sources)) => show(&ui, &run, sources),
+                Ok((run, sources)) => show(&ui, &root, &run, sources),
                 Err(e) => {
                     ui.set_loading(false);
                     ui.set_error(e.into());
@@ -148,6 +159,12 @@ fn wire(ui: &AppWindow, root: &Path) {
     }));
     wire_search(ui);
     matrix_ui::wire(ui);
+    start_ui::wire(ui);
+    architecture_ui::wire(ui);
+    calls_ui::wire(ui);
+    services_ui::wire(ui);
+    quality_ui::wire(ui);
+    security_ui::wire(ui);
     let w = ui.as_weak();
     let root = root.to_path_buf();
     ui.on_open_web(move |tab| open_web(&w, &root, tab.as_str()));
@@ -210,7 +227,18 @@ fn vec_model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
-fn show(ui: &AppWindow, run: &AnalysisRun, sources: ReviewSources) {
+fn show(ui: &AppWindow, root: &Path, run: &AnalysisRun, sources: ReviewSources) {
+    let loaded = Loaded {
+        root,
+        run,
+        sources: &sources,
+    };
+    start_ui::show(ui, &loaded);
+    architecture_ui::show(ui, &loaded);
+    calls_ui::show(ui, &loaded);
+    services_ui::show(ui, &loaded);
+    quality_ui::show(ui, &loaded);
+    security_ui::show(ui, &loaded);
     matrix_ui::show(
         ui,
         Tree::from_graph(&run.graph),

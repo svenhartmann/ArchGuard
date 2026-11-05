@@ -7,7 +7,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::matrix::{Matrix, Target};
 use crate::tree::Tree;
-use crate::{AppWindow, MatrixColumn, MatrixRowItem};
+use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
 
 /// Rows per page, as the web viewer's matrix.
 const PAGE: usize = 120;

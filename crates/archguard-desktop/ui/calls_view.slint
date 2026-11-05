@@ -1,0 +1,14 @@
+// Calls tab. Owned by the task that implements it: put its data in
+// CallsData (set from src/calls_ui.rs) and its layout in CallsView.
+import { TabPlaceholder } from "widgets.slint";
+
+export global CallsData {
+}
+
+export component CallsView inherits Rectangle {
+    callback open-web();
+    TabPlaceholder {
+        title: @tr("Calls");
+        open-web => { root.open-web(); }
+    }
+}
