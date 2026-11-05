@@ -1,0 +1,176 @@
+// The Services tab's details panel (renderServiceEvidence in
+// viewer_services.js): a relation's evidence, a project's inventory or a
+// deployment's connections.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons, Button } from "widgets.slint";
+
+export struct SvcEvidence {
+    location: string,
+    description: string,
+}
+
+// A button to a relation (edge >= 0) or a deployment (service >= 0).
+export struct SvcLink {
+    label: string,
+    edge: int,
+    service: int,
+}
+
+export struct SvcInspector {
+    // 0 hidden, 1 relation, 2 project without a deployment, 3 deployment.
+    mode: int,
+    title: string,
+    // Relation kind index (ServicesData.kind-label).
+    kind: int,
+    has-project: bool,
+    project-kind: int,
+    ecosystem: string,
+    path: string,
+    manifest: string,
+    runtime: string,
+    compose-file: string,
+    build-context: string,
+    networks: string,
+    profiles: string,
+    project-evidence: [SvcEvidence],
+    evidence: [SvcEvidence],
+    links: [SvcLink],
+}
+
+component Para inherits Text {
+    in property <bool> muted;
+    in property <bool> mono;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: 12px;
+    font-family: mono ? "Menlo" : "";
+    wrap: word-wrap;
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: 13px;
+    font-weight: 700;
+    wrap: word-wrap;
+}
+
+component EvidenceBox inherits VerticalLayout {
+    in property <SvcEvidence> item;
+    spacing: 4px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    Rectangle { height: 1px; background: Theme.border; }
+    Text { text: item.location; color: Theme.text; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+    Para { text: item.description; }
+}
+
+component LinkButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: label.preferred-height + 12px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    label := Text {
+        x: 8px;
+        width: parent.width - 16px;
+        text: root.text;
+        color: Theme.accent;
+        font-size: 12px;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ServicesInspector inherits Rectangle {
+    in property <SvcInspector> data;
+    in property <string> kind-text;
+    in property <string> project-kind-text;
+    callback select-edge(int);
+    callback select-service(int);
+    callback close();
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    sv := ScrollView {
+        content-height: column.preferred-height;
+        column := VerticalLayout {
+            width: sv.visible-width;
+            alignment: start;
+            padding: 16px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: data.title;
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+                Button { icon: Icons.close; compact: true; clicked => { root.close(); } }
+            }
+            if data.mode == 1: Para { text: root.kind-text; muted: true; }
+            if data.mode == 1: Para {
+                muted: true;
+                text: data.kind == 1 ? @tr("Declared startup order. This does not establish an API call.")
+                    : data.kind == 0 ? @tr("A literal HTTP(S) destination in Compose configuration. This is not evidence of an executed runtime call.")
+                    : @tr("Static source candidate, not an observed runtime call.");
+            }
+            if data.mode == 1 && data.evidence.length > 0: Heading { text: @tr("Source evidence (original wording)"); }
+            if data.mode == 1 && data.evidence.length == 0: Para {
+                text: @tr("No source evidence was included for this connection.");
+                muted: true;
+            }
+            if data.mode == 1: VerticalLayout {
+                for e in data.evidence: EvidenceBox { item: e; }
+            }
+
+            if data.has-project && data.mode > 1: Para { text: root.project-kind-text + " · " + data.ecosystem; muted: true; }
+            if data.has-project && data.mode > 1: Para { text: @tr("Project path: {}", data.path); mono: true; }
+            if data.has-project && data.mode > 1: Para { text: @tr("Manifest: {}", data.manifest); mono: true; }
+            if data.has-project && data.mode > 1 && data.runtime != "": Para { text: @tr("Runtime: {}", data.runtime); }
+            if data.mode > 1 && data.project-evidence.length > 0: Heading { text: @tr("Project evidence (original wording)"); }
+            if data.mode > 1: VerticalLayout {
+                for e in data.project-evidence: EvidenceBox { item: e; }
+            }
+
+            if data.mode == 2: Para {
+                muted: true;
+                text: data.links.length > 0 ? @tr("Select a deployment to inspect its connections.")
+                    : @tr("No service declaration is associated with this project. Libraries and test tools remain project inventory.");
+            }
+            if data.mode == 3 && data.compose-file != "": Para { text: @tr("Compose service · {}", data.compose-file); muted: true; }
+            if data.mode == 3 && data.compose-file != "": Para {
+                text: data.build-context != "" ? @tr("Local build context: {}", data.build-context) : @tr("No local build context identified.");
+            }
+            if data.mode == 3 && data.compose-file != "": Para {
+                text: @tr("Networks: {}", data.networks != "" ? data.networks : @tr("none reported"));
+                muted: true;
+            }
+            if data.mode == 3 && data.profiles != "": Para { text: @tr("Profiles: {}", data.profiles); muted: true; }
+            if data.mode == 3: Heading { text: @tr("{} connections", root.kind-text); }
+            if data.mode == 3 && data.links.length == 0: Para {
+                text: @tr("No connections of this kind were found for this service.");
+                muted: true;
+            }
+            if data.mode > 1: VerticalLayout {
+                for l in data.links: LinkButton {
+                    text: l.label;
+                    clicked => {
+                        if (l.edge >= 0) {
+                            root.select-edge(l.edge);
+                        } else {
+                            root.select-service(l.service);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

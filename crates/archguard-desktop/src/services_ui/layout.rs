@@ -1,0 +1,387 @@
+//! Port of the web viewer's `packageTreeLayout` as the Services tab calls
+//! it (`viewer_tree_layout.js`, no `tracks`, no `order`): a forest of
+//! groups and services, siblings in dependency construction order, and
+//! relation arcs on one axis to the right of the rows.
+
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BTreeMap, BinaryHeap};
+
+use petgraph::graph::DiGraph;
+
+/// One tree node in input order; `id` is the web's `src` key.
+pub struct Node {
+    pub id: String,
+    pub name: String,
+    pub parent: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// A relation between two nodes; `key` orders links as the web's
+/// `serviceKey` string, `side` forces a side ("In/Out" routing).
+pub struct Link {
+    pub from: usize,
+    pub to: usize,
+    pub key: String,
+    pub side: Option<Side>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// A placed row: node index, depth and centre.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub node: usize,
+    pub indent: f32,
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Route {
+    /// Index into the input links.
+    pub link: usize,
+    pub side: Side,
+    pub points: [Point; 6],
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layout {
+    pub rows: Vec<Row>,
+    /// Row width and height, the relation axis and the canvas size.
+    pub w: f32,
+    pub h: f32,
+    pub relation_x: f32,
+    pub width: f32,
+    pub height: f32,
+    /// Hierarchy connectors (child row → points of its rail).
+    pub hierarchy: Vec<[Point; 3]>,
+    /// One route per link whose ends are both placed, in key order.
+    pub routes: Vec<Route>,
+}
+
+const LEFT: f32 = 24.0;
+const BASE_GUTTER: f32 = 194.0;
+
+/// Lay out `nodes` and `links` for a viewport `width` (0 = unknown).
+pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
+    if nodes.is_empty() {
+        return Layout::default();
+    }
+    let cmp = |a: &usize, b: &usize| compare(nodes, *a, *b);
+    let mut children: BTreeMap<Option<usize>, Vec<usize>> = BTreeMap::new();
+    for (i, n) in nodes.iter().enumerate() {
+        children.entry(n.parent).or_default().push(i);
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by(cmp);
+    }
+    let mut deps: Vec<usize> = (0..links.len()).collect();
+    deps.sort_by(|&a, &b| links[a].key.cmp(&links[b].key));
+    let grouped = group_edges(nodes, links, &deps);
+    for (parent, siblings) in children.iter_mut() {
+        let pairs = grouped.get(parent).map(Vec::as_slice).unwrap_or(&[]);
+        *siblings = construction_order(nodes, siblings, pairs);
+    }
+    let ordered = preorder(&children);
+    place(nodes, links, &deps, &ordered, width)
+}
+
+/// The web's `compareId` for nodes of one kind: name, then id.
+fn compare(nodes: &[Node], a: usize, b: usize) -> Ordering {
+    (nodes[a].name.as_str(), nodes[a].id.as_str()).cmp(&(nodes[b].name.as_str(), &nodes[b].id))
+}
+
+/// Path from the outermost ancestor down to `n`.
+fn ancestry(nodes: &[Node], n: usize) -> Vec<usize> {
+    let mut out = vec![n];
+    let mut cur = n;
+    while let Some(p) = nodes[cur].parent {
+        if out.contains(&p) {
+            break;
+        }
+        out.push(p);
+        cur = p;
+    }
+    out.reverse();
+    out
+}
+
+/// Each link orders the two branches below its lowest common ancestor.
+fn group_edges(
+    nodes: &[Node],
+    links: &[Link],
+    deps: &[usize],
+) -> BTreeMap<Option<usize>, Vec<(usize, usize)>> {
+    let mut out: BTreeMap<Option<usize>, Vec<(usize, usize)>> = BTreeMap::new();
+    for &d in deps {
+        let (from, to) = (links[d].from, links[d].to);
+        let (pf, pt) = (ancestry(nodes, from), ancestry(nodes, to));
+        let i = pf.iter().zip(&pt).take_while(|(a, b)| a == b).count();
+        let (key, a, b) = if from == to {
+            (nodes[from].parent, from, from)
+        } else if i == pf.len() || i == pt.len() {
+            continue;
+        } else {
+            (if i > 0 { Some(pf[i - 1]) } else { None }, pf[i], pt[i])
+        };
+        out.entry(key).or_default().push((a, b));
+    }
+    out
+}
+
+/// Strongly connected sibling groups, dependents before their
+/// dependencies by longest path, ties by the groups' first member.
+fn construction_order(nodes: &[Node], siblings: &[usize], pairs: &[(usize, usize)]) -> Vec<usize> {
+    let mut g = DiGraph::<usize, ()>::new();
+    let idx: BTreeMap<usize, _> = siblings.iter().map(|&s| (s, g.add_node(s))).collect();
+    for (a, b) in pairs {
+        if let (Some(&x), Some(&y)) = (idx.get(a), idx.get(b)) {
+            g.update_edge(x, y, ());
+        }
+    }
+    let mut groups: Vec<Vec<usize>> = petgraph::algo::tarjan_scc(&g)
+        .into_iter()
+        .map(|c| {
+            let mut m: Vec<usize> = c.iter().map(|&i| g[i]).collect();
+            m.sort_by(|&a, &b| compare(nodes, a, b));
+            m
+        })
+        .collect();
+    groups.sort_by(|a, b| compare(nodes, a[0], b[0]));
+    let group_of: BTreeMap<usize, usize> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(gi, m)| m.iter().map(move |&n| (n, gi)))
+        .collect();
+    let mut next: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
+    for (a, b) in pairs {
+        if let (Some(&ga), Some(&gb)) = (group_of.get(a), group_of.get(b))
+            && ga != gb
+            && !next[ga].contains(&gb)
+        {
+            next[ga].push(gb);
+        }
+    }
+    let mut level = vec![None; groups.len()];
+    for gi in 0..groups.len() {
+        longest(gi, &next, &mut level);
+    }
+    let mut order: Vec<usize> = (0..groups.len()).collect();
+    order.sort_by_key(|&gi| Reverse(level[gi].unwrap_or(0)));
+    order
+        .into_iter()
+        .flat_map(|gi| groups[gi].clone())
+        .collect()
+}
+
+/// Longest path from group `gi` to a sink (the groups form a DAG).
+fn longest(gi: usize, next: &[Vec<usize>], level: &mut [Option<usize>]) -> usize {
+    if let Some(l) = level[gi] {
+        return l;
+    }
+    level[gi] = Some(0);
+    let l = next[gi]
+        .iter()
+        .map(|&n| longest(n, next, level) + 1)
+        .max()
+        .unwrap_or(0);
+    level[gi] = Some(l);
+    l
+}
+
+/// Depth-first order of the forest with each node's depth.
+fn preorder(children: &BTreeMap<Option<usize>, Vec<usize>>) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut pending: Vec<(usize, usize)> = children
+        .get(&None)
+        .map(|c| c.iter().rev().map(|&n| (n, 0)).collect())
+        .unwrap_or_default();
+    while let Some((n, depth)) = pending.pop() {
+        if out.iter().any(|&(m, _)| m == n) {
+            continue;
+        }
+        out.push((n, depth));
+        if let Some(c) = children.get(&Some(n)) {
+            pending.extend(c.iter().rev().map(|&m| (m, depth + 1)));
+        }
+    }
+    out
+}
+
+/// Row geometry, lanes and routes for the ordered rows.
+fn place(
+    nodes: &[Node],
+    links: &[Link],
+    deps: &[usize],
+    ordered: &[(usize, usize)],
+    width: f32,
+) -> Layout {
+    let max_depth = ordered.iter().map(|&(_, d)| d).max().unwrap_or(0) as f32;
+    let min_label = 400f32.max(300.0 + max_depth * 18.0);
+    let minimum = min_label + LEFT * 3.0 + BASE_GUTTER * 2.0;
+    let extra = (width - minimum).max(0.0);
+    let label_extra = (700.0 - min_label).max(0.0).min(extra * 0.4);
+    let w = min_label + label_extra;
+    let gutter = BASE_GUTTER + (extra - label_extra) / 2.0;
+    let relation_x = LEFT + w + 24.0 + gutter;
+    let rows: Vec<Row> = ordered
+        .iter()
+        .enumerate()
+        .map(|(i, &(node, depth))| Row {
+            node,
+            indent: depth as f32 * 18.0,
+            x: LEFT + w / 2.0,
+            y: 38.0 + i as f32 * 30.0,
+        })
+        .collect();
+    let mut at = vec![None; nodes.len()];
+    for r in &rows {
+        at[r.node] = Some(r);
+    }
+    let hierarchy = rows
+        .iter()
+        .filter_map(|r| {
+            let p = at[nodes[r.node].parent?]?;
+            let rail = LEFT + p.indent + 9.0;
+            Some([
+                Point {
+                    x: rail,
+                    y: p.y + 8.0,
+                },
+                Point { x: rail, y: r.y },
+                Point {
+                    x: LEFT + r.indent + 7.0,
+                    y: r.y,
+                },
+            ])
+        })
+        .collect();
+    let routes = routes(links, deps, &at, relation_x, gutter);
+    let height = rows.last().map_or(0.0, |r| r.y + 14.0 + 24.0);
+    Layout {
+        rows,
+        w,
+        h: 28.0,
+        relation_x,
+        width: relation_x + gutter + 24.0,
+        height,
+        hierarchy,
+        routes,
+    }
+}
+
+struct Interval {
+    link: usize,
+    source_y: f32,
+    target_y: f32,
+    start: f32,
+    end: f32,
+    lane: usize,
+}
+
+fn routes(
+    links: &[Link],
+    deps: &[usize],
+    at: &[Option<&Row>],
+    relation_x: f32,
+    gutter: f32,
+) -> Vec<Route> {
+    let mut intervals: Vec<Interval> = deps
+        .iter()
+        .filter_map(|&d| {
+            let (from, to) = (at[links[d].from]?, at[links[d].to]?);
+            let (s, t) = (from.y + 3.0, to.y - 3.0);
+            Some(Interval {
+                link: d,
+                source_y: s,
+                target_y: t,
+                start: s.min(t),
+                end: s.max(t),
+                lane: 0,
+            })
+        })
+        .collect();
+    intervals.sort_by(|a, b| {
+        (a.start, a.end)
+            .partial_cmp(&(b.start, b.end))
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| links[a.link].key.cmp(&links[b.link].key))
+    });
+    let lanes = assign_lanes(&mut intervals);
+    let mut out: Vec<Route> = intervals
+        .iter()
+        .map(|iv| route(&links[iv.link], iv, lanes, relation_x, gutter))
+        .collect();
+    out.sort_by(|a, b| links[a.link].key.cmp(&links[b.link].key));
+    out
+}
+
+/// The lowest free lane per interval (`packageTreeAssignLanes`).
+fn assign_lanes(intervals: &mut [Interval]) -> usize {
+    // Heap keys as bits keep f32 ends totally ordered (ends are positive).
+    let mut active: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();
+    let mut free: BinaryHeap<Reverse<usize>> = BinaryHeap::new();
+    let mut count = 0;
+    for iv in intervals.iter_mut() {
+        while let Some(&Reverse((end, lane))) = active.peek() {
+            if f32::from_bits(end) + 2.0 >= iv.start {
+                break;
+            }
+            active.pop();
+            free.push(Reverse(lane));
+        }
+        iv.lane = free.pop().map_or_else(
+            || {
+                count += 1;
+                count - 1
+            },
+            |Reverse(l)| l,
+        );
+        active.push(Reverse((iv.end.to_bits(), iv.lane)));
+    }
+    count
+}
+
+fn route(link: &Link, iv: &Interval, lanes: usize, axis: f32, gutter: f32) -> Route {
+    let side = link
+        .side
+        .unwrap_or(if iv.source_y - 3.0 < iv.target_y + 3.0 {
+            Side::Left
+        } else {
+            Side::Right
+        });
+    let sign = if side == Side::Left { -1.0 } else { 1.0 };
+    let spread = if lanes > 1 {
+        iv.lane as f32 / (lanes - 1) as f32
+    } else {
+        0.0
+    };
+    let span = (iv.target_y - iv.source_y).abs();
+    let reach = ((48.0 + span.sqrt() * 5.0).min(166.0) + spread * 28.0) * (gutter / BASE_GUTTER);
+    let p = |dx: f32, y: f32| Point {
+        x: axis + sign * dx,
+        y,
+    };
+    let (s, t) = (iv.source_y, iv.target_y);
+    Route {
+        link: iv.link,
+        side,
+        points: [
+            p(8.0, s),
+            p(20.0, s),
+            p(reach, s),
+            p(reach, t),
+            p(20.0, t),
+            p(8.0, t),
+        ],
+    }
+}
