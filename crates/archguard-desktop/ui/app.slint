@@ -11,9 +11,10 @@ import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
-import { DocumentStrip, DocItem, SubProjectItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
+import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
+import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 
-export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem }
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
 
@@ -169,6 +170,25 @@ export component AppWindow inherits Window {
     callback close-doc(int);
     callback add-doc();
     callback open-sub-project(int);
+
+    // App shell: menu, recent projects, settings, the save prompt
+    // (src/shell_ui.rs).
+    in property <[RecentItem]> recent;
+    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed.
+    in-out property <string> notice;
+    in property <int> notice-kind;
+    in property <bool> prompt-open;
+    in property <string> prompt-project;
+    in property <string> prompt-what;
+    callback open-recent(int);
+    callback clear-recent();
+    callback close-active();
+    callback close-all();
+    callback quit-app();
+    callback choose-theme(bool);
+    callback choose-language(string);
+    // 0 Save, 1 Don't save, 2 Cancel.
+    callback prompt-answered(int);
     // The active document has a finished analysis to show.
     property <bool> ready: root.has-doc && !root.loading && root.error == "";
 
@@ -274,6 +294,85 @@ export component AppWindow inherits Window {
         Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
     }
 
+    // Native on macOS and Windows, drawn by Slint elsewhere. Control is
+    // the command key on macOS.
+    MenuBar {
+        Menu {
+            title: @tr("File");
+            MenuItem {
+                title: @tr("Open project…");
+                shortcut: @keys(Control + O);
+                activated => { root.add-doc(); }
+            }
+            Menu {
+                title: @tr("Open recent");
+                for r[i] in root.recent: MenuItem {
+                    title: r.name + "  —  " + r.path;
+                    activated => { root.open-recent(i); }
+                }
+                MenuSeparator { }
+                MenuItem {
+                    title: @tr("Clear recent");
+                    enabled: root.recent.length > 0;
+                    activated => { root.clear-recent(); }
+                }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Close project");
+                shortcut: @keys(Control + W);
+                enabled: root.has-doc;
+                activated => { root.close-active(); }
+            }
+            MenuItem {
+                title: @tr("Close all");
+                shortcut: @keys(Control + Shift + W);
+                enabled: root.has-doc;
+                activated => { root.close-all(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Quit");
+                shortcut: @keys(Control + Q);
+                activated => { root.quit-app(); }
+            }
+        }
+        Menu {
+            title: @tr("View");
+            MenuItem {
+                title: @tr("Dark theme");
+                activated => { root.set-dark(true); root.choose-theme(true); }
+            }
+            MenuItem {
+                title: @tr("Light theme");
+                activated => { root.set-dark(false); root.choose-theme(false); }
+            }
+            MenuSeparator { }
+            Menu {
+                title: @tr("Language");
+                MenuItem {
+                    title: @tr("System language");
+                    activated => { root.choose-language(""); }
+                }
+                MenuItem {
+                    title: "English";
+                    activated => { root.choose-language("en"); }
+                }
+                MenuItem {
+                    title: "Deutsch";
+                    activated => { root.choose-language("de"); }
+                }
+            }
+        }
+        Menu {
+            title: @tr("Help");
+            MenuItem {
+                title: @tr("About ArchGuard");
+                activated => { about.show(); }
+            }
+        }
+    }
+
     VerticalLayout {
         // ---------------------------------------------------- documents
         DocumentStrip {
@@ -373,7 +472,10 @@ export component AppWindow inherits Window {
                 Button {
                     y: (parent.height - self.height) / 2;
                     icon: Theme.dark ? Icons.sun : Icons.moon;
-                    clicked => { root.set-dark(!Theme.dark); }
+                    clicked => {
+                        root.set-dark(!Theme.dark);
+                        root.choose-theme(Theme.dark);
+                    }
                 }
                 Button {
                     y: (parent.height - self.height) / 2;
@@ -381,6 +483,12 @@ export component AppWindow inherits Window {
                     clicked => { about.show(); }
                 }
             }
+        }
+
+        if root.notice != "": NoticeBar {
+            text: root.notice-kind == 1 ? @tr("Settings could not be read, a copy was kept: {}", root.notice)
+                : @tr("Could not save the changes: {}", root.notice);
+            dismiss => { root.notice = ""; }
         }
 
         if root.web-status != "": Rectangle {
@@ -450,7 +558,9 @@ export component AppWindow inherits Window {
 
         if !root.has-doc: EmptyStart {
             vertical-stretch: 1;
+            recent: root.recent;
             open-project => { root.add-doc(); }
+            open-recent(i) => { root.open-recent(i); }
         }
         if root.has-doc && !root.ready: Rectangle {
             vertical-stretch: 1;
@@ -718,6 +828,12 @@ export component AppWindow inherits Window {
         menu-y: 38px + 50px;
         chosen(i) => { root.open-sub-project(i); }
         dismiss => { root.projects-open = false; }
+    }
+
+    if root.prompt-open: SaveDialog {
+        project: root.prompt-project;
+        what: root.prompt-what;
+        answered(a) => { root.prompt-answered(a); }
     }
 
     about := PopupWindow {

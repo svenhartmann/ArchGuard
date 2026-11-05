@@ -9,6 +9,14 @@ export struct DocItem {
     path: string,
     loading: bool,
     failed: bool,
+    // Has unsaved changes: the close button shows a dot until hovered.
+    dirty: bool,
+}
+
+// An entry of "Open recent".
+export struct RecentItem {
+    name: string,
+    path: string,
 }
 
 export struct SubProjectItem {
@@ -59,10 +67,18 @@ component DocTab inherits Rectangle {
             border-radius: 5px;
             background: close-touch.has-hover ? Theme.panel-2 : transparent;
             Icon {
+                visible: !root.item.dirty || close-touch.has-hover;
                 icon: Icons.close;
                 tint: close-touch.has-hover ? Theme.text : Theme.muted;
                 width: 12px;
                 height: 12px;
+            }
+            Rectangle {
+                visible: root.item.dirty && !close-touch.has-hover;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.text;
             }
             close-touch := TouchArea {
                 mouse-cursor: pointer;
@@ -171,9 +187,11 @@ export component ProjectsMenu inherits Rectangle {
     }
 }
 
-// Shown when no document is open.
+// Shown when no document is open, with the recent projects.
 export component EmptyStart inherits Rectangle {
+    in property <[RecentItem]> recent;
     callback open-project();
+    callback open-recent(int);
     background: Theme.bg;
     VerticalLayout {
         alignment: center;
@@ -198,6 +216,49 @@ export component EmptyStart inherits Rectangle {
                 icon: Icons.folder;
                 text: @tr("Open project");
                 clicked => { root.open-project(); }
+            }
+        }
+        if root.recent.length > 0: HorizontalLayout {
+            alignment: center;
+            padding-top: 14px;
+            VerticalLayout {
+                width: 460px;
+                spacing: 2px;
+                Text {
+                    height: 26px;
+                    text: @tr("Recent projects");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                for r[i] in root.recent: Rectangle {
+                    height: 44px;
+                    border-radius: 6px;
+                    background: rt.has-hover ? Theme.panel-2 : transparent;
+                    rt := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-recent(i); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        Icon {
+                            icon: Icons.folder;
+                            tint: Theme.priority;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text { text: r.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                            Text { text: r.path; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                        }
+                    }
+                }
             }
         }
     }

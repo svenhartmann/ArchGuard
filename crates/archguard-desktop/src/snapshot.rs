@@ -11,6 +11,14 @@
 //! (`ARCHGUARD_DESKTOP_MCELL=<name>:<col>`), switch tab
 //! (`ARCHGUARD_DESKTOP_TAB`) or open the Projects menu
 //! (`ARCHGUARD_DESKTOP_MENU=projects`).
+//!
+//! App shell: mark tabs dirty (`ARCHGUARD_DESKTOP_DIRTY=0,1`, before the
+//! closes, so closing one shows the save prompt), press the window's close
+//! button (`ARCHGUARD_DESKTOP_QUIT=1`), click at logical points
+//! (`ARCHGUARD_DESKTOP_CLICK=x:y,x:y`, e.g. the menu bar Slint draws with
+//! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
+//! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu). Settings come from
+//! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
 
 use std::cell::Cell;
 
@@ -37,12 +45,14 @@ pub fn schedule(ui: &AppWindow) {
     if let Some(doc) = env::<i32>("ARCHGUARD_DESKTOP_DOC") {
         ui.invoke_select_doc(doc);
     }
+    mark_dirty(&std::env::var("ARCHGUARD_DESKTOP_DIRTY").unwrap_or_default());
     // Comma-separated tab indexes, closed in order.
     let close = std::env::var("ARCHGUARD_DESKTOP_CLOSE").unwrap_or_default();
     for i in close.split(',').filter_map(|i| i.trim().parse().ok()) {
         ui.invoke_close_doc(i);
     }
     apply_view_hooks(ui);
+    apply_shell_hooks(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
@@ -82,6 +92,49 @@ fn apply_view_hooks(ui: &AppWindow) {
     }
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);
+    }
+}
+
+fn mark_dirty(tabs: &str) {
+    for i in tabs
+        .split(',')
+        .filter_map(|i| i.trim().parse::<usize>().ok())
+    {
+        let id = crate::documents::with_store(|s| s.docs().get(i).map(|d| d.id));
+        if let Some(id) = id {
+            crate::documents::set_save_hook(id, || Ok(()));
+            crate::documents::mark_dirty(id, "Layer rules");
+            crate::documents::mark_dirty(id, "Thresholds");
+        }
+    }
+}
+
+fn point(v: &str) -> Option<slint::LogicalPosition> {
+    let (x, y) = v.split_once(':')?;
+    Some(slint::LogicalPosition::new(
+        x.trim().parse().ok()?,
+        y.trim().parse().ok()?,
+    ))
+}
+
+fn apply_shell_hooks(ui: &AppWindow) {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    if env::<String>("ARCHGUARD_DESKTOP_QUIT").as_deref() == Some("1") {
+        ui.window().dispatch_event(WindowEvent::CloseRequested);
+    }
+    let clicks = std::env::var("ARCHGUARD_DESKTOP_CLICK").unwrap_or_default();
+    for position in clicks.split(',').filter_map(point) {
+        let button = PointerEventButton::Left;
+        ui.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        ui.window()
+            .dispatch_event(WindowEvent::PointerPressed { position, button });
+        ui.window()
+            .dispatch_event(WindowEvent::PointerReleased { position, button });
+    }
+    if let Some(position) = env::<String>("ARCHGUARD_DESKTOP_HOVER_AT").and_then(|v| point(&v)) {
+        ui.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
     }
 }
 
