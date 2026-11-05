@@ -6,7 +6,7 @@
 //! live in the per-language tables below. Comments and strings never match.
 //! Test files are the caller's concern: the scan sees one file at a time.
 
-use crate::lex::{Flavor, Token, tokens};
+use crate::lex::{Token, tokens};
 use crate::walk::Lang;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -303,15 +303,7 @@ impl<'a> Code<'a> {
 
 /// Every memory growth candidate in `source`, ordered by line.
 pub fn scan_memory(source: &str, lang: Lang) -> Vec<MemoryCandidate> {
-    let flavor = match lang {
-        Lang::Java | Lang::CSharp | Lang::Go => Flavor::C,
-        Lang::Py => Flavor::Python,
-        Lang::Ts | Lang::Js => Flavor::Js,
-        Lang::Rust => Flavor::Rust,
-        Lang::Php => Flavor::Php,
-        Lang::Kotlin => Flavor::Kotlin,
-    };
-    let all = tokens(source, flavor);
+    let all = tokens(source, crate::lex::flavor(lang));
     let code = Code::new(source, &all);
     let mut found = Vec::new();
     for i in 0..code.tokens.len() {

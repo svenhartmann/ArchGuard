@@ -275,14 +275,26 @@ pub(crate) enum Command {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
     },
-    /// Import or read CPD XML duplicate groups with source locations and freshness.
+    /// Import CPD XML or run the built-in token scan, or read saved duplicate groups.
     Duplicates {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
-        #[arg(long, value_name = "XML")]
+        #[arg(long, value_name = "XML", conflicts_with = "scan")]
         report: Option<PathBuf>,
         #[arg(long, requires = "report", value_name = "PFAD")]
         source_root: Option<PathBuf>,
+        /// Run ArchGuard's token clone scanner over the walked sources instead of importing CPD.
+        #[arg(long)]
+        scan: bool,
+        /// Shortest reported clone in lexical tokens (one punctuation character is one token).
+        #[arg(long, requires = "scan", default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
+        min_tokens: u32,
+        /// Also match copies whose identifiers and literals differ (Type-2 clones).
+        #[arg(long, requires = "scan")]
+        normalize: bool,
+        /// Overwrite an imported CPD snapshot; without it the scan refuses.
+        #[arg(long, requires = "scan")]
+        replace: bool,
     },
     /// Import an OpenAPI contract for an exact service ID, or read saved comparisons.
     Contracts {

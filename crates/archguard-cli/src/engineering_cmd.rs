@@ -218,32 +218,51 @@ pub(crate) fn run(cli: &Cli, root: &Path, loaded: &LoadedConfig, graph: &Graph) 
             };
             output(cli, "Mutation evidence", json!(report))
         }
-        Command::Duplicates {
-            report,
-            source_root,
-            ..
-        } => {
-            let report = if let Some(path) = report {
-                match archguard_engine::import_duplicates(
-                    root,
-                    config,
-                    graph,
-                    path,
-                    source_root.as_deref(),
-                ) {
-                    Ok(v) => {
-                        if let Err(e) = ignore(root) {
-                            return analysis_error(e);
-                        }
-                        v
-                    }
-                    Err(e) => return analysis_error(e),
-                }
-            } else {
-                archguard_engine::read_duplicates(root, config, graph)
-            };
-            output(cli, "Duplication evidence", json!(report))
-        }
+        Command::Duplicates { .. } => duplicates(cli, root, config, graph),
         _ => unreachable!("engineering handler requires an engineering command"),
+    }
+}
+
+fn duplicates(
+    cli: &Cli,
+    root: &Path,
+    config: &archguard_engine::core::Config,
+    graph: &Graph,
+) -> i32 {
+    let Command::Duplicates {
+        report,
+        source_root,
+        scan,
+        min_tokens,
+        normalize,
+        replace,
+        ..
+    } = &cli.command
+    else {
+        unreachable!("duplicates handler requires the duplicates command")
+    };
+    let saved = if *scan {
+        let options = archguard_engine::DuplicateScanOptions {
+            min_tokens: *min_tokens as usize,
+            normalize: *normalize,
+            replace: *replace,
+            ..Default::default()
+        };
+        archguard_engine::scan_duplicates(root, config, graph, &options)
+    } else if let Some(path) = report {
+        archguard_engine::import_duplicates(root, config, graph, path, source_root.as_deref())
+    } else {
+        return output(
+            cli,
+            "Duplication evidence",
+            json!(archguard_engine::read_duplicates(root, config, graph)),
+        );
+    };
+    match saved {
+        Ok(v) => match ignore(root) {
+            Ok(()) => output(cli, "Duplication evidence", json!(v)),
+            Err(e) => analysis_error(e),
+        },
+        Err(e) => analysis_error(e),
     }
 }

@@ -148,6 +148,10 @@ impl<'a> Sources<'a> {
             p
         })
     }
+    /// The graph node a project-relative path maps to, without reading it.
+    pub fn node(&self, path: &str) -> Option<String> {
+        self.paths.get(path).cloned()
+    }
     pub fn get(&mut self, path: &str) -> Option<&SourceFile> {
         self.cache
             .entry(path.into())

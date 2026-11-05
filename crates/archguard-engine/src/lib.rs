@@ -98,8 +98,8 @@ pub use coverage_review::{CoverageReview, CoverageReviewFile, test_coverage_revi
 pub use csharp_calls::analyze_csharp_calls;
 pub use dep_inventory::{DependencyInventory, ExternalDependency, dependency_inventory};
 pub use duplicates::{
-    DuplicateGroup, DuplicateOccurrence, DuplicationReport, duplication_fingerprint,
-    import_duplicates, read_duplicates,
+    DuplicateGroup, DuplicateOccurrence, DuplicateScanOptions, DuplicationReport,
+    duplication_fingerprint, import_duplicates, read_duplicates, scan_duplicates,
 };
 pub use effective::{
     AnalysisRun, analyze, analyze_cached, analyze_effective, analyze_run, analyze_run_quiet,

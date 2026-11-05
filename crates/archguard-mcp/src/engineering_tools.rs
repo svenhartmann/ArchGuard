@@ -179,7 +179,7 @@ pub fn duplicates_value(
     }
     page(
         &r.status,
-        json!({"groups_total":r.groups.len(),"occurrences_total":r.groups.iter().map(|g|g.occurrences.len()).sum::<usize>(),"producer":"CPD","producer_version":r.producer_version,"producer_timestamp":r.producer_timestamp,"producer_errors":r.producer_errors,"producer_revision":"unverified","report_path":r.report_path,"imported_at_unix":r.imported_at_unix,"limitations":"Source hashes detect only changes after import. CPD scope, token normalization and producer revision are unverified. No project-wide duplication percentage is inferred."}),
+        json!({"groups_total":r.groups.len(),"occurrences_total":r.groups.iter().map(|g|g.occurrences.len()).sum::<usize>(),"producer":r.producer,"producer_version":r.producer_version,"producer_timestamp":r.producer_timestamp,"producer_errors":r.producer_errors,"producer_revision":"unverified","report_path":r.report_path,"imported_at_unix":r.imported_at_unix,"limitations":"Source hashes detect only changes after import. CPD scope, token normalization and producer revision are unverified. No project-wide duplication percentage is inferred."}),
         rows.iter(),
         p,
         |row| match row {

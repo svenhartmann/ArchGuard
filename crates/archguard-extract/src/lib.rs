@@ -8,6 +8,9 @@
 //! mechanisms — path specs against the file tree, symbol specs against the
 //! [`DeclMap`] of known modules.
 
+pub mod clones;
+#[cfg(test)]
+mod clones_tests;
 pub mod cs;
 pub mod debt;
 pub mod extract;
@@ -25,6 +28,7 @@ pub mod ts;
 pub mod visibility;
 pub mod walk;
 
+pub use clones::{CloneGroup, CloneLocation, CloneOptions, CloneScan, find_clones};
 pub use cs::CsExtractor;
 pub use debt::{DebtMarker, MarkerKind, scan_debt};
 pub use extract::{

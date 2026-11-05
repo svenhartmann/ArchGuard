@@ -9,6 +9,18 @@ pub(crate) enum Flavor {
     Python,
     Php,
 }
+/// The lexer flavor that shields a language's comments and strings.
+pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
+    use crate::walk::Lang;
+    match lang {
+        Lang::Java | Lang::CSharp | Lang::Go => Flavor::C,
+        Lang::Py => Flavor::Python,
+        Lang::Ts | Lang::Js => Flavor::Js,
+        Lang::Rust => Flavor::Rust,
+        Lang::Php => Flavor::Php,
+        Lang::Kotlin => Flavor::Kotlin,
+    }
+}
 #[derive(Debug)]
 pub(crate) struct Token {
     pub text: String,

@@ -178,3 +178,154 @@ fn cpd_source_root_ordering_and_missing_or_corrupt_evidence_remain_explicit() {
     assert_eq!(failed["status"], "error");
     assert_eq!(failed["groups"].as_array().unwrap().len(), 0);
 }
+
+/// A TypeScript function of `8 + 9 * statements + 1` lexical tokens.
+fn function(name: &str, var: &str, statements: usize) -> String {
+    let mut out = format!("function {name}(a, b) {{\n");
+    for i in 0..statements {
+        out.push_str(&format!("  let {var}{i} = a + b * {i};\n"));
+    }
+    out.push_str("}\n");
+    out
+}
+fn scan_fixture(files: &[(&str, String)], exclude: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, text) in files {
+        let path = dir.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    fs::write(dir.path().join("archguard.toml"),format!("derive_layers=false\n[project]\nlanguages=['ts']\nsource_roots=['src']\nexclude=[{exclude}]\n[rules]\ndeny_cycles='off'\n")).unwrap();
+    dir
+}
+
+#[test]
+fn builtin_scan_reports_a_copied_function_and_reads_back_like_an_import() {
+    let body = function("f", "x", 13);
+    let dir = scan_fixture(
+        &[
+            ("src/a.ts", format!("const head = 1\n{body}")),
+            ("src/b.ts", format!("const other = [1, 2]\n\n{body}")),
+        ],
+        "",
+    );
+    let root = dir.path();
+    let scanned = value(call(root, &["--scan", "--format", "json"]));
+    assert_eq!(scanned["status"], "ready", "{scanned:#}");
+    assert_eq!(scanned["producer"], "ArchGuard token scan");
+    assert!(scanned["report_path"].is_null());
+    assert!(
+        scanned["diagnostics"][0]
+            .as_str()
+            .unwrap()
+            .contains("not proven semantic equivalence")
+    );
+    let groups = scanned["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "{scanned:#}");
+    assert_eq!(groups[0]["tokens"], 126);
+    let occurrences = groups[0]["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(occurrences[0]["path"], "src/a.ts");
+    assert_eq!(occurrences[0]["node"], "a.ts");
+    assert_eq!(occurrences[0]["line"], 2);
+    assert_eq!(occurrences[1]["path"], "src/b.ts");
+    assert_eq!(occurrences[1]["line"], 3);
+    assert!(groups[0]["snippet"].as_str().unwrap().contains("let x12"));
+    let read = value(call(root, &["--format", "json"]));
+    assert_eq!(read["status"], "ready");
+    assert_eq!(read["producer"], "ArchGuard token scan");
+    assert_eq!(read["groups"], scanned["groups"]);
+    let review = value(
+        Command::new(assert_cmd::cargo::cargo_bin!("archguard"))
+            .arg("review")
+            .arg(root)
+            .args(["--format", "json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(review["findings"][0]["category"], "duplication");
+}
+
+#[test]
+fn builtin_scan_detects_renamed_copies_only_when_normalized() {
+    let dir = scan_fixture(
+        &[
+            ("src/a.ts", function("f", "x", 13)),
+            ("src/b.ts", function("g", "y", 13).replace("a + b", "p + q")),
+        ],
+        "",
+    );
+    let root = dir.path();
+    let exact = value(call(root, &["--scan", "--format", "json"]));
+    assert_eq!(exact["groups"].as_array().unwrap().len(), 0);
+    let normalized = value(call(root, &["--scan", "--normalize", "--format", "json"]));
+    assert_eq!(normalized["groups"].as_array().unwrap().len(), 1);
+    assert!(
+        normalized["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap().contains("normalize=true"))
+    );
+}
+
+#[test]
+fn builtin_scan_respects_threshold_excludes_and_gitignore() {
+    let body = function("f", "x", 13);
+    let short = function("s", "z", 8);
+    let dir = scan_fixture(
+        &[
+            ("src/a.ts", format!("{body}{short}")),
+            ("src/generated/g.ts", body.clone()),
+            ("src/vendor/v.ts", body.clone()),
+            (".gitignore", "src/vendor/\n".into()),
+            ("src/c.ts", format!("const c = 0\n{short}")),
+        ],
+        "'**/generated/**'",
+    );
+    let root = dir.path();
+    let report = value(call(root, &["--scan", "--format", "json"]));
+    assert_eq!(report["groups"].as_array().unwrap().len(), 0, "{report:#}");
+    let lower = value(call(
+        root,
+        &["--scan", "--min-tokens", "60", "--format", "json"],
+    ));
+    let groups = lower["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "{lower:#}");
+    let paths: Vec<_> = groups[0]["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["src/a.ts", "src/c.ts"]);
+    assert_eq!(
+        call(root, &["--scan", "--min-tokens", "0"]).status.code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn builtin_scan_never_silently_replaces_an_imported_cpd_report() {
+    let dir = fixture();
+    let root = dir.path();
+    fs::write(root.join("cpd.xml"), xml()).unwrap();
+    value(call(root, &["--report", "cpd.xml", "--format", "json"]));
+    let saved = fs::read(root.join(".archguard/duplicates.json")).unwrap();
+    let refused = call(root, &["--scan", "--format", "json"]);
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--replace"));
+    assert_eq!(
+        fs::read(root.join(".archguard/duplicates.json")).unwrap(),
+        saved
+    );
+    assert_eq!(value(call(root, &["--format", "json"]))["producer"], "CPD");
+    let replaced = value(call(root, &["--scan", "--replace", "--format", "json"]));
+    assert_eq!(replaced["producer"], "ArchGuard token scan");
+    // A later scan may refresh its own snapshot without --replace.
+    value(call(root, &["--scan", "--format", "json"]));
+    assert_eq!(
+        call(root, &["--scan", "--report", "cpd.xml"]).status.code(),
+        Some(2)
+    );
+}
