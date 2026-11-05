@@ -163,3 +163,60 @@ fn rules_and_store_stay_declared_when_written() {
     assert_eq!(report.config["project"], ConfigSource::Derived);
     assert_eq!(report.config["modules"], ConfigSource::Derived);
 }
+
+#[test]
+fn header_only_project_and_modules_sections_are_still_derived() {
+    // `[project]` and `[modules]` without values declare nothing, so the
+    // resolution `declared ⇐ derived ⇐ default` must still derive them.
+    let mut files: Vec<(&str, &str)> = LAYERED.to_vec();
+    files.push(("archguard.toml", "[project]\n[modules]\n[rules]\n"));
+    let dir = fixture(&files);
+    let (_graph, report) = run(dir.path());
+    assert_eq!(report.config["project"], ConfigSource::Derived);
+    assert_eq!(report.config["modules"], ConfigSource::Derived);
+    assert_eq!(report.config["rules"], ConfigSource::Default);
+}
+
+#[test]
+fn defaults_apply_with_default_provenance_and_never_fail_check() {
+    // No archguard.toml: every section that is neither derived nor
+    // declared carries its documented default with provenance `Default`.
+    // The off-by-default gates stay off although the project has measurable
+    // coupling, and derived layers produce no Error finding.
+    let dir = fixture(LAYERED);
+    let loaded = load_config(None, dir.path()).expect("load config");
+    let run =
+        archguard_engine::analyze_run_quiet(dir.path(), &loaded, Level::Module).expect("analyze");
+    let defaults = archguard_core::Config::default();
+    for key in [
+        "rules",
+        "store",
+        "review",
+        "performance",
+        "architecture",
+        "semantic",
+        "dependency_rules",
+        "ownership_rules",
+    ] {
+        assert_eq!(
+            run.report.config[key],
+            ConfigSource::Default,
+            "section {key}"
+        );
+    }
+    assert_eq!(run.config.rules, defaults.rules);
+    assert_eq!(run.config.store, defaults.store);
+    assert_eq!(run.config.review, defaults.review);
+    assert_eq!(run.config.performance, defaults.performance);
+    assert_eq!(run.config.semantic, defaults.semantic);
+    assert_eq!(run.config.project.exclude, defaults.project.exclude);
+    assert_eq!(run.report.summary.status, Status::Pass);
+    assert!(
+        run.report
+            .findings
+            .iter()
+            .all(|finding| finding.severity != Severity::Error),
+        "findings: {:?}",
+        run.report.findings
+    );
+}

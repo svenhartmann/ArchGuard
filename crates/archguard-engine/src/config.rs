@@ -206,7 +206,7 @@ pub fn load_config(
     let sources = SECTION_KEYS
         .iter()
         .map(|key| {
-            let source = if table.contains_key(*key) {
+            let source = if table.get(*key).is_some_and(declares_value) {
                 ConfigSource::Declared
             } else {
                 ConfigSource::Default
@@ -456,6 +456,16 @@ pub(crate) fn all_default_sources() -> BTreeMap<String, ConfigSource> {
         .collect()
 }
 
+/// Whether `value` writes at least one value: a table header without keys
+/// (`[modules]`, also nested like `[semantic.java]`) declares nothing, so its
+/// section stays derived or default (`declared ⇐ derived ⇐ default`).
+fn declares_value(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(table) => table.values().any(declares_value),
+        _ => true,
+    }
+}
+
 /// A [`ArchguardError::Config`] prefixed with the offending file.
 fn config_error(path: &Path, err: &dyn std::fmt::Display) -> ArchguardError {
     ArchguardError::Config(format!("{}: {err}", path.display()))
@@ -592,6 +602,23 @@ mod tests {
         assert_eq!(loaded.config.store.db, ".archguard/other.db");
         assert_eq!(loaded.config.layers.len(), 1);
         assert_eq!(loaded.config.layers[0].name, "domain");
+    }
+
+    #[test]
+    fn section_headers_without_values_declare_nothing() {
+        // A header alone writes no value: every value of the section is
+        // still its default, so the section must report `Default`.
+        let dir = project_with_toml("[project]\n[modules]\n[rules]\n[semantic.java]\n");
+        let loaded = load_config(None, dir.path()).expect("load header-only file");
+        assert_eq!(loaded.config, Config::default());
+        assert!(
+            loaded
+                .sources
+                .values()
+                .all(|source| *source == ConfigSource::Default),
+            "sources: {:?}",
+            loaded.sources
+        );
     }
 
     #[test]
