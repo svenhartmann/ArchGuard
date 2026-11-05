@@ -1,0 +1,840 @@
+import { ListView, AboutSlint, ScrollView } from "std-widgets.slint";
+
+export struct ModuleItem {
+    name: string,
+    label: string,
+    scope: string,
+    fan-in: int,
+    fan-out: int,
+    instability: float,
+    in-cycle: bool,
+    x: float,
+    y: float,
+    bright: bool,
+    accent: color,
+}
+
+export struct EdgeItem {
+    from: int,
+    to: int,
+    weight: int,
+    path: string,
+    cyclic: bool,
+}
+
+export struct ListItem {
+    index: int,
+    label: string,
+    scope: string,
+    accent: color,
+    in-cycle: bool,
+}
+
+export struct NeighborItem {
+    index: int,
+    label: string,
+    scope: string,
+    weight: int,
+    accent: color,
+}
+
+global Icons {
+    out property <string> info: "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 11 L 12 16.5 M 12 7.6 L 12 7.8";
+    out property <string> search: "M 10.5 4 A 6.5 6.5 0 1 0 10.5 17 A 6.5 6.5 0 1 0 10.5 4 Z M 15.5 15.5 L 20 20";
+    out property <string> fit: "M 4 9 L 4 4 L 9 4 M 15 4 L 20 4 L 20 9 M 20 15 L 20 20 L 15 20 M 9 20 L 4 20 L 4 15";
+    out property <string> minus: "M 6 12 L 18 12";
+    out property <string> plus: "M 6 12 L 18 12 M 12 6 L 12 18";
+    out property <string> close: "M 7 7 L 17 17 M 17 7 L 7 17";
+    out property <string> cycle: "M 19 12 A 7 7 0 1 1 16.5 6.6 M 17 3 L 17 7 L 13 7";
+}
+
+component Icon inherits Path {
+    in property <string> icon;
+    in property <color> tint: #e8ebf2;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: icon;
+    stroke: tint;
+    stroke-width: 1.8px;
+    fill: transparent;
+}
+
+global Theme {
+    out property <color> bg: #090b10;
+    out property <color> canvas: #0c0f16;
+    out property <color> panel: #10141c;
+    out property <color> card: #161b26;
+    out property <color> card-hover: #1c2230;
+    out property <color> line: #232a38;
+    out property <color> line-soft: #1a202b;
+    out property <color> text: #e8ebf2;
+    out property <color> muted: #8b93a7;
+    out property <color> faint: #5b6378;
+    out property <color> edge: #364055;
+    out property <color> hot: #8ea2ff;
+    out property <color> danger: #ff5c7a;
+    out property <color> ok: #34d399;
+    out property <brush> brand: @linear-gradient(135deg, #7c5cff 0%, #3dd6f5 100%);
+    out property <length> radius: 14px;
+}
+
+component Stat inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tone: Theme.text;
+    border-radius: 12px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.line-soft;
+    height: 68px;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 2px;
+        Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: 11.5px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: root.value;
+            color: root.tone;
+            font-size: 22px;
+            font-weight: 700;
+        }
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <length> size: 34px;
+    callback clicked;
+    width: self.size;
+    height: self.size;
+    border-radius: 10px;
+    background: touch.pressed ? Theme.line : touch.has-hover ? Theme.card-hover : Theme.card;
+    border-width: 1px;
+    border-color: Theme.line;
+    animate background { duration: 120ms; }
+    Icon {
+        icon: root.icon;
+        width: root.size * 0.5;
+        height: root.size * 0.5;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SearchField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    callback edited(string);
+    height: 38px;
+    border-radius: 10px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: input.has-focus ? #7c5cff : Theme.line;
+    animate border-color { duration: 150ms; }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Icon {
+            icon: Icons.search;
+            tint: Theme.muted;
+            width: 16px;
+            height: 16px;
+            y: (parent.height - self.height) / 2;
+        }
+        Rectangle {
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+                edited => { root.edited(self.text); }
+            }
+            if input.text == "": Text {
+                x: 0;
+                width: 100%;
+                horizontal-alignment: left;
+                text: "Modul suchen …";
+                color: Theme.faint;
+                font-size: 13px;
+                vertical-alignment: center;
+                height: 100%;
+            }
+        }
+    }
+}
+
+component NodeCard inherits Rectangle {
+    in property <ModuleItem> module;
+    in property <float> zoom;
+    in property <bool> selected;
+    in property <bool> dimmed;
+    callback clicked;
+
+    width: 196px * zoom;
+    height: 68px * zoom;
+    border-radius: Theme.radius * zoom;
+    background: selected ? Theme.brand : module.in-cycle ? Theme.danger.with-alpha(0.55) : touch.has-hover ? #2c3445 : Theme.line;
+    opacity: dimmed ? 0.18 : 1.0;
+    drop-shadow-blur: selected ? 28px : touch.has-hover ? 18px : 10px;
+    drop-shadow-offset-y: 4px * zoom;
+    drop-shadow-color: selected ? #7c5cff70 : module.in-cycle ? #ff5c7a40 : #00000080;
+    animate opacity { duration: 220ms; easing: ease-out; }
+    animate drop-shadow-blur { duration: 160ms; }
+
+    inner := Rectangle {
+        x: (selected ? 2px : 1px) * zoom;
+        y: self.x;
+        width: parent.width - 2 * self.x;
+        height: parent.height - 2 * self.y;
+        border-radius: (Theme.radius - 1px) * zoom;
+        background: touch.has-hover && !selected ? Theme.card-hover : Theme.card;
+        clip: true;
+        animate background { duration: 120ms; }
+
+        // Instability stripe: teal = stable, amber = unstable.
+        Rectangle {
+            x: 0;
+            width: 4px * zoom;
+            height: parent.height;
+            background: module.accent;
+        }
+        VerticalLayout {
+            padding-left: 16px * zoom;
+            padding-right: 12px * zoom;
+            padding-top: 10px * zoom;
+            padding-bottom: 10px * zoom;
+            spacing: 2px * zoom;
+            Text {
+                text: module.scope == "" ? " " : module.scope;
+                color: Theme.faint;
+                font-size: 10px * zoom;
+                overflow: elide;
+            }
+            Text {
+                text: module.label;
+                color: Theme.text;
+                font-size: 14px * zoom;
+                font-weight: 650;
+                overflow: elide;
+            }
+            HorizontalLayout {
+                spacing: 10px * zoom;
+                Text {
+                    text: "↓ " + module.fan-in;
+                    color: Theme.muted;
+                    font-size: 10.5px * zoom;
+                }
+                Text {
+                    text: "↑ " + module.fan-out;
+                    color: Theme.muted;
+                    font-size: 10.5px * zoom;
+                }
+                Text {
+                    text: "I " + round(module.instability * 100) / 100;
+                    color: module.accent;
+                    font-size: 10.5px * zoom;
+                }
+                Rectangle { }
+                if module.in-cycle: Icon {
+                    icon: Icons.cycle;
+                    tint: Theme.danger;
+                    width: 13px * zoom;
+                    height: 13px * zoom;
+                }
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component NeighborRow inherits Rectangle {
+    in property <NeighborItem> item;
+    in property <int> max-weight;
+    callback clicked;
+    height: 44px;
+    border-radius: 9px;
+    background: touch.has-hover ? Theme.card-hover : transparent;
+    animate background { duration: 100ms; }
+    // Weight bar behind the text.
+    Rectangle {
+        x: 0;
+        y: parent.height - 3px;
+        height: 2px;
+        width: parent.width * (root.max-weight > 0 ? root.item.weight / root.max-weight : 0);
+        background: root.item.accent.with-alpha(0.6);
+        border-radius: 1px;
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: root.item.accent;
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.item.label;
+                color: Theme.text;
+                font-size: 13px;
+                overflow: elide;
+            }
+            if root.item.scope != "": Text {
+                text: root.item.scope;
+                color: Theme.faint;
+                font-size: 10px;
+                overflow: elide;
+            }
+        }
+        Text {
+            text: root.item.weight;
+            color: Theme.muted;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SectionTitle inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+export component AppWindow inherits Window {
+    title: "ArchGuard";
+    preferred-width: 1480px;
+    preferred-height: 920px;
+    min-width: 980px;
+    min-height: 620px;
+    background: Theme.bg;
+    default-font-size: 13px;
+
+    in property <string> project;
+    in property <string> root-path;
+    in property <bool> loading: true;
+    in property <string> status;
+    in property <string> error;
+    in property <[ModuleItem]> modules;
+    in property <[EdgeItem]> edges;
+    in property <[ListItem]> list;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <int> dep-count;
+    in property <int> cycles;
+    in property <bool> passed;
+    in property <string> acd;
+
+    in-out property <int> selected: -1;
+    in-out property <float> zoom: 1.0;
+    in property <[NeighborItem]> outgoing;
+    in property <[NeighborItem]> incoming;
+
+    callback select(int);
+    callback search(string);
+
+    property <ModuleItem> current: selected >= 0 ? modules[selected] : { };
+    property <int> max-out: outgoing.length > 0 ? outgoing[0].weight : 0;
+    property <int> max-in: incoming.length > 0 ? incoming[0].weight : 0;
+
+    public function fit() {
+        if (canvas-w > 0 && canvas-h > 0) {
+            zoom = max(0.3, min(1.15, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+        }
+        flick.content-x = min(0px, (flick.width - canvas-w * zoom * 1px) / 2);
+        flick.content-y = min(0px, (flick.height - canvas-h * zoom * 1px) / 2);
+    }
+
+    function zoom-by(factor: float, px: length, py: length) {
+        // Keep the point under the cursor in place.
+        let old = zoom;
+        let new = max(0.25, min(2.5, zoom * factor));
+        let cx = (px - flick.content-x) / old;
+        let cy = (py - flick.content-y) / old;
+        zoom = new;
+        flick.content-x = px - cx * new;
+        flick.content-y = py - cy * new;
+    }
+
+    function center-on(i: int) {
+        if (i >= 0) {
+            flick.content-x = min(0px, flick.width / 2 - (modules[i].x + 98) * zoom * 1px);
+            flick.content-y = min(0px, flick.height / 2 - (modules[i].y + 34) * zoom * 1px);
+        }
+    }
+
+    HorizontalLayout {
+        // ------------------------------------------------------ sidebar
+        Rectangle {
+            width: 300px;
+            background: Theme.panel;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.line-soft;
+            }
+            VerticalLayout {
+                padding: 20px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: Theme.brand;
+                        drop-shadow-blur: 16px;
+                        drop-shadow-color: #7c5cff60;
+                        Text {
+                            text: "A";
+                            color: white;
+                            font-size: 19px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "ArchGuard";
+                            color: Theme.text;
+                            font-size: 16px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.project;
+                            color: Theme.muted;
+                            font-size: 12px;
+                            overflow: elide;
+                        }
+                    }
+                    Rectangle { }
+                    IconButton {
+                        icon: Icons.info;
+                        size: 30px;
+                        clicked => { about.show(); }
+                    }
+                }
+                GridLayout {
+                    spacing: 10px;
+                    Row {
+                        Stat { label: "Module"; value: root.modules.length; }
+                        Stat { label: "Abhängigkeiten"; value: root.dep-count; }
+                    }
+                    Row {
+                        Stat {
+                            label: "Zyklen";
+                            value: root.cycles;
+                            tone: root.cycles > 0 ? Theme.danger : Theme.ok;
+                        }
+                        Stat { label: "Ø Abhängigkeiten (ACD)"; value: root.acd; }
+                    }
+                }
+                Rectangle {
+                    height: 34px;
+                    border-radius: 17px;
+                    background: (root.passed ? Theme.ok : Theme.danger).with-alpha(0.12);
+                    border-width: 1px;
+                    border-color: (root.passed ? Theme.ok : Theme.danger).with-alpha(0.35);
+                    visible: !root.loading && root.error == "";
+                    Text {
+                        text: root.passed ? "●  Quality Gate bestanden" : "●  Quality Gate verletzt";
+                        color: root.passed ? Theme.ok : Theme.danger;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                SearchField {
+                    edited(t) => { root.search(t); }
+                }
+                SectionTitle { text: "Module"; }
+                ListView {
+                    vertical-stretch: 1;
+                    for item in root.list: Rectangle {
+                        height: 40px;
+                        border-radius: 8px;
+                        background: root.selected == item.index ? #7c5cff26 : row.has-hover ? Theme.card : transparent;
+                        animate background { duration: 100ms; }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 4px;
+                                background: item.accent;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: item.label;
+                                    color: root.selected == item.index ? Theme.text : #c9cfdb;
+                                    font-size: 13px;
+                                    overflow: elide;
+                                }
+                                if item.scope != "": Text {
+                                    text: item.scope;
+                                    color: Theme.faint;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                            }
+                            if item.in-cycle: Icon {
+                                icon: Icons.cycle;
+                                tint: Theme.danger;
+                                width: 14px;
+                                height: 14px;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        row := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.select(item.index);
+                                root.center-on(item.index);
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: root.root-path;
+                    color: Theme.faint;
+                    font-size: 10px;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // ------------------------------------------------------- canvas
+        Rectangle {
+            horizontal-stretch: 1;
+            background: @radial-gradient(circle, #121827 0%, Theme.canvas 70%);
+            clip: true;
+
+            flick := Flickable {
+                content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+                content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+
+                TouchArea {
+                    clicked => { root.select(-1); }
+                    scroll-event(event) => {
+                        if (event.modifiers.control || event.modifiers.meta) {
+                            root.zoom-by(event.delta-y > 0 ? 1.1 : 1 / 1.1, self.mouse-x + flick.content-x, self.mouse-y + flick.content-y);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+
+                for e in root.edges: Path {
+                    property <bool> hot: root.selected >= 0 && (e.from == root.selected || e.to == root.selected);
+                    x: 0;
+                    y: 0;
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-x: 0;
+                    viewbox-y: 0;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.path;
+                    fill: transparent;
+                    stroke: hot ? (e.cyclic ? Theme.danger : Theme.hot) : e.cyclic ? Theme.danger.with-alpha(0.7) : Theme.edge;
+                    stroke-width: (hot ? 2.4px : 1.4px) + min(e.weight, 30) * 0.04px;
+                    opacity: root.selected >= 0 && !hot ? 0.1 : 1.0;
+                    animate opacity { duration: 220ms; }
+                }
+
+                for m[i] in root.modules: NodeCard {
+                    x: m.x * root.zoom * 1px;
+                    y: m.y * root.zoom * 1px;
+                    module: m;
+                    zoom: root.zoom;
+                    selected: root.selected == i;
+                    dimmed: !m.bright;
+                    clicked => { root.select(i); }
+                }
+            }
+
+            // Loading / error overlay.
+            if root.loading || root.error != "": Rectangle {
+                background: Theme.canvas.with-alpha(0.85);
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 14px;
+                    Text {
+                        text: root.error != "" ? "Analyse fehlgeschlagen" : "Analysiere Architektur …";
+                        color: root.error != "" ? Theme.danger : Theme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.error != "" ? root.error : root.status;
+                        color: Theme.muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    if root.loading: Rectangle {
+                        height: 4px;
+                        width: 220px;
+                        x: (parent.width - self.width) / 2;
+                        border-radius: 2px;
+                        background: Theme.line;
+                        clip: true;
+                        Rectangle {
+                            width: 70px;
+                            border-radius: 2px;
+                            background: Theme.brand;
+                            x: (mod(animation-tick(), 1400ms) / 1400ms) * (parent.width + 70px) - 70px;
+                        }
+                    }
+                }
+            }
+
+            // Legend.
+            Rectangle {
+                x: 16px;
+                y: parent.height - self.height - 16px;
+                width: legend.preferred-width;
+                height: 36px;
+                border-radius: 10px;
+                background: Theme.panel.with-alpha(0.9);
+                border-width: 1px;
+                border-color: Theme.line;
+                legend := HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 16px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Rectangle { width: 10px; height: 10px; y: 13px; border-radius: 3px; background: #2dd4bf; }
+                        Text { text: "stabil"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Rectangle { width: 10px; height: 10px; y: 13px; border-radius: 3px; background: #f5a524; }
+                        Text { text: "instabil"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Rectangle { width: 10px; height: 10px; y: 13px; border-radius: 3px; background: Theme.danger; }
+                        Text { text: "Zyklus"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                    Text { text: "⌘/Strg + Scrollen: Zoom"; color: Theme.faint; font-size: 11px; vertical-alignment: center; }
+                }
+            }
+
+            // Zoom controls.
+            Rectangle {
+                x: parent.width - self.width - 16px;
+                y: parent.height - self.height - 16px;
+                width: zoombar.preferred-width;
+                height: 46px;
+                border-radius: 12px;
+                background: Theme.panel.with-alpha(0.9);
+                border-width: 1px;
+                border-color: Theme.line;
+                zoombar := HorizontalLayout {
+                    padding: 6px;
+                    spacing: 6px;
+                    IconButton {
+                        icon: Icons.minus;
+                        clicked => { root.zoom-by(1 / 1.2, flick.width / 2, flick.height / 2); }
+                    }
+                    Text {
+                        width: 52px;
+                        text: round(root.zoom * 100) + " %";
+                        color: Theme.text;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    IconButton {
+                        icon: Icons.plus;
+                        clicked => { root.zoom-by(1.2, flick.width / 2, flick.height / 2); }
+                    }
+                    IconButton {
+                        icon: Icons.fit;
+                        clicked => { root.fit(); }
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------ detail panel
+        Rectangle {
+            width: root.selected >= 0 ? 340px : 0px;
+            background: Theme.panel;
+            clip: true;
+            animate width { duration: 240ms; easing: cubic-bezier(0.33, 1, 0.68, 1); }
+            Rectangle {
+                x: 0;
+                width: 1px;
+                background: Theme.line-soft;
+            }
+            if root.selected >= 0: VerticalLayout {
+                width: 340px;
+                padding: 22px;
+                spacing: 18px;
+                HorizontalLayout {
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: root.current.scope;
+                            color: Theme.faint;
+                            font-size: 11px;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.current.label;
+                            color: Theme.text;
+                            font-size: 22px;
+                            font-weight: 700;
+                            overflow: elide;
+                        }
+                    }
+                    IconButton {
+                        icon: Icons.close;
+                        size: 30px;
+                        clicked => { root.select(-1); }
+                    }
+                }
+                if root.current.in-cycle: Rectangle {
+                    height: 30px;
+                    border-radius: 8px;
+                    background: Theme.danger.with-alpha(0.12);
+                    border-width: 1px;
+                    border-color: Theme.danger.with-alpha(0.35);
+                    Text {
+                        text: "Teil eines Abhängigkeitszyklus";
+                        color: Theme.danger;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Stat { label: "Fan-in"; value: root.current.fan-in; }
+                    Stat { label: "Fan-out"; value: root.current.fan-out; }
+                }
+                VerticalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 0;
+                    HorizontalLayout {
+                        SectionTitle { text: "Instabilität"; }
+                        Text {
+                            text: round(root.current.instability * 100) / 100;
+                            color: root.current.accent;
+                            font-size: 13px;
+                            font-weight: 700;
+                            horizontal-alignment: right;
+                        }
+                    }
+                    Rectangle {
+                        height: 8px;
+                        vertical-stretch: 0;
+                        border-radius: 4px;
+                        background: Theme.line;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * root.current.instability;
+                            border-radius: 4px;
+                            background: @linear-gradient(90deg, #2dd4bf 0%, #f5a524 100%);
+                            animate width { duration: 300ms; easing: ease-out; }
+                        }
+                    }
+                    Text {
+                        text: "Anteil ausgehender an allen Abhängigkeiten. 0 = stabil, 1 = instabil.";
+                        color: Theme.faint;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 4px;
+                        alignment: start;
+                        SectionTitle { text: "Hängt ab von (" + root.outgoing.length + ")"; }
+                        if root.outgoing.length == 0: Text { text: "—"; color: Theme.faint; }
+                        for n in root.outgoing: NeighborRow {
+                            item: n;
+                            max-weight: root.max-out;
+                            clicked => { root.select(n.index); root.center-on(n.index); }
+                        }
+                        Rectangle { height: 14px; }
+                        SectionTitle { text: "Wird genutzt von (" + root.incoming.length + ")"; }
+                        if root.incoming.length == 0: Text { text: "—"; color: Theme.faint; }
+                        for n in root.incoming: NeighborRow {
+                            item: n;
+                            max-weight: root.max-in;
+                            clicked => { root.select(n.index); root.center-on(n.index); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    about := PopupWindow {
+        x: (root.width - 420px) / 2;
+        y: (root.height - 380px) / 2;
+        width: 420px;
+        height: 380px;
+        Rectangle {
+            background: Theme.panel;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: #000000a0;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+                Text {
+                    text: "ArchGuard Desktop";
+                    color: Theme.text;
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Prototyp der nativen Oberfläche. Lizenz: MIT OR Apache-2.0.";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                AboutSlint { }
+            }
+        }
+    }
+}

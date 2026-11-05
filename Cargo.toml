@@ -5,6 +5,7 @@ members = [
     "crates/archguard-analysis",
     "crates/archguard-cli",
     "crates/archguard-core",
+    "crates/archguard-desktop",
     "crates/archguard-engine",
     "crates/archguard-extract",
     "crates/archguard-mcp",
