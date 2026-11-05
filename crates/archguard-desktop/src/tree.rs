@@ -5,7 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use archguard_engine::core::{Graph, NodeKind};
+use archguard_engine::core::{Graph, NodeKind, Ref};
+
+/// Evidence sample per link, as `core::view::aggregate` caps it.
+const MAX_REFS: usize = 10;
 
 /// One node of the containment tree, addressed by its index in
 /// `Graph::nodes`.
@@ -23,8 +26,8 @@ pub struct TreeNode {
 pub struct Tree {
     pub nodes: Vec<TreeNode>,
     pub roots: Vec<usize>,
-    /// File-level dependencies `(from, to, weight)` as node indices.
-    edges: Vec<(usize, usize, u64)>,
+    /// File-level dependencies `(from, to, weight, edge index in full)`.
+    edges: Vec<(usize, usize, u64, usize)>,
     /// The analysed graph the tree was built from.
     pub full: Graph,
 }
@@ -44,6 +47,8 @@ pub struct Link {
     pub to: usize,
     pub weight: u64,
     pub cyclic: bool,
+    /// Deduplicated source references, sorted, at most [`MAX_REFS`].
+    pub refs: Vec<Ref>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,7 +125,8 @@ impl Tree {
         let edges = g
             .edges
             .iter()
-            .filter_map(|e| Some((*index.get(&e.from)?, *index.get(&e.to)?, e.weight())))
+            .enumerate()
+            .filter_map(|(i, e)| Some((*index.get(&e.from)?, *index.get(&e.to)?, e.weight(), i)))
             .collect();
         Tree {
             nodes,
@@ -140,11 +146,13 @@ impl Tree {
         let rep: Vec<usize> = (0..self.nodes.len())
             .map(|n| self.representative(n, &row_of))
             .collect();
-        let mut merged: BTreeMap<(usize, usize), u64> = BTreeMap::new();
-        for &(from, to, w) in &self.edges {
+        let mut merged: BTreeMap<(usize, usize), (u64, Vec<Ref>)> = BTreeMap::new();
+        for &(from, to, w, edge) in &self.edges {
             let (a, b) = (rep[from], rep[to]);
             if a != b && a != usize::MAX && b != usize::MAX {
-                *merged.entry((a, b)).or_default() += w;
+                let entry = merged.entry((a, b)).or_default();
+                entry.0 += w;
+                entry.1.extend(self.full.edges[edge].refs.iter().cloned());
             }
         }
         let component = components(rows.len(), merged.keys().copied());
@@ -156,11 +164,17 @@ impl Tree {
         let cycle_groups = size.values().filter(|&&s| s > 1).count();
         let links: Vec<Link> = merged
             .into_iter()
-            .map(|((from, to), weight)| Link {
-                from,
-                to,
-                weight,
-                cyclic: component[from] == component[to],
+            .map(|((from, to), (weight, mut refs))| {
+                refs.sort_by(|a, b| (&a.file, a.line, &a.raw).cmp(&(&b.file, b.line, &b.raw)));
+                refs.dedup();
+                refs.truncate(MAX_REFS);
+                Link {
+                    from,
+                    to,
+                    weight,
+                    cyclic: component[from] == component[to],
+                    refs,
+                }
             })
             .collect();
         let (mut incoming, mut outgoing) = (vec![0; rows.len()], vec![0; rows.len()]);
@@ -334,6 +348,25 @@ pub fn row_center(row: usize) -> f32 {
 }
 
 impl TreeView {
+    /// Colour class of shown link `i`: cycles red without a selection or
+    /// in "cycles only", otherwise the direction colour of its lane.
+    pub fn link_kind(
+        &self,
+        i: usize,
+        lane: Lane,
+        selected: Option<usize>,
+        mode: EdgeMode,
+    ) -> LinkKind {
+        match (selected, lane) {
+            _ if self.links[i].cyclic && (selected.is_none() || mode == EdgeMode::Cycles) => {
+                LinkKind::Cyclic
+            }
+            (None, _) => LinkKind::Neutral,
+            (Some(_), Lane::Incoming) => LinkKind::Incoming,
+            (Some(_), Lane::Outgoing) => LinkKind::Outgoing,
+        }
+    }
+
     /// Paths for every link shown under `selected` and `mode`.
     pub fn draw(&self, selected: Option<usize>, mode: EdgeMode) -> Vec<(String, LinkKind)> {
         self.shown(selected, mode)
@@ -344,14 +377,7 @@ impl TreeView {
                     Lane::Incoming => LANE_W - 22.0,
                     Lane::Outgoing => LANE_W + TREE_W + 22.0,
                 };
-                let kind = match (selected, lane) {
-                    _ if l.cyclic && (selected.is_none() || mode == EdgeMode::Cycles) => {
-                        LinkKind::Cyclic
-                    }
-                    (None, _) => LinkKind::Neutral,
-                    (Some(_), Lane::Incoming) => LinkKind::Incoming,
-                    (Some(_), Lane::Outgoing) => LinkKind::Outgoing,
-                };
+                let kind = self.link_kind(i, lane, selected, mode);
                 let path = arc(x, row_center(l.from), row_center(l.to), lane, LANE_W - 30.0);
                 (path, kind)
             })
@@ -509,6 +535,34 @@ mod tests {
                 .iter()
                 .all(|&(i, _)| v.links[i].cyclic)
         );
+    }
+
+    #[test]
+    fn links_carry_merged_source_evidence() {
+        let mut g = graph();
+        g.edges[0].refs = vec![
+            Ref {
+                file: "a/x.rs".into(),
+                line: 9,
+                raw: "use b".into(),
+            },
+            Ref {
+                file: "a/x.rs".into(),
+                line: 2,
+                raw: "use b".into(),
+            },
+        ];
+        g.edges[1].refs = vec![Ref {
+            file: "a/x.rs".into(),
+            line: 2,
+            raw: "use b".into(),
+        }];
+        let t = Tree::from_graph(&g);
+        let v = t.view(&BTreeSet::new());
+        let a_to_b = v.links.iter().find(|l| l.from == 0 && l.to == 1).unwrap();
+        let lines: Vec<u32> = a_to_b.refs.iter().map(|r| r.line).collect();
+        assert_eq!(lines, [2, 9], "deduplicated and sorted");
+        assert_eq!(a_to_b.weight, 3, "the count stays the sum of the edges");
     }
 
     #[test]

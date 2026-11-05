@@ -248,6 +248,27 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
             kind: kind as i32,
         },
     )));
+    ui.set_deps(vec_model(v.shown(selected, g.mode).into_iter().map(
+        |(i, lane)| {
+            let l = &v.links[i];
+            let kind = v.link_kind(i, lane, selected, g.mode) as i32;
+            let name = |row: usize| g.tree.nodes[v.rows[row].node].name.clone();
+            DepCard {
+                from: name(l.from).into(),
+                to: name(l.to).into(),
+                weight: l.weight.min(i32::MAX as u64) as i32,
+                kind,
+                refs: l
+                    .refs
+                    .iter()
+                    .map(|r| format!("{}:{}  {}", r.file, r.line, r.raw.trim()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+                ref_count: l.refs.len() as i32,
+            }
+        },
+    )));
     ui.set_selected_row(selected.map_or(-1, |s| s as i32));
     ui.set_edge_mode(mode_index(g.mode));
     ui.set_dep_count(v.links.len() as i32);
@@ -354,7 +375,8 @@ mod snapshot {
 
     /// After the layout settled: optionally reveal a node by name
     /// (`ARCHGUARD_DESKTOP_REVEAL=<name>`), switch tab
-    /// (`ARCHGUARD_DESKTOP_TAB`), render, write the PNG, quit.
+    /// (`ARCHGUARD_DESKTOP_TAB`) or display (`ARCHGUARD_DESKTOP_DISPLAY`,
+    /// 0 tree, 1 layers, 2 dependencies), render, write the PNG, quit.
     pub fn schedule(ui: &AppWindow) {
         let Some(path) = std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT") else {
             return;
@@ -367,6 +389,12 @@ mod snapshot {
             if let Some(n) = node {
                 ui.invoke_reveal(n as i32);
             }
+        }
+        if let Some(d) = std::env::var("ARCHGUARD_DESKTOP_DISPLAY")
+            .ok()
+            .and_then(|d| d.parse().ok())
+        {
+            ui.set_display(d);
         }
         if let Ok(tab) = std::env::var("ARCHGUARD_DESKTOP_TAB") {
             ui.set_tab(tab.into());

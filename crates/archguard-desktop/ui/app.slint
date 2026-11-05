@@ -3,8 +3,9 @@ import { Theme } from "theme.slint";
 import { Icon, Icons, Button, Tab, Divider, Metric, SearchField } from "widgets.slint";
 import { TreeView, TreeRow, TreeLink, PriorityBadge } from "tree_view.slint";
 import { LayersView, ModuleItem, EdgeItem } from "layers_view.slint";
+import { DepsView, DepCard } from "deps_view.slint";
 
-export { TreeRow, TreeLink, ModuleItem, EdgeItem }
+export { TreeRow, TreeLink, ModuleItem, EdgeItem, DepCard }
 
 export struct Crumb {
     node: int,
@@ -199,6 +200,7 @@ export component AppWindow inherits Window {
     in property <[Neighbor]> incoming;
     in property <[Neighbor]> outgoing;
     in property <string> selected-label;
+    in property <[DepCard]> deps;
 
     // Explorer.
     in property <[Hit]> hits;
@@ -486,9 +488,10 @@ export component AppWindow inherits Window {
                         spacing: 6px;
                         alignment: start;
                         Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.display == 0; clicked => { root.display = 0; } }
+                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.display == 2; clicked => { root.display = 2; } }
                         Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Layers"); pressed-state: root.display == 1; clicked => { root.display = 1; } }
                         Rectangle { width: 10px; }
-                        if root.display == 0: HorizontalLayout {
+                        if root.display != 1: HorizontalLayout {
                             spacing: 6px;
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Incoming ({})", root.count-in); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Outgoing ({})", root.count-out); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
@@ -529,6 +532,11 @@ export component AppWindow inherits Window {
                         selected: root.layers-selected;
                         select(i) => { root.layers-selected = i; }
                     }
+                    if root.display == 2: DepsView {
+                        deps: root.deps;
+                        reference: root.reference;
+                        total: root.dep-count;
+                    }
                     if root.loading || root.error != "": Rectangle {
                         background: Theme.bg.with-alpha(0.9);
                         VerticalLayout {
@@ -554,7 +562,7 @@ export component AppWindow inherits Window {
             }
 
             // ------------------------------------------------- details
-            if root.show-details && root.selected-row >= 0 && root.display == 0: Rectangle {
+            if root.show-details && root.selected-row >= 0 && root.display != 1: Rectangle {
                 width: 320px;
                 background: Theme.panel;
                 Rectangle { x: 0; width: 1px; background: Theme.border; }

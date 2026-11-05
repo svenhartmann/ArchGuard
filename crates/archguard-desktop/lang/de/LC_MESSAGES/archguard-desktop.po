@@ -140,3 +140,27 @@ msgstr "{} Module"
 
 msgid "{} of {} items shown"
 msgstr "{} von {} Einträgen sichtbar"
+msgid "{} dependency evidence records"
+msgstr "{} Abhängigkeitsbelege"
+
+msgid "Evidence"
+msgstr "Belege"
+
+msgid "No source references recorded."
+msgstr "Keine Quellverweise erfasst."
+
+msgid "All dependencies"
+msgstr "Alle Abhängigkeiten"
+
+msgid "Dependencies of {}"
+msgstr "Abhängigkeiten von {}"
+
+msgid "{} directed dependencies match this view. Each arrow reads source → target."
+msgstr "{} gerichtete Abhängigkeiten passen zu dieser Ansicht. Jeder Pfeil liest sich Quelle → Ziel."
+
+msgid "All dependencies in this scope · {}"
+msgstr "Alle Abhängigkeiten in diesem Bereich · {}"
+
+msgid "Shown · {} of {}"
+msgstr "Angezeigt · {} von {}"
+
