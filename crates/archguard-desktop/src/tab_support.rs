@@ -1,14 +1,15 @@
 //! What the tabs share: callbacks on the active document's state, Slint
-//! list models, picker indices and snapshot mode.
+//! list models, picker indices, snapshot mode and background loading.
 //!
 //! A tab's state type implements [`TabState`]; [`Actions`] turns closures
-//! on that state into Slint callbacks.
+//! on that state into Slint callbacks, [`show_async`] builds the state once
+//! per document on a worker thread.
 
 use std::marker::PhantomData;
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::documents;
+use crate::documents::{self, DocId};
 use crate::ui::AppWindow;
 
 /// One tab's state, kept per document in [`documents`].
@@ -18,6 +19,13 @@ pub trait TabState: Sized + 'static {
 
     /// After a callback changed the state, before [`TabState::push`].
     fn changed(&mut self) {}
+
+    /// While the state is built on a worker thread (`error` is `None`), or
+    /// after that build failed.
+    fn pending(_ui: &AppWindow, _error: Option<&str>) {}
+
+    /// On the UI thread, before a state built on a worker is stored.
+    fn arrive(&mut self, _ui: &AppWindow) {}
 }
 
 /// Run `f` on the active document's `T` and push it.
@@ -96,9 +104,185 @@ pub fn reveal(ui: &AppWindow, node: usize) {
     ui.invoke_reveal(node as i32);
 }
 
+/// Marks a document whose `T` is built on a worker thread, or whose build
+/// failed (`Some(message)`).
+struct Pending<T> {
+    error: Option<String>,
+    state: PhantomData<fn() -> T>,
+}
+
+/// What [`show_async`] does for the active document.
+#[derive(Debug, PartialEq, Eq)]
+enum Start {
+    /// The state exists: show it.
+    Ready,
+    /// A worker builds it, or its build failed.
+    Pending(Option<String>),
+    /// Nothing yet: start building for this document.
+    Build(DocId),
+    /// No active document.
+    None,
+}
+
+/// Decide for the active document, marking it pending when building starts.
+fn start<T: 'static>() -> Start {
+    if documents::with_active_state(|_: &mut T| ()).is_some() {
+        return Start::Ready;
+    }
+    if let Some(error) = documents::with_active_state(|p: &mut Pending<T>| p.error.clone()) {
+        return Start::Pending(error);
+    }
+    let Some(doc) = documents::active_id() else {
+        return Start::None;
+    };
+    documents::set_state(
+        doc,
+        Pending::<T> {
+            error: None,
+            state: PhantomData,
+        },
+    );
+    Start::Build(doc)
+}
+
+/// Store a worker's result for `doc`: the state, or the failure message in
+/// its pending marker. Returns whether `doc` is active.
+fn finish<T: 'static>(doc: DocId, result: Result<T, String>) -> bool {
+    match result {
+        Ok(state) => documents::set_state(doc, state),
+        Err(error) => documents::set_state(
+            doc,
+            Pending::<T> {
+                error: Some(error),
+                state: PhantomData,
+            },
+        ),
+    }
+}
+
+/// Run `work`, turning a panic into its message.
+fn catch<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).map_err(|e| {
+        e.downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| e.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "the analysis failed".into())
+    })
+}
+
+/// Show the active document's `T`, building it once per document.
+///
+/// `prepare` runs on the UI thread only when building starts; it copies
+/// what the build needs and returns the build, which runs on a worker
+/// thread (in place for snapshot runs). Showing the document again while it
+/// runs starts no second worker; a panic in the build is kept as the tab's
+/// error.
+pub fn show_async<T, W>(ui: &AppWindow, prepare: impl FnOnce() -> W)
+where
+    T: TabState + Send,
+    W: FnOnce() -> T + Send + 'static,
+{
+    let doc = match start::<T>() {
+        Start::Ready => {
+            documents::with_active_state(|s: &mut T| s.push(ui));
+            return;
+        }
+        Start::Pending(error) => return T::pending(ui, error.as_deref()),
+        Start::None => return,
+        Start::Build(doc) => doc,
+    };
+    T::pending(ui, None);
+    let work = prepare();
+    if snapshot_mode() {
+        return install(ui, doc, catch(work));
+    }
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let result = catch(work);
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = weak.upgrade() {
+                install(&ui, doc, result);
+            }
+        });
+    });
+}
+
+fn install<T: TabState>(ui: &AppWindow, doc: DocId, result: Result<T, String>) {
+    let result = result.map(|mut s| {
+        s.arrive(ui);
+        s
+    });
+    let error = result.as_ref().err().cloned();
+    if !finish(doc, result) {
+        return;
+    }
+    match error {
+        None => {
+            documents::with_active_state(|s: &mut T| s.push(ui));
+        }
+        Some(e) => T::pending(ui, Some(&e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    fn two_documents() -> (DocId, DocId) {
+        documents::with_store(|s| {
+            *s = documents::Store::default();
+            let (a, _) = s.open(Path::new("/a"));
+            let (b, _) = s.open(Path::new("/b"));
+            (a, b)
+        })
+    }
+
+    struct Demo(u32);
+
+    /// Switching back to a document while its worker runs starts none.
+    #[test]
+    fn a_document_starts_one_build() {
+        let (a, b) = two_documents();
+        assert_eq!(start::<Demo>(), Start::Build(b));
+        assert_eq!(start::<Demo>(), Start::Pending(None));
+        documents::with_store(|s| s.activate(0));
+        assert_eq!(start::<Demo>(), Start::Build(a), "per document");
+        assert_eq!(start::<Demo>(), Start::Pending(None));
+    }
+
+    /// A finished build is shown; a result for an inactive document is
+    /// stored without showing it.
+    #[test]
+    fn finish_stores_for_the_starting_document() {
+        let (a, b) = two_documents();
+        assert_eq!(start::<Demo>(), Start::Build(b));
+        documents::with_store(|s| s.activate(0));
+        assert_eq!(start::<Demo>(), Start::Build(a));
+        assert!(!finish(b, Ok(Demo(2))), "b is not active");
+        assert!(finish(a, Ok(Demo(1))));
+        assert_eq!(start::<Demo>(), Start::Ready);
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(1));
+        documents::with_store(|s| s.activate(1));
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(2));
+    }
+
+    /// A panicking build leaves an error, not a document pending forever,
+    /// and starts no new worker on every switch.
+    #[test]
+    fn a_failed_build_keeps_its_error() {
+        let (_, b) = two_documents();
+        assert_eq!(start::<Demo>(), Start::Build(b));
+        let result = catch(|| -> Demo { panic!("no call analysis") });
+        assert_eq!(
+            result.as_ref().err().map(String::as_str),
+            Some("no call analysis")
+        );
+        assert!(finish(b, result));
+        let failed = Start::Pending(Some("no call analysis".into()));
+        assert_eq!(start::<Demo>(), failed);
+        assert_eq!(start::<Demo>(), failed);
+    }
 
     #[test]
     fn negative_indices_are_none() {

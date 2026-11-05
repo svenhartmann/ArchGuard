@@ -189,7 +189,7 @@ export component CallsView inherits Rectangle {
     preferred-height: 860px;
 
     if CallsData.model.state == 0: Text {
-        text: @tr("Analyzing calls …");
+        text: CallsData.model.error != "" ? CallsData.model.error : @tr("Analyzing calls …");
         color: Theme.muted;
         font-size: 14px;
         horizontal-alignment: center;

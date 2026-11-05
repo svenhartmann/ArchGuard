@@ -182,7 +182,7 @@ export component StartView inherits Rectangle {
             stage := StartStage {
                 vertical-stretch: 1;
                 if !m.ready: Text {
-                    text: @tr("Analyzing calls and classes …");
+                    text: m.error != "" ? m.error : @tr("Analyzing calls and classes …");
                     color: Theme.muted;
                     font-size: 14px;
                     horizontal-alignment: center;

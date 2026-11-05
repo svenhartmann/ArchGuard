@@ -3,7 +3,7 @@
 //! surfaces, one per class or file, drawn in an isometric projection that
 //! is computed here ([`scene`]); Slint draws the resulting polygons.
 //!
-//! All tab state is one [`StartState`], built by [`build`] and shown by
+//! All tab state is one [`StartState`], built by [`Inputs::build`] and shown by
 //! [`push`] as one `StartModel` value.
 
 mod details;
@@ -14,11 +14,13 @@ mod scene;
 mod state;
 mod view;
 
+use std::path::PathBuf;
+
+use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use scene::Camera;
@@ -27,15 +29,40 @@ pub use state::{Lens, Selection, StartState};
 
 pub use view::push;
 
-/// Build the tab state for an analysis: the same engine calls as the
-/// CLI's report (`review_cmd.rs`).
-pub fn build(data: &Loaded) -> StartState {
-    let graph = data.run.graph.clone();
-    let calls = archguard_engine::analyze_calls(data.root, &data.run.config);
-    let coverage = archguard_engine::read_test_coverage(data.root, &data.run.config, &graph);
-    let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
-    let findings = data.run.report.findings.clone();
-    from_evidence(Evidence::new(graph, findings, &calls, world))
+/// What the tab's build needs, copied from an analysis.
+struct Inputs {
+    root: PathBuf,
+    config: Config,
+    graph: Graph,
+    findings: Vec<Finding>,
+}
+
+impl Inputs {
+    fn of(data: &Loaded) -> Self {
+        Inputs {
+            root: data.root.to_path_buf(),
+            config: data.run.config.clone(),
+            graph: data.run.graph.clone(),
+            findings: data.run.report.findings.clone(),
+        }
+    }
+
+    /// The tab state: the same engine calls as the CLI's report
+    /// (`review_cmd.rs`). Slow; runs on a worker thread.
+    fn build(self) -> StartState {
+        let Inputs {
+            root,
+            config,
+            graph,
+            findings,
+        } = self;
+        let calls = archguard_engine::analyze_calls(&root, &config);
+        let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
+        let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
+        let mut state = from_evidence(Evidence::new(graph, findings, &calls, world));
+        snapshot_overrides(&mut state);
+        state
+    }
 }
 
 /// Register the tab's callbacks once at start-up.
@@ -135,61 +162,35 @@ impl TabState for StartState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
-}
 
-/// Fill the tab after an analysis finished. The call analysis runs on a
-/// worker thread; snapshot runs build in place so the PNG shows the world.
-pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut StartState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    let d = ui.global::<StartData>();
-    let old = d.get_model();
-    d.set_model(StartModel {
-        canvas_w: old.canvas_w,
-        canvas_h: old.canvas_h,
-        ..Default::default()
-    });
-    if snapshot_mode() {
-        let mut state = build(data);
-        snapshot_overrides(&mut state);
-        return install(ui, doc, state);
-    }
-    let (root, config, graph, findings) = (
-        data.root.to_path_buf(),
-        data.run.config.clone(),
-        data.run.graph.clone(),
-        data.run.report.findings.clone(),
-    );
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let calls = archguard_engine::analyze_calls(&root, &config);
-        let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
-        let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
-        let ev = Evidence::new(graph, findings, &calls, world);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, from_evidence(ev));
-            }
+    /// Keeps the canvas size the view reported.
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let d = ui.global::<StartData>();
+        let old = d.get_model();
+        d.set_model(StartModel {
+            canvas_w: old.canvas_w,
+            canvas_h: old.canvas_h,
+            error: error.unwrap_or_default().into(),
+            ..Default::default()
         });
-    });
+    }
+
+    /// The view may have reported its size before the state existed.
+    fn arrive(&mut self, ui: &AppWindow) {
+        let m = ui.global::<StartData>().get_model();
+        if m.canvas_w > 1.0 && m.canvas_h > 1.0 {
+            self.canvas = (f64::from(m.canvas_w), f64::from(m.canvas_h));
+        }
+    }
 }
 
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, state: StartState) {
-    // The view may have reported its size before the state existed.
-    let m = ui.global::<StartData>().get_model();
-    let mut state = state;
-    if m.canvas_w > 1.0 && m.canvas_h > 1.0 {
-        state.canvas = (f64::from(m.canvas_w), f64::from(m.canvas_h));
-    }
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut StartState| push(ui, s));
-    }
+/// Show the active document's tab. Its world is built once per document,
+/// on a worker thread.
+pub fn show(ui: &AppWindow, data: &Loaded) {
+    tab_support::show_async(ui, || {
+        let inputs = Inputs::of(data);
+        move || inputs.build()
+    });
 }
 
 /// `ARCHGUARD_DESKTOP_WORLD=<package>`, `ARCHGUARD_DESKTOP_LENS=<0..2>`,
@@ -242,11 +243,12 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let sources = Default::default();
-        build(&Loaded {
+        Inputs::of(&Loaded {
             root: &root,
             run: &run,
             sources: &sources,
         })
+        .build()
     }
 
     /// This repository (source root `crates`): every crate is a

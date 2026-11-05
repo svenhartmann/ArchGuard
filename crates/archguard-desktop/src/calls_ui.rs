@@ -3,7 +3,7 @@
 //! viewer_call_cycles*.js, viewer_method_metrics.js). The snapshot comes
 //! from `archguard_engine::analyze_calls`, as in the CLI's report.
 //!
-//! All tab state is one [`CallsState`], built by [`build`] and shown by
+//! All tab state is one [`CallsState`], built by [`build_from`] and shown by
 //! [`push`] as one `CallsModel` value.
 
 mod actions;
@@ -22,8 +22,7 @@ use archguard_engine::core::Config;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
@@ -31,50 +30,20 @@ use state::{MEMBER_PAGE, Mode, PAGE, RANK_PAGE, TREE_PAGE, WITNESS_PAGE};
 
 pub use state::State as CallsState;
 
-/// Build the tab state for an analysis (runs the call analysis).
-pub fn build(data: &Loaded) -> CallsState {
-    build_from(data.root, &data.run.config)
-}
-
+/// Build the tab state (runs the call analysis).
 fn build_from(root: &Path, config: &Config) -> CallsState {
     let mut s = CallsState::new(archguard_engine::analyze_calls(root, config));
     snapshot_overrides(&mut s);
     s
 }
 
-/// Fill the tab after an analysis finished. The call analysis runs on a
-/// worker thread; snapshot runs build it in place so the PNG shows it.
+/// Show the active document's tab. The call analysis runs once per
+/// document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut CallsState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    ui.global::<CallsData>().set_model(CallsModel::default());
-    if snapshot_mode() {
-        return install(ui, doc, build(data));
-    }
-    let (root, config) = (data.root.to_path_buf(), data.run.config.clone());
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = build_from(&root, &config);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let (root, config) = (data.root.to_path_buf(), data.run.config.clone());
+        move || build_from(&root, &config)
     });
-}
-
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, mut state: CallsState) {
-    state.labels = labels(ui);
-    state.refresh();
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut CallsState| push(ui, s));
-    }
 }
 
 fn labels(ui: &AppWindow) -> Labels {
@@ -106,6 +75,19 @@ pub fn push(ui: &AppWindow, s: &CallsState) {
 impl TabState for CallsState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
+    }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        ui.global::<CallsData>().set_model(CallsModel {
+            error: error.unwrap_or_default().into(),
+            ..Default::default()
+        });
+    }
+
+    /// Labels come from the window's language.
+    fn arrive(&mut self, ui: &AppWindow) {
+        self.labels = labels(ui);
+        self.refresh();
     }
 
     /// Apply the web's rules after a callback.

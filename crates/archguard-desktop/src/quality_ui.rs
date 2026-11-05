@@ -1,7 +1,7 @@
 //! Quality tab: the web viewer's "Software quality" workspace
 //! (`viewer_engineering_quality.js`, `viewer_class_heatmap.js`).
 //!
-//! All state lives in one [`QualityState`]; [`build`] makes it from an
+//! All state lives in one [`QualityState`]; [`show`] builds it from an
 //! analysis, [`push`] writes its page into `QualityData.model`.
 
 mod card;
@@ -20,7 +20,7 @@ use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index, model, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index, model};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
@@ -32,12 +32,6 @@ use notes::Section;
 pub use state::QualityState;
 use state::{PAGE, Page, View};
 
-/// The tab's state for an analysis (runs the call analysis and Git reads).
-pub fn build(data: &Loaded, lang: Lang) -> QualityState {
-    let inputs = Inputs::compute(data.root, &data.run.graph, &data.run.config, data.sources);
-    QualityState::new(lang, inputs)
-}
-
 fn language(ui: &AppWindow) -> Lang {
     Lang {
         de: ui.global::<QualityData>().get_lang() == "de",
@@ -47,6 +41,17 @@ fn language(ui: &AppWindow) -> Lang {
 impl TabState for QualityState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
+    }
+
+    /// The loading page, or the failure in place of the records.
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let lang = language(ui);
+        let mut m = page_model(lang, QualityState::loading(lang).page());
+        if let Some(e) = error {
+            m.loading = false;
+            m.empty = e.into();
+        }
+        ui.global::<QualityData>().set_model(m);
     }
 }
 
@@ -140,39 +145,22 @@ fn wire_targets(ui: &AppWindow) {
     });
 }
 
-/// Fill the tab after an analysis finished. The measurements take seconds,
-/// so they run on a worker thread; snapshot mode waits for them.
+/// Show the active document's tab. The measurements take seconds; they
+/// run once per document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut QualityState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    let lang = language(ui);
-    if snapshot_mode() {
-        documents::set_state(doc, build(data, lang));
-        tab_support::update(ui, |s, _| snapshot_view(s));
-        return;
-    }
-    documents::set_state(doc, QualityState::loading(lang));
-    tab_support::update(ui, |_: &mut QualityState, _| {});
-    let (root, graph, config, sources) = (
-        data.root.to_path_buf(),
-        data.run.graph.clone(),
-        data.run.config.clone(),
-        data.sources.clone(),
-    );
-    let w = ui.as_weak();
-    std::thread::spawn(move || {
-        let inputs = Inputs::compute(&root, &graph, &config, &sources);
-        let _ = slint::invoke_from_event_loop(move || {
-            let Some(ui) = w.upgrade() else { return };
-            if documents::set_state(doc, QualityState::new(lang, inputs)) {
-                tab_support::update(&ui, |_: &mut QualityState, _| {});
-            }
-        });
+    tab_support::show_async(ui, || {
+        let lang = language(ui);
+        let (root, graph, config, sources) = (
+            data.root.to_path_buf(),
+            data.run.graph.clone(),
+            data.run.config.clone(),
+            data.sources.clone(),
+        );
+        move || {
+            let mut s = QualityState::new(lang, Inputs::compute(&root, &graph, &config, &sources));
+            snapshot_view(&mut s);
+            s
+        }
     });
 }
 

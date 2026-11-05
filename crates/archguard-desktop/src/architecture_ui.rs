@@ -3,7 +3,7 @@
 //! comes from `archguard_engine::arc42_document`, as in the CLI's report.
 //!
 //! All tab state is one [`ArchitectureState`] per document (in
-//! [`documents`]), built by [`build`] and shown by [`push`] as one
+//! [`documents`]), built by [`build_from`] and shown by [`push`] as one
 //! `ArchitectureModel` value.
 
 mod blocks;
@@ -21,8 +21,7 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
@@ -49,16 +48,7 @@ pub struct ArchitectureState {
     saved: String,
 }
 
-/// Build the tab state for an analysis (writes the arc42 document).
-pub fn build(data: &Loaded) -> ArchitectureState {
-    build_from(
-        data.root,
-        &data.run.config,
-        data.run.graph.clone(),
-        &data.run.report,
-    )
-}
-
+/// Build the tab state (writes the arc42 document, runs the call analysis).
 fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> ArchitectureState {
     let doc =
         archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
@@ -127,52 +117,29 @@ impl TabState for ArchitectureState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let mut m = ArchitectureModel::default();
+        if let Some(e) = error {
+            m.state = 2;
+            m.error = e.into();
+        }
+        ui.global::<ArchitectureData>().set_model(m);
+    }
 }
 
 /// Show the active document's tab. Its state is built once per document,
-/// on a worker thread; snapshot runs build it in place so the PNG shows it.
+/// on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    if documents::with_active_state(|s: &mut ArchitectureState| push(ui, s)).is_some() {
-        return;
-    }
-    ui.global::<ArchitectureData>()
-        .set_model(ArchitectureModel::default());
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    if snapshot_mode() {
-        return install(ui, doc, build(data));
-    }
-    // One worker per document, even if it is shown again meanwhile.
-    if documents::with_active_state(|_: &mut Building| ()).is_some() {
-        return;
-    }
-    documents::set_state(doc, Building);
-    let (root, config, graph, report) = (
-        data.root.to_path_buf(),
-        data.run.config.clone(),
-        data.run.graph.clone(),
-        data.run.report.clone(),
-    );
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = build_from(&root, &config, graph, &report);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let (root, config, graph, report) = (
+            data.root.to_path_buf(),
+            data.run.config.clone(),
+            data.run.graph.clone(),
+            data.run.report.clone(),
+        );
+        move || build_from(&root, &config, graph, &report)
     });
-}
-
-/// Marks a document whose state is being built on a worker thread.
-struct Building;
-
-/// Keep `state` for document `doc`; show it if that document is active.
-fn install(ui: &AppWindow, doc: documents::DocId, state: ArchitectureState) {
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut ArchitectureState| push(ui, s));
-    }
 }
 
 /// `ARCHGUARD_DESKTOP_CHAPTER=<n>` and `ARCHGUARD_DESKTOP_ARC_SCOPE=<package>`
@@ -388,12 +355,7 @@ mod tests {
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
-        let sources = Default::default();
-        let state = build(&Loaded {
-            root: &root,
-            run: &run,
-            sources: &sources,
-        });
+        let state = build_from(&root, &run.config, run.graph.clone(), &run.report);
         let doc = state.doc.as_ref().expect("arc42 document");
         assert_eq!(doc.chapters.len(), 12);
         assert_eq!(state.chapter, 5);

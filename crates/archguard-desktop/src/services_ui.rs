@@ -2,7 +2,7 @@
 //! `viewer_services.js`). The topology comes from
 //! `archguard_engine::analyze_services`, as in the CLI's report.
 //!
-//! All tab state is one [`ServicesState`], built by [`build`] and shown by
+//! All tab state is one [`ServicesState`], built by [`build_from`] and shown by
 //! [`push`] as one `ServicesModel` value.
 
 mod layout;
@@ -10,18 +10,19 @@ mod paths;
 mod state;
 mod view;
 
+use std::path::Path;
+
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
 
-/// Build the tab state for an analysis (reads the service topology).
-pub fn build(data: &Loaded) -> ServicesState {
-    let mut state = state::build_from(data.root);
+/// Build the tab state for a project root (reads the service topology).
+fn build_from(root: &Path) -> ServicesState {
+    let mut state = state::build_from(root);
     snapshot_overrides(&mut state);
     state
 }
@@ -77,44 +78,35 @@ impl TabState for ServicesState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let model = match error {
+            None => ServicesModel::default(),
+            Some(e) => ServicesModel {
+                state: 2,
+                error: e.into(),
+                ..Default::default()
+            },
+        };
+        ui.global::<ServicesData>().set_model(model);
+    }
+
+    /// The view may not have reported its width yet.
+    fn arrive(&mut self, ui: &AppWindow) {
+        if self.viewport == 0.0 {
+            let window = ui.window();
+            self.viewport = (window.size().width as f32 / window.scale_factor()).floor();
+        }
+    }
 }
 
-/// Fill the tab after an analysis finished. The topology is read on a
-/// worker thread; snapshot runs build it in place so the PNG shows it.
+/// Show the active document's tab; its topology is read once per
+/// document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut ServicesState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    ui.global::<ServicesData>()
-        .set_model(ServicesModel::default());
-    if snapshot_mode() {
-        return install(ui, doc, build(data));
-    }
-    let root = data.root.to_path_buf();
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = state::build_from(&root);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let root = data.root.to_path_buf();
+        move || build_from(&root)
     });
-}
-
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, mut state: ServicesState) {
-    if state.viewport == 0.0 {
-        let window = ui.window();
-        state.viewport = (window.size().width as f32 / window.scale_factor()).floor();
-    }
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut ServicesState| push(ui, s));
-    }
 }
 
 /// Show the state in the window.

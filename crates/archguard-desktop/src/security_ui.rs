@@ -3,7 +3,7 @@
 //! through `archguard_engine::read_security`, as `archguard graph` and
 //! `archguard serve` do; it never starts Trivy or network work.
 //!
-//! All tab state is one [`SecurityState`], built by [`build`] and shown by
+//! All tab state is one [`SecurityState`], built by [`build_from`] and shown by
 //! [`push`] as one `SecurityModel` value.
 
 mod snapshot;
@@ -15,8 +15,7 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, model as rows, snapshot_mode};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index, model as rows};
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
 use snapshot::{SEVERITIES, safe_url};
 
@@ -33,12 +32,8 @@ pub struct SecurityState {
     limit: usize,
 }
 
-/// Read the saved scan for an analysis. `data.run.graph.root` is the root
-/// the web viewer reads and puts into its scan command.
-pub fn build(data: &Loaded) -> SecurityState {
-    build_from(Path::new(&data.run.graph.root), &data.run.config)
-}
-
+/// Read the saved scan. `data.run.graph.root` is the root the web viewer
+/// reads and puts into its scan command.
 fn build_from(root: &Path, config: &Config) -> SecurityState {
     SecurityState {
         report: archguard_engine::read_security(root, config),
@@ -74,43 +69,31 @@ impl TabState for SecurityState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let model = match error {
+            None => SecurityModel::default(),
+            Some(e) => SecurityModel {
+                loaded: true,
+                status: "error".into(),
+                diagnostics: rows([line(e.to_string(), -1)]),
+                ..Default::default()
+            },
+        };
+        ui.global::<SecurityData>().set_model(model);
+    }
 }
 
-/// Fill the tab after an analysis finished. The dependency files are hashed
-/// on a worker thread; snapshot runs read in place so the PNG shows them.
+/// Show the active document's tab. The dependency files are hashed once
+/// per document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut SecurityState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    ui.global::<SecurityData>()
-        .set_model(SecurityModel::default());
-    if snapshot_mode() {
-        return install(ui, doc, build(data));
-    }
-    let (root, config) = (
-        std::path::PathBuf::from(&data.run.graph.root),
-        data.run.config.clone(),
-    );
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = build_from(&root, &config);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let (root, config) = (
+            std::path::PathBuf::from(&data.run.graph.root),
+            data.run.config.clone(),
+        );
+        move || build_from(&root, &config)
     });
-}
-
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, state: SecurityState) {
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut SecurityState| push(ui, s));
-    }
 }
 
 /// Show the state in the window.
