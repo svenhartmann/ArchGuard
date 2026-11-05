@@ -234,6 +234,10 @@ impl Lexer<'_> {
     /// String with single or triple quotes; C and Kotlin also accept longer quote runs.
     fn quoted(&mut self) {
         let c = self.chars[self.i].1;
+        if self.flavor == Flavor::Kotlin && c == '"' {
+            kotlin_string(self);
+            return;
+        }
         let run = self.chars[self.i..].iter().take_while(|p| p.1 == c).count();
         let width = match (c != '`' && run >= 3, self.flavor) {
             (true, Flavor::C | Flavor::Kotlin) => run,
@@ -355,6 +359,68 @@ impl Lexer<'_> {
         } else {
             self.after_control = false;
         }
+    }
+}
+
+/// Kotlin `"…"` or raw `"""…"""`: a raw string has no escapes and ends at
+/// the last quote of a run of three or more; `${…}` templates, with any
+/// strings nested in them, stay part of the literal.
+fn kotlin_string(lexer: &mut Lexer) {
+    let quotes = |lexer: &Lexer| {
+        lexer.chars[lexer.i..]
+            .iter()
+            .take_while(|p| p.1 == '"')
+            .count()
+    };
+    let raw = quotes(lexer) >= 3;
+    lexer.i += if raw { 3 } else { 1 };
+    while lexer.i < lexer.chars.len() {
+        match lexer.peek(0) {
+            Some('\\') if !raw => {
+                lexer.i += 1;
+                if lexer.i < lexer.chars.len() {
+                    lexer.bump();
+                }
+            }
+            Some('"') if !raw => {
+                lexer.i += 1;
+                return;
+            }
+            Some('"') if quotes(lexer) >= 3 => {
+                lexer.i += quotes(lexer);
+                return;
+            }
+            Some('$') if lexer.peek(1) == Some('{') => kotlin_template(lexer),
+            _ => lexer.bump(),
+        }
+    }
+}
+
+/// Skip a `${…}` template up to its matching `}`.
+fn kotlin_template(lexer: &mut Lexer) {
+    lexer.i += 2;
+    let mut depth = 1usize;
+    while lexer.i < lexer.chars.len() {
+        match lexer.peek(0) {
+            Some('"') => {
+                kotlin_string(lexer);
+                continue;
+            }
+            Some('\'') => {
+                lexer.quoted();
+                continue;
+            }
+            Some('{') => depth += 1,
+            Some('}') => {
+                depth -= 1;
+                if depth == 0 {
+                    lexer.i += 1;
+                    return;
+                }
+            }
+            _ => {}
+        }
+        lexer.bump();
     }
 }
 

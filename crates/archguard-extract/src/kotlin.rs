@@ -5,7 +5,11 @@
 //! imports. Backtick-quoted names, top-level functions without a file of the
 //! same stem and runtime-loaded classes remain unresolved or module-level.
 
+mod structure;
+
 use std::collections::BTreeSet;
+
+pub use structure::{KotlinStructure, scan_kotlin_structure};
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
 use crate::lex::Flavor;
@@ -219,6 +223,20 @@ mod tests {
         let source = "/* outer /* nested */\nimport com.fake.Hidden\n*/\n\
             // import com.fake.Line\n\
             val text = \"\"\"\nimport com.fake.Raw\n\"\"\"\n\
+            import com.shop.order.Order\n";
+        assert_eq!(
+            imports(source),
+            vec![(8, symbol("com/shop/order", Some("Order")))]
+        );
+    }
+
+    #[test]
+    fn templates_and_raw_strings_never_create_imports() {
+        // A backslash does not escape in a raw string, and a quote inside a
+        // template expression does not end the string around it.
+        let source = "val path = \"\"\"C:\\\"\"\"\n\
+            val text = \"\"\"\nimport com.fake.Raw\n\"\"\"\n\
+            val label = \"\"\"${listOf(\"\"\"\nimport com.fake.Template\n\"\"\")}\"\"\"\n\
             import com.shop.order.Order\n";
         assert_eq!(
             imports(source),

@@ -104,3 +104,39 @@ fn kt_is_a_configurable_language() {
         "{files:?}"
     );
 }
+
+#[test]
+fn kotlin_classes_reach_their_graph_nodes() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (rel, content) in [FIXTURE[0], FIXTURE[2]] {
+        let path = dir.path().join(rel);
+        fs::create_dir_all(path.parent().expect("parent dir")).expect("create dirs");
+        fs::write(&path, content).expect("write fixture file");
+    }
+    let calls = archguard_engine::analyze_calls(dir.path(), &Config::default());
+    assert_eq!(calls.status, "partial", "{:?}", calls.diagnostics);
+    let analyzer = &calls.analyzers[0];
+    assert_eq!(
+        (
+            analyzer.language.as_str(),
+            analyzer.status.as_str(),
+            analyzer.files
+        ),
+        ("kotlin", "partial", 2)
+    );
+    let order = calls.classes.iter().find(|c| c.name == "Order").unwrap();
+    let (graph, _) = analyze(dir.path(), &Config::default(), Level::File).expect("analyze");
+    assert!(
+        graph.nodes.iter().any(|node| node.name == order.graph_node),
+        "{} is not a graph node: {:?}",
+        order.graph_node,
+        graph.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+    );
+    let label = calls.methods.iter().find(|m| m.name == "label").unwrap();
+    assert_eq!(label.class_id, order.id);
+    assert_eq!(label.complexity.as_ref().unwrap().cyclomatic, 1);
+    // Calls stay unresolved: the method enumeration is not complete.
+    let details = calls.details.as_ref().unwrap();
+    assert_eq!(details.enumeration_complete, Some(false));
+    assert!(calls.calls.is_empty());
+}

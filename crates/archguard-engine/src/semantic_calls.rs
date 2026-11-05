@@ -4,6 +4,9 @@ use archguard_extract::Lang;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod kotlin_calls;
+pub(crate) mod token_calls;
+
 /// Enrich the import graph before any SCC, gate or metric is calculated.
 /// Only compiler-resolved source relationships are projected; unsupported
 /// languages and missing references remain explicit coverage limitations.
@@ -55,7 +58,7 @@ pub(crate) fn integrate_graph(
 }
 
 /// Detect source languages once and combine independently reported providers.
-/// Unimplemented providers remain explicit coverage gaps, not clean call graphs.
+/// Unavailable or partial providers remain explicit coverage gaps, not clean call graphs.
 pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
     let files = match crate::pipeline::walk_files(root, config) {
         Ok(files) => files,
@@ -79,17 +82,7 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
         ("javascript", *counts.get(&Lang::Js).unwrap_or(&0)),
     ];
     for (lang, count) in counts {
-        let language = match lang {
-            Lang::Java => "java",
-            Lang::CSharp => "csharp",
-            Lang::Ts => "typescript",
-            Lang::Js => "javascript",
-            Lang::Py => "python",
-            Lang::Rust => "rust",
-            Lang::Php => "php",
-            Lang::Go => "go",
-            Lang::Kotlin => "kotlin",
-        };
+        let language = language_name(lang);
         let mut report = match lang {
             Lang::Java => crate::java_calls::analyze_java_calls(root, config),
             Lang::CSharp => crate::csharp_calls::analyze_csharp_calls(root, config),
@@ -104,15 +97,7 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
                 typescript_analyzed = true;
                 crate::typescript_calls::analyze_typescript_calls(root, config)
             }
-            _ => CallAnalysis {
-                status: "unavailable".into(),
-                files: count,
-                java_release: 0,
-                diagnostics: vec![format!(
-                    "Semantic analysis for {language} is not implemented; import analysis remains available."
-                )],
-                ..Default::default()
-            },
+            Lang::Kotlin => kotlin_calls::analyze_kotlin_calls(root, config),
         };
         if report.files == 0 && report.status == "unavailable" {
             report.files = if matches!(lang, Lang::Ts | Lang::Js) {
@@ -149,6 +134,21 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
         ));
     }
     combine(reports)
+}
+
+/// The language name of call analyzers and their reports.
+fn language_name(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Java => "java",
+        Lang::CSharp => "csharp",
+        Lang::Ts => "typescript",
+        Lang::Js => "javascript",
+        Lang::Py => "python",
+        Lang::Rust => "rust",
+        Lang::Php => "php",
+        Lang::Go => "go",
+        Lang::Kotlin => "kotlin",
+    }
 }
 
 /// Live reports also invalidate on project settings and reference changes,

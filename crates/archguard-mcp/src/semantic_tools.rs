@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_handler_reports_unsupported_language_with_effective_source_scope() {
+    async fn semantic_handler_reports_kotlin_token_analysis_as_partial() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("src")).unwrap();
         std::fs::write(
@@ -502,8 +502,9 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(reply["status"], "unavailable");
+        assert_eq!(reply["status"], "partial");
         assert_eq!(reply["analyzers"][0]["language"], "kotlin");
+        // The default kind lists calls; token analysis resolves none.
         assert_eq!(reply["total"], 0);
     }
 }

@@ -2,11 +2,11 @@ use assert_cmd::Command;
 use serde_json::Value;
 
 #[test]
-fn calls_command_reports_unsupported_language_without_inventing_a_clean_graph() {
+fn calls_command_reports_kotlin_token_measurements_as_partial() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(
         root.path().join("Main.kt"),
-        "fun main() {\n    println(\"hello\")\n}\n",
+        "fun main(flag: Boolean) {\n    if (flag) println(\"hello\")\n}\n",
     )
     .unwrap();
     let output = Command::new(assert_cmd::cargo::cargo_bin!("archguard"))
@@ -19,10 +19,15 @@ fn calls_command_reports_unsupported_language_without_inventing_a_clean_graph() 
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["status"], "unavailable");
+    // Calls stay unresolved: partial coverage and no call edges, never a
+    // clean, complete call graph.
+    assert_eq!(result["status"], "partial");
     assert_eq!(result["analyzers"][0]["language"], "kotlin");
+    assert_eq!(result["analyzers"][0]["backend"], "archguard tokens");
     assert_eq!(result["analyzers"][0]["files"], 1);
     assert_eq!(result["calls"].as_array().unwrap().len(), 0);
+    assert_eq!(result["methods"][0]["name"], "main");
+    assert_eq!(result["methods"][0]["complexity"]["cyclomatic"], 2);
 }
 
 #[test]

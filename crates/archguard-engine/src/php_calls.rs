@@ -3,69 +3,29 @@
 //! unresolved, so the report is `partial`.
 use std::path::Path;
 
-use archguard_core::{CallAnalysis, CallAnalyzer, Config, SemanticDetails};
-use archguard_extract::{Extractor, Lang, PhpExtractor, scan_php_structure, strip_root};
+use archguard_core::{CallAnalysis, Config};
+use archguard_extract::{Extractor, Lang, PhpExtractor, scan_php_structure};
 
-const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
 const LIMITATION: &str = "Token-based analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from interface and abstract class declarations.";
 
 pub(crate) fn analyze_php_calls(root: &Path, config: &Config) -> CallAnalysis {
-    let mut report = CallAnalysis {
-        java_release: 0,
-        ..Default::default()
-    };
-    let files = match crate::pipeline::walk_files(root, config) {
-        Ok(files) => files,
-        Err(error) => {
-            report.status = "unavailable".into();
-            report.diagnostics.push(error.to_string());
-            return report;
-        }
-    };
-    let mut metrics = Vec::new();
-    for file in files.iter().filter(|file| file.lang == Lang::Php) {
-        report.files += 1;
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let text =
-            crate::project_files::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()));
-        let content = match text {
-            Ok(content) => content,
-            Err(error) => {
-                report.diagnostics.push(format!("{stripped}: {error}"));
-                continue;
-            }
-        };
-        // The graph names a PHP file after its namespace, as the pipeline does.
-        let declarations = PhpExtractor.extract(&stripped, &content).declarations;
-        let node = crate::pipeline::file_node_name(&stripped, &declarations);
-        let found = scan_php_structure(&stripped, &node, &content);
-        report.classes.extend(found.classes);
-        report.methods.extend(found.methods);
-        report.diagnostics.extend(found.diagnostics);
-        metrics.extend(found.metrics);
-    }
-    if report.files == 0 {
-        return report;
-    }
-    report.status = "partial".into();
-    report.diagnostics.push(LIMITATION.into());
-    report.analyzers.push(CallAnalyzer {
-        language: "php".into(),
-        backend: "archguard tokens".into(),
-        status: "partial".into(),
-        files: report.files,
-        version: None,
-        project: None,
-        diagnostics: vec![LIMITATION.into()],
-    });
-    report.details = Some(SemanticDetails {
-        enumeration_complete: Some(false),
-        method_metrics: metrics,
-        ..Default::default()
-    });
-    report
+    crate::semantic_calls::token_calls::token_calls(
+        root,
+        config,
+        (Lang::Php, "php", LIMITATION),
+        |path, content| {
+            // The graph names a PHP file after its namespace, as the pipeline does.
+            let declarations = PhpExtractor.extract(path, content).declarations;
+            let node = crate::pipeline::file_node_name(path, &declarations);
+            let found = scan_php_structure(path, &node, content);
+            (
+                found.classes,
+                found.methods,
+                found.metrics,
+                found.diagnostics,
+            )
+        },
+    )
 }
 
 #[cfg(test)]
