@@ -1,0 +1,113 @@
+msgid "Architecture documentation"
+msgstr "Architekturdokumentation"
+
+msgid "arc42 · Evidence, decisions and open questions"
+msgstr "arc42 · Belege, Entscheidungen und offene Fragen"
+
+msgid "Download chapter"
+msgstr "Kapitel herunterladen"
+
+msgid "Download all chapters"
+msgstr "Alle Kapitel herunterladen"
+
+msgid "Saved {}"
+msgstr "Gespeichert: {}"
+
+msgid "Writing the architecture documentation …"
+msgstr "Architekturdokumentation wird erstellt …"
+
+msgid "No arc42 documentation in this report"
+msgstr "Keine arc42-Dokumentation in diesem Bericht"
+
+msgid "Generate a new report to see the architecture documentation."
+msgstr "Erzeuge einen neuen Bericht, um die Architekturdokumentation anzuzeigen."
+
+msgid "Markdown source"
+msgstr "Markdown-Quelltext"
+
+msgid "Source and update"
+msgstr "Quelle und Aktualisierung"
+
+msgid "Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks."
+msgstr "Aus den ursprünglichen Projektbelegen erzeugt. Ansichtfilter und Simulationen ändern dieses Dokument nicht. Ergänze Projektkontext im exportierten Markdown; archguard doc --arc42 erhält eigene Texte außerhalb erzeugter Blöcke."
+
+msgid "Optional: compare with a target model"
+msgstr "Optional: mit einem Sollmodell vergleichen"
+
+msgid "Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph."
+msgstr "Definiere logische Komponenten und erlaubte Abhängigkeiten unter architecture.model in archguard.toml. Komponenten können mehrere Pakete umfassen; ihre Zuordnung wird am vollständigen Quell-Abhängigkeitsgraphen geprüft."
+
+msgid "Target architecture: the comparison with the declared model is not native yet."
+msgstr "Sollarchitektur: der Vergleich mit dem deklarierten Modell ist noch nicht nativ."
+
+msgid "No entries recorded."
+msgstr "Keine Einträge erfasst."
+
+msgid "Diagram source · this diagram syntax is not supported in the viewer."
+msgstr "Diagrammquelle · diese Diagrammsyntax wird im Viewer nicht unterstützt."
+
+msgid "Files without a package"
+msgstr "Dateien ohne Paket"
+
+msgid "Other project packages"
+msgstr "Andere Projektpakete"
+
+msgid "Building blocks · Level {} of 3"
+msgstr "Bausteine · Ebene {} von 3"
+
+msgid "UML · Packages and dependencies"
+msgstr "UML · Pakete und Abhängigkeiten"
+
+msgid "Static calls between packages"
+msgstr "Statische Aufrufe zwischen Paketen"
+
+msgid "Cyclic package relationships"
+msgstr "Zyklische Paketbeziehungen"
+
+msgid "source connections"
+msgstr "Quellverbindungen"
+
+msgid "recorded call sites"
+msgstr "erfasste Aufrufstellen"
+
+msgid "{} {} · {} inside the shown groups"
+msgstr "{} {} · {} innerhalb der dargestellten Gruppen"
+
+msgid "Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order."
+msgstr "Compilerstatus: {} · Enthaltene, aufgelöste Projektaufrufe mit Quellzuordnung. Aufrufstellen belegen keine Laufzeitreihenfolge."
+
+msgid "No relationships of this kind are recorded in this scope."
+msgstr "In diesem Bereich sind keine Beziehungen dieser Art erfasst."
+
+msgid "{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle."
+msgstr "{} / {} gebündelte Beziehungen sichtbar. Paket auswählen, um seine Beziehungen hervorzuheben. Pfeile: Quelle → Abhängigkeit. Rot: Paketzyklus."
+
+msgid "Arrows show the dependency direction; edge labels show recorded counts."
+msgstr "Pfeile zeigen die Abhängigkeitsrichtung; Kantenbeschriftungen die erfasste Anzahl."
+
+msgid "Source package"
+msgstr "Quellpaket"
+
+msgid "Direct source nodes"
+msgstr "Direkte Quellknoten"
+
+msgid "Project context"
+msgstr "Projektkontext"
+
+msgid "{} source nodes"
+msgstr "{} Quellknoten"
+
+msgid "Open level {}"
+msgstr "Ebene {} öffnen"
+
+msgid "Open in graph"
+msgstr "Im Graph öffnen"
+
+msgid "Open package"
+msgstr "Paket öffnen"
+
+msgid "Relationships and counts"
+msgstr "Beziehungen und Anzahl"
+
+msgid "More relationships"
+msgstr "Weitere Beziehungen"

@@ -1,0 +1,166 @@
+// Markdown blocks of an arc42 chapter (the web's .arc42-article styles).
+import { Theme } from "theme.slint";
+
+// kind: 0 heading, 1 paragraph, 2 list item, 3 table header, 4 table row,
+// 5 code, 6 rule, 7 muted note, 8 empty table row.
+export struct ArcBlock {
+    kind: int,
+    // Heading level (2..6) or list depth.
+    level: int,
+    marker: string,
+    text: styled-text,
+    plain: string,
+    cells: [styled-text],
+    heads: [string],
+    // Per column: 0 left, 1 center, 2 right.
+    align: [int],
+    quote: bool,
+    // "Offen zu ergänzen": the web's .arc42-open-heading.
+    open: bool,
+    last: bool,
+}
+
+component Heading inherits VerticalLayout {
+    in property <ArcBlock> block;
+    padding-top: block.open ? 12px : block.level <= 3 ? 18px : 12px;
+    padding-bottom: 4px;
+    spacing: block.open ? 22px : 0;
+    if block.open: Rectangle { height: 1px; background: Theme.border; }
+    Text {
+        text: block.plain;
+        color: block.open ? Theme.accent : Theme.text;
+        font-size: block.level <= 2 ? 21px : block.level == 3 ? 17px : 14px;
+        font-weight: 700;
+        wrap: word-wrap;
+    }
+}
+
+component Paragraph inherits VerticalLayout {
+    in property <ArcBlock> block;
+    padding-top: 4px;
+    padding-bottom: 8px;
+    StyledText {
+        text: block.text;
+        default-color: block.kind == 7 ? Theme.muted : Theme.text;
+        default-font-size: block.kind == 7 ? 12px : 14px;
+        link-color: Theme.accent;
+    }
+}
+
+component Item inherits HorizontalLayout {
+    in property <ArcBlock> block;
+    padding-left: 10px + block.level * 24px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    spacing: 8px;
+    Text {
+        width: 18px;
+        text: block.marker;
+        color: Theme.text;
+        font-size: 14px;
+        horizontal-alignment: right;
+    }
+    StyledText {
+        text: block.text;
+        default-color: Theme.text;
+        default-font-size: 14px;
+        link-color: Theme.accent;
+    }
+}
+
+// One table row; header rows round the top corners, the last row the bottom.
+component TableRow inherits Rectangle {
+    in property <ArcBlock> block;
+    property <bool> head: block.kind == 3;
+    background: head ? Theme.panel-2 : transparent;
+    // Side and bottom lines; the header row also draws the top line.
+    Rectangle { x: 0; width: 1px; background: Theme.border; }
+    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    if head: Rectangle { y: 0; height: 1px; background: Theme.border; }
+    HorizontalLayout {
+        padding-left: 1px;
+        padding-right: 1px;
+        if head: HorizontalLayout {
+            for h in block.heads: Rectangle {
+                horizontal-stretch: 1;
+                min-width: 60px;
+                VerticalLayout {
+                    padding: 10px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text { text: h; color: Theme.text; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+                }
+            }
+        }
+        if block.kind == 4: HorizontalLayout {
+            for c[i] in block.cells: Rectangle {
+                horizontal-stretch: 1;
+                min-width: 60px;
+                VerticalLayout {
+                    padding: 10px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    StyledText {
+                        text: c;
+                        default-color: Theme.text;
+                        default-font-size: 13px;
+                        link-color: Theme.accent;
+                        horizontal-alignment: block.align[i] == 2 ? right : block.align[i] == 1 ? center : left;
+                    }
+                }
+            }
+        }
+        if block.kind == 8: VerticalLayout {
+            padding: 10px;
+            padding-left: 12px;
+            Text { text: @tr("No entries recorded."); color: Theme.muted; font-size: 13px; }
+        }
+    }
+}
+
+component Code inherits VerticalLayout {
+    in property <ArcBlock> block;
+    padding-top: 6px;
+    padding-bottom: 10px;
+    Rectangle {
+        background: Theme.panel-2;
+        border-radius: 8px;
+        VerticalLayout {
+            padding: 14px;
+            Text {
+                text: block.plain;
+                color: Theme.text;
+                font-family: "Menlo";
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+export component ArcBlockView inherits HorizontalLayout {
+    in property <ArcBlock> block;
+    spacing: 0;
+    if block.quote: Rectangle { width: 3px; background: Theme.accent; }
+    Rectangle {
+        background: block.quote ? Theme.panel-2 : transparent;
+        VerticalLayout {
+            padding-left: block.quote ? 16px : 0;
+            if block.kind == 0: Heading { block: block; }
+            if block.kind == 1 || block.kind == 7: Paragraph { block: block; }
+            if block.kind == 2: Item { block: block; }
+            if block.kind == 3 || block.kind == 4 || block.kind == 8: VerticalLayout {
+                padding-top: block.kind == 3 ? 10px : 0;
+                padding-bottom: block.last ? 16px : 0;
+                TableRow { block: block; }
+            }
+            if block.kind == 5: Code { block: block; }
+            if block.kind == 6: VerticalLayout {
+                padding-top: 10px;
+                padding-bottom: 10px;
+                Rectangle { height: 1px; background: Theme.border; }
+            }
+        }
+    }
+}

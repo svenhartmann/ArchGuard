@@ -1,11 +1,407 @@
-//! Architecture tab. Not native yet: the view shows the web-viewer fallback.
-//! Implement it here and in `ui/architecture_view.slint` (`ArchitectureData` global).
+//! Architecture tab: the web viewer's arc42 reader (renderArc42Documentation
+//! and the derived package maps in viewer_architecture.js). The document
+//! comes from `archguard_engine::arc42_document`, as in the CLI's report.
+//!
+//! All tab state is one [`ArchitectureState`], built by [`build`] and shown
+//! by [`push`] as one `ArchitectureModel` value.
+
+mod blocks;
+mod diagram;
+mod markdown;
+mod projection;
+mod view;
+mod visual;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use archguard_engine::core::{Config, Graph, Report};
+use archguard_engine::report::Arc42Document;
+use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::ui::AppWindow;
+use crate::tree::Tree;
+use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
+use projection::{Group, Labels, SourceModel};
+use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};
+
+/// Everything the tab knows: the document, the source graph and its
+/// projections indexes, and the reader's position.
+pub struct ArchitectureState {
+    root: PathBuf,
+    graph: Graph,
+    /// The arc42 document, or why it could not be written.
+    doc: Result<Arc42Document, String>,
+    has_model: bool,
+    model: SourceModel,
+    deps: Vec<(usize, usize)>,
+    calls: Vec<(usize, usize)>,
+    calls_status: String,
+    /// Graph-tab tree position per node name ("Open in graph").
+    tree_nodes: HashMap<String, usize>,
+    chapter: u8,
+    /// Per map kind (dependencies, calls, cycles).
+    maps: [MapState; 3],
+    /// Path of the last export, or its error.
+    saved: String,
+}
+
+thread_local! {
+    static STATE: RefCell<Option<ArchitectureState>> = const { RefCell::new(None) };
+}
+
+/// Build the tab state for an analysis (writes the arc42 document).
+pub fn build(data: &Loaded) -> ArchitectureState {
+    build_from(
+        data.root,
+        &data.run.config,
+        data.run.graph.clone(),
+        &data.run.report,
+    )
+}
+
+fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> ArchitectureState {
+    let doc =
+        archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
+    let calls = archguard_engine::analyze_calls(root, config);
+    let tree_nodes = Tree::from_graph(&graph)
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.name.clone(), i))
+        .collect();
+    let model = SourceModel::new(&graph);
+    let chapter = match &doc {
+        Ok(d) if !d.chapters.iter().any(|c| c.number == 5) => {
+            d.chapters.first().map_or(5, |c| c.number)
+        }
+        _ => 5,
+    };
+    let mut state = ArchitectureState {
+        root: root.to_path_buf(),
+        deps: projection::dependency_edges(&model, &graph),
+        calls: projection::call_edges(&graph, &calls),
+        calls_status: calls.status,
+        has_model: config.architecture.model.is_some(),
+        graph,
+        doc,
+        model,
+        tree_nodes,
+        chapter,
+        maps: Default::default(),
+        saved: String::new(),
+    };
+    snapshot_overrides(&mut state);
+    state
+}
 
 /// Register the tab's callbacks once at start-up.
-pub fn wire(_ui: &AppWindow) {}
+pub fn wire(ui: &AppWindow) {
+    let d = ui.global::<ArchitectureData>();
+    d.on_select_chapter(action(ui, |s, _, n: i32| {
+        s.chapter = u8::try_from(n).unwrap_or(5);
+    }));
+    d.on_navigate(action(ui, |s, _, scope: i32| {
+        open_scope(s, Kind::Dependencies, usize::try_from(scope).ok());
+    }));
+    d.on_scope_selected(action(ui, |s, ui, i: i32| {
+        let Some((kind, map)) = current(s, ui) else {
+            return;
+        };
+        let scope = usize::try_from(i)
+            .ok()
+            .and_then(|i| map.scopes.get(i).copied().flatten());
+        open_scope(s, kind, scope);
+    }));
+    d.on_select_card(action(ui, select_card));
+    let more = action(ui, |s, _, ()| {
+        if let Some(kind) = derived(s, s.chapter) {
+            let state = &mut s.maps[kind as usize];
+            state.relations = state.relations.max(RELATIONS_PAGE) + RELATIONS_PAGE;
+        }
+    });
+    d.on_more_relations(move || more(()));
+    let act = action(ui, |s, ui, ()| card_action(s, ui));
+    d.on_card_action(move || act(()));
+    d.on_download(action(ui, |s, _, all: bool| download(s, all)));
+    d.on_plantuml(action(ui, |s, ui, unit: SharedString| {
+        plantuml(s, ui, &unit)
+    }));
+}
 
-/// Fill the tab after an analysis finished.
-pub fn show(_ui: &AppWindow, _data: &Loaded) {}
+/// A callback that runs `f` on the tab state and refreshes the window.
+fn action<A: 'static>(
+    ui: &AppWindow,
+    f: impl Fn(&mut ArchitectureState, &AppWindow, A) + 'static,
+) -> impl Fn(A) + 'static {
+    let w = ui.as_weak();
+    move |arg| {
+        let Some(ui) = w.upgrade() else { return };
+        STATE.with_borrow_mut(|s| {
+            if let Some(s) = s {
+                f(s, &ui, arg);
+                push(&ui, s);
+            }
+        });
+    }
+}
+
+/// Fill the tab after an analysis finished. The document is written on a
+/// worker thread; snapshot runs build it in place so the PNG shows it.
+pub fn show(ui: &AppWindow, data: &Loaded) {
+    ui.global::<ArchitectureData>()
+        .set_model(ArchitectureModel::default());
+    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
+        return install(ui, build(data));
+    }
+    let (root, config, graph, report) = (
+        data.root.to_path_buf(),
+        data.run.config.clone(),
+        data.run.graph.clone(),
+        data.run.report.clone(),
+    );
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let state = build_from(&root, &config, graph, &report);
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = weak.upgrade() {
+                install(&ui, state);
+            }
+        });
+    });
+}
+
+fn install(ui: &AppWindow, state: ArchitectureState) {
+    push(ui, &state);
+    STATE.set(Some(state));
+}
+
+/// `ARCHGUARD_DESKTOP_CHAPTER=<n>` and `ARCHGUARD_DESKTOP_ARC_SCOPE=<package>`
+/// open a chapter and a building-block scope for snapshot runs.
+#[cfg(feature = "snapshot")]
+fn snapshot_overrides(s: &mut ArchitectureState) {
+    if let Some(n) = std::env::var("ARCHGUARD_DESKTOP_CHAPTER")
+        .ok()
+        .and_then(|n| n.parse().ok())
+    {
+        s.chapter = n;
+    }
+    if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_ARC_SCOPE") {
+        s.maps[Kind::Dependencies as usize].scope =
+            s.graph.nodes.iter().position(|n| n.name == name);
+    }
+}
+
+#[cfg(not(feature = "snapshot"))]
+fn snapshot_overrides(_: &mut ArchitectureState) {}
+
+/// The derived visual of a chapter, as `renderArc42Derived`. Chapter 7
+/// (deployment) and 4 (target model) are not native yet.
+fn derived(s: &ArchitectureState, chapter: u8) -> Option<Kind> {
+    match chapter {
+        5 if !s.graph.nodes.is_empty() => Some(Kind::Dependencies),
+        6 if !s.calls.is_empty() => Some(Kind::Calls),
+        11 if !s.graph.edges.is_empty() => Some(Kind::Cycles),
+        _ => None,
+    }
+}
+
+fn labels(ui: &AppWindow) -> Labels {
+    let d = ui.global::<ArchitectureData>();
+    Labels {
+        direct_root: d.get_label_direct_root().into(),
+        direct: d.get_label_direct().into(),
+        outside: d.get_label_outside().into(),
+    }
+}
+
+/// The map of the open chapter, if it has one.
+fn current(s: &ArchitectureState, ui: &AppWindow) -> Option<(Kind, Map)> {
+    let kind = derived(s, s.chapter)?;
+    let edges = if kind == Kind::Calls {
+        &s.calls
+    } else {
+        &s.deps
+    };
+    let map = visual::build(
+        kind,
+        &s.maps[kind as usize],
+        &s.model,
+        &s.graph,
+        edges,
+        &labels(ui),
+    );
+    Some((kind, map))
+}
+
+fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {
+    s.maps[kind as usize] = MapState {
+        scope,
+        selected: None,
+        relations: RELATIONS_PAGE,
+    };
+}
+
+fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
+    let Some((kind, map)) = current(s, ui) else {
+        return;
+    };
+    let Some(node) = usize::try_from(i).ok().and_then(|i| map.shown.nodes.get(i)) else {
+        return;
+    };
+    let state = &mut s.maps[kind as usize];
+    state.scope = map.scope;
+    state.selected = (state.selected != Some(node.group)).then_some(node.group);
+    state.relations = RELATIONS_PAGE;
+}
+
+fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
+    let Some((kind, map)) = current(s, ui) else {
+        return;
+    };
+    match map.action {
+        Action::None => {}
+        Action::OpenLevel(n) | Action::OpenPackage(n) => open_scope(s, kind, Some(n)),
+        Action::OpenInGraph(n) => {
+            if let Some(&t) = s.tree_nodes.get(&s.graph.nodes[n].name) {
+                ui.set_tab("graph".into());
+                ui.invoke_reveal(t as i32);
+            }
+        }
+    }
+}
+
+/// Show the state in the window.
+pub fn push(ui: &AppWindow, s: &ArchitectureState) {
+    let d = ui.global::<ArchitectureData>();
+    let mut m = ArchitectureModel {
+        has_model: s.has_model,
+        saved: s.saved.as_str().into(),
+        ..Default::default()
+    };
+    m.map.kind = -1;
+    match &s.doc {
+        Err(e) => {
+            m.state = 2;
+            m.error = e.as_str().into();
+        }
+        Ok(doc) if doc.chapters.is_empty() => m.state = 2,
+        Ok(doc) => {
+            m.state = 1;
+            view::fill_document(
+                &mut m,
+                doc,
+                s.chapter,
+                &d.get_label_mermaid(),
+                derived(s, s.chapter).is_some(),
+            );
+            if let Some((kind, map)) = current(s, ui) {
+                m.map = view::map_model(
+                    &s.graph,
+                    &s.calls_status,
+                    s.maps[kind as usize].relations,
+                    kind,
+                    &map,
+                    &d.get_label_overview(),
+                );
+            }
+        }
+    }
+    d.set_model(m);
+}
+
+fn download(s: &mut ArchitectureState, all: bool) {
+    let Ok(doc) = &s.doc else { return };
+    let (name, content) = if all {
+        ("arc42.md".to_string(), doc.markdown(None))
+    } else {
+        (
+            format!("arc42-{:02}.md", s.chapter),
+            doc.markdown(Some(s.chapter)),
+        )
+    };
+    s.saved = save(&s.root, &name, &content);
+}
+
+fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
+    let Some((kind, map)) = current(s, ui) else {
+        return;
+    };
+    let nodes: Vec<diagram::UmlNode<'_>> = map
+        .shown
+        .nodes
+        .iter()
+        .map(|n| diagram::UmlNode {
+            name: &n.name,
+            shape: match n.group {
+                Group::Package(_) => diagram::Shape::Package,
+                _ => diagram::Shape::Rectangle,
+            },
+            cycle: n.cycle,
+        })
+        .collect();
+    let edges: Vec<diagram::UmlEdge> = map
+        .shown
+        .edges
+        .iter()
+        .map(|e| diagram::UmlEdge {
+            from: e.from,
+            to: e.to,
+            count: e.count,
+            cycle: e.cycle,
+        })
+        .collect();
+    let name = if kind == Kind::Calls {
+        "arc42-calls.puml"
+    } else {
+        "arc42-dependencies.puml"
+    };
+    s.saved = save(&s.root, name, &diagram::plantuml(&nodes, &edges, unit));
+}
+
+/// Write an export to `~/Downloads` (else the project root), as the web's
+/// download; returns the path, or the path and the error.
+fn save(root: &Path, name: &str, content: &str) -> String {
+    let downloads = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Downloads"));
+    let dir = downloads
+        .filter(|d| d.is_dir())
+        .unwrap_or_else(|| root.to_path_buf());
+    let path = dir.join(name);
+    match std::fs::write(&path, content) {
+        Ok(()) => path.display().to_string(),
+        Err(e) => format!("{}: {e}", path.display()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tab state for this repository: twelve chapters, the package map
+    /// on chapter 5 and the cycle map on chapter 11, as the web viewer.
+    #[test]
+    fn build_writes_the_document_and_derives_maps() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repository root");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let sources = Default::default();
+        let state = build(&Loaded {
+            root: &root,
+            run: &run,
+            sources: &sources,
+        });
+        let doc = state.doc.as_ref().expect("arc42 document");
+        assert_eq!(doc.chapters.len(), 12);
+        assert_eq!(state.chapter, 5);
+        assert_eq!(derived(&state, 5), Some(Kind::Dependencies));
+        assert_eq!(derived(&state, 11), Some(Kind::Cycles));
+        assert_eq!(derived(&state, 1), None);
+        assert_eq!(state.deps.len(), run.graph.edges.len());
+    }
+}
