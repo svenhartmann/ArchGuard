@@ -196,8 +196,10 @@ fn snapshot_view(_: &mut QualityState) {}
 /// Write the state's page into `QualityData.model`.
 pub fn push(ui: &AppWindow, s: &mut QualityState) {
     let page = s.page();
-    ui.global::<QualityData>()
-        .set_model(page_model(s.lang, page));
+    let mut m = page_model(s.lang, page);
+    m.query = s.view.query.as_str().into();
+    m.target_query = s.view.target_query.as_str().into();
+    ui.global::<QualityData>().set_model(m);
 }
 
 fn page_model(lang: Lang, p: Page) -> QualityModel {
@@ -221,6 +223,7 @@ fn page_model(lang: Lang, p: Page) -> QualityModel {
         cards: model(p.cards.into_iter().map(card_model)),
         more: p.more,
         empty: p.empty.into(),
+        ..Default::default()
     }
 }
 

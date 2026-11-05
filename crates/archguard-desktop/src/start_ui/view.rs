@@ -187,6 +187,7 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         canvas_h: s.canvas.1 as f32,
         can_back: !s.history.is_empty(),
         query: s.query.as_str().into(),
+        search: s.search.as_str().into(),
         ..Default::default()
     };
     fill_texts(&mut m, s, &d.get_label_select_area(), &ui.get_project());

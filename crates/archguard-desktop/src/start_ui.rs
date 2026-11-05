@@ -115,7 +115,7 @@ pub fn wire(ui: &AppWindow) {
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     let a = Actions::<StartState>::new(ui);
-    d.on_search(a.on(|s, _, q: slint::SharedString| s.query = q.trim().to_lowercase()));
+    d.on_search(a.on(|s, _, q: slint::SharedString| s.set_search(q.into())));
     d.on_accept_search(a.on0(|s, _| s.accept_search()));
     d.on_click(a.on2(|s, _, x: f32, y: f32| {
         if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
@@ -323,7 +323,8 @@ mod tests {
         assert_eq!(s.lens, Lens::Explore);
         assert!(s.kpi_active());
         assert_eq!(s.layout.cells.len(), count);
-        s.query = "start_ui".into();
+        s.set_search(" Start_UI".into());
+        assert_eq!(s.query, "start_ui");
         s.accept_search();
         let sel = s.selection.clone().expect("a match");
         assert!(s.scope.areas[sel.area].name.ends_with("archguard-desktop"));
@@ -333,6 +334,7 @@ mod tests {
         assert_eq!(s.details_open, sel.entity.is_some() || !module);
         s.reset();
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
+        assert_eq!(s.search, "");
         assert_eq!(s.selection, None);
     }
 }

@@ -7,10 +7,11 @@
 #[path = "tab_support.rs"]
 pub mod tab_support;
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use archguard_engine::core::ReviewPriority;
-use slint::ModelRc;
+use slint::{ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
@@ -56,19 +57,36 @@ pub fn wire(ui: &AppWindow) {
     wire_search(ui);
 }
 
+thread_local! {
+    /// The header search field's text. The field belongs to the window, not
+    /// to a document; a switch searches the new document for it.
+    static SEARCH: RefCell<SharedString> = RefCell::default();
+}
+
 fn wire_search(ui: &AppWindow) {
     let w = ui.as_weak();
     ui.on_search(move |q| {
         let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|g: &mut GraphState| {
-            ui.set_searching(!q.trim().is_empty());
-            ui.set_hits(vec_model(g.search(&q, 300).into_iter().map(|h| Hit {
+        SEARCH.set(q);
+        push_hits(&ui);
+    });
+}
+
+/// Hits of the header search in the active document.
+fn push_hits(ui: &AppWindow) {
+    let q = SEARCH.with_borrow(Clone::clone);
+    let hits = documents::with_active_state(|g: &mut GraphState| {
+        g.search(&q, 300)
+            .into_iter()
+            .map(|h| Hit {
                 node: h.node as i32,
                 label: h.label.into(),
                 scope: h.scope.into(),
-            })));
-        });
+            })
+            .collect::<Vec<_>>()
     });
+    ui.set_searching(!q.trim().is_empty());
+    ui.set_hits(vec_model(hits.unwrap_or_default()));
 }
 
 fn edge_mode(m: i32) -> EdgeMode {
@@ -115,8 +133,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         )));
         push_graph(ui, g);
     });
-    ui.set_searching(false);
-    ui.set_hits(ModelRc::default());
+    push_hits(ui);
 }
 
 /// The tree node named `name` in the active document (snapshot hooks).
