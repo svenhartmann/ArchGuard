@@ -11,8 +11,9 @@ import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
+import { DocumentStrip, DocItem, SubProjectItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 
-export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem }
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
 
@@ -157,6 +158,20 @@ export component AppWindow inherits Window {
     background: Theme.bg;
     default-font-size: 13px;
 
+    // Documents: one tab per open project (src/documents_ui.rs).
+    in property <[DocItem]> docs;
+    in property <int> active-doc: -1;
+    in property <bool> has-doc: true;
+    in property <[SubProjectItem]> sub-projects;
+    in-out property <bool> projects-open;
+    out property <string> open-title: @tr("Open project folder");
+    callback select-doc(int);
+    callback close-doc(int);
+    callback add-doc();
+    callback open-sub-project(int);
+    // The active document has a finished analysis to show.
+    property <bool> ready: root.has-doc && !root.loading && root.error == "";
+
     in property <string> project;
     in property <string> root-path;
     in property <bool> loading: true;
@@ -260,6 +275,15 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+        // ---------------------------------------------------- documents
+        DocumentStrip {
+            docs: root.docs;
+            active: root.active-doc;
+            select(i) => { root.select-doc(i); }
+            close(i) => { root.close-doc(i); }
+            add => { root.add-doc(); }
+        }
+
         // ------------------------------------------------------- header
         Rectangle {
             height: 56px;
@@ -284,8 +308,16 @@ export component AppWindow inherits Window {
                     font-weight: 700;
                     vertical-alignment: center;
                     overflow: elide;
-                    min-width: min(self.preferred-width, 220px);
-                    max-width: 220px;
+                    min-width: min(self.preferred-width, 180px);
+                    max-width: 180px;
+                }
+                if root.sub-projects.length > 0: Button {
+                    y: (parent.height - self.height) / 2;
+                    compact: true;
+                    icon: Icons.package;
+                    text: root.sub-projects.length;
+                    pressed-state: root.projects-open;
+                    clicked => { root.projects-open = !root.projects-open; }
                 }
                 Rectangle {
                     height: 40px;
@@ -313,7 +345,8 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 SearchField {
-                    width: 200px;
+                    min-width: 120px;
+                    preferred-width: 200px;
                     y: (parent.height - self.height) / 2;
                     placeholder: @tr("Search modules");
                     edited(t) => { root.search(t); root.explorer-tab = 0; root.show-explorer = true; }
@@ -363,7 +396,7 @@ export component AppWindow inherits Window {
         }
 
         // --------------------------------------------------------- body
-        if root.tab == "dsm": MatrixView {
+        if root.ready && root.tab == "dsm": MatrixView {
             vertical-stretch: 1;
             columns: root.m-columns;
             rows: root.m-rows;
@@ -390,32 +423,59 @@ export component AppWindow inherits Window {
             close-evidence => { root.m-close-evidence(); }
         }
 
-        if root.tab == "start": StartView {
+        if root.ready && root.tab == "start": StartView {
             vertical-stretch: 1;
             open-web => { root.open-web("start"); }
         }
-        if root.tab == "architecture": ArchitectureView {
+        if root.ready && root.tab == "architecture": ArchitectureView {
             vertical-stretch: 1;
             open-web => { root.open-web("architecture"); }
         }
-        if root.tab == "calls": CallsView {
+        if root.ready && root.tab == "calls": CallsView {
             vertical-stretch: 1;
             open-web => { root.open-web("calls"); }
         }
-        if root.tab == "services": ServicesView {
+        if root.ready && root.tab == "services": ServicesView {
             vertical-stretch: 1;
             open-web => { root.open-web("services"); }
         }
-        if root.tab == "quality": QualityView {
+        if root.ready && root.tab == "quality": QualityView {
             vertical-stretch: 1;
             open-web => { root.open-web("quality"); }
         }
-        if root.tab == "security": SecurityView {
+        if root.ready && root.tab == "security": SecurityView {
             vertical-stretch: 1;
             open-web => { root.open-web("security"); }
         }
 
-        if root.tab == "graph": HorizontalLayout {
+        if !root.has-doc: EmptyStart {
+            vertical-stretch: 1;
+            open-project => { root.add-doc(); }
+        }
+        if root.has-doc && !root.ready: Rectangle {
+            vertical-stretch: 1;
+            background: Theme.bg;
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                Text {
+                    text: root.error != "" ? @tr("Analysis failed") : @tr("Analyzing architecture …");
+                    color: root.error != "" ? Theme.cycle : Theme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.error != "" ? root.error : root.status;
+                    color: Theme.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if root.ready && root.tab == "graph": HorizontalLayout {
             vertical-stretch: 1;
 
             // ------------------------------------------------- explorer
@@ -609,27 +669,6 @@ export component AppWindow inherits Window {
                         reference: root.reference;
                         total: root.dep-count;
                     }
-                    if root.loading || root.error != "": Rectangle {
-                        background: Theme.bg.with-alpha(0.9);
-                        VerticalLayout {
-                            alignment: center;
-                            spacing: 10px;
-                            Text {
-                                text: root.error != "" ? @tr("Analysis failed") : @tr("Analyzing architecture …");
-                                color: root.error != "" ? Theme.cycle : Theme.text;
-                                font-size: 18px;
-                                font-weight: 600;
-                                horizontal-alignment: center;
-                            }
-                            Text {
-                                text: root.error != "" ? root.error : root.status;
-                                color: Theme.muted;
-                                font-size: 12px;
-                                horizontal-alignment: center;
-                                wrap: word-wrap;
-                            }
-                        }
-                    }
                 }
             }
 
@@ -671,6 +710,14 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
+
+    if root.projects-open: ProjectsMenu {
+        items: root.sub-projects;
+        menu-x: 60px;
+        menu-y: 38px + 50px;
+        chosen(i) => { root.open-sub-project(i); }
+        dismiss => { root.projects-open = false; }
     }
 
     about := PopupWindow {

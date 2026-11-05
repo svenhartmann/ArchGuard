@@ -1,12 +1,14 @@
-//! "Open in web viewer": start `archguard serve` for the project once,
+//! "Open in web viewer": start `archguard serve` once per project root,
 //! read the URL it prints and open the requested tab in the browser.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
-static SERVER: Mutex<Option<(Child, String)>> = Mutex::new(None);
+/// Running servers by project root, with their base URL.
+static SERVERS: Mutex<BTreeMap<PathBuf, (Child, String)>> = Mutex::new(BTreeMap::new());
 
 /// Route of the web viewer for a desktop tab id (`viewer.js`,
 /// `parseViewerRoute`).
@@ -37,16 +39,22 @@ fn binary() -> PathBuf {
         .unwrap_or_else(|| name.into())
 }
 
-/// Base URL of the running server, starting it on first use.
+/// Base URL of the server for `root`, starting it on first use.
 fn server_url(root: &Path) -> Result<String, String> {
-    let mut server = SERVER
+    let mut servers = SERVERS
         .lock()
         .map_err(|_| "server lock poisoned".to_string())?;
-    if let Some((child, url)) = server.as_mut()
+    if let Some((child, url)) = servers.get_mut(root)
         && child.try_wait().ok().flatten().is_none()
     {
         return Ok(url.clone());
     }
+    let (child, url) = start(root)?;
+    servers.insert(root.to_path_buf(), (child, url.clone()));
+    Ok(url)
+}
+
+fn start(root: &Path) -> Result<(Child, String), String> {
     let bin = binary();
     let mut child = Command::new(&bin)
         .arg("serve")
@@ -70,8 +78,7 @@ fn server_url(root: &Path) -> Result<String, String> {
         let _ = child.kill();
         return Err(format!("archguard serve printed no URL: {url:?}"));
     }
-    *server = Some((child, url.clone()));
-    Ok(url)
+    Ok((child, url))
 }
 
 fn open_in_browser(url: &str) -> Result<(), String> {
@@ -96,11 +103,19 @@ pub fn open(root: &Path, tab: &str) -> Result<String, String> {
     Ok(url)
 }
 
-/// Stop the server started by [`open`], if any.
+/// Stop the server of `root` started by [`open`], if any.
+pub fn stop(root: &Path) {
+    let server = SERVERS.lock().ok().and_then(|mut s| s.remove(root));
+    if let Some((mut child, _)) = server {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Stop every server started by [`open`].
 pub fn shutdown() {
-    if let Ok(mut server) = SERVER.lock()
-        && let Some((mut child, _)) = server.take()
-    {
+    let servers = SERVERS.lock().map(|mut s| std::mem::take(&mut *s));
+    for (_, (mut child, _)) in servers.unwrap_or_default() {
         let _ = child.kill();
         let _ = child.wait();
     }
