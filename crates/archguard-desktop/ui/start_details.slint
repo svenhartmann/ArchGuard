@@ -1,0 +1,137 @@
+// Detail panel of a world selection (#world-detail in the web viewer).
+// Line kinds come from src/start_ui/details.rs (module `kind`).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons, Button } from "widgets.slint";
+import { StartData, StartTones, StartLine } from "start_data.slint";
+
+component DetailLine inherits Rectangle {
+    in property <StartLine> line;
+    in property <string> metric;
+    in property <bool> explore;
+    property <string> text: line.kind == 10 ? @tr("Class: {}", line.a)
+        : line.kind == 11 ? @tr("File · no class assignment")
+        : line.kind == 12 ? @tr("Maximum cyclomatic complexity: {}", line.a)
+        : line.kind == 13 ? @tr("{}/{} methods measured. Height and color show the highest recorded method value, not a class average.", line.a, line.b)
+        : line.kind == 14 ? metric + ": " + line.a
+        : line.kind == 15 ? @tr("{}/{} entries measured · maximum {}: {}", line.a, line.b, metric, line.c)
+        : line.kind == 16 ? @tr("Select a class below for its methods and measurements.")
+        : line.kind == 17 ? @tr("File coverage: {}/{} lines · {} uncovered", line.a, line.b, line.c)
+        : line.kind == 18 ? @tr("File coverage: unknown")
+        : line.kind == 19 ? @tr("{}/{} source files measured. Coverage is file-level, not class- or method-level; import revision is unverified.", line.a, line.b)
+        : line.kind == 20 ? @tr("The containing package belongs to a package cycle. This does not establish a class-level cycle.")
+        : line.kind == 21 ? @tr("No package cycle recorded for this area.")
+        : line.kind == 22 ? @tr("{} findings in the containing area", line.a)
+        : line.kind == 23 ? @tr("Methods · highest complexity first")
+        : line.kind == 24 ? line.a + " · CC " + line.b
+        : line.kind == 25 ? @tr("No imported measurement for this class.")
+        : line.kind == 26 ? @tr("{}/{} method records · missing measurements stay unknown.", line.a, line.b)
+        : line.kind == 30 ? (explore ? line.a + " · " + metric + ": " + line.b : line.a)
+        : line.kind == 31 ? (line.a == "" ? @tr("More evidence") : @tr("More ({})", line.a))
+        : line.kind == 40 ? @tr("Evidence")
+        : line.kind == 41 ? line.a + " → " + line.b + (line.c == "" ? "" : " · " + @tr("package cycle"))
+        : line.kind == 42 ? @tr("No connections or findings recorded at this level.")
+        : line.a;
+    property <bool> button: line.kind == 30 || line.kind == 31;
+    property <bool> heading: line.kind == 23 || line.kind == 40;
+    height: label.preferred-height + (button ? 14px : heading ? 12px : 4px);
+    border-radius: button ? Theme.radius-sm : 0;
+    background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : transparent;
+    border-width: button ? 1px : 0;
+    border-color: Theme.border;
+    label := Text {
+        x: button ? 10px : 0;
+        y: heading ? 8px : button ? 7px : 2px;
+        width: parent.width - (button ? 20px : 0);
+        text: root.text;
+        wrap: word-wrap;
+        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 ? Theme.muted : Theme.text;
+        font-size: heading ? 14px : line.kind == 12 ? 16px : 13px;
+        font-weight: heading || line.kind == 12 ? 650 : 400;
+        font-family: line.kind == 2 || line.kind == 10 ? "Menlo" : "";
+    }
+    t := TouchArea {
+        enabled: root.button;
+        mouse-cursor: root.button ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            if (line.kind == 30) {
+                StartData.pick-entity(line.entity);
+            } else {
+                StartData.more();
+            }
+        }
+    }
+}
+
+export component StartDetails inherits Rectangle {
+    property <int> lens: StartData.model.lens;
+    property <string> metric: StartTones.kpi-label(lens == 1 ? StartData.model.kpi : 0);
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 28px;
+    drop-shadow-offset-x: -8px;
+    drop-shadow-color: Theme.shadow;
+    // Clicks and wheel stay in the panel.
+    TouchArea { }
+    VerticalLayout {
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 12px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            spacing: 12px;
+            Text {
+                text: StartData.model.detail-title;
+                color: Theme.text;
+                font-size: 15px;
+                font-weight: 650;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            Button {
+                icon: Icons.close;
+                compact: true;
+                y: (parent.height - self.height) / 2;
+                clicked => { StartData.toggle-details(); }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 16px;
+                spacing: 6px;
+                Text {
+                    text: lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 650;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    padding-bottom: 6px;
+                    if StartData.model.can-explore: Button {
+                        text: @tr("Explore");
+                        primary: true;
+                        compact: true;
+                        clicked => { StartData.open-area(StartData.model.area-index - 1); }
+                    }
+                    Button {
+                        text: @tr("Source graph");
+                        compact: true;
+                        clicked => { StartData.source-graph(); }
+                    }
+                }
+                for l in StartData.model.detail-lines: DetailLine {
+                    line: l;
+                    metric: root.metric;
+                    explore: root.lens == 1;
+                }
+            }
+        }
+    }
+}

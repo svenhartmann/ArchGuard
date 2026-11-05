@@ -1,0 +1,148 @@
+// Data of the Start tab, set from src/start_ui.rs as one StartModel.
+import { Theme } from "theme.slint";
+
+// tone: 0 accent, 1 muted, 2 cycle, 3 covered, 4 low, 5 medium, 6 high,
+// 7 rgb (measured complexity). shade > 0 lightens, < 0 darkens.
+export struct StartFace {
+    path: string,
+    tone: int,
+    rgb: color,
+    shade: float,
+    alpha: float,
+    stroke: bool,
+}
+
+export struct StartPlate {
+    path: string,
+    flagged: bool,
+}
+
+// x, y: top-left corner in canvas pixels; w: width (estimated in Rust).
+export struct StartPin {
+    area: int,
+    name: string,
+    module: bool,
+    entries: int,
+    cyclic: bool,
+    findings: int,
+    max: string,
+    x: float,
+    y: float,
+    w: float,
+}
+
+export struct StartCrumb {
+    label: string,
+    last: bool,
+}
+
+// One detail line; kind selects the template (src/start_ui/details.rs).
+export struct StartLine {
+    kind: int,
+    a: string,
+    b: string,
+    c: string,
+    entity: int,
+}
+
+export struct StartModel {
+    ready: bool,
+    empty: bool,
+    // 0 Problems, 1 Explore, 2 Test gaps; kpi 0 complexity, 1..6 CBO…LCOM4.
+    lens: int,
+    kpi: int,
+    crumbs: [StartCrumb],
+    can-back: bool,
+    // Status line.
+    cycle-groups: int,
+    coverage-known: bool,
+    gaps: int,
+    covered-lines: int,
+    total-lines: int,
+    top-value: string,
+    top-area: string,
+    // Scene in unit coordinates and the camera's viewbox onto it.
+    scene-key: string,
+    faces: [StartFace],
+    plates: [StartPlate],
+    lattice: string,
+    selection: string,
+    vb-x: float,
+    vb-y: float,
+    vb-w: float,
+    vb-h: float,
+    // Overlays in canvas pixels.
+    arrows: string,
+    heads: string,
+    leaders: string,
+    pins: [StartPin],
+    canvas-w: float,
+    canvas-h: float,
+    zoom: int,
+    angle: int,
+    bearing: string,
+    // Footer.
+    count: int,
+    tiles: int,
+    matching: int,
+    query: string,
+    areas: [string],
+    area-index: int,
+    // Detail panel.
+    has-selection: bool,
+    details-open: bool,
+    can-explore: bool,
+    detail-title: string,
+    detail-lines: [StartLine],
+}
+
+export global StartData {
+    in-out property <StartModel> model;
+    // First entry of the area picker, read by Rust.
+    out property <string> label-select-area: @tr("Select area…");
+
+    callback set-lens(int);
+    callback set-kpi(int);
+    callback go-back();
+    callback crumb(int);
+    callback open-area(int);
+    callback resized(float, float);
+    callback pan(float, float);
+    callback wheel(float, float, float);
+    callback zoom-by(float);
+    callback rotate-by(float);
+    callback orient();
+    callback fit();
+    callback reset();
+    callback search(string);
+    callback accept-search();
+    callback click(float, float);
+    callback double-click(float, float);
+    callback pick-area(int);
+    callback toggle-details();
+    callback pick-entity(int);
+    callback more();
+    callback source-graph();
+}
+
+export global StartTones {
+    // Overlays as the web's white and black alpha layers, in both themes.
+    out property <color> light: Theme.dark ? Theme.text : Theme.panel;
+    out property <color> shadow: Theme.dark ? Theme.accent-contrast : Theme.text;
+
+    public pure function tone(t: int, rgb: color) -> color {
+        return t == 0 ? Theme.accent : t == 1 ? Theme.muted : t == 2 ? Theme.cycle
+            : t == 3 || t == 4 ? Theme.low : t == 5 ? Theme.medium : t == 6 ? Theme.high : rgb;
+    }
+
+    public pure function fill(f: StartFace) -> color {
+        return f.shade >= 0
+            ? tone(f.tone, f.rgb).mix(Theme.panel, f.alpha).mix(light, 1 - f.shade)
+            : tone(f.tone, f.rgb).mix(Theme.panel, f.alpha).mix(shadow, 1 + f.shade);
+    }
+
+    public pure function kpi-label(k: int) -> string {
+        return k == 1 ? "CBO" : k == 2 ? "RFC" : k == 3 ? "DIT" : k == 4 ? "NOC"
+            : k == 5 ? "WMC" : k == 6 ? "LCOM4" : @tr("Complexity");
+    }
+}

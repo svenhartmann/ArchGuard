@@ -1,14 +1,237 @@
-// Start tab. Owned by the task that implements it: put its data in
-// StartData (set from src/start_ui.rs) and its layout in StartView.
-import { TabPlaceholder } from "widgets.slint";
+// Start tab: the web viewer's "Your architecture" world (#start-world in
+// viewer.html, viewer_world.js). Data and callbacks live in StartData, set
+// from src/start_ui.rs.
+import { ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, SearchField } from "widgets.slint";
+import { StartData, StartTones, StartModel } from "start_data.slint";
+import { StartStage } from "start_world.slint";
+import { StartDetails } from "start_details.slint";
 
-export global StartData {
+export { StartData }
+
+// A lens button: pressed reads inverted, as `.world-bar [aria-pressed]`.
+component LensButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked;
+    height: 32px;
+    width: label.preferred-width + 26px;
+    border-radius: Theme.radius-sm;
+    background: active ? Theme.text : t.has-hover ? Theme.panel-2 : transparent;
+    label := Text {
+        text: root.text;
+        color: active ? Theme.panel : Theme.text;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A legend entry; outline draws the swatch as a frame.
+component Legend inherits HorizontalLayout {
+    in property <string> text;
+    in property <brush> swatch;
+    in property <bool> outline;
+    in property <length> swatch-w: 10px;
+    horizontal-stretch: 0;
+    padding-left: 6px;
+    spacing: 7px;
+    Rectangle {
+        width: outline ? 16px : root.swatch-w;
+        height: 10px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 3px;
+        background: outline ? transparent : root.swatch;
+        border-width: outline ? 2px : 0;
+        border-color: Theme.cycle;
+    }
+    Text {
+        text: root.text;
+        color: Theme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
 }
 
 export component StartView inherits Rectangle {
     callback open-web();
-    TabPlaceholder {
-        title: @tr("Start");
-        open-web => { root.open-web(); }
+    property <StartModel> m: StartData.model;
+    property <string> metric: StartTones.kpi-label(m.kpi);
+    property <bool> help;
+    background: Theme.bg;
+
+    card := Rectangle {
+        x: 18px;
+        y: 18px;
+        width: parent.width - 36px;
+        height: parent.height - 36px;
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+        clip: true;
+
+        VerticalLayout {
+            HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 20px;
+                padding-bottom: 10px;
+                Text {
+                    text: @tr("Your architecture");
+                    color: Theme.text;
+                    font-size: 28px;
+                    font-weight: 550;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: "?";
+                    compact: true;
+                    pressed-state: root.help;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.help = !root.help; }
+                }
+            }
+            if root.help: Text {
+                x: 24px;
+                width: parent.width - 48px;
+                text: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match.");
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            // Lenses, metric and legend.
+            HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 8px;
+                LensButton { text: @tr("Problems"); active: m.lens == 0; clicked => { StartData.set-lens(0); } }
+                LensButton { text: @tr("Explore"); active: m.lens == 1; clicked => { StartData.set-lens(1); } }
+                LensButton { text: @tr("Test gaps"); active: m.lens == 2; clicked => { StartData.set-lens(2); } }
+                ComboBox {
+                    width: 140px;
+                    enabled: m.lens == 1;
+                    model: [@tr("Complexity"), "CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
+                    current-index: m.kpi;
+                    selected => { StartData.set-kpi(self.current-index); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if m.lens == 0: Legend { text: @tr("Cycle / finding"); outline: true; }
+                if m.lens == 0: Legend { text: @tr("Classes / files"); swatch: Theme.accent; }
+                if m.lens == 1 && m.kpi == 0: Legend {
+                    text: @tr("Low → high");
+                    swatch-w: 56px;
+                    swatch: @linear-gradient(90deg, #55c3ba 0%, #55c38e 14%, #55c362 29%, #74c355 43%, #a0c355 57%, #c3ba55 71%, #c38e55 86%, #c37155 100%);
+                }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Low"); swatch: Theme.low; }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Elevated"); swatch: Theme.medium; }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("High"); swatch: Theme.high; }
+                if m.lens == 1 && m.kpi == 4: Legend { text: @tr("Informational"); swatch: Theme.accent; }
+                if m.lens == 2: Legend { text: @tr("Test gaps"); swatch: Theme.cycle; }
+                if m.lens == 2: Legend { text: @tr("Covered"); swatch: Theme.low; }
+                if m.lens != 0: Legend { text: @tr("Unknown"); swatch: Theme.muted; }
+            }
+            // Back, package path and status.
+            HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 4px;
+                padding-bottom: 8px;
+                spacing: 4px;
+                LensButton { text: @tr("Back"); opacity: m.can-back ? 1 : 0.45; clicked => { StartData.go-back(); } }
+                for c[i] in m.crumbs: HorizontalLayout {
+                    spacing: 4px;
+                    if i > 0: Text { text: "/"; color: Theme.muted; vertical-alignment: center; }
+                    Rectangle {
+                        width: crumb.preferred-width + 14px;
+                        border-radius: 6px;
+                        background: !c.last && ct.has-hover ? Theme.panel-2 : transparent;
+                        crumb := Text {
+                            text: c.label;
+                            color: c.last ? Theme.text : Theme.accent;
+                            font-size: 14px;
+                            font-weight: c.last ? 600 : 400;
+                            vertical-alignment: center;
+                        }
+                        ct := TouchArea {
+                            enabled: !c.last;
+                            mouse-cursor: c.last ? MouseCursor.default : MouseCursor.pointer;
+                            clicked => { StartData.crumb(i); }
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: m.lens == 0 ? @tr("{} package cycle groups", m.cycle-groups)
+                        : m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {}/{} lines", m.gaps, m.covered-lines, m.total-lines) : @tr("Unknown · no usable coverage"))
+                        : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
+                        : @tr("Observed {} measurements", root.metric);
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            stage := StartStage {
+                vertical-stretch: 1;
+                if !m.ready: Text {
+                    text: @tr("Analyzing calls and classes …");
+                    color: Theme.muted;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            // Search, area picker, counts, details.
+            HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                spacing: 16px;
+                SearchField {
+                    width: 220px;
+                    placeholder: @tr("Search classes / files…");
+                    edited(t) => { StartData.search(t); }
+                    accepted => { StartData.accept-search(); }
+                }
+                ComboBox {
+                    width: 220px;
+                    model: m.areas;
+                    current-index: m.area-index;
+                    selected => { StartData.pick-area(self.current-index); }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: @tr("{} classes / files · {} surfaces", m.count, m.tiles) + (m.query != "" ? @tr(" · {} surfaces match", m.matching) : "");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: @tr("Details");
+                    enabled: m.has-selection;
+                    pressed-state: m.details-open;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { StartData.toggle-details(); }
+                }
+            }
+        }
+
+        if m.has-selection && m.details-open: StartDetails {
+            width: min(420px, card.width - 16px);
+            x: card.width - self.width;
+            y: stage.y;
+            height: card.height - stage.y;
+        }
     }
 }
