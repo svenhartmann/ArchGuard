@@ -196,12 +196,6 @@ msgstr "Methoden"
 msgid "Sort by"
 msgstr "Sortierung"
 
-msgid "Incoming"
-msgstr "Eingehend"
-
-msgid "Outgoing"
-msgstr "Ausgehend"
-
 msgid "Involved call sites"
 msgstr "Beteiligte Aufrufstellen"
 
@@ -255,9 +249,6 @@ msgstr "Keine gemessenen Methodenkörper in diesem Deklarationsumfang. Fehlende 
 
 msgid "No recorded call sites for this direction and these filters."
 msgstr "Keine erfassten Aufrufstellen für diese Richtung und diese Filter."
-
-msgid "Show next 20"
-msgstr "Nächste 20 anzeigen"
 
 msgid " · {} call sites"
 msgstr " · {} Aufrufstellen"
@@ -375,9 +366,6 @@ msgstr "Sprache"
 
 msgid "Package"
 msgstr "Paket"
-
-msgid "Search"
-msgstr "Suche"
 
 msgid "Filter type, module or function…"
 msgstr "Typ, Modul oder Funktion filtern…"

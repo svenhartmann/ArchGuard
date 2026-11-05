@@ -35,9 +35,6 @@ msgstr "Wirksamkeit der Tests"
 msgid "Code duplication"
 msgstr "Code-Duplikate"
 
-msgid "Search"
-msgstr "Suchen"
-
 msgid "Package or file"
 msgstr "Paket oder Datei"
 
@@ -79,9 +76,6 @@ msgstr "Zur Heatmap"
 
 msgid "Class"
 msgstr "Klasse"
-
-msgid "Show next 20"
-msgstr "Nächste 20 anzeigen"
 
 msgid "Show next 20 groups"
 msgstr "Nächste 20 Gruppen"

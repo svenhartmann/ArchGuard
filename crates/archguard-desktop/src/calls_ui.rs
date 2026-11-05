@@ -16,23 +16,19 @@ mod state;
 mod tree;
 mod view;
 
-use std::cell::RefCell;
 use std::path::Path;
 
 use archguard_engine::core::Config;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
 use state::{MEMBER_PAGE, Mode, PAGE, RANK_PAGE, TREE_PAGE, WITNESS_PAGE};
 
 pub use state::State as CallsState;
-
-thread_local! {
-    static STATE: RefCell<Option<CallsState>> = const { RefCell::new(None) };
-}
 
 /// Build the tab state for an analysis (runs the call analysis).
 pub fn build(data: &Loaded) -> CallsState {
@@ -48,9 +44,16 @@ fn build_from(root: &Path, config: &Config) -> CallsState {
 /// Fill the tab after an analysis finished. The call analysis runs on a
 /// worker thread; snapshot runs build it in place so the PNG shows it.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    // A document keeps its state; switching back only shows it again.
+    if documents::with_active_state(|s: &mut CallsState| push(ui, s)).is_some() {
+        return;
+    }
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     ui.global::<CallsData>().set_model(CallsModel::default());
     if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, build(data));
+        return install(ui, doc, build(data));
     }
     let (root, config) = (data.root.to_path_buf(), data.run.config.clone());
     let weak = ui.as_weak();
@@ -58,17 +61,19 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let state = build_from(&root, &config);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, state);
+                install(&ui, doc, state);
             }
         });
     });
 }
 
-fn install(ui: &AppWindow, mut state: CallsState) {
+/// Store the state for `doc`; show it only if `doc` is still active.
+fn install(ui: &AppWindow, doc: documents::DocId, mut state: CallsState) {
     state.labels = labels(ui);
     state.refresh();
-    push(ui, &state);
-    STATE.set(Some(state));
+    if documents::set_state(doc, state) {
+        documents::with_active_state(|s: &mut CallsState| push(ui, s));
+    }
 }
 
 fn labels(ui: &AppWindow) -> Labels {
@@ -106,12 +111,10 @@ fn action<A: 'static>(
     let w = ui.as_weak();
     move |arg| {
         let Some(ui) = w.upgrade() else { return };
-        STATE.with_borrow_mut(|s| {
-            if let Some(s) = s {
-                f(s, arg);
-                s.refresh();
-                push(&ui, s);
-            }
+        documents::with_active_state(|s: &mut CallsState| {
+            f(s, arg);
+            s.refresh();
+            push(&ui, s);
         });
     }
 }
