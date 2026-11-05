@@ -44,9 +44,15 @@ pub fn schedule(ui: &AppWindow) {
     }
     apply_view_hooks(ui);
     let weak = ui.as_weak();
-    slint::Timer::single_shot(std::time::Duration::from_millis(900), move || {
+    // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
+    // long without writing a PNG (for renderer measurements), then quit.
+    let hold = env::<u64>("ARCHGUARD_DESKTOP_HOLD");
+    let delay = hold.map_or(900, |s| s * 1000);
+    slint::Timer::single_shot(std::time::Duration::from_millis(delay), move || {
         let Some(ui) = weak.upgrade() else { return };
-        write_png(&ui, &path);
+        if hold.is_none() {
+            write_png(&ui, &path);
+        }
         let _ = slint::quit_event_loop();
     });
 }
