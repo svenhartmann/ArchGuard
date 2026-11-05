@@ -16,7 +16,7 @@ use crate::context::Loaded;
 use crate::documents;
 use crate::network;
 use crate::state::{self, GraphState};
-use crate::tree::{EdgeMode, Sort, Tree};
+use crate::tree::{EdgeMode, Sort};
 use crate::ui::*;
 use tab_support::{Actions, TabState, index};
 
@@ -99,7 +99,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     let run = data.run;
     let build = || {
         GraphState::with_review(
-            Tree::from_graph(&run.graph),
+            tab_support::tree(data),
             data.sources.clone(),
             run.config.review.entry_points.clone(),
         )

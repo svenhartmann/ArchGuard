@@ -7,6 +7,7 @@
 
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use archguard_engine::core::{CallAnalysis, Config, ServiceTopology};
@@ -14,6 +15,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::context::Loaded;
 use crate::documents::{self, DocId};
+use crate::tree::Tree;
 use crate::ui::AppWindow;
 
 /// One tab's state, kept per document in [`documents`].
@@ -100,6 +102,13 @@ pub fn index(i: i32) -> Option<usize> {
 /// place so the picture shows them.
 pub fn snapshot_mode() -> bool {
     cfg!(feature = "snapshot") && std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some()
+}
+
+/// The active document's package tree, built once for the Graph and Matrix
+/// tabs.
+pub fn tree(data: &Loaded) -> Rc<Tree> {
+    let build = || Rc::new(Tree::from_graph(&data.run.graph));
+    documents::with_active_state_or(build, |t: &mut Rc<Tree>| t.clone()).unwrap_or_else(build)
 }
 
 /// Show `node` (an index into the analysed graph's nodes) in the Graph tab.

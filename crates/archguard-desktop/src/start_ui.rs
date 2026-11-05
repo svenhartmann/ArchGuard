@@ -155,9 +155,9 @@ fn source_graph(s: &mut StartState, ui: &AppWindow) {
         .entity
         .map(|e| s.ev.entity(e).node.clone())
         .unwrap_or_else(|| s.scope.areas[sel.area].name.clone());
-    if let Some(&n) = s.tree_nodes.get(&name) {
-        ui.set_tab("graph".into());
-        ui.invoke_reveal(n as i32);
+    // Graph-tab nodes are the graph's nodes.
+    if let Some(n) = s.ev.graph.nodes.iter().position(|n| n.name == name) {
+        tab_support::reveal(ui, n);
     }
 }
 

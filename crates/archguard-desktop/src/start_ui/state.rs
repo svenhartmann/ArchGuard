@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 
-use crate::tree::Tree;
 
 use super::evidence::{self, Evidence, Scope};
 use super::layout::{self, Layout, Region};
@@ -37,8 +36,6 @@ pub(super) struct Visit {
 /// Everything the tab knows: the evidence and the viewer's position.
 pub struct StartState {
     pub(super) ev: Evidence,
-    /// Graph-tab tree position per node name ("Source graph").
-    pub(super) tree_nodes: HashMap<String, usize>,
     /// The scope of the overview (after skipping single-package chains).
     pub(super) home: Option<String>,
     pub(super) within: Option<String>,
@@ -60,15 +57,8 @@ pub struct StartState {
 }
 
 pub(super) fn from_evidence(ev: Evidence) -> StartState {
-    let tree_nodes = Tree::from_graph(&ev.graph)
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.name.clone(), i))
-        .collect();
     let mut s = StartState {
         ev,
-        tree_nodes,
         home: None,
         within: None,
         history: Vec::new(),

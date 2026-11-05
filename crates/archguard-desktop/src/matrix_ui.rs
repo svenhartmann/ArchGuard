@@ -6,10 +6,11 @@ use slint::{ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::graph_ui::tab_support::{Actions, TabState, index, model};
+use crate::graph_ui::tab_support::{self, Actions, TabState, index, model};
 use crate::matrix::{Matrix, Target};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
+use std::rc::Rc;
 
 /// Rows per page, as the web viewer's matrix.
 const PAGE: usize = 120;
@@ -17,7 +18,8 @@ const PAGE: usize = 120;
 const EVIDENCE: usize = 40;
 
 pub struct MatrixState {
-    tree: Tree,
+    /// Shared with the Graph tab of the same document.
+    tree: Rc<Tree>,
     project: String,
     /// `None`: project overview; else a package node.
     scope: Option<usize>,
@@ -33,7 +35,7 @@ pub struct MatrixState {
 }
 
 impl MatrixState {
-    fn new(tree: Tree, project: String) -> Self {
+    fn new(tree: Rc<Tree>, project: String) -> Self {
         let mut scopes: Vec<usize> = (0..tree.nodes.len())
             .filter(|&n| !tree.nodes[n].file)
             .collect();
@@ -69,7 +71,7 @@ impl MatrixState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     let project = ui.get_project().to_string();
     documents::with_active_state_or(
-        || MatrixState::new(Tree::from_graph(&data.run.graph), project),
+        || MatrixState::new(tab_support::tree(data), project),
         |m: &mut MatrixState| push(ui, m),
     );
 }

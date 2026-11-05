@@ -13,7 +13,6 @@ mod projection;
 mod view;
 mod visual;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use archguard_engine::core::{CallAnalysis, Config, Graph, Report};
@@ -22,7 +21,6 @@ use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
 use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
-use crate::tree::Tree;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
 use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};
@@ -39,8 +37,6 @@ pub struct ArchitectureState {
     deps: Vec<(usize, usize)>,
     calls: Vec<(usize, usize)>,
     calls_status: String,
-    /// Graph-tab tree position per node name ("Open in graph").
-    tree_nodes: HashMap<String, usize>,
     chapter: u8,
     /// Per map kind (dependencies, calls, cycles).
     maps: [MapState; 3],
@@ -58,12 +54,6 @@ fn build_from(
 ) -> ArchitectureState {
     let doc =
         archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
-    let tree_nodes = Tree::from_graph(&graph)
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.name.clone(), i))
-        .collect();
     let model = SourceModel::new(&graph);
     let chapter = match &doc {
         Ok(d) if !d.chapters.iter().any(|c| c.number == 5) => {
@@ -80,7 +70,6 @@ fn build_from(
         graph,
         doc,
         model,
-        tree_nodes,
         chapter,
         maps: Default::default(),
         saved: String::new(),
@@ -234,12 +223,8 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
     match map.action {
         Action::None => {}
         Action::OpenLevel(n) | Action::OpenPackage(n) => open_scope(s, kind, Some(n)),
-        Action::OpenInGraph(n) => {
-            if let Some(&t) = s.tree_nodes.get(&s.graph.nodes[n].name) {
-                ui.set_tab("graph".into());
-                ui.invoke_reveal(t as i32);
-            }
-        }
+        // Graph-tab nodes are the graph's nodes.
+        Action::OpenInGraph(n) => tab_support::reveal(ui, n),
     }
 }
 
