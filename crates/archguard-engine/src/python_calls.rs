@@ -1,6 +1,8 @@
-//! Syntax-only Python measurements from the standard `ast` module of the local
-//! Python 3. The bundled helper parses sources and never imports or executes
-//! project code. Calls and types stay unresolved, so the report is `partial`.
+//! Python measurements and static call targets from the standard `ast` module
+//! of the local Python 3. The bundled helper parses sources and never imports
+//! or executes project code. Calls are resolved only where imports and
+//! definitions bind them (rules in the helper's docstring); everything else is
+//! reported as `unresolved`. Types stay unresolved, so the report is `partial`.
 //! Counting rules mirror `rust_calls.rs` (`ast-decisions-v1`,
 //! `source-maintainability/v1`), mapped to Python in the helper's docstring.
 use std::ffi::{OsStr, OsString};
@@ -8,7 +10,8 @@ use std::path::Path;
 use std::process::Command;
 
 use archguard_core::{
-    CallAnalysis, CallAnalyzer, CallClass, CallMethod, Config, SemanticDetails, SourceMethodMetrics,
+    CallAnalysis, CallAnalyzer, CallClass, CallMethod, Config, MethodCall, SemanticDetails,
+    SourceMethodMetrics,
 };
 use archguard_extract::{Lang, strip_root};
 use serde::Deserialize;
@@ -18,7 +21,7 @@ const BACKEND: &str = "python ast";
 const HINT: &str = "Install Python 3.9+ or set ARCHGUARD_PYTHON to its executable.";
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
-const LIMITATION: &str = "Syntax-only analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod.";
+const LIMITATION: &str = "Syntax-only analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); calls on other values, rebound names and star imports stay unresolved. Types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod.";
 
 /// What the helper writes to stdout.
 #[derive(Deserialize)]
@@ -27,6 +30,7 @@ struct HelperOutput {
     classes: Vec<CallClass>,
     methods: Vec<CallMethod>,
     metrics: Vec<SourceMethodMetrics>,
+    calls: Vec<MethodCall>,
     diagnostics: Vec<String>,
 }
 
@@ -78,6 +82,7 @@ fn analyze_with(root: &Path, config: &Config, python: &OsStr) -> CallAnalysis {
         Err(error) => return unavailable(count, error),
     };
     diagnostics.extend(output.diagnostics);
+    diagnostics.push(coverage(&output.calls));
     diagnostics.push(LIMITATION.into());
     CallAnalysis {
         details: Some(SemanticDetails {
@@ -99,9 +104,21 @@ fn analyze_with(root: &Path, config: &Config, python: &OsStr) -> CallAnalysis {
         files: count,
         classes: output.classes,
         methods: output.methods,
-        calls: Vec::new(),
+        calls: output.calls,
         diagnostics,
     }
+}
+
+/// How many call sites the static resolver could attribute.
+fn coverage(calls: &[MethodCall]) -> String {
+    let count = |kind: &str| calls.iter().filter(|c| c.resolution == kind).count();
+    format!(
+        "Calls: {} sites, {} project, {} external, {} unresolved (dynamic receivers, call results, subscripts or rebound names).",
+        calls.len(),
+        count("project"),
+        count("external"),
+        count("unresolved")
+    )
 }
 
 /// Run the helper isolated (`-I -S`: no user site, no environment, no script
@@ -401,6 +418,270 @@ def helper():
             "{:?}",
             report.diagnostics
         );
+    }
+
+    /// The single call whose source text is `code`.
+    fn call<'a>(report: &'a CallAnalysis, code: &str) -> &'a archguard_core::MethodCall {
+        let found: Vec<_> = report.calls.iter().filter(|c| c.code == code).collect();
+        assert_eq!(found.len(), 1, "call {code}: {:#?}", report.calls);
+        found[0]
+    }
+    /// (resolution, dispatch, target method name) of the call `code`.
+    fn target(report: &CallAnalysis, code: &str) -> (String, String, Option<String>) {
+        let call = call(report, code);
+        let name = call.to_method.as_ref().map(|id| {
+            report
+                .methods
+                .iter()
+                .find(|m| &m.id == id)
+                .map_or_else(|| id.clone(), |m| m.name.clone())
+        });
+        (call.resolution.clone(), call.dispatch.clone(), name)
+    }
+    fn project(dispatch: &str, name: &str) -> (String, String, Option<String>) {
+        ("project".into(), dispatch.into(), Some(name.into()))
+    }
+
+    #[test]
+    fn resolves_calls_to_functions_in_the_same_module() {
+        let report = analyze(&[(
+            "app.py",
+            "def run():\n    return step(1)\n\ndef step(x):\n    return x\n\nrun()\n",
+        )]);
+        let edge = call(&report, "step(1)");
+        assert_eq!(target(&report, "step(1)"), project("static", "step"));
+        assert_eq!(edge.from_method.as_ref(), Some(&method(&report, "run").id));
+        assert_eq!(edge.to_class.as_deref(), Some("app.py::(module)"));
+        assert_eq!(
+            (edge.file.as_str(), edge.line, edge.column),
+            ("app.py", 2, 12)
+        );
+        assert_eq!(edge.target_label, "step");
+        // Module-level statements call from the module, not from a function.
+        let top = call(&report, "run()");
+        assert_eq!(
+            (top.from_class.as_str(), top.from_method.as_ref()),
+            ("app.py::(module)", None)
+        );
+        assert_eq!(top.resolution, "project");
+    }
+
+    #[test]
+    fn resolves_self_super_and_inherited_methods() {
+        let report = analyze(&[
+            (
+                "shop/base.py",
+                "class Base:\n    def __init__(self):\n        pass\n\n    def save(self):\n        return 1\n\n    def log(self):\n        return 2\n",
+            ),
+            (
+                "shop/order.py",
+                r#"
+from abc import ABC
+from shop.base import Base
+
+class Order(Base, ABC):
+    def __init__(self):
+        super().__init__()
+
+    def save(self):
+        self.log()
+        self.check()
+        return super().save()
+
+    def check(this):
+        return Order.make()
+
+    @staticmethod
+    def make():
+        return Order()
+"#,
+            ),
+        ]);
+        assert_eq!(
+            target(&report, "self.check()"),
+            project("instance", "check")
+        );
+        // Inherited from the project base class in another module.
+        let log = call(&report, "self.log()");
+        assert_eq!(log.to_class.as_deref(), Some("shop/base.py::Base"));
+        assert_eq!(log.resolution, "project");
+        let parent_save = call(&report, "super().save()");
+        assert_eq!(parent_save.to_class.as_deref(), Some("shop/base.py::Base"));
+        assert_eq!(parent_save.dispatch, "instance");
+        assert_eq!(
+            call(&report, "super().__init__()").to_class.as_deref(),
+            Some("shop/base.py::Base")
+        );
+        assert_eq!(target(&report, "Order.make()"), project("static", "make"));
+        // A constructor call targets the class and its own `__init__`.
+        let new = call(&report, "Order()");
+        assert_eq!(new.to_class.as_deref(), Some("shop/order.py::Order"));
+        assert_eq!(
+            target(&report, "Order()"),
+            project("constructor", "__init__")
+        );
+    }
+
+    #[test]
+    fn resolves_functions_imported_from_other_modules() {
+        let report = analyze(&[
+            ("pkg/__init__.py", "from .util import helper as exported\n"),
+            (
+                "pkg/util.py",
+                "def helper():\n    return 1\n\nclass Service:\n    pass\n",
+            ),
+            (
+                "pkg/app.py",
+                r#"
+import pkg.util
+import pkg.util as u
+from . import util
+from .util import helper, Service
+from pkg import exported
+
+def main():
+    helper()
+    util.helper()
+    u.helper()
+    pkg.util.helper()
+    exported()
+    return Service()
+"#,
+            ),
+        ]);
+        for code in [
+            "helper()",
+            "util.helper()",
+            "u.helper()",
+            "pkg.util.helper()",
+            "exported()",
+        ] {
+            assert_eq!(target(&report, code), project("static", "helper"), "{code}");
+            assert_eq!(
+                call(&report, code).to_class.as_deref(),
+                Some("pkg/util.py::(module)")
+            );
+        }
+        // No `__init__` of its own: the class itself is the target.
+        let new = call(&report, "Service()");
+        assert_eq!(
+            (
+                new.resolution.as_str(),
+                new.dispatch.as_str(),
+                new.to_class.as_deref(),
+                new.to_method.as_ref()
+            ),
+            ("project", "constructor", Some("pkg/util.py::Service"), None)
+        );
+    }
+
+    #[test]
+    fn dynamic_and_external_calls_are_reported_not_dropped() {
+        let report = analyze(&[(
+            "dyn.py",
+            r#"
+import os.path
+from json import loads
+
+def target():
+    pass
+
+def twice():
+    pass
+
+def twice():
+    pass
+
+def run(obj, name, handlers):
+    getattr(obj, name)()
+    obj.method()
+    handlers[0]()
+    target = obj
+    target()
+    twice()
+    loads("1")
+    os.path.join("a", "b")
+    return len(handlers)
+"#,
+        )]);
+        for code in [
+            "getattr(obj, name)()",
+            "obj.method()",
+            "handlers[0]()",
+            "target()",
+            "twice()",
+        ] {
+            let edge = call(&report, code);
+            assert_eq!(
+                (
+                    edge.resolution.as_str(),
+                    edge.dispatch.as_str(),
+                    edge.to_class.as_ref()
+                ),
+                ("unresolved", "unknown", None),
+                "{code}"
+            );
+        }
+        let external = call(&report, "loads(\"1\")");
+        assert_eq!(external.resolution, "external");
+        assert_eq!(external.to_method.as_deref(), Some("json::(module)#loads"));
+        assert_eq!(
+            call(&report, r#"os.path.join("a", "b")"#).resolution,
+            "external"
+        );
+        assert_eq!(
+            call(&report, "len(handlers)").to_class.as_deref(),
+            Some("builtins::(module)")
+        );
+        // `getattr(...)` itself is a builtin call; the call of its result is not.
+        assert_eq!(call(&report, "getattr(obj, name)").resolution, "external");
+        assert_eq!(report.status, "partial");
+        let coverage = "Calls: 9 sites, 0 project, 4 external, 5 unresolved";
+        assert!(
+            report.analyzers[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.starts_with(coverage)),
+            "{:?}",
+            report.analyzers[0].diagnostics
+        );
+    }
+
+    #[test]
+    fn unknown_bases_and_import_cycles_stay_unresolved() {
+        let report = analyze(&[
+            ("a.py", "from b import loop\n"),
+            ("b.py", "from a import loop\n"),
+            (
+                "c.py",
+                r#"
+from a import loop
+from django.views import View
+
+class Page(View):
+    def get(self):
+        self.render()
+        self.dispatch()
+        return loop()
+
+    def post(self):
+        self = None
+        return self.get()
+
+    def render(self):
+        pass
+"#,
+            ),
+        ]);
+        // Defined in the class itself: certain whatever the external base holds.
+        assert_eq!(
+            target(&report, "self.render()"),
+            project("instance", "render")
+        );
+        // May come from the external base (or be overridden there): unknown.
+        assert_eq!(target(&report, "self.dispatch()").0, "unresolved");
+        assert_eq!(target(&report, "loop()").0, "unresolved");
+        assert_eq!(target(&report, "self.get()").0, "unresolved");
     }
 
     #[test]

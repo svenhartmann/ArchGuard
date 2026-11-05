@@ -208,7 +208,8 @@
       {
         "backend": "python ast",
         "diagnostics": [
-          "Syntax-only analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
+          "Calls: 14 sites, 8 project, 4 external, 2 unresolved (dynamic receivers, call results, subscripts or rebound names).",
+          "Syntax-only analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); calls on other values, rebound names and star imports stay unresolved. Types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
         ],
         "files": 8,
         "language": "python",
@@ -218,9 +219,10 @@
       }
     ],
     "diagnostics": [
-      "python: Syntax-only analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
+      "python: Calls: 14 sites, 8 project, 4 external, 2 unresolved (dynamic receivers, call results, subscripts or rebound names).",
+      "python: Syntax-only analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); calls on other values, rebound names and star imports stay unresolved. Types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod."
     ],
-    "projected_calls": 0,
+    "projected_calls": 8,
     "projected_supertypes": 0,
     "projected_type_uses": 0,
     "skipped_project_calls": 0,

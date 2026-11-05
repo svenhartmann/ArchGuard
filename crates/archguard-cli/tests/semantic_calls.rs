@@ -48,10 +48,11 @@ fn calls_command_reports_python_syntax_measurements_as_partial() {
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    // Syntax only: measured functions, but no resolved calls are claimed.
+    // Static resolution: builtins are external, nothing is guessed.
     assert_eq!(result["status"], "partial");
     assert_eq!(result["analyzers"][0]["language"], "python");
     assert_eq!(result["methods"][0]["name"], "main");
     assert_eq!(result["methods"][0]["complexity"]["cyclomatic"], 2);
-    assert_eq!(result["calls"].as_array().unwrap().len(), 0);
+    assert_eq!(result["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(result["calls"][0]["resolution"], "external");
 }
