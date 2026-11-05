@@ -30,3 +30,11 @@ impl Analysis {
         }
     }
 }
+
+/// True for off-screen snapshot runs, which must not touch AppKit.
+pub fn headless_run() -> bool {
+    #[cfg(feature = "snapshot")]
+    return crate::headless::active();
+    #[cfg(not(feature = "snapshot"))]
+    false
+}

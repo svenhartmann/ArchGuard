@@ -11,6 +11,8 @@ mod context;
 mod documents;
 mod documents_ui;
 mod graph_ui;
+#[cfg(feature = "snapshot")]
+mod headless;
 mod matrix;
 mod matrix_ui;
 mod network;
@@ -36,8 +38,13 @@ use ui::*;
 
 fn main() -> Result<(), slint::PlatformError> {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    // Snapshot runs render off-screen: no window, no Dock icon.
+    #[cfg(feature = "snapshot")]
+    headless::install()?;
     let ui = AppWindow::new()?;
-    set_dock_icon();
+    if !context::headless_run() {
+        set_dock_icon();
+    }
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     shell_ui::start(&ui, args);

@@ -280,6 +280,9 @@ fn route_app_quit() {}
 fn patch_app_quit() {
     use objc2::{MainThreadMarker, sel};
     use objc2_app_kit::NSApplication;
+    if crate::context::headless_run() {
+        return;
+    }
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
