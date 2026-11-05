@@ -135,6 +135,8 @@ export struct CallsDeclaration {
 export struct CallsModel {
     // 0 analyzing, 1 ready.
     state: int,
+    // Why the analysis failed (state 0 shows it instead of the progress).
+    error: string,
     // Toolbar.
     languages: [string],
     language-index: int,

@@ -3,7 +3,7 @@
 //! viewer_call_cycles*.js, viewer_method_metrics.js). The snapshot comes
 //! from `archguard_engine::analyze_calls`, as in the CLI's report.
 //!
-//! All tab state is one [`CallsState`], built by [`build`] and shown by
+//! All tab state is one [`CallsState`], built by [`build_from`] and shown by
 //! [`push`] as one `CallsModel` value.
 
 mod actions;
@@ -16,13 +16,10 @@ mod state;
 mod tree;
 mod view;
 
-use std::path::Path;
-
-use archguard_engine::core::Config;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::documents;
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
@@ -30,50 +27,20 @@ use state::{MEMBER_PAGE, Mode, PAGE, RANK_PAGE, TREE_PAGE, WITNESS_PAGE};
 
 pub use state::State as CallsState;
 
-/// Build the tab state for an analysis (runs the call analysis).
-pub fn build(data: &Loaded) -> CallsState {
-    build_from(data.root, &data.run.config)
-}
-
-fn build_from(root: &Path, config: &Config) -> CallsState {
-    let mut s = CallsState::new(archguard_engine::analyze_calls(root, config));
+/// Build the tab state (runs the document's call analysis, or waits for it).
+fn build_from(calls: &Calls) -> CallsState {
+    let mut s = CallsState::new(calls.get());
     snapshot_overrides(&mut s);
     s
 }
 
-/// Fill the tab after an analysis finished. The call analysis runs on a
-/// worker thread; snapshot runs build it in place so the PNG shows it.
+/// Show the active document's tab. The call analysis runs once per
+/// document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut CallsState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    ui.global::<CallsData>().set_model(CallsModel::default());
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, doc, build(data));
-    }
-    let (root, config) = (data.root.to_path_buf(), data.run.config.clone());
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = build_from(&root, &config);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let calls = Calls::of(data);
+        move || build_from(&calls)
     });
-}
-
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, mut state: CallsState) {
-    state.labels = labels(ui);
-    state.refresh();
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut CallsState| push(ui, s));
-    }
 }
 
 fn labels(ui: &AppWindow) -> Labels {
@@ -102,60 +69,54 @@ pub fn push(ui: &AppWindow, s: &CallsState) {
         .set_model(view::fill(s, &ui_labels(ui)));
 }
 
-/// A callback that runs `f` on the tab state, applies the web's rules and
-/// refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut CallsState, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut CallsState| {
-            f(s, arg);
-            s.refresh();
-            push(&ui, s);
+impl TabState for CallsState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
+    }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        ui.global::<CallsData>().set_model(CallsModel {
+            error: error.unwrap_or_default().into(),
+            ..Default::default()
         });
     }
-}
 
-/// The same for a callback without argument.
-fn action0(ui: &AppWindow, f: impl Fn(&mut CallsState) + 'static) -> impl Fn() + 'static {
-    let a = action(ui, move |s, ()| f(s));
-    move || a(())
-}
+    /// Labels come from the window's language.
+    fn arrive(&mut self, ui: &AppWindow) {
+        self.labels = labels(ui);
+        self.refresh();
+    }
 
-fn index(i: i32) -> usize {
-    usize::try_from(i).unwrap_or(usize::MAX)
+    /// Apply the web's rules after a callback.
+    fn changed(&mut self) {
+        self.refresh();
+    }
 }
 
 /// Picker index → value; 0 is "All".
 fn pick(list: Vec<String>, i: i32) -> Option<String> {
     index(i)
-        .checked_sub(1)
+        .and_then(|i| i.checked_sub(1))
         .and_then(|i| list.into_iter().nth(i))
 }
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<CallsData>();
-    d.on_set_language(action(ui, |s, i: i32| {
+    let a = Actions::<CallsState>::new(ui);
+    d.on_set_language(a.on(|s, _, i: i32| {
         let language = pick(s.idx.languages(), i);
         actions::set_language(s, language);
     }));
-    d.on_set_package(action(ui, |s, i: i32| {
+    d.on_set_package(a.on(|s, _, i: i32| {
         let package = pick(s.idx.packages(s.filter.language.as_deref()), i);
         actions::set_package(s, package);
     }));
-    d.on_set_query(action(ui, |s, q: SharedString| {
-        actions::set_query(s, q.into())
-    }));
-    d.on_set_resolution(action(ui, |s, i: i32| {
-        actions::set_resolution(s, Resolution::from_index(i))
-    }));
-    d.on_toggle_internal(action0(ui, actions::toggle_internal));
-    d.on_toggle_analysis(action0(ui, |s| s.analysis_open = !s.analysis_open));
-    d.on_set_mode(action(ui, |s, i: i32| {
+    d.on_set_query(a.on(|s, _, q: SharedString| actions::set_query(s, q.into())));
+    d.on_set_resolution(a.on(|s, _, i: i32| actions::set_resolution(s, Resolution::from_index(i))));
+    d.on_toggle_internal(a.on0(|s, _| actions::toggle_internal(s)));
+    d.on_toggle_analysis(a.on0(|s, _| s.analysis_open = !s.analysis_open));
+    d.on_set_mode(a.on(|s, _, i: i32| {
         actions::set_mode(
             s,
             match i {
@@ -173,31 +134,45 @@ pub fn wire(ui: &AppWindow) {
 
 fn wire_tree(ui: &AppWindow) {
     let d = ui.global::<CallsData>();
-    d.on_tree_toggle(action(ui, |s, n: i32| actions::tree_toggle(s, index(n))));
-    d.on_tree_select(action(ui, |s, n: i32| actions::tree_select(s, index(n))));
-    d.on_tree_expand(action(ui, |s, all: bool| actions::tree_expand(s, all)));
-    d.on_tree_clear(action0(ui, |s| {
+    let a = Actions::<CallsState>::new(ui);
+    d.on_tree_toggle(a.on(|s, _, n: i32| {
+        if let Some(n) = index(n) {
+            actions::tree_toggle(s, n)
+        }
+    }));
+    d.on_tree_select(a.on(|s, _, n: i32| {
+        if let Some(n) = index(n) {
+            actions::tree_select(s, n)
+        }
+    }));
+    d.on_tree_expand(a.on(|s, _, all: bool| actions::tree_expand(s, all)));
+    d.on_tree_clear(a.on0(|s, _| {
         s.element = None;
         s.limit = PAGE;
         s.site_limit = PAGE;
     }));
-    d.on_tree_more(action0(ui, |s| s.tree_limit += TREE_PAGE));
-    d.on_select_relation(action(ui, |s, i: i32| {
-        if let Some(r) = s.view.relations.get(index(i)) {
+    d.on_tree_more(a.on0(|s, _| s.tree_limit += TREE_PAGE));
+    d.on_select_relation(a.on(|s, _, i: i32| {
+        if let Some(r) = index(i).and_then(|i| s.view.relations.get(i)) {
             let key = r.key.clone();
             actions::select_relation(s, key);
         }
     }));
-    d.on_relations_more(action0(ui, |s| s.limit += PAGE));
+    d.on_relations_more(a.on0(|s, _| s.limit += PAGE));
 }
 
 fn wire_rankings(ui: &AppWindow) {
     let d = ui.global::<CallsData>();
-    d.on_set_rank_method(action(ui, |s, m: bool| s.rank_method = m));
-    d.on_set_rank_sort(action(ui, |s, i: i32| s.rank_sort = Sort::from_index(i)));
-    d.on_rank_select(action(ui, |s, i: i32| actions::rank_select(s, index(i))));
-    d.on_rank_more(action0(ui, |s| s.rank_limit += RANK_PAGE));
-    d.on_toggle_rank_help(action0(ui, |s| s.rank_help = !s.rank_help));
+    let a = Actions::<CallsState>::new(ui);
+    d.on_set_rank_method(a.on(|s, _, m: bool| s.rank_method = m));
+    d.on_set_rank_sort(a.on(|s, _, i: i32| s.rank_sort = Sort::from_index(i)));
+    d.on_rank_select(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            actions::rank_select(s, i)
+        }
+    }));
+    d.on_rank_more(a.on0(|s, _| s.rank_limit += RANK_PAGE));
+    d.on_toggle_rank_help(a.on0(|s, _| s.rank_help = !s.rank_help));
 }
 
 fn cycle_kind(method: bool) -> ElementKind {
@@ -210,15 +185,18 @@ fn cycle_kind(method: bool) -> ElementKind {
 
 fn wire_cycles(ui: &AppWindow) {
     let d = ui.global::<CallsData>();
-    d.on_set_cycle_method(action(ui, |s, m: bool| {
-        actions::set_cycle_kind(s, cycle_kind(m))
+    let a = Actions::<CallsState>::new(ui);
+    d.on_set_cycle_method(a.on(|s, _, m: bool| actions::set_cycle_kind(s, cycle_kind(m))));
+    d.on_cycle_select(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            actions::cycle_select(s, i)
+        }
     }));
-    d.on_cycle_select(action(ui, |s, i: i32| actions::cycle_select(s, index(i))));
-    d.on_cycles_show_all(action0(ui, actions::cycles_show_all));
-    d.on_cycles_more(action0(ui, |s| s.cycle.groups += state::CYCLE_PAGE));
-    d.on_toggle_cycle_help(action0(ui, |s| s.cycle_help = !s.cycle_help));
-    d.on_path_select(action(ui, |s, i: i32| {
-        let i = index(i);
+    d.on_cycles_show_all(a.on0(|s, _| actions::cycles_show_all(s)));
+    d.on_cycles_more(a.on0(|s, _| s.cycle.groups += state::CYCLE_PAGE));
+    d.on_toggle_cycle_help(a.on0(|s, _| s.cycle_help = !s.cycle_help));
+    d.on_path_select(a.on(|s, _, i: i32| {
+        let Some(i) = index(i) else { return };
         let step = s
             .group()
             .and_then(|g| Some((g.witness.get(i)?.clone(), g.witness.get(i + 1)?.clone())));
@@ -226,49 +204,48 @@ fn wire_cycles(ui: &AppWindow) {
             actions::cycle_edge(s, &from, &to);
         }
     }));
-    d.on_path_more(action0(ui, |s| s.cycle.witness += WITNESS_PAGE));
-    d.on_member_select(action(ui, |s, i: i32| {
+    d.on_path_more(a.on0(|s, _| s.cycle.witness += WITNESS_PAGE));
+    d.on_member_select(a.on(|s, _, i: i32| {
         let kind = s.cycle_kind;
-        if let Some(id) = s.group().and_then(|g| g.members.get(index(i)).cloned()) {
+        if let Some(id) = index(i).and_then(|i| s.group()?.members.get(i).cloned()) {
             actions::open_in_tree(s, kind, &id);
             actions::select_element(s, kind, &id);
         }
     }));
-    d.on_members_more(action0(ui, |s| s.cycle.members += MEMBER_PAGE));
-    d.on_edge_select(action(ui, |s, i: i32| {
-        let edge = s
-            .view
-            .cycle_relations
-            .get(index(i))
+    d.on_members_more(a.on0(|s, _| s.cycle.members += MEMBER_PAGE));
+    d.on_edge_select(a.on(|s, _, i: i32| {
+        let edge = index(i)
+            .and_then(|i| s.view.cycle_relations.get(i))
             .and_then(|r| r.cycle.clone());
         if let Some((from, to)) = edge {
             actions::cycle_edge(s, &from, &to);
         }
     }));
-    d.on_edges_more(action0(ui, |s| s.cycle.edges += MEMBER_PAGE));
+    d.on_edges_more(a.on0(|s, _| s.cycle.edges += MEMBER_PAGE));
 }
 
 fn wire_evidence(ui: &AppWindow) {
     let d = ui.global::<CallsData>();
-    d.on_toggle_group(action(ui, |s, i: i32| {
+    let a = Actions::<CallsState>::new(ui);
+    d.on_toggle_group(a.on(|s, _, i: i32| {
         let Some(r) = s.view.selected.as_ref() else {
             return;
         };
         let groups = evidence::method_groups(r, &s.idx, s.site_limit);
-        let pos = index(i);
+        let Some(pos) = index(i) else { return };
         if let Some(g) = groups.get(pos) {
             let open = s.open_groups.get(&g.key).copied().unwrap_or(pos == 0);
             s.open_groups.insert(g.key.clone(), !open);
         }
     }));
-    d.on_sites_more(action0(ui, |s| s.site_limit += PAGE));
-    d.on_toggle_suggestion(action(ui, |s, i: i32| {
-        let i = index(i);
+    d.on_sites_more(a.on0(|s, _| s.site_limit += PAGE));
+    d.on_toggle_suggestion(a.on(|s, _, i: i32| {
+        let Some(i) = index(i) else { return };
         if !s.open_suggestions.remove(&i) {
             s.open_suggestions.insert(i);
         }
     }));
-    d.on_select_method(action(ui, |s, id: SharedString| {
+    d.on_select_method(a.on(|s, _, id: SharedString| {
         actions::select_element(s, ElementKind::Method, &id);
     }));
 }
@@ -308,6 +285,7 @@ fn snapshot_overrides(_: &mut CallsState) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn fixture(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -319,7 +297,7 @@ mod tests {
 
     fn state(root: &Path) -> CallsState {
         let loaded = archguard_engine::load_config(None, root).expect("config");
-        build_from(root, &loaded.config)
+        build_from(&Calls::unshared(root, &loaded.config))
     }
 
     /// The Python fixture resolves calls without an external compiler:

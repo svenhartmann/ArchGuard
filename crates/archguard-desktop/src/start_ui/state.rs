@@ -3,8 +3,6 @@
 
 use std::collections::HashMap;
 
-use crate::tree::Tree;
-
 use super::evidence::{self, Evidence, Scope};
 use super::layout::{self, Layout, Region};
 use super::scene::{self, Camera};
@@ -37,8 +35,6 @@ pub(super) struct Visit {
 /// Everything the tab knows: the evidence and the viewer's position.
 pub struct StartState {
     pub(super) ev: Evidence,
-    /// Graph-tab tree position per node name ("Source graph").
-    pub(super) tree_nodes: HashMap<String, usize>,
     /// The scope of the overview (after skipping single-package chains).
     pub(super) home: Option<String>,
     pub(super) within: Option<String>,
@@ -48,7 +44,9 @@ pub struct StartState {
     pub(super) kpi: usize,
     pub(super) cam: Camera,
     pub(super) selection: Option<Selection>,
-    /// Lower-case search term.
+    /// The search field's text, as typed.
+    pub(super) search: String,
+    /// Lower-case search term (`search`, trimmed).
     pub(super) query: String,
     /// Canvas size in pixels, reported by the view.
     pub(super) canvas: (f64, f64),
@@ -60,15 +58,8 @@ pub struct StartState {
 }
 
 pub(super) fn from_evidence(ev: Evidence) -> StartState {
-    let tree_nodes = Tree::from_graph(&ev.graph)
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.name.clone(), i))
-        .collect();
     let mut s = StartState {
         ev,
-        tree_nodes,
         home: None,
         within: None,
         history: Vec::new(),
@@ -76,6 +67,7 @@ pub(super) fn from_evidence(ev: Evidence) -> StartState {
         kpi: 0,
         cam: Camera::default(),
         selection: None,
+        search: String::new(),
         query: String::new(),
         canvas: (1200.0, 520.0),
         details_open: false,
@@ -215,9 +207,14 @@ impl StartState {
         self.cam = Camera::default();
         self.lens = Lens::Problems;
         self.kpi = 0;
-        self.query.clear();
+        self.set_search(String::new());
         self.details_open = false;
         self.refresh();
+    }
+
+    pub(super) fn set_search(&mut self, text: String) {
+        self.query = text.trim().to_lowercase();
+        self.search = text;
     }
 
     /// `worldMatches`: the class id or file name contains the term.

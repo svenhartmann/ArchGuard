@@ -3,7 +3,7 @@
 //! comes from `archguard_engine::arc42_document`, as in the CLI's report.
 //!
 //! All tab state is one [`ArchitectureState`] per document (in
-//! [`documents`]), built by [`build`] and shown by [`push`] as one
+//! [`documents`]), built by [`build_from`] and shown by [`push`] as one
 //! `ArchitectureModel` value.
 
 mod blocks;
@@ -13,16 +13,14 @@ mod projection;
 mod view;
 mod visual;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{Config, Graph, Report};
+use archguard_engine::core::{CallAnalysis, Config, Graph, Report};
 use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::documents;
-use crate::tree::Tree;
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
 use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};
@@ -39,8 +37,6 @@ pub struct ArchitectureState {
     deps: Vec<(usize, usize)>,
     calls: Vec<(usize, usize)>,
     calls_status: String,
-    /// Graph-tab tree position per node name ("Open in graph").
-    tree_nodes: HashMap<String, usize>,
     chapter: u8,
     /// Per map kind (dependencies, calls, cycles).
     maps: [MapState; 3],
@@ -48,26 +44,16 @@ pub struct ArchitectureState {
     saved: String,
 }
 
-/// Build the tab state for an analysis (writes the arc42 document).
-pub fn build(data: &Loaded) -> ArchitectureState {
-    build_from(
-        data.root,
-        &data.run.config,
-        data.run.graph.clone(),
-        &data.run.report,
-    )
-}
-
-fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> ArchitectureState {
+/// Build the tab state (writes the arc42 document, runs the call analysis).
+fn build_from(
+    root: &Path,
+    config: &Config,
+    graph: Graph,
+    report: &Report,
+    calls: &CallAnalysis,
+) -> ArchitectureState {
     let doc =
         archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
-    let calls = archguard_engine::analyze_calls(root, config);
-    let tree_nodes = Tree::from_graph(&graph)
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.name.clone(), i))
-        .collect();
     let model = SourceModel::new(&graph);
     let chapter = match &doc {
         Ok(d) if !d.chapters.iter().any(|c| c.number == 5) => {
@@ -78,13 +64,12 @@ fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> Ar
     let mut state = ArchitectureState {
         root: root.to_path_buf(),
         deps: projection::dependency_edges(&model, &graph),
-        calls: projection::call_edges(&graph, &calls),
-        calls_status: calls.status,
+        calls: projection::call_edges(&graph, calls),
+        calls_status: calls.status.clone(),
         has_model: config.architecture.model.is_some(),
         graph,
         doc,
         model,
-        tree_nodes,
         chapter,
         maps: Default::default(),
         saved: String::new(),
@@ -96,96 +81,60 @@ fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> Ar
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ArchitectureData>();
-    d.on_select_chapter(action(ui, |s, _, n: i32| {
+    let a = Actions::<ArchitectureState>::new(ui);
+    d.on_select_chapter(a.on(|s, _, n: i32| {
         s.chapter = u8::try_from(n).unwrap_or(5);
     }));
-    d.on_navigate(action(ui, |s, _, scope: i32| {
-        open_scope(s, Kind::Dependencies, usize::try_from(scope).ok());
+    d.on_navigate(a.on(|s, _, scope: i32| {
+        open_scope(s, Kind::Dependencies, index(scope));
     }));
-    d.on_scope_selected(action(ui, |s, ui, i: i32| {
+    d.on_scope_selected(a.on(|s, ui, i: i32| {
         let Some((kind, map)) = current(s, ui) else {
             return;
         };
-        let scope = usize::try_from(i)
-            .ok()
-            .and_then(|i| map.scopes.get(i).copied().flatten());
+        let scope = index(i).and_then(|i| map.scopes.get(i).copied().flatten());
         open_scope(s, kind, scope);
     }));
-    d.on_select_card(action(ui, select_card));
-    let more = action(ui, |s, _, ()| {
+    d.on_select_card(a.on(select_card));
+    d.on_more_relations(a.on0(|s, _| {
         if let Some(kind) = derived(s, s.chapter) {
             let state = &mut s.maps[kind as usize];
             state.relations = state.relations.max(RELATIONS_PAGE) + RELATIONS_PAGE;
         }
-    });
-    d.on_more_relations(move || more(()));
-    let act = action(ui, |s, ui, ()| card_action(s, ui));
-    d.on_card_action(move || act(()));
-    d.on_download(action(ui, |s, _, all: bool| download(s, all)));
-    d.on_plantuml(action(ui, |s, ui, unit: SharedString| {
-        plantuml(s, ui, &unit)
     }));
+    d.on_card_action(a.on0(card_action));
+    d.on_download(a.on(|s, _, all: bool| download(s, all)));
+    d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
 }
 
-/// A callback that runs `f` on the tab state and refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut ArchitectureState, &AppWindow, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut ArchitectureState| {
-            f(s, &ui, arg);
-            push(&ui, s);
-        });
+impl TabState for ArchitectureState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
+    }
+
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let mut m = ArchitectureModel::default();
+        if let Some(e) = error {
+            m.state = 2;
+            m.error = e.into();
+        }
+        ui.global::<ArchitectureData>().set_model(m);
     }
 }
 
 /// Show the active document's tab. Its state is built once per document,
-/// on a worker thread; snapshot runs build it in place so the PNG shows it.
+/// on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    if documents::with_active_state(|s: &mut ArchitectureState| push(ui, s)).is_some() {
-        return;
-    }
-    ui.global::<ArchitectureData>()
-        .set_model(ArchitectureModel::default());
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, doc, build(data));
-    }
-    // One worker per document, even if it is shown again meanwhile.
-    if documents::with_active_state(|_: &mut Building| ()).is_some() {
-        return;
-    }
-    documents::set_state(doc, Building);
-    let (root, config, graph, report) = (
-        data.root.to_path_buf(),
-        data.run.config.clone(),
-        data.run.graph.clone(),
-        data.run.report.clone(),
-    );
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let state = build_from(&root, &config, graph, &report);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, state);
-            }
-        });
+    tab_support::show_async(ui, || {
+        let calls = Calls::of(data);
+        let (root, config, graph, report) = (
+            data.root.to_path_buf(),
+            data.run.config.clone(),
+            data.run.graph.clone(),
+            data.run.report.clone(),
+        );
+        move || build_from(&root, &config, graph, &report, &calls.get())
     });
-}
-
-/// Marks a document whose state is being built on a worker thread.
-struct Building;
-
-/// Keep `state` for document `doc`; show it if that document is active.
-fn install(ui: &AppWindow, doc: documents::DocId, state: ArchitectureState) {
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut ArchitectureState| push(ui, s));
-    }
 }
 
 /// `ARCHGUARD_DESKTOP_CHAPTER=<n>` and `ARCHGUARD_DESKTOP_ARC_SCOPE=<package>`
@@ -258,7 +207,7 @@ fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
     let Some((kind, map)) = current(s, ui) else {
         return;
     };
-    let Some(node) = usize::try_from(i).ok().and_then(|i| map.shown.nodes.get(i)) else {
+    let Some(node) = index(i).and_then(|i| map.shown.nodes.get(i)) else {
         return;
     };
     let state = &mut s.maps[kind as usize];
@@ -274,12 +223,8 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
     match map.action {
         Action::None => {}
         Action::OpenLevel(n) | Action::OpenPackage(n) => open_scope(s, kind, Some(n)),
-        Action::OpenInGraph(n) => {
-            if let Some(&t) = s.tree_nodes.get(&s.graph.nodes[n].name) {
-                ui.set_tab("graph".into());
-                ui.invoke_reveal(t as i32);
-            }
-        }
+        // Graph-tab nodes are the graph's nodes.
+        Action::OpenInGraph(n) => tab_support::reveal(ui, n),
     }
 }
 
@@ -401,12 +346,8 @@ mod tests {
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
-        let sources = Default::default();
-        let state = build(&Loaded {
-            root: &root,
-            run: &run,
-            sources: &sources,
-        });
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let state = build_from(&root, &run.config, run.graph.clone(), &run.report, &calls);
         let doc = state.doc.as_ref().expect("arc42 document");
         assert_eq!(doc.chapters.len(), 12);
         assert_eq!(state.chapter, 5);

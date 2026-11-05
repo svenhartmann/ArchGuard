@@ -98,7 +98,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(a: CallAnalysis) -> Self {
+    pub fn new(a: impl Into<std::sync::Arc<CallAnalysis>>) -> Self {
         let idx = Index::new(a);
         let filter = Filter {
             package: idx.packages(None).into_iter().next(),

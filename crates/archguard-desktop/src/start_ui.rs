@@ -3,7 +3,7 @@
 //! surfaces, one per class or file, drawn in an isometric projection that
 //! is computed here ([`scene`]); Slint draws the resulting polygons.
 //!
-//! All tab state is one [`StartState`], built by [`build`] and shown by
+//! All tab state is one [`StartState`], built by [`Inputs::build`] and shown by
 //! [`push`] as one `StartModel` value.
 
 mod details;
@@ -14,10 +14,13 @@ mod scene;
 mod state;
 mod view;
 
+use std::path::PathBuf;
+
+use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::documents;
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use scene::Camera;
@@ -26,83 +29,107 @@ pub use state::{Lens, Selection, StartState};
 
 pub use view::push;
 
-/// Build the tab state for an analysis: the same engine calls as the
-/// CLI's report (`review_cmd.rs`).
-pub fn build(data: &Loaded) -> StartState {
-    let graph = data.run.graph.clone();
-    let calls = archguard_engine::analyze_calls(data.root, &data.run.config);
-    let coverage = archguard_engine::read_test_coverage(data.root, &data.run.config, &graph);
-    let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
-    let findings = data.run.report.findings.clone();
-    from_evidence(Evidence::new(graph, findings, &calls, world))
+/// What the tab's build needs, copied from an analysis.
+struct Inputs {
+    calls: Calls,
+    root: PathBuf,
+    config: Config,
+    graph: Graph,
+    findings: Vec<Finding>,
+}
+
+impl Inputs {
+    fn of(data: &Loaded) -> Self {
+        Inputs {
+            calls: Calls::of(data),
+            root: data.root.to_path_buf(),
+            config: data.run.config.clone(),
+            graph: data.run.graph.clone(),
+            findings: data.run.report.findings.clone(),
+        }
+    }
+
+    /// The tab state: the same engine calls as the CLI's report
+    /// (`review_cmd.rs`). Slow; runs on a worker thread.
+    fn build(self) -> StartState {
+        let Inputs {
+            calls,
+            root,
+            config,
+            graph,
+            findings,
+        } = self;
+        let calls = calls.get();
+        let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
+        let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
+        let mut state = from_evidence(Evidence::new(graph, findings, &calls, world));
+        snapshot_overrides(&mut state);
+        state
+    }
 }
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<StartData>();
-    d.on_set_lens(action(ui, |s, _, l: i32| {
+    let a = Actions::<StartState>::new(ui);
+    d.on_set_lens(a.on(|s, _, l: i32| {
         s.set_lens(match l {
             1 => Lens::Explore,
             2 => Lens::Coverage,
             _ => Lens::Problems,
         })
     }));
-    d.on_set_kpi(action(ui, |s, _, k: i32| s.set_kpi(k.max(0) as usize)));
-    d.on_go_back(action0(ui, |s, _| s.back()));
-    d.on_crumb(action(ui, |s, ui, i: i32| {
+    d.on_set_kpi(a.on(|s, _, k: i32| s.set_kpi(index(k).unwrap_or(0))));
+    d.on_go_back(a.on0(|s, _| s.back()));
+    d.on_crumb(a.on(|s, ui, i: i32| {
         let crumbs = s.crumbs(&ui.get_project());
-        if let Some((_, scope)) = usize::try_from(i).ok().and_then(|i| crumbs.get(i)) {
+        if let Some((_, scope)) = index(i).and_then(|i| crumbs.get(i)) {
             s.navigate(scope.clone());
         }
     }));
-    d.on_open_area(action(ui, |s, _, a: i32| s.open_area(a.max(0) as usize)));
-    d.on_resized(action2(ui, |s, w: f32, h: f32| {
-        s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))
-    }));
-    d.on_pan(action2(ui, |s, dx: f32, dy: f32| {
+    d.on_open_area(a.on(|s, _, i: i32| s.open_area(index(i).unwrap_or(0))));
+    d.on_resized(
+        a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
+    );
+    d.on_pan(a.on2(|s, _, dx: f32, dy: f32| {
         s.cam.x += f64::from(dx);
         s.cam.y += f64::from(dy);
     }));
-    let wheel = action(ui, |s, _, (x, y, delta): (f32, f32, f32)| {
+    let wheel = a.on(|s, _, (x, y, delta): (f32, f32, f32)| {
         let delta = f64::from(delta).clamp(-180.0, 180.0);
         s.wheel(f64::from(x), f64::from(y), (delta * 0.005).exp())
     });
     d.on_wheel(move |x, y, delta| wheel((x, y, delta)));
-    d.on_zoom_by(action(ui, |s, _, f: f32| {
-        s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))
-    }));
-    d.on_rotate_by(action(ui, |s, _, r: f32| {
-        s.cam = scene::rotate(s.cam, f64::from(r))
-    }));
-    d.on_orient(action0(ui, |s, _| s.cam.rotation = 0.0));
-    d.on_fit(action0(ui, |s, _| {
+    d.on_zoom_by(a.on(|s, _, f: f32| s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))));
+    d.on_rotate_by(a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r))));
+    d.on_orient(a.on0(|s, _| s.cam.rotation = 0.0));
+    d.on_fit(a.on0(|s, _| {
         s.cam = Camera {
             rotation: s.cam.rotation,
             ..Camera::default()
         }
     }));
-    d.on_reset(action0(ui, |s, _| s.reset()));
+    d.on_reset(a.on0(|s, _| s.reset()));
     wire_selection(ui, &d);
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
-    d.on_search(action(ui, |s, _, q: slint::SharedString| {
-        s.query = q.trim().to_lowercase()
-    }));
-    d.on_accept_search(action0(ui, |s, _| s.accept_search()));
-    d.on_click(action2(ui, |s, x: f32, y: f32| {
+    let a = Actions::<StartState>::new(ui);
+    d.on_search(a.on(|s, _, q: slint::SharedString| s.set_search(q.into())));
+    d.on_accept_search(a.on0(|s, _| s.accept_search()));
+    d.on_click(a.on2(|s, _, x: f32, y: f32| {
         if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
             s.select_cell(c);
         }
     }));
-    d.on_double_click(action2(ui, |s, x: f32, y: f32| {
+    d.on_double_click(a.on2(|s, _, x: f32, y: f32| {
         if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
             s.open_area(s.layout.cells[c].area);
         }
     }));
-    d.on_pick_area(action(ui, |s, _, i: i32| {
-        s.selection = usize::try_from(i - 1)
-            .ok()
+    d.on_pick_area(a.on(|s, _, i: i32| {
+        // Entry 0 is "Select area…".
+        s.selection = index(i - 1)
             .filter(|&a| a < s.scope.areas.len())
             .map(|area| Selection {
                 area,
@@ -110,17 +137,15 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
                 members: None,
             });
     }));
-    d.on_toggle_details(action0(ui, |s, _| {
-        s.details_open = !s.details_open && s.selection.is_some()
-    }));
-    d.on_pick_entity(action(ui, |s, _, e: i32| {
-        if let (Some(sel), Ok(e)) = (&mut s.selection, usize::try_from(e)) {
+    d.on_toggle_details(a.on0(|s, _| s.details_open = !s.details_open && s.selection.is_some()));
+    d.on_pick_entity(a.on(|s, _, e: i32| {
+        if let (Some(sel), Some(e)) = (&mut s.selection, index(e)) {
             sel.entity = Some(e);
             s.limit = 20;
         }
     }));
-    d.on_more(action0(ui, |s, _| s.limit += 20));
-    d.on_source_graph(action0(ui, source_graph));
+    d.on_more(a.on0(|s, _| s.limit += 20));
+    d.on_source_graph(a.on0(source_graph));
 }
 
 /// "Source graph": reveal the selection in the Graph tab.
@@ -130,96 +155,45 @@ fn source_graph(s: &mut StartState, ui: &AppWindow) {
         .entity
         .map(|e| s.ev.entity(e).node.clone())
         .unwrap_or_else(|| s.scope.areas[sel.area].name.clone());
-    if let Some(&n) = s.tree_nodes.get(&name) {
-        ui.set_tab("graph".into());
-        ui.invoke_reveal(n as i32);
+    // Graph-tab nodes are the graph's nodes.
+    if let Some(n) = s.ev.graph.nodes.iter().position(|n| n.name == name) {
+        tab_support::reveal(ui, n);
     }
 }
 
-/// A callback that runs `f` on the tab state and refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut StartState, &AppWindow, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut StartState| {
-            f(s, &ui, arg);
-            push(&ui, s);
+impl TabState for StartState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
+    }
+
+    /// Keeps the canvas size the view reported.
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        let d = ui.global::<StartData>();
+        let old = d.get_model();
+        d.set_model(StartModel {
+            canvas_w: old.canvas_w,
+            canvas_h: old.canvas_h,
+            error: error.unwrap_or_default().into(),
+            ..Default::default()
         });
     }
+
+    /// The view may have reported its size before the state existed.
+    fn arrive(&mut self, ui: &AppWindow) {
+        let m = ui.global::<StartData>().get_model();
+        if m.canvas_w > 1.0 && m.canvas_h > 1.0 {
+            self.canvas = (f64::from(m.canvas_w), f64::from(m.canvas_h));
+        }
+    }
 }
 
-fn action0(
-    ui: &AppWindow,
-    f: impl Fn(&mut StartState, &AppWindow) + 'static,
-) -> impl Fn() + 'static {
-    let g = action(ui, move |s, ui, ()| f(s, ui));
-    move || g(())
-}
-
-fn action2<A: 'static, B: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut StartState, A, B) + 'static,
-) -> impl Fn(A, B) + 'static {
-    let g = action(ui, move |s, _, (a, b)| f(s, a, b));
-    move |a, b| g((a, b))
-}
-
-/// Fill the tab after an analysis finished. The call analysis runs on a
-/// worker thread; snapshot runs build in place so the PNG shows the world.
+/// Show the active document's tab. Its world is built once per document,
+/// on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
-    // A document keeps its state; switching back only shows it again.
-    if documents::with_active_state(|s: &mut StartState| push(ui, s)).is_some() {
-        return;
-    }
-    let Some(doc) = documents::active_id() else {
-        return;
-    };
-    let d = ui.global::<StartData>();
-    let old = d.get_model();
-    d.set_model(StartModel {
-        canvas_w: old.canvas_w,
-        canvas_h: old.canvas_h,
-        ..Default::default()
+    tab_support::show_async(ui, || {
+        let inputs = Inputs::of(data);
+        move || inputs.build()
     });
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        let mut state = build(data);
-        snapshot_overrides(&mut state);
-        return install(ui, doc, state);
-    }
-    let (root, config, graph, findings) = (
-        data.root.to_path_buf(),
-        data.run.config.clone(),
-        data.run.graph.clone(),
-        data.run.report.findings.clone(),
-    );
-    let weak = ui.as_weak();
-    std::thread::spawn(move || {
-        let calls = archguard_engine::analyze_calls(&root, &config);
-        let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
-        let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
-        let ev = Evidence::new(graph, findings, &calls, world);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, from_evidence(ev));
-            }
-        });
-    });
-}
-
-/// Store the state for `doc`; show it only if `doc` is still active.
-fn install(ui: &AppWindow, doc: documents::DocId, state: StartState) {
-    // The view may have reported its size before the state existed.
-    let m = ui.global::<StartData>().get_model();
-    let mut state = state;
-    if m.canvas_w > 1.0 && m.canvas_h > 1.0 {
-        state.canvas = (f64::from(m.canvas_w), f64::from(m.canvas_h));
-    }
-    if documents::set_state(doc, state) {
-        documents::with_active_state(|s: &mut StartState| push(ui, s));
-    }
 }
 
 /// `ARCHGUARD_DESKTOP_WORLD=<package>`, `ARCHGUARD_DESKTOP_LENS=<0..2>`,
@@ -272,11 +246,12 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let sources = Default::default();
-        build(&Loaded {
+        Inputs::of(&Loaded {
             root: &root,
             run: &run,
             sources: &sources,
         })
+        .build()
     }
 
     /// This repository (source root `crates`): every crate is a
@@ -348,7 +323,8 @@ mod tests {
         assert_eq!(s.lens, Lens::Explore);
         assert!(s.kpi_active());
         assert_eq!(s.layout.cells.len(), count);
-        s.query = "start_ui".into();
+        s.set_search(" Start_UI".into());
+        assert_eq!(s.query, "start_ui");
         s.accept_search();
         let sel = s.selection.clone().expect("a match");
         assert!(s.scope.areas[sel.area].name.ends_with("archguard-desktop"));
@@ -358,6 +334,7 @@ mod tests {
         assert_eq!(s.details_open, sel.entity.is_some() || !module);
         s.reset();
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
+        assert_eq!(s.search, "");
         assert_eq!(s.selection, None);
     }
 }

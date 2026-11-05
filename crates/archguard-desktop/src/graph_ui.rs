@@ -1,69 +1,53 @@
 //! Graph tab: tree, network and dependency displays of one
 //! [`GraphState`] per document (in [`documents`]).
 
+// The helpers all tabs share. They belong to the crate root, but `main.rs`
+// is the window shell's; declared in `context.rs` they would close the
+// cycle context -> tab_support -> documents -> context.
+#[path = "tab_support.rs"]
+pub mod tab_support;
+
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use archguard_engine::core::ReviewPriority;
-use slint::{ModelRc, VecModel};
+use slint::{ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
 use crate::network;
 use crate::state::{self, GraphState};
-use crate::tree::{EdgeMode, Sort, Tree};
+use crate::tree::{EdgeMode, Sort};
 use crate::ui::*;
+use tab_support::{Actions, TabState, index};
 
-/// Run `f` on the active document's graph state and push the Graph tab.
-fn update(ui: &AppWindow, f: impl FnOnce(&mut GraphState)) {
-    documents::with_active_state(|g: &mut GraphState| {
-        f(g);
-        push_graph(ui, g);
-    });
-}
-
-/// A callback that runs `f` on the graph state and refreshes the window.
-fn graph_action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut GraphState, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |a| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |g| f(g, a));
-        }
+impl TabState for GraphState {
+    fn push(&mut self, ui: &AppWindow) {
+        push_graph(ui, self);
     }
 }
 
 fn node_of_row(g: &GraphState, r: i32) -> Option<usize> {
-    usize::try_from(r)
-        .ok()
-        .and_then(|r| g.view.rows.get(r))
-        .map(|r| r.node)
+    index(r).and_then(|r| g.view.rows.get(r)).map(|r| r.node)
 }
 
 /// Register the Graph tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
-    ui.on_select_row(graph_action(ui, |g, r: i32| {
-        g.select_row(usize::try_from(r).ok())
-    }));
-    ui.on_toggle_row(graph_action(ui, |g, r: i32| {
-        g.toggle_row(r.max(0) as usize)
-    }));
-    let expand = graph_action(ui, |g, ()| g.expand_all());
-    ui.on_expand_all(move || expand(()));
-    let collapse = graph_action(ui, |g, ()| g.collapse_all());
-    ui.on_collapse_all(move || collapse(()));
-    let reset = graph_action(ui, |g, ()| g.reset());
-    ui.on_reset_tree(move || reset(()));
-    ui.on_reveal(graph_action(ui, |g, n: i32| g.reveal(n.max(0) as usize)));
-    ui.on_open_node(graph_action(ui, |g, n: i32| g.open(n.max(0) as usize)));
-    ui.on_open_row(graph_action(ui, |g, r: i32| {
+    let a = Actions::<GraphState>::new(ui);
+    ui.on_select_row(a.on(|g, _, r: i32| g.select_row(index(r))));
+    ui.on_toggle_row(a.on(|g, _, r: i32| g.toggle_row(index(r).unwrap_or(0))));
+    ui.on_expand_all(a.on0(|g, _| g.expand_all()));
+    ui.on_collapse_all(a.on0(|g, _| g.collapse_all()));
+    ui.on_reset_tree(a.on0(|g, _| g.reset()));
+    ui.on_reveal(a.on(|g, _, n: i32| g.reveal(index(n).unwrap_or(0))));
+    ui.on_open_node(a.on(|g, _, n: i32| g.open(index(n).unwrap_or(0))));
+    ui.on_open_row(a.on(|g, _, r: i32| {
         if let Some(node) = node_of_row(g, r) {
             g.open(node);
         }
     }));
-    ui.on_set_edge_mode(graph_action(ui, |g, m: i32| g.mode = edge_mode(m)));
-    ui.on_set_sort(graph_action(ui, |g, by_deps: bool| {
+    ui.on_set_edge_mode(a.on(|g, _, m: i32| g.mode = edge_mode(m)));
+    ui.on_set_sort(a.on(|g, _, by_deps: bool| {
         g.set_sort(if by_deps {
             Sort::Connections
         } else {
@@ -73,19 +57,36 @@ pub fn wire(ui: &AppWindow) {
     wire_search(ui);
 }
 
+thread_local! {
+    /// The header search field's text. The field belongs to the window, not
+    /// to a document; a switch searches the new document for it.
+    static SEARCH: RefCell<SharedString> = RefCell::default();
+}
+
 fn wire_search(ui: &AppWindow) {
     let w = ui.as_weak();
     ui.on_search(move |q| {
         let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|g: &mut GraphState| {
-            ui.set_searching(!q.trim().is_empty());
-            ui.set_hits(vec_model(g.search(&q, 300).into_iter().map(|h| Hit {
+        SEARCH.set(q);
+        push_hits(&ui);
+    });
+}
+
+/// Hits of the header search in the active document.
+fn push_hits(ui: &AppWindow) {
+    let q = SEARCH.with_borrow(Clone::clone);
+    let hits = documents::with_active_state(|g: &mut GraphState| {
+        g.search(&q, 300)
+            .into_iter()
+            .map(|h| Hit {
                 node: h.node as i32,
                 label: h.label.into(),
                 scope: h.scope.into(),
-            })));
-        });
+            })
+            .collect::<Vec<_>>()
     });
+    ui.set_searching(!q.trim().is_empty());
+    ui.set_hits(vec_model(hits.unwrap_or_default()));
 }
 
 fn edge_mode(m: i32) -> EdgeMode {
@@ -108,16 +109,15 @@ fn mode_index(m: EdgeMode) -> i32 {
     }
 }
 
-pub fn vec_model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
-}
+/// For `documents_ui`, which imports the list model from here.
+pub use tab_support::model as vec_model;
 
 /// Show the active document's Graph tab, building its state on first use.
 pub fn show(ui: &AppWindow, data: &Loaded) {
     let run = data.run;
     let build = || {
         GraphState::with_review(
-            Tree::from_graph(&run.graph),
+            tab_support::tree(data),
             data.sources.clone(),
             run.config.review.entry_points.clone(),
         )
@@ -133,8 +133,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         )));
         push_graph(ui, g);
     });
-    ui.set_searching(false);
-    ui.set_hits(ModelRc::default());
+    push_hits(ui);
 }
 
 /// The tree node named `name` in the active document (snapshot hooks).

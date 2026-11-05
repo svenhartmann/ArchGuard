@@ -2,6 +2,7 @@
 //! mode, search and the lists derived from them.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use archguard_engine::core::{Finding, FindingKind};
 
@@ -31,7 +32,8 @@ pub struct Neighbor {
 }
 
 pub struct GraphState {
-    pub tree: Tree,
+    /// Shared with the Matrix tab of the same document.
+    pub tree: Rc<Tree>,
     pub expanded: BTreeSet<usize>,
     pub view: TreeView,
     /// Selected tree node (not row: rows move when branches open).
@@ -48,11 +50,11 @@ pub struct GraphState {
 impl GraphState {
     #[cfg(test)]
     pub fn new(tree: Tree) -> Self {
-        Self::with_review(tree, ReviewSources::default(), Vec::new())
+        Self::with_review(Rc::new(tree), ReviewSources::default(), Vec::new())
     }
 
     pub fn with_review(
-        tree: Tree,
+        tree: Rc<Tree>,
         review_sources: ReviewSources,
         entry_points: Vec<String>,
     ) -> Self {

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use archguard_engine::core::{Config, Graph, NodeKind, ReviewSources};
+use archguard_engine::core::{CallAnalysis, Config, Graph, NodeKind, ReviewSources};
 use archguard_engine::{
     CodeMetricsReport, CohesionReport, DuplicationReport, KnowledgeReport, MeasurementReport,
     MutationReport, QualityHistoryReport, TestEvidenceReport,
@@ -57,10 +57,15 @@ pub fn source(graph: &Graph, sources: &ReviewSources) -> Source {
 }
 
 impl Inputs {
-    /// Runs the call analysis and reads Git and imported evidence; slow
-    /// (seconds), so the window calls it on a worker thread.
-    pub fn compute(root: &Path, graph: &Graph, config: &Config, sources: &ReviewSources) -> Self {
-        let calls = archguard_engine::analyze_calls(root, config);
+    /// Reads Git and imported evidence; slow (seconds), so the window
+    /// calls it on a worker thread.
+    pub fn compute(
+        root: &Path,
+        graph: &Graph,
+        config: &Config,
+        sources: &ReviewSources,
+        calls: &CallAnalysis,
+    ) -> Self {
         let options = archguard_engine::CoChangeOptions {
             since: config.review.git_since.clone(),
             ..Default::default()
@@ -68,7 +73,7 @@ impl Inputs {
         let co_change = archguard_engine::co_change(root, config, graph, &options).ok();
         Inputs {
             source: source(graph, sources),
-            code: archguard_engine::code_metrics(&calls),
+            code: archguard_engine::code_metrics(calls),
             knowledge: archguard_engine::knowledge_metrics(root, config, graph).ok(),
             measurements: archguard_engine::read_measurement_runs(root),
             cohesion: archguard_engine::analyze_cohesion(graph, co_change.as_ref()),

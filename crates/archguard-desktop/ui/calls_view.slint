@@ -60,6 +60,8 @@ component Toolbar inherits Rectangle {
             label: @tr("Search");
             width: 200px;
             search := SearchField {
+                // Initial value: a recreated view shows the kept query.
+                text: root.query;
                 placeholder: @tr("Filter type, module or function…");
                 edited(t) => { CallsData.set-query(t); }
             }
@@ -189,7 +191,7 @@ export component CallsView inherits Rectangle {
     preferred-height: 860px;
 
     if CallsData.model.state == 0: Text {
-        text: @tr("Analyzing calls …");
+        text: CallsData.model.error != "" ? CallsData.model.error : @tr("Analyzing calls …");
         color: Theme.muted;
         font-size: 14px;
         horizontal-alignment: center;

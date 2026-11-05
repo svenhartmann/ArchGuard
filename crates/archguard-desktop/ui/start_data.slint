@@ -47,6 +47,8 @@ export struct StartLine {
 
 export struct StartModel {
     ready: bool,
+    // Why the world could not be built (shown instead of the progress).
+    error: string,
     empty: bool,
     // 0 Problems, 1 Explore, 2 Test gaps; kpi 0 complexity, 1..6 CBO…LCOM4.
     lens: int,
@@ -86,6 +88,8 @@ export struct StartModel {
     tiles: int,
     matching: int,
     query: string,
+    // The search field's text as typed (`query` is its lower-case term).
+    search: string,
     areas: [string],
     area-index: int,
     // Detail panel.

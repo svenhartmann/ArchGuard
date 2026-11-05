@@ -27,6 +27,9 @@ export struct QualityModel {
     cards: [QualityCard],
     more: bool,
     empty: string,
+    // The search fields' texts, kept across a recreated view.
+    query: string,
+    target-query: string,
 }
 
 export global QualityData {
@@ -134,6 +137,7 @@ export component QualityView inherits Rectangle {
                 SearchField {
                     width: 160px;
                     height: 32px;
+                    text: root.m.query;
                     edited(t) => { QualityData.query(t); }
                 }
             }
@@ -150,6 +154,7 @@ export component QualityView inherits Rectangle {
                 Text { text: @tr("Package or file"); color: Theme.text; font-size: 12px; }
                 SearchField {
                     width: 320px;
+                    text: root.m.target-query;
                     placeholder: @tr("Find package or file");
                     edited(t) => { QualityData.target-query(t); }
                 }

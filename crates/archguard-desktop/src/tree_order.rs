@@ -66,7 +66,7 @@ fn group_edges(
 }
 
 /// Siblings in dependency construction order: strongly connected groups
-/// (Kosaraju), dependents before their dependencies by longest path,
+/// ([`scc`]), dependents before their dependencies by longest path,
 /// ties alphabetical — the web viewer's sibling order before searching.
 fn construction_order(
     children: &mut Children,
@@ -88,23 +88,33 @@ pub(crate) fn level_order(
     pairs: &[(usize, usize)],
     rank: &BTreeMap<usize, usize>,
 ) -> Vec<usize> {
-    let member: BTreeSet<usize> = siblings.iter().copied().collect();
+    let pos: BTreeMap<usize, usize> = siblings.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     let mut adjacent: BTreeMap<usize, BTreeSet<usize>> =
         siblings.iter().map(|&s| (s, BTreeSet::new())).collect();
-    let mut reverse = adjacent.clone();
     for &(a, b) in pairs {
-        if member.contains(&a) && member.contains(&b) {
+        if pos.contains_key(&a) && pos.contains_key(&b) {
             adjacent.get_mut(&a).map(|s| s.insert(b));
-            reverse.get_mut(&b).map(|s| s.insert(a));
         }
     }
-    let by_rank = |set: &BTreeSet<usize>| {
-        let mut v: Vec<usize> = set.iter().copied().collect();
-        v.sort_by_key(|n| rank[n]);
-        v
-    };
-    let finish = kosaraju_finish(siblings, &adjacent, &by_rank);
-    let (groups, assigned) = kosaraju_groups(&finish, &reverse, rank);
+    // The web finds the groups with an iterative Kosaraju (to spare the JS
+    // stack); the order below depends only on the groups, not on the order
+    // in which they are found.
+    let local = adjacent
+        .iter()
+        .flat_map(|(a, bs)| bs.iter().map(|b| (pos[a], pos[b])));
+    let groups: Vec<Vec<usize>> = scc(siblings.len(), local)
+        .into_iter()
+        .map(|c| {
+            let mut g: Vec<usize> = c.into_iter().map(|i| siblings[i]).collect();
+            g.sort_by_key(|n| rank[n]);
+            g
+        })
+        .collect();
+    let assigned: BTreeMap<usize, usize> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(g, members)| members.iter().map(move |&m| (m, g)))
+        .collect();
     let mut outgoing: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); groups.len()];
     let mut incoming = vec![0usize; groups.len()];
     for (&a, targets) in &adjacent {
@@ -142,64 +152,19 @@ pub(crate) fn level_order(
         .collect()
 }
 
-/// First Kosaraju pass: finish order of an iterative DFS, neighbours in
-/// alphabetical order.
-fn kosaraju_finish(
-    siblings: &[usize],
-    adjacent: &BTreeMap<usize, BTreeSet<usize>>,
-    by_rank: &dyn Fn(&BTreeSet<usize>) -> Vec<usize>,
-) -> Vec<usize> {
-    let mut visited = BTreeSet::new();
-    let mut finish = Vec::new();
-    for &start in siblings {
-        if !visited.insert(start) {
-            continue;
-        }
-        let mut stack = vec![(start, by_rank(&adjacent[&start]), 0usize)];
-        while let Some((id, neighbors, next)) = stack.last_mut() {
-            if *next == neighbors.len() {
-                finish.push(*id);
-                stack.pop();
-                continue;
-            }
-            let n = neighbors[*next];
-            *next += 1;
-            if visited.insert(n) {
-                stack.push((n, by_rank(&adjacent[&n]), 0));
-            }
-        }
+/// Strongly connected components of a graph on the nodes `0..n`
+/// (petgraph's Tarjan), in reverse topological order. The one SCC helper
+/// of the crate: tree, matrix, architecture and calls use it as well.
+pub fn scc(n: usize, edges: impl IntoIterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
+    let mut g = petgraph::graph::DiGraph::<(), ()>::with_capacity(n, 0);
+    let ids: Vec<_> = (0..n).map(|_| g.add_node(())).collect();
+    for (a, b) in edges {
+        g.add_edge(ids[a], ids[b], ());
     }
-    finish
-}
-
-/// Second Kosaraju pass over the reverse graph; members sorted.
-fn kosaraju_groups(
-    finish: &[usize],
-    reverse: &BTreeMap<usize, BTreeSet<usize>>,
-    rank: &BTreeMap<usize, usize>,
-) -> (Vec<Vec<usize>>, BTreeMap<usize, usize>) {
-    let mut assigned = BTreeMap::new();
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for &start in finish.iter().rev() {
-        if assigned.contains_key(&start) {
-            continue;
-        }
-        let gid = groups.len();
-        let (mut group, mut pending) = (Vec::new(), vec![start]);
-        assigned.insert(start, gid);
-        while let Some(id) = pending.pop() {
-            group.push(id);
-            for &next in &reverse[&id] {
-                if let std::collections::btree_map::Entry::Vacant(e) = assigned.entry(next) {
-                    e.insert(gid);
-                    pending.push(next);
-                }
-            }
-        }
-        group.sort_by_key(|n| rank[n]);
-        groups.push(group);
-    }
-    (groups, assigned)
+    petgraph::algo::tarjan_scc(&g)
+        .into_iter()
+        .map(|c| c.into_iter().map(|v| v.index()).collect())
+        .collect()
 }
 
 /// The bounded crossing search; keeps the alphabetical order instead

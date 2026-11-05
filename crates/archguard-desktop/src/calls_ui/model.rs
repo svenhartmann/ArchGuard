@@ -2,6 +2,7 @@
 //! (`prepareCallModel`, `callClassLabel`, `callRelations` in viewer.js).
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use archguard_engine::core::{CallAnalysis, CallClass, CallMethod, MethodCall};
 
@@ -23,15 +24,17 @@ impl Default for Labels {
     }
 }
 
-/// The analysis with id lookups.
+/// The analysis with id lookups. The analysis is shared with the other
+/// tabs of the document.
 pub struct Index {
-    pub a: CallAnalysis,
+    pub a: Arc<CallAnalysis>,
     classes: HashMap<String, usize>,
     methods: HashMap<String, usize>,
 }
 
 impl Index {
-    pub fn new(a: CallAnalysis) -> Self {
+    pub fn new(a: impl Into<Arc<CallAnalysis>>) -> Self {
+        let a = a.into();
         let classes = a
             .classes
             .iter()

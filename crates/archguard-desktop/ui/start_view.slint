@@ -61,6 +61,9 @@ component Legend inherits HorizontalLayout {
 export component StartView inherits Rectangle {
     callback open-web();
     property <StartModel> m: StartData.model;
+    // Typing ends the field's binding; Reset clears the field through this.
+    property <string> search-text: m.search;
+    changed search-text => { if search.text != self.search-text { search.text = self.search-text; } }
     property <string> metric: StartTones.kpi-label(m.kpi);
     property <bool> help;
     background: Theme.bg;
@@ -182,7 +185,7 @@ export component StartView inherits Rectangle {
             stage := StartStage {
                 vertical-stretch: 1;
                 if !m.ready: Text {
-                    text: @tr("Analyzing calls and classes …");
+                    text: m.error != "" ? m.error : @tr("Analyzing calls and classes …");
                     color: Theme.muted;
                     font-size: 14px;
                     horizontal-alignment: center;
@@ -197,8 +200,9 @@ export component StartView inherits Rectangle {
                 padding-top: 12px;
                 padding-bottom: 12px;
                 spacing: 16px;
-                SearchField {
+                search := SearchField {
                     width: 220px;
+                    text: root.search-text;
                     placeholder: @tr("Search classes / files…");
                     edited(t) => { StartData.search(t); }
                     accepted => { StartData.accept-search(); }
