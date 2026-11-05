@@ -195,7 +195,9 @@ export component AppWindow inherits Window {
     in property <string> acd;
     in property <int> count-in;
     in property <int> count-out;
+    in property <int> count-both;
     in property <int> count-all;
+    in property <int> scope-nodes;
     in property <string> reference;
     in property <[Neighbor]> incoming;
     in property <[Neighbor]> outgoing;
@@ -228,6 +230,10 @@ export component AppWindow inherits Window {
     callback set-edge-mode(int);
     callback search(string);
     callback reveal(int);
+    // Open a package by row (double-click) or by node (breadcrumb).
+    callback open-row(int);
+    callback open-node(int);
+    callback reset-tree();
     callback open-web(string);
 
     init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
@@ -464,13 +470,13 @@ export component AppWindow inherits Window {
                                     }
                                     ct := TouchArea {
                                         mouse-cursor: pointer;
-                                        clicked => { if (c.node >= 0) { root.reveal(c.node); } else { root.select-row(-1); } }
+                                        clicked => { if (c.node >= 0) { root.open-node(c.node); } else { root.reset-tree(); } }
                                     }
                                 }
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        Metric { value: root.rows.length; label: @tr("Scope nodes"); }
+                        Metric { value: root.scope-nodes; label: @tr("Scope nodes"); }
                         Metric { value: root.dep-count; label: @tr("Dependencies"); }
                         Metric { value: root.cycle-groups; label: @tr("Cyclic groups"); }
                         Metric { value: root.acd; label: "ACD"; }
@@ -494,7 +500,7 @@ export component AppWindow inherits Window {
                             spacing: 6px;
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Incoming ({})", root.count-in); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Outgoing ({})", root.count-out); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
-                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", root.count-in + root.count-out); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", root.count-both); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", root.count-all); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
                         }
@@ -513,13 +519,13 @@ export component AppWindow inherits Window {
                     background: Theme.bg;
                     clip: true;
                     TreeView {
-                        fit-tick: root.fit-tick;
                         visible: root.display == 0;
                         rows: root.rows;
                         links: root.links;
                         selected: root.selected-row;
                         select(r) => { root.select-row(r); }
                         toggle(r) => { root.toggle-row(r); }
+                        open(r) => { root.open-row(r); }
                     }
                     NetworkView {
                         fit-tick: root.fit-tick;
@@ -530,6 +536,7 @@ export component AppWindow inherits Window {
                         canvas-h: root.net-h;
                         selected: root.selected-row;
                         select(r) => { root.select-row(r); }
+                        open(r) => { root.open-row(r); }
                     }
                     if root.display == 2: DepsView {
                         deps: root.deps;

@@ -80,6 +80,9 @@ pub enum Lane {
     /// Right of the tree: dependencies of the selection, or any link
     /// without a selection.
     Outgoing,
+    /// Right of the tree, neutral: links inside the selection ("Both")
+    /// or unrelated to it ("All").
+    Other,
 }
 
 impl Tree {
@@ -261,21 +264,24 @@ fn components(n: usize, links: impl Iterator<Item = (usize, usize)>) -> Vec<usiz
 }
 
 impl TreeView {
-    /// Lakos ACD of the visible rows and their links, as the web viewer
+    /// Lakos ACD of the scope rows and their links, as the web viewer
     /// shows it for the current scope.
     pub fn acd(&self, tree: &Tree) -> f64 {
         archguard_engine::analysis::lakos_metrics(&self.as_graph(tree)).1
     }
 
-    /// The visible rows as a flat view graph: node `i` is row `i`, named
-    /// like its tree node, edges are the links.
+    /// The scope rows as a flat view graph: a node's id is its row index,
+    /// its name that of its tree node, edges are the links (which only
+    /// connect scope rows).
     pub fn as_graph(&self, tree: &Tree) -> Graph {
         use archguard_engine::core::{Edge, Node, NodeId};
         let id = |i: usize| NodeId(i as u32);
         Graph {
             schema_version: 1,
             root: tree.full.root.clone(),
-            nodes: (0..self.rows.len())
+            nodes: self
+                .scope_rows()
+                .into_iter()
                 .map(|i| Node {
                     id: id(i),
                     name: tree.nodes[self.rows[i].node].name.clone(),
@@ -297,6 +303,13 @@ impl TreeView {
             semantic: None,
             review_kpis: None,
         }
+    }
+
+    /// Rows of the analysis scope: all but expanded containers.
+    pub fn scope_rows(&self) -> Vec<usize> {
+        (0..self.rows.len())
+            .filter(|&r| !self.rows[r].expanded)
+            .collect()
     }
 
     /// Rows covered by selecting `row`: the row and its visible
@@ -325,9 +338,16 @@ impl TreeView {
             let lane = match (out, inc) {
                 (true, false) => Lane::Outgoing,
                 (false, true) => Lane::Incoming,
-                _ => {
+                // Inside the selection: the web shows these with "Both".
+                (true, true) => {
+                    if matches!(mode, EdgeMode::Both | EdgeMode::All) {
+                        shown.push((i, Lane::Other));
+                    }
+                    continue;
+                }
+                (false, false) => {
                     if mode == EdgeMode::All {
-                        shown.push((i, Lane::Outgoing));
+                        shown.push((i, Lane::Other));
                     }
                     continue;
                 }
@@ -379,7 +399,7 @@ impl TreeView {
             _ if self.links[i].cyclic && (selected.is_none() || mode == EdgeMode::Cycles) => {
                 LinkKind::Cyclic
             }
-            (None, _) => LinkKind::Neutral,
+            (None, _) | (Some(_), Lane::Other) => LinkKind::Neutral,
             (Some(_), Lane::Incoming) => LinkKind::Incoming,
             (Some(_), Lane::Outgoing) => LinkKind::Outgoing,
         }
@@ -393,7 +413,7 @@ impl TreeView {
                 let l = &self.links[i];
                 let x = match lane {
                     Lane::Incoming => LANE_W - 22.0,
-                    Lane::Outgoing => LANE_W + TREE_W + 22.0,
+                    Lane::Outgoing | Lane::Other => LANE_W + TREE_W + 22.0,
                 };
                 let kind = self.link_kind(i, lane, selected, mode);
                 let path = arc(x, row_center(l.from), row_center(l.to), lane, LANE_W - 30.0);
@@ -408,7 +428,7 @@ impl TreeView {
 /// rows are apart. Ends with an arrow head at the target.
 pub fn arc(x: f32, from_y: f32, to_y: f32, lane: Lane, lane_width: f32) -> String {
     let side = match lane {
-        Lane::Outgoing => 1.0,
+        Lane::Outgoing | Lane::Other => 1.0,
         Lane::Incoming => -1.0,
     };
     let reach = (14.0 + (to_y - from_y).abs() * 0.3).min(lane_width - 10.0);
@@ -588,6 +608,43 @@ mod tests {
         let lines: Vec<u32> = a_to_b.refs.iter().map(|r| r.line).collect();
         assert_eq!(lines, [2, 9], "deduplicated and sorted");
         assert_eq!(a_to_b.weight, 3, "the count stays the sum of the edges");
+    }
+
+    #[test]
+    fn scope_excludes_expanded_containers() {
+        // Expanded `a` carries no links; the web counts only x, y, b, c.
+        let t = Tree::from_graph(&graph());
+        let v = t.view(&BTreeSet::from([0]));
+        assert_eq!(v.rows.len(), 5);
+        assert_eq!(v.scope_rows(), [1, 2, 3, 4]);
+        // x→b, y→b, b↔c over 4 nodes: reach 3 + 3 + 2 + 2 = 10.
+        assert!((v.acd(&t) - 10.0 / 4.0).abs() < 1e-9, "{}", v.acd(&t));
+    }
+
+    #[test]
+    fn both_also_shows_links_inside_the_selection() {
+        let mut g = graph();
+        g.edges.push(archguard_engine::core::Edge {
+            from: NodeId(1),
+            to: NodeId(2),
+            refs: Vec::new(),
+            count: Some(1),
+        });
+        let t = Tree::from_graph(&g);
+        let v = t.view(&BTreeSet::from([0]));
+        // Selecting `a` covers x and y; x→y is internal.
+        let both = v.shown(Some(0), EdgeMode::Both);
+        assert_eq!(both.len(), 3, "x→b, y→b and the internal x→y");
+        let internal = both.iter().find(|&&(i, _)| v.links[i].to == 2).unwrap();
+        assert_eq!(
+            v.link_kind(internal.0, internal.1, Some(0), EdgeMode::Both),
+            LinkKind::Neutral
+        );
+        assert_eq!(
+            v.shown(Some(0), EdgeMode::Outgoing).len(),
+            2,
+            "internal links only in Both"
+        );
     }
 
     #[test]

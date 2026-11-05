@@ -93,43 +93,54 @@ fn main() -> Result<(), slint::PlatformError> {
     result
 }
 
+/// A callback that runs `f` on the graph state and refreshes the window.
+fn graph_action<A: 'static>(
+    ui: &AppWindow,
+    f: impl Fn(&mut GraphState, A) + 'static,
+) -> impl Fn(A) + 'static {
+    let w = ui.as_weak();
+    move |a| {
+        if let Some(ui) = w.upgrade() {
+            update(&ui, |g| f(g, a));
+        }
+    }
+}
+
+fn node_of_row(g: &GraphState, r: i32) -> Option<usize> {
+    usize::try_from(r)
+        .ok()
+        .and_then(|r| g.view.rows.get(r))
+        .map(|r| r.node)
+}
+
 fn wire(ui: &AppWindow, root: &Path) {
-    let w = ui.as_weak();
-    ui.on_select_row(move |r| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |g| g.select_row(usize::try_from(r).ok()));
+    ui.on_select_row(graph_action(ui, |g, r: i32| {
+        g.select_row(usize::try_from(r).ok())
+    }));
+    ui.on_toggle_row(graph_action(ui, |g, r: i32| {
+        g.toggle_row(r.max(0) as usize)
+    }));
+    let expand = graph_action(ui, |g, ()| g.expand_all());
+    ui.on_expand_all(move || expand(()));
+    let collapse = graph_action(ui, |g, ()| g.collapse_all());
+    ui.on_collapse_all(move || collapse(()));
+    let reset = graph_action(ui, |g, ()| g.reset());
+    ui.on_reset_tree(move || reset(()));
+    ui.on_reveal(graph_action(ui, |g, n: i32| g.reveal(n.max(0) as usize)));
+    ui.on_open_node(graph_action(ui, |g, n: i32| g.open(n.max(0) as usize)));
+    ui.on_open_row(graph_action(ui, |g, r: i32| {
+        if let Some(node) = node_of_row(g, r) {
+            g.open(node);
         }
-    });
+    }));
+    ui.on_set_edge_mode(graph_action(ui, |g, m: i32| g.mode = edge_mode(m)));
+    wire_search(ui);
     let w = ui.as_weak();
-    ui.on_toggle_row(move |r| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |g| g.toggle_row(r.max(0) as usize));
-        }
-    });
-    let w = ui.as_weak();
-    ui.on_expand_all(move || {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, GraphState::expand_all);
-        }
-    });
-    let w = ui.as_weak();
-    ui.on_collapse_all(move || {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, GraphState::collapse_all);
-        }
-    });
-    let w = ui.as_weak();
-    ui.on_reveal(move |n| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |g| g.reveal(n.max(0) as usize));
-        }
-    });
-    let w = ui.as_weak();
-    ui.on_set_edge_mode(move |m| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |g| g.mode = edge_mode(m));
-        }
-    });
+    let root = root.to_path_buf();
+    ui.on_open_web(move |tab| open_web(&w, &root, tab.as_str()));
+}
+
+fn wire_search(ui: &AppWindow) {
     let w = ui.as_weak();
     ui.on_search(move |q| {
         let Some(ui) = w.upgrade() else { return };
@@ -143,9 +154,6 @@ fn wire(ui: &AppWindow, root: &Path) {
             })));
         });
     });
-    let w = ui.as_weak();
-    let root = root.to_path_buf();
-    ui.on_open_web(move |tab| open_web(&w, &root, tab.as_str()));
 }
 
 fn open_web(w: &slint::Weak<AppWindow>, root: &Path, tab: &str) {
@@ -268,10 +276,12 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     ui.set_dep_count(v.links.len() as i32);
     ui.set_cycle_groups(v.cycle_groups as i32);
     ui.set_acd(format!("{:.2}", v.acd(&g.tree)).into());
-    let (cin, cout, call) = g.counts();
+    let (cin, cout, cboth, call) = g.counts();
     ui.set_count_in(cin as i32);
     ui.set_count_out(cout as i32);
+    ui.set_count_both(cboth as i32);
     ui.set_count_all(call as i32);
+    ui.set_scope_nodes(v.scope_rows().len() as i32);
     push_selection(ui, g);
 }
 
@@ -383,7 +393,8 @@ mod snapshot {
     use slint::ComponentHandle;
 
     /// After the layout settled: optionally reveal a node by name
-    /// (`ARCHGUARD_DESKTOP_REVEAL=<name>`), switch tab
+    /// (`ARCHGUARD_DESKTOP_REVEAL=<name>`) or open a package as a
+    /// breadcrumb does (`ARCHGUARD_DESKTOP_OPEN=<name>`), switch tab
     /// (`ARCHGUARD_DESKTOP_TAB`) or display (`ARCHGUARD_DESKTOP_DISPLAY`,
     /// 0 tree, 1 network, 2 dependencies), render, write the PNG, quit.
     pub fn schedule(ui: &AppWindow) {
@@ -397,6 +408,15 @@ mod snapshot {
             });
             if let Some(n) = node {
                 ui.invoke_reveal(n as i32);
+            }
+        }
+        if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_OPEN") {
+            let node = super::APP.with_borrow(|app| {
+                app.as_ref()
+                    .and_then(|g| g.tree.nodes.iter().position(|n| n.name == name))
+            });
+            if let Some(n) = node {
+                ui.invoke_open_node(n as i32);
             }
         }
         if let Some(d) = std::env::var("ARCHGUARD_DESKTOP_DISPLAY")

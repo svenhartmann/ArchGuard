@@ -58,6 +58,7 @@ component RowCard inherits Rectangle {
     in property <float> zoom;
     callback select();
     callback toggle();
+    callback open();
 
     property <length> indent: data.depth * 18px * zoom;
     x: (TreeGeo.lane-w * 1px) * zoom + indent;
@@ -72,7 +73,7 @@ component RowCard inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.select(); }
-        double-clicked => { root.toggle(); }
+        double-clicked => { root.open(); }
     }
     HorizontalLayout {
         padding-left: 6px * zoom;
@@ -163,10 +164,9 @@ export component TreeView inherits Rectangle {
     in property <[TreeLink]> links;
     in property <int> selected: -1;
     in-out property <float> zoom: 1.0;
-    in property <int> fit-tick;
     callback select(int);
     callback toggle(int);
-    changed fit-tick => { self.fit(); }
+    callback open(int);
 
     property <float> canvas-w: TreeGeo.lane-w * 2 + TreeGeo.tree-w;
     property <float> canvas-h: TreeGeo.top + rows.length * TreeGeo.row-h + 20;
@@ -258,6 +258,7 @@ export component TreeView inherits Rectangle {
             selected: r.row == root.selected;
             select => { root.select(r.row); }
             toggle => { root.toggle(r.row); }
+            open => { root.open(r.row); }
         }
       }
     }

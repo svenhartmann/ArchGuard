@@ -32,6 +32,7 @@ component PackageCard inherits Rectangle {
     in property <bool> selected;
     in property <float> zoom;
     callback clicked;
+    callback open;
 
     x: card.x * 1px * zoom;
     y: card.y * 1px * zoom;
@@ -95,6 +96,7 @@ component PackageCard inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+        double-clicked => { root.open(); }
     }
 }
 
@@ -107,6 +109,7 @@ export component NetworkView inherits Rectangle {
     in property <int> fit-tick;
     in-out property <float> zoom: 1.0;
     callback select(int);
+    callback open(int);
     changed fit-tick => { self.fit(); }
     // Opening the details panel narrows the view; keep all cards visible.
     changed width => { self.fit(); }
@@ -140,6 +143,7 @@ export component NetworkView inherits Rectangle {
             zoom: root.zoom;
             selected: c.row == root.selected;
             clicked => { root.select(c.row); }
+            open => { root.open(c.row); }
         }
         // Arrows above the cards so that heads stay visible, as in the web.
         for a in root.arrows: Path {

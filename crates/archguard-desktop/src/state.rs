@@ -1,7 +1,7 @@
 //! Graph tab state, independent of Slint: expansion, selection, edge
 //! mode, search and the lists derived from them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_engine::core::{Finding, FindingKind};
 
@@ -158,6 +158,27 @@ impl GraphState {
         self.select_row(row);
     }
 
+    /// Double-click or breadcrumb on a package, as the web viewer's
+    /// `navigateExplorerNode`: open its path and itself, select it.
+    pub fn open(&mut self, node: usize) {
+        if self
+            .tree
+            .nodes
+            .get(node)
+            .is_some_and(|n| !n.children.is_empty())
+        {
+            self.expanded.insert(node);
+        }
+        self.reveal(node);
+    }
+
+    /// The project crumb: collapse everything and clear the selection.
+    pub fn reset(&mut self) {
+        self.selected = None;
+        self.mode = EdgeMode::All;
+        self.collapse_all();
+    }
+
     /// The selection's ancestors and itself, outermost first.
     pub fn crumbs(&self) -> Vec<usize> {
         let mut path = Vec::new();
@@ -198,20 +219,22 @@ impl GraphState {
         let Some(s) = self.selected_row() else {
             return (Vec::new(), Vec::new());
         };
-        let (mut inc, mut out) = (Vec::new(), Vec::new());
+        // One entry per row on the other end, weights summed.
+        let (mut inc, mut out) = (BTreeMap::new(), BTreeMap::new());
         for (i, lane) in self.view.shown(Some(s), EdgeMode::Both) {
             let l = &self.view.links[i];
             match lane {
-                Lane::Incoming => inc.push(Neighbor {
-                    row: l.from,
-                    weight: l.weight,
-                }),
-                Lane::Outgoing => out.push(Neighbor {
-                    row: l.to,
-                    weight: l.weight,
-                }),
+                Lane::Incoming => *inc.entry(l.from).or_insert(0) += l.weight,
+                Lane::Outgoing => *out.entry(l.to).or_insert(0) += l.weight,
+                Lane::Other => {}
             }
         }
+        let list = |m: BTreeMap<usize, u64>| -> Vec<Neighbor> {
+            m.into_iter()
+                .map(|(row, weight)| Neighbor { row, weight })
+                .collect()
+        };
+        let (mut inc, mut out) = (list(inc), list(out));
         let by_weight =
             |a: &Neighbor, b: &Neighbor| b.weight.cmp(&a.weight).then(a.row.cmp(&b.row));
         inc.sort_by(by_weight);
@@ -219,15 +242,20 @@ impl GraphState {
         (inc, out)
     }
 
-    /// `(incoming, outgoing, all)` link counts for the filter buttons.
-    pub fn counts(&self) -> (usize, usize, usize) {
+    /// `(incoming, outgoing, both, all)` link counts for the filter
+    /// buttons; "both" includes links inside the selection.
+    pub fn counts(&self) -> (usize, usize, usize, usize) {
         let all = self.view.links.len();
         let Some(s) = self.selected_row() else {
-            return (0, 0, all);
+            return (0, 0, 0, all);
         };
-        let inc = self.view.shown(Some(s), EdgeMode::Incoming).len();
-        let out = self.view.shown(Some(s), EdgeMode::Outgoing).len();
-        (inc, out, all)
+        let n = |mode| self.view.shown(Some(s), mode).len();
+        (
+            n(EdgeMode::Incoming),
+            n(EdgeMode::Outgoing),
+            n(EdgeMode::Both),
+            all,
+        )
     }
 
     /// Cycle findings of the report, mapped onto tree nodes by name.
@@ -320,6 +348,35 @@ mod tests {
     }
 
     #[test]
+    fn opening_a_package_expands_its_path_and_itself() {
+        let mut s = GraphState::new(tree());
+        s.open(1);
+        assert!(s.expanded.contains(&0) && s.expanded.contains(&1));
+        assert_eq!(s.selected, Some(1));
+        let names: Vec<&str> = s
+            .view
+            .rows
+            .iter()
+            .map(|r| s.tree.nodes[r.node].name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["app", "app/ui", "app/ui/view.rs", "core"],
+            "siblings stay"
+        );
+    }
+
+    #[test]
+    fn reset_collapses_and_clears_the_selection() {
+        let mut s = GraphState::new(tree());
+        s.open(1);
+        s.reset();
+        assert!(s.expanded.is_empty());
+        assert_eq!(s.selected, None);
+        assert_eq!(s.mode, EdgeMode::All);
+    }
+
+    #[test]
     fn collapsing_hides_and_drops_a_selection_inside() {
         let mut s = GraphState::new(tree());
         s.reveal(2);
@@ -346,12 +403,48 @@ mod tests {
     #[test]
     fn neighbors_and_counts_follow_the_selection() {
         let mut s = GraphState::new(tree());
-        assert_eq!(s.counts(), (0, 0, 2));
+        assert_eq!(s.counts(), (0, 0, 0, 2));
         s.select_row(Some(0));
         let (inc, out) = s.neighbors();
         assert_eq!(out, [Neighbor { row: 1, weight: 5 }]);
         assert_eq!(inc, [Neighbor { row: 1, weight: 1 }]);
-        assert_eq!(s.counts(), (1, 1, 2));
+        assert_eq!(s.counts(), (1, 1, 2, 2));
+    }
+
+    #[test]
+    fn neighbors_merge_per_other_row() {
+        // app/{a.rs, b.rs} both use core: two links, one neighbour.
+        let node = |id: u32, name: &str, kind, parent: Option<u32>| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind,
+            parent: parent.map(NodeId),
+            lang: None,
+        };
+        let edge = |from: u32, to: u32, count: u64| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: Some(count),
+        };
+        let mut s = GraphState::new(Tree::from_graph(&Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: vec![
+                node(0, "app", NodeKind::Module, None),
+                node(1, "app/a.rs", NodeKind::File, Some(0)),
+                node(2, "app/b.rs", NodeKind::File, Some(0)),
+                node(3, "core", NodeKind::Module, None),
+                node(4, "core/lib.rs", NodeKind::File, Some(3)),
+            ],
+            edges: vec![edge(1, 4, 2), edge(2, 4, 3)],
+            semantic: None,
+            review_kpis: None,
+        }));
+        s.open(0);
+        let (inc, out) = s.neighbors();
+        assert!(inc.is_empty());
+        assert_eq!(out, [Neighbor { row: 3, weight: 5 }]);
     }
 
     #[test]
