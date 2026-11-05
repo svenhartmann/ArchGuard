@@ -1,7 +1,7 @@
 import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, Tab, Divider, Metric, SearchField } from "widgets.slint";
-import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
+import { TreeView, TreeRow, TreeLink, PriorityBadge } from "tree_view.slint";
 import { LayersView, ModuleItem, EdgeItem } from "layers_view.slint";
 
 export { TreeRow, TreeLink, ModuleItem, EdgeItem }
@@ -80,6 +80,10 @@ component ExplorerRow inherits Rectangle {
             y: (parent.height - self.height) / 2;
             border-radius: 3.5px;
             background: Theme.cycle;
+        }
+        if data.priority > 0: PriorityBadge {
+            priority: data.priority;
+            y: (parent.height - self.height) / 2;
         }
     }
 }

@@ -13,7 +13,10 @@ mod web;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use archguard_engine::{AnalysisRun, Level, analyze_run_quiet, load_config};
+use archguard_engine::core::{ReviewPriority, ReviewSources};
+use archguard_engine::{
+    AnalysisRun, Level, analyze_run_quiet, collect_review_sources, load_config,
+};
 use slint::{Color, ModelRc, SharedString, VecModel};
 
 use model::{Module, Overview};
@@ -62,11 +65,23 @@ fn main() -> Result<(), slint::PlatformError> {
     std::thread::spawn(move || {
         let result = load_config(None, &root)
             .and_then(|loaded| analyze_run_quiet(&root, &loaded, Level::Module))
+            .map(|run| {
+                // Git evidence for review priorities; without it the
+                // churn component is zero, as in the CLI.
+                let sources = collect_review_sources(
+                    &root,
+                    &run.config,
+                    &run.graph,
+                    &run.config.review.git_since,
+                )
+                .unwrap_or_default();
+                (run, sources)
+            })
             .map_err(|e| e.to_string());
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = weak.upgrade() else { return };
             match result {
-                Ok(run) => show(&ui, project, &run),
+                Ok((run, sources)) => show(&ui, project, &run, sources),
                 Err(e) => {
                     ui.set_loading(false);
                     ui.set_error(e.into());
@@ -176,8 +191,12 @@ fn vec_model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
-fn show(ui: &AppWindow, project: String, run: &AnalysisRun) {
-    let graph = GraphState::new(Tree::from_graph(&run.graph));
+fn show(ui: &AppWindow, project: String, run: &AnalysisRun, sources: ReviewSources) {
+    let graph = GraphState::with_review(
+        Tree::from_graph(&run.graph),
+        sources,
+        run.config.review.entry_points.clone(),
+    );
     ui.set_node_total(graph.tree.nodes.len() as i32);
     ui.set_cycles(vec_model(
         graph
@@ -216,6 +235,11 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
             out_count: v.outgoing[i] as i32,
             in_cycle: v.in_cycle[i],
             covered: covered.contains(&i),
+            priority: match g.priorities[i] {
+                Some(ReviewPriority::High) => 1,
+                Some(ReviewPriority::Medium) => 2,
+                _ => 0,
+            },
         }
     })));
     ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(
@@ -228,7 +252,7 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     ui.set_edge_mode(mode_index(g.mode));
     ui.set_dep_count(v.links.len() as i32);
     ui.set_cycle_groups(v.cycle_groups as i32);
-    ui.set_acd(format!("{:.2}", v.acd()).into());
+    ui.set_acd(format!("{:.2}", v.acd(&g.tree)).into());
     let (cin, cout, call) = g.counts();
     ui.set_count_in(cin as i32);
     ui.set_count_out(cout as i32);

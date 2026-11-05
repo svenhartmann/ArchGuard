@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 
 use archguard_engine::core::{Finding, FindingKind};
 
+use archguard_engine::core::{ReviewPriority, ReviewSources};
+
 use crate::tree::{EdgeMode, Lane, Tree, TreeView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,23 +37,64 @@ pub struct GraphState {
     /// Selected tree node (not row: rows move when branches open).
     pub selected: Option<usize>,
     pub mode: EdgeMode,
+    /// Review priority per visible row; `None` for low priority.
+    pub priorities: Vec<Option<ReviewPriority>>,
+    review_sources: ReviewSources,
+    entry_points: Vec<String>,
 }
 
 impl GraphState {
+    #[cfg(test)]
     pub fn new(tree: Tree) -> Self {
-        let expanded = BTreeSet::new();
-        let view = tree.view(&expanded);
-        GraphState {
+        Self::with_review(tree, ReviewSources::default(), Vec::new())
+    }
+
+    pub fn with_review(
+        tree: Tree,
+        review_sources: ReviewSources,
+        entry_points: Vec<String>,
+    ) -> Self {
+        let mut s = GraphState {
+            view: tree.view(&BTreeSet::new()),
             tree,
-            expanded,
-            view,
+            expanded: BTreeSet::new(),
             selected: None,
             mode: EdgeMode::All,
+            priorities: Vec::new(),
+            review_sources,
+            entry_points,
+        };
+        s.priorities = s.review();
+        s
+    }
+
+    /// Review priorities of the visible rows, computed on the current view
+    /// as the web viewer does (`analyze_review`, mirrored in
+    /// `viewer_review.js`). Low priorities and errors show no badge.
+    fn review(&self) -> Vec<Option<ReviewPriority>> {
+        let view = self.view.as_graph(&self.tree);
+        let Ok(report) = archguard_engine::analysis::analyze_review(
+            &self.tree.full,
+            &view,
+            &self.review_sources,
+            &self.entry_points,
+        ) else {
+            return vec![None; self.view.rows.len()];
+        };
+        let mut out = vec![None; self.view.rows.len()];
+        for m in report.nodes {
+            if let Some(slot) = out.get_mut(m.node_id.0 as usize)
+                && m.priority != ReviewPriority::Low
+            {
+                *slot = Some(m.priority);
+            }
         }
+        out
     }
 
     fn refresh(&mut self) {
         self.view = self.tree.view(&self.expanded);
+        self.priorities = self.review();
         if let Some(node) = self.selected
             && self.selected_row_of(node).is_none()
         {
@@ -249,6 +292,20 @@ mod tests {
             semantic: None,
             review_kpis: None,
         })
+    }
+
+    #[test]
+    fn review_priorities_follow_the_visible_rows() {
+        // app ↔ core: cyclic group of 2 (+32), 2 direct links (+4),
+        // 1 transitive dependent (+1) = 37 → medium (P2) for both.
+        let s = GraphState::new(tree());
+        assert_eq!(
+            s.priorities,
+            [Some(ReviewPriority::Medium), Some(ReviewPriority::Medium)]
+        );
+        let mut s = s;
+        s.expand_all();
+        assert_eq!(s.priorities.len(), s.view.rows.len());
     }
 
     #[test]

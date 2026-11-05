@@ -25,6 +25,8 @@ pub struct Tree {
     pub roots: Vec<usize>,
     /// File-level dependencies `(from, to, weight)` as node indices.
     edges: Vec<(usize, usize, u64)>,
+    /// The analysed graph the tree was built from.
+    pub full: Graph,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +126,7 @@ impl Tree {
             nodes,
             roots,
             edges,
+            full: g.clone(),
         }
     }
 
@@ -228,16 +231,22 @@ fn components(n: usize, links: impl Iterator<Item = (usize, usize)>) -> Vec<usiz
 impl TreeView {
     /// Lakos ACD of the visible rows and their links, as the web viewer
     /// shows it for the current scope.
-    pub fn acd(&self) -> f64 {
+    pub fn acd(&self, tree: &Tree) -> f64 {
+        archguard_engine::analysis::lakos_metrics(&self.as_graph(tree)).1
+    }
+
+    /// The visible rows as a flat view graph: node `i` is row `i`, named
+    /// like its tree node, edges are the links.
+    pub fn as_graph(&self, tree: &Tree) -> Graph {
         use archguard_engine::core::{Edge, Node, NodeId};
         let id = |i: usize| NodeId(i as u32);
-        let g = Graph {
+        Graph {
             schema_version: 1,
-            root: String::new(),
+            root: tree.full.root.clone(),
             nodes: (0..self.rows.len())
                 .map(|i| Node {
                     id: id(i),
-                    name: i.to_string(),
+                    name: tree.nodes[self.rows[i].node].name.clone(),
                     kind: NodeKind::Module,
                     parent: None,
                     lang: None,
@@ -255,8 +264,7 @@ impl TreeView {
                 .collect(),
             semantic: None,
             review_kpis: None,
-        };
-        archguard_engine::analysis::lakos_metrics(&g).1
+        }
     }
 
     /// Rows covered by selecting `row`: the row and its visible
@@ -508,7 +516,7 @@ mod tests {
         // a→b, b↔c: reach(a) = 3, reach(b) = reach(c) = 2 → 7 / 3.
         let t = Tree::from_graph(&graph());
         let v = t.view(&BTreeSet::new());
-        assert!((v.acd() - 7.0 / 3.0).abs() < 1e-9, "{}", v.acd());
+        assert!((v.acd(&t) - 7.0 / 3.0).abs() < 1e-9, "{}", v.acd(&t));
     }
 
     #[test]

@@ -14,6 +14,8 @@ export struct TreeRow {
     in-cycle: bool,
     // Part of the current selection (the row or a descendant of it).
     covered: bool,
+    // Review priority badge: 0 none, 1 P1 (high), 2 P2 (medium).
+    priority: int,
 }
 
 // kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
@@ -28,6 +30,26 @@ export global TreeGeo {
     out property <float> lane-w: 280;
     out property <float> tree-w: 560;
     out property <float> top: 34;
+}
+
+// The web viewer's tree-priority badge (P1 high, P2 medium).
+export component PriorityBadge inherits Rectangle {
+    in property <int> priority;
+    in property <float> zoom: 1.0;
+    width: 26px * zoom;
+    height: 18px * zoom;
+    border-radius: 4px * zoom;
+    background: Theme.priority-fill;
+    border-width: 1px;
+    border-color: Theme.priority;
+    Text {
+        text: root.priority == 1 ? "P1" : "P2";
+        color: Theme.dark ? Theme.priority : #502500;
+        font-size: 10.5px * zoom;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
 }
 
 component RowCard inherits Rectangle {
@@ -85,6 +107,11 @@ component RowCard inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+        if data.priority > 0: PriorityBadge {
+            priority: data.priority;
+            zoom: root.zoom;
+            y: (parent.height - self.height) / 2;
         }
         if data.in-cycle: Rectangle {
             width: 7px * zoom;
