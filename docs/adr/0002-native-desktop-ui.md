@@ -85,3 +85,15 @@ comparison of the native view against the web view on the same project
 - A fork that ships the desktop app must keep the Slint attribution.
 - Windows and Linux have not been tested yet; the prototype was checked
   on macOS only.
+
+## History
+
+- **2026-11-05:** Phase 1 implemented on `feat/slint-desktop`. The Graph
+  tab offers the web viewer's Tree, Dependencies and Network displays;
+  the layered prototype view was dropped in favour of Network. Opening a
+  package expands its path instead of re-rooting the scope, as the web
+  viewer's `navigateExplorerNode` does. The tree order ports the web's
+  construction levels and crossing search, and open single-child chains
+  are compressed into one row; on this repository scope counts, ACD,
+  filter counts, priorities and row order match the web viewer.
+  Known deviation: the Explorer shows compressed chains as one row too.
