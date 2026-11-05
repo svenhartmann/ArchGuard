@@ -104,3 +104,31 @@ comparison of the native view against the web view on the same project
   native: the "Jump to target" list and opening a row in the inspector.
   The app has an icon (`assets/icon.svg`, PNG for the macOS Dock);
   signed bundles with `.icns` remain part of phase 8.
+- **2026-11-05:** Phase 4 (Architecture) implemented: arc42 chapters from
+  `arc42_document`, the web's arc42 Markdown and package maps ported to
+  Rust; Markdown of all 12 chapters is byte-identical to the web.
+  Open: chapter 7 deployment map, chapter 4 component model, the target
+  architecture section; the diagram uses the web's fallback grid layout,
+  not Graphviz.
+- **2026-11-05:** Scope extended by the user. Additional decisions:
+  5. **Documents.** Every open project is a document tab with its own
+     analysis and view state. For a monorepo the app offers its projects
+     (`analyze_services`) to open as tabs.
+  6. **Panes.** The content area is a split tree of panes; each pane has
+     view tabs ("Graph · shop-api"). Views take their data as properties
+     of one model struct per view, so the same view kind can show two
+     projects side by side. Tab state lives in one Rust struct per view
+     and document.
+  7. **Settings.** Global settings in the user config directory
+     (`desktop.toml`); per-project personal settings there keyed by
+     project path; team-shared settings (dashboards) in `archguard.toml`
+     under `[desktop]`. Project overrides global.
+  8. **Configuration editor.** A view with a schema-driven form
+     (`schemars` from the config structs) and the TOML text side by side,
+     provenance per value (declared/derived/default), graphical editors
+     for layers, dependency rules, thresholds and globs, a preview of the
+     changed findings before saving, and comment-preserving writes
+     (`toml_edit`). The same editor edits desktop settings and the
+     dashboard designer.
+  Revised order: documents, panes, settings, configuration editor,
+  dashboard with designer, then Calls, Services, Security, World.
