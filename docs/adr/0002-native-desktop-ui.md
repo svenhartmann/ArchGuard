@@ -97,3 +97,10 @@ comparison of the native view against the web view on the same project
   are compressed into one row; on this repository scope counts, ACD,
   filter counts, priorities and row order match the web viewer.
   Known deviation: the Explorer shows compressed chains as one row too.
+- **2026-11-05:** Phase 2 (Matrix) implemented. `buildTreeMatrix` and
+  `treeMatrixRows` are ported to Rust (`matrix.rs`); on this repository
+  file, evidence, row, column and cell counts match the web viewer.
+  Column headers add the parent path under the short name. Not yet
+  native: the "Jump to target" list and opening a row in the inspector.
+  The app has an icon (`assets/icon.svg`, PNG for the macOS Dock);
+  signed bundles with `.icns` remain part of phase 8.
