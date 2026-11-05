@@ -40,7 +40,9 @@ export component Button inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked;
     height: compact ? 28px : 34px;
-    min-width: self.height;
+    // Never narrower than the label: toolbars shrink their texts instead.
+    min-width: max(self.height, content.min-width);
+    horizontal-stretch: 0;
     border-radius: Theme.radius-sm;
     background: primary ? Theme.accent
         : pressed-state ? Theme.accent.with-alpha(0.16)
@@ -49,7 +51,7 @@ export component Button inherits Rectangle {
     border-color: pressed-state ? Theme.accent : Theme.border;
     opacity: enabled ? 1 : 0.45;
     animate background { duration: 100ms; }
-    HorizontalLayout {
+    content := HorizontalLayout {
         padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
         padding-right: self.padding-left;
         spacing: 6px;

@@ -305,6 +305,7 @@ export component TreeView inherits Rectangle {
             Button { icon: Icons.plus; compact: true; clicked => { root.zoom-by(1.25); } }
             Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
             Button { icon: Icons.fit; compact: true; clicked => { root.fit(); } }
+
         }
     }
 }

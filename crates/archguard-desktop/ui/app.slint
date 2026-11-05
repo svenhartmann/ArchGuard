@@ -229,6 +229,8 @@ export component AppWindow inherits Window {
     callback expand-all();
     callback collapse-all();
     callback set-edge-mode(int);
+    callback set-sort(bool);
+    in property <bool> sort-by-deps: true;
     callback search(string);
     callback reveal(int);
     // Open a package by row (double-click) or by node (breadcrumb).
@@ -505,6 +507,12 @@ export component AppWindow inherits Window {
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", root.count-all); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
                         }
+                        if root.display == 0: HorizontalLayout {
+                            spacing: 6px;
+                            padding-left: 10px;
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Alphabetical"); pressed-state: !root.sort-by-deps; clicked => { root.set-sort(false); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("By dependencies"); pressed-state: root.sort-by-deps; clicked => { root.set-sort(true); } }
+                        }
                         Rectangle { width: 10px; }
                         Text {
                             text: root.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.reference);
@@ -512,6 +520,8 @@ export component AppWindow inherits Window {
                             font-size: 12px;
                             vertical-alignment: center;
                             overflow: elide;
+                            horizontal-stretch: 1;
+                            min-width: 0;
                         }
                     }
                 }

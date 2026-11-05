@@ -35,6 +35,9 @@ pub struct Tree {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub node: usize,
+    /// Nodes this row stands for, outermost first; more than one when
+    /// open containers with a single open child are compressed.
+    pub chain: Vec<usize>,
     pub depth: usize,
     pub expandable: bool,
     pub expanded: bool,
@@ -60,6 +63,14 @@ pub struct TreeView {
     pub outgoing: Vec<u32>,
     pub in_cycle: Vec<bool>,
     pub cycle_groups: usize,
+}
+
+/// Sibling order of the tree, as the web viewer's "Order" option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sort {
+    Alphabetical,
+    /// Reorder sibling subtrees to reduce crossings (the web default).
+    Connections,
 }
 
 /// Which links of a selection are shown.
@@ -157,6 +168,68 @@ impl Tree {
         (files, packages)
     }
 
+    /// [`Tree::view`] with the sibling order `sort`.
+    pub fn view_sorted(&self, expanded: &BTreeSet<usize>, sort: Sort) -> TreeView {
+        let mut v = self.view(expanded);
+        if sort == Sort::Connections {
+            let order = self.connection_order(&v);
+            v.reorder(&order);
+        }
+        v
+    }
+
+    /// Old row indices in their connection order.
+    fn connection_order(&self, v: &TreeView) -> Vec<usize> {
+        let row_of: BTreeMap<usize, usize> = v
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.node, i))
+            .collect();
+        let mut children = crate::tree_order::Children::new();
+        for r in &v.rows {
+            let parent = self.nodes[r.node].parent.filter(|p| row_of.contains_key(p));
+            children.entry(parent).or_default().push(r.node);
+        }
+        // Rows are alphabetical (packages first), the web's initial order.
+        let rank: BTreeMap<usize, usize> = row_of.clone();
+        // The web keys links by view ids (scope nodes ranked by name);
+        // that key order decides the sample on scopes above 256 links.
+        let mut scope: Vec<usize> = v.scope_rows();
+        scope.sort_by(|&a, &b| {
+            self.nodes[v.rows[a].node]
+                .name
+                .cmp(&self.nodes[v.rows[b].node].name)
+        });
+        let mut view_id = vec![usize::MAX; v.rows.len()];
+        for (id, &r) in scope.iter().enumerate() {
+            view_id[r] = id;
+        }
+        let node_of_id: Vec<usize> = scope.iter().map(|&r| v.rows[r].node).collect();
+        let keyed: Vec<(usize, usize)> = v
+            .links
+            .iter()
+            .map(|l| (view_id[l.from], view_id[l.to]))
+            .collect();
+        let deps: Vec<(usize, usize)> = web_link_keys(&keyed)
+            .into_iter()
+            .map(|(a, b)| (node_of_id[a], node_of_id[b]))
+            .collect();
+        let parent: BTreeMap<usize, usize> = v
+            .rows
+            .iter()
+            .filter_map(|r| {
+                let p = self.nodes[r.node].parent?;
+                row_of.contains_key(&p).then_some((r.node, p))
+            })
+            .collect();
+        crate::tree_order::order(&mut children, &deps, &rank, &parent);
+        crate::tree_order::preorder(&children)
+            .into_iter()
+            .map(|n| row_of[&n])
+            .collect()
+    }
+
     pub fn view(&self, expanded: &BTreeSet<usize>) -> TreeView {
         let rows = self.rows(expanded);
         let mut row_of = vec![usize::MAX; self.nodes.len()];
@@ -216,19 +289,35 @@ impl Tree {
     /// Visible rows in preorder: roots, and the children of every
     /// expanded row.
     fn rows(&self, expanded: &BTreeSet<usize>) -> Vec<Row> {
+        let open = |n: usize| !self.nodes[n].children.is_empty() && expanded.contains(&n);
         let mut rows = Vec::new();
         let mut pending: Vec<(usize, usize)> = self.roots.iter().rev().map(|&r| (r, 0)).collect();
         while let Some((n, depth)) = pending.pop() {
-            let expandable = !self.nodes[n].children.is_empty();
-            let open = expandable && expanded.contains(&n);
+            // Compress open containers whose only child is open too, as the
+            // web viewer's containmentLayout does with context chains.
+            let mut chain = vec![n];
+            while let [only] = self.nodes[*chain.last().unwrap()].children[..] {
+                if !open(*chain.last().unwrap()) || !open(only) {
+                    break;
+                }
+                chain.push(only);
+            }
+            let last = *chain.last().unwrap();
             rows.push(Row {
-                node: n,
+                node: last,
+                chain,
                 depth,
-                expandable,
-                expanded: open,
+                expandable: !self.nodes[last].children.is_empty(),
+                expanded: open(last),
             });
-            if open {
-                pending.extend(self.nodes[n].children.iter().rev().map(|&c| (c, depth + 1)));
+            if open(last) {
+                pending.extend(
+                    self.nodes[last]
+                        .children
+                        .iter()
+                        .rev()
+                        .map(|&c| (c, depth + 1)),
+                );
             }
         }
         rows
@@ -396,6 +485,24 @@ pub fn row_center(row: usize) -> f32 {
 }
 
 impl TreeView {
+    /// Put the rows into `order` (old row indices) and renumber links.
+    fn reorder(&mut self, order: &[usize]) {
+        let mut new_of = vec![0; order.len()];
+        for (new, &old) in order.iter().enumerate() {
+            new_of[old] = new;
+        }
+        let pick = |v: &[u32]| order.iter().map(|&o| v[o]).collect::<Vec<_>>();
+        self.rows = order.iter().map(|&o| self.rows[o].clone()).collect();
+        self.incoming = pick(&self.incoming);
+        self.outgoing = pick(&self.outgoing);
+        self.in_cycle = order.iter().map(|&o| self.in_cycle[o]).collect();
+        for l in &mut self.links {
+            l.from = new_of[l.from];
+            l.to = new_of[l.to];
+        }
+        self.links.sort_by_key(|l| (l.from, l.to));
+    }
+
     /// Colour class of shown link `i`: cycles red without a selection or
     /// in "cycles only", otherwise the direction colour of its lane.
     pub fn link_kind(
@@ -458,6 +565,17 @@ pub fn arc(x: f32, from_y: f32, to_y: f32, lane: Lane, lane_width: f32) -> Strin
     )
 }
 
+/// Sort link endpoints (view ids) as the web viewer sorts its link keys
+/// `"<from> <to>"`: as strings, which decides the sample on large scopes.
+pub fn web_link_keys(links: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut keyed: Vec<(String, (usize, usize))> = links
+        .iter()
+        .map(|&(a, b)| (format!("{a} {b}"), (a, b)))
+        .collect();
+    keyed.sort();
+    keyed.into_iter().map(|(_, l)| l).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +623,98 @@ mod tests {
             .iter()
             .map(|r| t.nodes[r.node].name.clone())
             .collect()
+    }
+
+    /// The nine crates of this repository with their 13 root-level
+    /// dependencies, as the web viewer showed them.
+    fn crates() -> Graph {
+        let names = [
+            "archguard-analysis",
+            "archguard-cli",
+            "archguard-core",
+            "archguard-desktop",
+            "archguard-engine",
+            "archguard-extract",
+            "archguard-mcp",
+            "archguard-report",
+            "archguard-store",
+        ];
+        let id = |n: &str| names.iter().position(|x| x.ends_with(n)).unwrap() as u32;
+        let deps = [
+            ("analysis", "core"),
+            ("cli", "engine"),
+            ("cli", "mcp"),
+            ("desktop", "engine"),
+            ("engine", "analysis"),
+            ("engine", "core"),
+            ("engine", "extract"),
+            ("engine", "report"),
+            ("engine", "store"),
+            ("extract", "core"),
+            ("mcp", "engine"),
+            ("report", "core"),
+            ("store", "core"),
+        ];
+        Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| Node {
+                    id: NodeId(i as u32),
+                    name: n.to_string(),
+                    kind: NodeKind::Module,
+                    parent: None,
+                    lang: None,
+                })
+                .collect(),
+            edges: deps
+                .iter()
+                .map(|(a, b)| Edge {
+                    from: NodeId(id(a)),
+                    to: NodeId(id(b)),
+                    refs: Vec::new(),
+                    count: Some(1),
+                })
+                .collect(),
+            semantic: None,
+            review_kpis: None,
+        }
+    }
+
+    #[test]
+    fn connection_order_matches_the_web_viewer() {
+        let t = Tree::from_graph(&crates());
+        let v = t.view_sorted(&BTreeSet::new(), Sort::Connections);
+        let labels: Vec<&str> = v
+            .rows
+            .iter()
+            .map(|r| t.nodes[r.node].name.trim_start_matches("archguard-"))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "analysis", "cli", "mcp", "desktop", "engine", "extract", "report", "core", "store"
+            ]
+        );
+        // Links follow their rows.
+        let mcp_to_engine = v.links.iter().any(|l| l.from == 2 && l.to == 4);
+        assert!(mcp_to_engine);
+    }
+
+    #[test]
+    fn sampling_follows_the_web_link_keys() {
+        // View ids are name ranks; keys sort as strings ("10 2" < "2 3").
+        let keys = web_link_keys(&[(2, 3), (10, 2), (1, 0)]);
+        assert_eq!(keys, [(1, 0), (10, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn alphabetical_order_is_still_available() {
+        let t = Tree::from_graph(&crates());
+        let v = t.view_sorted(&BTreeSet::new(), Sort::Alphabetical);
+        assert_eq!(t.nodes[v.rows[2].node].name, "archguard-core");
     }
 
     #[test]

@@ -7,9 +7,11 @@
 mod network;
 mod state;
 mod tree;
+mod tree_order;
 mod web;
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use archguard_engine::core::{ReviewPriority, ReviewSources};
@@ -19,7 +21,7 @@ use archguard_engine::{
 use slint::{ModelRc, SharedString, VecModel};
 
 use state::GraphState;
-use tree::{EdgeMode, Tree};
+use tree::{EdgeMode, Sort, Tree};
 
 slint::include_modules!();
 
@@ -134,6 +136,13 @@ fn wire(ui: &AppWindow, root: &Path) {
         }
     }));
     ui.on_set_edge_mode(graph_action(ui, |g, m: i32| g.mode = edge_mode(m)));
+    ui.on_set_sort(graph_action(ui, |g, by_deps: bool| {
+        g.set_sort(if by_deps {
+            Sort::Connections
+        } else {
+            Sort::Alphabetical
+        });
+    }));
     wire_search(ui);
     let w = ui.as_weak();
     let root = root.to_path_buf();
@@ -226,23 +235,7 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     let v = &g.view;
     let selected = g.selected_row();
     let covered = selected.map(|s| v.selection(s)).unwrap_or_default();
-    ui.set_rows(vec_model(v.rows.iter().enumerate().map(|(i, r)| {
-        let n = &g.tree.nodes[r.node];
-        TreeRow {
-            row: i as i32,
-            node: r.node as i32,
-            label: n.label.clone().into(),
-            depth: r.depth as i32,
-            expandable: r.expandable,
-            expanded: r.expanded,
-            file: n.file,
-            in_count: v.incoming[i] as i32,
-            out_count: v.outgoing[i] as i32,
-            in_cycle: v.in_cycle[i],
-            covered: covered.contains(&i),
-            priority: priority_index(g.priorities[i]),
-        }
-    })));
+    ui.set_rows(tree_rows(g, &covered));
     ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(|d| {
         TreeLink {
             path: d.path.into(),
@@ -276,6 +269,7 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     push_network(ui, g, selected);
     ui.set_selected_row(selected.map_or(-1, |s| s as i32));
     ui.set_edge_mode(mode_index(g.mode));
+    ui.set_sort_by_deps(g.sort == Sort::Connections);
     ui.set_dep_count(v.links.len() as i32);
     ui.set_cycle_groups(v.cycle_groups as i32);
     ui.set_acd(format!("{:.2}", v.acd(&g.tree)).into());
@@ -286,6 +280,34 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     ui.set_count_all(call as i32);
     ui.set_scope_nodes(v.scope_rows().len() as i32);
     push_selection(ui, g);
+}
+
+/// The tree rows for the window; a compressed chain reads as its path.
+fn tree_rows(g: &GraphState, covered: &BTreeSet<usize>) -> ModelRc<TreeRow> {
+    let v = &g.view;
+    vec_model(v.rows.iter().enumerate().map(|(i, r)| {
+        let n = &g.tree.nodes[r.node];
+        TreeRow {
+            row: i as i32,
+            node: r.node as i32,
+            label: r
+                .chain
+                .iter()
+                .map(|&c| g.tree.nodes[c].label.as_str())
+                .collect::<Vec<_>>()
+                .join("/")
+                .into(),
+            depth: r.depth as i32,
+            expandable: r.expandable,
+            expanded: r.expanded,
+            file: n.file,
+            in_count: v.incoming[i] as i32,
+            out_count: v.outgoing[i] as i32,
+            in_cycle: v.in_cycle[i],
+            covered: covered.contains(&i),
+            priority: priority_index(g.priorities[i]),
+        }
+    }))
 }
 
 /// The network display shows the rows that are not expanded: exactly the

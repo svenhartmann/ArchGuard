@@ -179,3 +179,9 @@ msgstr "{} Dateien · {} Paket"
 msgid "Fit"
 msgstr "Einpassen"
 
+msgid "Alphabetical"
+msgstr "Alphabetisch"
+
+msgid "By dependencies"
+msgstr "Nach Beziehungen"
+

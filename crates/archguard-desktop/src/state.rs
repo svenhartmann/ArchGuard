@@ -7,7 +7,7 @@ use archguard_engine::core::{Finding, FindingKind};
 
 use archguard_engine::core::{ReviewPriority, ReviewSources};
 
-use crate::tree::{EdgeMode, Lane, Tree, TreeView};
+use crate::tree::{EdgeMode, Lane, Sort, Tree, TreeView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hit {
@@ -37,6 +37,8 @@ pub struct GraphState {
     /// Selected tree node (not row: rows move when branches open).
     pub selected: Option<usize>,
     pub mode: EdgeMode,
+    /// Sibling order; the web viewer defaults to "By dependencies".
+    pub sort: Sort,
     /// Review priority per visible row; `None` for low priority.
     pub priorities: Vec<Option<ReviewPriority>>,
     review_sources: ReviewSources,
@@ -55,11 +57,12 @@ impl GraphState {
         entry_points: Vec<String>,
     ) -> Self {
         let mut s = GraphState {
-            view: tree.view(&BTreeSet::new()),
+            view: tree.view_sorted(&BTreeSet::new(), Sort::Connections),
             tree,
             expanded: BTreeSet::new(),
             selected: None,
             mode: EdgeMode::All,
+            sort: Sort::Connections,
             priorities: Vec::new(),
             review_sources,
             entry_points,
@@ -93,7 +96,7 @@ impl GraphState {
     }
 
     fn refresh(&mut self) {
-        self.view = self.tree.view(&self.expanded);
+        self.view = self.tree.view_sorted(&self.expanded, self.sort);
         self.priorities = self.review();
         if let Some(node) = self.selected
             && self.selected_row_of(node).is_none()
@@ -102,8 +105,9 @@ impl GraphState {
         }
     }
 
+    /// The row standing for `node`, also inside a compressed chain.
     fn selected_row_of(&self, node: usize) -> Option<usize> {
-        self.view.rows.iter().position(|r| r.node == node)
+        self.view.rows.iter().position(|r| r.chain.contains(&node))
     }
 
     pub fn selected_row(&self) -> Option<usize> {
@@ -170,6 +174,11 @@ impl GraphState {
             self.expanded.insert(node);
         }
         self.reveal(node);
+    }
+
+    pub fn set_sort(&mut self, sort: Sort) {
+        self.sort = sort;
+        self.refresh();
     }
 
     /// The project crumb: collapse everything and clear the selection.
@@ -344,6 +353,7 @@ mod tests {
         assert_eq!(s.selected, Some(2));
         assert_eq!(s.view.rows[s.selected_row().unwrap()].node, 2);
         assert_eq!(s.crumbs(), [0, 1, 2]);
+        assert_eq!(s.view.rows.len(), 3, "app and app/ui share one row");
         assert_eq!(s.mode, EdgeMode::Both);
     }
 
@@ -359,11 +369,11 @@ mod tests {
             .iter()
             .map(|r| s.tree.nodes[r.node].name.as_str())
             .collect();
-        assert_eq!(
-            names,
-            ["app", "app/ui", "app/ui/view.rs", "core"],
-            "siblings stay"
-        );
+        // `app` has the single child `app/ui`, both open: one context row,
+        // as the web viewer compresses unary chains.
+        assert_eq!(names, ["app/ui", "app/ui/view.rs", "core"], "siblings stay");
+        assert_eq!(s.view.rows[0].chain, [0, 1]);
+        assert_eq!(s.view.rows[1].depth, 1);
     }
 
     #[test]
