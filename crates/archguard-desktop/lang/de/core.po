@@ -252,3 +252,9 @@ msgstr "Nächste 20 anzeigen"
 msgid "Search"
 msgstr "Suche"
 
+
+msgid "Save"
+msgstr "Speichern"
+
+msgid "Cancel"
+msgstr "Abbrechen"

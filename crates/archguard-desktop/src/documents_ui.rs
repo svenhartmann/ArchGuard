@@ -1,5 +1,7 @@
 //! Document tabs in the window: open a project, analyse it on a worker
-//! thread, switch, close. The store itself is [`documents`].
+//! thread, switch, close. The store itself is [`documents`]. Opening,
+//! switching and closing update the recent list, the session and the
+//! project's last view in the settings ([`settings_file`]).
 //!
 //! Every tab's `show(ui, &Loaded)` runs when a document with a finished
 //! analysis becomes active: after its analysis and on every switch. Tabs
@@ -14,7 +16,9 @@ use slint::{ComponentHandle, SharedString};
 use crate::context::{Analysis, Loaded};
 use crate::documents::{self, DocId, Status, SubProject, with_store};
 use crate::graph_ui::{self, vec_model};
-use crate::ui::{AppWindow, DocItem, SubProjectItem};
+use crate::settings::{self, ProjectView, Session};
+use crate::settings_file;
+use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
     architecture_ui, calls_ui, matrix_ui, quality_ui, security_ui, services_ui, start_ui, web,
 };
@@ -37,14 +41,15 @@ pub fn wire(ui: &AppWindow) {
     quality_ui::wire(ui);
     security_ui::wire(ui);
     ui.on_select_doc(with_ui(ui, |ui, i: i32| activate(ui, index(i))));
-    ui.on_close_doc(with_ui(ui, |ui, i: i32| close(ui, index(i))));
     ui.on_open_sub_project(with_ui(ui, |ui, i: i32| open_sub_project(ui, index(i))));
     let add = with_ui(ui, |ui, ()| pick_folder(ui));
     ui.on_add_doc(move || add(()));
     ui.on_open_web(with_ui(ui, |ui, tab: SharedString| open_web(ui, &tab)));
+    let strip = with_ui(ui, |ui, ()| push_strip(ui));
+    documents::on_dirty_changed(move || strip(()));
 }
 
-fn with_ui<A: 'static>(
+pub fn with_ui<A: 'static>(
     ui: &AppWindow,
     f: impl Fn(&AppWindow, A) + 'static,
 ) -> impl Fn(A) + 'static {
@@ -56,7 +61,7 @@ fn with_ui<A: 'static>(
     }
 }
 
-fn index(i: i32) -> usize {
+pub fn index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }
 
@@ -66,20 +71,69 @@ pub fn open(ui: &AppWindow, root: PathBuf) {
     save_view(ui);
     let (id, new) = with_store(|s| s.open(&root));
     if new {
-        spawn_analysis(ui, id, root);
+        seed_view(id, &root);
+        spawn_analysis(ui, id, root.clone());
     }
+    settings_file::edit(|s| s.add_recent(&root));
+    record_session();
+    push_recent(ui);
     refresh(ui);
+}
+
+/// A newly opened project shows the view it had when it was last open.
+fn seed_view(id: DocId, root: &Path) {
+    let Some(view) = settings_file::get(|s| s.project(root).cloned()) else {
+        return;
+    };
+    documents::set_state(
+        id,
+        ViewState {
+            tab: view.tab.into(),
+            display: view.display,
+            explorer_tab: view.explorer_tab,
+        },
+    );
+}
+
+/// Store the open documents as the session.
+fn record_session() {
+    let session = with_store(|s| Session {
+        documents: s.docs().iter().map(|d| d.root.clone()).collect(),
+        active: s.active_index().unwrap_or(0),
+    });
+    settings_file::update(|s| s.session = Some(session));
+}
+
+/// Show the recent projects in the menu and on the start screen.
+pub fn push_recent(ui: &AppWindow) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let items: Vec<RecentItem> = settings_file::get(|s| {
+        s.recent
+            .iter()
+            .map(|p| {
+                let (name, path) = settings::recent_label(p, home.as_deref());
+                RecentItem {
+                    name: name.into(),
+                    path: path.into(),
+                }
+            })
+            .collect()
+    });
+    ui.set_recent(vec_model(items));
 }
 
 /// Show the document at tab `index`.
 pub fn activate(ui: &AppWindow, index: usize) {
     save_view(ui);
     if with_store(|s| s.activate(index)) {
+        record_session();
         refresh(ui);
     }
 }
 
-fn close(ui: &AppWindow, index: usize) {
+/// Close the document at tab `index` without asking; `shell_ui` asks
+/// about unsaved changes first.
+pub fn close(ui: &AppWindow, index: usize) {
     save_view(ui);
     let Some(doc) = with_store(|s| s.close(index)) else {
         return;
@@ -88,6 +142,7 @@ fn close(ui: &AppWindow, index: usize) {
     // Drop the document's state before the window shows the next one.
     drop(doc);
     std::thread::spawn(move || web::stop(&root));
+    record_session();
     refresh(ui);
 }
 
@@ -172,17 +227,26 @@ fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>
     }
 }
 
-fn save_view(ui: &AppWindow) {
-    if let Some(id) = documents::active_id() {
-        documents::set_state(
-            id,
-            ViewState {
-                tab: ui.get_tab(),
-                display: ui.get_display(),
-                explorer_tab: ui.get_explorer_tab(),
-            },
-        );
-    }
+/// Remember the active document's view, in the document and as the
+/// project's last view in the settings.
+pub fn save_view(ui: &AppWindow) {
+    let Some((id, root)) = with_store(|s| s.active().map(|d| (d.id, d.root.clone()))) else {
+        return;
+    };
+    let view = ProjectView {
+        tab: ui.get_tab().into(),
+        display: ui.get_display(),
+        explorer_tab: ui.get_explorer_tab(),
+    };
+    settings_file::edit(|s| s.set_project(&root, view));
+    documents::set_state(
+        id,
+        ViewState {
+            tab: ui.get_tab(),
+            display: ui.get_display(),
+            explorer_tab: ui.get_explorer_tab(),
+        },
+    );
 }
 
 fn restore_view(ui: &AppWindow) {
@@ -203,6 +267,7 @@ fn push_strip(ui: &AppWindow) {
                 path: d.root.display().to_string().into(),
                 loading: d.status == Status::Loading,
                 failed: matches!(d.status, Status::Failed(_)),
+                dirty: d.is_dirty(),
             })
             .collect();
         (items, s.active_index())
@@ -212,7 +277,7 @@ fn push_strip(ui: &AppWindow) {
 }
 
 /// Show the active document: strip, header, status and every tab.
-fn refresh(ui: &AppWindow) {
+pub fn refresh(ui: &AppWindow) {
     push_strip(ui);
     ui.set_projects_open(false);
     ui.set_web_status(SharedString::new());

@@ -1,0 +1,56 @@
+msgid "File"
+msgstr "Datei"
+
+msgid "Open project…"
+msgstr "Projekt öffnen …"
+
+msgid "Open recent"
+msgstr "Zuletzt geöffnet"
+
+msgid "Clear recent"
+msgstr "Liste leeren"
+
+msgid "Close project"
+msgstr "Projekt schließen"
+
+msgid "Close all"
+msgstr "Alle Projekte schließen"
+
+msgid "Quit"
+msgstr "Beenden"
+
+msgid "Dark theme"
+msgstr "Dunkles Design"
+
+msgid "Light theme"
+msgstr "Helles Design"
+
+msgid "System language"
+msgstr "Systemsprache"
+
+msgid "Help"
+msgstr "Hilfe"
+
+msgid "About ArchGuard"
+msgstr "Über ArchGuard"
+
+msgid "Recent projects"
+msgstr "Zuletzt geöffnete Projekte"
+
+msgid "Save changes to {}?"
+msgstr "Änderungen an {} speichern?"
+
+msgid "Unsaved: {}"
+msgstr "Nicht gespeichert: {}"
+
+msgid "Your changes will be lost if you don't save them."
+msgstr "Deine Änderungen gehen verloren, wenn du sie nicht speicherst."
+
+msgid "Don't save"
+msgstr "Nicht speichern"
+
+msgid "Settings could not be read, a copy was kept: {}"
+msgstr "Einstellungen waren nicht lesbar, eine Kopie liegt hier: {}"
+
+msgid "Could not save the changes: {}"
+msgstr "Änderungen konnten nicht gespeichert werden: {}"

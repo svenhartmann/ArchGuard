@@ -1,0 +1,126 @@
+// The "Save changes?" prompt and the notice bar. Filled from
+// src/shell_ui.rs.
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+
+// Modal: covers the window, so nothing behind it reacts until answered.
+// answered(0) Save, (1) Don't save, (2) Cancel; Escape cancels, Return saves.
+export component SaveDialog inherits Rectangle {
+    in property <string> project;
+    in property <string> what;
+    callback answered(int);
+    background: Theme.shadow;
+    TouchArea { }
+    keys := FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.answered(2);
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                root.answered(0);
+                return accept;
+            }
+            reject
+        }
+    }
+    Rectangle {
+        x: (root.width - self.width) / 2;
+        y: max(40px, (root.height - self.height) / 3);
+        width: 440px;
+        height: box.preferred-height;
+        background: Theme.panel;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.shadow;
+        box := VerticalLayout {
+            padding: 22px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 12px;
+                Icon {
+                    icon: Icons.info;
+                    tint: Theme.medium;
+                    width: 22px;
+                    height: 22px;
+                }
+                Text {
+                    text: @tr("Save changes to {}?", root.project);
+                    color: Theme.text;
+                    font-size: 16px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+            if root.what != "": Text {
+                text: @tr("Unsaved: {}", root.what);
+                color: Theme.text;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: @tr("Your changes will be lost if you don't save them.");
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            Rectangle { height: 6px; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button {
+                    text: @tr("Don't save");
+                    clicked => { root.answered(1); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: @tr("Cancel");
+                    clicked => { root.answered(2); }
+                }
+                Button {
+                    primary: true;
+                    text: @tr("Save");
+                    clicked => { root.answered(0); }
+                }
+            }
+        }
+    }
+}
+
+// A message about the app itself (settings that could not be read, a
+// failed save), until dismissed.
+export component NoticeBar inherits Rectangle {
+    in property <string> text;
+    callback dismiss();
+    height: 32px;
+    background: Theme.medium.with-alpha(0.18);
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 8px;
+        spacing: 10px;
+        Icon {
+            icon: Icons.info;
+            tint: Theme.text;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.close;
+            clicked => { root.dismiss(); }
+        }
+    }
+}

@@ -23,6 +23,21 @@
 //! State is held per type in an `Rc<RefCell<T>>`; the store itself is not
 //! borrowed while `f` runs, so `f` may trigger callbacks of other tabs.
 //! Re-entering the same type panics, as a `RefCell` thread-local would.
+//!
+//! # Unsaved changes
+//!
+//! A view that edits a document (the configuration editor) marks it dirty
+//! with a short description and registers how to save it:
+//!
+//! ```ignore
+//! documents::set_save_hook(doc, move || write_config(&path, &text));
+//! documents::mark_dirty(doc, "Layer rules");   // after each edit
+//! documents::mark_clean(doc);                  // after the editor saved itself
+//! ```
+//!
+//! Closing the document, closing all or quitting then asks
+//! "Save changes to <project>?" (`shell.rs`). Save runs the hook through
+//! [`save`]; it marks the document clean on success.
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
@@ -62,7 +77,13 @@ pub struct Document {
     pub analysis: Option<Rc<Analysis>>,
     pub projects: Vec<SubProject>,
     states: HashMap<TypeId, Rc<dyn Any>>,
+    /// What is unsaved, in the order it was first marked; empty: clean.
+    unsaved: Vec<String>,
+    save_hook: Option<SaveHook>,
 }
+
+/// Saves a document's unsaved changes; `Err` is shown to the user.
+pub type SaveHook = Box<dyn FnMut() -> Result<(), String>>;
 
 impl Document {
     fn new(id: DocId, root: PathBuf) -> Self {
@@ -78,6 +99,8 @@ impl Document {
             analysis: None,
             projects: Vec::new(),
             states: HashMap::new(),
+            unsaved: Vec::new(),
+            save_hook: None,
         }
     }
 
@@ -93,6 +116,15 @@ impl Document {
 
     pub fn has_state<T: 'static>(&self) -> bool {
         self.states.contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        !self.unsaved.is_empty()
+    }
+
+    /// What is unsaved, e.g. "Layer rules, Thresholds"; empty when clean.
+    pub fn unsaved(&self) -> String {
+        self.unsaved.join(", ")
     }
 }
 
@@ -157,6 +189,37 @@ impl Store {
 
     pub fn get_mut(&mut self, id: DocId) -> Option<&mut Document> {
         self.docs.iter_mut().find(|d| d.id == id)
+    }
+
+    pub fn get(&self, id: DocId) -> Option<&Document> {
+        self.docs.iter().find(|d| d.id == id)
+    }
+
+    pub fn index_of(&self, id: DocId) -> Option<usize> {
+        self.docs.iter().position(|d| d.id == id)
+    }
+
+    /// Note that `what` of document `id` is unsaved; false if it is closed.
+    #[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
+    pub fn mark_dirty(&mut self, id: DocId, what: &str) -> bool {
+        let Some(doc) = self.get_mut(id) else {
+            return false;
+        };
+        if !doc.unsaved.iter().any(|w| w == what) {
+            doc.unsaved.push(what.to_string());
+        }
+        true
+    }
+
+    pub fn mark_clean(&mut self, id: DocId) {
+        if let Some(doc) = self.get_mut(id) {
+            doc.unsaved.clear();
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_dirty(&self, id: DocId) -> bool {
+        self.get(id).is_some_and(Document::is_dirty)
     }
 
     /// Store `state` for document `id`; false if the document is closed.
@@ -257,6 +320,77 @@ pub fn with_active_state_or<T: 'static, R>(
         None => s.active_cell::<T>(),
     })?;
     Some(run(cell, f))
+}
+
+thread_local! {
+    static ON_DIRTY: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Called after a document became dirty or clean (the window redraws its
+/// document tabs).
+pub fn on_dirty_changed(f: impl Fn() + 'static) {
+    ON_DIRTY.set(Some(Rc::new(f)));
+}
+
+fn dirty_changed() {
+    if let Some(f) = ON_DIRTY.with_borrow(Clone::clone) {
+        f();
+    }
+}
+
+// The configuration editor (ADR 0002 decision 8) is the first user of
+// the dirty API; until then only tests and snapshots call parts of it.
+
+/// Note that `what` of document `doc` is unsaved (see the module docs).
+#[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
+pub fn mark_dirty(doc: DocId, what: &str) {
+    if with_store(|s| s.mark_dirty(doc, what)) {
+        dirty_changed();
+    }
+}
+
+/// The document has no unsaved changes any more.
+pub fn mark_clean(doc: DocId) {
+    with_store(|s| s.mark_clean(doc));
+    dirty_changed();
+}
+
+#[allow(dead_code)]
+pub fn is_dirty(doc: DocId) -> bool {
+    with_store(|s| s.is_dirty(doc))
+}
+
+/// How [`save`] saves document `doc`; replaces an earlier hook.
+#[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
+pub fn set_save_hook(doc: DocId, hook: impl FnMut() -> Result<(), String> + 'static) {
+    with_store(|s| s.get_mut(doc).map(|d| d.save_hook = Some(Box::new(hook))));
+}
+
+/// Save document `doc` with its hook and mark it clean. Clean documents
+/// need nothing; a dirty one without hook is an error.
+pub fn save(doc: DocId) -> Result<(), String> {
+    let hook = with_store(|s| {
+        let d = s.get_mut(doc)?;
+        d.is_dirty().then(|| d.save_hook.take())
+    });
+    let Some(hook) = hook else {
+        return Ok(());
+    };
+    let Some(mut hook) = hook else {
+        return Err("nothing can save these changes yet".into());
+    };
+    // Run without the store borrowed: the hook may read documents.
+    let result = hook();
+    // Put it back unless the hook registered a new one.
+    with_store(|s| {
+        if let Some(d) = s.get_mut(doc) {
+            d.save_hook.get_or_insert(hook);
+        }
+    });
+    if result.is_ok() {
+        mark_clean(doc);
+    }
+    result
 }
 
 /// Store `state` for document `doc` (e.g. from a worker thread's result).
@@ -382,6 +516,71 @@ mod tests {
         with_active_state_or(|| 1_u8, |_: &mut u8| ());
         let nested = with_active_state(|_: &mut i64| with_active_state(|v: &mut u8| *v));
         assert_eq!(nested, Some(Some(1)));
+    }
+
+    #[test]
+    fn dirty_collects_what_is_unsaved_until_clean() {
+        let mut s = store(&["/a", "/b"]);
+        let (a, b) = (s.docs()[0].id, s.docs()[1].id);
+        assert!(!s.is_dirty(a));
+        assert!(s.mark_dirty(a, "Layer rules"));
+        assert!(s.mark_dirty(a, "Thresholds"));
+        assert!(s.mark_dirty(a, "Layer rules"));
+        assert!(s.is_dirty(a) && !s.is_dirty(b));
+        assert_eq!(
+            s.get(a).map(Document::unsaved).as_deref(),
+            Some("Layer rules, Thresholds")
+        );
+        s.mark_clean(a);
+        assert!(!s.is_dirty(a));
+        assert_eq!(s.index_of(b), Some(1));
+        s.close(1);
+        assert!(!s.mark_dirty(b, "x"), "closed documents cannot be dirty");
+        assert!(!s.is_dirty(b));
+    }
+
+    #[test]
+    fn save_runs_the_hook_and_marks_clean_only_on_success() {
+        with_store(|s| *s = store(&["/a", "/b"]));
+        let (a, b) = with_store(|s| (s.docs()[0].id, s.docs()[1].id));
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let fail = Rc::new(std::cell::Cell::new(true));
+        let (c, f) = (calls.clone(), fail.clone());
+        set_save_hook(a, move || {
+            c.set(c.get() + 1);
+            // The store is not borrowed while the hook runs.
+            assert!(is_dirty(a));
+            if f.get() {
+                Err("disk full".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(save(a), Ok(()), "a clean document needs no save");
+        assert_eq!(calls.get(), 0);
+        mark_dirty(a, "Layer rules");
+        assert_eq!(save(a), Err("disk full".into()));
+        assert!(is_dirty(a), "a failed save keeps the changes");
+        fail.set(false);
+        assert_eq!(save(a), Ok(()));
+        assert!(!is_dirty(a));
+        assert_eq!(calls.get(), 2);
+        mark_dirty(b, "Dashboard");
+        assert!(save(b).is_err(), "no hook");
+        assert!(is_dirty(b));
+    }
+
+    #[test]
+    fn dirty_changes_notify_the_window() {
+        with_store(|s| *s = store(&["/a"]));
+        let a = with_store(|s| s.docs()[0].id);
+        let seen = Rc::new(std::cell::Cell::new(0));
+        let n = seen.clone();
+        on_dirty_changed(move || n.set(n.get() + 1));
+        mark_dirty(a, "x");
+        mark_clean(a);
+        mark_dirty(999, "closed");
+        assert_eq!(seen.get(), 2);
     }
 
     fn project(name: &str, path: &str, kind: &str) -> ServiceProject {

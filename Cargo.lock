@@ -340,6 +340,7 @@ dependencies = [
  "rfd",
  "slint",
  "slint-build",
+ "toml_edit",
 ]
 
 [[package]]
