@@ -8,7 +8,6 @@
 
 mod snapshot;
 
-use std::cell::RefCell;
 use std::path::Path;
 
 use archguard_engine::core::Config;
@@ -16,6 +15,7 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
 use snapshot::{SEVERITIES, safe_url};
 
@@ -30,10 +30,6 @@ pub struct SecurityState {
     /// 0 all, else 1 + position in [`SEVERITIES`].
     severity: usize,
     limit: usize,
-}
-
-thread_local! {
-    static STATE: RefCell<Option<SecurityState>> = const { RefCell::new(None) };
 }
 
 /// Read the saved scan for an analysis. `data.run.graph.root` is the root
@@ -68,7 +64,7 @@ pub fn wire(ui: &AppWindow) {
     d.on_open_url(|url| {
         if let Some(url) = safe_url(Some(url.as_str())) {
             let url = url.to_string();
-            std::thread::spawn(move || open_in_browser(&url));
+            std::thread::spawn(move || crate::web::open_in_browser(&url));
         }
     });
 }
@@ -81,11 +77,9 @@ fn action<A: 'static>(
     let w = ui.as_weak();
     move |arg| {
         let Some(ui) = w.upgrade() else { return };
-        STATE.with_borrow_mut(|s| {
-            if let Some(s) = s {
-                f(s, arg);
-                push(&ui, s);
-            }
+        documents::with_active_state(|s: &mut SecurityState| {
+            f(s, arg);
+            push(&ui, s);
         });
     }
 }
@@ -93,10 +87,17 @@ fn action<A: 'static>(
 /// Fill the tab after an analysis finished. The dependency files are hashed
 /// on a worker thread; snapshot runs read in place so the PNG shows them.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    // A document keeps its state; switching back only shows it again.
+    if documents::with_active_state(|s: &mut SecurityState| push(ui, s)).is_some() {
+        return;
+    }
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     ui.global::<SecurityData>()
         .set_model(SecurityModel::default());
     if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
-        return install(ui, build(data));
+        return install(ui, doc, build(data));
     }
     let (root, config) = (
         std::path::PathBuf::from(&data.run.graph.root),
@@ -107,15 +108,17 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let state = build_from(&root, &config);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, state);
+                install(&ui, doc, state);
             }
         });
     });
 }
 
-fn install(ui: &AppWindow, state: SecurityState) {
-    push(ui, &state);
-    STATE.set(Some(state));
+/// Store the state for `doc`; show it only if `doc` is still active.
+fn install(ui: &AppWindow, doc: documents::DocId, state: SecurityState) {
+    if documents::set_state(doc, state) {
+        documents::with_active_state(|s: &mut SecurityState| push(ui, s));
+    }
 }
 
 /// Show the state in the window.
@@ -193,21 +196,6 @@ fn strings<const N: usize>(items: [String; N]) -> ModelRc<SharedString> {
 
 fn rows<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
-}
-
-/// The advisory link in the system browser (the web's target=_blank). Only
-/// called with a URL that passed [`safe_url`].
-fn open_in_browser(url: &str) {
-    let mut command = if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-    } else if cfg!(windows) {
-        let mut c = std::process::Command::new("rundll32");
-        c.arg("url.dll,FileProtocolHandler");
-        c
-    } else {
-        std::process::Command::new("xdg-open")
-    };
-    let _ = command.arg(url).status();
 }
 
 #[cfg(test)]

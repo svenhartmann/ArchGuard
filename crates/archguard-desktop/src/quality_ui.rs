@@ -16,11 +16,10 @@ mod notes;
 mod rows;
 mod state;
 
-use std::cell::RefCell;
-
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
@@ -31,10 +30,6 @@ use lang::Lang;
 use notes::Section;
 pub use state::QualityState;
 use state::{PAGE, Page, View};
-
-thread_local! {
-    static QUALITY: RefCell<Option<QualityState>> = const { RefCell::new(None) };
-}
 
 /// The tab's state for an analysis (runs the call analysis and Git reads).
 pub fn build(data: &Loaded, lang: Lang) -> QualityState {
@@ -48,13 +43,11 @@ fn language(ui: &AppWindow) -> Lang {
     }
 }
 
-/// Run `f` on the state and push the page.
+/// Run `f` on the active document's state and push the page.
 fn update(ui: &AppWindow, f: impl FnOnce(&mut QualityState)) {
-    QUALITY.with_borrow_mut(|s| {
-        if let Some(s) = s {
-            f(s);
-            push(ui, s);
-        }
+    documents::with_active_state(|s: &mut QualityState| {
+        f(s);
+        push(ui, s);
     });
 }
 
@@ -135,10 +128,13 @@ fn wire_targets(ui: &AppWindow) {
     let w = ui.as_weak();
     q.on_locate(move |name| {
         let Some(ui) = w.upgrade() else { return };
-        let node = QUALITY.with_borrow(|s| {
-            let nodes = &s.as_ref()?.inputs.as_ref()?.source.nodes;
+        // The store lock is released before reveal runs, so the Graph
+        // tab can take its own state.
+        let node = documents::with_active_state(|s: &mut QualityState| {
+            let nodes = &s.inputs.as_ref()?.source.nodes;
             nodes.iter().position(|n| n.name == name.as_str())
-        });
+        })
+        .flatten();
         if let Some(n) = node {
             ui.set_tab("graph".into());
             ui.invoke_reveal(n as i32);
@@ -149,13 +145,20 @@ fn wire_targets(ui: &AppWindow) {
 /// Fill the tab after an analysis finished. The measurements take seconds,
 /// so they run on a worker thread; snapshot mode waits for them.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    // A document keeps its state; switching back only shows it again.
+    if documents::with_active_state(|s: &mut QualityState| push(ui, s)).is_some() {
+        return;
+    }
+    let Some(doc) = documents::active_id() else {
+        return;
+    };
     let lang = language(ui);
     if wait_for_data() {
-        QUALITY.set(Some(build(data, lang)));
+        documents::set_state(doc, build(data, lang));
         update(ui, snapshot_view);
         return;
     }
-    QUALITY.set(Some(QualityState::loading(lang)));
+    documents::set_state(doc, QualityState::loading(lang));
     update(ui, |_| {});
     let (root, graph, config, sources) = (
         data.root.to_path_buf(),
@@ -168,8 +171,9 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let inputs = Inputs::compute(&root, &graph, &config, &sources);
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = w.upgrade() else { return };
-            QUALITY.set(Some(QualityState::new(lang, inputs)));
-            update(&ui, |_| {});
+            if documents::set_state(doc, QualityState::new(lang, inputs)) {
+                update(&ui, |_| {});
+            }
         });
     });
 }

@@ -81,11 +81,15 @@ fn start(root: &Path) -> Result<(Child, String), String> {
     Ok((child, url))
 }
 
-fn open_in_browser(url: &str) -> Result<(), String> {
+/// Open `url` in the default browser. On Windows `rundll32` instead of
+/// `cmd /C start`, which would treat `&` in a URL as a command separator.
+pub fn open_in_browser(url: &str) -> Result<(), String> {
     let status = if cfg!(target_os = "macos") {
         Command::new("open").arg(url).status()
     } else if cfg!(windows) {
-        Command::new("cmd").args(["/C", "start", "", url]).status()
+        Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
+            .status()
     } else {
         Command::new("xdg-open").arg(url).status()
     };
