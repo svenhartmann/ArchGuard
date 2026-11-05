@@ -175,20 +175,19 @@ impl Matrix {
         let index: BTreeMap<usize, usize> =
             files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
         let mut adj: BTreeMap<usize, Vec<usize>> = files.iter().map(|&f| (f, Vec::new())).collect();
-        let mut g = petgraph::graph::DiGraph::<usize, ()>::new();
-        let ids: Vec<_> = files.iter().map(|&f| g.add_node(f)).collect();
+        let mut local = Vec::new();
         for (from, to, _) in tree.edges() {
             if let (Some(&a), Some(&b)) = (index.get(&from), index.get(&to)) {
-                g.add_edge(ids[a], ids[b], ());
+                local.push((a, b));
                 if let Some(v) = adj.get_mut(&from) {
                     v.push(to);
                 }
             }
         }
-        let mut groups: Vec<Vec<usize>> = petgraph::algo::tarjan_scc(&g)
+        let mut groups: Vec<Vec<usize>> = crate::tree_order::scc(files.len(), local)
             .into_iter()
             .map(|c| {
-                let mut m: Vec<usize> = c.into_iter().map(|i| g[i]).collect();
+                let mut m: Vec<usize> = c.into_iter().map(|i| files[i]).collect();
                 m.sort_by(|a, b| tree.nodes[*a].name.cmp(&tree.nodes[*b].name));
                 m
             })

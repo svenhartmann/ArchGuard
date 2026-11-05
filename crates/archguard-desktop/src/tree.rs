@@ -341,17 +341,12 @@ impl Tree {
     }
 }
 
-/// Strongly connected component per row (petgraph's Tarjan).
+/// Strongly connected component per row.
 fn components(n: usize, links: impl Iterator<Item = (usize, usize)>) -> Vec<usize> {
-    let mut g = petgraph::graph::DiGraph::<(), ()>::with_capacity(n, 0);
-    let ids: Vec<_> = (0..n).map(|_| g.add_node(())).collect();
-    for (a, b) in links {
-        g.add_edge(ids[a], ids[b], ());
-    }
     let mut component = vec![0; n];
-    for (c, members) in petgraph::algo::tarjan_scc(&g).into_iter().enumerate() {
+    for (c, members) in crate::tree_order::scc(n, links).into_iter().enumerate() {
         for v in members {
-            component[v.index()] = c;
+            component[v] = c;
         }
     }
     component

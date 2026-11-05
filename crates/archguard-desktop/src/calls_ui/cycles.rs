@@ -5,9 +5,6 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use petgraph::algo::tarjan_scc;
-use petgraph::graph::DiGraph;
-
 use super::model::{ElementKind, Filter, Index, Labels, Relation, json_list, json_str};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,22 +121,16 @@ fn site_order(idx: &Index, a: usize, b: usize) -> std::cmp::Ordering {
 }
 
 fn groups(kind: ElementKind, edges: Edges, idx: &Index) -> Vec<Group> {
-    let mut graph = DiGraph::<String, ()>::new();
-    let mut node = HashMap::new();
     let mut ids: Vec<&String> = edges.keys().flat_map(|(f, t)| [f, t]).collect();
     ids.sort();
     ids.dedup();
-    for id in ids {
-        node.insert(id.clone(), graph.add_node(id.clone()));
-    }
-    for (f, t) in edges.keys() {
-        graph.add_edge(node[f], node[t], ());
-    }
-    let mut result: Vec<Group> = tarjan_scc(&graph)
+    let node: HashMap<&String, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let links = edges.keys().map(|(f, t)| (node[f], node[t]));
+    let mut result: Vec<Group> = crate::tree_order::scc(ids.len(), links)
         .into_iter()
-        .filter(|c| c.len() > 1 || edges.contains_key(&(graph[c[0]].clone(), graph[c[0]].clone())))
+        .filter(|c| c.len() > 1 || edges.contains_key(&(ids[c[0]].clone(), ids[c[0]].clone())))
         .map(|c| {
-            let mut members: Vec<String> = c.into_iter().map(|n| graph[n].clone()).collect();
+            let mut members: Vec<String> = c.into_iter().map(|n| ids[n].clone()).collect();
             members.sort();
             let kind_name = if kind == ElementKind::Class {
                 "class"

@@ -5,8 +5,6 @@
 use std::collections::{HashMap, HashSet};
 
 use archguard_engine::core::{CallAnalysis, Graph, NodeId, NodeKind};
-use petgraph::algo::tarjan_scc;
-use petgraph::graph::DiGraph;
 
 /// Containment indexes over `graph.nodes` (positions, not ids).
 pub struct SourceModel {
@@ -361,17 +359,13 @@ fn bundle(
 }
 
 fn mark_cycles(nodes: &mut [PNode], edges: &mut [PEdge]) {
-    let mut g = DiGraph::<(), ()>::new();
-    let ix: Vec<_> = nodes.iter().map(|_| g.add_node(())).collect();
-    for e in edges.iter() {
-        g.add_edge(ix[e.from], ix[e.to], ());
-    }
     let mut comp = vec![usize::MAX; nodes.len()];
-    for (c, scc) in tarjan_scc(&g).into_iter().enumerate() {
+    let groups = crate::tree_order::scc(nodes.len(), edges.iter().map(|e| (e.from, e.to)));
+    for (c, scc) in groups.into_iter().enumerate() {
         if scc.len() > 1 {
             for n in scc {
-                comp[n.index()] = c;
-                nodes[n.index()].cycle = true;
+                comp[n] = c;
+                nodes[n].cycle = true;
             }
         }
     }
