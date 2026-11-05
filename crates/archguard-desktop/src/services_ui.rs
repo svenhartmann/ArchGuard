@@ -10,19 +10,17 @@ mod paths;
 mod state;
 mod view;
 
-use std::path::Path;
-
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index};
+use crate::graph_ui::tab_support::{self, Actions, Shared, TabState, Topology, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
 
-/// Build the tab state for a project root (reads the service topology).
-fn build_from(root: &Path) -> ServicesState {
-    let mut state = state::build_from(root);
+/// Build the tab state from the document's topology.
+fn build_from(topology: Topology) -> ServicesState {
+    let mut state = state::build_from(topology);
     snapshot_overrides(&mut state);
     state
 }
@@ -104,8 +102,8 @@ impl TabState for ServicesState {
 /// document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
-        let root = data.root.to_path_buf();
-        move || build_from(&root)
+        let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
+        move || build_from(tab_support::topology(&slot, &root))
     });
 }
 

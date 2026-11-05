@@ -146,7 +146,7 @@ impl<'a> Scope<'a> {
 
 /// Build the whole window model for the state.
 pub fn build(s: &ServicesState, unmapped: &str) -> ServicesModel {
-    let t = match &s.topology {
+    let t = match &*s.topology {
         Err(e) => {
             return ServicesModel {
                 state: 2,
@@ -531,7 +531,7 @@ fn deployment(out: &mut SvcInspector, sc: &Scope, i: usize) {
 
 /// `fitServices` for a viewport of `w` × `h`.
 pub fn fit(s: &mut ServicesState, w: f32, h: f32, unmapped: &str) {
-    let Some(t) = s.topology.as_ref().ok() else {
+    let Some(t) = (*s.topology).as_ref().ok() else {
         return;
     };
     let placed = place(&Scope::new(s, t), s, unmapped);
@@ -557,7 +557,9 @@ mod tests {
 
     fn shop() -> ServicesState {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/service-shop");
-        let mut s = build_from(&root);
+        let mut s = build_from(std::sync::Arc::new(
+            archguard_engine::analyze_services(&root).map_err(|e| e.to_string()),
+        ));
         s.viewport = 1480.0;
         s
     }
@@ -567,7 +569,7 @@ mod tests {
     }
 
     fn service(s: &ServicesState, name: &str) -> usize {
-        let t = s.topology.as_ref().expect("topology");
+        let t = (*s.topology).as_ref().expect("topology");
         t.services.iter().position(|x| x.name == name).expect(name)
     }
 
@@ -678,7 +680,7 @@ mod tests {
     #[test]
     fn an_edge_shows_its_evidence() {
         let mut s = shop();
-        let t = s.topology.as_ref().expect("topology");
+        let t = (*s.topology).as_ref().expect("topology");
         let d = t
             .dependencies
             .iter()

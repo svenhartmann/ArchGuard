@@ -590,7 +590,8 @@ mod tests {
         let graph = archguard_engine::core::GraphBuilder::new().build(root.display().to_string());
         let config = archguard_engine::core::Config::default();
         let sources = archguard_engine::core::ReviewSources::default();
-        let mut i = Inputs::compute(root, &graph, &config, &sources);
+        let calls = archguard_engine::analyze_calls(root, &config);
+        let mut i = Inputs::compute(root, &graph, &config, &sources, &calls);
         i.code.status = "partial".into();
         i.code.classes = classes;
         i

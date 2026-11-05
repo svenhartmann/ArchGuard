@@ -16,12 +16,12 @@ mod visual;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{Config, Graph, Report};
+use archguard_engine::core::{CallAnalysis, Config, Graph, Report};
 use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index};
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
@@ -49,10 +49,15 @@ pub struct ArchitectureState {
 }
 
 /// Build the tab state (writes the arc42 document, runs the call analysis).
-fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> ArchitectureState {
+fn build_from(
+    root: &Path,
+    config: &Config,
+    graph: Graph,
+    report: &Report,
+    calls: &CallAnalysis,
+) -> ArchitectureState {
     let doc =
         archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
-    let calls = archguard_engine::analyze_calls(root, config);
     let tree_nodes = Tree::from_graph(&graph)
         .nodes
         .iter()
@@ -69,8 +74,8 @@ fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> Ar
     let mut state = ArchitectureState {
         root: root.to_path_buf(),
         deps: projection::dependency_edges(&model, &graph),
-        calls: projection::call_edges(&graph, &calls),
-        calls_status: calls.status,
+        calls: projection::call_edges(&graph, calls),
+        calls_status: calls.status.clone(),
         has_model: config.architecture.model.is_some(),
         graph,
         doc,
@@ -132,13 +137,14 @@ impl TabState for ArchitectureState {
 /// on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
+        let calls = Calls::of(data);
         let (root, config, graph, report) = (
             data.root.to_path_buf(),
             data.run.config.clone(),
             data.run.graph.clone(),
             data.run.report.clone(),
         );
-        move || build_from(&root, &config, graph, &report)
+        move || build_from(&root, &config, graph, &report, &calls.get())
     });
 }
 
@@ -355,7 +361,8 @@ mod tests {
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
-        let state = build_from(&root, &run.config, run.graph.clone(), &run.report);
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let state = build_from(&root, &run.config, run.graph.clone(), &run.report, &calls);
         let doc = state.doc.as_ref().expect("arc42 document");
         assert_eq!(doc.chapters.len(), 12);
         assert_eq!(state.chapter, 5);

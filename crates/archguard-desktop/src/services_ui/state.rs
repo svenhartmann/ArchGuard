@@ -1,6 +1,6 @@
 //! The Services tab's state: the topology and the web's `serviceUi`.
 
-use std::path::Path;
+use crate::graph_ui::tab_support::Topology;
 
 use archguard_engine::core::{ServiceDependencyKind, ServiceTopology};
 
@@ -25,7 +25,7 @@ pub enum Mode {
 
 /// Everything the tab knows: the topology and the web's `serviceUi`.
 pub struct ServicesState {
-    pub(super) topology: Result<ServiceTopology, String>,
+    pub(super) topology: Topology,
     /// Projects by path, then manifest (indices into `projects`).
     pub(super) project_order: Vec<usize>,
     /// Index into [`KINDS`].
@@ -49,11 +49,10 @@ pub struct ServicesState {
     pub(super) viewport: f32,
 }
 
-pub fn build_from(root: &Path) -> ServicesState {
-    let topology = archguard_engine::analyze_services(root).map_err(|e| e.to_string());
+pub fn build_from(topology: Topology) -> ServicesState {
     let mut project_order = Vec::new();
     let mut kind = ServiceDependencyKind::ConfiguredHttp;
-    if let Ok(t) = &topology {
+    if let Ok(t) = &*topology {
         project_order = (0..t.projects.len()).collect();
         project_order.sort_by(|&a, &b| {
             let (x, y) = (&t.projects[a], &t.projects[b]);
@@ -95,7 +94,7 @@ fn initial_kind(t: &ServiceTopology) -> ServiceDependencyKind {
 
 impl ServicesState {
     pub(super) fn topology(&self) -> Option<&ServiceTopology> {
-        self.topology.as_ref().ok()
+        (*self.topology).as_ref().ok()
     }
 
     pub(super) fn clear_focus(&mut self) {

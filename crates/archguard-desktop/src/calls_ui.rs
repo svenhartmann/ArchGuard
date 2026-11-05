@@ -16,13 +16,10 @@ mod state;
 mod tree;
 mod view;
 
-use std::path::Path;
-
-use archguard_engine::core::Config;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index};
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
@@ -30,9 +27,9 @@ use state::{MEMBER_PAGE, Mode, PAGE, RANK_PAGE, TREE_PAGE, WITNESS_PAGE};
 
 pub use state::State as CallsState;
 
-/// Build the tab state (runs the call analysis).
-fn build_from(root: &Path, config: &Config) -> CallsState {
-    let mut s = CallsState::new(archguard_engine::analyze_calls(root, config));
+/// Build the tab state (runs the document's call analysis, or waits for it).
+fn build_from(calls: &Calls) -> CallsState {
+    let mut s = CallsState::new(calls.get());
     snapshot_overrides(&mut s);
     s
 }
@@ -41,8 +38,8 @@ fn build_from(root: &Path, config: &Config) -> CallsState {
 /// document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
-        let (root, config) = (data.root.to_path_buf(), data.run.config.clone());
-        move || build_from(&root, &config)
+        let calls = Calls::of(data);
+        move || build_from(&calls)
     });
 }
 
@@ -288,6 +285,7 @@ fn snapshot_overrides(_: &mut CallsState) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn fixture(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -299,7 +297,7 @@ mod tests {
 
     fn state(root: &Path) -> CallsState {
         let loaded = archguard_engine::load_config(None, root).expect("config");
-        build_from(root, &loaded.config)
+        build_from(&Calls::unshared(root, &loaded.config))
     }
 
     /// The Python fixture resolves calls without an external compiler:

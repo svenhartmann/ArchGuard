@@ -20,7 +20,7 @@ use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index};
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use scene::Camera;
@@ -31,6 +31,7 @@ pub use view::push;
 
 /// What the tab's build needs, copied from an analysis.
 struct Inputs {
+    calls: Calls,
     root: PathBuf,
     config: Config,
     graph: Graph,
@@ -40,6 +41,7 @@ struct Inputs {
 impl Inputs {
     fn of(data: &Loaded) -> Self {
         Inputs {
+            calls: Calls::of(data),
             root: data.root.to_path_buf(),
             config: data.run.config.clone(),
             graph: data.run.graph.clone(),
@@ -51,12 +53,13 @@ impl Inputs {
     /// (`review_cmd.rs`). Slow; runs on a worker thread.
     fn build(self) -> StartState {
         let Inputs {
+            calls,
             root,
             config,
             graph,
             findings,
         } = self;
-        let calls = archguard_engine::analyze_calls(&root, &config);
+        let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world));

@@ -6,9 +6,13 @@
 //! per document on a worker thread.
 
 use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
+use archguard_engine::core::{CallAnalysis, Config, ServiceTopology};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::context::Loaded;
 use crate::documents::{self, DocId};
 use crate::ui::AppWindow;
 
@@ -224,6 +228,78 @@ fn install<T: TabState>(ui: &AppWindow, doc: DocId, result: Result<T, String>) {
     }
 }
 
+/// A value computed at most once per document, by whichever thread needs
+/// it first; others wait for it.
+pub struct Shared<T>(Arc<OnceLock<T>>);
+
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Shared(self.0.clone())
+    }
+}
+
+impl<T: Send + Sync + 'static> Shared<T> {
+    /// The active document's slot (UI thread); a fresh one without an
+    /// active document.
+    pub fn active() -> Self {
+        documents::with_active_state_or(|| Shared(Arc::default()), |s: &mut Shared<T>| s.clone())
+            .unwrap_or_else(|| Shared(Arc::default()))
+    }
+
+    pub fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
+        self.0.get_or_init(f)
+    }
+}
+
+/// A document's call analysis. Start, Architecture, Calls and Quality all
+/// need it; it runs once, in the first worker that asks.
+#[derive(Clone)]
+pub struct Calls {
+    root: PathBuf,
+    config: Config,
+    slot: Shared<Arc<CallAnalysis>>,
+}
+
+impl Calls {
+    /// The active document's analysis (UI thread).
+    pub fn of(data: &Loaded) -> Self {
+        Calls {
+            root: data.root.to_path_buf(),
+            config: data.run.config.clone(),
+            slot: Shared::active(),
+        }
+    }
+
+    /// An analysis of `root` shared with nothing (tests).
+    #[cfg(test)]
+    pub fn unshared(root: &Path, config: &Config) -> Self {
+        Calls {
+            root: root.to_path_buf(),
+            config: config.clone(),
+            slot: Shared(Arc::default()),
+        }
+    }
+
+    /// Blocking: runs the analysis, or waits for the worker running it.
+    pub fn get(&self) -> Arc<CallAnalysis> {
+        self.slot
+            .get_or_init(|| Arc::new(archguard_engine::analyze_calls(&self.root, &self.config)))
+            .clone()
+    }
+}
+
+/// A document's service topology, or why it could not be read.
+pub type Topology = Arc<Result<ServiceTopology, String>>;
+
+/// Blocking: the topology of `root`, read once per slot
+/// (`Shared::<Topology>::active()` on the UI thread).
+pub fn topology(slot: &Shared<Topology>, root: &Path) -> Topology {
+    slot.get_or_init(|| {
+        Arc::new(archguard_engine::analyze_services(root).map_err(|e| e.to_string()))
+    })
+    .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +358,16 @@ mod tests {
         let failed = Start::Pending(Some("no call analysis".into()));
         assert_eq!(start::<Demo>(), failed);
         assert_eq!(start::<Demo>(), failed);
+    }
+
+    #[test]
+    fn shared_values_are_per_document_and_computed_once() {
+        two_documents();
+        let b = Shared::<u32>::active();
+        assert_eq!(*b.get_or_init(|| 2), 2);
+        assert_eq!(*Shared::<u32>::active().get_or_init(|| 3), 2, "same slot");
+        documents::with_store(|s| s.activate(0));
+        assert_eq!(*Shared::<u32>::active().get_or_init(|| 1), 1);
     }
 
     #[test]

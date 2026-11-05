@@ -20,7 +20,7 @@ use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index, model};
+use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index, model};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
@@ -150,6 +150,7 @@ fn wire_targets(ui: &AppWindow) {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let lang = language(ui);
+        let calls = Calls::of(data);
         let (root, graph, config, sources) = (
             data.root.to_path_buf(),
             data.run.graph.clone(),
@@ -157,7 +158,10 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
             data.sources.clone(),
         );
         move || {
-            let mut s = QualityState::new(lang, Inputs::compute(&root, &graph, &config, &sources));
+            let mut s = QualityState::new(
+                lang,
+                Inputs::compute(&root, &graph, &config, &sources, &calls.get()),
+            );
             snapshot_view(&mut s);
             s
         }
