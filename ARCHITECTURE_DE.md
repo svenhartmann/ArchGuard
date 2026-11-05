@@ -303,7 +303,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 
 ## 6. Analyse-Pipeline (in `archguard-engine`)
 
-1. **Deklaration laden:** die Projektconfig nach der [Dateipriorität](README_DE.md#konfiguration-und-projektdaten) lesen — fehlende Abschnitte bleiben **leer**, Defaults werden noch nicht angewandt (Auflösung `deklariert ⇐ abgeleitet ⇐ Default`, Kap. 11).
+1. **Deklaration laden:** die Projektconfig nach der [Dateipriorität](README_DE.md#konfiguration-und-projektdaten) lesen — nicht geschriebene Abschnitte und Werte erhalten ihren dokumentierten Default (Kap. 11); ein Abschnittskopf ohne Werte deklariert nichts. Auflösung: `deklariert ⇐ abgeleitet ⇐ Default`.
 2. **Vorarbeit ableiten:** `[project]` nicht deklariert → Source-Roots + Sprachen aus Manifesten (PSR-4, `Cargo.toml`, tsconfig, pyproject) und Endungs-Statistik (Kap. 7, „Projekt-Ableitung"). `--no-derive` überspringt Schritte 2 und 7.
 3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs.
 4. **Extrahieren:** je Datei der passende Scanner → Importe (`RawImport` mit `TargetSpec::Path` für relative Pfade oder `TargetSpec::Symbol` für Paket-/Namespace-Importe) **und** Deklarationen (`package`/`namespace` der Datei).
@@ -617,7 +617,7 @@ CLI, MCP und den HTML-Viewer. Analysegrenzen stehen in [README_DE.md](README_DE.
 | Quality Gates | Schwellwerte in `[rules]` (`max_scc_size`, `max_acd`, …) + Exit-Code | implementiert |
 | Graphabfragen | openCypher über `graph_query`/`db query` | implementiert (Feature `db`) |
 | Symbolgenaue Analyse und Qualitätsmetriken | Implementiert für Java/C#/TypeScript/JavaScript/Go über Compiler-Helper; Umfang und Messregeln in [README: Erweiterte Qualitätsmetriken](README_DE.md#sprachen-und-quellmetriken) | implementiert; Messabdeckung wird ausgewiesen |
-| Duplikat-Erkennung | [CPD-XML-Import](README_DE.md#sprachen-und-quellmetriken) mit Fundstellen, Quellaktualität und Review-Befunden; kein eigener Clone-Scanner | implementiert |
+| Duplikat-Erkennung | [CPD-XML-Import](README_DE.md#sprachen-und-quellmetriken) oder optionaler eingebauter Token-Scanner (`archguard-extract::clones`: Rolling Hash über Lexer-Tokens, Typ 1 und optional Typ 2), beide mit Fundstellen, Quellaktualität und Review-Befunden im selben Snapshot, gekennzeichnet durch `producer` | implementiert |
 | Review-Kennzahlen | KPI-Block `review_kpis` im Analyse-Payload (R23): Propagationskosten, SDP, Zonen, Verstricktheit, Hub-Gini, Schichtdrift, Schuldendichte, API-Oberfläche, Leaks, Risikolücken, Health; Definitionen und Grenzen unten | implementiert; Messgrenzen unten |
 | Entscheidungsregister | `archguard review-decision` / MCP `review_decisions`; Register `.archguard/reviews.json`, atomarer Upsert per Id (Format unten) | implementiert |
 | PR-Kommentar | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; Format unten | implementiert |

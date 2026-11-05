@@ -72,17 +72,19 @@ Deployment-Belege stammen aus Compose-Dateien und einfachen Kubernetes-Manifeste
 | TypeScript / JavaScript | Ja | Typen, Aufrufe und unterstützte Metriken; JavaScript benötigt `allowJs` | Node.js und ein installierter TypeScript-Compiler; `ARCHGUARD_TRUST_PROJECT_COMPILER=1`, um einen über das Repository gefundenen Compiler auszuführen |
 | Go | Ja | Pakete, Structs, Interfaces, Receiver-Methoden, Funktionsgruppen und Quellmetriken | Go SDK auf `PATH` oder `ARCHGUARD_GO` als Pfad zur ausführbaren Datei |
 | Rust | Ja | Complexity, Cognitive und Halstead pro Funktion aus der Syntax; Aufrufziele über rust-analyzer nach Opt-in; Typen bleiben unaufgelöst | Keine; für Aufrufe rust-analyzer und `ARCHGUARD_TRUST_PROJECT_COMPILER=1` |
-| Python | Ja | Klassen, Funktionen, Complexity, Cognitive und Halstead pro Funktion aus der Syntax; Aufrufe und Typen bleiben unaufgelöst | Python 3.9+ auf `PATH` oder `ARCHGUARD_PYTHON` mit dem Pfad dazu; Importe brauchen nichts |
+| Python | Ja | Klassen, Funktionen, Complexity, Cognitive und Halstead pro Funktion aus der Syntax; Aufrufziele statisch aus Importen, Modulfunktionen, Klassen, `self`/`cls` und `super()` aufgelöst; übrige Aufrufe und Typen bleiben unaufgelöst | Python 3.9+ auf `PATH` oder `ARCHGUARD_PYTHON` mit dem Pfad dazu; Importe brauchen nichts |
 | PHP | Ja | Klassen, Funktionen, Complexity, Cognitive und Halstead pro Funktion aus dem Token-Scanner von ArchGuard; Aufrufe und Typen bleiben unaufgelöst | Keine |
-| Kotlin (`.kt`) | Ja, gemeinsam mit Java aufgelöst | Importgraph-Analyse; keine Klassenmetriken; Gradle-Skripte `.kts` werden nicht gescannt | Keine |
+| Kotlin (`.kt`) | Ja, gemeinsam mit Java aufgelöst | Klassen, Objekte, Funktionen, Complexity, Cognitive und Halstead pro Funktion aus dem Token-Scanner von ArchGuard; Aufrufe und Typen bleiben unaufgelöst; Gradle-Skripte `.kts` werden nicht gescannt | Keine |
 
 Abhängigkeiten, die als voll qualifizierter Name ohne Import geschrieben sind, zählen ebenfalls: PHP `\A\B\C`, Rust-Pfade mit `crate::`, `self::` und `super::` sowie Java-/Kotlin-/C#-Namen wie `com.a.B` oder `A.B.C`. Bei Java, Kotlin und C# verknüpft der Scanner einen solchen Namen nur mit einer Typdatei eines deklarierten Pakets oder Namespace; die Compiler-Helfer lösen zusätzlich Namen hinter Variablen auf.
 
 Go nutzt den mitgelieferten `go/parser`- und `go/types`-Helfer, ohne Projektcode auszuführen oder Module herunterzuladen. Embedding ist Komposition: DIT/NOC sind nicht anwendbar. Dynamische Aufrufe, fehlende Referenzen und zusammengefasste Build-Varianten bleiben ausdrückliche Analyselücken.
 
-Python nutzt einen mitgelieferten Helfer auf dem Standardmodul `ast`, isoliert gestartet (`-I -S`), sodass kein Projektcode importiert oder ausgeführt wird. Er parst mit der Grammatik des lokalen Interpreters: Eine Datei mit neuerer Syntax als dieses Python (etwa `match` unter 3.9) erscheint als Syntaxdiagnose und wird nicht gemessen. Eine Klasse gilt als abstrakt, wenn sie `ABC` oder `Protocol` als Basis nennt, `metaclass=ABCMeta` nutzt oder eine `@abstractmethod` deklariert. Rust-Aufrufziele stammen aus `rust-analyzer scip`, sobald `ARCHGUARD_TRUST_PROJECT_COMPILER=1` außerhalb des Repositorys gesetzt ist. ArchGuard ersetzt den Build-Skript-Befehl, daher laufen weder `build.rs` noch Proc-Macros; cargo bleibt offline und ignoriert `RUSTC_WRAPPER`. Aufrufe in Code, den Build-Skripte oder Proc-Macros erzeugen, bleiben deshalb unaufgelöst.
+Python nutzt einen mitgelieferten Helfer auf dem Standardmodul `ast`, isoliert gestartet (`-I -S`), sodass kein Projektcode importiert oder ausgeführt wird. Er parst mit der Grammatik des lokalen Interpreters: Eine Datei mit neuerer Syntax als dieses Python (etwa `match` unter 3.9) erscheint als Syntaxdiagnose und wird nicht gemessen. Eine Klasse gilt als abstrakt, wenn sie `ABC` oder `Protocol` als Basis nennt, `metaclass=ABCMeta` nutzt oder eine `@abstractmethod` deklariert. Ein Aufruf wird nur aufgelöst, wo der Quelltext sein Ziel bindet: über einen Import (auch relative Importe und Re-Exporte über `__init__.py`), eine Modulfunktion, eine Klasse, `self`/`cls` oder `super()` entlang der C3-Reihenfolge der Projektklassen. Aufrufe auf lokalen Variablen, Aufrufergebnissen, neu gebundenen Namen und Stern-Importen erscheinen als `unresolved`, Builtins und andere Bibliotheken als `external`. `archguard calls` meldet die Anzahlen; der Bericht bleibt `partial`, weil Typen nicht aufgelöst werden. Rust-Aufrufziele stammen aus `rust-analyzer scip`, sobald `ARCHGUARD_TRUST_PROJECT_COMPILER=1` außerhalb des Repositorys gesetzt ist. ArchGuard ersetzt den Build-Skript-Befehl, daher laufen weder `build.rs` noch Proc-Macros; cargo bleibt offline und ignoriert `RUSTC_WRAPPER`. Aufrufe in Code, den Build-Skripte oder Proc-Macros erzeugen, bleiben deshalb unaufgelöst.
 
-PHP misst der eigene Token-Scanner von ArchGuard ohne PHP-Installation; Interfaces und `abstract`-Klassen gelten als abstrakt. Quality-Gates mit Methodengrenzen bleiben für Python und PHP wie für Rust unvollständig, weil Syntax allein keine vollständige Compileranalyse ist.
+PHP und Kotlin misst der eigene Token-Scanner von ArchGuard ohne PHP-Installation oder Kotlin-Compiler; Interfaces und `abstract`-Klassen gelten als abstrakt, bei Kotlin auch `sealed`-Klassen. Property-Accessoren, Konstruktoren und `init`-Blöcke in Kotlin werden nicht gemessen. Quality-Gates mit Methodengrenzen bleiben für Python, PHP und Kotlin wie für Rust unvollständig, weil Syntax allein keine vollständige Compileranalyse ist.
+
+**Duplikate.** `archguard duplicates . --report cpd.xml` importiert PMD-CPD-XML. Ohne PMD durchsucht `archguard duplicates . --scan` die gefundenen Quelldateien mit dem eingebauten Token-Scanner von ArchGuard (`.gitignore` und `project.exclude` gelten). Er meldet identische Tokenfolgen ab `--min-tokens` (Standard 100; jedes Satzzeichen ist ein Token, die Zählung ist also feiner als bei CPD). `--normalize` findet zusätzlich Kopien mit anderen Bezeichnern und Literalen. Gruppen sind Token-Übereinstimmungen, keine semantische Gleichheit. Dateien über 1 MiB, ein Budget von 5 Mio. Tokens und ein Zeitlimit von 120 s machen das Ergebnis `partial` mit Diagnose. Ein Scan ersetzt einen importierten CPD-Bericht nur mit `--replace`; das Feld `producer` zeigt, welcher gespeichert ist.
 
 Die **KPI-Hilfe** im Viewer enthält Einrichtung, unterstützte Messwerte und Importbeispiele pro Sprache. Testabdeckung und Laufzeitmessungen benötigen echte Berichte; fehlende Daten gelten nicht als Nullwerte.
 
@@ -156,6 +158,45 @@ node scripts/viewer/test_viewer_world.js
 Das Verzeichnis [`scripts/`](scripts/README_DE.md) enthält Integrations- und Browsertests, Benchmarks sowie Release-Prüfungen. Das sind Entwicklungswerkzeuge; für die normale CLI- und Viewer-Nutzung müssen sie nicht manuell gestartet werden. Go-Integrationstests nutzen `ARCHGUARD_GO`; sprachspezifische Tests und Browsertests benötigen gegebenenfalls zusätzliche installierte Werkzeuge.
 
 Die CI-Workflows prüfen außerdem optionale Features, Dependency-Advisories, Secrets, native Releases und Malware. Release-Bundles enthalten Prüfberichte und verfügbare Scan-Protokolle; ein unauffälliger Scan garantiert keine Unbedenklichkeit. Siehe [SECURITY.md](SECURITY.md) und [RELEASES.md](RELEASES.md).
+
+### GitHub Action
+
+Das Repository enthält eine Composite Action. Sie installiert ein festes oder das neueste Release (Prüfsummen werden geprüft), führt `archguard check` als SARIF aus und legt in Pull Requests genau einen Review-Kommentar an oder aktualisiert ihn. Solange die Action in keinem Release enthalten ist, `@main` oder einen Commit-SHA verwenden.
+
+```yaml
+name: ArchGuard
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write    # Review-Kommentar
+  security-events: write  # SARIF-Upload
+jobs:
+  archguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: archguard
+        uses: svenhartmann/ArchGuard@main
+        with:
+          version: latest
+      - if: success() || failure()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.archguard.outputs.sarif-file }}
+          category: archguard
+```
+
+| Eingabe | Standard | Bedeutung |
+| --- | --- | --- |
+| `version` | `latest` | Zu installierendes Release, z. B. `0.2.1`. |
+| `path` | `.` | Zu analysierendes Projekt. Für den SARIF-Upload das Repository-Wurzelverzeichnis lassen: Dateipfade sind relativ dazu. |
+| `base` | Basis-Commit des PR | Ref für `review --base`. |
+| `comment` | `true` | Einen PR-Kommentar anlegen oder aktualisieren. |
+| `fail-on-violation` | `true` | Bei Gate-Verletzungen (Exit 1) fehlschlagen. Exit 2 und 3 schlagen immer fehl. |
+| `sarif-file` | `$RUNNER_TEMP/archguard.sarif` | Pfad der SARIF-Datei. |
+| `token` | `github.token` | Braucht `pull-requests: write` für den Kommentar. |
+
+Ausgaben sind `sarif-file`, `exit-code` und `comment-file`; der Kommentar steht auch in der Job-Zusammenfassung. Fehlt der Basis-Commit des PR im Checkout, holt die Action ihn nach; klappt das nicht, mit `fetch-depth: 0` auschecken. Pull Requests aus Forks erhalten ein Token nur mit Leserechten, dort entfällt der Kommentar. Aktualisiert wird nur ein Kommentar von `github-actions[bot]`; mit einem anderen Token kommt bei jedem Lauf ein neuer hinzu. `check` prüft den gesamten aktuellen Stand; wer nur an neuen Befunden scheitern will, ruft `archguard check . --base <ref>` selbst auf. Unterstützt werden Linux- und macOS-Runner; unter Windows bricht die Action mit einer Fehlermeldung ab.
 
 ## Interpretation und Grenzen
 

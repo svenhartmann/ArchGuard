@@ -299,7 +299,7 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 
 ## 6. Analysis pipeline (in `archguard-engine`)
 
-1. **Load declarations:** read project config using the [file priority](README.md#configuration-and-project-data). Missing sections remain **empty**; defaults are not yet applied (resolution: `declared ⇐ derived ⇐ default`, Section 11).
+1. **Load declarations:** read project config using the [file priority](README.md#configuration-and-project-data). Sections and values not written there take their documented default (Section 11); a section header without values declares nothing. Resolution: `declared ⇐ derived ⇐ default`.
 2. **Infer project setup:** if `[project]` is absent, infer source roots and languages from manifests (PSR-4, `Cargo.toml`, tsconfig, pyproject) and extension statistics (Section 7, "Project inference"). `--no-derive` skips steps 2 and 7.
 3. **Walk:** use the `ignore` crate (respecting `.gitignore`), filtering known extensions and `exclude` globs.
 4. **Extract:** the scanner for each file yields imports (`RawImport` with `TargetSpec::Path` for relative paths or `TargetSpec::Symbol` for package/namespace imports) **and** declarations (the file's `package`/`namespace`).
@@ -627,7 +627,7 @@ the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
 | Quality gates | `[rules]` thresholds (`max_scc_size`, `max_acd`, …) and exit code | Implemented |
 | Graph queries | openCypher through `graph_query`/`db query` | Implemented (`db` feature) |
 | Symbol-level analysis and quality metrics | Java/C#/TypeScript/JavaScript/Go compiler helpers; scope and measurement rules in [README: Extended quality metrics](README.md#languages-and-source-metrics) | Implemented; measurement coverage is reported |
-| Duplicate detection | [CPD XML import](README.md#languages-and-source-metrics) with locations, source freshness and review findings; no built-in clone scanner | Implemented |
+| Duplicate detection | [CPD XML import](README.md#languages-and-source-metrics) or the opt-in built-in token scanner (`archguard-extract::clones`: rolling hash over lexer tokens, Type 1 and optionally Type 2), both with locations, source freshness and review findings in the same snapshot, marked by `producer` | Implemented |
 | Review metrics | Analysis payload `review_kpis` block: propagation cost, SDP, zones, tangledness, hub Gini, layer drift, debt density, API surface, leaks, risk gaps and health; definitions and limits below | Implemented; measurement limits below |
 | Decision register | `archguard review-decision` / MCP `review_decisions`; `.archguard/reviews.json`, atomic upsert by ID (format below) | Implemented |
 | PR comment | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; format below | Implemented |
