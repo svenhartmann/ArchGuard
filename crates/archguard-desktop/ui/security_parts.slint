@@ -1,0 +1,192 @@
+// Building blocks of the Security tab (viewer_security.js): totals, severity
+// chips, <details> lists with "Show more evidence" and the finding card.
+import { Theme } from "theme.slint";
+import { Button } from "widgets.slint";
+
+// One entry of an evidence list; `packages` >= 0 appends "· {n} packages".
+export struct SecurityLine {
+    text: string,
+    packages: int,
+}
+
+export struct SecurityFindingItem {
+    // Severity key: critical, high, medium, low or unknown.
+    severity: string,
+    package: string,
+    id: string,
+    title: string,
+    ecosystem: string,
+    installed: string,
+    fixed: string,
+    // Empty unless the advisory link is http(s).
+    url: string,
+    targets: [SecurityLine],
+}
+
+// securitySeverityLabel.
+export global SecuritySeverity {
+    public pure function label(key: string) -> string {
+        return key == "critical" ? @tr("Security" => "Critical")
+            : key == "high" ? @tr("Security" => "High")
+            : key == "medium" ? @tr("Security" => "Medium")
+            : key == "low" ? @tr("Security" => "Low")
+            : @tr("Security" => "Unknown");
+    }
+    public pure function color(key: string) -> color {
+        return key == "critical" || key == "high" ? Theme.cycle
+            : key == "medium" ? Theme.priority : Theme.text;
+    }
+}
+
+// .security-metric
+export component SecurityMetric inherits Rectangle {
+    in property <string> value;
+    in property <string> label;
+    // Equal columns like the web's grid, whatever the label widths.
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.panel;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        Text { text: root.value; color: Theme.text; font-size: 24px; font-weight: 700; }
+        Text { text: root.label; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+    }
+}
+
+// .security-severity: the chip in the totals row and on each card.
+export component SecurityChip inherits Rectangle {
+    in property <string> key;
+    in property <string> value;
+    property <color> tint: SecuritySeverity.color(root.key);
+    horizontal-stretch: 0;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.key == "critical" || root.key == "high" ? Theme.cycle : Theme.border;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
+        if root.value != "": Text { text: root.value; color: root.tint; font-size: 12px; font-weight: 700; vertical-alignment: center; }
+        Text { text: SecuritySeverity.label(root.key); color: root.tint; font-size: 12px; vertical-alignment: center; }
+    }
+}
+
+// The <summary> of a <details>.
+export component SecuritySummary inherits TouchArea {
+    in property <string> text;
+    in property <length> font-size: 12px;
+    in-out property <bool> open;
+    height: label.preferred-height + 10px;
+    mouse-cursor: pointer;
+    clicked => { root.open = !root.open; }
+    HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: root.open ? "▼" : "▶";
+            color: Theme.text;
+            font-size: 9px;
+            vertical-alignment: center;
+        }
+        label := Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: root.font-size;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// securityListDisclosure: a closed list that shows 100 more entries per click.
+export component SecurityList inherits VerticalLayout {
+    in property <string> label;
+    in property <[SecurityLine]> entries;
+    property <bool> open;
+    property <int> shown: 100;
+    changed entries => { root.shown = 100; }
+    spacing: 2px;
+    SecuritySummary {
+        text: root.label + " (" + root.entries.length + ")";
+        open <=> root.open;
+    }
+    if root.open: VerticalLayout {
+        spacing: 0;
+        for e[i] in root.entries: Text {
+            visible: i < root.shown;
+            height: i < root.shown ? self.preferred-height : 0;
+            text: e.text + (e.packages >= 0 ? " · " + @tr("Security" => "{} packages", e.packages) : "");
+            color: Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        if root.shown < root.entries.length: HorizontalLayout {
+            alignment: start;
+            padding-top: 4px;
+            Button {
+                compact: true;
+                text: @tr("Security" => "Show more evidence");
+                clicked => { root.shown += 100; }
+            }
+        }
+    }
+}
+
+// article.security-finding
+export component SecurityCard inherits Rectangle {
+    in property <SecurityFindingItem> item;
+    callback open-url(string);
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.panel;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: start;
+            SecurityChip { key: root.item.severity; }
+            Text { text: root.item.package; color: Theme.text; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+            Text { text: root.item.id; color: Theme.text; font-size: 14px; vertical-alignment: center; }
+        }
+        Text { text: root.item.title; color: Theme.text; font-size: 12px; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: start;
+            Text {
+                text: root.item.ecosystem + " · " + @tr("Security" => "Installed: {}", root.item.installed);
+                color: Theme.muted;
+                font-size: 12px;
+            }
+            Text {
+                text: root.item.fixed != "" ? @tr("Security" => "Fixed version(s): {}", root.item.fixed) : @tr("Security" => "No fixed version reported");
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+        if root.item.url != "": HorizontalLayout {
+            alignment: start;
+            link := Text {
+                text: @tr("Security" => "Open advisory");
+                color: Theme.accent;
+                font-size: 12px;
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-url(root.item.url); }
+                }
+            }
+        }
+        SecurityList {
+            label: @tr("Security" => "Manifest / lockfile evidence");
+            entries: root.item.targets;
+        }
+    }
+}
