@@ -1,0 +1,259 @@
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+
+export struct TreeRow {
+    row: int,
+    node: int,
+    label: string,
+    depth: int,
+    expandable: bool,
+    expanded: bool,
+    file: bool,
+    in-count: int,
+    out-count: int,
+    in-cycle: bool,
+    // Part of the current selection (the row or a descendant of it).
+    covered: bool,
+}
+
+// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
+export struct TreeLink {
+    path: string,
+    kind: int,
+}
+
+// Geometry shared with src/tree.rs (ROW_H, LANE_W, TREE_W, TOP).
+export global TreeGeo {
+    out property <float> row-h: 30;
+    out property <float> lane-w: 280;
+    out property <float> tree-w: 560;
+    out property <float> top: 34;
+}
+
+component RowCard inherits Rectangle {
+    in property <TreeRow> data;
+    in property <bool> selected;
+    in property <float> zoom;
+    callback select();
+    callback toggle();
+
+    property <length> indent: data.depth * 18px * zoom;
+    x: (TreeGeo.lane-w * 1px) * zoom + indent;
+    y: (TreeGeo.top + data.row * TreeGeo.row-h) * 1px * zoom;
+    width: TreeGeo.tree-w * 1px * zoom - indent;
+    height: (TreeGeo.row-h - 4) * 1px * zoom;
+    border-radius: 6px * zoom;
+    background: selected ? Theme.accent.with-alpha(0.10) : data.covered ? Theme.accent.with-alpha(0.05) : touch.has-hover ? Theme.panel : Theme.panel-2;
+    border-width: selected ? 1.5px : 1px;
+    border-color: selected ? Theme.accent : Theme.border.with-alpha(0.6);
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+        double-clicked => { root.toggle(); }
+    }
+    HorizontalLayout {
+        padding-left: 6px * zoom;
+        padding-right: 10px * zoom;
+        spacing: 6px * zoom;
+        Rectangle {
+            width: 18px * zoom;
+            if data.expandable: Icon {
+                icon: data.expanded ? Icons.chevron-down : Icons.chevron-right;
+                tint: Theme.muted;
+                width: 14px * zoom;
+                height: 14px * zoom;
+            }
+            TouchArea {
+                enabled: data.expandable;
+                mouse-cursor: pointer;
+                clicked => { root.toggle(); }
+            }
+        }
+        Icon {
+            icon: data.file ? Icons.file : Icons.package;
+            tint: Theme.muted;
+            width: 15px * zoom;
+            height: 15px * zoom;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: data.label;
+            color: Theme.text;
+            font-size: 13px * zoom;
+            font-weight: data.file ? 500 : 650;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if data.in-cycle: Rectangle {
+            width: 7px * zoom;
+            height: 7px * zoom;
+            y: (parent.height - self.height) / 2;
+            border-radius: self.width / 2;
+            background: Theme.cycle;
+        }
+        Text {
+            width: 64px * zoom;
+            text: @tr("In {}", data.in-count);
+            color: Theme.incoming;
+            font-size: 11.5px * zoom;
+            vertical-alignment: center;
+        }
+        Text {
+            width: 52px * zoom;
+            text: @tr("Out {}", data.out-count);
+            color: Theme.outgoing;
+            font-size: 11.5px * zoom;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Port inherits Rectangle {
+    in property <float> cx;
+    in property <float> cy;
+    in property <float> zoom;
+    width: 12px * zoom;
+    height: self.width;
+    x: cx * 1px * zoom - self.width / 2;
+    y: cy * 1px * zoom - self.height / 2;
+    border-radius: self.width / 2;
+    border-width: 1.5px;
+    border-color: Theme.muted;
+    background: Theme.bg;
+    Rectangle {
+        width: 4px * zoom;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: Theme.muted;
+    }
+}
+
+export component TreeView inherits Rectangle {
+    in property <[TreeRow]> rows;
+    in property <[TreeLink]> links;
+    in property <int> selected: -1;
+    in-out property <float> zoom: 1.0;
+    in property <int> fit-tick;
+    callback select(int);
+    callback toggle(int);
+    changed fit-tick => { self.fit(); }
+
+    property <float> canvas-w: TreeGeo.lane-w * 2 + TreeGeo.tree-w;
+    property <float> canvas-h: TreeGeo.top + rows.length * TreeGeo.row-h + 20;
+
+    public function fit() {
+        zoom = max(0.3, min(1.0, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+    }
+
+    function zoom-by(f: float) {
+        zoom = max(0.3, min(2.0, zoom * f));
+    }
+
+    flick := Flickable {
+        content-width: max(self.width, canvas-w * zoom * 1px);
+        content-height: max(self.height, canvas-h * zoom * 1px);
+      Rectangle {
+        // Centred when the tree is narrower than the view.
+        x: max(0px, (flick.width - canvas-w * zoom * 1px) / 2);
+        width: canvas-w * zoom * 1px;
+        height: max(flick.height, canvas-h * zoom * 1px);
+
+        TouchArea {
+            clicked => { root.select(-1); }
+            scroll-event(event) => {
+                if (event.modifiers.control || event.modifiers.meta) {
+                    root.zoom-by(event.delta-y > 0 ? 1.1 : 1 / 1.1);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        // Column labels as in the web tree.
+        Text {
+            x: 0;
+            y: 8px * zoom;
+            width: TreeGeo.lane-w * 1px * zoom;
+            text: @tr("INCOMING");
+            color: Theme.muted;
+            font-size: 11px * zoom;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            x: (TreeGeo.lane-w * 1px + 10px) * zoom;
+            y: 8px * zoom;
+            text: @tr("PACKAGES");
+            color: Theme.muted;
+            font-size: 11px * zoom;
+            font-weight: 700;
+        }
+        Text {
+            x: (TreeGeo.lane-w + TreeGeo.tree-w) * 1px * zoom;
+            y: 8px * zoom;
+            width: TreeGeo.lane-w * 1px * zoom;
+            text: @tr("OUTGOING · CYCLES");
+            color: Theme.muted;
+            font-size: 11px * zoom;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        for l in root.links: Path {
+            x: 0;
+            y: 0;
+            width: canvas-w * zoom * 1px;
+            height: canvas-h * zoom * 1px;
+            viewbox-width: canvas-w;
+            viewbox-height: canvas-h;
+            commands: l.path;
+            fill: transparent;
+            stroke: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.75);
+            stroke-width: l.kind == 0 ? 1.3px : 1.8px;
+        }
+
+        for r in root.rows: Port {
+            cx: TreeGeo.lane-w - 22;
+            cy: TreeGeo.top + r.row * TreeGeo.row-h + (TreeGeo.row-h - 4) / 2;
+            zoom: root.zoom;
+        }
+        for r in root.rows: Port {
+            cx: TreeGeo.lane-w + TreeGeo.tree-w + 22;
+            cy: TreeGeo.top + r.row * TreeGeo.row-h + (TreeGeo.row-h - 4) / 2;
+            zoom: root.zoom;
+        }
+        for r in root.rows: RowCard {
+            data: r;
+            zoom: root.zoom;
+            selected: r.row == root.selected;
+            select => { root.select(r.row); }
+            toggle => { root.toggle(r.row); }
+        }
+      }
+    }
+
+    // Zoom controls, top left below the column labels as in the web tree.
+    Rectangle {
+        x: 12px;
+        y: 36px;
+        width: bar.preferred-width;
+        height: 40px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Theme.shadow;
+        bar := HorizontalLayout {
+            padding: 5px;
+            spacing: 4px;
+            Button { icon: Icons.minus; compact: true; clicked => { root.zoom-by(1 / 1.25); } }
+            Button { icon: Icons.plus; compact: true; clicked => { root.zoom-by(1.25); } }
+            Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
+            Button { icon: Icons.fit; compact: true; clicked => { root.fit(); } }
+        }
+    }
+}

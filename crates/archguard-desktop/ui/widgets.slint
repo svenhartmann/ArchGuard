@@ -1,0 +1,171 @@
+import { Theme } from "theme.slint";
+
+export global Icons {
+    out property <string> info: "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 11 L 12 16.5 M 12 7.6 L 12 7.8";
+    out property <string> search: "M 10.5 4 A 6.5 6.5 0 1 0 10.5 17 A 6.5 6.5 0 1 0 10.5 4 Z M 15.5 15.5 L 20 20";
+    out property <string> fit: "M 4 9 L 4 4 L 9 4 M 15 4 L 20 4 L 20 9 M 20 15 L 20 20 L 15 20 M 9 20 L 4 20 L 4 15";
+    out property <string> minus: "M 6 12 L 18 12";
+    out property <string> plus: "M 6 12 L 18 12 M 12 6 L 12 18";
+    out property <string> close: "M 7 7 L 17 17 M 17 7 L 7 17";
+    out property <string> chevron-right: "M 9 6 L 15 12 L 9 18";
+    out property <string> chevron-down: "M 6 9 L 12 15 L 18 9";
+    out property <string> package: "M 12 3 L 20 7.5 L 20 16.5 L 12 21 L 4 16.5 L 4 7.5 Z M 4 7.5 L 12 12 L 20 7.5 M 12 12 L 12 21";
+    out property <string> file: "M 6 3 L 14 3 L 19 8 L 19 21 L 6 21 Z M 14 3 L 14 8 L 19 8";
+    out property <string> folder: "M 3 6 L 9 6 L 11 8 L 21 8 L 21 19 L 3 19 Z";
+    out property <string> sun: "M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z M 12 2 L 12 4 M 12 20 L 12 22 M 2 12 L 4 12 M 20 12 L 22 12 M 4.9 4.9 L 6.3 6.3 M 17.7 17.7 L 19.1 19.1 M 4.9 19.1 L 6.3 17.7 M 17.7 6.3 L 19.1 4.9";
+    out property <string> moon: "M 20 14.5 A 8 8 0 1 1 9.5 4 A 6.5 6.5 0 0 0 20 14.5 Z";
+    out property <string> external: "M 14 4 L 20 4 L 20 10 M 20 4 L 11 13 M 18 14 L 18 20 L 4 20 L 4 6 L 10 6";
+    out property <string> cycle: "M 19 12 A 7 7 0 1 1 16.5 6.6 M 17 3 L 17 7 L 13 7";
+}
+
+export component Icon inherits Path {
+    in property <string> icon;
+    in property <color> tint: Theme.text;
+    in property <length> stroke-w: 1.8px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: icon;
+    stroke: tint;
+    stroke-width: stroke-w;
+    fill: transparent;
+}
+
+// The web viewer's .btn / .btn-secondary / .btn-primary.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> pressed-state;
+    in property <bool> compact;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: compact ? 28px : 34px;
+    min-width: self.height;
+    border-radius: Theme.radius-sm;
+    background: primary ? Theme.accent
+        : pressed-state ? Theme.accent.with-alpha(0.16)
+        : touch.has-hover ? Theme.panel-2 : Theme.panel;
+    border-width: 1px;
+    border-color: pressed-state ? Theme.accent : Theme.border;
+    opacity: enabled ? 1 : 0.45;
+    animate background { duration: 100ms; }
+    HorizontalLayout {
+        padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
+        padding-right: self.padding-left;
+        spacing: 6px;
+        alignment: center;
+        if root.icon != "": Icon {
+            icon: root.icon;
+            tint: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            width: compact ? 14px : 16px;
+            height: self.width;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            font-size: compact ? 12px : 13px;
+            font-weight: pressed-state || primary ? 600 : 500;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One tab of the top tab bar (#tabs in the web viewer).
+export component Tab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked;
+    height: 30px;
+    width: label.preferred-width + 24px;
+    border-radius: 7px;
+    background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    animate background { duration: 100ms; }
+    label := Text {
+        text: root.text;
+        color: active ? Theme.accent : Theme.text;
+        font-size: 14px;
+        font-weight: active ? 650 : 450;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Divider inherits Rectangle {
+    width: 1px;
+    height: 18px;
+    background: Theme.border;
+}
+
+export component Metric inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> label;
+    spacing: 5px;
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: 15px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+}
+
+export component SearchField inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> input.text;
+    callback edited(string);
+    callback accepted(string);
+    height: 34px;
+    border-radius: Theme.radius-sm;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Icon {
+            icon: Icons.search;
+            tint: Theme.muted;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Rectangle {
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(self.text); }
+            }
+            if input.text == "": Text {
+                x: 0;
+                width: 100%;
+                height: 100%;
+                text: root.placeholder;
+                color: Theme.muted;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

@@ -1,0 +1,142 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: de\n"
+
+msgid "All ({})"
+msgstr "Alle ({})"
+
+msgid "Analysis failed"
+msgstr "Analyse fehlgeschlagen"
+
+msgid "Analyzing architecture …"
+msgstr "Analysiere Architektur …"
+
+msgid "Architecture"
+msgstr "Architektur"
+
+msgid "Both ({})"
+msgstr "Beide ({})"
+
+msgid "Calls"
+msgstr "Aufrufe"
+
+msgid "Collapse all"
+msgstr "Alle schließen"
+
+msgid "Cycles only"
+msgstr "Nur Zyklen"
+
+msgid "Cycles"
+msgstr "Zyklen"
+
+msgid "Cyclic groups"
+msgstr "Zyklische Gruppen"
+
+msgid "Dependencies"
+msgstr "Abhängigkeiten"
+
+msgid "Depends on ({})"
+msgstr "Hängt ab von ({})"
+
+msgid "Details"
+msgstr "Details"
+
+msgid "Expand all"
+msgstr "Alle öffnen"
+
+msgid "Explorer"
+msgstr "Explorer"
+
+msgid "Graph"
+msgstr "Graph"
+
+msgid "INCOMING"
+msgstr "EINGEHEND"
+
+msgid "In {}"
+msgstr "Ein {}"
+
+msgid "Incoming ({})"
+msgstr "Eingehend ({})"
+
+msgid "Layers"
+msgstr "Ebenen"
+
+msgid "Matrix"
+msgstr "Matrix"
+
+msgid "Modules"
+msgstr "Module"
+
+msgid "Native viewer. License: MIT OR Apache-2.0."
+msgstr "Native Oberfläche. Lizenz: MIT OR Apache-2.0."
+
+msgid "No cycles found."
+msgstr "Keine Zyklen gefunden."
+
+msgid "OUTGOING · CYCLES"
+msgstr "AUSGEHEND · ZYKLEN"
+
+msgid "Open in web viewer"
+msgstr "Im Web-Viewer öffnen"
+
+msgid "Out {}"
+msgstr "Aus {}"
+
+msgid "Outgoing ({})"
+msgstr "Ausgehend ({})"
+
+msgid "PACKAGES"
+msgstr "PAKETE"
+
+msgid "Quality"
+msgstr "Qualität"
+
+msgid "Reference: {}"
+msgstr "Referenz: {}"
+
+msgid "Review priorities are not native yet."
+msgstr "Prüfprioritäten gibt es noch nicht nativ."
+
+msgid "Review"
+msgstr "Prüfung"
+
+msgid "Scope nodes"
+msgstr "Knoten im Bereich"
+
+msgid "Search modules"
+msgstr "Module suchen"
+
+msgid "Security"
+msgstr "Sicherheit"
+
+msgid "Select a package or file for its incoming and outgoing dependencies."
+msgstr "Paket oder Datei auswählen, um eingehende und ausgehende Abhängigkeiten zu sehen."
+
+msgid "Services"
+msgstr "Dienste"
+
+msgid "Start"
+msgstr "Start"
+
+msgid "This view is not native yet. The web viewer shows it for the same project."
+msgstr "Diese Ansicht gibt es noch nicht nativ. Der Web-Viewer zeigt sie für dasselbe Projekt."
+
+msgid "Tree"
+msgstr "Baum"
+
+msgid "Used by ({})"
+msgstr "Wird genutzt von ({})"
+
+msgid "Web viewer"
+msgstr "Web-Viewer"
+
+msgid "{} matches"
+msgstr "{} Treffer"
+
+msgid "{} modules"
+msgstr "{} Module"
+
+msgid "{} of {} items shown"
+msgstr "{} von {} Einträgen sichtbar"

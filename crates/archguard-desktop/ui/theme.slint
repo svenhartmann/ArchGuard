@@ -1,0 +1,29 @@
+// Color tokens of the web viewer (crates/archguard-report/src/viewer.html,
+// :root and the dark override). Keep both in sync.
+export global Theme {
+    in-out property <bool> dark: true;
+
+    out property <color> bg: dark ? #101722 : #F5F7FB;
+    out property <color> panel: dark ? #182231 : #FFFFFF;
+    out property <color> panel-2: dark ? #131C29 : #EEF2F8;
+    out property <color> text: dark ? #E6EDF7 : #172033;
+    out property <color> muted: dark ? #93A1B5 : #5B6472;
+    out property <color> accent: dark ? #5B9CF6 : #2563EB;
+    out property <color> accent-contrast: dark ? #0B1220 : #FFFFFF;
+    out property <color> border: dark ? #2B3A4E : #DDE3ED;
+    out property <color> node: dark ? #7FB0F7 : #2563EB;
+    out property <color> cycle: dark ? #FF6B61 : #D92D20;
+    out property <color> dim: dark ? #33415A : #D7DEE9;
+    out property <color> edge: dark ? #8FA0B5 : #64748B;
+    out property <color> incoming: dark ? #38BDF8 : #0369A1;
+    out property <color> outgoing: dark ? #C4B5FD : #7C3AED;
+    out property <color> priority: dark ? #FFC267 : #9A4D00;
+    out property <color> priority-fill: dark ? #805017 : #FFE0A3;
+    out property <color> low: #16845b;
+    out property <color> medium: #c58a23;
+    out property <color> high: #db4c4c;
+    out property <color> shadow: dark ? #00000073 : #17203314;
+
+    out property <length> radius: 10px;
+    out property <length> radius-sm: 8px;
+}

@@ -1,0 +1,154 @@
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+
+export struct ModuleItem {
+    name: string,
+    label: string,
+    scope: string,
+    fan-in: int,
+    fan-out: int,
+    instability: float,
+    in-cycle: bool,
+    x: float,
+    y: float,
+    bright: bool,
+    accent: color,
+}
+
+export struct EdgeItem {
+    from: int,
+    to: int,
+    weight: int,
+    path: string,
+    cyclic: bool,
+}
+
+component NodeCard inherits Rectangle {
+    in property <ModuleItem> module;
+    in property <float> zoom;
+    in property <bool> selected;
+    callback clicked;
+
+    width: 196px * zoom;
+    height: 68px * zoom;
+    border-radius: Theme.radius * zoom;
+    background: touch.has-hover ? Theme.panel : Theme.panel-2;
+    border-width: selected ? 2px : 1px;
+    border-color: selected ? Theme.accent : module.in-cycle ? Theme.cycle : Theme.border;
+    opacity: module.bright ? 1.0 : 0.2;
+    drop-shadow-blur: selected ? 16px : 6px;
+    drop-shadow-color: Theme.shadow;
+    clip: true;
+    animate opacity { duration: 200ms; }
+
+    Rectangle {
+        x: 0;
+        width: 4px * zoom;
+        background: module.accent;
+    }
+    VerticalLayout {
+        padding-left: 14px * zoom;
+        padding-right: 10px * zoom;
+        padding-top: 9px * zoom;
+        padding-bottom: 9px * zoom;
+        spacing: 2px * zoom;
+        Text {
+            text: module.scope == "" ? " " : module.scope;
+            color: Theme.muted;
+            font-size: 10px * zoom;
+            overflow: elide;
+        }
+        Text {
+            text: module.label;
+            color: Theme.text;
+            font-size: 14px * zoom;
+            font-weight: 650;
+            overflow: elide;
+        }
+        HorizontalLayout {
+            spacing: 10px * zoom;
+            Text { text: @tr("In {}", module.fan-in); color: Theme.incoming; font-size: 11px * zoom; }
+            Text { text: @tr("Out {}", module.fan-out); color: Theme.outgoing; font-size: 11px * zoom; }
+            Text { text: "I " + round(module.instability * 100) / 100; color: Theme.muted; font-size: 11px * zoom; }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Layered module graph: dependents above their dependencies.
+export component LayersView inherits Rectangle {
+    in property <[ModuleItem]> modules;
+    in property <[EdgeItem]> edges;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <int> selected: -1;
+    in-out property <float> zoom: 1.0;
+    in property <int> fit-tick;
+    callback select(int);
+    changed fit-tick => { self.fit(); }
+
+    public function fit() {
+        if (canvas-w > 0 && canvas-h > 0) {
+            zoom = max(0.3, min(1.1, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+        }
+    }
+
+    flick := Flickable {
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+        TouchArea {
+            clicked => { root.select(-1); }
+            scroll-event(event) => {
+                if (event.modifiers.control || event.modifiers.meta) {
+                    root.zoom = max(0.25, min(2.5, root.zoom * (event.delta-y > 0 ? 1.1 : 1 / 1.1)));
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        for e in root.edges: Path {
+            property <bool> hot: root.selected >= 0 && (e.from == root.selected || e.to == root.selected);
+            x: 0;
+            y: 0;
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            viewbox-width: root.canvas-w;
+            viewbox-height: root.canvas-h;
+            commands: e.path;
+            fill: transparent;
+            stroke: e.cyclic ? Theme.cycle : !hot ? Theme.edge.with-alpha(0.6) : e.from == root.selected ? Theme.outgoing : Theme.incoming;
+            stroke-width: hot ? 2.2px : 1.3px;
+            opacity: root.selected >= 0 && !hot ? 0.12 : 1.0;
+        }
+        for m[i] in root.modules: NodeCard {
+            x: m.x * root.zoom * 1px;
+            y: m.y * root.zoom * 1px;
+            module: m;
+            zoom: root.zoom;
+            selected: root.selected == i;
+            clicked => { root.select(i); }
+        }
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        width: bar.preferred-width;
+        height: 40px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        bar := HorizontalLayout {
+            padding: 5px;
+            spacing: 4px;
+            Button { icon: Icons.minus; compact: true; clicked => { root.zoom = max(0.25, root.zoom / 1.25); } }
+            Button { icon: Icons.plus; compact: true; clicked => { root.zoom = min(2.5, root.zoom * 1.25); } }
+            Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
+            Button { icon: Icons.fit; compact: true; clicked => { root.fit(); } }
+        }
+    }
+}

@@ -45,14 +45,6 @@ pub struct Overview {
     pub acd: f64,
 }
 
-/// One row of the detail panel: the module on the other end and the
-/// number of references.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Neighbor {
-    pub index: usize,
-    pub weight: u64,
-}
-
 impl Overview {
     pub fn from_run(project: String, run: &AnalysisRun) -> Self {
         let mut o = Self::from_graph(project, &run.view, &run.report.metrics);
@@ -128,62 +120,6 @@ impl Overview {
             passed: true,
             acd: 0.0,
         }
-    }
-
-    /// Modules `selected` depends on, heaviest first.
-    pub fn outgoing(&self, selected: usize) -> Vec<Neighbor> {
-        self.neighbors(|d| (d.from == selected).then_some(d.to))
-    }
-
-    /// Modules that depend on `selected`, heaviest first.
-    pub fn incoming(&self, selected: usize) -> Vec<Neighbor> {
-        self.neighbors(|d| (d.to == selected).then_some(d.from))
-    }
-
-    fn neighbors(&self, other: impl Fn(&Dependency) -> Option<usize>) -> Vec<Neighbor> {
-        let mut out: Vec<Neighbor> = self
-            .deps
-            .iter()
-            .filter_map(|d| {
-                other(d).map(|index| Neighbor {
-                    index,
-                    weight: d.weight,
-                })
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            b.weight
-                .cmp(&a.weight)
-                .then(self.modules[a.index].name.cmp(&self.modules[b.index].name))
-        });
-        out
-    }
-
-    /// Which modules stay bright for a selection: the module itself and
-    /// its direct neighbours. Without a selection everything is bright.
-    pub fn bright(&self, selected: Option<usize>) -> Vec<bool> {
-        let Some(s) = selected else {
-            return vec![true; self.modules.len()];
-        };
-        let mut bright = vec![false; self.modules.len()];
-        bright[s] = true;
-        for d in &self.deps {
-            if d.from == s {
-                bright[d.to] = true;
-            }
-            if d.to == s {
-                bright[d.from] = true;
-            }
-        }
-        bright
-    }
-
-    /// Indices of modules whose name contains `query`, ignoring case.
-    pub fn search(&self, query: &str) -> Vec<usize> {
-        let q = query.trim().to_lowercase();
-        (0..self.modules.len())
-            .filter(|&i| q.is_empty() || self.modules[i].name.to_lowercase().contains(&q))
-            .collect()
     }
 }
 
@@ -296,43 +232,5 @@ mod tests {
             ("web".to_string(), "app".to_string())
         );
         assert_eq!(split_name("src"), (String::new(), "src".to_string()));
-    }
-
-    #[test]
-    fn neighbours_are_sorted_by_weight() {
-        let (g, m) = graph();
-        let o = Overview::from_graph("shop".into(), &g, &m);
-        let out = o.outgoing(0);
-        assert_eq!(
-            out,
-            vec![
-                Neighbor {
-                    index: 1,
-                    weight: 5
-                },
-                Neighbor {
-                    index: 2,
-                    weight: 2
-                }
-            ]
-        );
-        let into_db: Vec<usize> = o.incoming(2).iter().map(|n| n.index).collect();
-        assert_eq!(into_db, vec![1, 0]);
-    }
-
-    #[test]
-    fn selection_keeps_only_direct_neighbours_bright() {
-        let (g, m) = graph();
-        let o = Overview::from_graph("shop".into(), &g, &m);
-        assert_eq!(o.bright(None), vec![true; 4]);
-        assert_eq!(o.bright(Some(1)), vec![true, true, true, false]);
-    }
-
-    #[test]
-    fn search_ignores_case_and_empty_query_matches_all() {
-        let (g, m) = graph();
-        let o = Overview::from_graph("shop".into(), &g, &m);
-        assert_eq!(o.search("  "), vec![0, 1, 2, 3]);
-        assert_eq!(o.search("SRC/C"), vec![1]);
     }
 }
