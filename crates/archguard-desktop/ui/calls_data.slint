@@ -1,0 +1,290 @@
+// Data of the Calls tab: one CallsModel value, set from src/calls_ui.rs.
+
+// kind: 0 language, 1 package, 2 type/module, 3 function/method, 4 group,
+// 5 external/unresolved connection. role: 0 none, 1 caller, 2 target, 3 both.
+export struct CallsTreeRow {
+    node: int,
+    // Rows skipped before this one ("{} additional rows").
+    skipped: int,
+    kind: int,
+    depth: int,
+    label: string,
+    expandable: bool,
+    expanded: bool,
+    role: int,
+    count: int,
+    module: bool,
+    cycle: bool,
+    pressed: bool,
+}
+
+export struct CallsRelationRow {
+    title: string,
+    language: string,
+    sites: int,
+    methods: int,
+    // 0 project, 1 external, 2 unresolved.
+    resolution: int,
+    full: string,
+    selected: bool,
+}
+
+export struct CallsRankRow {
+    label: string,
+    incoming: int,
+    outgoing: int,
+    total: int,
+    method: bool,
+    measured: bool,
+    cyclomatic: int,
+    nesting: int,
+    language: string,
+    module: bool,
+    pressed: bool,
+}
+
+export struct CallsCycleRow {
+    number: int,
+    preview: string,
+    members: int,
+    edges: int,
+    sites: int,
+    selected: bool,
+}
+
+// A button of the cycle detail; `sites` < 0 hides the count.
+export struct CallsStep {
+    label: string,
+    sites: int,
+    pressed: bool,
+}
+
+export struct CallsMetric {
+    label: string,
+    measured: bool,
+    cyclomatic: int,
+    nesting: int,
+}
+
+export struct CallsSite {
+    location: string,
+    dispatch: string,
+    resolution: int,
+    declared: string,
+    code: string,
+}
+
+export struct CallsMethodGroup {
+    title: string,
+    shown: int,
+    total: int,
+    open: bool,
+    metrics: [CallsMetric],
+    sites: [CallsSite],
+}
+
+// kind: 0 interface, 1 adapter/factory, 2 move.
+export struct CallsSuggestion {
+    kind: int,
+    source: string,
+    target: string,
+    methods: string,
+    cycle-size: int,
+    target-calls: int,
+    outgoing: int,
+    own-calls: int,
+    same-file: int,
+    unresolved: int,
+    partial: bool,
+    evidence: string,
+    evidence-more: int,
+    open: bool,
+}
+
+export struct CallsAnalyzer {
+    language: string,
+    backend: string,
+    status: string,
+    files: int,
+    version: string,
+    project: string,
+    diagnostics: [string],
+}
+
+export struct CallsCohesionGroup {
+    methods: [string],
+    ids: [string],
+}
+
+// The selected type or method when no connection is selected.
+// kind: 0 none, 1 type/module, 2 function/method.
+// cohesion: 0 no evidence, 1 LCOM4 unknown, 2 known.
+export struct CallsDeclaration {
+    kind: int,
+    title: string,
+    location: string,
+    metric: CallsMetric,
+    cohesion: int,
+    lcom4: int,
+    methods: int,
+    fields: int,
+    complexity: string,
+    groups: [CallsCohesionGroup],
+}
+
+export struct CallsModel {
+    // 0 analyzing, 1 ready.
+    state: int,
+    // Toolbar.
+    languages: [string],
+    language-index: int,
+    packages: [string],
+    package-index: int,
+    query: string,
+    resolution: int,
+    internal: bool,
+    // Coverage.
+    status: string,
+    files: int,
+    classes: int,
+    project: int,
+    external: int,
+    unresolved: int,
+    java-release: int,
+    unreported: bool,
+    diagnostics: [string],
+    // The diagnostics as one line (unavailable analysis).
+    diagnostic-line: string,
+    analyzers: [CallsAnalyzer],
+    analysis-open: bool,
+    connections: int,
+    sites: int,
+    // 0 connections, 1 most calls, 2 cycles.
+    mode: int,
+    // Call tree.
+    tree: [CallsTreeRow],
+    tree-shown: int,
+    tree-total: int,
+    tree-element: string,
+    tree-missing: int,
+    tree-more: bool,
+    tree-nodes: int,
+    // Connections.
+    relations: [CallsRelationRow],
+    relations-more: bool,
+    // Most calls.
+    rank-method: bool,
+    rank-sort: int,
+    ranks: [CallsRankRow],
+    rank-total: int,
+    rank-more: bool,
+    rank-unresolved: int,
+    rank-missing-callers: int,
+    rank-missing-targets: int,
+    rank-unmeasured: int,
+    rank-help: bool,
+    // Cycles.
+    cycle-method: bool,
+    cycle-rows: [CallsCycleRow],
+    cycle-count: int,
+    cycle-total: int,
+    cycles-more: bool,
+    cycle-unresolved: int,
+    cycle-missing: int,
+    cycle-help: bool,
+    has-group: bool,
+    group-members: int,
+    group-edges: int,
+    // Closed example path, or empty when it has more than 20 steps.
+    witness: string,
+    witness-steps: int,
+    path: [CallsStep],
+    path-more: bool,
+    members: [CallsStep],
+    members-more: bool,
+    edges: [CallsStep],
+    edges-more: bool,
+    // Evidence of the selected connection.
+    has-relation: bool,
+    evidence-title: string,
+    evidence-sites: int,
+    evidence-resolution: int,
+    groups: [CallsMethodGroup],
+    sites-more: bool,
+    suggestions: [CallsSuggestion],
+    declaration: CallsDeclaration,
+}
+
+export global CallsData {
+    in-out property <CallsModel> model;
+
+    // Translated names Rust needs in lists and labels.
+    out property <string> label-all-languages: @tr("All languages");
+    out property <string> label-all-packages: @tr("All packages");
+    out property <string> label-default-package: @tr("(default package)");
+    out property <string> label-unreported-language: @tr("Unreported language");
+    out property <string> label-unresolved-target: @tr("Unresolved target");
+    out property <string> label-initializer: @tr("initializer");
+    out property <string> label-external-group: @tr("External targets · no project package mapping");
+    out property <string> label-unresolved-group: @tr("Unresolved targets · no package mapping");
+
+    pure public function coverage(status: string) -> string {
+        if status == "ready" { return @tr("ready"); }
+        if status == "partial" { return @tr("partial"); }
+        if status == "unavailable" { return @tr("unavailable"); }
+        if status == "not_applicable" { return @tr("not applicable"); }
+        return status;
+    }
+    pure public function resolution-label(r: int) -> string {
+        if r == 0 { return @tr("project"); }
+        if r == 1 { return @tr("external"); }
+        return @tr("unresolved");
+    }
+    pure public function dispatch-label(d: string) -> string {
+        if d == "instance" { return @tr("instance"); }
+        if d == "static" { return @tr("static"); }
+        if d == "constructor" { return @tr("constructor"); }
+        if d == "unknown" { return @tr("unknown"); }
+        return d;
+    }
+    pure public function metric-text(m: CallsMetric) -> string {
+        return m.measured
+            ? @tr("AST complexity {} · max. nesting {}", m.cyclomatic, m.nesting)
+            : @tr("AST complexity {} · max. nesting {}", "—", "—");
+    }
+
+    callback set-language(int);
+    callback set-package(int);
+    callback set-query(string);
+    callback set-resolution(int);
+    callback toggle-internal();
+    callback toggle-analysis();
+    callback set-mode(int);
+    callback tree-toggle(int);
+    callback tree-select(int);
+    callback tree-expand(bool);
+    callback tree-clear();
+    callback tree-more();
+    callback select-relation(int);
+    callback relations-more();
+    callback set-rank-method(bool);
+    callback set-rank-sort(int);
+    callback rank-select(int);
+    callback rank-more();
+    callback toggle-rank-help();
+    callback set-cycle-method(bool);
+    callback cycle-select(int);
+    callback cycles-show-all();
+    callback cycles-more();
+    callback toggle-cycle-help();
+    callback path-select(int);
+    callback path-more();
+    callback member-select(int);
+    callback members-more();
+    callback edge-select(int);
+    callback edges-more();
+    callback toggle-group(int);
+    callback sites-more();
+    callback toggle-suggestion(int);
+    callback select-method(string);
+}

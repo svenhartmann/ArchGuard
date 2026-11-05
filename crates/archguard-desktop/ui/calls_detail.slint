@@ -1,0 +1,249 @@
+// The detail column: call sites of the selected connection and the
+// refactoring candidates (renderCallEvidence, callSuggestions), or the
+// selected type/method declaration.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button } from "widgets.slint";
+import { CallsData, CallsModel, CallsMethodGroup, CallsSuggestion, CallsDeclaration } from "calls_data.slint";
+import { CallsColumn, Muted, Badge, Summary } from "calls_parts.slint";
+
+component Para inherits Text {
+    color: Theme.text;
+    font-size: 13px;
+    wrap: word-wrap;
+}
+
+component Mono inherits Text {
+    color: Theme.text;
+    font-size: 12px;
+    font-family: "Menlo";
+    wrap: word-wrap;
+}
+
+component MethodGroup inherits Rectangle {
+    in property <CallsMethodGroup> group;
+    in property <int> index;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+    VerticalLayout {
+        Rectangle {
+            background: Theme.panel-2;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Summary {
+                        horizontal-stretch: 1;
+                        text: group.title;
+                        open: group.open;
+                        tint: Theme.text;
+                        weight: 700;
+                        clicked => { CallsData.toggle-group(root.index); }
+                    }
+                    Badge {
+                        y: (parent.height - self.height) / 2;
+                        text: (group.shown < group.total ? group.shown + " / " : "") + @tr("{} call sites", group.total);
+                    }
+                }
+            }
+        }
+        if group.open: VerticalLayout {
+            padding-top: 6px;
+            spacing: 6px;
+            for metric in group.metrics: Muted {
+                text: metric.label + " · " + CallsData.metric-text(metric);
+                font-size: 12px;
+            }
+            for site in group.sites: VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                Rectangle { height: 1px; background: Theme.border; }
+                Mono { text: site.location; }
+                HorizontalLayout {
+                    alignment: start;
+                    Badge { text: CallsData.dispatch-label(site.dispatch) + " · " + CallsData.resolution-label(site.resolution); }
+                }
+                if site.declared != "": Mono { text: @tr("Declared target: ") + site.declared; }
+                Rectangle {
+                    background: Theme.bg;
+                    border-radius: 6px;
+                    VerticalLayout {
+                        padding: 10px;
+                        Mono { text: site.code; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Proposal inherits Rectangle {
+    in property <CallsSuggestion> s;
+    in property <int> index;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.panel;
+    property <string> title: s.kind == 0 ? @tr("Interface candidate: {}", s.target)
+        : s.kind == 1 ? @tr("Adapter / factory candidate")
+        : @tr("Move candidate: {} → {}", s.source, s.methods);
+    property <string> summary: s.kind == 0 ? @tr("{} calls {}. Both classes belong to a {}-class call cycle.", s.source, s.methods, s.cycle-size)
+        : s.kind == 1 ? @tr("{} uses static calls or construction of {} inside a class call cycle.", s.source, s.target)
+        : @tr("{} of {} recorded outgoing project call sites target this package; {} target the current package.", s.target-calls, s.outgoing, s.own-calls);
+    property <string> tail: s.unresolved > 0
+        ? @tr("{} unresolved outgoing call sites are excluded from this evidence; resolving them may change the candidate ranking.", s.unresolved)
+        : s.partial ? @tr("Analysis coverage is incomplete. Review compiler diagnostics before acting on this plan.") : "";
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        Summary {
+            text: root.title;
+            open: s.open;
+            tint: Theme.text;
+            weight: 650;
+            clicked => { CallsData.toggle-suggestion(root.index); }
+        }
+        if s.open: VerticalLayout {
+            spacing: 8px;
+            Para { text: root.summary; font-size: 12px; }
+            if s.kind == 0: VerticalLayout {
+                spacing: 6px;
+                Para { font-size: 12px; text: "1. " + @tr("Check whether an existing interface already covers {}. Reuse it if appropriate; otherwise consider a narrow contract owned by the consuming responsibility.", s.methods); }
+                Para { font-size: 12px; text: "2. " + @tr("Let {} implement that contract and inject it into {} from the composition root. Keep concrete construction outside the consumer.", s.target, s.source); }
+                Para { font-size: 12px; text: "3. " + @tr("Review signatures, access modifiers and return/parameter types for dependencies that would preserve the cycle. An interface alone does not remove runtime call cycles; rescan after changing code."); }
+            }
+            if s.kind == 1: VerticalLayout {
+                spacing: 6px;
+                Para { font-size: 12px; text: "1. " + @tr("Review moving concrete construction or static utility access behind an injected adapter or factory owned by the consumer."); }
+                Para { font-size: 12px; text: "2. " + @tr("Choose the contract from the recorded operations; verify lifetime, state and error behavior before changing code. Static methods cannot directly implement an instance interface."); }
+                Para { font-size: 12px; text: "3. " + @tr("Rescan after the source change. This proposal does not modify source code or prove that every cycle is removed."); }
+            }
+            if s.kind == 2: VerticalLayout {
+                spacing: 6px;
+                Para { font-size: 12px; text: "1. " + @tr("Review whether this type or module belongs to the target package’s responsibility. Call affinity is evidence to inspect, not an architectural decision."); }
+                Para {
+                    font-size: 12px;
+                    text: "2. " + @tr("Check incoming callers, restricted access, imports and public API compatibility")
+                        + (s.same-file > 1 ? @tr("; this file contains {} type/module elements, so moving the file also affects them.", s.same-file) : ".");
+                }
+                Para { font-size: 12px; text: "3. " + @tr("A package move changes grouping, not method calls. Class call cycles remain unless responsibilities or calls also change. Rerun the import and call analyses after a source edit."); }
+            }
+            if root.tail != "": Para { font-size: 12px; text: "4. " + root.tail; }
+            Mono {
+                font-size: 11px;
+                text: @tr("Evidence: ") + s.evidence + (s.evidence-more > 0 ? " · " + @tr("{} more call sites", s.evidence-more) : "");
+            }
+        }
+    }
+}
+
+component Declaration inherits VerticalLayout {
+    in property <CallsDeclaration> d;
+    spacing: 8px;
+    Text {
+        text: d.title;
+        color: Theme.text;
+        font-size: d.kind == 1 ? 18px : 15px;
+        font-weight: 700;
+        wrap: word-wrap;
+    }
+    Mono { text: d.location; color: Theme.muted; }
+    if d.kind == 2: VerticalLayout {
+        spacing: 8px;
+        Muted { font-size: 12px; text: d.metric.label + " · " + CallsData.metric-text(d.metric); }
+        Muted { font-size: 12px; text: @tr("No recorded call sites match this method and the current call filters. This declaration is still measurable; missing calls do not prove it is unused."); }
+    }
+    if d.kind == 1 && d.cohesion == 0: Muted {
+        font-size: 12px;
+        text: @tr("Class cohesion unknown: compiler state-access evidence is unavailable.");
+    }
+    if d.kind == 1 && d.cohesion > 0: VerticalLayout {
+        spacing: 8px;
+        Text {
+            text: d.cohesion == 1 ? @tr("Class cohesion unknown") : @tr("{} method groups", d.lcom4);
+            color: Theme.text;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        Muted { font-size: 12px; text: @tr("{} instance methods · {} state members · complexity Σ {}", d.methods, d.fields, d.complexity); }
+        Muted { font-size: 12px; text: @tr("LCOM4 groups instance methods that share a non-static field/property or call each other. Constructors, static members and local functions are excluded. Multiple groups suggest a review, not an automatic design error. Incomplete compiler evidence leaves LCOM4 unknown."); }
+        for g[i] in d.groups: VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: @tr("Group {} · {} methods", i + 1, g.methods.length);
+                color: Theme.text;
+                font-size: 12px;
+                font-weight: 650;
+            }
+            for name[j] in g.methods: HorizontalLayout {
+                alignment: start;
+                Button {
+                    compact: true;
+                    text: name;
+                    clicked => { CallsData.select-method(g.ids[j]); }
+                }
+            }
+        }
+    }
+}
+
+export component CallsDetail inherits CallsColumn {
+    property <CallsModel> m: CallsData.model;
+    ScrollView {
+        VerticalLayout {
+            alignment: start;
+            padding: 14px;
+            spacing: 10px;
+            if !m.has-relation && m.declaration.kind == 0: Text {
+                text: @tr("Select a type/module connection to inspect its functions and methods and source call sites.");
+                color: Theme.text;
+                font-size: 13px;
+                wrap: word-wrap;
+                height: 60px;
+                vertical-alignment: center;
+            }
+            if !m.has-relation && m.declaration.kind > 0: Declaration { d: m.declaration; }
+            if m.has-relation: VerticalLayout {
+                spacing: 10px;
+                Text {
+                    text: m.evidence-title;
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                Muted {
+                    font-size: 12px;
+                    text: @tr("{} call sites · ", m.evidence-sites)
+                        + (m.evidence-resolution == 0 ? @tr("project declaration targets")
+                            : m.evidence-resolution == 1 ? @tr("external declaration targets")
+                            : @tr("unresolved targets; no class or method is assumed"));
+                }
+                for g[i] in m.groups: MethodGroup { group: g; index: i; }
+                if m.sites-more: HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        compact: true;
+                        text: @tr("Show next 100 call sites");
+                        clicked => { CallsData.sites-more(); }
+                    }
+                }
+                Text {
+                    text: @tr("Refactoring candidates");
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 700;
+                }
+                Muted { font-size: 12px; text: @tr("Review plans based on the original source calls. They do not change code or the simulated dependency graph."); }
+                if m.suggestions.length == 0: Muted {
+                    font-size: 12px;
+                    text: @tr("No supported suggestion for this connection. A dependency alone does not establish a misplaced responsibility or justify an interface.");
+                }
+                for s[i] in m.suggestions: Proposal { s: s; index: i; }
+            }
+        }
+    }
+}

@@ -1,0 +1,113 @@
+// Small building blocks of the Calls tab (the web's .explorer-row,
+// .badge, <details> and the column frames).
+import { Theme } from "theme.slint";
+
+// A column of the tab (.calls-outline / .calls-master / .calls-detail).
+export component CallsColumn inherits Rectangle {
+    background: Theme.panel;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+}
+
+export component Heading inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+}
+
+export component Muted inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+    wrap: word-wrap;
+}
+
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> tint: Theme.muted;
+    height: label.preferred-height + 4px;
+    width: label.preferred-width + 14px;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: Theme.border;
+    label := Text {
+        text: root.text;
+        color: root.tint;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A clickable card row (.explorer-row.call-relation).
+export component Card inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: selected ? Theme.accent : Theme.border;
+    background: touch.has-hover ? Theme.panel-2 : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    if selected: Rectangle {
+        x: 0;
+        width: 3px;
+        background: Theme.accent;
+        border-radius: 2px;
+    }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 3px;
+        @children
+    }
+}
+
+// A <details> summary line.
+export component Summary inherits TouchArea {
+    in property <string> text;
+    in property <bool> open;
+    in property <color> tint: Theme.muted;
+    in property <length> size: 12px;
+    in property <int> weight: 400;
+    height: label.preferred-height + 8px;
+    mouse-cursor: pointer;
+    label := Text {
+        x: 0;
+        width: root.width;
+        text: (root.open ? "▾ " : "▸ ") + root.text;
+        color: root.tint;
+        font-size: root.size;
+        font-weight: root.weight;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+}
+
+// A full-width left-aligned button (.call-cycle-edge / .call-cycle-member).
+export component LineButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> pressed-state;
+    callback clicked();
+    height: label.preferred-height + 14px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: pressed-state ? Theme.accent : Theme.border;
+    background: touch.has-hover ? Theme.panel-2 : Theme.panel;
+    label := Text {
+        x: 10px;
+        width: root.width - 20px;
+        text: root.text;
+        color: root.pressed-state ? Theme.accent : Theme.text;
+        font-size: 12px;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
