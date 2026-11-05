@@ -369,7 +369,6 @@ impl TreeView {
 // Geometry shared with ui/tree_view.slint (TreeGeo).
 pub const ROW_H: f32 = 30.0;
 pub const LANE_W: f32 = 280.0;
-pub const TREE_W: f32 = 560.0;
 pub const TOP: f32 = 34.0;
 
 /// Colour class of a drawn link, as `TreeLink.kind` in the UI.
@@ -379,6 +378,17 @@ pub enum LinkKind {
     Incoming = 1,
     Outgoing = 2,
     Cyclic = 3,
+}
+
+/// One link as drawn: path, colour class, endpoint rows (for hover) and
+/// whether it lies in the right lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Drawn {
+    pub path: String,
+    pub kind: LinkKind,
+    pub from: usize,
+    pub to: usize,
+    pub right: bool,
 }
 
 pub fn row_center(row: usize) -> f32 {
@@ -406,18 +416,24 @@ impl TreeView {
     }
 
     /// Paths for every link shown under `selected` and `mode`.
-    pub fn draw(&self, selected: Option<usize>, mode: EdgeMode) -> Vec<(String, LinkKind)> {
+    pub fn draw(&self, selected: Option<usize>, mode: EdgeMode) -> Vec<Drawn> {
         self.shown(selected, mode)
             .into_iter()
             .map(|(i, lane)| {
                 let l = &self.links[i];
-                let x = match lane {
-                    Lane::Incoming => LANE_W - 22.0,
-                    Lane::Outgoing | Lane::Other => LANE_W + TREE_W + 22.0,
+                // Left lane in absolute coordinates; the right lane relative
+                // to its own left edge (the tree's right edge).
+                let (x, right) = match lane {
+                    Lane::Incoming => (LANE_W - 22.0, false),
+                    Lane::Outgoing | Lane::Other => (22.0, true),
                 };
-                let kind = self.link_kind(i, lane, selected, mode);
-                let path = arc(x, row_center(l.from), row_center(l.to), lane, LANE_W - 30.0);
-                (path, kind)
+                Drawn {
+                    path: arc(x, row_center(l.from), row_center(l.to), lane, LANE_W - 30.0),
+                    kind: self.link_kind(i, lane, selected, mode),
+                    from: l.from,
+                    to: l.to,
+                    right,
+                }
             })
             .collect()
     }
@@ -661,17 +677,23 @@ mod tests {
         let v = t.view(&BTreeSet::new());
         let none = v.draw(None, EdgeMode::All);
         assert_eq!(none.len(), 3);
-        assert_eq!(none[0].1, LinkKind::Neutral);
-        assert_eq!(none[1].1, LinkKind::Cyclic);
-        let right = format!("M {:.1} ", LANE_W + TREE_W + 22.0);
-        assert!(none.iter().all(|(p, _)| p.starts_with(&right)));
+        assert_eq!(none[0].kind, LinkKind::Neutral);
+        assert_eq!(none[1].kind, LinkKind::Cyclic);
+        // The right lane is drawn relative to its own origin, so the tree
+        // between the lanes can take any width.
+        assert!(
+            none.iter()
+                .all(|d| d.right && d.path.starts_with("M 22.0 "))
+        );
+        assert_eq!((none[0].from, none[0].to), (0, 1), "endpoints for hover");
         let sel = v.draw(Some(1), EdgeMode::Both);
-        let kinds: Vec<LinkKind> = sel.iter().map(|(_, k)| *k).collect();
+        let kinds: Vec<LinkKind> = sel.iter().map(|d| d.kind).collect();
         assert_eq!(
             kinds,
             [LinkKind::Incoming, LinkKind::Outgoing, LinkKind::Incoming]
         );
-        assert!(sel[0].0.starts_with(&format!("M {:.1} ", LANE_W - 22.0)));
+        assert!(!sel[0].right);
+        assert!(sel[0].path.starts_with(&format!("M {:.1} ", LANE_W - 22.0)));
     }
 
     #[test]

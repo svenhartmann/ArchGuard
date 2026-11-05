@@ -18,17 +18,22 @@ export struct TreeRow {
     priority: int,
 }
 
-// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
+// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic. Paths of the right
+// lane are relative to that lane's left edge.
 export struct TreeLink {
     path: string,
     kind: int,
+    from: int,
+    to: int,
+    right: bool,
 }
 
-// Geometry shared with src/tree.rs (ROW_H, LANE_W, TREE_W, TOP).
+// Geometry shared with src/tree.rs (ROW_H, LANE_W, TOP). The tree between
+// the lanes takes the remaining width, at least min-tree-w.
 export global TreeGeo {
     out property <float> row-h: 30;
     out property <float> lane-w: 280;
-    out property <float> tree-w: 560;
+    out property <float> min-tree-w: 560;
     out property <float> top: 34;
 }
 
@@ -56,6 +61,8 @@ component RowCard inherits Rectangle {
     in property <TreeRow> data;
     in property <bool> selected;
     in property <float> zoom;
+    in property <float> tree-w;
+    out property <bool> hovered: touch.has-hover;
     callback select();
     callback toggle();
     callback open();
@@ -63,7 +70,7 @@ component RowCard inherits Rectangle {
     property <length> indent: data.depth * 18px * zoom;
     x: (TreeGeo.lane-w * 1px) * zoom + indent;
     y: (TreeGeo.top + data.row * TreeGeo.row-h) * 1px * zoom;
-    width: TreeGeo.tree-w * 1px * zoom - indent;
+    width: tree-w * 1px * zoom - indent;
     height: (TreeGeo.row-h - 4) * 1px * zoom;
     border-radius: 6px * zoom;
     background: selected ? Theme.accent.with-alpha(0.10) : data.covered ? Theme.accent.with-alpha(0.05) : touch.has-hover ? Theme.panel : Theme.panel-2;
@@ -168,11 +175,16 @@ export component TreeView inherits Rectangle {
     callback toggle(int);
     callback open(int);
 
-    property <float> canvas-w: TreeGeo.lane-w * 2 + TreeGeo.tree-w;
+    // The tree fills the view between the lanes, as in the web viewer.
+    property <float> tree-w: max(TreeGeo.min-tree-w, flick.width / 1px / zoom - 2 * TreeGeo.lane-w);
+    property <float> canvas-w: TreeGeo.lane-w * 2 + tree-w;
     property <float> canvas-h: TreeGeo.top + rows.length * TreeGeo.row-h + 20;
+    // Row under the mouse; its links stay bright, the others fade.
+    in-out property <int> hovered: -1;
 
     public function fit() {
-        zoom = max(0.3, min(1.0, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+        let w = TreeGeo.lane-w * 2 + TreeGeo.min-tree-w;
+        zoom = max(0.3, min(1.0, min(flick.width / 1px / w, flick.height / 1px / canvas-h)));
     }
 
     function zoom-by(f: float) {
@@ -219,7 +231,7 @@ export component TreeView inherits Rectangle {
             font-weight: 700;
         }
         Text {
-            x: (TreeGeo.lane-w + TreeGeo.tree-w) * 1px * zoom;
+            x: (TreeGeo.lane-w + tree-w) * 1px * zoom;
             y: 8px * zoom;
             width: TreeGeo.lane-w * 1px * zoom;
             text: @tr("OUTGOING · CYCLES");
@@ -230,16 +242,19 @@ export component TreeView inherits Rectangle {
         }
 
         for l in root.links: Path {
-            x: 0;
+            property <bool> traced: root.hovered >= 0 && (l.from == root.hovered || l.to == root.hovered);
+            x: l.right ? (TreeGeo.lane-w + tree-w) * 1px * zoom : 0;
             y: 0;
-            width: canvas-w * zoom * 1px;
+            width: TreeGeo.lane-w * zoom * 1px;
             height: canvas-h * zoom * 1px;
-            viewbox-width: canvas-w;
+            viewbox-width: TreeGeo.lane-w;
             viewbox-height: canvas-h;
             commands: l.path;
             fill: transparent;
-            stroke: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.75);
-            stroke-width: l.kind == 0 ? 1.3px : 1.8px;
+            stroke: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
+            stroke-width: traced ? 2.6px : l.kind == 0 ? 1.3px : 1.8px;
+            opacity: root.hovered >= 0 && !traced ? 0.15 : 1.0;
+            animate opacity { duration: 120ms; }
         }
 
         for r in root.rows: Port {
@@ -248,13 +263,21 @@ export component TreeView inherits Rectangle {
             zoom: root.zoom;
         }
         for r in root.rows: Port {
-            cx: TreeGeo.lane-w + TreeGeo.tree-w + 22;
+            cx: TreeGeo.lane-w + tree-w + 22;
             cy: TreeGeo.top + r.row * TreeGeo.row-h + (TreeGeo.row-h - 4) / 2;
             zoom: root.zoom;
         }
         for r in root.rows: RowCard {
             data: r;
             zoom: root.zoom;
+            tree-w: root.tree-w;
+            changed hovered => {
+                if (self.hovered) {
+                    root.hovered = r.row;
+                } else if (root.hovered == r.row) {
+                    root.hovered = -1;
+                }
+            }
             selected: r.row == root.selected;
             select => { root.select(r.row); }
             toggle => { root.toggle(r.row); }

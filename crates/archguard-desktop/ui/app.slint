@@ -220,6 +220,7 @@ export component AppWindow inherits Window {
     in-out property <int> display: 0;
     in-out property <int> edge-mode: 3;
     in-out property <int> explorer-tab: 0;
+    in-out property <int> tree-hovered: -1;
     in-out property <bool> show-explorer: true;
     in-out property <bool> show-details: true;
 
@@ -519,6 +520,7 @@ export component AppWindow inherits Window {
                     background: Theme.bg;
                     clip: true;
                     TreeView {
+                        hovered <=> root.tree-hovered;
                         visible: root.display == 0;
                         rows: root.rows;
                         links: root.links;

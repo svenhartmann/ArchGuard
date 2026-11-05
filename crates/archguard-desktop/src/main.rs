@@ -243,12 +243,15 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
             priority: priority_index(g.priorities[i]),
         }
     })));
-    ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(
-        |(path, kind)| TreeLink {
-            path: path.into(),
-            kind: kind as i32,
-        },
-    )));
+    ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(|d| {
+        TreeLink {
+            path: d.path.into(),
+            kind: d.kind as i32,
+            from: d.from as i32,
+            to: d.to as i32,
+            right: d.right,
+        }
+    })));
     ui.set_deps(vec_model(v.shown(selected, g.mode).into_iter().map(
         |(i, lane)| {
             let l = &v.links[i];
@@ -418,6 +421,12 @@ mod snapshot {
             if let Some(n) = node {
                 ui.invoke_open_node(n as i32);
             }
+        }
+        if let Some(h) = std::env::var("ARCHGUARD_DESKTOP_HOVER")
+            .ok()
+            .and_then(|h| h.parse().ok())
+        {
+            ui.set_tree_hovered(h);
         }
         if let Some(d) = std::env::var("ARCHGUARD_DESKTOP_DISPLAY")
             .ok()
