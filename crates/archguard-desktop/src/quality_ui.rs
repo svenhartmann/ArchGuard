@@ -16,10 +16,11 @@ mod notes;
 mod rows;
 mod state;
 
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::graph_ui::tab_support::{self, Actions, TabState, index, model, snapshot_mode};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
@@ -43,65 +44,63 @@ fn language(ui: &AppWindow) -> Lang {
     }
 }
 
-/// Run `f` on the active document's state and push the page.
-fn update(ui: &AppWindow, f: impl FnOnce(&mut QualityState)) {
-    documents::with_active_state(|s: &mut QualityState| {
-        f(s);
-        push(ui, s);
-    });
-}
-
-fn action<A: 'static>(ui: &AppWindow, f: impl Fn(&mut View, A) + 'static) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |a| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |s| f(&mut s.view, a));
-        }
+impl TabState for QualityState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
     }
 }
 
-fn index(i: i32) -> usize {
-    usize::try_from(i).unwrap_or(0)
+/// A callback that changes what the user chose.
+fn on_view<A: 'static>(
+    a: &Actions<QualityState>,
+    f: impl Fn(&mut View, A) + 'static,
+) -> impl Fn(A) + 'static {
+    a.on(move |s, _, arg| f(&mut s.view, arg))
+}
+
+/// A picker or row index; negative values pick the first entry.
+fn first_or(i: i32) -> usize {
+    index(i).unwrap_or(0)
 }
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let q = ui.global::<QualityData>();
-    q.on_section(action(ui, |v, i: i32| {
-        v.section = Section::ALL[index(i).min(Section::ALL.len() - 1)];
+    let a = Actions::<QualityState>::new(ui);
+    q.on_section(on_view(&a, |v, i: i32| {
+        v.section = Section::ALL[first_or(i).min(Section::ALL.len() - 1)];
         v.limit = PAGE;
     }));
-    q.on_query(action(ui, |v, t: SharedString| {
+    q.on_query(on_view(&a, |v, t: SharedString| {
         v.query = t.to_string();
         v.limit = PAGE;
     }));
-    q.on_target_query(action(ui, |v, t: SharedString| {
+    q.on_target_query(on_view(&a, |v, t: SharedString| {
         v.target_query = t.to_string()
     }));
-    q.on_filter(action(ui, |v, i: i32| {
-        v.filter = state::filter_of(index(i));
+    q.on_filter(on_view(&a, |v, i: i32| {
+        v.filter = state::filter_of(first_or(i));
         v.limit = PAGE;
     }));
-    q.on_sort(action(ui, |v, i: i32| {
-        v.sort = state::sort_of(index(i));
+    q.on_sort(on_view(&a, |v, i: i32| {
+        v.sort = state::sort_of(first_or(i));
         v.limit = PAGE;
     }));
-    let more = action(ui, |v, ()| v.limit += PAGE);
-    q.on_more(move || more(()));
-    q.on_select_class(action(ui, |v, id: SharedString| {
+    q.on_more(a.on0(|s, _| s.view.limit += PAGE));
+    q.on_select_class(on_view(&a, |v, id: SharedString| {
         v.selected = Some(id.to_string())
     }));
-    let back = action(ui, |v, ()| v.selected = None);
-    q.on_back(move || back(()));
-    q.on_package(action(ui, |v, node: SharedString| {
+    q.on_back(a.on0(|s, _| s.view.selected = None));
+    q.on_package(on_view(&a, |v, node: SharedString| {
         v.cohesion = cohesion::Selection {
             package: Some(node.to_string()),
             ..Default::default()
         };
     }));
-    q.on_group(action(ui, |v, i: i32| v.cohesion.group = Some(index(i))));
-    let more_groups = action(ui, |v, ()| v.cohesion.limit += PAGE);
-    q.on_more_groups(move || more_groups(()));
+    q.on_group(on_view(&a, |v, i: i32| {
+        v.cohesion.group = Some(first_or(i))
+    }));
+    q.on_more_groups(a.on0(|s, _| s.view.cohesion.limit += PAGE));
     wire_targets(ui);
 }
 
@@ -114,8 +113,8 @@ fn wire_targets(ui: &AppWindow) {
             .global::<QualityData>()
             .get_model()
             .targets
-            .row_data(index(i));
-        update(&ui, |s| {
+            .row_data(first_or(i));
+        tab_support::update(&ui, |s: &mut QualityState, _| {
             // Row 0 is "Entire source scope".
             s.view.target = if i <= 0 {
                 String::new()
@@ -136,8 +135,7 @@ fn wire_targets(ui: &AppWindow) {
         })
         .flatten();
         if let Some(n) = node {
-            ui.set_tab("graph".into());
-            ui.invoke_reveal(n as i32);
+            tab_support::reveal(&ui, n);
         }
     });
 }
@@ -153,13 +151,13 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         return;
     };
     let lang = language(ui);
-    if wait_for_data() {
+    if snapshot_mode() {
         documents::set_state(doc, build(data, lang));
-        update(ui, snapshot_view);
+        tab_support::update(ui, |s, _| snapshot_view(s));
         return;
     }
     documents::set_state(doc, QualityState::loading(lang));
-    update(ui, |_| {});
+    tab_support::update(ui, |_: &mut QualityState, _| {});
     let (root, graph, config, sources) = (
         data.root.to_path_buf(),
         data.run.graph.clone(),
@@ -172,15 +170,10 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = w.upgrade() else { return };
             if documents::set_state(doc, QualityState::new(lang, inputs)) {
-                update(&ui, |_| {});
+                tab_support::update(&ui, |_: &mut QualityState, _| {});
             }
         });
     });
-}
-
-#[cfg(feature = "snapshot")]
-fn wait_for_data() -> bool {
-    std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some()
 }
 
 /// Snapshot mode opens a section as the web's route does:
@@ -206,16 +199,7 @@ fn snapshot_view(s: &mut QualityState) {
 }
 
 #[cfg(not(feature = "snapshot"))]
-fn wait_for_data() -> bool {
-    false
-}
-
-#[cfg(not(feature = "snapshot"))]
 fn snapshot_view(_: &mut QualityState) {}
-
-fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
-}
 
 /// Write the state's page into `QualityData.model`.
 pub fn push(ui: &AppWindow, s: &mut QualityState) {

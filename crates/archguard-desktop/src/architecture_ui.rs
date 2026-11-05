@@ -22,6 +22,7 @@ use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
@@ -96,49 +97,35 @@ fn build_from(root: &Path, config: &Config, graph: Graph, report: &Report) -> Ar
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ArchitectureData>();
-    d.on_select_chapter(action(ui, |s, _, n: i32| {
+    let a = Actions::<ArchitectureState>::new(ui);
+    d.on_select_chapter(a.on(|s, _, n: i32| {
         s.chapter = u8::try_from(n).unwrap_or(5);
     }));
-    d.on_navigate(action(ui, |s, _, scope: i32| {
-        open_scope(s, Kind::Dependencies, usize::try_from(scope).ok());
+    d.on_navigate(a.on(|s, _, scope: i32| {
+        open_scope(s, Kind::Dependencies, index(scope));
     }));
-    d.on_scope_selected(action(ui, |s, ui, i: i32| {
+    d.on_scope_selected(a.on(|s, ui, i: i32| {
         let Some((kind, map)) = current(s, ui) else {
             return;
         };
-        let scope = usize::try_from(i)
-            .ok()
-            .and_then(|i| map.scopes.get(i).copied().flatten());
+        let scope = index(i).and_then(|i| map.scopes.get(i).copied().flatten());
         open_scope(s, kind, scope);
     }));
-    d.on_select_card(action(ui, select_card));
-    let more = action(ui, |s, _, ()| {
+    d.on_select_card(a.on(select_card));
+    d.on_more_relations(a.on0(|s, _| {
         if let Some(kind) = derived(s, s.chapter) {
             let state = &mut s.maps[kind as usize];
             state.relations = state.relations.max(RELATIONS_PAGE) + RELATIONS_PAGE;
         }
-    });
-    d.on_more_relations(move || more(()));
-    let act = action(ui, |s, ui, ()| card_action(s, ui));
-    d.on_card_action(move || act(()));
-    d.on_download(action(ui, |s, _, all: bool| download(s, all)));
-    d.on_plantuml(action(ui, |s, ui, unit: SharedString| {
-        plantuml(s, ui, &unit)
     }));
+    d.on_card_action(a.on0(card_action));
+    d.on_download(a.on(|s, _, all: bool| download(s, all)));
+    d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
 }
 
-/// A callback that runs `f` on the tab state and refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut ArchitectureState, &AppWindow, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut ArchitectureState| {
-            f(s, &ui, arg);
-            push(&ui, s);
-        });
+impl TabState for ArchitectureState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
     }
 }
 
@@ -153,7 +140,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     let Some(doc) = documents::active_id() else {
         return;
     };
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
+    if snapshot_mode() {
         return install(ui, doc, build(data));
     }
     // One worker per document, even if it is shown again meanwhile.
@@ -258,7 +245,7 @@ fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
     let Some((kind, map)) = current(s, ui) else {
         return;
     };
-    let Some(node) = usize::try_from(i).ok().and_then(|i| map.shown.nodes.get(i)) else {
+    let Some(node) = index(i).and_then(|i| map.shown.nodes.get(i)) else {
         return;
     };
     let state = &mut s.maps[kind as usize];

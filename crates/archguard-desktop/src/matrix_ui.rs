@@ -2,10 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::graph_ui::tab_support::{Actions, TabState, index, model};
 use crate::matrix::{Matrix, Target};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
@@ -73,71 +74,52 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     );
 }
 
-fn update(ui: &AppWindow, f: impl FnOnce(&mut MatrixState)) {
-    documents::with_active_state(|m: &mut MatrixState| {
-        f(m);
-        push(ui, m);
-    });
-}
-
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut MatrixState, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |a| {
-        if let Some(ui) = w.upgrade() {
-            update(&ui, |m| f(m, a));
-        }
+impl TabState for MatrixState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
     }
 }
 
 pub fn wire(ui: &AppWindow) {
-    ui.on_m_toggle(action(ui, |m, n: i32| {
-        let n = n.max(0) as usize;
+    let a = Actions::<MatrixState>::new(ui);
+    ui.on_m_toggle(a.on(|m, _, n: i32| {
+        let n = index(n).unwrap_or(0);
         if !m.expanded.remove(&n) {
             m.expanded.insert(n);
         }
     }));
-    let expand = action(ui, |m, ()| {
+    ui.on_m_expand_all(a.on0(|m, _| {
         m.expanded = (0..m.tree.nodes.len())
             .filter(|&n| !m.tree.nodes[n].file)
             .collect();
         m.page = 0;
-    });
-    ui.on_m_expand_all(move || expand(()));
-    let collapse = action(ui, |m, ()| {
+    }));
+    ui.on_m_collapse_all(a.on0(|m, _| {
         m.expanded.clear();
         m.page = 0;
-    });
-    ui.on_m_collapse_all(move || collapse(()));
-    ui.on_m_search(action(ui, |m, q: SharedString| {
+    }));
+    ui.on_m_search(a.on(|m, _, q: SharedString| {
         m.query = q.to_string();
         m.page = 0;
     }));
-    ui.on_m_scope(action(ui, |m, i: i32| {
-        let scope = usize::try_from(i - 1)
-            .ok()
-            .and_then(|i| m.scopes.get(i).copied());
+    ui.on_m_scope(a.on(|m, _, i: i32| {
+        // Entry 0 is the project overview.
+        let scope = index(i - 1).and_then(|i| m.scopes.get(i).copied());
         m.set_scope(scope);
     }));
-    ui.on_m_cycle(action(ui, |m, i: i32| {
-        choose_cycle(m, usize::try_from(i - 1).ok())
-    }));
-    let only = action(ui, |m, ()| {
+    // Entry 0 is "All dependencies".
+    ui.on_m_cycle(a.on(|m, _, i: i32| choose_cycle(m, index(i - 1))));
+    ui.on_m_toggle_only(a.on0(|m, _| {
         m.only = !m.only && m.cycle.is_some();
         m.page = 0;
-    });
-    ui.on_m_toggle_only(move || only(()));
-    ui.on_m_page(action(ui, |m, d: i32| {
+    }));
+    ui.on_m_page(a.on(|m, _, d: i32| {
         m.page = (m.page as i64 + d as i64).max(0) as usize;
     }));
-    let cell = action(ui, |m, (row, col): (i32, i32)| {
-        m.evidence = Some((row.max(0) as usize, col.max(0) as usize));
-    });
-    ui.on_m_cell(move |row, col| cell((row, col)));
-    let close = action(ui, |m, ()| m.evidence = None);
-    ui.on_m_close_evidence(move || close(()));
+    ui.on_m_cell(a.on2(|m, _, row: i32, col: i32| {
+        m.evidence = Some((index(row).unwrap_or(0), index(col).unwrap_or(0)));
+    }));
+    ui.on_m_close_evidence(a.on0(|m, _| m.evidence = None));
 }
 
 /// Choosing a cycle opens its members' ancestors, as the web viewer does.
@@ -304,8 +286,4 @@ fn push_evidence(ui: &AppWindow, m: &MatrixState) {
     }
     ui.set_m_evidence_title(format!("{} · {}", name(row), cell.count).into());
     ui.set_m_evidence(model(lines));
-}
-
-fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }

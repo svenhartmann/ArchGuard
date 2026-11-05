@@ -14,6 +14,7 @@ use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::graph_ui::tab_support::{Actions, TabState, index, snapshot_mode};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
@@ -28,74 +29,54 @@ pub fn build(data: &Loaded) -> ServicesState {
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ServicesData>();
-    d.on_select_kind(action(ui, |s, _, i: i32| {
-        s.kind = usize::try_from(i).unwrap_or(0).min(KINDS.len() - 1);
+    let a = Actions::<ServicesState>::new(ui);
+    d.on_select_kind(a.on(|s, _, i: i32| {
+        s.kind = index(i).unwrap_or(0).min(KINDS.len() - 1);
         s.clear_focus();
     }));
-    d.on_select_mode(action(ui, |s, _, i: i32| {
-        s.mode = [Mode::All, Mode::Incoming, Mode::Outgoing, Mode::Both]
-            [usize::try_from(i).unwrap_or(0).min(3)];
+    d.on_select_mode(a.on(|s, _, i: i32| {
+        s.mode =
+            [Mode::All, Mode::Incoming, Mode::Outgoing, Mode::Both][index(i).unwrap_or(0).min(3)];
     }));
-    d.on_select_routing(action(ui, |s, _, i: i32| s.in_out = i == 1));
-    let toggle = action(ui, |s, _, ()| {
+    d.on_select_routing(a.on(|s, _, i: i32| s.in_out = i == 1));
+    d.on_toggle_cycles_only(a.on0(|s, _| {
         s.cycles_only = !s.cycles_only;
         s.cycle = None;
-    });
-    d.on_toggle_cycles_only(move || toggle(()));
-    let all = action(ui, |s, _, ()| s.show_all());
-    d.on_show_all(move || all(()));
-    let close = action(ui, |s, _, ()| s.details_hidden = true);
-    d.on_close_details(move || close(()));
-    let more = action(ui, |s, _, ()| s.project_limit += 100);
-    d.on_show_more_projects(move || more(()));
-    d.on_select_service(action(ui, |s, _, i: i32| {
-        if let Ok(i) = usize::try_from(i) {
-            s.select_service(i);
+    }));
+    d.on_show_all(a.on0(|s, _| s.show_all()));
+    d.on_close_details(a.on0(|s, _| s.details_hidden = true));
+    d.on_show_more_projects(a.on0(|s, _| s.project_limit += 100));
+    d.on_select_service(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.select_service(i)
         }
     }));
-    d.on_select_project(action(ui, |s, _, i: i32| {
-        if let Ok(i) = usize::try_from(i) {
-            s.select_project(i);
+    d.on_select_project(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.select_project(i)
         }
     }));
-    d.on_select_edge(action(ui, |s, _, i: i32| {
-        if let Ok(i) = usize::try_from(i) {
-            s.select_edge(i);
+    d.on_select_edge(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.select_edge(i)
         }
     }));
-    d.on_select_cycle(action(ui, |s, _, i: i32| {
-        if let Ok(i) = usize::try_from(i) {
-            s.select_cycle(i);
+    d.on_select_cycle(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.select_cycle(i)
         }
     }));
-    d.on_zoom_by(action(ui, |s, _, f: f32| s.zoom_by(f)));
-    d.on_fit(action2(ui, |s, ui, w: f32, h: f32| {
+    d.on_zoom_by(a.on(|s, _, f: f32| s.zoom_by(f)));
+    d.on_fit(a.on2(|s, ui, w: f32, h: f32| {
         view::fit(s, w, h, &ui.global::<ServicesData>().get_label_unmapped());
     }));
-    d.on_resized(action(ui, |s, _, w: f32| s.viewport = w.floor().max(0.0)));
+    d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
 }
 
-/// A callback that runs `f` on the tab state and refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut ServicesState, &AppWindow, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut ServicesState| {
-            f(s, &ui, arg);
-            push(&ui, s);
-        });
+impl TabState for ServicesState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
     }
-}
-
-fn action2<A: 'static, B: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut ServicesState, &AppWindow, A, B) + 'static,
-) -> impl Fn(A, B) + 'static {
-    let g = action(ui, move |s, ui, (a, b)| f(s, ui, a, b));
-    move |a, b| g((a, b))
 }
 
 /// Fill the tab after an analysis finished. The topology is read on a
@@ -110,7 +91,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     };
     ui.global::<ServicesData>()
         .set_model(ServicesModel::default());
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
+    if snapshot_mode() {
         return install(ui, doc, build(data));
     }
     let root = data.root.to_path_buf();

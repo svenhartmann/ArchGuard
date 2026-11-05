@@ -12,10 +12,11 @@ use std::path::Path;
 
 use archguard_engine::core::Config;
 use archguard_engine::{SecurityFinding, SecurityReport};
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::graph_ui::tab_support::{Actions, TabState, index, model as rows, snapshot_mode};
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
 use snapshot::{SEVERITIES, safe_url};
 
@@ -51,16 +52,16 @@ fn build_from(root: &Path, config: &Config) -> SecurityState {
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<SecurityData>();
-    d.on_set_query(action(ui, |s, q: SharedString| {
+    let a = Actions::<SecurityState>::new(ui);
+    d.on_set_query(a.on(|s, _, q: SharedString| {
         s.query = q.into();
         s.limit = PAGE;
     }));
-    d.on_set_severity(action(ui, |s, i: i32| {
-        s.severity = usize::try_from(i).unwrap_or(0).min(SEVERITIES.len());
+    d.on_set_severity(a.on(|s, _, i: i32| {
+        s.severity = index(i).unwrap_or(0).min(SEVERITIES.len());
         s.limit = PAGE;
     }));
-    let more = action(ui, |s, ()| s.limit += PAGE);
-    d.on_load_more(move || more(()));
+    d.on_load_more(a.on0(|s, _| s.limit += PAGE));
     d.on_open_url(|url| {
         if let Some(url) = safe_url(Some(url.as_str())) {
             let url = url.to_string();
@@ -69,18 +70,9 @@ pub fn wire(ui: &AppWindow) {
     });
 }
 
-/// A callback that runs `f` on the tab state and refreshes the window.
-fn action<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&mut SecurityState, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |arg| {
-        let Some(ui) = w.upgrade() else { return };
-        documents::with_active_state(|s: &mut SecurityState| {
-            f(s, arg);
-            push(&ui, s);
-        });
+impl TabState for SecurityState {
+    fn push(&mut self, ui: &AppWindow) {
+        push(ui, self);
     }
 }
 
@@ -96,7 +88,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     };
     ui.global::<SecurityData>()
         .set_model(SecurityModel::default());
-    if std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() {
+    if snapshot_mode() {
         return install(ui, doc, build(data));
     }
     let (root, config) = (
@@ -192,10 +184,6 @@ fn line(text: String, packages: i32) -> SecurityLine {
 
 fn strings<const N: usize>(items: [String; N]) -> ModelRc<SharedString> {
     rows(items.into_iter().map(SharedString::from))
-}
-
-fn rows<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
 #[cfg(test)]
