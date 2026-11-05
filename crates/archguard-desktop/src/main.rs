@@ -4,6 +4,8 @@
 //! directory). The analysis runs on a worker thread with the same
 //! cached pipeline as the CLI; the window fills once it is done.
 
+mod matrix;
+mod matrix_ui;
 mod network;
 mod state;
 mod tree;
@@ -144,6 +146,7 @@ fn wire(ui: &AppWindow, root: &Path) {
         });
     }));
     wire_search(ui);
+    matrix_ui::wire(ui);
     let w = ui.as_weak();
     let root = root.to_path_buf();
     ui.on_open_web(move |tab| open_web(&w, &root, tab.as_str()));
@@ -207,6 +210,11 @@ fn vec_model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<
 }
 
 fn show(ui: &AppWindow, run: &AnalysisRun, sources: ReviewSources) {
+    matrix_ui::show(
+        ui,
+        Tree::from_graph(&run.graph),
+        ui.get_project().to_string(),
+    );
     let graph = GraphState::with_review(
         Tree::from_graph(&run.graph),
         sources,
@@ -455,6 +463,18 @@ mod snapshot {
             .and_then(|d| d.parse().ok())
         {
             ui.set_display(d);
+        }
+        if let Some((name, col)) = std::env::var("ARCHGUARD_DESKTOP_MCELL").ok().and_then(|v| {
+            v.rsplit_once(':')
+                .map(|(n, c)| (n.to_string(), c.parse::<i32>().ok()))
+        }) {
+            let node = super::APP.with_borrow(|app| {
+                app.as_ref()
+                    .and_then(|g| g.tree.nodes.iter().position(|n| n.name == name))
+            });
+            if let (Some(n), Some(c)) = (node, col) {
+                ui.invoke_m_cell(n as i32, c);
+            }
         }
         if let Ok(tab) = std::env::var("ARCHGUARD_DESKTOP_TAB") {
             ui.set_tab(tab.into());

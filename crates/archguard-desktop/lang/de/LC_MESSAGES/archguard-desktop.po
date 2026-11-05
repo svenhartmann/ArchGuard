@@ -185,3 +185,48 @@ msgstr "Alphabetisch"
 msgid "By dependencies"
 msgstr "Nach Beziehungen"
 
+msgid "Compact cells"
+msgstr "Kompakte Zellen"
+
+msgid "Previous"
+msgstr "Zurück"
+
+msgid "Next"
+msgstr "Weiter"
+
+msgid "Target packages {}–{} / {}"
+msgstr "Zielpakete {}–{} / {}"
+
+msgid "Dependencies in the tree"
+msgstr "Abhängigkeiten im Baum"
+
+msgid "{} files · {} dependency evidence records · {} file cycle groups"
+msgstr "{} Dateien · {} Abhängigkeitsbelege · {} Datei-Zyklusgruppen"
+
+msgid "Find package or file…"
+msgstr "Paket oder Datei suchen…"
+
+msgid "Cycle only"
+msgstr "Nur dieser Zyklus"
+
+msgid "Rows {}–{} / {}"
+msgstr "Zeilen {}–{} / {}"
+
+msgid "Tree / source"
+msgstr "Baum / Quelle"
+
+msgid "direct files"
+msgstr "direkte Dateien"
+
+msgid "Outside this scope"
+msgstr "Außerhalb des Bereichs"
+
+msgid "No matching files or packages. Adjust the search or cycle filter."
+msgstr "Keine passenden Dateien oder Pakete. Suche oder Zyklusfilter anpassen."
+
+msgid "Dependency evidence"
+msgstr "Abhängigkeitsbelege"
+
+msgid "Project overview"
+msgstr "Projektübersicht"
+

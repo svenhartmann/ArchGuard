@@ -1,0 +1,344 @@
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button, SearchField } from "widgets.slint";
+
+// kind: 0 package, 1 direct files of the scope root, 2 outside the scope.
+export struct MatrixColumn {
+    label: string,
+    context: string,
+    kind: int,
+}
+
+export struct MatrixRowItem {
+    node: int,
+    label: string,
+    depth: int,
+    package: bool,
+    expanded: bool,
+    in-cycle-path: bool,
+    badges: string,
+    // One entry per column (all columns, not only the visible page).
+    cells: [string],
+}
+
+export component MatrixView inherits Rectangle {
+    in property <[MatrixColumn]> columns;
+    in property <[MatrixRowItem]> rows;
+    in property <int> files;
+    in property <string> total;
+    in property <int> cycle-count;
+    in property <int> row-start;
+    in property <int> row-total;
+    in property <[string]> scopes;
+    in-out property <int> scope-index;
+    in property <[string]> cycle-options;
+    in-out property <int> cycle-index;
+    in property <bool> only;
+    in property <[string]> evidence;
+    in property <string> evidence-title;
+    in property <string> cycle-path;
+    in-out property <bool> compact;
+    in-out property <int> col-page: 0;
+
+    callback toggle(int);
+    callback expand-all();
+    callback collapse-all();
+    callback search(string);
+    callback scope-changed(int);
+    callback cycle-changed(int);
+    callback toggle-only();
+    callback page(int);
+    callback cell(int, int);
+    callback close-evidence();
+    // Tabs must not change the window's preferred size (Slint would resize
+    // the window when switching to this tab).
+    // Explicit horizontal constraints: the content depends on the width
+    // (columns per page), so it must not feed back into the layout.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    property <length> label-w: 280px;
+    property <length> col-w: 96px;
+    property <int> col-size: max(2, min(12, floor((root.width - label-w - 32px) / col-w)));
+    property <int> col-pages: max(1, ceil(columns.length / col-size));
+    property <int> col-start: min(col-page, col-pages - 1) * col-size;
+    property <int> col-count: max(0, min(col-size, columns.length - col-start));
+    property <length> row-h: compact ? 24px : 30px;
+    property <int> hover-row: -1;
+    property <int> hover-col: -1;
+
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Button { compact: true; text: @tr("Compact cells"); pressed-state: root.compact; clicked => { root.compact = !root.compact; } }
+            Button { compact: true; text: @tr("Previous"); enabled: root.col-page > 0; clicked => { root.col-page -= 1; } }
+            // Not in a layout: the label depends on the columns per page,
+            // which depend on the width.
+            Rectangle {
+                width: 170px;
+                Text {
+                    x: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    text: @tr("Target packages {}–{} / {}", root.col-count > 0 ? root.col-start + 1 : 0, root.col-start + root.col-count, root.columns.length);
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            Button { compact: true; text: @tr("Next"); enabled: root.col-page < root.col-pages - 1; clicked => { root.col-page += 1; } }
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                alignment: start;
+                Text { text: @tr("Dependencies in the tree"); color: Theme.text; font-size: 18px; font-weight: 700; }
+                Text {
+                    text: @tr("{} files · {} dependency evidence records · {} file cycle groups", root.files, root.total, root.cycle-count);
+                    color: Theme.muted;
+                    font-size: 12px;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            ComboBox {
+                width: 260px;
+                model: root.scopes;
+                current-index <=> root.scope-index;
+                selected => { root.scope-changed(self.current-index); }
+            }
+            Button { text: @tr("Expand all"); compact: true; y: (parent.height - self.height) / 2; clicked => { root.expand-all(); } }
+            Button { text: @tr("Collapse all"); compact: true; y: (parent.height - self.height) / 2; clicked => { root.collapse-all(); } }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            SearchField {
+                width: 340px;
+                placeholder: @tr("Find package or file…");
+                edited(t) => { root.search(t); }
+            }
+            ComboBox {
+                width: 220px;
+                model: root.cycle-options;
+                current-index <=> root.cycle-index;
+                selected => { root.cycle-changed(self.current-index); }
+            }
+            Button {
+                text: @tr("Cycle only");
+                pressed-state: root.only;
+                enabled: root.cycle-index > 0;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.toggle-only(); }
+            }
+        }
+
+        if root.cycle-path != "": Rectangle {
+            height: 34px;
+            border-radius: Theme.radius-sm;
+            background: Theme.cycle.with-alpha(0.10);
+            border-width: 1px;
+            border-color: Theme.cycle.with-alpha(0.4);
+            Text {
+                x: 12px;
+                text: root.cycle-path;
+                color: Theme.text;
+                font-size: 12px;
+                vertical-alignment: center;
+                height: 100%;
+                overflow: elide;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: @tr("Rows {}–{} / {}", root.rows.length > 0 ? root.row-start + 1 : 0, root.row-start + root.rows.length, root.row-total);
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+            Button { compact: true; icon: Icons.chevron-left; enabled: root.row-start > 0; clicked => { root.page(-1); } }
+            Button { compact: true; icon: Icons.chevron-right; enabled: root.row-start + root.rows.length < root.row-total; clicked => { root.page(1); } }
+        }
+
+        // Header row.
+        Rectangle {
+            height: 40px;
+            background: Theme.panel-2;
+            border-radius: Theme.radius-sm;
+            // Columns are placed absolutely: their number depends on the
+            // width, so they must stay out of layouts (no binding loop).
+            Rectangle {
+                x: 0;
+                width: root.label-w;
+                Text { x: 8px; text: @tr("Tree / source"); color: Theme.muted; font-size: 11px; vertical-alignment: center; height: 100%; }
+            }
+            for j in root.col-count: Rectangle {
+                    property <MatrixColumn> column: root.columns[root.col-start + j];
+                    x: root.label-w + j * root.col-w;
+                    width: root.col-w;
+                    background: root.hover-col == root.col-start + j ? Theme.accent.with-alpha(0.10) : transparent;
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text {
+                            text: column.kind == 1 ? column.label + " / " + @tr("direct files") : column.kind == 2 ? @tr("Outside this scope") : column.label;
+                            color: Theme.text;
+                            font-size: 11px;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                        if column.context != "" && column.kind == 0: Text {
+                            text: column.context;
+                            color: Theme.muted;
+                            font-size: 9.5px;
+                            overflow: elide;
+                        }
+                    }
+                }
+        }
+
+        // Body.
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                for r[i] in root.rows: Rectangle {
+                    height: root.row-h;
+                    background: r.package ? Theme.panel-2 : transparent;
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.border.with-alpha(0.55);
+                    }
+                        Rectangle {
+                            x: 0;
+                            width: root.label-w;
+                            background: r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
+                            HorizontalLayout {
+                                padding-left: 6px + r.depth * 16px;
+                                spacing: 6px;
+                                Rectangle {
+                                    width: 16px;
+                                    if r.package: Icon {
+                                        icon: r.expanded ? Icons.chevron-down : Icons.chevron-right;
+                                        tint: Theme.muted;
+                                        width: 12px;
+                                        height: 12px;
+                                    }
+                                    if !r.package: Text { text: "·"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea {
+                                        enabled: r.package;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.toggle(r.node); }
+                                    }
+                                }
+                                Text {
+                                    text: r.label;
+                                    color: Theme.text;
+                                    font-size: 12px;
+                                    font-weight: r.package ? 650 : 400;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                if r.badges != "": Text {
+                                    text: r.badges;
+                                    color: Theme.cycle;
+                                    font-size: 10.5px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        for j in root.col-count: Rectangle {
+                            property <string> value: r.cells[root.col-start + j];
+                            x: root.label-w + j * root.col-w;
+                            width: root.col-w;
+                            background: root.hover-col == root.col-start + j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
+                            if value != "": Rectangle {
+                                width: max(30px, label.preferred-width + 14px);
+                                height: root.row-h - 8px;
+                                border-radius: 4px;
+                                background: area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18);
+                                label := Text {
+                                    text: value;
+                                    color: Theme.accent;
+                                    font-size: 11.5px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                area := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.cell(r.node, root.col-start + j); }
+                                }
+                            }
+                            hover := TouchArea {
+                                changed has-hover => {
+                                    if (self.has-hover) {
+                                        root.hover-row = i;
+                                        root.hover-col = root.col-start + j;
+                                    }
+                                }
+                            }
+                        }
+                }
+                if root.rows.length == 0: Text {
+                    text: @tr("No matching files or packages. Adjust the search or cycle filter.");
+                    color: Theme.muted;
+                    font-size: 13px;
+                }
+            }
+        }
+    }
+
+    // Evidence panel for a clicked cell.
+    if root.evidence-title != "": Rectangle {
+        x: root.width - self.width - 16px;
+        y: 60px;
+        width: 460px;
+        height: root.height - 80px;
+        background: Theme.panel;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Theme.shadow;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+            HorizontalLayout {
+                Text { text: @tr("Dependency evidence"); color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; }
+                Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.close-evidence(); } }
+            }
+            Text { text: root.evidence-title; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 6px;
+                    for line in root.evidence: Text {
+                        text: line;
+                        color: Theme.text;
+                        font-family: "Menlo";
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}

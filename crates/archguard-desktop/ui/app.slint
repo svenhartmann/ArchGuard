@@ -4,8 +4,9 @@ import { Icon, Icons, Button, Tab, Divider, Metric, SearchField } from "widgets.
 import { TreeView, TreeRow, TreeLink, PriorityBadge } from "tree_view.slint";
 import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
+import { MatrixView, MatrixColumn, MatrixRowItem } from "matrix_view.slint";
 
-export { TreeRow, TreeLink, NetCard, NetArrow, DepCard }
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem }
 
 export struct Crumb {
     node: int,
@@ -224,6 +225,33 @@ export component AppWindow inherits Window {
     in-out property <bool> show-explorer: true;
     in-out property <bool> show-details: true;
 
+    // Matrix tab.
+    in property <[MatrixColumn]> m-columns;
+    in property <[MatrixRowItem]> m-rows;
+    in property <int> m-files;
+    in property <string> m-total;
+    in property <int> m-cycle-count;
+    in property <int> m-row-start;
+    in property <int> m-row-total;
+    in property <[string]> m-scopes;
+    in property <[string]> m-cycle-options;
+    in property <bool> m-only;
+    in property <[string]> m-evidence;
+    in property <string> m-evidence-title;
+    in property <string> m-cycle-path;
+    out property <string> m-overview-label: @tr("Project overview");
+    out property <string> m-all-label: @tr("All dependencies");
+    callback m-toggle(int);
+    callback m-expand-all();
+    callback m-collapse-all();
+    callback m-search(string);
+    callback m-scope(int);
+    callback m-cycle(int);
+    callback m-toggle-only();
+    callback m-page(int);
+    callback m-cell(int, int);
+    callback m-close-evidence();
+
     callback select-row(int);
     callback toggle-row(int);
     callback expand-all();
@@ -246,8 +274,11 @@ export component AppWindow inherits Window {
         fit-tick += 1;
     }
 
+    // Theme and the std widgets' palette switch together, so ComboBoxes
+    // and scroll bars follow the app theme instead of the system.
     public function set-dark(dark: bool) {
         Theme.dark = dark;
+        Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
     }
 
     VerticalLayout {
@@ -275,6 +306,7 @@ export component AppWindow inherits Window {
                     font-weight: 700;
                     vertical-alignment: center;
                     overflow: elide;
+                    min-width: min(self.preferred-width, 220px);
                     max-width: 220px;
                 }
                 Rectangle {
@@ -330,7 +362,7 @@ export component AppWindow inherits Window {
                 Button {
                     y: (parent.height - self.height) / 2;
                     icon: Theme.dark ? Icons.sun : Icons.moon;
-                    clicked => { Theme.dark = !Theme.dark; }
+                    clicked => { root.set-dark(!Theme.dark); }
                 }
                 Button {
                     y: (parent.height - self.height) / 2;
@@ -353,7 +385,34 @@ export component AppWindow inherits Window {
         }
 
         // --------------------------------------------------------- body
-        if root.tab != "graph": Placeholder {
+        if root.tab == "dsm": MatrixView {
+            vertical-stretch: 1;
+            columns: root.m-columns;
+            rows: root.m-rows;
+            files: root.m-files;
+            total: root.m-total;
+            cycle-count: root.m-cycle-count;
+            row-start: root.m-row-start;
+            row-total: root.m-row-total;
+            scopes: root.m-scopes;
+            cycle-options: root.m-cycle-options;
+            only: root.m-only;
+            evidence: root.m-evidence;
+            evidence-title: root.m-evidence-title;
+            cycle-path: root.m-cycle-path;
+            toggle(n) => { root.m-toggle(n); }
+            expand-all => { root.m-expand-all(); }
+            collapse-all => { root.m-collapse-all(); }
+            search(t) => { root.m-search(t); }
+            scope-changed(i) => { root.m-scope(i); }
+            cycle-changed(i) => { root.m-cycle(i); }
+            toggle-only => { root.m-toggle-only(); }
+            page(d) => { root.m-page(d); }
+            cell(r, c) => { root.m-cell(r, c); }
+            close-evidence => { root.m-close-evidence(); }
+        }
+
+        if root.tab != "graph" && root.tab != "dsm": Placeholder {
             vertical-stretch: 1;
             title: root.tab == "start" ? @tr("Start") : root.tab == "architecture" ? @tr("Architecture")
                 : root.tab == "dsm" ? @tr("Matrix") : root.tab == "calls" ? @tr("Calls")

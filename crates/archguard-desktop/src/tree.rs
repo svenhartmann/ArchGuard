@@ -150,6 +150,11 @@ impl Tree {
         }
     }
 
+    /// File-level edges `(from, to, edge index in full)` as node indices.
+    pub fn edges(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+        self.edges.iter().map(|&(from, to, _, e)| (from, to, e))
+    }
+
     /// `(files below, direct child packages)` of `node`, as the web
     /// viewer's "N files · M package" on network cards.
     pub fn counts(&self, node: usize) -> (usize, usize) {
