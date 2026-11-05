@@ -60,9 +60,6 @@ msgstr "Ein {}"
 msgid "Incoming ({})"
 msgstr "Eingehend ({})"
 
-msgid "Layers"
-msgstr "Ebenen"
-
 msgid "Matrix"
 msgstr "Matrix"
 
@@ -163,4 +160,22 @@ msgstr "Alle Abhängigkeiten in diesem Bereich · {}"
 
 msgid "Shown · {} of {}"
 msgstr "Angezeigt · {} von {}"
+
+msgid "Network"
+msgstr "Netzwerk"
+
+msgid "PACKAGE"
+msgstr "PAKET"
+
+msgid "FILE"
+msgstr "DATEI"
+
+msgid "source file"
+msgstr "Quelldatei"
+
+msgid "{} files · {} package"
+msgstr "{} Dateien · {} Paket"
+
+msgid "Fit"
+msgstr "Einpassen"
 

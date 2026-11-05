@@ -1,0 +1,178 @@
+import { Theme } from "theme.slint";
+import { Icons, Button } from "widgets.slint";
+import { PriorityBadge } from "tree_view.slint";
+
+export struct NetCard {
+    row: int,
+    label: string,
+    file: bool,
+    files: int,
+    packages: int,
+    priority: int,
+    in-cycle: bool,
+    x: float,
+    y: float,
+}
+
+// kind as TreeLink: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
+export struct NetArrow {
+    path: string,
+    width: float,
+    kind: int,
+}
+
+// Geometry shared with src/network.rs (CARD_W, CARD_H).
+global NetGeo {
+    out property <float> card-w: 270;
+    out property <float> card-h: 124;
+}
+
+component PackageCard inherits Rectangle {
+    in property <NetCard> card;
+    in property <bool> selected;
+    in property <float> zoom;
+    callback clicked;
+
+    x: card.x * 1px * zoom;
+    y: card.y * 1px * zoom;
+    width: NetGeo.card-w * 1px * zoom;
+    height: NetGeo.card-h * 1px * zoom;
+
+    // Tab above the card, as the web's package tab.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: tab-label.preferred-width + 24px * zoom;
+        height: 26px * zoom;
+        background: Theme.package-tab;
+        border-width: 1px;
+        border-color: Theme.package-border;
+        tab-label := Text {
+            text: card.file ? @tr("FILE") : @tr("PACKAGE");
+            color: Theme.text;
+            font-size: 12px * zoom;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        y: 24px * zoom;
+        height: parent.height - 24px * zoom;
+        background: selected ? Theme.package-selected : touch.has-hover ? Theme.package.brighter(0.15) : Theme.package;
+        border-width: selected ? 2px : 1.5px;
+        border-color: selected ? Theme.accent : card.in-cycle ? Theme.cycle : Theme.package-border;
+        VerticalLayout {
+            padding-left: 18px * zoom;
+            padding-right: 14px * zoom;
+            padding-top: 12px * zoom;
+            padding-bottom: 12px * zoom;
+            spacing: 8px * zoom;
+            HorizontalLayout {
+                spacing: 8px * zoom;
+                Text {
+                    text: card.label;
+                    color: Theme.text;
+                    font-size: 20px * zoom;
+                    font-weight: 650;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                if card.priority > 0: PriorityBadge {
+                    priority: card.priority;
+                    zoom: root.zoom * 1.2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.package-border.with-alpha(0.6); }
+            Text {
+                text: card.file ? @tr("source file") : @tr("{} files · {} package", card.files, card.packages);
+                color: Theme.muted;
+                font-size: 15px * zoom;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component NetworkView inherits Rectangle {
+    in property <[NetCard]> cards;
+    in property <[NetArrow]> arrows;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <int> selected: -1;
+    in property <int> fit-tick;
+    in-out property <float> zoom: 1.0;
+    callback select(int);
+    changed fit-tick => { self.fit(); }
+    // Opening the details panel narrows the view; keep all cards visible.
+    changed width => { self.fit(); }
+
+    public function fit() {
+        if (canvas-w > 0 && canvas-h > 0) {
+            zoom = max(0.3, min(1.0, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+        }
+    }
+
+    flick := Flickable {
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+      Rectangle {
+        x: max(0px, (flick.width - root.canvas-w * root.zoom * 1px) / 2);
+        y: max(0px, (flick.height - root.canvas-h * root.zoom * 1px) / 2);
+        width: root.canvas-w * root.zoom * 1px;
+        height: root.canvas-h * root.zoom * 1px;
+        TouchArea {
+            clicked => { root.select(-1); }
+            scroll-event(event) => {
+                if (event.modifiers.control || event.modifiers.meta) {
+                    root.zoom = max(0.25, min(2.5, root.zoom * (event.delta-y > 0 ? 1.1 : 1 / 1.1)));
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        for c in root.cards: PackageCard {
+            card: c;
+            zoom: root.zoom;
+            selected: c.row == root.selected;
+            clicked => { root.select(c.row); }
+        }
+        // Arrows above the cards so that heads stay visible, as in the web.
+        for a in root.arrows: Path {
+            x: 0;
+            y: 0;
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            viewbox-width: root.canvas-w;
+            viewbox-height: root.canvas-h;
+            commands: a.path;
+            fill: transparent;
+            stroke: a.kind == 1 ? Theme.incoming : a.kind == 2 ? Theme.outgoing : a.kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.85);
+            stroke-width: a.width * 1px * root.zoom;
+        }
+      }
+    }
+
+    Rectangle {
+        x: 16px;
+        y: parent.height - self.height - 16px;
+        width: bar.preferred-width;
+        height: 44px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        bar := HorizontalLayout {
+            padding: 6px;
+            spacing: 4px;
+            Button { icon: Icons.plus; compact: true; clicked => { root.zoom = min(2.5, root.zoom * 1.25); } }
+            Button { icon: Icons.minus; compact: true; clicked => { root.zoom = max(0.25, root.zoom / 1.25); } }
+            Button { text: @tr("Fit"); compact: true; clicked => { root.fit(); } }
+            Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
+        }
+    }
+}

@@ -136,6 +136,24 @@ impl Tree {
         }
     }
 
+    /// `(files below, direct child packages)` of `node`, as the web
+    /// viewer's "N files · M package" on network cards.
+    pub fn counts(&self, node: usize) -> (usize, usize) {
+        let packages = self.nodes[node]
+            .children
+            .iter()
+            .filter(|&&c| !self.nodes[c].file)
+            .count();
+        let (mut files, mut pending) = (0, self.nodes[node].children.clone());
+        while let Some(n) = pending.pop() {
+            if self.nodes[n].file {
+                files += 1;
+            }
+            pending.extend(self.nodes[n].children.iter().copied());
+        }
+        (files, packages)
+    }
+
     pub fn view(&self, expanded: &BTreeSet<usize>) -> TreeView {
         let rows = self.rows(expanded);
         let mut row_of = vec![usize::MAX; self.nodes.len()];
@@ -535,6 +553,13 @@ mod tests {
                 .iter()
                 .all(|&(i, _)| v.links[i].cyclic)
         );
+    }
+
+    #[test]
+    fn counts_descendant_files_and_direct_packages() {
+        let t = Tree::from_graph(&graph());
+        assert_eq!(t.counts(0), (2, 0), "a holds x.rs and y.rs");
+        assert_eq!(t.counts(1), (0, 0), "a file has no children");
     }
 
     #[test]

@@ -4,8 +4,7 @@
 //! directory). The analysis runs on a worker thread with the same
 //! cached pipeline as the CLI; the window fills once it is done.
 
-mod layout;
-mod model;
+mod network;
 mod state;
 mod tree;
 mod web;
@@ -17,9 +16,8 @@ use archguard_engine::core::{ReviewPriority, ReviewSources};
 use archguard_engine::{
     AnalysisRun, Level, analyze_run_quiet, collect_review_sources, load_config,
 };
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
-use model::{Module, Overview};
 use state::GraphState;
 use tree::{EdgeMode, Tree};
 
@@ -81,7 +79,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = weak.upgrade() else { return };
             match result {
-                Ok((run, sources)) => show(&ui, project, &run, sources),
+                Ok((run, sources)) => show(&ui, &run, sources),
                 Err(e) => {
                     ui.set_loading(false);
                     ui.set_error(e.into());
@@ -191,7 +189,7 @@ fn vec_model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
-fn show(ui: &AppWindow, project: String, run: &AnalysisRun, sources: ReviewSources) {
+fn show(ui: &AppWindow, run: &AnalysisRun, sources: ReviewSources) {
     let graph = GraphState::with_review(
         Tree::from_graph(&run.graph),
         sources,
@@ -208,7 +206,6 @@ fn show(ui: &AppWindow, project: String, run: &AnalysisRun, sources: ReviewSourc
                 size: c.size as i32,
             }),
     ));
-    show_layers(ui, &Overview::from_run(project, run));
     push_graph(ui, &graph);
     APP.set(Some(graph));
     ui.set_loading(false);
@@ -235,11 +232,7 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
             out_count: v.outgoing[i] as i32,
             in_cycle: v.in_cycle[i],
             covered: covered.contains(&i),
-            priority: match g.priorities[i] {
-                Some(ReviewPriority::High) => 1,
-                Some(ReviewPriority::Medium) => 2,
-                _ => 0,
-            },
+            priority: priority_index(g.priorities[i]),
         }
     })));
     ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(
@@ -269,6 +262,7 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
             }
         },
     )));
+    push_network(ui, g, selected);
     ui.set_selected_row(selected.map_or(-1, |s| s as i32));
     ui.set_edge_mode(mode_index(g.mode));
     ui.set_dep_count(v.links.len() as i32);
@@ -279,6 +273,57 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     ui.set_count_out(cout as i32);
     ui.set_count_all(call as i32);
     push_selection(ui, g);
+}
+
+/// The network display shows the rows that are not expanded: exactly the
+/// rows that carry links.
+fn push_network(ui: &AppWindow, g: &GraphState, selected: Option<usize>) {
+    let v = &g.view;
+    let leaves: Vec<usize> = (0..v.rows.len()).filter(|&r| !v.rows[r].expanded).collect();
+    let mut slot = vec![usize::MAX; v.rows.len()];
+    for (i, &r) in leaves.iter().enumerate() {
+        slot[r] = i;
+    }
+    let net = network::place(leaves.len());
+    ui.set_net_cards(vec_model(leaves.iter().zip(&net.cards).map(|(&r, c)| {
+        let node = v.rows[r].node;
+        let (files, packages) = g.tree.counts(node);
+        NetCard {
+            row: r as i32,
+            label: g.tree.nodes[node].label.clone().into(),
+            file: g.tree.nodes[node].file,
+            files: files as i32,
+            packages: packages as i32,
+            priority: priority_index(g.priorities[r]),
+            in_cycle: v.in_cycle[r],
+            x: c.x,
+            y: c.y,
+        }
+    })));
+    ui.set_net_arrows(vec_model(v.shown(selected, g.mode).into_iter().filter_map(
+        |(i, lane)| {
+            let l = &v.links[i];
+            let (a, b) = (slot[l.from], slot[l.to]);
+            (a != usize::MAX && b != usize::MAX).then(|| {
+                let arrow = network::arrow(&net.cards[a], &net.cards[b], l.weight);
+                NetArrow {
+                    path: arrow.path.into(),
+                    width: arrow.width,
+                    kind: v.link_kind(i, lane, selected, g.mode) as i32,
+                }
+            })
+        },
+    )));
+    ui.set_net_w(net.width);
+    ui.set_net_h(net.height);
+}
+
+fn priority_index(p: Option<ReviewPriority>) -> i32 {
+    match p {
+        Some(ReviewPriority::High) => 1,
+        Some(ReviewPriority::Medium) => 2,
+        _ => 0,
+    }
 }
 
 fn push_selection(ui: &AppWindow, g: &GraphState) {
@@ -305,42 +350,6 @@ fn push_selection(ui: &AppWindow, g: &GraphState) {
     };
     ui.set_incoming(neighbors(inc));
     ui.set_outgoing(neighbors(out));
-}
-
-fn show_layers(ui: &AppWindow, o: &Overview) {
-    ui.set_modules(vec_model(o.modules.iter().map(module_item)));
-    ui.set_edges(vec_model(o.deps.iter().map(|d| EdgeItem {
-        from: d.from as i32,
-        to: d.to as i32,
-        weight: d.weight.min(i32::MAX as u64) as i32,
-        path: d.path.clone().into(),
-        cyclic: d.cyclic,
-    })));
-    ui.set_layers_w(o.width);
-    ui.set_layers_h(o.height);
-}
-
-fn module_item(m: &Module) -> ModuleItem {
-    ModuleItem {
-        name: m.name.clone().into(),
-        label: m.label.clone().into(),
-        scope: m.scope.clone().into(),
-        fan_in: m.fan_in as i32,
-        fan_out: m.fan_out as i32,
-        instability: m.instability,
-        in_cycle: m.in_cycle,
-        x: m.x,
-        y: m.y,
-        bright: true,
-        accent: accent(m),
-    }
-}
-
-/// Green for stable, amber for unstable modules (the web's m-low/m-medium).
-fn accent(m: &Module) -> Color {
-    let t = m.instability.clamp(0.0, 1.0);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-    Color::from_rgb_u8(mix(0x16, 0xc5), mix(0x84, 0x8a), mix(0x5b, 0x23))
 }
 
 /// German when the system language is German, else English.
@@ -376,7 +385,7 @@ mod snapshot {
     /// After the layout settled: optionally reveal a node by name
     /// (`ARCHGUARD_DESKTOP_REVEAL=<name>`), switch tab
     /// (`ARCHGUARD_DESKTOP_TAB`) or display (`ARCHGUARD_DESKTOP_DISPLAY`,
-    /// 0 tree, 1 layers, 2 dependencies), render, write the PNG, quit.
+    /// 0 tree, 1 network, 2 dependencies), render, write the PNG, quit.
     pub fn schedule(ui: &AppWindow) {
         let Some(path) = std::env::var_os("ARCHGUARD_DESKTOP_SNAPSHOT") else {
             return;

@@ -2,10 +2,10 @@ import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, Tab, Divider, Metric, SearchField } from "widgets.slint";
 import { TreeView, TreeRow, TreeLink, PriorityBadge } from "tree_view.slint";
-import { LayersView, ModuleItem, EdgeItem } from "layers_view.slint";
+import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
 
-export { TreeRow, TreeLink, ModuleItem, EdgeItem, DepCard }
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard }
 
 export struct Crumb {
     node: int,
@@ -208,12 +208,11 @@ export component AppWindow inherits Window {
     in property <[CycleItem]> cycles;
     in property <int> node-total;
 
-    // Graph tab, layered display.
-    in property <[ModuleItem]> modules;
-    in property <[EdgeItem]> edges;
-    in property <float> layers-w;
-    in property <float> layers-h;
-    in-out property <int> layers-selected: -1;
+    // Graph tab, network display.
+    in property <[NetCard]> net-cards;
+    in property <[NetArrow]> net-arrows;
+    in property <float> net-w;
+    in property <float> net-h;
 
     in-out property <string> tab: "graph";
     in-out property <int> display: 0;
@@ -489,9 +488,9 @@ export component AppWindow inherits Window {
                         alignment: start;
                         Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.display == 0; clicked => { root.display = 0; } }
                         Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.display == 2; clicked => { root.display = 2; } }
-                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Layers"); pressed-state: root.display == 1; clicked => { root.display = 1; } }
+                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Network"); pressed-state: root.display == 1; clicked => { root.display = 1; root.fit-views(); } }
                         Rectangle { width: 10px; }
-                        if root.display != 1: HorizontalLayout {
+                        HorizontalLayout {
                             spacing: 6px;
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Incoming ({})", root.count-in); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Outgoing ({})", root.count-out); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
@@ -522,15 +521,15 @@ export component AppWindow inherits Window {
                         select(r) => { root.select-row(r); }
                         toggle(r) => { root.toggle-row(r); }
                     }
-                    LayersView {
+                    NetworkView {
                         fit-tick: root.fit-tick;
                         visible: root.display == 1;
-                        modules: root.modules;
-                        edges: root.edges;
-                        canvas-w: root.layers-w;
-                        canvas-h: root.layers-h;
-                        selected: root.layers-selected;
-                        select(i) => { root.layers-selected = i; }
+                        cards: root.net-cards;
+                        arrows: root.net-arrows;
+                        canvas-w: root.net-w;
+                        canvas-h: root.net-h;
+                        selected: root.selected-row;
+                        select(r) => { root.select-row(r); }
                     }
                     if root.display == 2: DepsView {
                         deps: root.deps;
@@ -562,7 +561,7 @@ export component AppWindow inherits Window {
             }
 
             // ------------------------------------------------- details
-            if root.show-details && root.selected-row >= 0 && root.display != 1: Rectangle {
+            if root.show-details && root.selected-row >= 0: Rectangle {
                 width: 320px;
                 background: Theme.panel;
                 Rectangle { x: 0; width: 1px; background: Theme.border; }
