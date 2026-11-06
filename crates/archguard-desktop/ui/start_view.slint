@@ -3,7 +3,8 @@
 // from src/start_ui.rs.
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
-import { Button, SearchField, Legend, StatInline, HelpTip } from "widgets.slint";
+import { Button, SearchField, StatInline, HelpTip } from "widgets.slint";
+import { WorldLegend, ServicesLegend } from "start_legend.slint";
 import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
@@ -181,20 +182,7 @@ export component StartView inherits Rectangle {
                     selected => { StartData.set-kpi(self.current-index); }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if m.lens == 0: Legend { text: @tr("Cycle / finding"); outline: true; }
-                if m.lens == 0: Legend { text: @tr("Classes / files"); swatch: Theme.accent; }
-                if m.lens == 1 && m.kpi == 0: Legend {
-                    text: @tr("Low → high");
-                    swatch-w: 56px;
-                    swatch: Theme.rate-scale;
-                }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Low"); swatch: Theme.rate-low; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Elevated"); swatch: Theme.rate-medium; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("High"); swatch: Theme.rate-high; }
-                if m.lens == 1 && m.kpi == 4: Legend { text: @tr("Informational"); swatch: Theme.accent; }
-                if m.lens == 2: Legend { text: @tr("Test gaps"); swatch: Theme.danger; }
-                if m.lens == 2: Legend { text: @tr("Covered"); swatch: Theme.success; }
-                if m.lens != 0: Legend { text: @tr("Unknown"); swatch: Theme.muted; }
+                WorldLegend { lens: m.lens; kpi: m.kpi; }
             }
             // Back, package path and status.
             HorizontalLayout {
@@ -234,6 +222,8 @@ export component StartView inherits Rectangle {
                         }
                     }
                 }
+                if root.services: Rectangle { width: 12px; }
+                if root.services: ServicesLegend { }
                 Rectangle { horizontal-stretch: 1; }
                 if root.services: Text {
                     text: root.services-status;

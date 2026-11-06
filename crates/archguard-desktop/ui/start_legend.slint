@@ -1,0 +1,124 @@
+// The Start tab's legends with their explanations (`renderWorldLegend` in
+// viewer_world.js): hover or click an item for its help.
+import { Theme } from "theme.slint";
+import { Legend, TipArea, HelpTip } from "widgets.slint";
+import { StartData, StartTones } from "start_data.slint";
+
+// A legend item that explains itself.
+component TipLegend inherits Rectangle {
+    in property <string> text;
+    in property <string> tip;
+    in property <brush> swatch: Theme.accent;
+    in property <bool> outline;
+    in property <length> swatch-w: 10px;
+    width: item.preferred-width + 10px;
+    border-radius: Theme.radius-sm;
+    background: area.has-hover || area.focused ? Theme.panel-2 : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.tip;
+    item := Legend {
+        x: 5px;
+        height: parent.height;
+        text: root.text;
+        swatch: root.swatch;
+        outline: root.outline;
+        swatch-w: root.swatch-w;
+    }
+    area := TipArea { tip: root.tip; mouse-cursor: pointer; }
+}
+
+export global StartHelp {
+    // `metricHelp` for a class KPI (1..6), the complexity text for 0.
+    public pure function kpi(k: int) -> string {
+        return k == 1 ? @tr("CBO — Coupling Between Objects. Distinct resolved target types used by declaration types and calls, excluding self and inheritance. Higher values mean broader coupling to inspect. Missing compiler evidence leaves the value unknown (—); observed counts are lower bounds.")
+            : k == 2 ? @tr("RFC — Response For a Class. Distinct own non-constructor methods and their direct call targets, counting each member once. A larger response set increases the behavior to understand and test. This uses static resolution, not all possible runtime dispatch targets. Incomplete evidence remains —.")
+            : k == 3 ? @tr("DIT — Depth of Inheritance Tree. Superclass edges up to the compiler-known root, including known external bases; interfaces are excluded. Deeper inheritance means more inherited behavior to trace, not an automatic design error. Unknown hierarchy remains —.")
+            : k == 4 ? @tr("NOC — Number of Children. Direct subclasses inside the analyzed source scope. External subclasses are not counted. High values can mean intended reuse or a broad change impact; this is informational, not a good/bad score. Incomplete hierarchy remains —.")
+            : k == 5 ? @tr("WMC — Weighted Methods per Class. Sum of source cyclomatic complexity of declared non-constructor methods. Static methods count; local functions and constructors are excluded. High values suggest a large or complex responsibility. Missing method measurements leave the sum unknown (—).")
+            : k == 6 ? @tr("LCOM4 — Lack of Cohesion in Methods, variant 4. Connected groups of instance methods sharing a non-static field/property or calling each other. One group is connected; multiple groups invite a responsibility review. Constructors, static members and local functions are excluded. Incomplete compiler evidence remains —.")
+            : @tr("Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange; grouped surfaces use the largest recorded value and heights are log-scaled. The scale is continuous, not a good/bad threshold.");
+    }
+
+    // `worldKpiHelpText`.
+    public pure function kpi-colors(k: int) -> string {
+        return k == 0 ? kpi(0) : kpi(k) + " " + @tr("Colors compare with measured classes of the same source language exactly as in the class heatmap: below 50% low, from 50% elevated, from 80% high; unmeasured stays gray. Grouped surfaces use their highest value; heights normalise to the highest value in this view.");
+    }
+}
+
+// The architecture World's legend for its lens and KPI.
+export component WorldLegend inherits HorizontalLayout {
+    in property <int> lens;
+    in property <int> kpi;
+    spacing: 4px;
+    if lens == 0: TipLegend {
+        text: @tr("Cycle / finding");
+        outline: true;
+        tip: @tr("Red outlines mark areas in a cycle or with recorded findings. Red arrows show cyclic dependencies at this level; opposite directions have separate curves. A package cycle does not mean every class participates, or that a file cycle exists.");
+    }
+    if lens == 0: TipLegend {
+        text: @tr("Classes / files");
+        swatch: Theme.accent;
+        tip: @tr("Blue surfaces represent classes or files, including inside cyclic packages. Their color is neutral: it does not rate their quality or claim they are free of findings.");
+    }
+    if lens == 1 && kpi == 0: TipLegend {
+        text: @tr("Low → high");
+        swatch-w: 56px;
+        swatch: Theme.rate-scale;
+        tip: @tr("Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange. Grouped surfaces use the largest recorded value. The scale is continuous, not a good/bad threshold.");
+    }
+    if lens == 1 && kpi > 0: TipLegend { text: @tr("Low"); swatch: Theme.rate-low; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
+    if lens == 1 && kpi > 0: TipLegend { text: @tr("Elevated"); swatch: Theme.rate-medium; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
+    if lens == 1 && kpi > 0: TipLegend { text: @tr("High"); swatch: Theme.rate-high; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
+    if lens == 1 && kpi == 4: TipLegend { text: @tr("Informational"); swatch: Theme.accent; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
+    if lens == 2: TipLegend {
+        text: @tr("Test gaps");
+        swatch: Theme.danger;
+        tip: @tr("The imported file coverage contains uncovered executable lines. Grouped surfaces are red if all members have usable coverage and at least one has a gap. This does not identify missing test cases.");
+    }
+    if lens == 2: TipLegend {
+        text: @tr("Covered");
+        swatch: Theme.success;
+        tip: @tr("All executable lines recorded in the imported file coverage are covered. This does not prove current, complete or passing tests; the report revision at import is unverified.");
+    }
+    if lens != 0: TipLegend {
+        text: @tr("Unknown");
+        swatch: Theme.muted;
+        tip: lens == 2 ? @tr("Coverage is missing, stale or cannot be mapped unambiguously. A grouped surface stays gray when any member lacks usable file coverage.")
+            : kpi == 0 ? @tr("No method complexity has been recorded for this surface. Gray does not mean low complexity.")
+            : @tr("No measurement for {} in the imported class metrics for this surface. Gray does not mean a low value; missing class data stays unknown.", StartTones.kpi-label(kpi));
+    }
+    if lens == 1: HelpTip {
+        y: (parent.height - self.height) / 2;
+        tip: StartHelp.kpi-colors(kpi);
+    }
+}
+
+// The services World's arrows (`worldDraw`): tones and dashes.
+export component ServicesLegend inherits HorizontalLayout {
+    spacing: 4px;
+    TipLegend {
+        text: @tr("Cyclic");
+        swatch: StartTones.edge(0);
+        swatch-w: 16px;
+        tip: @tr("Red arrows are cyclic communication of one kind: following connections of that kind leads back to the service. Opposite directions have separate curves.");
+    }
+    TipLegend {
+        text: @tr("Into the selection");
+        swatch: StartTones.edge(1);
+        swatch-w: 16px;
+        tip: @tr("Accented arrows lead into the selected service.");
+    }
+    TipLegend {
+        text: @tr("Other connections");
+        swatch: StartTones.edge(2);
+        swatch-w: 16px;
+        tip: @tr("Green arrows are the other shown connections, from caller, producer or referencing service to its target.");
+    }
+    TipLegend {
+        text: @tr("Events");
+        swatch: @linear-gradient(90deg, Theme.muted 0%, Theme.muted 40%, transparent 40%, transparent 60%, Theme.muted 60%, Theme.muted 100%);
+        swatch-w: 16px;
+        tip: @tr("Dashed arrows are inferred event flows, from the producing to the consuming service.");
+    }
+}
