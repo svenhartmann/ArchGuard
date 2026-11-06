@@ -1,0 +1,244 @@
+// Settings view: the project's archguard.toml as a form by group, with
+// provenance per value, table arrays as entry cards, a preview of the
+// check and the raw TOML. Data and callbacks live in SettingsData and
+// SettingsEdit, set from src/settings_view_ui.rs (ADR 0002 decision 8).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Button, SearchField, StatusLine, EmptyState, SectionHeading } from "widgets.slint";
+import { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit, SettingsFormItem, GroupRow, PreviewPanel } from "settings_parts.slint";
+
+export { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit }
+
+// Everything the view shows, set from Rust as one value.
+export struct SettingsModel {
+    loaded: bool,
+    // Why the file could not be read; the form is not shown then.
+    load-error: string,
+    // The file saving writes, relative to the project.
+    file: string,
+    groups: [SettingsGroupItem],
+    group: int,
+    query: string,
+    items: [SettingsItem],
+    dirty: bool,
+    // Field errors and the engine's first validation problem.
+    errors: int,
+    // The validation problem when no row shows it.
+    general-error: string,
+    text-mode: bool,
+    text: string,
+    // The text's parse error, with its line.
+    text-error: string,
+    changed-on-disk: bool,
+    save-error: string,
+    preview: SettingsPreview,
+}
+
+export global SettingsData {
+    in-out property <SettingsModel> model;
+    callback select-group(int);
+    callback set-query(string);
+    callback preview();
+    callback close-preview();
+    callback save();
+    callback revert();
+    callback toggle-text();
+    callback edit-text(string);
+    callback reload();
+    callback overwrite();
+}
+
+component TopBar inherits HorizontalLayout {
+    in property <SettingsModel> model;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    spacing: 8px;
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+        StatusLine {
+            status: model.errors > 0 ? 5 : model.dirty ? 1 : 0;
+            label: model.errors > 0 ? @tr("Settings" => "{0} error" | "{0} errors" % model.errors, Fmt.int(model.errors))
+                : model.dirty ? @tr("Settings" => "Unsaved changes") : @tr("Settings" => "Saved");
+            detail: model.file;
+        }
+    }
+    Button {
+        text: @tr("Settings" => "Text");
+        pressed-state: model.text-mode;
+        clicked => { SettingsData.toggle-text(); }
+    }
+    Button {
+        text: model.preview.state == 1 ? @tr("Settings" => "Running …") : @tr("Settings" => "Preview");
+        enabled: model.errors == 0 && model.preview.state != 1;
+        clicked => { SettingsData.preview(); }
+    }
+    Button {
+        text: @tr("Settings" => "Revert");
+        enabled: model.dirty || model.errors > 0;
+        clicked => { SettingsData.revert(); }
+    }
+    Button {
+        text: @tr("Save");
+        primary: true;
+        enabled: model.dirty && model.errors == 0;
+        clicked => { SettingsData.save(); }
+    }
+}
+
+// The file changed on disk since it was loaded: reload it or overwrite it.
+component DiskNotice inherits Rectangle {
+    background: Theme.warning.with-alpha(0.12);
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.warning;
+    HorizontalLayout {
+        padding: 8px;
+        padding-left: 12px;
+        spacing: 8px;
+        Text {
+            text: @tr("Settings" => "Not saved: the file changed on disk since it was loaded.");
+            color: Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Button { compact: true; text: @tr("Settings" => "Reload"); clicked => { SettingsData.reload(); } }
+        Button { compact: true; text: @tr("Settings" => "Overwrite"); clicked => { SettingsData.overwrite(); } }
+    }
+}
+
+component Message inherits Text {
+    color: Theme.danger;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+
+component Sidebar inherits VerticalLayout {
+    in property <SettingsModel> model;
+    width: 230px;
+    padding: 12px;
+    spacing: 2px;
+    SearchField {
+        placeholder: @tr("Settings" => "Search settings");
+        text: model.query;
+        edited(t) => { SettingsData.set-query(t); }
+    }
+    SectionHeading { label: @tr("Settings" => "Groups"); }
+    for g[i] in model.groups: GroupRow {
+        group: g;
+        selected: model.query == "" && i == model.group;
+        clicked => { SettingsData.select-group(i); }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+
+// The raw TOML, editable, with the parse error and its line.
+component TextPane inherits VerticalLayout {
+    in property <SettingsModel> model;
+    padding: 16px;
+    spacing: 8px;
+    property <string> value: model.text;
+    changed value => {
+        if toml.text != root.value {
+            toml.text = root.value;
+        }
+    }
+    if model.text-error != "": Message { text: model.text-error; font-family: "Menlo"; }
+    Rectangle {
+        vertical-stretch: 1;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: toml.has-focus ? Theme.accent : Theme.border;
+        border-radius: Theme.radius-sm;
+        clip: true;
+        ScrollView {
+            content-width: max(toml.preferred-width + 24px, self.visible-width);
+            content-height: max(toml.preferred-height + 24px, self.visible-height);
+            toml := TextInput {
+                x: 12px;
+                y: 12px;
+                width: max(self.preferred-width, parent.width - 24px);
+                text: root.value;
+                single-line: false;
+                wrap: no-wrap;
+                color: Theme.text;
+                font-family: "Menlo";
+                font-size: 12.5px;
+                edited => { SettingsData.edit-text(self.text); }
+            }
+        }
+    }
+}
+
+component Form inherits ScrollView {
+    in property <SettingsModel> model;
+    VerticalLayout {
+        alignment: start;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-bottom: 24px;
+        for item in model.items: SettingsFormItem { item: item; }
+        if model.items.length == 0: EmptyState {
+            title: @tr("Settings" => "No setting matches the search.");
+        }
+    }
+}
+
+export component SettingsView inherits Rectangle {
+    property <SettingsModel> model: SettingsData.model;
+    background: Theme.bg;
+    // Tabs must not change the window's preferred size.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if !root.model.loaded: Text {
+        text: @tr("Settings" => "Reading archguard.toml …");
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.model.loaded && root.model.load-error != "": VerticalLayout {
+        alignment: center;
+        EmptyState {
+            title: @tr("Settings" => "The configuration file cannot be read.");
+            reason: root.model.load-error;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button { text: @tr("Settings" => "Reload"); clicked => { SettingsData.reload(); } }
+        }
+    }
+    if root.model.loaded && root.model.load-error == "": VerticalLayout {
+        TopBar { model: root.model; }
+        if root.model.changed-on-disk || root.model.save-error != "" || root.model.general-error != "" || root.model.preview.state != 0: VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 10px;
+            spacing: 8px;
+            if root.model.changed-on-disk: DiskNotice { }
+            if root.model.save-error != "": Message { text: root.model.save-error; }
+            if root.model.general-error != "": Message { text: root.model.general-error; }
+            if root.model.preview.state != 0: PreviewPanel {
+                preview: root.model.preview;
+                close => { SettingsData.close-preview(); }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            Sidebar { model: root.model; }
+            Rectangle { width: 1px; background: Theme.border; }
+            if !root.model.text-mode: Form { model: root.model; horizontal-stretch: 1; }
+            if root.model.text-mode: TextPane { model: root.model; horizontal-stretch: 1; }
+        }
+    }
+}

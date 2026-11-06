@@ -97,6 +97,7 @@ pub fn wire(ui: &AppWindow) {
         CloseRequestResponse::KeepWindowShown
     });
     route_app_quit();
+    crate::settings_view_ui::wire(ui);
 }
 
 fn open_recent(ui: &AppWindow, i: usize) {

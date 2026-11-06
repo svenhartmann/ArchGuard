@@ -1,0 +1,149 @@
+msgctxt "Settings"
+msgid "Settings"
+msgstr "Einstellungen"
+
+msgctxt "Settings"
+msgid "Add entry"
+msgstr "Eintrag hinzufügen"
+
+msgctxt "Settings"
+msgid "Added findings"
+msgstr "Neue Befunde"
+
+msgctxt "Settings"
+msgid "Default"
+msgstr "Standard"
+
+msgctxt "Settings"
+msgid "Derived"
+msgstr "Abgeleitet"
+
+msgctxt "Settings"
+msgid "Derived from the project. Write a value in Text to override it."
+msgstr "Aus dem Projekt abgeleitet. Zum Überschreiben einen Wert unter Text eintragen."
+
+msgctxt "Settings"
+msgid "Derived from the project; declare a layer of the same name to change it."
+msgstr "Aus dem Projekt abgeleitet; zum Ändern eine Schicht gleichen Namens deklarieren."
+
+msgctxt "Settings"
+msgid "File"
+msgstr "Datei"
+
+msgctxt "Settings"
+msgid "Groups"
+msgstr "Gruppen"
+
+msgctxt "Settings"
+msgid "Known after the analysis"
+msgstr "Nach der Analyse bekannt"
+
+msgctxt "Settings"
+msgid "No entries."
+msgstr "Keine Einträge."
+
+msgctxt "Settings"
+msgid "No setting matches the search."
+msgstr "Keine Einstellung passt zur Suche."
+
+msgctxt "Settings"
+msgid "Not included: baseline acceptance and the review key-figure gates that archguard check adds."
+msgstr "Nicht enthalten: Baseline-Akzeptanz und die Kennzahl-Gates aus [review], die archguard check ergänzt."
+
+msgctxt "Settings"
+msgid "Not saved: the file changed on disk since it was loaded."
+msgstr "Nicht gespeichert: Die Datei wurde seit dem Laden auf der Festplatte geändert."
+
+msgctxt "Settings"
+msgid "Not set"
+msgstr "Nicht gesetzt"
+
+msgctxt "Settings"
+msgid "Overwrite"
+msgstr "Überschreiben"
+
+msgctxt "Settings"
+msgid "Preview"
+msgstr "Vorschau"
+
+msgctxt "Settings"
+msgid "Preview of archguard check"
+msgstr "Vorschau von archguard check"
+
+msgctxt "Settings"
+msgid "Reading archguard.toml …"
+msgstr "archguard.toml wird gelesen …"
+
+msgctxt "Settings"
+msgid "Reload"
+msgstr "Neu laden"
+
+msgctxt "Settings"
+msgid "Remove"
+msgstr "Entfernen"
+
+msgctxt "Settings"
+msgid "Removed findings"
+msgstr "Entfallene Befunde"
+
+msgctxt "Settings"
+msgid "Reset"
+msgstr "Zurücksetzen"
+
+msgctxt "Settings"
+msgid "Revert"
+msgstr "Verwerfen"
+
+msgctxt "Settings"
+msgid "Running …"
+msgstr "Läuft …"
+
+msgctxt "Settings"
+msgid "Saved"
+msgstr "Gespeichert"
+
+msgctxt "Settings"
+msgid "Search settings"
+msgstr "Einstellungen durchsuchen"
+
+msgctxt "Settings"
+msgid "Text"
+msgstr "Text"
+
+msgctxt "Settings"
+msgid "The configuration file cannot be read."
+msgstr "Die Konfigurationsdatei kann nicht gelesen werden."
+
+msgctxt "Settings"
+msgid "The edits change no finding."
+msgstr "Die Änderungen ändern keinen Befund."
+
+msgctxt "Settings"
+msgid "Unsaved changes"
+msgstr "Ungespeicherte Änderungen"
+
+msgctxt "Settings"
+msgid "With edits"
+msgstr "Mit Änderungen"
+
+msgctxt "Settings"
+msgid "fail"
+msgstr "rot"
+
+msgctxt "Settings"
+msgid "pass"
+msgstr "grün"
+
+msgctxt "Settings"
+msgid "{0} error"
+msgid_plural "{0} errors"
+msgstr[0] "{0} Fehler"
+msgstr[1] "{0} Fehler"
+
+msgctxt "Settings"
+msgid "{} errors · {} warnings · {} infos"
+msgstr "{} Fehler · {} Warnungen · {} Hinweise"
+
+msgctxt "Settings"
+msgid "… and {} more"
+msgstr "… und {} weitere"

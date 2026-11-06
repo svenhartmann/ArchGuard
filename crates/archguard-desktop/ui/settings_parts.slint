@@ -1,0 +1,455 @@
+// Parts of the Settings view (settings_view.slint): one form item per
+// row, the value widgets by field kind and the preview panel. Built from
+// src/settings_view_ui.rs.
+import { LineEdit, TextEdit, Switch, ComboBox, ScrollView, Spinner } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Button, Badge, Icons, SectionHeading } from "widgets.slint";
+
+// One item of the form, flat: headings, field rows, table arrays and
+// their entries follow each other.
+export struct SettingsItem {
+    // 0 heading, 1 field, 2 table array, 3 entry of a table array,
+    // 4 note (a table array without entries).
+    kind: int,
+    // The concrete path the callbacks take (`rules.max_acd`,
+    // `layers[0].name`); the array's path for kinds 2 and 3.
+    path: string,
+    label: string,
+    // English description from the field catalogue.
+    description: string,
+    // 0 switch, 1 whole number, 2 number, 3 choice, 4 text,
+    // 5 list (one entry per line), 6 map (name = number per line).
+    widget: int,
+    text: string,
+    checked: bool,
+    options: [string],
+    option: int,
+    // 0 none, 1 file, 2 default, 3 derived.
+    provenance: int,
+    read-only: bool,
+    can-reset: bool,
+    error: string,
+    // A field of a table array's entry.
+    nested: bool,
+    // Entry index in the file; -1 for a derived layer.
+    index: int,
+    can-up: bool,
+    can-down: bool,
+}
+
+export struct SettingsGroupItem {
+    label: string,
+    edited: bool,
+    failed: bool,
+    // Fields matching the search; -1 without a search.
+    matches: int,
+}
+
+export struct SettingsFinding {
+    severity: string,
+    id: string,
+    text: string,
+}
+
+export struct SettingsPreview {
+    // 0 none, 1 running, 2 done, 3 failed.
+    state: int,
+    error: string,
+    // The saved configuration's check; `before-error` when it did not run.
+    before-error: string,
+    before-pass: bool,
+    before-errors: int,
+    before-warnings: int,
+    before-infos: int,
+    after-pass: bool,
+    after-errors: int,
+    after-warnings: int,
+    after-infos: int,
+    changed: bool,
+    added: [SettingsFinding],
+    removed: [SettingsFinding],
+    added-more: int,
+    removed-more: int,
+}
+
+// What the callbacks of a row do; set by the view.
+export global SettingsEdit {
+    callback set-bool(string, bool);
+    callback set-text(string, string);
+    callback set-option(string, int);
+    callback reset(string);
+    callback add-entry(string);
+    callback remove-entry(string, int);
+    callback move-entry(string, int, int);
+}
+
+component ProvenanceBadge inherits Badge {
+    in property <int> provenance;
+    text: provenance == 1 ? @tr("Settings" => "File")
+        : provenance == 3 ? @tr("Settings" => "Derived") : @tr("Settings" => "Default");
+    variant: provenance == 1 ? "accent" : "neutral";
+}
+
+// A one-line value. The text follows the model unless the user is typing.
+component LineValue inherits LineEdit {
+    in property <string> value;
+    in property <string> path;
+    in property <bool> number;
+    text: value;
+    changed value => {
+        if self.text != root.value {
+            self.text = root.value;
+        }
+    }
+    placeholder-text: @tr("Settings" => "Not set");
+    edited(t) => { SettingsEdit.set-text(root.path, t); }
+    accepted(t) => { SettingsEdit.set-text(root.path, t); }
+}
+
+// A list or map value, one entry per line.
+component LinesValue inherits TextEdit {
+    in property <string> value;
+    in property <string> path;
+    text: value;
+    changed value => {
+        if self.text != root.value {
+            self.text = root.value;
+        }
+    }
+    height: 78px;
+    wrap: no-wrap;
+    edited(t) => { SettingsEdit.set-text(root.path, t); }
+}
+
+component ChoiceValue inherits ComboBox {
+    in property <int> option;
+    in property <string> path;
+    current-index: option;
+    changed option => { self.current-index = root.option; }
+    selected => { SettingsEdit.set-option(root.path, self.current-index); }
+}
+
+component SwitchValue inherits Switch {
+    in property <bool> value;
+    in property <string> path;
+    checked: value;
+    changed value => { self.checked = root.value; }
+    toggled => { SettingsEdit.set-bool(root.path, self.checked); }
+}
+
+// The value widget of a field row by `item.widget`; read-only rows show text.
+component ValueWidget inherits VerticalLayout {
+    in property <SettingsItem> item;
+    alignment: center;
+    if item.read-only: Text {
+        text: item.text != "" ? item.text : @tr("Settings" => "Known after the analysis");
+        color: item.text != "" ? Theme.text : Theme.muted;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+    if !item.read-only && item.widget == 0: HorizontalLayout {
+        alignment: start;
+        SwitchValue { value: item.checked; path: item.path; }
+    }
+    if !item.read-only && (item.widget == 1 || item.widget == 2 || item.widget == 4): LineValue {
+        value: item.text;
+        path: item.path;
+    }
+    if !item.read-only && item.widget == 3: ChoiceValue {
+        model: item.options;
+        option: item.option;
+        path: item.path;
+    }
+    if !item.read-only && (item.widget == 5 || item.widget == 6): LinesValue {
+        value: item.text;
+        path: item.path;
+    }
+}
+
+// A field: label and description, the value, provenance and Reset.
+component FieldRow inherits Rectangle {
+    in property <SettingsItem> item;
+    background: item.nested ? Theme.panel-2 : transparent;
+    VerticalLayout {
+        padding-left: item.nested ? 26px : 4px;
+        padding-right: item.nested ? 14px : 4px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                width: 30%;
+                spacing: 2px;
+                alignment: start;
+                Text { text: item.label; color: Theme.text; font-size: 13px; font-weight: 600; wrap: word-wrap; }
+                Text { text: item.description; color: Theme.muted; font-size: 11.5px; wrap: word-wrap; }
+            }
+            ValueWidget { item: item; horizontal-stretch: 1; }
+            VerticalLayout {
+                alignment: start;
+                horizontal-stretch: 0;
+                ProvenanceBadge { provenance: item.provenance; }
+            }
+            VerticalLayout {
+                alignment: start;
+                horizontal-stretch: 0;
+                min-width: 64px;
+                if item.can-reset: Button {
+                    compact: true;
+                    text: @tr("Settings" => "Reset");
+                    clicked => { SettingsEdit.reset(item.path); }
+                }
+            }
+        }
+        if item.provenance == 3: Text {
+            text: @tr("Settings" => "Derived from the project. Write a value in Text to override it.");
+            color: Theme.muted;
+            font-size: 11.5px;
+            wrap: word-wrap;
+        }
+        if item.error != "": Text {
+            text: item.error;
+            color: Theme.danger;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// A table array: name, description, number of entries and "Add entry".
+component ArrayHead inherits VerticalLayout {
+    in property <SettingsItem> item;
+    padding-top: 16px;
+    padding-bottom: 6px;
+    spacing: 4px;
+    HorizontalLayout {
+        spacing: 10px;
+        SectionHeading { label: item.label; horizontal-stretch: 1; }
+        Button {
+            compact: true;
+            icon: Icons.plus;
+            text: @tr("Settings" => "Add entry");
+            clicked => { SettingsEdit.add-entry(item.path); }
+        }
+    }
+    Text { text: item.description; color: Theme.muted; font-size: 11.5px; wrap: word-wrap; }
+    if item.error != "": Text { text: item.error; color: Theme.danger; font-size: 12px; wrap: word-wrap; }
+}
+
+// The top of an entry card: its number and title, provenance and moves.
+component EntryHead inherits Rectangle {
+    in property <SettingsItem> item;
+    background: Theme.panel-2;
+    border-radius: Theme.radius-sm;
+    // The card continues below with the entry's rows.
+    Rectangle {
+        y: parent.height / 2;
+        height: parent.height / 2;
+        background: Theme.panel-2;
+    }
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 4px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: item.index < 0 ? item.text : "#" + (item.index + 1) + (item.text != "" ? " · " + item.text : "");
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            ProvenanceBadge { provenance: item.provenance; y: (parent.height - self.height) / 2; }
+            if !item.read-only: Button {
+                compact: true;
+                text: "↑";
+                enabled: item.can-up;
+                clicked => { SettingsEdit.move-entry(item.path, item.index, item.index - 1); }
+            }
+            if !item.read-only: Button {
+                compact: true;
+                text: "↓";
+                enabled: item.can-down;
+                clicked => { SettingsEdit.move-entry(item.path, item.index, item.index + 1); }
+            }
+            if !item.read-only: Button {
+                compact: true;
+                text: @tr("Settings" => "Remove");
+                clicked => { SettingsEdit.remove-entry(item.path, item.index); }
+            }
+        }
+        if item.read-only: Text {
+            text: @tr("Settings" => "Derived from the project; declare a layer of the same name to change it.");
+            color: Theme.muted;
+            font-size: 11.5px;
+            wrap: word-wrap;
+        }
+        if item.error != "": Text { text: item.error; color: Theme.danger; font-size: 12px; wrap: word-wrap; }
+    }
+}
+
+// One form item by kind.
+export component SettingsFormItem inherits VerticalLayout {
+    in property <SettingsItem> item;
+    if item.kind == 0: VerticalLayout {
+        padding-top: 18px;
+        padding-bottom: 4px;
+        SectionHeading { label: item.label; }
+    }
+    if item.kind == 1: FieldRow { item: item; }
+    if item.kind == 2: ArrayHead { item: item; }
+    if item.kind == 3: VerticalLayout {
+        padding-top: 8px;
+        EntryHead { item: item; }
+    }
+    if item.kind == 4: Text {
+        text: @tr("Settings" => "No entries.");
+        color: Theme.muted;
+        font-size: 12px;
+    }
+}
+
+// A group of the list on the left, with a dot for edits or errors.
+export component GroupRow inherits Rectangle {
+    in property <SettingsGroupItem> group;
+    in property <bool> selected;
+    callback clicked;
+    height: 28px;
+    border-radius: 6px;
+    background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    opacity: group.matches == 0 ? 0.5 : 1;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        Text {
+            text: group.label;
+            color: selected ? Theme.accent : Theme.text;
+            font-size: 13px;
+            font-weight: selected ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        if group.matches > 0: Text {
+            text: Fmt.int(group.matches);
+            color: Theme.muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        if group.failed || group.edited: Rectangle {
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: group.failed ? Theme.danger : Theme.accent;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Summary inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> error;
+    in property <bool> pass;
+    in property <int> errors;
+    in property <int> warnings;
+    in property <int> infos;
+    spacing: 8px;
+    Text { text: label; color: Theme.muted; font-size: 12px; min-width: 80px; vertical-alignment: center; }
+    if error != "": Text { text: error; color: Theme.danger; font-size: 12px; wrap: word-wrap; horizontal-stretch: 1; }
+    if error == "": Badge {
+        text: pass ? @tr("Settings" => "pass") : @tr("Settings" => "fail");
+        variant: pass ? "success" : "danger";
+        y: (parent.height - self.height) / 2;
+    }
+    if error == "": Text {
+        text: @tr("Settings" => "{} errors · {} warnings · {} infos", Fmt.int(errors), Fmt.int(warnings), Fmt.int(infos));
+        color: Theme.text;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+}
+
+component FindingList inherits VerticalLayout {
+    in property <string> label;
+    in property <[SettingsFinding]> findings;
+    in property <int> more;
+    spacing: 2px;
+    if findings.length > 0: Text { text: label; color: Theme.text; font-size: 12px; font-weight: 600; }
+    for f in findings: HorizontalLayout {
+        spacing: 6px;
+        Text { text: f.severity; color: f.severity == "error" ? Theme.danger : f.severity == "warning" ? Theme.warning : Theme.muted; font-size: 11.5px; min-width: 52px; }
+        Text { text: f.id; color: Theme.muted; font-size: 11.5px; font-family: "Menlo"; }
+        Text { text: f.text; color: Theme.text; font-size: 11.5px; overflow: elide; horizontal-stretch: 1; }
+    }
+    if more > 0: Text {
+        text: @tr("Settings" => "… and {} more", Fmt.int(more));
+        color: Theme.muted;
+        font-size: 11.5px;
+    }
+}
+
+// What the edit changes in `archguard check`, before saving.
+export component PreviewPanel inherits Rectangle {
+    in property <SettingsPreview> preview;
+    callback close();
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: Theme.radius-sm;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: @tr("Settings" => "Preview of archguard check"); color: Theme.text; font-size: 13px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+            Button { compact: true; icon: Icons.close; clicked => { root.close(); } }
+        }
+        if preview.state == 1: HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Spinner { indeterminate: true; width: 18px; height: 18px; }
+            Text { text: @tr("Settings" => "Running …"); color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+        }
+        if preview.state == 3: Text { text: preview.error; color: Theme.danger; font-size: 12px; wrap: word-wrap; }
+        if preview.state == 2: VerticalLayout {
+            spacing: 6px;
+            Summary {
+                label: @tr("Settings" => "Saved");
+                error: preview.before-error;
+                pass: preview.before-pass;
+                errors: preview.before-errors;
+                warnings: preview.before-warnings;
+                infos: preview.before-infos;
+            }
+            Summary {
+                label: @tr("Settings" => "With edits");
+                pass: preview.after-pass;
+                errors: preview.after-errors;
+                warnings: preview.after-warnings;
+                infos: preview.after-infos;
+            }
+            if !preview.changed: Text { text: @tr("Settings" => "The edits change no finding."); color: Theme.muted; font-size: 12px; }
+            FindingList { label: @tr("Settings" => "Added findings"); findings: preview.added; more: preview.added-more; }
+            FindingList { label: @tr("Settings" => "Removed findings"); findings: preview.removed; more: preview.removed-more; }
+        }
+        Text {
+            text: @tr("Settings" => "Not included: baseline acceptance and the review key-figure gates that archguard check adds.");
+            color: Theme.muted;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
