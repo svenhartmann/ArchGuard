@@ -37,7 +37,7 @@ export struct StartPin {
     ay: float,
     // A service island's kind: 0 none (a package), 1 application,
     // 2 library, 3 test / tooling, 4 unclassified, 5 no local sources;
-    // path: its source project.
+    // path: its technology and source project ("" at the root).
     svc: int,
     path: string,
 }

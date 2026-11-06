@@ -21,6 +21,8 @@ pub struct Island {
     pub kind: String,
     /// The local source project's path; `None` without local sources.
     pub source: Option<String>,
+    /// The runtime, else the ecosystem (`npm`, `maven`, …).
+    pub tech: Option<String>,
     pub external: bool,
 }
 
@@ -34,6 +36,14 @@ impl Island {
             return &self.name;
         }
         self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+
+    /// The pin's line after the kind: technology and source path, without
+    /// the "." of a project at the repository root.
+    pub fn detail(&self) -> String {
+        let path = self.source.as_deref().filter(|p| *p != ".");
+        let parts: Vec<&str> = [self.tech.as_deref(), path].into_iter().flatten().collect();
+        parts.join(" · ")
     }
 
     /// The name in connection lists (`displayName || name`).
@@ -83,6 +93,7 @@ pub fn inventory(t: &ServiceTopology) -> Vec<Island> {
                 display: Some(s.name.clone()),
                 kind: p.kind.clone(),
                 source: Some(p.path.clone()),
+                tech: tech(p),
                 external: false,
             }));
         } else {
@@ -93,6 +104,7 @@ pub fn inventory(t: &ServiceTopology) -> Vec<Island> {
                 display: deployments.first().map(|s| s.name.clone()),
                 kind: p.kind.clone(),
                 source: Some(p.path.clone()),
+                tech: tech(p),
                 external: false,
             });
         }
@@ -112,9 +124,19 @@ pub fn inventory(t: &ServiceTopology) -> Vec<Island> {
         display: None,
         kind: "unknown".into(),
         source: None,
+        tech: None,
         external: true,
     }));
     out
+}
+
+/// A project's runtime, else its ecosystem.
+fn tech(p: &ServiceProject) -> Option<String> {
+    [p.runtime.as_deref(), Some(p.ecosystem.as_str())]
+        .into_iter()
+        .flatten()
+        .find(|t| !t.is_empty())
+        .map(str::to_string)
 }
 
 fn service_path(id: &str) -> String {
@@ -314,6 +336,24 @@ pub mod tests {
         assert_eq!(shown(&t, &inv, None, true), [0, 1, 2, 3]);
         assert_eq!(shown(&t, &inv, Some("prod/compose.yaml"), false), [1]);
         assert!(available(&t, &inv));
+    }
+
+    /// The pin's second line after the kind: the technology and the
+    /// source path, but no "." for a project at the repository root.
+    #[test]
+    fn island_details_name_the_technology_and_the_path() {
+        let mut root = project(".", "application");
+        root.runtime = Some("node".into());
+        let t = topology(vec![root, project("lib/core", "library")], Vec::new());
+        let inv = inventory(&t);
+        assert_eq!(inv[0].detail(), "node");
+        assert_eq!(inv[1].detail(), "maven · lib/core");
+        let external = Island {
+            tech: None,
+            source: None,
+            ..inv[0].clone()
+        };
+        assert_eq!(external.detail(), "");
     }
 
     #[test]

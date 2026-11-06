@@ -45,9 +45,10 @@ component Pin inherits Rectangle {
             overflow: elide;
         }
         Text {
-            // A service island: its kind and source project (`renderRepositoryWorld`).
+            // A service island: its kind, technology and source project
+            // (`renderRepositoryWorld`).
             text: pin.svc == 5 ? @tr("No local sources")
-                : pin.svc > 0 ? StartTones.project-kind(pin.svc) + " · " + pin.path
+                : pin.svc > 0 ? join(StartTones.project-kind(pin.svc), pin.path)
                 : marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
             color: Theme.muted;
             font-size: Theme.font-caption;
