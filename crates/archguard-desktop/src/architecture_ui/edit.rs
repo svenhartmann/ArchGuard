@@ -68,13 +68,14 @@ impl Editor {
     }
 
     pub fn fill(&self, m: &mut ArchitectureModel) {
-        m.file = match &self.files {
-            Some(f) => {
-                let (Target::File(path) | Target::Folder(path)) = &f.target;
-                let shown = path.strip_prefix(&self.root).unwrap_or(path);
+        // The file the open chapter is saved to; the editor shows it.
+        m.file = match (&self.files, &self.open) {
+            (Some(f), Some(e)) => {
+                let path = f.path_of(e.chapter);
+                let shown = path.strip_prefix(&self.root).unwrap_or(&path);
                 shown.display().to_string().into()
             }
-            None => SharedString::new(),
+            _ => SharedString::new(),
         };
         m.file_error = self.files_error.as_str().into();
         if let Some(e) = &self.open {

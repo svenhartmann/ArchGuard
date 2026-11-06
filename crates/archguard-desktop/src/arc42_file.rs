@@ -204,15 +204,24 @@ impl Arc42Files {
         Ok(path)
     }
 
-    /// The file that holds chapter `n`, with its text if it exists.
-    fn file_of(&self, n: u8) -> (PathBuf, Option<String>) {
+    /// The file that holds chapter `n`, or that saving it creates.
+    pub fn path_of(&self, n: u8) -> PathBuf {
         match &self.target {
-            Target::File(path) => (path.clone(), self.whole.clone()),
+            Target::File(path) => path.clone(),
             Target::Folder(dir) => match self.chapters.get(&n) {
-                Some((p, t)) => (p.clone(), Some(t.clone())),
-                None => (dir.join(format!("arc42-{n:02}.md")), None),
+                Some((p, _)) => p.clone(),
+                None => dir.join(format!("arc42-{n:02}.md")),
             },
         }
+    }
+
+    /// The file that holds chapter `n`, with its text if it exists.
+    fn file_of(&self, n: u8) -> (PathBuf, Option<String>) {
+        let text = match &self.target {
+            Target::File(_) => self.whole.clone(),
+            Target::Folder(_) => self.chapters.get(&n).map(|(_, t)| t.clone()),
+        };
+        (self.path_of(n), text)
     }
 
     /// The new text of that file, in its old line endings.
@@ -487,6 +496,7 @@ mod tests {
         let d = dir();
         let path = d.path().join("docs/arc42.md");
         let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        assert_eq!(files.path_of(3), path, "one file holds every chapter");
         let new = doc("New");
         let edited = files.chapter(&new, 3) + "Kontext vom Team.\n";
         files.save_chapter(&new, 3, &edited).unwrap();
@@ -509,6 +519,12 @@ mod tests {
         let new = doc("New");
         assert_eq!(files.chapter(&new, 5), "## 5. Bausteine\n\nAlt.\n");
         assert!(files.chapter(&new, 9).starts_with("## 9. Title"));
+        assert_eq!(files.path_of(5), folder.join("05_bausteine.md"));
+        assert_eq!(
+            files.path_of(9),
+            folder.join("arc42-09.md"),
+            "the file a save creates"
+        );
         assert_eq!(
             files.save_chapter(&new, 5, "## 5. Bausteine\n\nNeu."),
             Ok(folder.join("05_bausteine.md"))

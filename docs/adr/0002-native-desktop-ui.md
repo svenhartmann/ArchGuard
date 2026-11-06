@@ -336,5 +336,5 @@ comparison of the native view against the web view on the same project
   without an `arc42.md` written by the CLI; en and de; a split pane, where
   editor and preview stack; a `docs/arc42/` folder, where a new chapter
   became `arc42-09.md`); not checked yet: typing in the editor and the
-  save dialog. In a folder the editor names the folder, not the chapter
-  file.
+  save dialog. The editor names the file the chapter is saved to (in a
+  folder the chapter file, also one a save would create).
