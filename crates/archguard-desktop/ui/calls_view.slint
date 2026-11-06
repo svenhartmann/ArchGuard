@@ -13,11 +13,13 @@ import { CallsDetail } from "calls_detail.slint";
 
 export { CallsData }
 
+// A label above its control; every control has the same height, so the
+// labels and controls of a toolbar line up.
 component Field inherits VerticalLayout {
     in property <string> label;
     spacing: 4px;
-    alignment: end;
-    Text { text: root.label; color: Theme.muted; font-size: 11px; }
+    alignment: start;
+    Text { text: root.label; color: Theme.muted; font-size: Theme.field-label; }
     @children
 }
 
@@ -32,15 +34,31 @@ component Toolbar inherits Rectangle {
     changed package-index => { package.current-index = self.package-index; }
     changed resolution-index => { resolution.current-index = self.resolution-index; }
     changed query => { if search.text != self.query { search.text = self.query; } }
+    // The filters and the target options flow into a second row when the
+    // view is too narrow for one (from the view's width, not the content).
+    property <length> pad: 12px;
+    property <length> gap: 10px;
+    property <length> avail: self.width - self.pad;
+    property <bool> f1: filters.x + filters.width + self.gap + search-field.width <= self.avail;
+    property <int> r1: self.f1 ? 0 : 1;
+    property <length> x1: self.f1 ? filters.x + filters.width + self.gap : self.pad;
+    property <bool> f2: self.x1 + search-field.width + self.gap + targets.preferred-width <= self.avail;
+    property <int> r2: self.f2 ? self.r1 : self.r1 + 1;
+    property <length> x2: self.f2 ? self.x1 + search-field.width + self.gap : self.pad;
+    property <length> row-h: filters.preferred-height;
+    pure function row-y(r: int) -> length { return self.pad + r * (self.row-h + 8px); }
+    height: self.pad * 2 + (self.r2 + 1) * self.row-h + self.r2 * 8px;
     background: Theme.panel;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-    HorizontalLayout {
-        padding: 12px;
+    filters := HorizontalLayout {
+        x: root.pad;
+        y: root.pad;
+        width: self.preferred-width;
         spacing: 10px;
-        alignment: start;
-        Field {
+        lang-field := Field {
             label: @tr("Language");
             language := ComboBox {
+                height: Theme.control-h;
                 model: m.languages;
                 current-index: root.language-index;
                 enabled: m.languages.length > 1;
@@ -49,34 +67,46 @@ component Toolbar inherits Rectangle {
         }
         Field {
             label: @tr("Package");
-            width: 260px;
+            width: max(150px, min(260px, root.width - 2 * root.pad - root.gap - lang-field.preferred-width));
             package := ComboBox {
+                height: Theme.control-h;
                 model: m.packages;
                 current-index: root.package-index;
                 enabled: m.packages.length > 1;
                 selected => { CallsData.set-package(self.current-index); }
             }
         }
-        Field {
-            label: @tr("Search");
-            width: 200px;
+    }
+    search-field := Field {
+        x: root.x1;
+        y: root.row-y(root.r1);
+        width: 200px;
+        label: @tr("Search");
             search := SearchField {
                 // Initial value: a recreated view shows the kept query.
                 text: root.query;
                 placeholder: @tr("Filter type, module or function…");
                 edited(t) => { CallsData.set-query(t); }
             }
-        }
+    }
+    targets := HorizontalLayout {
+        x: root.x2;
+        y: root.row-y(root.r2);
+        width: self.preferred-width;
+        spacing: 10px;
         Field {
             label: @tr("Targets");
             resolution := ComboBox {
+                height: Theme.control-h;
                 model: [@tr("Project"), @tr("External"), @tr("Unresolved"), @tr("All")];
                 current-index: root.resolution-index;
                 enabled: m.mode != 2;
                 selected => { CallsData.set-resolution(self.current-index); }
             }
         }
+        // The empty label keeps the button on the controls' line.
         Field {
+            label: " ";
             Button {
                 text: @tr("Within-class calls");
                 pressed-state: m.internal;
@@ -104,7 +134,10 @@ component Coverage inherits Muted {
 }
 
 component Description inherits VerticalLayout {
+    in property <bool> narrow;
     property <CallsModel> m: CallsData.model;
+    property <string> counts: none || unavailable ? @tr("{} connections · {} call sites", Fmt.unknown, Fmt.unknown)
+        : @tr("{} connections · {} call sites", Fmt.int(m.connections), Fmt.int(m.sites));
     property <bool> unavailable: m.status == "unavailable";
     property <bool> none: m.status == "not_applicable";
     padding-left: 14px;
@@ -116,10 +149,12 @@ component Description inherits VerticalLayout {
         spacing: 18px;
         alignment: start;
         if none: Muted {
+            horizontal-stretch: 1;
             font-size: 12px;
             text: @tr("No applicable source files for call analysis.") + @tr(" Original source snapshot.");
         }
         if unavailable: Muted {
+            horizontal-stretch: 1;
             font-size: 12px;
             text: @tr("Call analysis unavailable. ") + m.diagnostic-line
                 + (m.unreported ? " " + @tr("Analyzer version unreported.") : "") + @tr(" Original source snapshot.");
@@ -132,14 +167,15 @@ component Description inherits VerticalLayout {
             open: m.analysis-open;
             clicked => { CallsData.toggle-analysis(); }
         }
-        Muted {
+        // Without an analysis the counts are unknown, not zero.
+        if !root.narrow: Muted {
             font-size: 12px;
-            // Without an analysis the counts are unknown, not zero.
-            text: none || unavailable ? @tr("{} connections · {} call sites", Fmt.unknown, Fmt.unknown)
-                : @tr("{} connections · {} call sites", Fmt.int(m.connections), Fmt.int(m.sites));
+            wrap: no-wrap;
+            text: root.counts;
             vertical-alignment: center;
         }
     }
+    if root.narrow: Muted { font-size: 12px; text: root.counts; }
     // Like the web's .calls-description (max-height 30%, scrolls).
     if m.analysis-open: ScrollView {
         height: 190px;
@@ -177,9 +213,12 @@ export component CallsView inherits Rectangle {
     // Column widths .65 : .75 : 1 of the width minus padding and gaps,
     // as the web's grid (.calls-columns).
     property <length> share: (root.width - 48px) / 2.4;
+    // A split pane: the columns stack.
+    property <bool> narrow: root.width < 760px;
     background: Theme.bg;
-    // Tabs must not change the window's preferred size.
-    min-width: 640px;
+    // Tabs must not change the window's preferred size; a split pane can
+    // be narrow.
+    min-width: 360px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
@@ -193,8 +232,8 @@ export component CallsView inherits Rectangle {
     }
     if CallsData.model.state == 1: VerticalLayout {
         Toolbar { vertical-stretch: 0; }
-        Description { vertical-stretch: 0; }
-        HorizontalLayout {
+        Description { vertical-stretch: 0; narrow: root.narrow; }
+        if !root.narrow: HorizontalLayout {
             vertical-stretch: 1;
             padding-left: 12px;
             padding-right: 12px;
@@ -204,6 +243,17 @@ export component CallsView inherits Rectangle {
             CallsTree { width: max(190px, root.share * 0.65); }
             CallsOverview { width: max(210px, root.share * 0.75); }
             CallsDetail { horizontal-stretch: 1; }
+        }
+        if root.narrow: VerticalLayout {
+            vertical-stretch: 1;
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 16px;
+            spacing: 12px;
+            CallsTree { vertical-stretch: 1; }
+            CallsOverview { vertical-stretch: 1; }
+            CallsDetail { vertical-stretch: 1; }
         }
     }
 }
