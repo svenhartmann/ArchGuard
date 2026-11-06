@@ -172,3 +172,30 @@ comparison of the native view against the web view on the same project
      Zyklusgruppe. Counted nouns use plural forms (`@tr` plurals in Slint,
      `Texts::plural` in Rust); uppercase headings come from
      `SectionHeading`, not from the text.
+- **2026-11-06:** Decision 6 (panes) implemented on `feat/desktop-panes`,
+  left/right only. Each document has a layout of one or two panes with
+  view tabs (`src/panes.rs`). The view bar shows a view in the focused
+  pane; its context menu and View > "Open in new tab" add a view tab;
+  "Open to the side", View > "Split right" (⌘\ / Ctrl+\) and the pane
+  strip's button open a right pane; a divider sets the ratio (each pane
+  at least 380 px); closing a pane or its last tab returns to one pane.
+  A node selected in the Graph or in a Matrix cell is revealed in the
+  view beside it if that view can reveal nodes (Graph, Matrix); one link
+  runs at a time, so a reveal never links back (`src/panes/link.rs`).
+  "Open in graph" from Architecture, Start and Quality reveals in the
+  pane that shows the Graph. The layout is stored per project in
+  `desktop.toml` (`panes`, `pane_active`, `pane_focus`, `pane_ratio`
+  under `[projects."<path>"]`, `src/pane_store.rs`) and restored with the
+  session. Decision taken in the implementation, instead of state per
+  pane: **a view is open at most once per document**, and its state
+  stays one struct per view kind and document. The Slint views read
+  their data from window-wide properties and globals (`StartData`, …),
+  so two visible instances of one view would show, and write to, one
+  state (for example the Start world's camera size). Opening an open
+  view selects its tab; opening it to the side moves its tab. Two
+  independent instances of one view first need the views' data as
+  per-pane model structs (follow-up). One background analysis per
+  document stays (`Shared`, `show_async`): panes only choose which built
+  view is shown. Known limits: views with a fixed minimum width (Matrix
+  640 px, the Graph's explorer and details panels) are clipped in a
+  narrow pane; checked with headless snapshot builds on macOS only.
