@@ -10,7 +10,9 @@ use super::details;
 use super::layout::Cell;
 use super::pins::{self, Rect};
 use super::scene::{self, Face, Paint, Tone, View};
-use super::state::{Lens, StartState, number};
+use super::state::{Lens, StartState};
+use crate::format::Locale;
+use crate::kpi;
 use crate::tab_support::Texts;
 use crate::ui::{AppWindow, StartCrumb, StartData, StartFace, StartModel, StartPin, StartPlate};
 
@@ -89,7 +91,7 @@ fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
         return Tone::Muted;
     }
     if known.iter().any(|l| l.covered < l.total) {
-        Tone::Cycle
+        Tone::Gap
     } else {
         Tone::Covered
     }
@@ -99,7 +101,7 @@ fn face_row(f: Face) -> StartFace {
     let (tone, rgb) = match f.tone {
         Tone::Accent => (0, (0, 0, 0)),
         Tone::Muted => (1, (0, 0, 0)),
-        Tone::Cycle => (2, (0, 0, 0)),
+        Tone::Gap => (2, (0, 0, 0)),
         Tone::Covered => (3, (0, 0, 0)),
         Tone::Low => (4, (0, 0, 0)),
         Tone::Medium => (5, (0, 0, 0)),
@@ -191,20 +193,15 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         search: s.search.as_str().into(),
         ..Default::default()
     };
-    fill_texts(
-        &mut m,
-        s,
-        Texts::of(ui).t("Select area…"),
-        &ui.get_project(),
-    );
+    fill_texts(&mut m, s, &Texts::of(ui), &ui.get_project());
     if let Some(v) = s.view() {
         fill_scene(&mut m, &old, s, &v);
         fill_camera(&mut m, s, &v);
-        fill_overlay(&mut m, s, &v);
+        fill_overlay(&mut m, s, &v, Texts::of(ui).locale());
     } else {
         m.empty = true;
     }
-    details::fill(&mut m, s);
+    details::fill(&mut m, s, Texts::of(ui).locale());
     d.set_model(m);
 }
 
@@ -296,12 +293,12 @@ fn controls(w: f64, h: f64) -> Vec<Rect> {
     ]
 }
 
-fn pin_row(s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) {
+fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) {
     let a = &s.scope.areas[area];
     let name = a.name.rsplit('/').next().unwrap_or(&a.name).to_string();
     let max = max
         .filter(|_| s.lens == Lens::Explore)
-        .map(number)
+        .map(|v| l.num(v, 2))
         .unwrap_or_default();
     let mut marks = Vec::new();
     if a.cyclic {
@@ -314,7 +311,7 @@ fn pin_row(s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) 
         marks.push(format!("CBO max. {max}"));
     }
     let sub = if marks.is_empty() {
-        format!("{} entries", a.entities.len())
+        format!("{} elements", l.count(a.entities.len()))
     } else {
         marks.join(" · ")
     };
@@ -333,7 +330,7 @@ fn pin_row(s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) 
 }
 
 /// Pins with their leader lines, and the cycle arrows of the Problems lens.
-fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View) {
+fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View, l: Locale) {
     let center = |area: usize, z: f64| {
         let p = s
             .layout
@@ -345,7 +342,7 @@ fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View) {
     };
     let max = area_max(s);
     let order = pinned(s, &max);
-    let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(s, a, max[a]).0).collect();
+    let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(l, s, a, max[a]).0).collect();
     let anchors: Vec<(f64, f64)> = order.iter().map(|&a| center(a, 0.0)).collect();
     let widths: Vec<f64> = rows.iter().map(|p| f64::from(p.w)).collect();
     let placed = pins::place(&anchors, &widths, (v.w, v.h), controls(v.w, v.h));
@@ -381,7 +378,7 @@ fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View) {
 }
 
 /// Breadcrumbs, the status line, counts and the area picker.
-fn fill_texts(m: &mut StartModel, s: &StartState, select_area: &str, root: &str) {
+fn fill_texts(m: &mut StartModel, s: &StartState, texts: &Texts, root: &str) {
     let crumbs = s.crumbs(root);
     let last = crumbs.len().saturating_sub(1);
     m.crumbs = ModelRc::new(VecModel::from(
@@ -394,7 +391,7 @@ fn fill_texts(m: &mut StartModel, s: &StartState, select_area: &str, root: &str)
             })
             .collect::<Vec<_>>(),
     ));
-    m.cycle_groups = s.scope.cycle_groups as i32;
+    m.cycle_groups = kpi::AREA_CYCLE_GROUPS.item(texts, s.scope.cycle_groups);
     let cells = &s.layout.cells;
     m.count = cells.iter().map(|c| c.entities.len()).sum::<usize>() as i32;
     m.tiles = cells.len() as i32;
@@ -405,10 +402,10 @@ fn fill_texts(m: &mut StartModel, s: &StartState, select_area: &str, root: &str)
         .filter_map(|c| c.value.map(|v| (v, &s.scope.areas[c.area].name)))
         .max_by(|a, b| a.0.total_cmp(&b.0).then_with(|| b.1.cmp(a.1)));
     if let Some((v, area)) = top {
-        m.top_value = number(v).into();
+        m.top_value = texts.locale().num(v, 2).into();
         m.top_area = area.as_str().into();
     }
-    let mut areas = vec![SharedString::from(select_area)];
+    let mut areas = vec![SharedString::from(texts.t("Select area…"))];
     areas.extend(
         s.scope
             .areas
@@ -443,7 +440,5 @@ mod tests {
         // hsl(175 48% 55%) and the floor hsl(15 48% 55%).
         assert_eq!(complexity_color(0.0), Tone::Rgb(85, 195, 186));
         assert_eq!(complexity_color(1e9), Tone::Rgb(195, 113, 85));
-        assert_eq!(number(12.0), "12");
-        assert_eq!(number(0.5), "0.50");
     }
 }

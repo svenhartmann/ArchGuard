@@ -185,6 +185,25 @@ fn controls(s: &ServicesState, scope: Option<&Scope>) -> ServicesModel {
     }
 }
 
+/// The counts the engine's monorepo reason states (`analyze_services`):
+/// manifest project roots without workspace aggregators and local Compose
+/// build contexts. The tab words them in the window's language.
+pub fn monorepo_evidence(t: &archguard_engine::core::ServiceTopology) -> (usize, usize) {
+    let projects: std::collections::BTreeSet<&str> = t
+        .projects
+        .iter()
+        .filter(|p| p.kind != "workspace")
+        .map(|p| p.path.as_str())
+        .collect();
+    let contexts: std::collections::BTreeSet<&str> = t
+        .services
+        .iter()
+        .filter(|s| !s.compose_file.is_empty())
+        .filter_map(|s| s.build_context.as_deref())
+        .collect();
+    (projects.len(), contexts.len())
+}
+
 fn status(m: &mut ServicesModel, sc: &Scope, s: &ServicesState) {
     let t = sc.t;
     m.complete = t.complete;
@@ -204,7 +223,9 @@ fn status(m: &mut ServicesModel, sc: &Scope, s: &ServicesState) {
     m.all = sc.all.len() as i32;
     m.shown = sc.shown(s).len() as i32;
     m.monorepo = t.monorepo;
-    m.monorepo_reason = t.monorepo_reason.as_str().into();
+    m.build_units = crate::documents::build_units(t).len() as i32;
+    let (projects, contexts) = monorepo_evidence(t);
+    (m.reason_projects, m.reason_contexts) = (projects as i32, contexts as i32);
     m.diagnostics = model(t.diagnostics.iter().map(|d| {
         let service = d
             .service
@@ -578,10 +599,28 @@ mod tests {
         let m = build(&shop(), "Unmapped service");
         assert_eq!(m.state, 1);
         assert_eq!((m.projects, m.applications, m.containers), (1, 1, 14));
+        // The header chip's set: the ten local build contexts.
+        assert_eq!(m.build_units, 10);
+        assert_eq!((m.reason_projects, m.reason_contexts), (1, 10));
         assert_eq!((m.shown, m.all), (15, 15));
         assert_eq!(m.cycles.row_count(), 2);
         assert!(m.monorepo);
         assert_eq!(m.kind, 0, "configured HTTP relations exist");
+    }
+
+    /// The counts shown in place of the engine's English monorepo reason
+    /// are the ones that reason states.
+    #[test]
+    fn monorepo_counts_restate_the_engine_reason() {
+        let s = shop();
+        let t = (*s.topology).as_ref().expect("topology");
+        let (projects, contexts) = monorepo_evidence(t);
+        assert_eq!(
+            t.monorepo_reason,
+            format!(
+                "{projects} distinct manifest project roots (excluding workspace aggregators), {contexts} verified local Compose build contexts; at least two project roots or build contexts establish monorepo evidence."
+            )
+        );
     }
 
     #[test]

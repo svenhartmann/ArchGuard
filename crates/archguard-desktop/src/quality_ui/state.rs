@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use super::card::{Card, Kind, Line};
 use super::cohesion::Selection;
-use super::heatmap::{self, Cohorts, Filter, METRICS, Sort, State};
+use super::heatmap::{self, Cohorts, Filter, METRICS, Rating, Sort};
 use super::heatmap_text;
 use super::inputs::Inputs;
 use super::lang::{number, percent};
@@ -61,7 +61,7 @@ pub struct QualityState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeatCell {
     pub text: String,
-    pub state: State,
+    pub state: Rating,
     pub tip: String,
 }
 
@@ -83,7 +83,11 @@ pub struct Page {
     pub targets: Vec<String>,
     pub target_index: usize,
     pub target_note: String,
+    /// "Analysis: partial" or "Import: …", its `Status::slot` and the
+    /// record counts.
     pub status: String,
+    pub status_slot: i32,
+    pub status_detail: String,
     pub notes: Card,
     pub heatmap: bool,
     pub filter: usize,
@@ -142,9 +146,12 @@ impl QualityState {
     fn render(&mut self, inputs: &Inputs) -> Page {
         let scope = rows::scope(&inputs.source, &self.view.target);
         let (total, cards, heat) = self.records(inputs, &scope);
+        let (status_slot, status, status_detail) = self.status(inputs, total);
         let mut page = Page {
             section: self.view.section.index(),
-            status: self.status(inputs, total),
+            status,
+            status_slot,
+            status_detail,
             notes: self.notes(inputs),
             heatmap: self.view.section == Section::Heatmap,
             filter: filter_index(self.view.filter),
@@ -165,19 +172,16 @@ impl QualityState {
         page
     }
 
-    fn status(&self, inputs: &Inputs, total: usize) -> String {
-        let status = self
-            .view
-            .section
-            .status(&self.lang, source_status(inputs, self.view.section));
-        let counts = self.lang.f(
-            "{shown} / {total} matching records",
-            &[
-                ("shown", total.min(self.view.limit).to_string()),
-                ("total", total.to_string()),
-            ],
-        );
-        format!("{status} · {counts}")
+    /// The section's status line and "shown / total matching records".
+    fn status(&self, inputs: &Inputs, total: usize) -> (i32, String, String) {
+        let section = self.view.section;
+        let code = source_status(inputs, section);
+        let (slot, line) = section.status(&self.lang, code);
+        let locale = self.lang.locale();
+        let shown = total.min(self.view.limit);
+        let ratio = locale.ratio(shown as i64, total as i64);
+        let counts = self.lang.f("{ratio} matching records", &[("ratio", ratio)]);
+        (slot, line, counts)
     }
 }
 
@@ -349,7 +353,7 @@ impl QualityState {
     fn heat_cell(&self, row: &archguard_engine::ClassMetrics, i: usize) -> HeatCell {
         let a = self.cohorts.assess(row, METRICS[i]);
         HeatCell {
-            text: number(a.value),
+            text: number(&self.lang, a.value),
             state: a.state,
             tip: format!(
                 "{} · {} {}",
@@ -469,14 +473,14 @@ impl QualityState {
         match self.view.section {
             Section::History => history_notes(b, inputs),
             Section::Mutations => {
-                let value = percent(inputs.mutations.summary.killed_percent);
+                let value = percent(lang, inputs.mutations.summary.killed_percent);
                 b.push(
                     Kind::Text,
                     lang.f("Detected mutation ratio: {value}", &[("value", value)]),
                 );
             }
             Section::Measurements => {
-                let value = percent(inputs.measurements.flaky_test_percent);
+                let value = percent(lang, inputs.measurements.flaky_test_percent);
                 b.push(
                     Kind::Text,
                     lang.f("Mixed test groups: {percent}", &[("percent", value)]),
@@ -577,7 +581,9 @@ mod tests {
         let mut s = QualityState::new(Texts::default(), inputs(classes(25)));
         let page = s.page();
         assert!(page.heatmap);
-        assert_eq!(page.status, "partial analysis · 20 / 25 matching records");
+        assert_eq!(page.status, "Analysis: partial");
+        assert_eq!(page.status_detail, "20 / 25 matching records");
+        assert_eq!(page.status_slot, 1);
         assert_eq!(page.heat.len(), 20);
         assert_eq!(page.heat[0].label, "rs::C");
         assert_eq!(page.heat[0].cells[0].text, "—");
@@ -595,7 +601,8 @@ mod tests {
         assert_eq!(s.view.section, Section::Cohesion);
         s.view.section = Section::Tests;
         let page = s.page();
-        assert_eq!(page.status, "not imported · 0 / 0 matching records");
+        assert_eq!(page.status, "Import: not imported");
+        assert_eq!(page.status_slot, 4);
         assert!(page.empty.starts_with("No matching measurements."));
         assert!(
             page.notes

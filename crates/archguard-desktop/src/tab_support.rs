@@ -16,6 +16,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::context::Loaded;
 use crate::documents::{self, DocId};
+use crate::format::Locale;
 use crate::tree::Tree;
 use crate::ui::{AppWindow, Templates};
 
@@ -330,10 +331,17 @@ impl Texts {
         fill(self.t(key), args)
     }
 
-    /// `one` for a count of 1, else `many`; `{count}` filled.
+    /// `one` for a count of 1, else `many`; `{count}` filled with the
+    /// count in the window's number format.
     pub fn plural(&self, count: usize, one: &str, many: &str) -> String {
         let key = if count == 1 { one } else { many };
-        self.f(key, &[("count", count.to_string())])
+        self.f(key, &[("count", self.locale().count(count))])
+    }
+
+    /// The window language's number conventions: the `en` template reads
+    /// `de` in the German translation.
+    pub fn locale(&self) -> Locale {
+        Locale::from_code(self.t("en"))
     }
 
     /// The German templates as the bundled translation has them: the
@@ -452,13 +460,46 @@ mod tests {
         assert_eq!(index(3), Some(3));
     }
 
+    /// Template keys of the kinds a build unit can have; unknown kinds show
+    /// as they are.
+    const KINDS: [&str; 7] = [
+        "application",
+        "library",
+        "test",
+        "workspace",
+        "plugin",
+        "module",
+        "service",
+    ];
+
+    /// Build unit kinds (`documents::build_units`) are shown in the
+    /// window's language.
+    #[test]
+    fn build_unit_kinds_are_translated() {
+        let de = Texts::german();
+        for k in KINDS {
+            assert_ne!(de.t(k), k, "{k}");
+        }
+        assert_eq!(de.t("service"), "Dienst");
+    }
+
     #[test]
     fn german_templates_fill_placeholders() {
         let de = Texts::german();
         assert_eq!(de.plural(3, "{count} file", "{count} files"), "3 Dateien");
         assert_eq!(de.plural(1, "{count} file", "{count} files"), "1 Datei");
         assert_eq!(de.t("Locate in graph"), "Im Graphen anzeigen");
+        assert_eq!(
+            de.plural(2374, "{count} file", "{count} files"),
+            "2.374 Dateien"
+        );
+        assert_eq!(de.locale(), Locale::De);
         let en = Texts::default();
+        assert_eq!(en.locale(), Locale::En);
+        assert_eq!(
+            en.plural(2374, "{count} file", "{count} files"),
+            "2,374 files"
+        );
         assert_eq!(en.plural(1, "{count} file", "{count} files"), "1 file");
         assert_eq!(en.t("unknown key"), "unknown key");
     }

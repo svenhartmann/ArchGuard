@@ -3,8 +3,8 @@
 // src/quality_ui.rs; the view only lays them out.
 import { ComboBox, ScrollView, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, Icon, Icons, SearchField } from "widgets.slint";
-import { QualityCard, QualityCardView, QualityHeatRow, Tone } from "quality_cards.slint";
+import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState } from "widgets.slint";
+import { QualityCard, QualityCardView, QualityHeatRow } from "quality_cards.slint";
 
 export { QualityCard, QualityHeatRow }
 
@@ -15,7 +15,10 @@ export struct QualityModel {
     targets: [string],
     target-index: int,
     target-note: string,
+    // "Analysis: partial", its `Status::slot` and the record counts.
     status: string,
+    status-slot: int,
+    status-detail: string,
     notes: QualityCard,
     heatmap: bool,
     filter: int,
@@ -192,7 +195,7 @@ export component QualityView inherits Rectangle {
         if !root.m.loading: HorizontalLayout {
             alignment: start;
             spacing: 10px;
-            Text { text: root.m.status; color: Theme.text; font-size: 14px; vertical-alignment: center; }
+            StatusLine { status: root.m.status-slot; label: root.m.status; detail: root.m.status-detail; }
             HelpButton { clicked => { root.help = !root.help; } }
         }
 
@@ -239,11 +242,11 @@ export component QualityView inherits Rectangle {
                         spacing: 8px;
                         alignment: end;
                         padding-top: 18px;
-                        Tone { state: 1; text: @tr("Low"); font: 11px; width: self.label-w + 16px; height: 24px; }
-                        Tone { state: 2; text: @tr("Elevated"); font: 11px; width: self.label-w + 16px; height: 24px; }
-                        Tone { state: 3; text: @tr("High"); font: 11px; width: self.label-w + 16px; height: 24px; }
-                        Tone { state: 0; text: @tr("Unknown"); font: 11px; width: self.label-w + 16px; height: 24px; }
-                        Tone { state: 4; text: @tr("Informational"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 1; text: @tr("Low"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 2; text: @tr("Elevated"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 3; text: @tr("High"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 0; text: @tr("Unknown"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 4; text: @tr("Informational"); font: 11px; width: self.label-w + 16px; height: 24px; }
                         HelpButton { y: (parent.height - self.height) / 2 + 9px; clicked => { root.legend-help = !root.legend-help; } }
                     }
                 }
@@ -358,12 +361,12 @@ export component QualityView inherits Rectangle {
                                 }
                             }
                         }
-                        for cell[j] in row.cells: Tone {
+                        for cell[j] in row.cells: RatingChip {
                             x: gap + table.name-w + gap + j * (table.cell-w + gap);
                             y: 5px;
                             width: table.cell-w;
                             height: 33px;
-                            state: cell.state;
+                            rating: cell.state;
                             text: cell.text;
                             TouchArea {
                                 mouse-cursor: pointer;
@@ -391,12 +394,7 @@ export component QualityView inherits Rectangle {
                     more-groups => { QualityData.more-groups(); }
                 }
 
-                if root.m.empty != "" && !root.m.loading: Text {
-                    text: root.m.empty;
-                    color: Theme.muted;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                }
+                if root.m.empty != "" && !root.m.loading: EmptyState { reason: root.m.empty; }
 
                 if root.m.more: HorizontalLayout {
                     alignment: start;

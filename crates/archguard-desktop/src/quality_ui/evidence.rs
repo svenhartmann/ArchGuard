@@ -95,22 +95,22 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
     let metrics = [
         (
             lang.t("Line coverage"),
-            percent(coverage),
+            percent(lang, coverage),
             delta.map(|d| &d.line_coverage),
         ),
         (
             lang.t("Mean complexity"),
-            number(p.and_then(|p| p.mean_complexity)),
+            number(lang, p.and_then(|p| p.mean_complexity)),
             delta.map(|d| &d.mean_complexity),
         ),
         (
             lang.t("Max. complexity"),
-            number(p.and_then(|p| p.max_complexity).map(f64::from)),
+            number(lang, p.and_then(|p| p.max_complexity).map(f64::from)),
             delta.map(|d| &d.max_complexity),
         ),
         (
             lang.t("Active findings"),
-            number(p.and_then(|p| p.active_findings).map(|v| v as f64)),
+            number(lang, p.and_then(|p| p.active_findings).map(|v| v as f64)),
             delta.map(|d| &d.active_findings),
         ),
     ];
@@ -118,9 +118,9 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
         let change = m.map_or(String::new(), |m| {
             format!(
                 " · {} → {} · Δ {} · {}",
-                number(m.before),
-                number(m.after),
-                number(m.delta),
+                number(lang, m.before),
+                number(lang, m.after),
+                number(lang, m.delta),
                 lang::status(lang, &m.status)
             )
         });
@@ -157,7 +157,7 @@ fn extended(
                     .map_or(String::new(), |c| {
                         format!(
                             " · Δ {} · {}",
-                            number(c.delta),
+                            number(lang, c.delta),
                             lang::status(lang, &c.status)
                         )
                     });
@@ -165,7 +165,7 @@ fn extended(
                     Kind::Text,
                     format!(
                         "{key}: {} · {}/{}{change}",
-                        number(m.value),
+                        number(lang, m.value),
                         m.measured,
                         m.population
                     ),
@@ -186,7 +186,7 @@ pub fn test(lang: &Texts, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
             t.outcome,
             lang.f(
                 "Duration: {duration} s",
-                &[("duration", number(t.duration_seconds))]
+                &[("duration", number(lang, t.duration_seconds))]
             )
         ),
     );

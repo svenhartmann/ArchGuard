@@ -2,7 +2,7 @@ msgid "No project open"
 msgstr "Kein Projekt geöffnet"
 
 msgid "Open a project folder to analyze its architecture."
-msgstr "Öffne einen Projektordner, um seine Architektur zu analysieren."
+msgstr "Einen Projektordner öffnen, um seine Architektur zu analysieren."
 
 msgid "Open project"
 msgstr "Projekt öffnen"
@@ -10,5 +10,10 @@ msgstr "Projekt öffnen"
 msgid "Open project folder"
 msgstr "Projektordner öffnen"
 
-msgid "Projects in this repository ({})"
-msgstr "Projekte in diesem Repository ({})"
+msgid "Build units in this repository ({})"
+msgstr "Build-Einheiten in diesem Repository ({})"
+
+msgid "{0} build unit"
+msgid_plural "{0} build units"
+msgstr[0] "{0} Build-Einheit"
+msgstr[1] "{0} Build-Einheiten"

@@ -6,6 +6,8 @@ use slint::SharedString;
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::format::Locale;
+use crate::kpi::{self, Value};
 use crate::matrix::{Matrix, MatrixRow, Target};
 use crate::tab_support::{self, Actions, TabState, Texts, index, model};
 use crate::tree::Tree;
@@ -158,7 +160,19 @@ fn choose_cycle(m: &mut MatrixState, cycle: Option<usize>) {
     }
 }
 
+/// A matrix count; `≥` marks one the analysis cut off.
+fn count(locale: Locale, n: usize, exact: bool) -> String {
+    let n = i64::try_from(n).unwrap_or(i64::MAX);
+    if exact {
+        locale.int(n)
+    } else {
+        locale.lower_bound(n)
+    }
+}
+
 fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
+    let texts = Texts::of(ui);
+    let locale = texts.locale();
     let mx = &m.matrix;
     let page = m.page;
     let path: BTreeSet<usize> = m
@@ -180,19 +194,25 @@ fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
             cells: model((0..mx.columns.len()).map(|c| {
                 cells
                     .and_then(|row| row.get(&c))
-                    .map(|cell| format!("{}{}", if cell.exact { "" } else { "≥" }, cell.count))
+                    .map(|cell| count(locale, cell.count as usize, cell.exact))
                     .unwrap_or_default()
                     .into()
             })),
         }
     })));
-    ui.set_m_files(mx.files as i32);
-    ui.set_m_total(format!("{}{}", if mx.total_exact { "" } else { "≥" }, mx.total).into());
-    ui.set_m_cycle_count(mx.cycles.len() as i32);
+    let evidence = if mx.total_exact {
+        Value::Count(mx.total as usize)
+    } else {
+        Value::AtLeast(mx.total as usize)
+    };
+    ui.set_m_kpis(model([
+        kpi::MATRIX_FILES.item(&texts, mx.files),
+        kpi::DEPENDENCY_EVIDENCE.item(&texts, evidence),
+        kpi::FILE_CYCLE_GROUPS.item(&texts, mx.cycles.len()),
+    ]));
     ui.set_m_row_start((page * PAGE) as i32);
     ui.set_m_row_total(rows.len() as i32);
     ui.set_m_only(m.only);
-    let texts = Texts::of(ui);
     let mut scopes = vec![SharedString::from(texts.t("Project overview"))];
     scopes.extend(
         m.scopes

@@ -3,7 +3,8 @@
 // src/services_ui.rs.
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icons, Button } from "widgets.slint";
+import { Icons, Button, Disclosure, ZoomControls } from "widgets.slint";
+import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
 
@@ -36,7 +37,11 @@ export struct ServicesModel {
     shown: int,
     all: int,
     monorepo: bool,
-    monorepo-reason: string,
+    // Build units (`documents::build_units`) and the counts behind the
+    // monorepo verdict (`monorepo_evidence`).
+    build-units: int,
+    reason-projects: int,
+    reason-contexts: int,
     // Controls.
     kind: int,
     mode: int,
@@ -105,18 +110,12 @@ component Details inherits VerticalLayout {
     in property <string> text;
     in property <bool> strong;
     in-out property <bool> open;
-    TouchArea {
-        height: 26px;
-        mouse-cursor: pointer;
-        clicked => { root.open = !root.open; }
-        Text {
-            x: 0;
-            text: (root.open ? "▾ " : "▸ ") + root.text;
-            color: root.strong ? Theme.text : Theme.muted;
-            font-size: root.strong ? 14px : 12px;
-            font-weight: root.strong ? 650 : 400;
-            vertical-alignment: center;
-        }
+    Disclosure {
+        text: root.text;
+        open <=> root.open;
+        tint: root.strong ? Theme.text : Theme.muted;
+        size: root.strong ? 14px : 12px;
+        weight: root.strong ? 650 : 400;
     }
     @children
 }
@@ -198,11 +197,14 @@ component Toolbar inherits HorizontalLayout {
     }
     Button { text: @tr("Cycles only"); pressed-state: m.cycles-only; clicked => { ServicesData.toggle-cycles-only(); } }
     Button { text: @tr("All services"); clicked => { ServicesData.show-all(); } }
-    Button { icon: Icons.minus; clicked => { ServicesData.zoom-by(1 / 1.25); } }
-    Button { icon: Icons.plus; clicked => { ServicesData.zoom-by(1.25); } }
-    Button { text: "100%"; clicked => { ServicesData.zoom-by(0); } }
-    Button { text: @tr("Fit"); clicked => { root.fit(); } }
-    Label { text: round(m.zoom * 100) + "%"; font-weight: 700; font-size: 14px; }
+    ZoomControls {
+        compact: false;
+        zoom: m.zoom;
+        zoom-out => { ServicesData.zoom-by(1 / 1.25); }
+        zoom-in => { ServicesData.zoom-by(1.25); }
+        reset => { ServicesData.zoom-by(0); }
+        fit => { root.fit(); }
+    }
     Label { text: @tr("Relations"); }
     routing-box := ComboBox {
         width: 120px;
@@ -255,7 +257,7 @@ export component ServicesView inherits Rectangle {
                         if root.evidence-open: Note { text: root.limitations(); }
                     }
                     if m.projects > 0: Details {
-                        text: @tr("{} projects · applications, libraries and tools", m.projects);
+                        text: @tr("{0} manifest project · applications, libraries and tools" | "{0} manifest projects · applications, libraries and tools" % m.projects, Fmt.int(m.projects));
                         open <=> root.projects-open;
                         if root.projects-open: Note {
                             text: @tr("Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections.");
@@ -269,7 +271,7 @@ export component ServicesView inherits Rectangle {
                         }
                         if root.projects-open && m.more-projects: HorizontalLayout {
                             alignment: start;
-                            Button { compact: true; text: @tr("Show more projects"); clicked => { ServicesData.show-more-projects(); } }
+                            Button { compact: true; text: @tr("Show more manifest projects"); clicked => { ServicesData.show-more-projects(); } }
                         }
                     }
                     WebOnly { text: @tr("Project workspace"); strong: true; open <=> root.workspace-open; open-web => { root.open-web(); } }
@@ -364,10 +366,16 @@ export component ServicesView inherits Rectangle {
             return @tr("No supported project manifests or Docker Compose files found.") + (m.complete ? "" : @tr(" Analysis incomplete – missing connections do not establish isolation; see diagnostics."));
         }
         return (m.projects > 0
-                ? @tr("{} projects · {} applications · {} containers · ", m.projects, m.applications, m.containers)
-                : @tr("{} services in {} Compose files · ", m.services, m.compose-files))
-            + @tr("{} / {} connections shown · {} cyclic groups · ", m.shown, m.all, m.cycles.length)
-            + (m.monorepo ? @tr("Monorepo detected: {}", m.monorepo-reason) : @tr("Monorepo not established: {}", m.monorepo-reason))
+                ? @tr("{0} build unit" | "{0} build units" % m.build-units, Fmt.int(m.build-units)) + " · "
+                    + @tr("{0} manifest project" | "{0} manifest projects" % m.projects, Fmt.int(m.projects)) + " · "
+                    + @tr("{0} application" | "{0} applications" % m.applications, Fmt.int(m.applications)) + " · "
+                    + @tr("{0} container" | "{0} containers" % m.containers, Fmt.int(m.containers)) + " · "
+                : @tr("{0} service" | "{0} services" % m.services, Fmt.int(m.services)) + " · "
+                    + @tr("{0} Compose file" | "{0} Compose files" % m.compose-files, Fmt.int(m.compose-files)) + " · ")
+            + @tr("{} / {} service relations shown", Fmt.int(m.shown), Fmt.int(m.all)) + " · "
+            + @tr("{0} cycle group" | "{0} cycle groups" % m.cycles.length, Fmt.int(m.cycles.length)) + " · "
+            + (m.monorepo ? @tr("Monorepo detected") : @tr("Monorepo not established")) + ": "
+            + @tr("{} manifest project roots without workspace aggregators, {} local Compose build contexts; at least two establish a monorepo.", Fmt.int(m.reason-projects), Fmt.int(m.reason-contexts))
             + (m.complete ? "" : @tr(" · Analysis incomplete – missing connections do not establish isolation"));
     }
 

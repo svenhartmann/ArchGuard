@@ -3,9 +3,10 @@
 // selected type/method declaration.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Button, Badge, Disclosure } from "widgets.slint";
 import { CallsData, CallsModel, CallsMethodGroup, CallsSuggestion, CallsDeclaration } from "calls_data.slint";
-import { CallsColumn, Muted, Badge, Summary } from "calls_parts.slint";
+import { CallsColumn, Muted } from "calls_parts.slint";
 
 component Para inherits Text {
     color: Theme.text;
@@ -35,7 +36,7 @@ component MethodGroup inherits Rectangle {
                 spacing: 6px;
                 HorizontalLayout {
                     spacing: 8px;
-                    Summary {
+                    Disclosure {
                         horizontal-stretch: 1;
                         text: group.title;
                         open: group.open;
@@ -45,7 +46,7 @@ component MethodGroup inherits Rectangle {
                     }
                     Badge {
                         y: (parent.height - self.height) / 2;
-                        text: (group.shown < group.total ? group.shown + " / " : "") + @tr("{} call sites", group.total);
+                        text: (group.shown < group.total ? Fmt.int(group.shown) + " / " : "") + @tr("{} call sites", Fmt.int(group.total));
                     }
                 }
             }
@@ -90,16 +91,16 @@ component Proposal inherits Rectangle {
     property <string> title: s.kind == 0 ? @tr("Interface candidate: {}", s.target)
         : s.kind == 1 ? @tr("Adapter / factory candidate")
         : @tr("Move candidate: {} → {}", s.source, s.methods);
-    property <string> summary: s.kind == 0 ? @tr("{} calls {}. Both classes belong to a {}-class call cycle.", s.source, s.methods, s.cycle-size)
+    property <string> summary: s.kind == 0 ? @tr("{} calls {}. Both classes belong to a {}-class call cycle.", s.source, s.methods, Fmt.int(s.cycle-size))
         : s.kind == 1 ? @tr("{} uses static calls or construction of {} inside a class call cycle.", s.source, s.target)
-        : @tr("{} of {} recorded outgoing project call sites target this package; {} target the current package.", s.target-calls, s.outgoing, s.own-calls);
+        : @tr("{} of {} recorded outgoing project call sites target this package; {} target the current package.", Fmt.int(s.target-calls), Fmt.int(s.outgoing), Fmt.int(s.own-calls));
     property <string> tail: s.unresolved > 0
-        ? @tr("{} unresolved outgoing call sites are excluded from this evidence; resolving them may change the candidate ranking.", s.unresolved)
+        ? @tr("{} unresolved outgoing call sites are excluded from this evidence; resolving them may change the candidate ranking.", Fmt.int(s.unresolved))
         : s.partial ? @tr("Analysis coverage is incomplete. Review compiler diagnostics before acting on this plan.") : "";
     VerticalLayout {
         padding: 12px;
         spacing: 8px;
-        Summary {
+        Disclosure {
             text: root.title;
             open: s.open;
             tint: Theme.text;
@@ -127,14 +128,14 @@ component Proposal inherits Rectangle {
                 Para {
                     font-size: 12px;
                     text: "2. " + @tr("Check incoming callers, restricted access, imports and public API compatibility")
-                        + (s.same-file > 1 ? @tr("; this file contains {} type/module elements, so moving the file also affects them.", s.same-file) : ".");
+                        + (s.same-file > 1 ? @tr("; this file contains {} type/module elements, so moving the file also affects them.", Fmt.int(s.same-file)) : ".");
                 }
                 Para { font-size: 12px; text: "3. " + @tr("A package move changes grouping, not method calls. Class call cycles remain unless responsibilities or calls also change. Rerun the import and call analyses after a source edit."); }
             }
             if root.tail != "": Para { font-size: 12px; text: "4. " + root.tail; }
             Mono {
                 font-size: 11px;
-                text: @tr("Evidence: ") + s.evidence + (s.evidence-more > 0 ? " · " + @tr("{} more call sites", s.evidence-more) : "");
+                text: @tr("Evidence: ") + s.evidence + (s.evidence-more > 0 ? " · " + @tr("{} more call sites", Fmt.int(s.evidence-more)) : "");
             }
         }
     }
@@ -163,17 +164,17 @@ component Declaration inherits VerticalLayout {
     if d.kind == 1 && d.cohesion > 0: VerticalLayout {
         spacing: 8px;
         Text {
-            text: d.cohesion == 1 ? @tr("Class cohesion unknown") : @tr("{} method groups", d.lcom4);
+            text: d.cohesion == 1 ? @tr("Class cohesion unknown") : @tr("{} method groups", Fmt.int(d.lcom4));
             color: Theme.text;
             font-size: 15px;
             font-weight: 700;
         }
-        Muted { font-size: 12px; text: @tr("{} instance methods · {} state members · complexity Σ {}", d.methods, d.fields, d.complexity); }
+        Muted { font-size: 12px; text: @tr("{} instance methods · {} state members · complexity Σ {}", Fmt.int(d.methods), Fmt.int(d.fields), d.complexity); }
         Muted { font-size: 12px; text: @tr("LCOM4 groups instance methods that share a non-static field/property or call each other. Constructors, static members and local functions are excluded. Multiple groups suggest a review, not an automatic design error. Incomplete compiler evidence leaves LCOM4 unknown."); }
         for g[i] in d.groups: VerticalLayout {
             spacing: 4px;
             Text {
-                text: @tr("Group {} · {} methods", i + 1, g.methods.length);
+                text: @tr("Group {} · {} methods", Fmt.int(i + 1), Fmt.int(g.methods.length));
                 color: Theme.text;
                 font-size: 12px;
                 font-weight: 650;
@@ -211,13 +212,13 @@ export component CallsDetail inherits CallsColumn {
                 Text {
                     text: m.evidence-title;
                     color: Theme.text;
-                    font-size: 17px;
+                    font-size: Theme.font-section;
                     font-weight: 700;
                     wrap: word-wrap;
                 }
                 Muted {
                     font-size: 12px;
-                    text: @tr("{} call sites · ", m.evidence-sites)
+                    text: @tr("{} call sites · ", Fmt.int(m.evidence-sites))
                         + (m.evidence-resolution == 0 ? @tr("project declaration targets")
                             : m.evidence-resolution == 1 ? @tr("external declaration targets")
                             : @tr("unresolved targets; no class or method is assumed"));
@@ -234,7 +235,7 @@ export component CallsDetail inherits CallsColumn {
                 Text {
                     text: @tr("Refactoring candidates");
                     color: Theme.text;
-                    font-size: 17px;
+                    font-size: Theme.font-section;
                     font-weight: 700;
                 }
                 Muted { font-size: 12px; text: @tr("Review plans based on the original source calls. They do not change code or the simulated dependency graph."); }

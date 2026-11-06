@@ -47,7 +47,7 @@ fn apply_settings(ui: &AppWindow) {
         Err(_) if theme != Theme::System => ui.invoke_set_dark(theme == Theme::Dark),
         Err(_) => {}
     }
-    select_language(&language);
+    select_language(ui, &language);
     if let Some((w, h)) = window {
         ui.window()
             .set_size(slint::LogicalSize::new(w as f32, h as f32));
@@ -84,7 +84,7 @@ pub fn wire(ui: &AppWindow) {
     });
     ui.on_choose_language(with_ui(ui, |ui, lang: SharedString| {
         settings_file::update(|s| s.language = lang.to_string());
-        select_language(&lang);
+        select_language(ui, &lang);
         // Texts built in Rust follow on the next push.
         documents_ui::refresh(ui);
     }));
@@ -209,13 +209,14 @@ fn show_notice(ui: &AppWindow, kind: i32, text: &str) {
 
 /// German or English: the environment override, the setting, then the
 /// system language. Call after creating the window.
-fn select_language(setting: &str) {
+fn select_language(ui: &AppWindow, setting: &str) {
     let lang = pick_language(
         std::env::var("ARCHGUARD_DESKTOP_LANG").ok(),
         setting,
         system_language,
     );
     let _ = slint::select_bundled_translation(lang);
+    crate::format::set_locale(ui, crate::format::Locale::from_code(lang));
 }
 
 fn pick_language(

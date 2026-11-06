@@ -1,0 +1,131 @@
+msgid "Shown modules"
+msgstr "Angezeigte Module"
+
+msgid "Rows of the tree that are not expanded: the level the Graph's figures are counted on."
+msgstr "Nicht aufgeklappte Zeilen des Baums: die Ebene, auf der die Kennzahlen des Graphen gezählt werden."
+
+msgid "Dependencies (shown level)"
+msgstr "Abhängigkeiten (angezeigte Ebene)"
+
+msgid "Directed dependencies between the shown modules; dependencies inside one module are not counted."
+msgstr "Gerichtete Abhängigkeiten zwischen den angezeigten Modulen; Abhängigkeiten innerhalb eines Moduls zählen nicht."
+
+msgid "Cycle groups (shown level)"
+msgstr "Zyklusgruppen (angezeigte Ebene)"
+
+msgid "Groups of shown modules that depend on each other in a cycle. Expanding a package can reveal cycles inside it."
+msgstr "Gruppen angezeigter Module, die zyklisch voneinander abhängen. Ein aufgeklapptes Paket kann Zyklen in seinem Inneren zeigen."
+
+msgid "ACD (shown level)"
+msgstr "ACD (angezeigte Ebene)"
+
+msgid "Average component dependency (Lakos) of the shown modules: how many shown modules one depends on, itself included, on average."
+msgstr "Durchschnittliche Komponentenabhängigkeit (Lakos) der angezeigten Module: von wie vielen angezeigten Modulen eines im Mittel abhängt, sich selbst eingeschlossen."
+
+msgid "ACD (module level)"
+msgstr "ACD (Modulebene)"
+
+msgid "Average component dependency (Lakos) of the modules at depth 2, as the arc42 quality chapter computes it."
+msgstr "Durchschnittliche Komponentenabhängigkeit (Lakos) der Module auf Tiefe 2, wie sie das arc42-Qualitätskapitel berechnet."
+
+msgid "File cycle groups"
+msgstr "Datei-Zyklusgruppen"
+
+msgid "Groups of source files that depend on each other in a cycle."
+msgstr "Gruppen von Quelldateien, die zyklisch voneinander abhängen."
+
+msgid "Files"
+msgstr "Dateien"
+
+msgid "Source files in the matrix scope."
+msgstr "Quelldateien im Bereich der Matrix."
+
+msgid "Dependency evidence records"
+msgstr "Abhängigkeitsbelege"
+
+msgid "Recorded import and reference sites between files; ≥ marks counts cut off by the analysis."
+msgstr "Erfasste Import- und Referenzstellen zwischen Dateien; ≥ kennzeichnet von der Analyse abgeschnittene Zählungen."
+
+msgid "Area cycle groups"
+msgstr "Bereichs-Zyklusgruppen"
+
+msgid "Groups of the shown areas that depend on each other in a cycle."
+msgstr "Gruppen der angezeigten Bereiche, die zyklisch voneinander abhängen."
+
+msgid "Package cycles"
+msgstr "Paketzyklen"
+
+msgid "Groups of the diagram's packages that depend on each other in a cycle (package projection)."
+msgstr "Gruppen der Pakete im Diagramm, die zyklisch voneinander abhängen (Paketprojektion)."
+
+msgid "Build units"
+msgstr "Build-Einheiten"
+
+msgid "Directories built on their own: manifest projects and local Compose build contexts, one per path."
+msgstr "Eigenständig gebaute Verzeichnisse: Manifest-Projekte und lokale Compose-Build-Kontexte, eines je Pfad."
+
+msgid "Manifest projects"
+msgstr "Manifest-Projekte"
+
+msgid "Project manifests found (applications, libraries and tools), without workspace aggregators."
+msgstr "Gefundene Projektmanifeste (Anwendungen, Bibliotheken und Werkzeuge), ohne Workspace-Aggregatoren."
+
+msgid "Packages scanned"
+msgstr "Gescannte Pakete"
+
+msgid "Dependency packages the saved scan checked; — until a scan ran."
+msgstr "Vom gespeicherten Scan geprüfte Abhängigkeitspakete; — bis ein Scan gelaufen ist."
+
+msgid "Affected packages"
+msgstr "Betroffene Pakete"
+
+msgid "Scanned packages with at least one known vulnerability; — until a current scan is available."
+msgstr "Gescannte Pakete mit mindestens einer bekannten Schwachstelle; — bis ein aktueller Scan vorliegt."
+
+msgid "Findings"
+msgstr "Befunde"
+
+msgid "Known vulnerabilities reported for the scanned packages; — until a current scan is available."
+msgstr "Für die gescannten Pakete gemeldete bekannte Schwachstellen; — bis ein aktueller Scan vorliegt."
+
+msgid "Manifest / lockfile targets"
+msgstr "Manifest- / Lockfile-Ziele"
+
+msgid "Manifests and lockfiles the saved scan read; — until a scan ran."
+msgstr "Vom gespeicherten Scan gelesene Manifeste und Lockfiles; — bis ein Scan gelaufen ist."
+
+msgid "error"
+msgstr "Fehler"
+
+msgid "{{subject}}: {{status}}"
+msgstr "{{subject}}: {{status}}"
+
+msgid "Import"
+msgstr "Import"
+
+msgid "Scan"
+msgstr "Scan"
+
+msgid "application"
+msgstr "Anwendung"
+
+msgid "library"
+msgstr "Bibliothek"
+
+msgid "test"
+msgstr "Test"
+
+msgid "workspace"
+msgstr "Workspace"
+
+msgid "plugin"
+msgstr "Plug-in"
+
+msgid "service"
+msgstr "Dienst"
+
+msgid "Document language: German. The analysis engine writes the arc42 text in German."
+msgstr "Dokumentsprache: Deutsch. Die Analyse-Engine schreibt den arc42-Text auf Deutsch."
+
+msgid "{{acd}} and the cycle figures of this chapter are counted on modules (depth 2). {{shown}} is in the Graph tab; package cycles are in the chapter 5 diagram."
+msgstr "{{acd}} und die Zyklus-Kennzahlen dieses Kapitels werden auf Modulen (Tiefe 2) gezählt. {{shown}} steht im Graph-Tab, Paketzyklen im Diagramm von Kapitel 5."

@@ -43,7 +43,7 @@ export component SaveDialog inherits Rectangle {
                 spacing: 12px;
                 Icon {
                     icon: Icons.info;
-                    tint: Theme.medium;
+                    tint: Theme.warning;
                     width: 22px;
                     height: 22px;
                 }
@@ -96,7 +96,7 @@ export component NoticeBar inherits Rectangle {
     in property <string> text;
     callback dismiss();
     height: 32px;
-    background: Theme.medium.with-alpha(0.18);
+    background: Theme.warning.with-alpha(0.18);
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 8px;

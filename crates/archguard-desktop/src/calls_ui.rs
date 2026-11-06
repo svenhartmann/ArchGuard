@@ -19,6 +19,7 @@ mod view;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::status::Status;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
@@ -67,8 +68,11 @@ fn ui_labels(ui: &AppWindow) -> view::UiLabels {
 
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &CallsState) {
-    ui.global::<CallsData>()
-        .set_model(view::fill(s, &ui_labels(ui)));
+    let mut m = view::fill(s, &ui_labels(ui));
+    let status = Status::of(&s.idx.a.status);
+    m.status_slot = status.slot();
+    m.status_label = status.line(&Texts::of(ui), "Analysis").into();
+    ui.global::<CallsData>().set_model(m);
 }
 
 impl TabState for CallsState {

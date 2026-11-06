@@ -10,13 +10,16 @@ mod calls_ui;
 mod context;
 mod documents;
 mod documents_ui;
+mod format;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
+mod kpi;
 mod matrix;
 mod matrix_ui;
 mod network;
 mod quality_ui;
+mod rating;
 mod security_ui;
 mod services_ui;
 mod settings;
@@ -27,6 +30,7 @@ mod shell_ui;
 mod snapshot;
 mod start_ui;
 mod state;
+mod status;
 mod tab_support;
 mod tree;
 mod tree_order;
@@ -46,6 +50,7 @@ fn main() -> Result<(), slint::PlatformError> {
     if !context::headless_run() {
         set_dock_icon();
     }
+    format::wire(&ui);
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     shell_ui::start(&ui, args);

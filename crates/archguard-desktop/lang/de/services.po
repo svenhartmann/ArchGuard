@@ -1,26 +1,11 @@
 msgid "Reading the service topology …"
 msgstr "Diensttopologie wird gelesen …"
 
-msgid "{} projects · {} applications · {} containers · "
-msgstr "{} Projekte · {} Anwendungen · {} Container · "
-
-msgid "{} services in {} Compose files · "
-msgstr "{} Dienste in {} Compose-Dateien · "
-
-msgid "{} / {} connections shown · {} cyclic groups · "
-msgstr "{} / {} Beziehungen angezeigt · {} zyklische Gruppen · "
-
-msgid "Monorepo detected: {}"
-msgstr "Monorepo erkannt: {}"
-
-msgid "Monorepo not established: {}"
-msgstr "Monorepo nicht belegt: {}"
-
 msgid " · Analysis incomplete – missing connections do not establish isolation"
-msgstr " · Analyse unvollständig – fehlende Verbindungen sind kein Beleg für Isolation"
+msgstr " · Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation"
 
 msgid " Analysis incomplete – missing connections do not establish isolation; see diagnostics."
-msgstr " Analyse unvollständig – fehlende Verbindungen sind kein Beleg für Isolation; siehe Diagnosehinweise."
+msgstr " Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation; siehe Diagnosehinweise."
 
 msgid "No supported project manifests or Docker Compose files found."
 msgstr "Keine unterstützten Projektmanifeste oder Docker-Compose-Dateien gefunden."
@@ -37,14 +22,8 @@ msgstr "HTTP(S)-Endpunkte aus der Compose-Konfiguration sind potenzielle Diensta
 msgid "Static source candidates; execution is not proven. Event cycles can represent intended workflows. Aspire references are configuration, not calls."
 msgstr "Statische Quellkandidaten; Ausführung ist nicht belegt. Event-Zyklen können gewollte Abläufe darstellen. Aspire-Verweise sind Konfiguration, keine Aufrufe."
 
-msgid "{} projects · applications, libraries and tools"
-msgstr "{} Projekte · Anwendungen, Bibliotheken und Werkzeuge"
-
 msgid "Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections."
-msgstr "Manifestinventar. Nur erkannte Anwendungen werden zu Dienstknoten; gemeinsame Namen und Technologien belegen keine Beziehungen."
-
-msgid "Show more projects"
-msgstr "Weitere Projekte anzeigen"
+msgstr "Manifestinventar. Nur erkannte Anwendungen werden zu Dienstknoten; gemeinsame Namen und Technologien belegen keine Dienstbeziehungen."
 
 msgid "Project workspace"
 msgstr "Projektverbund"
@@ -65,7 +44,7 @@ msgid "Diagnostic messages (original wording)"
 msgstr "Diagnosehinweise (Originaltext)"
 
 msgid "Cyclic group: {}"
-msgstr "Zyklische Gruppe: {}"
+msgstr "Zyklusgruppe: {}"
 
 msgid "Legend"
 msgstr "Legende"
@@ -86,7 +65,7 @@ msgid "Red marks only right-hand cyclic edges; left-hand edges keep their direct
 msgstr "Nur rechte zyklische Kanten sind rot; linke Kanten behalten ihre Richtungsfarbe."
 
 msgid "Relation"
-msgstr "Beziehung"
+msgstr "Dienstbeziehung"
 
 msgid "API configuration"
 msgstr "API-Konfiguration"
@@ -126,7 +105,7 @@ msgid "All services"
 msgstr "Alle Dienste"
 
 msgid "Relations"
-msgstr "Beziehungen"
+msgstr "Dienstbeziehungen"
 
 msgid "Up / down"
 msgstr "Auf / ab"
@@ -165,7 +144,7 @@ msgid "Source evidence (original wording)"
 msgstr "Quellenbelege (Originaltext)"
 
 msgid "No source evidence was included for this connection."
-msgstr "Für diese Beziehung wurden keine Quellenbelege mitgeliefert."
+msgstr "Für diese Dienstbeziehung wurden keine Quellenbelege mitgeliefert."
 
 msgid "Project path: {}"
 msgstr "Projektpfad: {}"
@@ -180,7 +159,7 @@ msgid "Project evidence (original wording)"
 msgstr "Projektbelege (Originaltext)"
 
 msgid "Select a deployment to inspect its connections."
-msgstr "Eine Bereitstellung auswählen, um ihre Beziehungen zu prüfen."
+msgstr "Eine Bereitstellung auswählen, um ihre Dienstbeziehungen zu prüfen."
 
 msgid "No service declaration is associated with this project. Libraries and test tools remain project inventory."
 msgstr "Diesem Projekt ist keine Dienstdeklaration zugeordnet. Bibliotheken und Testwerkzeuge bleiben im Projektinventar."
@@ -204,7 +183,52 @@ msgid "Profiles: {}"
 msgstr "Profile: {}"
 
 msgid "{} connections"
-msgstr "Beziehungen: {}"
+msgstr "Dienstbeziehungen: {}"
 
 msgid "No connections of this kind were found for this service."
-msgstr "Für diesen Dienst wurden keine Beziehungen dieser Art gefunden."
+msgstr "Für diesen Dienst wurden keine Dienstbeziehungen dieser Art gefunden."
+
+msgid "Monorepo detected"
+msgstr "Monorepo erkannt"
+
+msgid "Monorepo not established"
+msgstr "Kein Monorepo nachgewiesen"
+
+msgid "Show more manifest projects"
+msgstr "Weitere Manifest-Projekte anzeigen"
+
+msgid "{0} Compose file"
+msgid_plural "{0} Compose files"
+msgstr[0] "{0} Compose-Datei"
+msgstr[1] "{0} Compose-Dateien"
+
+msgid "{0} application"
+msgid_plural "{0} applications"
+msgstr[0] "{0} Anwendung"
+msgstr[1] "{0} Anwendungen"
+
+msgid "{0} container"
+msgid_plural "{0} containers"
+msgstr[0] "{0} Container"
+msgstr[1] "{0} Container"
+
+msgid "{0} manifest project · applications, libraries and tools"
+msgid_plural "{0} manifest projects · applications, libraries and tools"
+msgstr[0] "{0} Manifest-Projekt · Anwendungen, Bibliotheken und Werkzeuge"
+msgstr[1] "{0} Manifest-Projekte · Anwendungen, Bibliotheken und Werkzeuge"
+
+msgid "{0} manifest project"
+msgid_plural "{0} manifest projects"
+msgstr[0] "{0} Manifest-Projekt"
+msgstr[1] "{0} Manifest-Projekte"
+
+msgid "{0} service"
+msgid_plural "{0} services"
+msgstr[0] "{0} Dienst"
+msgstr[1] "{0} Dienste"
+
+msgid "{} / {} service relations shown"
+msgstr "{} / {} Dienstbeziehungen angezeigt"
+
+msgid "{} manifest project roots without workspace aggregators, {} local Compose build contexts; at least two establish a monorepo."
+msgstr "{} Manifest-Projektwurzeln ohne Workspace-Aggregatoren, {} lokale Compose-Build-Kontexte; ab zwei liegt ein Monorepo vor."

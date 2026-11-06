@@ -14,7 +14,7 @@ component DetailLine inherits Rectangle {
         : line.kind == 12 ? @tr("Maximum cyclomatic complexity: {}", line.a)
         : line.kind == 13 ? @tr("{}/{} methods measured. Height and color show the highest recorded method value, not a class average.", line.a, line.b)
         : line.kind == 14 ? metric + ": " + line.a
-        : line.kind == 15 ? @tr("{}/{} entries measured · maximum {}: {}", line.a, line.b, metric, line.c)
+        : line.kind == 15 ? @tr("{} / {} elements measured · maximum {}: {}", line.a, line.b, metric, line.c)
         : line.kind == 16 ? @tr("Select a class below for its methods and measurements.")
         : line.kind == 17 ? @tr("File coverage: {}/{} lines · {} uncovered", line.a, line.b, line.c)
         : line.kind == 18 ? @tr("File coverage: unknown")
@@ -107,7 +107,7 @@ export component StartDetails inherits Rectangle {
                 Text {
                     text: lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
                     color: Theme.text;
-                    font-size: 17px;
+                    font-size: Theme.font-section;
                     font-weight: 650;
                 }
                 HorizontalLayout {

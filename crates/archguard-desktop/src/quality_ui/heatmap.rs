@@ -2,26 +2,9 @@
 //! measured value with all measured classes of the same source language
 //! in the original project (the cohort); search and scope never change it.
 
-use std::collections::BTreeMap;
+use archguard_engine::ClassMetrics;
 
-use archguard_engine::{ClassMetrics, CountMetric};
-
-/// Metric columns, in the web's order.
-pub const METRICS: [&str; 6] = ["cbo", "rfc", "dit", "noc", "wmc", "lcom4"];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum State {
-    NotApplicable,
-    Low,
-    Medium,
-    High,
-    Unknown,
-    /// Fewer than five measurements or an unknown language.
-    Small,
-    /// All measurements of the cohort are equal.
-    Equal,
-    Info,
-}
+pub use crate::rating::{Cohorts, METRICS, Rating, not_applicable, value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
@@ -39,124 +22,13 @@ pub enum Sort {
     Metric(usize),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Assessment {
-    pub value: Option<f64>,
-    pub state: State,
-    pub population: usize,
-}
-
-fn metric<'a>(row: &'a ClassMetrics, key: &str) -> Option<&'a CountMetric> {
-    match key {
-        "cbo" => Some(&row.cbo),
-        "rfc" => Some(&row.rfc),
-        "dit" => Some(&row.dit),
-        "noc" => Some(&row.noc),
-        "wmc" => Some(&row.wmc),
-        _ => None,
-    }
-}
-
-/// `classMetricValue`: a complete measurement, else `None`.
-pub fn value(row: &ClassMetrics, key: &str) -> Option<f64> {
-    if key == "lcom4" {
-        return row.lcom4.map(|v| v as f64);
-    }
-    let m = metric(row, key)?;
-    m.value
-        .filter(|_| m.status.is_empty() || m.status == "ready")
-        .map(|v| v as f64)
-}
-
-/// `true` when the metric does not apply to the class (Go embedding).
-pub fn not_applicable(row: &ClassMetrics, key: &str) -> bool {
-    metric(row, key).is_some_and(|m| m.status == "not_applicable")
-}
-
-/// `classMetricLanguage`: the cohort language from the file extension.
-pub fn language(row: &ClassMetrics) -> &'static str {
-    let ext = row.file.rsplit('.').next().unwrap_or("").to_lowercase();
-    match ext.as_str() {
-        "go" => "go",
-        "java" => "java",
-        "cs" => "csharp",
-        "ts" | "tsx" => "typescript",
-        "js" | "jsx" | "mjs" | "cjs" => "javascript",
-        _ => "unknown",
-    }
-}
-
-/// Sorted measured values per `(language, metric)`.
-#[derive(Debug, Default)]
-pub struct Cohorts(BTreeMap<(&'static str, &'static str), Vec<f64>>);
-
-impl Cohorts {
-    pub fn new(classes: &[ClassMetrics]) -> Self {
-        let mut map: BTreeMap<_, Vec<f64>> = BTreeMap::new();
-        for row in classes {
-            for key in METRICS {
-                if let Some(v) = value(row, key) {
-                    map.entry((language(row), key)).or_default().push(v);
-                }
-            }
-        }
-        for values in map.values_mut() {
-            values.sort_by(f64::total_cmp);
-        }
-        Cohorts(map)
-    }
-
-    /// `classMetricAssessment`.
-    pub fn assess(&self, row: &ClassMetrics, key: &'static str) -> Assessment {
-        let values = self
-            .0
-            .get(&(language(row), key))
-            .map_or(&[][..], Vec::as_slice);
-        let value = value(row, key);
-        let state = match value {
-            None if not_applicable(row, key) => State::NotApplicable,
-            None => State::Unknown,
-            Some(v) => rate(key, v, language(row), values),
-        };
-        Assessment {
-            value,
-            state,
-            population: values.len(),
-        }
-    }
-}
-
-fn rate(key: &str, v: f64, language: &str, values: &[f64]) -> State {
-    if key == "noc" {
-        return State::Info;
-    }
-    if v == 0.0 || (key == "lcom4" && v == 1.0) {
-        return State::Low;
-    }
-    if language == "unknown" || values.len() < 5 {
-        return State::Small;
-    }
-    if values[0] == values[values.len() - 1] {
-        return State::Equal;
-    }
-    // Strictly smaller values: equal measurements share a rank.
-    let rank = values.partition_point(|&x| x < v) as f64 / (values.len() - 1) as f64;
-    if rank >= 0.8 {
-        State::High
-    } else if rank >= 0.5 {
-        State::Medium
-    } else {
-        State::Low
-    }
-}
-
 /// `classHeatmapPriority`: high counts 2, elevated 1.
 pub fn priority(cohorts: &Cohorts, row: &ClassMetrics) -> u32 {
     METRICS
         .iter()
         .map(|k| match cohorts.assess(row, k).state {
-            State::High => 2,
-            State::Medium => 1,
+            Rating::High => 2,
+            Rating::Medium => 1,
             _ => 0,
         })
         .sum()
@@ -171,11 +43,11 @@ fn keep(cohorts: &Cohorts, row: &ClassMetrics, filter: Filter) -> bool {
     };
     match filter {
         Filter::All => true,
-        Filter::High => rated().any(|s| s == State::High),
-        Filter::Low => rated().all(|s| s == State::Low),
+        Filter::High => rated().any(|s| s == Rating::High),
+        Filter::Low => rated().all(|s| s == Rating::Low),
         Filter::Unknown => METRICS
             .iter()
-            .any(|k| cohorts.assess(row, k).state == State::Unknown),
+            .any(|k| cohorts.assess(row, k).state == Rating::Unknown),
     }
 }
 
@@ -204,32 +76,9 @@ pub fn rows<'a>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub use crate::rating::tests::{class, count};
+
     use super::*;
-
-    pub fn count(value: Option<u64>, status: &str) -> CountMetric {
-        CountMetric {
-            value,
-            observed: value.unwrap_or(0),
-            status: status.into(),
-            evidence: Vec::new(),
-        }
-    }
-
-    /// A class with all five count metrics at `v` (ready) and LCOM4 `lcom4`.
-    pub fn class(id: &str, file: &str, v: Option<u64>, lcom4: Option<usize>) -> ClassMetrics {
-        let m = || count(v, if v.is_some() { "ready" } else { "partial" });
-        ClassMetrics {
-            class_id: id.into(),
-            node: file.into(),
-            file: file.into(),
-            cbo: m(),
-            rfc: m(),
-            dit: m(),
-            noc: m(),
-            wmc: m(),
-            lcom4,
-        }
-    }
 
     fn java(values: &[u64]) -> Vec<ClassMetrics> {
         values
@@ -244,57 +93,6 @@ pub(crate) mod tests {
                 )
             })
             .collect()
-    }
-
-    #[test]
-    fn partial_measurements_stay_unknown_and_count_nothing() {
-        let rows = vec![class("rust:a.rs::A", "a.rs", None, None)];
-        let cohorts = Cohorts::new(&rows);
-        let a = cohorts.assess(&rows[0], "cbo");
-        assert_eq!((a.value, a.state), (None, State::Unknown));
-        assert_eq!(priority(&cohorts, &rows[0]), 0);
-    }
-
-    #[test]
-    fn unknown_language_and_small_cohorts_stay_neutral() {
-        let mut rows = vec![class("rust:a.rs::A", "a.rs", Some(11), None)];
-        rows.extend(java(&[3, 4]));
-        let cohorts = Cohorts::new(&rows);
-        assert_eq!(cohorts.assess(&rows[0], "wmc").state, State::Small);
-        assert_eq!(cohorts.assess(&rows[1], "cbo").state, State::Small);
-        assert_eq!(cohorts.assess(&rows[0], "noc").state, State::Info);
-    }
-
-    #[test]
-    fn rank_is_the_share_of_strictly_smaller_values() {
-        // Cohort 1..=6: rank = smaller / (n - 1).
-        let rows = java(&[1, 2, 3, 4, 5, 6]);
-        let cohorts = Cohorts::new(&rows);
-        let state = |i: usize| cohorts.assess(&rows[i], "cbo").state;
-        assert_eq!(state(2), State::Low); // 2/5 = 0.4
-        assert_eq!(state(3), State::Medium); // 3/5 = 0.6
-        assert_eq!(state(4), State::High); // 4/5 = 0.8
-        assert_eq!(cohorts.assess(&rows[0], "cbo").population, 6);
-        // LCOM4 1 (one connected group) is low; equal cohorts stay neutral.
-        assert_eq!(cohorts.assess(&rows[5], "lcom4").state, State::Low);
-        let equal = java(&[3, 3, 3, 3, 3]);
-        assert_eq!(
-            Cohorts::new(&equal).assess(&equal[0], "cbo").state,
-            State::Equal
-        );
-        let zero = java(&[0, 3, 3, 3, 3]);
-        assert_eq!(
-            Cohorts::new(&zero).assess(&zero[0], "cbo").state,
-            State::Low
-        );
-    }
-
-    #[test]
-    fn not_applicable_keeps_its_own_state() {
-        let mut rows = java(&[1, 2, 3, 4, 5]);
-        rows[0].dit = count(None, "not_applicable");
-        let cohorts = Cohorts::new(&rows);
-        assert_eq!(cohorts.assess(&rows[0], "dit").state, State::NotApplicable);
     }
 
     #[test]

@@ -3,8 +3,9 @@
 // src/security_ui.rs.
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
-import { SecurityLine, SecurityFindingItem, SecurityMetric, SecurityChip, SecuritySummary, SecurityList, SecurityCard } from "security_parts.slint";
+import { Fmt } from "format.slint";
+import { Button, KpiItem, StatCard, SeverityChip, StatusLine, Disclosure, EmptyState } from "widgets.slint";
+import { SecurityLine, SecurityFindingItem, SecurityList, SecurityCard } from "security_parts.slint";
 
 export { SecurityLine, SecurityFindingItem }
 
@@ -13,8 +14,11 @@ export struct SecurityModel {
     loaded: bool,
     // not_scanned, ready, partial, stale, error or another scanner value.
     status: string,
-    // Packages scanned, affected packages, findings, targets ("—" if unknown).
-    metrics: [string],
+    // `Status::slot` and "Scan: …".
+    status-slot: int,
+    status-label: string,
+    // Packages scanned, affected packages, findings, targets (`kpi.rs`).
+    metrics: [KpiItem],
     // Per severity in SECURITY_SEVERITIES order ("—" if unknown).
     severities: [string],
     scanner: string,
@@ -44,33 +48,24 @@ export global SecurityData {
     callback open-url(string);
 }
 
-// securityStatusText.
-component StatusText inherits Text {
-    in property <string> status;
-    text: status == "not_scanned" ? @tr("Security" => "Not scanned — run the CLI command to create a dependency scan.")
-        : status == "ready" ? @tr("Security" => "Scan completed")
-        : status == "partial" ? @tr("Security" => "Partial scan — findings do not cover all dependencies.")
-        : status == "stale" ? @tr("Security" => "Outdated snapshot — dependency inputs have changed; run a fresh scan.")
-        : status == "error" ? @tr("Security" => "Scan failed — dependency coverage is unknown.")
-        : @tr("Security" => "Unknown scan status");
-    color: status == "error" || status == "stale" ? Theme.priority : Theme.text;
-    font-size: 14px;
-    font-weight: 650;
-    wrap: word-wrap;
+// securityStatusText: what the scan status means for the findings.
+component StatusText inherits StatusLine {
+    in property <string> code;
+    detail: code == "not_scanned" ? @tr("Security" => "Run the CLI command to create a dependency scan.")
+        : code == "partial" ? @tr("Security" => "Findings do not cover all dependencies.")
+        : code == "stale" ? @tr("Security" => "Dependency inputs have changed; run a fresh scan.")
+        : code == "error" ? @tr("Security" => "Dependency coverage is unknown.")
+        : "";
 }
-
 // The text of an empty findings list.
-component EmptyText inherits Text {
+component EmptyText inherits EmptyState {
     in property <int> kind;
-    text: kind == 1 ? @tr("Security" => "No findings match these filters.")
+    reason: kind == 1 ? @tr("Security" => "No findings match these filters.")
         : kind == 2 ? @tr("Security" => "Not scanned. No security conclusion is available.")
         : kind == 3 ? @tr("Security" => "Scan failed. The absence of findings does not establish dependency safety.")
         : kind == 4 ? @tr("Security" => "No packages were scanned. The absence of findings does not establish dependency safety.")
         : kind == 5 ? @tr("Security" => "No vulnerabilities reported for the scanned package versions in this snapshot.")
         : @tr("Security" => "No findings were recorded; this incomplete or outdated snapshot does not establish dependency safety.");
-    color: Theme.muted;
-    font-size: 12px;
-    wrap: word-wrap;
 }
 
 component Fact inherits Text {
@@ -97,7 +92,7 @@ component Coverage inherits Rectangle {
         padding-top: 10px;
         padding-bottom: 10px;
         spacing: 8px;
-        SecuritySummary { text: @tr("Security" => "Scan"); font-size: 14px; open <=> root.open; }
+        Disclosure { text: @tr("Security" => "Scan"); size: 14px; tint: Theme.text; open <=> root.open; }
         if root.open: VerticalLayout {
             spacing: 8px;
             Text {
@@ -230,24 +225,24 @@ export component SecurityView inherits Rectangle {
             padding: 16px;
             spacing: 0;
             Rectangle { height: 14px; }
-            StatusText { status: root.model.status; }
+            StatusText { code: root.model.status; status: root.model.status-slot; label: root.model.status-label; }
             Rectangle { height: 16px; }
             HorizontalLayout {
                 spacing: 8px;
-                SecurityMetric { value: root.model.metrics[0]; label: @tr("Security" => "Packages scanned"); }
-                SecurityMetric { value: root.model.metrics[1]; label: @tr("Security" => "Affected packages"); }
-                SecurityMetric { value: root.model.metrics[2]; label: @tr("Security" => "Findings"); }
-                SecurityMetric { value: root.model.metrics[3]; label: @tr("Security" => "Manifest / lockfile targets"); }
+                StatCard { kpi: root.model.metrics[0]; }
+                StatCard { kpi: root.model.metrics[1]; }
+                StatCard { kpi: root.model.metrics[2]; }
+                StatCard { kpi: root.model.metrics[3]; }
             }
             Rectangle { height: 8px; }
             HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
-                SecurityChip { key: "critical"; value: root.model.severities[0]; }
-                SecurityChip { key: "high"; value: root.model.severities[1]; }
-                SecurityChip { key: "medium"; value: root.model.severities[2]; }
-                SecurityChip { key: "low"; value: root.model.severities[3]; }
-                SecurityChip { key: "unknown"; value: root.model.severities[4]; }
+                SeverityChip { key: "critical"; value: root.model.severities[0]; }
+                SeverityChip { key: "high"; value: root.model.severities[1]; }
+                SeverityChip { key: "medium"; value: root.model.severities[2]; }
+                SeverityChip { key: "low"; value: root.model.severities[3]; }
+                SeverityChip { key: "unknown"; value: root.model.severities[4]; }
             }
             Rectangle { height: 16px; }
             Coverage { model: root.model; }
@@ -255,7 +250,7 @@ export component SecurityView inherits Rectangle {
             Controls { model: root.model; }
             Rectangle { height: 8px; }
             Text {
-                text: @tr("Security" => "{} / {} matching findings shown · {} in snapshot", root.model.shown, root.model.matching, root.model.total);
+                text: @tr("Security" => "{} / {} matching findings shown · {} in snapshot", Fmt.int(root.model.shown), Fmt.int(root.model.matching), Fmt.int(root.model.total));
                 color: Theme.muted;
                 font-size: 12px;
                 wrap: word-wrap;

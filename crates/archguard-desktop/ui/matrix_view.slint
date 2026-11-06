@@ -1,6 +1,7 @@
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, SearchField } from "widgets.slint";
+import { Icon, Icons, Button, SearchField, KpiItem, StatInline, PageTitle } from "widgets.slint";
+import { Fmt } from "format.slint";
 
 // kind: 0 package, 1 direct files of the scope root, 2 outside the scope.
 export struct MatrixColumn {
@@ -24,9 +25,7 @@ export struct MatrixRowItem {
 export component MatrixView inherits Rectangle {
     in property <[MatrixColumn]> columns;
     in property <[MatrixRowItem]> rows;
-    in property <int> files;
-    in property <string> total;
-    in property <int> cycle-count;
+    in property <[KpiItem]> kpis;
     in property <int> row-start;
     in property <int> row-total;
     in property <[string]> scopes;
@@ -94,7 +93,7 @@ export component MatrixView inherits Rectangle {
                     x: 0;
                     width: parent.width;
                     height: parent.height;
-                    text: @tr("Target packages {}–{} / {}", root.col-count > 0 ? root.col-start + 1 : 0, root.col-start + root.col-count, root.columns.length);
+                    text: @tr("Target packages {}–{} / {}", Fmt.int(root.col-count > 0 ? root.col-start + 1 : 0), Fmt.int(root.col-start + root.col-count), Fmt.int(root.columns.length));
                     color: Theme.muted;
                     font-size: 12px;
                     vertical-alignment: center;
@@ -107,11 +106,11 @@ export component MatrixView inherits Rectangle {
             spacing: 10px;
             VerticalLayout {
                 alignment: start;
-                Text { text: @tr("Dependencies in the tree"); color: Theme.text; font-size: 18px; font-weight: 700; }
-                Text {
-                    text: @tr("{} files · {} dependency evidence records · {} file cycle groups", root.files, root.total, root.cycle-count);
-                    color: Theme.muted;
-                    font-size: 12px;
+                PageTitle { text: @tr("Dependencies in the tree"); section: true; }
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    for k in root.kpis: StatInline { kpi: k; }
                 }
             }
             Rectangle { horizontal-stretch: 1; }
@@ -170,7 +169,7 @@ export component MatrixView inherits Rectangle {
             spacing: 8px;
             alignment: start;
             Text {
-                text: @tr("Rows {}–{} / {}", root.rows.length > 0 ? root.row-start + 1 : 0, root.row-start + root.rows.length, root.row-total);
+                text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
                 color: Theme.text;
                 font-size: 13px;
                 vertical-alignment: center;

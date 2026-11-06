@@ -2,6 +2,7 @@
 //! `renderEngineeringQuality`): description, coverage notes, import command.
 
 use super::lang;
+use crate::status::Status;
 use crate::tab_support::Texts;
 
 /// The web's sections, in the order of its "View" select.
@@ -93,16 +94,28 @@ impl Section {
         }
     }
 
-    /// The status word before "· shown / total matching records".
-    pub fn status<'a>(self, lang: &'a Texts, status: Option<&str>) -> &'a str {
-        if !self.computed() {
-            return lang::status(lang, status.unwrap_or(""));
-        }
-        match status {
-            Some("ready") => lang.t("measured"),
-            Some("partial") => lang.t("partial analysis"),
-            Some("not_applicable") => lang.t("not applicable"),
-            _ => lang.t("unavailable"),
+    /// The status line of the section's source: `(Status::slot, "Analysis:
+    /// partial")` for computed sections, "Import: …" for imported ones.
+    /// Codes outside the shared vocabulary keep their own word.
+    pub fn status(self, lang: &Texts, code: Option<&str>) -> (i32, String) {
+        let code = code.unwrap_or(if self.computed() { "unavailable" } else { "" });
+        let subject = if self.computed() {
+            "Analysis"
+        } else {
+            "Import"
+        };
+        match Status::from_code(code) {
+            Some(s) => (s.slot(), s.line(lang, subject)),
+            None => (
+                Status::Unavailable.slot(),
+                lang.f(
+                    "{subject}: {status}",
+                    &[
+                        ("subject", lang.t(subject).to_string()),
+                        ("status", lang::status(lang, code).to_string()),
+                    ],
+                ),
+            ),
         }
     }
 }
@@ -114,22 +127,22 @@ mod tests {
     #[test]
     fn computed_and_imported_sections_name_their_status_like_the_web() {
         let en = &Texts::default();
+        let line = |s: Section, code| s.status(en, code).1;
+        assert_eq!(line(Section::Heatmap, Some("partial")), "Analysis: partial");
+        assert_eq!(line(Section::Heatmap, Some("ready")), "Analysis: ready");
+        assert_eq!(line(Section::Knowledge, None), "Analysis: unavailable");
+        assert_eq!(line(Section::Tests, Some("ready")), "Import: ready");
         assert_eq!(
-            Section::Heatmap.status(en, Some("partial")),
-            "partial analysis"
+            line(Section::Tests, Some("not_imported")),
+            "Import: not imported"
         );
-        assert_eq!(Section::Knowledge.status(en, None), "unavailable");
         assert_eq!(
-            Section::Tests.status(en, Some("not_imported")),
-            "not imported"
-        );
-        assert_eq!(
-            Section::History.status(en, Some("not_recorded")),
-            "not recorded"
+            line(Section::History, Some("not_recorded")),
+            "Import: not recorded"
         );
         assert_eq!(
             Section::Cohesion.status(&Texts::german(), Some("partial")),
-            "unvollständiger Bericht"
+            (1, "Import: teilweise".to_string())
         );
         assert_eq!(Section::ALL[5].index(), 5);
     }

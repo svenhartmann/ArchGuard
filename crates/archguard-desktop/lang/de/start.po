@@ -2,7 +2,7 @@ msgid " · {} surfaces match"
 msgstr " · {} Flächen entsprechen"
 
 msgid "Analyzing calls and classes …"
-msgstr "Analysiere Aufrufe und Klassen …"
+msgstr "Aufrufe und Klassen werden analysiert …"
 
 msgid "Back"
 msgstr "Zurück"
@@ -56,7 +56,7 @@ msgid "More evidence"
 msgstr "Weitere Belege"
 
 msgid "No connections or findings recorded at this level."
-msgstr "Keine Verbindungen oder Befunde auf dieser Ebene erfasst."
+msgstr "Keine Abhängigkeiten oder Befunde auf dieser Ebene erfasst."
 
 msgid "No imported measurement for this class."
 msgstr "Kein importierter Messwert für diese Klasse."
@@ -104,7 +104,7 @@ msgid "Unknown · no usable coverage"
 msgstr "Unbekannt · keine nutzbare Abdeckung"
 
 msgid "Your architecture"
-msgstr "Deine Architektur"
+msgstr "Architektur im Überblick"
 
 msgid "max {}"
 msgstr "max. {}"
@@ -112,32 +112,11 @@ msgstr "max. {}"
 msgid "package cycle"
 msgstr "Paketzyklus"
 
-msgid "{} classes / files · {} surfaces"
-msgstr "{} Klassen / Dateien · {} Flächen"
-
-msgid "{} entries"
-msgstr "{} Einträge"
-
-msgid "{} entry"
-msgstr "{} Eintrag"
-
 msgid "{} findings in the containing area"
 msgstr "{} Befunde im zugehörigen Bereich"
 
-msgid "{} findings"
-msgstr "{} Befunde"
-
 msgid "{} max. {}"
 msgstr "{} max. {}"
-
-msgid "{} package cycle groups"
-msgstr "{} Paketzyklus-Gruppen"
-
-msgid "{} surfaces with gaps · {}/{} lines"
-msgstr "{} Flächen mit Lücken · {}/{} Zeilen"
-
-msgid "{}/{} entries measured · maximum {}: {}"
-msgstr "{}/{} Einträge gemessen · Maximum {}: {}"
 
 msgid "{}/{} method records · missing measurements stay unknown."
 msgstr "{}/{} Methodeneinträge · fehlende Messwerte bleiben unbekannt."
@@ -147,3 +126,22 @@ msgstr "{}/{} Methoden gemessen. Höhe und Farbe zeigen den höchsten erfassten 
 
 msgid "{}/{} source files measured. Coverage is file-level, not class- or method-level; import revision is unverified."
 msgstr "{}/{} Quelldateien gemessen. Abdeckung gilt für Dateien, nicht einzelne Klassen oder Methoden; Importrevision ungeprüft."
+
+msgid "{0} element"
+msgid_plural "{0} elements"
+msgstr[0] "{0} Element"
+msgstr[1] "{0} Elemente"
+
+msgid "{0} finding"
+msgid_plural "{0} findings"
+msgstr[0] "{0} Befund"
+msgstr[1] "{0} Befunde"
+
+msgid "{} / {} elements measured · maximum {}: {}"
+msgstr "{} / {} Elemente gemessen · Maximum {}: {}"
+
+msgid "{} elements · {} surfaces"
+msgstr "{} Elemente · {} Flächen"
+
+msgid "{} surfaces with gaps · {} / {} lines"
+msgstr "{} Flächen mit Lücken · {} / {} Zeilen"

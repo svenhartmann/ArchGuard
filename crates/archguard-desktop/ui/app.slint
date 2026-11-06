@@ -1,7 +1,7 @@
 import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab, Divider, Metric, SearchField } from "widgets.slint";
-import { TreeView, TreeRow, TreeLink, PriorityBadge } from "tree_view.slint";
+import { Icon, Icons, Button, Tab, Divider, SearchField, StatInline, KpiItem, Badge, Disclosure, EmptyState } from "widgets.slint";
+import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
 import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
 import { MatrixView, MatrixColumn, MatrixRowItem } from "matrix_view.slint";
@@ -14,12 +14,13 @@ import { SecurityView, SecurityData } from "security_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { Templates, Template } from "texts.slint";
+import { Fmt } from "format.slint";
 
 export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
 // Templates for text the Rust side composes (`tab_support::Texts`).
-export { Templates, Template }
+export { Templates, Template, Fmt, KpiItem }
 
 export struct Crumb {
     node: int,
@@ -96,8 +97,9 @@ component ExplorerRow inherits Rectangle {
             border-radius: 3.5px;
             background: Theme.cycle;
         }
-        if data.priority > 0: PriorityBadge {
-            priority: data.priority;
+        if data.priority > 0: Badge {
+            text: data.priority == 1 ? "P1" : "P2";
+            variant: data.priority == 1 ? "p1" : "p2";
             y: (parent.height - self.height) / 2;
         }
     }
@@ -144,7 +146,7 @@ component NeighborRow inherits Rectangle {
         padding-right: 8px;
         spacing: 8px;
         Text { text: root.item.label; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-        Text { text: root.item.weight; color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -208,13 +210,12 @@ export component AppWindow inherits Window {
     in property <int> selected-row: -1;
     in property <[Crumb]> crumbs;
     in property <int> dep-count;
-    in property <int> cycle-groups;
-    in property <string> acd;
+    // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
+    in property <[KpiItem]> graph-kpis;
     in property <int> count-in;
     in property <int> count-out;
     in property <int> count-both;
     in property <int> count-all;
-    in property <int> scope-nodes;
     in property <string> reference;
     in property <[Neighbor]> incoming;
     in property <[Neighbor]> outgoing;
@@ -244,9 +245,8 @@ export component AppWindow inherits Window {
     // Matrix tab.
     in property <[MatrixColumn]> m-columns;
     in property <[MatrixRowItem]> m-rows;
-    in property <int> m-files;
-    in property <string> m-total;
-    in property <int> m-cycle-count;
+    // Files, dependency evidence records, file cycle groups (`kpi.rs`).
+    in property <[KpiItem]> m-kpis;
     in property <int> m-row-start;
     in property <int> m-row-total;
     in property <[string]> m-scopes;
@@ -418,7 +418,7 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     compact: true;
                     icon: Icons.package;
-                    text: root.sub-projects.length;
+                    text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length));
                     pressed-state: root.projects-open;
                     clicked => { root.projects-open = !root.projects-open; }
                 }
@@ -512,9 +512,7 @@ export component AppWindow inherits Window {
             vertical-stretch: 1;
             columns: root.m-columns;
             rows: root.m-rows;
-            files: root.m-files;
-            total: root.m-total;
-            cycle-count: root.m-cycle-count;
+            kpis: root.m-kpis;
             row-start: root.m-row-start;
             row-total: root.m-row-total;
             scopes: root.m-scopes;
@@ -577,8 +575,8 @@ export component AppWindow inherits Window {
                 spacing: 10px;
                 Text {
                     text: root.error != "" ? @tr("Analysis failed") : @tr("Analyzing architecture …");
-                    color: root.error != "" ? Theme.cycle : Theme.text;
-                    font-size: 18px;
+                    color: root.error != "" ? Theme.danger : Theme.text;
+                    font-size: Theme.font-section;
                     font-weight: 600;
                     horizontal-alignment: center;
                 }
@@ -618,7 +616,7 @@ export component AppWindow inherits Window {
                         Button { text: @tr("Collapse all"); compact: true; clicked => { root.collapse-all(); } }
                     }
                     if root.explorer-tab == 0: Text {
-                        text: root.searching ? @tr("{} matches", root.hits.length) : @tr("{} of {} items shown", root.rows.length, root.node-total);
+                        text: root.searching ? @tr("{} matches", Fmt.int(root.hits.length)) : @tr("{} of {} modules shown", Fmt.int(root.rows.length), Fmt.int(root.node-total));
                         color: Theme.muted;
                         font-size: 12px;
                     }
@@ -639,18 +637,15 @@ export component AppWindow inherits Window {
                             clicked => { root.reveal(h.node); }
                         }
                     }
-                    if root.explorer-tab == 1 && root.cycles.length == 0: Text {
-                        text: @tr("No cycles found.");
-                        color: Theme.muted;
-                        font-size: 13px;
+                    if root.explorer-tab == 1 && root.cycles.length == 0: EmptyState {
                         vertical-stretch: 1;
-                        vertical-alignment: top;
+                        title: @tr("No cycles found.");
                     }
                     if root.explorer-tab == 1 && root.cycles.length > 0: ListView {
                         vertical-stretch: 1;
                         for c in root.cycles: PlainRow {
                             label: c.label;
-                            detail: @tr("{} modules", c.size);
+                            detail: @tr("{} modules", Fmt.int(c.size));
                             tone: Theme.cycle;
                             clicked => { root.reveal(c.first-node); }
                         }
@@ -710,10 +705,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; }
-                        Metric { value: root.scope-nodes; label: @tr("Scope nodes"); }
-                        Metric { value: root.dep-count; label: @tr("Dependencies"); }
-                        Metric { value: root.cycle-groups; label: @tr("Cyclic groups"); }
-                        Metric { value: root.acd; label: "ACD"; }
+                        for k in root.graph-kpis: StatInline { kpi: k; }
                     }
                 }
                 // Toolbar: display and dependency filter.
@@ -732,10 +724,10 @@ export component AppWindow inherits Window {
                         Rectangle { width: 10px; }
                         HorizontalLayout {
                             spacing: 6px;
-                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Incoming ({})", root.count-in); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
-                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Outgoing ({})", root.count-out); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
-                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", root.count-both); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
-                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", root.count-all); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Used by ({})", Fmt.int(root.count-in)); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Depends on ({})", Fmt.int(root.count-out)); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", Fmt.int(root.count-both)); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", Fmt.int(root.count-all)); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
                         }
                         if root.display == 0: HorizontalLayout {
@@ -798,7 +790,7 @@ export component AppWindow inherits Window {
                     padding: 16px;
                     spacing: 12px;
                     HorizontalLayout {
-                        Text { text: root.selected-label; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: root.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
                         Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.select-row(-1); } }
                     }
                     Text { text: root.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
@@ -807,7 +799,7 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             alignment: start;
                             spacing: 2px;
-                            Text { text: @tr("Depends on ({})", root.outgoing.length); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                            Text { text: @tr("Depends on ({})", Fmt.int(root.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
                             for n in root.outgoing: NeighborRow {
                                 item: n;
                                 tone: Theme.outgoing;
@@ -815,7 +807,7 @@ export component AppWindow inherits Window {
                                 clicked => { root.select-row(n.row); }
                             }
                             Rectangle { height: 12px; }
-                            Text { text: @tr("Used by ({})", root.incoming.length); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                            Text { text: @tr("Used by ({})", Fmt.int(root.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
                             for n in root.incoming: NeighborRow {
                                 item: n;
                                 tone: Theme.incoming;

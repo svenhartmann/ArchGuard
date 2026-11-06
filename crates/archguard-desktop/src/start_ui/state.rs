@@ -320,12 +320,3 @@ fn plan(s: &StartState) -> Layout {
         layout::layout(&regions, |e| s.value(e), layout::complexity_height)
     }
 }
-
-/// A measured value as the web prints it: integers without decimals.
-pub(super) fn number(v: f64) -> String {
-    if v.fract() == 0.0 && v.abs() < 1e15 {
-        format!("{}", v as i64)
-    } else {
-        format!("{v:.2}")
-    }
-}

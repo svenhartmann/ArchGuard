@@ -138,6 +138,15 @@ pub struct Projection {
 }
 
 impl Projection {
+    /// Package cycles of the projection: groups of shown packages that
+    /// depend on each other in a cycle (`kpi::PACKAGE_CYCLES`).
+    pub fn cycle_groups(&self) -> usize {
+        crate::tree_order::scc(self.nodes.len(), self.edges.iter().map(|e| (e.from, e.to)))
+            .into_iter()
+            .filter(|g| g.len() > 1)
+            .count()
+    }
+
     /// Only the cyclic relationships and the nodes they touch.
     pub fn cycles_only(&self) -> Projection {
         let mut keep = vec![false; self.nodes.len()];
@@ -530,6 +539,7 @@ mod tests {
             .map(|e| (e.from, e.to, e.count, e.cycle))
             .collect();
         assert_eq!(e, vec![(0, 2, 1, true), (2, 0, 1, true), (1, 0, 1, false)]);
+        assert_eq!(p.cycle_groups(), 1, "a↔b form one package cycle");
     }
 
     #[test]

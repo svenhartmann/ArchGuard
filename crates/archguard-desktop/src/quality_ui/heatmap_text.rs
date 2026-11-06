@@ -3,7 +3,7 @@
 
 use archguard_engine::ClassMetrics;
 
-use super::heatmap::{Cohorts, State};
+use super::heatmap::{Cohorts, Rating};
 use super::lang::number;
 use crate::tab_support::Texts;
 
@@ -21,20 +21,6 @@ pub fn help(lang: &Texts, metric: usize) -> &str {
     lang.t(HELP[metric])
 }
 
-/// `classMetricStateLabel`.
-pub fn state_label(lang: &Texts, state: State) -> &str {
-    match state {
-        State::NotApplicable => lang.t("Not applicable"),
-        State::Low => lang.t("Low"),
-        State::Medium => lang.t("Elevated"),
-        State::High => lang.t("High"),
-        State::Unknown => lang.t("Unknown"),
-        State::Small => lang.t("Few comparisons"),
-        State::Equal => lang.t("Equal values"),
-        State::Info => lang.t("Informational"),
-    }
-}
-
 /// `classMetricInterpretation`.
 pub fn interpretation(
     lang: &Texts,
@@ -49,11 +35,11 @@ pub fn interpretation(
             .into();
     }
     let a = cohorts.assess(row, key);
-    let head = format!("{} · {}. ", state_label(lang, a.state), number(a.value));
+    let head = format!("{} · {}. ", lang.t(a.state.label()), number(lang, a.value));
     let tail = match a.state {
-        State::Unknown => lang.t("Incomplete measurement. Observed lower bounds are not rated.",
+        Rating::Unknown => lang.t("Incomplete measurement. Observed lower bounds are not rated.",
         ).to_string(),
-        State::Info => lang.t("More subclasses can reflect intended reuse; no good/bad rating.",
+        Rating::Info => lang.t("More subclasses can reflect intended reuse; no good/bad rating.",
         ).to_string(),
         _ => lang.f("Comparison: {count} measured classes of the same source language. Search and package filters do not change the colors.",
             &[("count", a.population.to_string())],

@@ -9,9 +9,10 @@ use slint::{ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::kpi;
 use crate::network;
 use crate::state::{self, GraphState};
-use crate::tab_support::{self, Actions, TabState, index};
+use crate::tab_support::{self, Actions, TabState, Texts, index};
 use crate::tree::{EdgeMode, Sort};
 use crate::ui::*;
 
@@ -179,14 +180,18 @@ fn push_graph(ui: &AppWindow, g: &GraphState) {
     ui.set_edge_mode(mode_index(g.mode));
     ui.set_sort_by_deps(g.sort == Sort::Connections);
     ui.set_dep_count(v.links.len() as i32);
-    ui.set_cycle_groups(v.cycle_groups as i32);
-    ui.set_acd(format!("{:.2}", v.acd(&g.tree)).into());
+    let texts = Texts::of(ui);
+    ui.set_graph_kpis(tab_support::model([
+        kpi::SHOWN_MODULES.item(&texts, v.scope_rows().len()),
+        kpi::SHOWN_DEPENDENCIES.item(&texts, v.links.len()),
+        kpi::SHOWN_CYCLE_GROUPS.item(&texts, v.cycle_groups),
+        kpi::SHOWN_ACD.item(&texts, kpi::Value::Real(v.acd(&g.tree))),
+    ]));
     let (cin, cout, cboth, call) = g.counts();
     ui.set_count_in(cin as i32);
     ui.set_count_out(cout as i32);
     ui.set_count_both(cboth as i32);
     ui.set_count_all(call as i32);
-    ui.set_scope_nodes(v.scope_rows().len() as i32);
     push_selection(ui, g);
 }
 

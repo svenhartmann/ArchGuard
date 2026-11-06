@@ -20,7 +20,7 @@ msgid "No arc42 documentation in this report"
 msgstr "Keine arc42-Dokumentation in diesem Bericht"
 
 msgid "Generate a new report to see the architecture documentation."
-msgstr "Erzeuge einen neuen Bericht, um die Architekturdokumentation anzuzeigen."
+msgstr "Einen neuen Bericht erzeugen, um die Architekturdokumentation anzuzeigen."
 
 msgid "Markdown source"
 msgstr "Markdown-Quelltext"
@@ -29,7 +29,7 @@ msgid "Source and update"
 msgstr "Quelle und Aktualisierung"
 
 msgid "Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks."
-msgstr "Aus den ursprünglichen Projektbelegen erzeugt. Ansichtfilter und Simulationen ändern dieses Dokument nicht. Ergänze Projektkontext im exportierten Markdown; archguard doc --arc42 erhält eigene Texte außerhalb erzeugter Blöcke."
+msgstr "Aus den ursprünglichen Projektbelegen erzeugt. Ansichtfilter und Simulationen ändern dieses Dokument nicht. Projektkontext im exportierten Markdown ergänzen; archguard doc --arc42 erhält eigene Texte außerhalb erzeugter Blöcke."
 
 msgid "Optional: compare with a target model"
 msgstr "Optional: mit einem Sollmodell vergleichen"
@@ -41,7 +41,7 @@ msgid "Target architecture: the comparison with the declared model is not native
 msgstr "Sollarchitektur: der Vergleich mit dem deklarierten Modell ist noch nicht nativ."
 
 msgid "No entries recorded."
-msgstr "Keine Einträge erfasst."
+msgstr "Nichts erfasst."
 
 msgid "Diagram source · this diagram syntax is not supported in the viewer."
 msgstr "Diagrammquelle · diese Diagrammsyntax wird im Viewer nicht unterstützt."
