@@ -1,7 +1,8 @@
 // Services tab: the web viewer's service topology (renderServices in
 // viewer_services.js). Data and callbacks live in ServicesData, set from
 // src/services_ui.rs.
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Icons, Button, Disclosure, ZoomControls, HelpTip } from "widgets.slint";
 import { Fmt } from "format.slint";
@@ -115,7 +116,7 @@ component Details inherits VerticalLayout {
         open <=> root.open;
         tint: Theme.text;
         size: Theme.field-label;
-        weight: 600;
+        weight: Theme.weight-strong;
     }
     @children
 }
@@ -123,7 +124,7 @@ component Details inherits VerticalLayout {
 component Note inherits Text {
     in property <bool> muted: true;
     color: muted ? Theme.muted : Theme.text;
-    font-size: 12px;
+    font-size: Theme.font-small;
     wrap: word-wrap;
 }
 
@@ -139,9 +140,9 @@ component ProjectRow inherits Rectangle {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 12px;
-        Text { text: project.path; color: Theme.text; font-family: "Menlo"; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-        Text { text: project.name; color: Theme.text; font-size: 12px; font-weight: 700; vertical-alignment: center; overflow: elide; }
-        Text { text: ServicesData.project-kind(project.kind) + " · " + project.ecosystem; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+        Text { text: project.path; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-small; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        Text { text: project.name; color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; overflow: elide; }
+        Text { text: ServicesData.project-kind(project.kind) + " · " + project.ecosystem; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -151,7 +152,7 @@ component ProjectRow inherits Rectangle {
 
 component Label inherits Text {
     color: Theme.text;
-    font-size: 12px;
+    font-size: Theme.font-small;
     vertical-alignment: center;
 }
 
@@ -264,7 +265,7 @@ export component ServicesView inherits Rectangle {
     if m.state == 0: Text {
         text: @tr("Reading the service topology …");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -325,7 +326,7 @@ export component ServicesView inherits Rectangle {
                             Text {
                                 text: @tr("Cyclic group: {}", c.names);
                                 color: Theme.cycle;
-                                font-size: 12px;
+                                font-size: Theme.font-small;
                                 wrap: word-wrap;
                             }
                         }
@@ -358,7 +359,7 @@ export component ServicesView inherits Rectangle {
                         : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
                         : @tr("No service declarations were found.");
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                     vertical-alignment: center;
                 }
             }
