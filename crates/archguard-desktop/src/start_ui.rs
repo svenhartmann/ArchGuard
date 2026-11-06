@@ -164,6 +164,10 @@ pub fn wire(ui: &AppWindow) {
     d.on_reset(move || reset(()));
     wire_selection(ui, &d);
     services_wire::wire(ui, &d);
+    // The World beside a Graph follows its package and selection.
+    crate::follow_ui::on_follow("start", |ui, _, nav| {
+        tab_support::update(ui, |s: &mut StartState, _| s.follow(nav));
+    });
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
@@ -628,6 +632,29 @@ mod tests {
         let mut arch = fixture_state_at(dir.path());
         arch.restore(&s.memo());
         assert_eq!(arch.mode, Mode::Architecture);
+    }
+
+    /// Beside a Graph, the World enters its package and selects its node:
+    /// an area by name, else the entity of a file or class node.
+    #[test]
+    fn the_world_follows_a_graph() {
+        use crate::follow::Nav;
+        let (mut s, _) = fixture_state("py-layers");
+        s.follow(&Nav::Select("domain".into()));
+        let sel = s.selection.clone().expect("the area");
+        assert_eq!(s.scope.areas[sel.area].name, "domain");
+        s.follow(&Nav::Scope(Some("domain".into())));
+        assert_eq!(s.within.as_deref(), Some("domain"));
+        let e = s.scope.areas[0].entities[0];
+        let node = s.ev.entity(e).node.clone();
+        s.follow(&Nav::Select(node.clone()));
+        let sel = s.selection.clone().expect("a selection");
+        let picked = sel.entity.map(|e| s.ev.entity(e).node.clone());
+        let area = s.scope.areas[sel.area].name.clone();
+        assert!(picked.as_deref() == Some(&node) || area == node, "{node}");
+        s.follow(&Nav::Scope(None));
+        assert_eq!(s.within, None);
+        s.follow(&Nav::Select("no/such/node".into()));
     }
 
     /// Two npm projects side by side.
