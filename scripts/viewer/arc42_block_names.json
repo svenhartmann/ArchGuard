@@ -1,0 +1,62 @@
+[
+  {
+    "case": "this repository, level 2 (source roots below the crates)",
+    "names": ["archguard-analysis/src", "archguard-cli/src", "archguard-cli", "archguard-core/src", "archguard-desktop/src", "archguard-desktop", "archguard-engine/src/semantic_calls", "archguard-engine/src", "archguard-extract/src/kotlin", "archguard-extract/src", "archguard-mcp/src", "archguard-report/src", "archguard-store/src"],
+    "labels": ["archguard-analysis", "archguard-cli/src", "archguard-cli", "archguard-core", "archguard-desktop/src", "archguard-desktop", "archguard-engine/semantic_calls", "archguard-engine", "archguard-extract/kotlin", "archguard-extract", "archguard-mcp", "archguard-report", "archguard-store"]
+  },
+  {
+    "case": "this repository, level 2 with the crates directory",
+    "names": ["crates/archguard-analysis/src", "crates/archguard-engine/src/semantic_calls", "crates/archguard-engine/src", "crates/archguard-extract/src/kotlin"],
+    "labels": ["archguard-analysis", "archguard-engine/semantic_calls", "archguard-engine", "archguard-extract/kotlin"]
+  },
+  {
+    "case": "this repository, level 3 below one crate",
+    "names": ["archguard-desktop/src/architecture_ui", "archguard-desktop/src/calls_ui", "archguard-desktop/src/export"],
+    "labels": ["architecture_ui", "calls_ui", "export"]
+  },
+  {
+    "case": "Rust workspace with a sub-package",
+    "names": ["crates/x/src", "crates/y/src/sub"],
+    "labels": ["x", "y/sub"]
+  },
+  {
+    "case": "examples/service-shop, level 2",
+    "names": ["catalog", "gateway", "inventory", "notifications", "orders", "payments", "pricing", "promotions", "risk", "shipping", "test"],
+    "labels": ["catalog", "gateway", "inventory", "notifications", "orders", "payments", "pricing", "promotions", "risk", "shipping", "test"]
+  },
+  {
+    "case": "a crate root next to its source root keeps the distinguishing segment",
+    "names": ["crates/engine/src", "crates/cli/src", "crates/cli"],
+    "labels": ["engine", "cli/src", "cli"]
+  },
+  {
+    "case": "a single block",
+    "names": ["crates/archguard-report/src"],
+    "labels": ["archguard-report"]
+  },
+  {
+    "case": "Maven packages",
+    "names": ["src/main/java/com/example/a", "src/main/java/com/example/b"],
+    "labels": ["a", "b"]
+  },
+  {
+    "case": "SwiftPM targets",
+    "names": ["Sources/App", "Sources/Core"],
+    "labels": ["App", "Core"]
+  },
+  {
+    "case": "no common prefix",
+    "names": ["x/a/src", "y/a/src", "src"],
+    "labels": ["x/a", "y/a", "src"]
+  },
+  {
+    "case": "dropping a source root would collide",
+    "names": ["a/src/x", "a/x"],
+    "labels": ["src/x", "x"]
+  },
+  {
+    "case": "only a source root",
+    "names": ["lib"],
+    "labels": ["lib"]
+  }
+]

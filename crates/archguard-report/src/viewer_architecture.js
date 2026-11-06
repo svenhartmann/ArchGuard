@@ -293,9 +293,9 @@ function arc42CallEdges(){
 function arc42PackageProjection(scope=null,kind='dependencies'){
   const model=arc42SourceModel();scope=scope==null?null:String(scope);
   const candidates=scope==null?model.overview:(model.children.get(scope)||[]).filter(n=>n.kind==='module');
-  const allNodes=candidates.map(n=>({id:String(n.id),name:n.name,files:0,members:[String(n.id)],kind:'package',drill:String(n.id)})),ids=new Set(allNodes.map(n=>n.id));
-  const direct=(scope==null?model.children.get(null):model.children.get(scope))||[];
-  if(direct.some(n=>n.kind==='file')){allNodes.push({id:'direct',name:scope==null?t('Files without a package','Dateien ohne Paket'):model.nodes.get(scope).name+' / '+t('direct files','direkte Dateien'),files:0,members:['direct'],kind:'files'});ids.add('direct');}
+  const short=arc42ShortNames(candidates.map(n=>n.name)),allNodes=candidates.map(n=>({id:String(n.id),name:n.name,label:short.get(n.name),files:0,members:[String(n.id)],kind:'package',drill:String(n.id)})),ids=new Set(allNodes.map(n=>n.id));
+  const direct=(scope==null?model.children.get(null):model.children.get(scope))||[],scopeName=scope==null?null:model.nodes.get(scope).name,files=t('direct files','direkte Dateien');
+  if(direct.some(n=>n.kind==='file')){allNodes.push({id:'direct',name:scope==null?t('Files without a package','Dateien ohne Paket'):scopeName+' / '+files,label:scope==null?undefined:arc42ShortNames([scopeName]).get(scopeName)+' / '+files,files:0,members:['direct'],kind:'files'});ids.add('direct');}
   const owner=new Map(),counts=new Map();
   for(const n of data.nodes){const id=String(n.id),chain=model.ancestors.get(id)||[];if(scope!=null&&!chain.includes(scope))continue;
     const group=chain.find(p=>ids.has(p))||'direct';if(!ids.has(group))continue;owner.set(id,group);if(n.kind==='file')counts.set(group,(counts.get(group)||0)+1);
@@ -343,8 +343,7 @@ function arc42Graph(parent,model,{title,onNode,selected=null,all=false}={}){
     g.appendChild(svgNode('rect',{x:p.x,y:p.y,width:p.w,height:p.h,rx:node.kind==='deployment'?5:2,fill:node.kind==='context'||node.kind==='group'?'var(--panel-2)':'var(--panel)',stroke:selected===node.id?'var(--accent)':node.cycle?'var(--c-cycle)':'var(--border)','stroke-width':selected===node.id?2.5:1.5,'stroke-dasharray':node.kind==='group'?'5 3':'none'}));
     const type=node.kind==='deployment'?t('Deployment node · Docker','Deployment-Knoten · Docker'):node.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):node.kind==='context'?t('Project context','Projektkontext'):node.kind==='component'?t('Declared component','Deklarierte Komponente'):node.kind==='files'?t('Direct source nodes','Direkte Quellknoten'):t('Source package','Quellpaket');
     g.appendChild(svgNode('text',{x:p.x+12,y:p.y+19,class:'arc42-map-kind'},type));
-    const parts=node.name.split('/'),base=parts.pop()||node.name,context=parts.join('/');
-    const lines=[];for(let i=0;i<base.length;i+=24)lines.push(base.slice(i,i+24));lines.slice(0,2).forEach((line,i)=>g.appendChild(svgNode('text',{x:p.x+12,y:p.y+42+i*17,class:'arc42-map-name'},line+(i===1&&lines.length>2?'…':''))));
+    arc42NameLines(node.label??(node.name.split('/').pop()||node.name)).forEach((line,i)=>g.appendChild(svgNode('text',{x:p.x+12,y:p.y+42+i*17,class:'arc42-map-name'},line)));
     const detail=node.files!=null?node.files+' '+t('source nodes','Quellknoten'):node.detail||'';
     g.appendChild(svgNode('text',{x:p.x+12,y:p.y+82,class:'arc42-map-kind'},detail.slice(0,30)));
     g.appendChild(svgNode('title',{},node.name));if(node.cycle)g.appendChild(svgNode('circle',{cx:p.x+p.w-12,cy:p.y+17,r:4,fill:'var(--c-cycle)'}));
@@ -364,6 +363,12 @@ function arc42BuildingLevels(scope){
   const entry=entries.get(id),path=[];if(entry?.parent)path.push(entries.get(entry.parent));if(entry)path.push(entry);
   return {entries,scope:id,level:entry?.level||1,path};
 }
+// Level-2 names among each other, level-3 names among their siblings: the list indents them below their parent.
+function arc42LevelLabels(levels){
+  const groups=new Map(),out=new Map();for(const [id,item]of levels.entries){const key=item.parent??'';if(!groups.has(key))groups.set(key,[]);groups.get(key).push([id,item.node.name]);}
+  for(const group of groups.values()){const short=arc42ShortNames(group.map(([,name])=>name));for(const [id,name]of group)out.set(id,short.get(name));}
+  return out;
+}
 function arc42BuildingNavigation(shell,levels,navigate){
   shell.appendChild(element('style',`
     .arc42-building-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px}.arc42-building-nav{min-width:0;max-height:560px;overflow:auto;border-right:1px solid var(--border);padding-right:10px}
@@ -374,14 +379,14 @@ function arc42BuildingNavigation(shell,levels,navigate){
   `));
   const layout=element('div',undefined,'arc42-building-layout'),nav=element('nav',undefined,'arc42-building-nav'),body=element('div',undefined,'arc42-building-content');layout.appendChild(nav);layout.appendChild(body);shell.appendChild(layout);
   nav.setAttribute('data-arc42-levels','true');nav.setAttribute('data-current-level',levels.level);nav.setAttribute('aria-label',t('Building-block levels','Bausteinebenen'));nav.appendChild(element('strong',t('Building blocks · Level {level} of 3','Bausteine · Ebene {level} von 3',{level:levels.level})));
-  const short=arc42ShortNames([...[...levels.entries.values()].map(item=>item.node.name),...levels.path.map(item=>item.node.name)]);
-  function entry(id,name,level){const b=button('',()=>navigate(id),'');b.setAttribute('data-arc42-level-scope',id??'');b.setAttribute('data-level',level);b.setAttribute('aria-label',t('Level {level}: {name}','Ebene {level}: {name}',{level,name}));b.title=name;b.appendChild(element('small',String(level)));b.appendChild(element('span',id==null?name:short.get(String(name))||name));if(id===levels.scope)b.setAttribute('aria-current','page');nav.appendChild(b);}
+  const short=arc42LevelLabels(levels);
+  function entry(id,name,level){const b=button('',()=>navigate(id),'');b.setAttribute('data-arc42-level-scope',id??'');b.setAttribute('data-level',level);b.setAttribute('aria-label',t('Level {level}: {name}','Ebene {level}: {name}',{level,name}));b.title=name;b.appendChild(element('small',String(level)));b.appendChild(element('span',id==null?name:short.get(id)));if(id===levels.scope)b.setAttribute('aria-current','page');nav.appendChild(b);}
   entry(null,t('Project overview','Projektübersicht'),1);
   const expanded=levels.path[0]?.node.id;
   for(const [id,item]of levels.entries)if(item.level===2){entry(id,item.node.name,2);if(String(expanded)===id)for(const [child,childItem]of levels.entries)if(childItem.parent===id)entry(child,childItem.node.name,3);}
   const path=element('nav',undefined,'arc42-building-path');path.setAttribute('data-arc42-breadcrumb','true');path.setAttribute('aria-label',t('Building-block path','Bausteinpfad'));body.appendChild(path);
   const crumbs=[{id:null,name:t('Project overview','Projektübersicht'),level:1},...levels.path.map(item=>({id:String(item.node.id),name:item.node.name,level:item.level}))];
-  for(const [index,crumb]of crumbs.entries()){if(index)path.appendChild(element('span','›','muted'));const b=button(crumb.level+' · '+(crumb.id==null?crumb.name:short.get(String(crumb.name))||crumb.name),()=>navigate(crumb.id),'btn btn-secondary');b.title=crumb.name;if(index===crumbs.length-1)b.setAttribute('aria-current','page');path.appendChild(b);}
+  for(const [index,crumb]of crumbs.entries()){if(index)path.appendChild(element('span','›','muted'));const b=button(crumb.level+' · '+(crumb.id==null?crumb.name:short.get(crumb.id)),()=>navigate(crumb.id),'btn btn-secondary');b.title=crumb.name;if(index===crumbs.length-1)b.setAttribute('aria-current','page');path.appendChild(b);}
   return body;
 }
 function renderArc42PackageMap(parent,kind='dependencies'){
@@ -398,7 +403,8 @@ function renderArc42PackageMap(parent,kind='dependencies'){
     host.appendChild(element('h3',kind==='calls'?t('Static calls between packages','Statische Aufrufe zwischen Paketen'):kind==='cycles'?t('Cyclic package relationships','Zyklische Paketbeziehungen'):t('UML · Packages and dependencies','UML · Pakete und Abhängigkeiten')));
     const controls=element('div',undefined,'arc42-map-controls'),scope=element('select');scope.setAttribute('data-arc42-scope','true');scope.setAttribute('aria-label',t('Package scope','Paketbereich'));
     const option=element('option',t('Project overview','Projektübersicht'));option.value='';scope.appendChild(option);
-    for(const n of (levels?[...levels.entries.values()].map(entry=>entry.node):[...data.nodes].filter(n=>n.kind==='module')).sort((a,b)=>compareNames(a.name,b.name))){const o=element('option',n.name);o.value=String(n.id);scope.appendChild(o);}
+    const choices=(levels?[...levels.entries.values()].map(entry=>entry.node):[...data.nodes].filter(n=>n.kind==='module')).sort((a,b)=>compareNames(a.name,b.name)),names=arc42ShortNames(choices.map(n=>n.name));
+    for(const n of choices){const o=element('option',names.get(n.name));o.value=String(n.id);o.title=n.name;scope.appendChild(o);}
     scope.value=state.scope||'';scope.addEventListener('change',()=>{state.scope=scope.value||null;state.selected=null;draw();host.querySelector('select[data-arc42-scope]').focus({preventScroll:true});});controls.appendChild(scope);host.appendChild(controls);
     host.appendChild(element('p',projection.total+' '+projection.unit+' · '+projection.internal+' '+t('inside the shown groups','innerhalb der dargestellten Gruppen'),'arc42-map-note'));
     if(kind==='calls')host.appendChild(element('p',t('Compiler status: ','Compilerstatus: ')+(data.calls?.status||'unavailable')+' · '+t('Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order.','Enthaltene, aufgelöste Projektaufrufe mit Quellzuordnung. Aufrufstellen belegen keine Laufzeitreihenfolge.'),'arc42-map-note'));
@@ -406,11 +412,11 @@ function renderArc42PackageMap(parent,kind='dependencies'){
     const legend=element('p',undefined,'arc42-map-note');host.appendChild(legend);
     const selected=graph.nodes.find(n=>n.id===state.selected),shown=arc42Graph(host,graph,{selected:selected?.id,all:true,onNode:node=>{state.selected=state.selected===node.id?null:node.id;draw();[...host.querySelectorAll('g[data-arc42-node]')].find(n=>n.getAttribute('data-arc42-node')===node.id)?.focus({preventScroll:true});}});
     legend.textContent=t('{shown} / {total} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.','{shown} / {total} gebündelte Beziehungen sichtbar. Paket auswählen, um seine Beziehungen hervorzuheben. Pfeile: Quelle → Abhängigkeit. Rot: Paketzyklus.',{shown,total:graph.edges.length});
-    if(selected){const info=element('div',undefined,'arc42-map-selection');info.appendChild(element('strong',selected.name));if(selected.drill&&(!levels||levels.level<3&&levels.entries.has(selected.drill)))info.appendChild(button(levels?t('Open level {level}','Ebene {level} öffnen',{level:levels.level+1}):t('Open package','Paket öffnen'),()=>navigate(selected.drill),'btn btn-secondary'));else if(selected.drill&&levels)info.appendChild(button(t('Open in graph','Im Graph öffnen'),()=>{showTab('graph');revealNode(selected.name);},'btn btn-secondary'));host.appendChild(info);}
+    if(selected){const info=element('div',undefined,'arc42-map-selection'),name=element('strong',arc42Label(selected));name.title=selected.name;info.appendChild(name);if(selected.drill&&(!levels||levels.level<3&&levels.entries.has(selected.drill)))info.appendChild(button(levels?t('Open level {level}','Ebene {level} öffnen',{level:levels.level+1}):t('Open package','Paket öffnen'),()=>navigate(selected.drill),'btn btn-secondary'));else if(selected.drill&&levels)info.appendChild(button(t('Open in graph','Im Graph öffnen'),()=>{showTab('graph');revealNode(selected.name);},'btn btn-secondary'));host.appendChild(info);}
     const detail=element('details',undefined,'arc42-relations');detail.appendChild(element('summary',t('Relationships and counts','Beziehungen und Anzahl')+' · '+graph.edges.length));host.appendChild(detail);
     const list=element('div');detail.appendChild(list);let limit=0;const edges=selected?graph.edges.filter(e=>e.from===selected.id||e.to===selected.id):graph.edges;
     const more=button(t('More relationships','Weitere Beziehungen'),fill,'btn btn-secondary');detail.appendChild(more);
-    function fill(){for(const e of edges.slice(limit,limit+30)){const from=graph.nodes.find(n=>n.id===e.from),to=graph.nodes.find(n=>n.id===e.to);list.appendChild(element('p',from.name+' → '+to.name+' · '+e.count+' '+projection.unit));}limit+=30;more.hidden=limit>=edges.length;}
+    function fill(){for(const e of edges.slice(limit,limit+30)){const from=graph.nodes.find(n=>n.id===e.from),to=graph.nodes.find(n=>n.id===e.to);const row=element('p',arc42Label(from)+' → '+arc42Label(to)+' · '+e.count+' '+projection.unit);row.title=from.name+' → '+to.name;list.appendChild(row);}limit+=30;more.hidden=limit>=edges.length;}
     fill();
   }
   draw();
@@ -462,16 +468,33 @@ function arc42LayoutEngine(){
   });
   return arc42VizPromise;
 }
-// Shortest trailing path that no other name shares: Rust crates and Maven
-// modules all end in src or main, so the last segment alone is ambiguous.
+// Building-block names: the path below the segments all shown blocks share, without generic
+// source roots, unique within the list. Same rule as architecture_ui/names.rs (desktop); shared
+// cases in scripts/viewer/arc42_block_names.json. Source roots: src (Cargo, Python, Maven/Gradle),
+// main and java (Maven/Gradle src/main/java), lib (Ruby, Dart, Elixir), source/sources (C/C++, SwiftPM).
+const arc42SourceRoots=new Set(['src','lib','main','java','source','sources']);
 function arc42ShortNames(names){
-  const unique=[...new Set(names.map(String))],parts=new Map(unique.map(n=>[n,n.split('/').filter(Boolean)])),short=new Map();
-  for(let k=1;short.size<unique.length;k++){
-    const open=unique.filter(n=>!short.has(n)),suffix=n=>parts.get(n).slice(-k).join('/'),seen=new Map();
-    for(const n of unique)seen.set(suffix(n),(seen.get(suffix(n))||0)+1);
-    for(const n of open)if(seen.get(suffix(n))===1||k>=parts.get(n).length)short.set(n,suffix(n)||n);
+  const unique=[...new Set(names.map(String))],parts=unique.map(n=>n.split('/').filter(Boolean));if(!unique.length)return new Map();
+  const keep=Math.max(0,Math.min(...parts.map(p=>p.length))-1);let common=0;
+  while(common<keep&&parts.every(p=>p[common]===parts[0][common]))common++;
+  const tiers=parts.map((p,i)=>arc42NameTiers(p,common,unique[i])),tier=unique.map(()=>0),label=i=>tiers[i][tier[i]];
+  for(let changed=true;changed;){
+    const seen=new Map();unique.forEach((_,i)=>seen.set(label(i),(seen.get(label(i))||0)+1));
+    changed=false;unique.forEach((_,i)=>{if(seen.get(label(i))>1&&tier[i]<2){tier[i]++;changed=true;}});
   }
-  return short;
+  return new Map(unique.map((n,i)=>[n,label(i)]));
+}
+function arc42Label(node){return node.label??node.name;}
+// At most two lines of 24 characters, the first ending after its last '/'; as diagram::name_lines (desktop).
+function arc42NameLines(text){
+  if(text.length<=24)return [text];const cut=text.lastIndexOf('/',23),head=cut>0?text.slice(0,cut+1):text.slice(0,24),rest=text.slice(head.length);
+  return [head,rest.length>24?rest.slice(0,24)+'…':rest];
+}
+// Ever longer candidates for one name: without source roots, with them, the full path.
+function arc42NameTiers(parts,common,name){
+  const rest=parts.slice(common),root=s=>arc42SourceRoots.has(s.toLowerCase()),specific=rest.filter(s=>!root(s));
+  const fallback=[...parts].reverse().find(s=>!root(s))||parts[parts.length-1]||name;
+  return [specific.join('/')||fallback,rest.join('/')||name,name];
 }
 function arc42StandardGraph(model,selected){
   const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i])),short=arc42ShortNames(model.nodes.map(n=>n.name));
@@ -479,7 +502,7 @@ function arc42StandardGraph(model,selected){
   // Graphviz needs concrete colours; read the active theme so light mode is not drawn in the dark palette.
   const css=typeof getComputedStyle==='function'?getComputedStyle(document.documentElement):null,token=(name,fallback)=>css?.getPropertyValue(name).trim()||fallback;
   const muted=token('--muted','#b6c4d8'),border=token('--muted','#607796'),accent=token('--accent','#92b6ef'),cycle=token('--c-cycle','#ee7d87');
-  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',label:'',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:muted},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:token('--panel','#1c2b42'),fontcolor:token('--text','#ecf2fa'),color:border,penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:token('--muted','#c3cfe2'),arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:short.get(String(n.name))+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?accent:n.cycle?cycle:border,penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map((e,i)=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{id:'arc42-standard-edge-'+i,xlabel:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?token('--c-dim','#45556c'):e.cycle?cycle:accent,style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
+  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',label:'',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:muted},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:token('--panel','#1c2b42'),fontcolor:token('--text','#ecf2fa'),color:border,penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:token('--muted','#c3cfe2'),arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:(n.label??short.get(String(n.name)))+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?accent:n.cycle?cycle:border,penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map((e,i)=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{id:'arc42-standard-edge-'+i,xlabel:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?token('--c-dim','#45556c'):e.cycle?cycle:accent,style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
   // dot puts unconnected nodes into one rank: a single unreadable row. Invisible edges stack them
   // into a grid; Graphviz packing would also do that but drops the edge-count xlabels.
   const linked=new Set(graph.edges.flatMap(e=>[e.tail,e.head])),loose=graph.nodes.map(n=>n.name).filter(n=>!linked.has(n)),columns=Math.ceil(Math.sqrt(loose.length));
