@@ -159,7 +159,7 @@ fn declaration(s: &State) -> CallsDeclaration {
                 return d;
             };
             d.kind = 1;
-            d.title = c.name.as_str().into();
+            d.title = super::model::class_name(c).into();
             d.location = format!("{}:{}", c.file, c.line).into();
             cohesion(&mut d, s, &c.id);
         }

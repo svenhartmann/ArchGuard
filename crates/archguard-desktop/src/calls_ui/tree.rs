@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::model::{Index, Labels, Relation, json_list};
+use super::model::{Index, Labels, Relation, class_name, json_list};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -97,11 +97,8 @@ impl CallTree {
             parent = self.package(&language, "", "", parent);
         }
         let prefix = format!("{}.", cls.package.replace('/', "."));
-        let label = cls
-            .name
-            .strip_prefix(&prefix)
-            .unwrap_or(&cls.name)
-            .to_string();
+        let name = class_name(cls);
+        let label = name.strip_prefix(&prefix).unwrap_or(&name).to_string();
         let n = self.add("class", Kind::Class, id, Some(parent));
         self.nodes[n].label = Some(label);
         Some(n)

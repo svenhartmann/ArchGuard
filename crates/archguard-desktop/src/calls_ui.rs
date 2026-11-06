@@ -307,15 +307,17 @@ mod tests {
     }
 
     /// The Python fixture resolves calls without an external compiler:
-    /// package "api" opens with its two connections, as the web viewer.
+    /// package "app", the one with the most connections, opens.
     #[test]
-    fn build_opens_the_first_package_of_a_real_project() {
+    fn build_opens_the_busiest_package_of_a_real_project() {
         let s = state(&fixture("py-layers"));
         assert_eq!(s.idx.a.calls.len(), 14);
-        assert_eq!(s.filter.package.as_deref(), Some("api"));
+        assert_eq!(s.filter.package.as_deref(), Some("app"));
         let v = &s.view;
-        assert_eq!(v.relations.len(), 2);
-        assert_eq!(v.relations.iter().map(|r| r.calls.len()).sum::<usize>(), 2);
-        assert_eq!((v.shown.len(), v.visible.len()), (9, 9));
+        let sites: usize = v.relations.iter().map(|r| r.calls.len()).sum();
+        assert_eq!(
+            (v.relations.len(), sites, v.shown.len(), v.visible.len()),
+            (6, 6, 12, 12)
+        );
     }
 }
