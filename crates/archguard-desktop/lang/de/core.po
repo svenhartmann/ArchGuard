@@ -5,7 +5,7 @@ msgid "Analysis failed"
 msgstr "Analyse fehlgeschlagen"
 
 msgid "Analyzing architecture …"
-msgstr "Analysiere Architektur …"
+msgstr "Architektur wird analysiert …"
 
 msgid "Architecture"
 msgstr "Architektur"
@@ -25,9 +25,6 @@ msgstr "Nur Zyklen"
 msgid "Cycles"
 msgstr "Zyklen"
 
-msgid "Cyclic groups"
-msgstr "Zyklische Gruppen"
-
 msgid "Dependencies"
 msgstr "Abhängigkeiten"
 
@@ -46,14 +43,8 @@ msgstr "Explorer"
 msgid "Graph"
 msgstr "Graph"
 
-msgid "INCOMING"
-msgstr "EINGEHEND"
-
 msgid "In {}"
 msgstr "Ein {}"
-
-msgid "Incoming ({})"
-msgstr "Eingehend ({})"
 
 msgid "Matrix"
 msgstr "Matrix"
@@ -67,20 +58,11 @@ msgstr "Native Oberfläche. Lizenz: MIT OR Apache-2.0."
 msgid "No cycles found."
 msgstr "Keine Zyklen gefunden."
 
-msgid "OUTGOING · CYCLES"
-msgstr "AUSGEHEND · ZYKLEN"
-
 msgid "Open in web viewer"
 msgstr "Im Web-Viewer öffnen"
 
 msgid "Out {}"
 msgstr "Aus {}"
-
-msgid "Outgoing ({})"
-msgstr "Ausgehend ({})"
-
-msgid "PACKAGES"
-msgstr "PAKETE"
 
 msgid "Quality"
 msgstr "Qualität"
@@ -93,9 +75,6 @@ msgstr "Prüfprioritäten gibt es noch nicht nativ."
 
 msgid "Review"
 msgstr "Prüfung"
-
-msgid "Scope nodes"
-msgstr "Knoten im Bereich"
 
 msgid "Search modules"
 msgstr "Module suchen"
@@ -130,8 +109,8 @@ msgstr "{} Treffer"
 msgid "{} modules"
 msgstr "{} Module"
 
-msgid "{} of {} items shown"
-msgstr "{} von {} Einträgen sichtbar"
+msgid "{} of {} modules shown"
+msgstr "{} von {} Modulen sichtbar"
 msgid "{} dependency evidence records"
 msgstr "{} Abhängigkeitsbelege"
 
@@ -159,12 +138,6 @@ msgstr "Angezeigt · {} von {}"
 msgid "Network"
 msgstr "Netzwerk"
 
-msgid "PACKAGE"
-msgstr "PAKET"
-
-msgid "FILE"
-msgstr "DATEI"
-
 msgid "source file"
 msgstr "Quelldatei"
 
@@ -178,7 +151,7 @@ msgid "Alphabetical"
 msgstr "Alphabetisch"
 
 msgid "By dependencies"
-msgstr "Nach Beziehungen"
+msgstr "Nach Abhängigkeiten"
 
 msgid "Compact cells"
 msgstr "Kompakte Zellen"
@@ -194,9 +167,6 @@ msgstr "Zielpakete {}–{} / {}"
 
 msgid "Dependencies in the tree"
 msgstr "Abhängigkeiten im Baum"
-
-msgid "{} files · {} dependency evidence records · {} file cycle groups"
-msgstr "{} Dateien · {} Abhängigkeitsbelege · {} Datei-Zyklusgruppen"
 
 msgid "Find package or file…"
 msgstr "Paket oder Datei suchen…"
@@ -252,9 +222,37 @@ msgstr "Nächste 20 anzeigen"
 msgid "Search"
 msgstr "Suche"
 
-
 msgid "Save"
 msgstr "Speichern"
 
 msgid "Cancel"
 msgstr "Abbrechen"
+
+msgid "en"
+msgstr "de"
+
+msgid "ready"
+msgstr "vollständig"
+
+msgid "partial"
+msgstr "teilweise"
+
+msgid "unavailable"
+msgstr "nicht verfügbar"
+
+msgid "Analysis"
+msgstr "Analyse"
+
+msgid "stale"
+msgstr "veraltet"
+
+msgid "{0} cycle group"
+msgid_plural "{0} cycle groups"
+msgstr[0] "{0} Zyklusgruppe"
+msgstr[1] "{0} Zyklusgruppen"
+
+msgid "Outgoing · cycles"
+msgstr "Ausgehend · Zyklen"
+
+msgid "Packages"
+msgstr "Pakete"

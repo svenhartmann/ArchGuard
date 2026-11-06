@@ -1,9 +1,10 @@
 // The call tree column (renderCallTree in viewer_calls_tree.js).
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Button, SectionHeading } from "widgets.slint";
 import { CallsData, CallsTreeRow, CallsModel } from "calls_data.slint";
-import { CallsColumn, Heading, Muted } from "calls_parts.slint";
+import { CallsColumn, Muted } from "calls_parts.slint";
 
 component TreeLine inherits Rectangle {
     in property <CallsTreeRow> item;
@@ -90,7 +91,7 @@ component TreeLine inherits Rectangle {
             vertical-alignment: center;
         }
         if item.count > 0: Text {
-            text: item.count;
+            text: Fmt.int(item.count);
             color: root.role-color;
             font-size: 10px;
             vertical-alignment: center;
@@ -103,7 +104,7 @@ export component CallsTree inherits CallsColumn {
     VerticalLayout {
         padding: 12px;
         spacing: 8px;
-        Heading { text: @tr("CALL TREE"); }
+        SectionHeading { label: @tr("Call tree"); }
         HorizontalLayout {
             spacing: 5px;
             alignment: start;
@@ -127,9 +128,9 @@ export component CallsTree inherits CallsColumn {
             }
         }
         Muted {
-            text: @tr("{} / {} rows", m.tree-shown, m.tree-total)
+            text: @tr("{} / {} rows", Fmt.int(m.tree-shown), Fmt.int(m.tree-total))
                 + (m.tree-element != "" ? " · " + @tr("Element: {}", m.tree-element) : "")
-                + (m.tree-missing > 0 ? " · " + @tr("{} sites without method identity", m.tree-missing) : "");
+                + (m.tree-missing > 0 ? " · " + @tr("{} sites without method identity", Fmt.int(m.tree-missing)) : "");
         }
         ScrollView {
             vertical-stretch: 1;
@@ -138,7 +139,7 @@ export component CallsTree inherits CallsColumn {
                 padding-top: 3px;
                 for row in m.tree: VerticalLayout {
                     if row.skipped > 0: Muted {
-                        text: @tr("{} additional rows · load more below", row.skipped);
+                        text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));
                         height: 24px;
                         vertical-alignment: center;
                     }

@@ -34,7 +34,7 @@ pub fn class(lang: &Texts, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card
             let v = if not_applicable(row, k) {
                 lang.t("n/a").to_string()
             } else {
-                number(value(row, k))
+                number(lang, value(row, k))
             };
             format!("{}: {v}", k.to_uppercase())
         })
@@ -60,20 +60,20 @@ pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Ca
     b.push(Kind::Small, format!("{}:{}", row.file, row.line))
         .push(
             Kind::Text,
-            format!("Cognitive: {}", number(row.cognitive.map(f64::from))),
+            format!("Cognitive: {}", number(lang, row.cognitive.map(f64::from))),
         )
         .push(
             Kind::Text,
-            format!("MI: {}", number(row.maintainability_index)),
+            format!("MI: {}", number(lang, row.maintainability_index)),
         );
     let h = row.halstead.as_ref();
     let lines = vec![
-        Line::new(Kind::Text, format!("{}: {}", lang.t("Volume"), number(h.map(|h| h.volume)))),
+        Line::new(Kind::Text, format!("{}: {}", lang.t("Volume"), number(lang, h.map(|h| h.volume)))),
         Line::new(
             Kind::Text,
-            format!("{}: {}", lang.t("Difficulty"), number(h.and_then(|h| h.difficulty))),
+            format!("{}: {}", lang.t("Difficulty"), number(lang, h.and_then(|h| h.difficulty))),
         ),
-        Line::new(Kind::Text, format!("{}: {}", lang.t("Effort"), number(h.and_then(|h| h.effort)))),
+        Line::new(Kind::Text, format!("{}: {}", lang.t("Effort"), number(lang, h.and_then(|h| h.effort)))),
         Line::new(
             Kind::Text,
             lang.f("Source lines: {lines} · source-maintainability/v1. Compare the same language and measurement definition.",
@@ -94,8 +94,8 @@ pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) 
             lang.f(
                 "Bus factor 50: {factor} · largest share {share}",
                 &[
-                    ("factor", number(row.bus_factor_50.map(|f| f as f64))),
-                    ("share", percent(share)),
+                    ("factor", number(lang, row.bus_factor_50.map(|f| f as f64))),
+                    ("share", percent(lang, share)),
                 ],
             ),
         )
@@ -147,8 +147,8 @@ pub fn measurement(lang: &Texts, nodes: &BTreeSet<String>, row: &MeasurementGrou
         Kind::Text,
         format!(
             "Median: {} s · p95: {} s · n={}",
-            number(row.median_seconds),
-            number(row.p95_seconds),
+            number(lang, row.median_seconds),
+            number(lang, row.p95_seconds),
             row.duration_samples
         ),
     )

@@ -15,7 +15,10 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
-use crate::tab_support::{self, Actions, TabState, index, model as rows};
+use crate::format::UNKNOWN;
+use crate::kpi;
+use crate::status::Status;
+use crate::tab_support::{self, Actions, TabState, Texts, index, model as rows};
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
 use snapshot::{SEVERITIES, safe_url};
 
@@ -98,26 +101,39 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &SecurityState) {
-    ui.global::<SecurityData>().set_model(model(s));
+    ui.global::<SecurityData>()
+        .set_model(model(s, &Texts::of(ui)));
 }
 
-fn model(s: &SecurityState) -> SecurityModel {
+fn model(s: &SecurityState, texts: &Texts) -> SecurityModel {
     let r = &s.report;
     let counts = snapshot::counts(r);
     let available = snapshot::available(r, &counts);
-    let shown_if = |ok: bool, n: usize| if ok { n.to_string() } else { "—".into() };
+    // Without a scan nothing is known, not even zero packages.
+    let scanned = r.status != "not_scanned";
+    let known = |ok: bool, n: usize| ok.then_some(n);
     let metrics = [
-        shown_if(true, counts.packages_scanned),
-        shown_if(available, counts.affected_packages),
-        shown_if(available, counts.findings),
-        shown_if(true, counts.targets),
+        kpi::SECURITY_SCANNED.item(texts, known(scanned, counts.packages_scanned)),
+        kpi::SECURITY_AFFECTED.item(texts, known(available, counts.affected_packages)),
+        kpi::SECURITY_FINDINGS.item(texts, known(available, counts.findings)),
+        kpi::SECURITY_TARGETS.item(texts, known(scanned, counts.targets)),
     ];
+    let shown_if = |ok: bool, n: usize| {
+        if ok {
+            texts.locale().count(n)
+        } else {
+            UNKNOWN.into()
+        }
+    };
+    let status = Status::of(&r.status);
     let findings = snapshot::filtered(r, &s.query, s.severity);
     let page: Vec<_> = findings.iter().take(s.limit).map(|f| finding(f)).collect();
     SecurityModel {
         loaded: true,
         status: r.status.as_str().into(),
-        metrics: strings(metrics),
+        status_slot: status.slot(),
+        status_label: status.line(texts, "Scan").into(),
+        metrics: rows(metrics),
         severities: strings(counts.by_severity.map(|n| shown_if(available, n))),
         scanner: match &r.scanner_version {
             Some(v) => format!("{} {v}", r.scanner),
@@ -210,10 +226,11 @@ mod tests {
     #[test]
     fn missing_snapshot_is_not_scanned() {
         let root = temp_project("missing");
-        let m = model(&build_from(&root, &config(&root)));
+        let m = model(&build_from(&root, &config(&root)), &Texts::default());
         assert_eq!(m.status, "not_scanned");
-        let metrics: Vec<_> = m.metrics.iter().map(|s| s.to_string()).collect();
-        assert_eq!(metrics, ["0", "—", "—", "0"]);
+        let metrics: Vec<_> = m.metrics.iter().map(|k| k.value.to_string()).collect();
+        assert_eq!(metrics, ["—", "—", "—", "—"], "unknown, not 0");
+        assert_eq!(m.status_label, "Scan: not imported");
         assert!(m.severities.iter().all(|s| s == "—"));
         assert_eq!((m.shown, m.matching, m.total), (0, 0, 0));
         assert_eq!(m.empty, snapshot::Empty::NotScanned as i32);
@@ -238,10 +255,15 @@ mod tests {
         )
         .expect("snapshot");
         let s = build_from(&root, &config);
-        let m = model(&s);
+        let m = model(&s, &Texts::default());
         assert_eq!(m.status, "ready");
-        let metrics: Vec<_> = m.metrics.iter().map(|s| s.to_string()).collect();
+        let metrics: Vec<_> = m.metrics.iter().map(|k| k.value.to_string()).collect();
         assert_eq!(metrics, ["1", "1", "1", "1"]);
+        assert_eq!(
+            m.metrics.row_data(0).expect("kpi").label,
+            "Packages scanned"
+        );
+        assert_eq!((m.status_slot, m.status_label.as_str()), (0, "Scan: ready"));
         let sev: Vec<_> = m.severities.iter().map(|s| s.to_string()).collect();
         assert_eq!(sev, ["0", "1", "0", "0", "0"]);
         assert_eq!(m.scanner, "trivy 0.76.0");
@@ -268,20 +290,20 @@ mod tests {
             .map(|i| row(&format!("CVE-{i:03}"), "pkg", "1.0.0", "medium"))
             .collect();
         let mut s = state(report("stale", findings));
-        let m = model(&s);
+        let m = model(&s, &Texts::default());
         assert_eq!(
             (m.shown, m.matching, m.total, m.more),
             (100, 250, 250, true)
         );
         s.limit += PAGE * 2;
-        let m = model(&s);
+        let m = model(&s, &Texts::default());
         assert_eq!((m.shown, m.more), (250, false));
         s.severity = 2;
-        let m = model(&s);
+        let m = model(&s, &Texts::default());
         assert_eq!((m.shown, m.matching, m.total), (0, 0, 250));
         assert_eq!(m.empty, snapshot::Empty::Filtered as i32);
         s.severity = 3;
         s.query = "cve-24".into();
-        assert_eq!(model(&s).matching, 10);
+        assert_eq!(model(&s, &Texts::default()).matching, 10);
     }
 }

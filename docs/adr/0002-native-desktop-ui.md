@@ -139,3 +139,36 @@ comparison of the native view against the web view on the same project
   112–120 fps. Decision: keep FemtoVG. Skia (`slint/renderer-skia`) stays
   an option if large repositories hit the limit; it adds ~10 MB and a
   prebuilt-binary download to the build. Interaction cost is CPU-side.
+- **2026-11-06:** Key figures and presentation unified across all tabs
+  (`feat/desktop-kpis`). Each figure is defined once in `src/kpi.rs`
+  (label, scope note shown on hover, precision, unknown policy), numbers
+  are formatted only in `src/format.rs` (Slint calls it through the `Fmt`
+  global), statuses come from one `Status` (`src/status.rs`) and class
+  ratings from one module (`src/rating.rs`, replacing the Quality and
+  Start copies). Theme tokens gained a rating scale (`rate-*`), a
+  severity scale (`sev-*`), `warning`, `danger`, `success` and
+  `priority-text`, all with dark variants; `cycle` marks cycles only.
+  Shared widgets in `ui/widgets.slint` (StatCard/StatInline, Badge,
+  SeverityChip, RatingChip, Legend, StatusLine, EmptyState,
+  SectionHeading, PageTitle, Disclosure, ZoomControls) replace the
+  per-tab copies. Decisions by the user:
+  1. **KPI levels.** A figure's name states the level it is counted on
+     ("ACD (shown level)", "ACD (module level)", "Package cycles", "File
+     cycle groups", "Cycle groups (shown level)", "Area cycle groups");
+     values stay as computed. ACD has two decimals everywhere. arc42 text
+     comes from the engine; the desktop names its level around it
+     (chapter 10) and, in an English window, notes that the document is
+     German.
+  2. **Numbers follow the window language:** German `4,11` and `2.374`,
+     English `4.11` and `2,374`, one formatter for the whole app.
+     Unknown values read `—`, never `0`.
+  3. **Projects are build units** (`documents::build_units`: manifest
+     projects and local Compose build contexts below the opened folder,
+     one per path). The header chip, its menu and Services count the
+     same set; Services labels its manifest projects separately.
+  4. **German UI uses the infinitive** ("Paket auswählen …"), no
+     du-form; glossary: dependency = Abhängigkeit, call connection =
+     Aufrufverbindung, service relation = Dienstbeziehung, cycle group =
+     Zyklusgruppe. Counted nouns use plural forms (`@tr` plurals in Slint,
+     `Texts::plural` in Rust); uppercase headings come from
+     `SectionHeading`, not from the text.

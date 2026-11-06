@@ -1,5 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
 import { Button } from "widgets.slint";
 
 // One directed dependency of the "Dependencies" display.
@@ -36,7 +37,7 @@ component Card inherits Rectangle {
             spacing: 6px;
             alignment: start;
             Text {
-                text: @tr("{} dependency evidence records", dep.weight);
+                text: @tr("{} dependency evidence records", Fmt.int(dep.weight));
                 color: Theme.muted;
                 font-size: 12px;
                 vertical-alignment: center;
@@ -77,16 +78,16 @@ export component DepsView inherits Rectangle {
         Text {
             text: root.reference == "" ? @tr("All dependencies") : @tr("Dependencies of {}", root.reference);
             color: Theme.text;
-            font-size: 20px;
+            font-size: Theme.font-section;
             font-weight: 700;
         }
         Text {
-            text: @tr("{} directed dependencies match this view. Each arrow reads source → target.", root.deps.length);
+            text: @tr("{} directed dependencies match this view. Each arrow reads source → target.", Fmt.int(root.deps.length));
             color: Theme.muted;
             font-size: 12px;
         }
         Text {
-            text: root.reference == "" ? @tr("All dependencies in this scope · {}", root.total) : @tr("Shown · {} of {}", root.deps.length, root.total);
+            text: root.reference == "" ? @tr("All dependencies in this scope · {}", Fmt.int(root.total)) : @tr("Shown · {} of {}", Fmt.int(root.deps.length), Fmt.int(root.total));
             color: Theme.text;
             font-size: 13px;
             font-weight: 700;

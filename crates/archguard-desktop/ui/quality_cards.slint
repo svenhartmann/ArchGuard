@@ -2,7 +2,7 @@
 // .engineering-card and .class-heatmap). Texts come from Rust
 // (src/quality_ui/), already in the window's language.
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
+import { Button, Disclosure } from "widgets.slint";
 
 // kind: see `Kind` in src/quality_ui/card.rs.
 export struct QualityLine {
@@ -94,21 +94,7 @@ component DetailsView inherits VerticalLayout {
     callback locate(string);
     property <bool> open;
     spacing: 4px;
-    Rectangle {
-        height: 22px;
-        Text {
-            x: 0;
-            text: (root.open ? "▾ " : "▸ ") + root.summary;
-            color: Theme.text;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
-        }
-        TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.open = !root.open; }
-        }
-    }
+    Disclosure { text: root.summary; open <=> root.open; tint: Theme.text; weight: 600; }
     if root.open: VerticalLayout {
         padding-left: 14px;
         spacing: 4px;
@@ -220,67 +206,3 @@ export component QualityCardView inherits Rectangle {
 }
 
 // Unknown cells have a dashed border (CSS `border-style: dashed`).
-component Dashes inherits Rectangle {
-    in property <color> tint;
-    property <length> step: 6px;
-    for i in max(0, floor((root.width - 8px) / step)): Rectangle {
-        x: 4px + i * step;
-        y: 0;
-        width: 3px;
-        height: 1px;
-        background: tint;
-    }
-    for i in max(0, floor((root.width - 8px) / step)): Rectangle {
-        x: 4px + i * step;
-        y: root.height - 1px;
-        width: 3px;
-        height: 1px;
-        background: tint;
-    }
-    for i in max(0, floor((root.height - 8px) / step)): Rectangle {
-        x: 0;
-        y: 4px + i * step;
-        width: 1px;
-        height: 3px;
-        background: tint;
-    }
-    for i in max(0, floor((root.height - 8px) / step)): Rectangle {
-        x: root.width - 1px;
-        y: 4px + i * step;
-        width: 1px;
-        height: 3px;
-        background: tint;
-    }
-}
-
-// A metric tone (.class-metric-tone): heatmap cell or legend entry.
-export component Tone inherits Rectangle {
-    in property <int> state;
-    in property <string> text;
-    in property <length> font: 12px;
-    in property <bool> bold-high: true;
-    // Width of the label, for legend entries sized to their text.
-    out property <length> label-w: label.preferred-width;
-    border-radius: 5px;
-    border-width: state == 0 ? 0 : 1px;
-    border-color: state == 1 ? Theme.low.mix(Theme.border, 0.5)
-        : state == 2 ? Theme.medium.mix(Theme.border, 0.55)
-        : state == 3 ? Theme.high.mix(Theme.border, 0.6) : Theme.border;
-    background: state == 1 ? Theme.low.mix(Theme.panel, 0.17)
-        : state == 2 ? Theme.medium.mix(Theme.panel, 0.2)
-        : state == 3 ? Theme.high.mix(Theme.panel, 0.23)
-        : state == 4 ? Theme.accent.mix(Theme.panel, 0.12) : Theme.panel-2;
-    if root.state == 0: Dashes {
-        width: parent.width;
-        height: parent.height;
-        tint: Theme.border;
-    }
-    label := Text {
-        text: root.text;
-        color: root.state == 0 ? Theme.muted : Theme.text;
-        font-size: root.font;
-        font-weight: root.state == 3 && root.bold-high ? 700 : 400;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-}

@@ -20,6 +20,8 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::format::Locale;
+use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
@@ -253,19 +255,44 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
                     .t("Diagram source · this diagram syntax is not supported in the viewer."),
                 derived(s, s.chapter).is_some(),
             );
+            let texts = Texts::of(ui);
+            (m.language_note, m.chapter_note) = notes(&texts, m.chapter);
             if let Some((kind, map)) = current(s, ui) {
                 m.map = view::map_model(
+                    &Texts::of(ui),
                     &s.graph,
                     &s.calls_status,
                     s.maps[kind as usize].relations,
                     kind,
                     &map,
-                    &Texts::of(ui).t("Project overview").into(),
                 );
             }
         }
     }
     d.set_model(m);
+}
+
+/// What the desktop says around the engine's German arc42 text: its
+/// language (in an English window) and, in chapter 10, the level its
+/// figures are counted on.
+fn notes(texts: &Texts, chapter: i32) -> (SharedString, SharedString) {
+    let language = if texts.locale() == Locale::En {
+        texts.t("Document language: German. The analysis engine writes the arc42 text in German.")
+    } else {
+        ""
+    };
+    let level = if chapter == 10 {
+        texts.f(
+            "{acd} and the cycle figures of this chapter are counted on modules (depth 2). {shown} is in the Graph tab; package cycles are in the chapter 5 diagram.",
+            &[
+                ("acd", texts.t(kpi::MODULE_ACD.label).to_string()),
+                ("shown", texts.t(kpi::SHOWN_ACD.label).to_string()),
+            ],
+        )
+    } else {
+        String::new()
+    };
+    (language.into(), level.into())
 }
 
 fn download(s: &mut ArchitectureState, all: bool) {
@@ -334,6 +361,25 @@ fn save(root: &Path, name: &str, content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The engine's arc42 is German: an English window says so, and
+    /// chapter 10 names the level of its ACD.
+    #[test]
+    fn arc42_chrome_names_language_and_level() {
+        let en = Texts::default();
+        let (language, level) = notes(&en, 10);
+        assert!(language.starts_with("Document language: German"));
+        assert!(
+            level.starts_with("ACD (module level) and the cycle figures"),
+            "{level}"
+        );
+        assert!(level.contains("ACD (shown level) is in the Graph tab"));
+        assert_eq!(notes(&en, 5).1, "");
+        let de = Texts::german();
+        let (language, level) = notes(&de, 10);
+        assert_eq!(language, "", "a German window needs no note");
+        assert!(level.starts_with("ACD (Modulebene)"), "{level}");
+    }
 
     /// The tab state for a small layered fixture: twelve chapters, the
     /// package map on chapter 5 and the cycle map on chapter 11, as the web

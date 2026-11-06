@@ -3,6 +3,7 @@
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button } from "widgets.slint";
+import { Fmt } from "format.slint";
 
 export struct DocItem {
     name: string,
@@ -49,7 +50,7 @@ component DocTab inherits Rectangle {
             height: 7px;
             y: (parent.height - self.height) / 2;
             border-radius: 3.5px;
-            background: root.item.failed ? Theme.cycle : root.item.loading ? Theme.medium : root.active ? Theme.accent : Theme.dim;
+            background: root.item.failed ? Theme.danger : root.item.loading ? Theme.warning : root.active ? Theme.accent : Theme.dim;
         }
         Text {
             text: root.item.name;
@@ -147,7 +148,7 @@ export component ProjectsMenu inherits Rectangle {
             spacing: 2px;
             Text {
                 height: 26px;
-                text: @tr("Projects in this repository ({})", root.items.length);
+                text: @tr("Build units in this repository ({})", Fmt.int(root.items.length));
                 color: Theme.muted;
                 font-size: 12px;
                 font-weight: 600;
@@ -199,7 +200,7 @@ export component EmptyStart inherits Rectangle {
         Text {
             text: @tr("No project open");
             color: Theme.text;
-            font-size: 20px;
+            font-size: Theme.font-page;
             font-weight: 700;
             horizontal-alignment: center;
         }

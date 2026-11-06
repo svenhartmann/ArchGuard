@@ -2,7 +2,8 @@
 // web's .arc42-visual, renderArc42PackageMap and the basic arc42Graph).
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
+import { Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
+import { Fmt } from "format.slint";
 
 export struct ArcLevelItem {
     // Node position; -1 is the project overview.
@@ -106,7 +107,7 @@ component Diagram inherits Rectangle {
     for l in root.lines: Text {
         x: l.lx * root.zoom * 1px - self.width / 2;
         y: l.ly * root.zoom * 1px - self.height;
-        text: l.count;
+        text: Fmt.int(l.count);
         color: l.cycle ? Theme.cycle : Theme.muted;
         font-size: 9px * root.zoom;
         opacity: l.dim ? 0.25 : 1;
@@ -161,7 +162,7 @@ component Diagram inherits Rectangle {
             Text {
                 x: 12px * root.zoom;
                 y: 71px * root.zoom;
-                text: @tr("{} source nodes", c.files);
+                text: @tr("{} source nodes", Fmt.int(c.files));
                 color: Theme.muted;
                 font-size: 10px * root.zoom;
             }
@@ -192,6 +193,8 @@ export struct ArcMap {
     scope-index: int,
     total: int,
     internal: int,
+    // Package cycles of the projection (`kpi::PACKAGE_CYCLES`).
+    cycles: KpiItem,
     calls-status: string,
     cards: [ArcCard],
     lines: [ArcLine],
@@ -285,7 +288,7 @@ export component ArcVisual inherits Rectangle {
             Text {
                 text: root.map.kind == 1 ? @tr("Static calls between packages") : root.map.kind == 2 ? @tr("Cyclic package relationships") : @tr("UML · Packages and dependencies");
                 color: Theme.text;
-                font-size: 17px;
+                font-size: Theme.font-section;
                 font-weight: 700;
             }
             combo := ComboBox {
@@ -293,10 +296,16 @@ export component ArcVisual inherits Rectangle {
                 current-index: root.map.scope-index;
                 selected => { root.scope-selected(self.current-index); }
             }
-            Text {
-                text: @tr("{} {} · {} inside the shown groups", root.map.total, root.unit, root.map.internal);
-                color: Theme.muted;
-                font-size: 12px;
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                Text {
+                    text: @tr("{} {} · {} inside the shown groups", Fmt.int(root.map.total), root.unit, Fmt.int(root.map.internal));
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                StatInline { kpi: root.map.cycles; }
             }
             if root.map.kind == 1: Text {
                 text: @tr("Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order.", root.map.calls-status);
@@ -310,7 +319,7 @@ export component ArcVisual inherits Rectangle {
                 font-size: 14px;
             }
             if root.map.cards.length > 0: Text {
-                text: @tr("{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.", root.map.lines.length, root.map.lines.length);
+                text: @tr("{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.", Fmt.int(root.map.lines.length), Fmt.int(root.map.lines.length));
                 color: Theme.muted;
                 font-size: 12px;
                 wrap: word-wrap;
@@ -325,10 +334,13 @@ export component ArcVisual inherits Rectangle {
                     vertical-alignment: center;
                 }
                 Button { compact: true; text: "PlantUML ↓"; clicked => { root.plantuml(root.unit); } }
-                Button { compact: true; text: @tr("Fit"); clicked => { root.user-zoom = 0; } }
-                Button { compact: true; text: "−"; clicked => { root.user-zoom = max(0.2, root.zoom * 0.8); } }
-                Button { compact: true; text: "+"; clicked => { root.user-zoom = min(5, root.zoom * 1.25); } }
-                Button { compact: true; text: "1:1"; clicked => { root.user-zoom = 1; } }
+                ZoomControls {
+                    zoom: root.zoom;
+                    zoom-out => { root.user-zoom = max(0.2, root.zoom * 0.8); }
+                    zoom-in => { root.user-zoom = min(5, root.zoom * 1.25); }
+                    reset => { root.user-zoom = 1; }
+                    fit => { root.user-zoom = 0; }
+                }
             }
             if root.map.cards.length > 0: Rectangle {
                 min-width: 0;
@@ -362,23 +374,16 @@ export component ArcVisual inherits Rectangle {
                 Text { text: root.map.selected-name; color: Theme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
                 if root.map.selected-action != 0: Button {
                     compact: true;
-                    text: root.map.selected-action == 1 ? @tr("Open level {}", root.map.level + 1) : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
+                    text: root.map.selected-action == 1 ? @tr("Open level {}", Fmt.int(root.map.level + 1)) : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
                     clicked => { root.action(); }
                 }
             }
             if root.map.cards.length > 0: VerticalLayout {
                 spacing: 0;
-                TouchArea {
-                    height: 26px;
-                    mouse-cursor: pointer;
-                    clicked => { root.relations-open = !root.relations-open; }
-                    Text {
-                        x: 0;
-                        text: (root.relations-open ? "▾ " : "▸ ") + @tr("Relationships and counts") + " · " + root.map.relation-total;
-                        color: Theme.text;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
+                Disclosure {
+                    text: @tr("Relationships and counts") + " · " + Fmt.int(root.map.relation-total);
+                    tint: Theme.text;
+                    open <=> root.relations-open;
                 }
                 if root.relations-open: VerticalLayout {
                     spacing: 0;
@@ -387,7 +392,7 @@ export component ArcVisual inherits Rectangle {
                         padding-bottom: 7px;
                         spacing: 7px;
                         Text {
-                            text: r.from + " → " + r.to + " · " + r.count + " " + root.unit;
+                            text: r.from + " → " + r.to + " · " + Fmt.int(r.count) + " " + root.unit;
                             color: Theme.text;
                             font-size: 12px;
                             wrap: word-wrap;

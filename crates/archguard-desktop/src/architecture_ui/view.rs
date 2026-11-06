@@ -7,6 +7,8 @@ use slint::{ModelRc, SharedString, VecModel};
 use super::projection::Group;
 use super::visual::{self, Action, Kind, Map, RELATIONS_PAGE};
 use super::{blocks, diagram, markdown};
+use crate::kpi;
+use crate::tab_support::Texts;
 use crate::ui::{
     ArcCard, ArcChapter, ArcLevelItem, ArcLine, ArcMap, ArcRelation, ArchitectureModel,
 };
@@ -47,17 +49,19 @@ pub fn fill_document(
 
 /// The map value; `relations` is how many relationships are listed.
 pub fn map_model(
+    texts: &Texts,
     graph: &Graph,
     calls_status: &str,
     relations: usize,
     kind: Kind,
     map: &Map,
-    overview: &SharedString,
 ) -> ArcMap {
+    let overview = &SharedString::from(texts.t("Project overview"));
     let mut m = ArcMap {
         kind: kind as i32,
         total: map.projection.total as i32,
         internal: map.projection.internal as i32,
+        cycles: kpi::PACKAGE_CYCLES.item(texts, map.projection.cycle_groups()),
         calls_status: calls_status.into(),
         scopes: model(map.scopes.iter().map(|sc| match sc {
             None => overview.clone(),

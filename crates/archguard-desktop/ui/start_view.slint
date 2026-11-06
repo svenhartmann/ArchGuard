@@ -3,7 +3,8 @@
 // from src/start_ui.rs.
 import { ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, SearchField } from "widgets.slint";
+import { Button, SearchField, Legend, StatInline } from "widgets.slint";
+import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
 import { StartDetails } from "start_details.slint";
@@ -29,32 +30,6 @@ component LensButton inherits Rectangle {
     t := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-    }
-}
-
-// A legend entry; outline draws the swatch as a frame.
-component Legend inherits HorizontalLayout {
-    in property <string> text;
-    in property <brush> swatch;
-    in property <bool> outline;
-    in property <length> swatch-w: 10px;
-    horizontal-stretch: 0;
-    padding-left: 6px;
-    spacing: 7px;
-    Rectangle {
-        width: outline ? 16px : root.swatch-w;
-        height: 10px;
-        y: (parent.height - self.height) / 2;
-        border-radius: 3px;
-        background: outline ? transparent : root.swatch;
-        border-width: outline ? 2px : 0;
-        border-color: Theme.cycle;
-    }
-    Text {
-        text: root.text;
-        color: Theme.muted;
-        font-size: 12px;
-        vertical-alignment: center;
     }
 }
 
@@ -88,8 +63,8 @@ export component StartView inherits Rectangle {
                 Text {
                     text: @tr("Your architecture");
                     color: Theme.text;
-                    font-size: 28px;
-                    font-weight: 550;
+                    font-size: Theme.font-page;
+                    font-weight: 700;
                     vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -132,14 +107,14 @@ export component StartView inherits Rectangle {
                 if m.lens == 1 && m.kpi == 0: Legend {
                     text: @tr("Low → high");
                     swatch-w: 56px;
-                    swatch: @linear-gradient(90deg, #55c3ba 0%, #55c38e 14%, #55c362 29%, #74c355 43%, #a0c355 57%, #c3ba55 71%, #c38e55 86%, #c37155 100%);
+                    swatch: Theme.rate-scale;
                 }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Low"); swatch: Theme.low; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Elevated"); swatch: Theme.medium; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("High"); swatch: Theme.high; }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Low"); swatch: Theme.rate-low; }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Elevated"); swatch: Theme.rate-medium; }
+                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("High"); swatch: Theme.rate-high; }
                 if m.lens == 1 && m.kpi == 4: Legend { text: @tr("Informational"); swatch: Theme.accent; }
-                if m.lens == 2: Legend { text: @tr("Test gaps"); swatch: Theme.cycle; }
-                if m.lens == 2: Legend { text: @tr("Covered"); swatch: Theme.low; }
+                if m.lens == 2: Legend { text: @tr("Test gaps"); swatch: Theme.danger; }
+                if m.lens == 2: Legend { text: @tr("Covered"); swatch: Theme.success; }
                 if m.lens != 0: Legend { text: @tr("Unknown"); swatch: Theme.muted; }
             }
             // Back, package path and status.
@@ -172,9 +147,9 @@ export component StartView inherits Rectangle {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                Text {
-                    text: m.lens == 0 ? @tr("{} package cycle groups", m.cycle-groups)
-                        : m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {}/{} lines", m.gaps, m.covered-lines, m.total-lines) : @tr("Unknown · no usable coverage"))
+                if m.lens == 0: StatInline { kpi: m.cycle-groups; }
+                if m.lens != 0: Text {
+                    text: m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {} / {} lines", Fmt.int(m.gaps), Fmt.int(m.covered-lines), Fmt.int(m.total-lines)) : @tr("Unknown · no usable coverage"))
                         : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
                         : @tr("Observed {} measurements", root.metric);
                     color: Theme.muted;
@@ -215,7 +190,7 @@ export component StartView inherits Rectangle {
                 }
                 Text {
                     horizontal-stretch: 1;
-                    text: @tr("{} classes / files · {} surfaces", m.count, m.tiles) + (m.query != "" ? @tr(" · {} surfaces match", m.matching) : "");
+                    text: @tr("{} elements · {} surfaces", Fmt.int(m.count), Fmt.int(m.tiles)) + (m.query != "" ? @tr(" · {} surfaces match", Fmt.int(m.matching)) : "");
                     color: Theme.muted;
                     font-size: 12px;
                     horizontal-alignment: center;

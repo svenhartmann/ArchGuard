@@ -2,7 +2,8 @@
 // src/start_ui/scene.rs, pins and the floating camera controls
 // (#world-canvas, .world-orbit, .world-controls in the web viewer).
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button } from "widgets.slint";
+import { Icon, Icons, Button, ZoomControls } from "widgets.slint";
+import { Fmt } from "format.slint";
 import { StartData, StartTones, StartPin } from "start_data.slint";
 
 component Pin inherits Rectangle {
@@ -13,7 +14,7 @@ component Pin inherits Rectangle {
         return a == "" ? b : b == "" ? a : a + " · " + b;
     }
     property <string> marks: join(join(pin.cyclic ? @tr("Package cycle") : "",
-            pin.findings > 0 ? @tr("{} findings", pin.findings) : ""),
+            pin.findings > 0 ? @tr("{0} finding" | "{0} findings" % pin.findings, Fmt.int(pin.findings)) : ""),
         pin.max == "" ? "" : kpi > 0 ? @tr("{} max. {}", StartTones.kpi-label(kpi), pin.max) : @tr("max {}", pin.max));
     x: pin.x * 1px;
     y: pin.y * 1px - (touch.has-hover ? 2px : 0);
@@ -40,7 +41,7 @@ component Pin inherits Rectangle {
             overflow: elide;
         }
         Text {
-            text: marks != "" ? marks : pin.entries == 1 ? @tr("{} entry", pin.entries) : @tr("{} entries", pin.entries);
+            text: marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
             color: Theme.muted;
             font-size: 11px;
             overflow: elide;
@@ -278,17 +279,13 @@ export component StartStage inherits Rectangle {
         controls := HorizontalLayout {
             padding: 5px;
             spacing: 5px;
-            Button { icon: Icons.minus; compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.zoom-by(0.8); } }
-            Text {
-                min-width: 44px;
-                text: StartData.model.zoom + "%";
-                color: Theme.text;
-                font-size: 12px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            ZoomControls {
+                zoom: StartData.model.zoom / 100;
+                zoom-out => { StartData.zoom-by(0.8); }
+                zoom-in => { StartData.zoom-by(1.25); }
+                reset => { StartData.zoom-by(100 / max(1, StartData.model.zoom)); }
+                fit => { StartData.fit(); }
             }
-            Button { icon: Icons.plus; compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.zoom-by(1.25); } }
-            Button { text: @tr("Fit"); compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.fit(); } }
             Button { text: @tr("Reset"); compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.reset(); } }
         }
     }

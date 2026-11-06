@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
-import { Icons, Button } from "widgets.slint";
-import { PriorityBadge } from "tree_view.slint";
+import { Fmt } from "format.slint";
+import { Icons, Button, Badge, ZoomControls } from "widgets.slint";
 
 export struct NetCard {
     row: int,
@@ -49,7 +49,7 @@ component PackageCard inherits Rectangle {
         border-width: 1px;
         border-color: Theme.package-border;
         tab-label := Text {
-            text: card.file ? @tr("FILE") : @tr("PACKAGE");
+            text: (card.file ? @tr("File") : @tr("Package")).to-uppercase();
             color: Theme.text;
             font-size: 12px * zoom;
             font-weight: 700;
@@ -79,15 +79,16 @@ component PackageCard inherits Rectangle {
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
-                if card.priority > 0: PriorityBadge {
-                    priority: card.priority;
+                if card.priority > 0: Badge {
+                    text: card.priority == 1 ? "P1" : "P2";
+                    variant: card.priority == 1 ? "p1" : "p2";
                     zoom: root.zoom * 1.2;
                     y: (parent.height - self.height) / 2;
                 }
             }
             Rectangle { height: 1px; background: Theme.package-border.with-alpha(0.6); }
             Text {
-                text: card.file ? @tr("source file") : @tr("{} files · {} package", card.files, card.packages);
+                text: card.file ? @tr("source file") : @tr("{} files · {} package", Fmt.int(card.files), Fmt.int(card.packages));
                 color: Theme.muted;
                 font-size: 15px * zoom;
             }
@@ -173,10 +174,13 @@ export component NetworkView inherits Rectangle {
         bar := HorizontalLayout {
             padding: 6px;
             spacing: 4px;
-            Button { icon: Icons.plus; compact: true; clicked => { root.zoom = min(2.5, root.zoom * 1.25); } }
-            Button { icon: Icons.minus; compact: true; clicked => { root.zoom = max(0.25, root.zoom / 1.25); } }
-            Button { text: @tr("Fit"); compact: true; clicked => { root.fit(); } }
-            Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom = max(0.25, root.zoom / 1.25); }
+                zoom-in => { root.zoom = min(2.5, root.zoom * 1.25); }
+                reset => { root.zoom = 1; }
+                fit => { root.fit(); }
+            }
         }
     }
 }

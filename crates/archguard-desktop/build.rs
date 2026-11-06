@@ -24,7 +24,7 @@ fn merge_translations(src: &Path, out: &Path) {
             .collect();
         parts.sort();
         let mut merged = format!(
-            "msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\"Language: {code}\\n\"\n\n"
+            "msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\"Language: {code}\\n\"\n\"Plural-Forms: nplurals=2; plural=(n != 1);\\n\"\n\n"
         );
         let mut seen = std::collections::BTreeMap::new();
         for part in parts {

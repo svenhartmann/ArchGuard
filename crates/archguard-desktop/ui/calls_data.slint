@@ -1,4 +1,5 @@
 // Data of the Calls tab: one CallsModel value, set from src/calls_ui.rs.
+import { Fmt } from "format.slint";
 
 // kind: 0 language, 1 package, 2 type/module, 3 function/method, 4 group,
 // 5 external/unresolved connection. role: 0 none, 1 caller, 2 target, 3 both.
@@ -137,6 +138,9 @@ export struct CallsModel {
     state: int,
     // Why the analysis failed (state 0 shows it instead of the progress).
     error: string,
+    // `Status::slot` and "Analysis: …" of the call analysis.
+    status-slot: int,
+    status-label: string,
     // Toolbar.
     languages: [string],
     language-index: int,
@@ -241,7 +245,7 @@ export global CallsData {
     }
     pure public function metric-text(m: CallsMetric) -> string {
         return m.measured
-            ? @tr("AST complexity {} · max. nesting {}", m.cyclomatic, m.nesting)
+            ? @tr("AST complexity {} · max. nesting {}", Fmt.int(m.cyclomatic), Fmt.int(m.nesting))
             : @tr("AST complexity {} · max. nesting {}", "—", "—");
     }
 

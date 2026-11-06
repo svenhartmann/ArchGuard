@@ -18,7 +18,7 @@ use crate::documents::{self, DocId, Status, SubProject, with_store};
 use crate::graph_ui;
 use crate::settings::{self, ProjectView, Session};
 use crate::settings_file;
-use crate::tab_support::{self, Shared, Topology, model as vec_model};
+use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
     architecture_ui, calls_ui, matrix_ui, quality_ui, security_ui, services_ui, start_ui, web,
@@ -184,7 +184,7 @@ fn analyze(
             .unwrap_or_default();
     // Read once per document; the Services tab reuses the same slot.
     let projects = match &*tab_support::topology(topology, root) {
-        Ok(t) => documents::sub_projects(t),
+        Ok(t) => documents::build_units(t),
         Err(_) => Vec::new(),
     };
     let analysis = Analysis {
@@ -316,9 +316,10 @@ pub fn refresh(ui: &AppWindow) {
         Status::Failed(e) => e.into(),
         _ => SharedString::new(),
     });
+    let texts = Texts::of(ui);
     ui.set_sub_projects(vec_model(projects.into_iter().map(|p| SubProjectItem {
         name: p.name.into(),
-        kind: p.kind.into(),
+        kind: texts.t(&p.kind).into(),
         path: p.path.into(),
     })));
     restore_view(ui);

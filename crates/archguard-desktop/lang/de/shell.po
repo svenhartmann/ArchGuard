@@ -44,7 +44,7 @@ msgid "Unsaved: {}"
 msgstr "Nicht gespeichert: {}"
 
 msgid "Your changes will be lost if you don't save them."
-msgstr "Deine Änderungen gehen verloren, wenn du sie nicht speicherst."
+msgstr "Nicht gespeicherte Änderungen gehen verloren."
 
 msgid "Don't save"
 msgstr "Nicht speichern"

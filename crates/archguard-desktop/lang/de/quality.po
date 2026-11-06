@@ -157,7 +157,7 @@ msgid "Review package split: check the responsibilities of these groups."
 msgstr "Paketaufteilung prüfen: Verantwortlichkeiten der Gruppen vergleichen."
 
 msgid "Too few internal connections to assess a package split."
-msgstr "Zu wenige interne Verbindungen, um eine Paketaufteilung zu bewerten."
+msgstr "Zu wenige interne Abhängigkeiten, um eine Paketaufteilung zu bewerten."
 
 msgid "Co-change not checked."
 msgstr "Gemeinsame Änderungen nicht geprüft."
@@ -187,7 +187,7 @@ msgid "External dependencies · {{incoming}} in / {{outgoing}} out"
 msgstr "Externe Abhängigkeiten · {{incoming}} ein / {{outgoing}} aus"
 
 msgid "Direct files only; nested packages are separate. Isolation refers to connections inside this package."
-msgstr "Nur direkte Dateien; Unterpakete sind separat. Isolation bezieht sich auf Verbindungen innerhalb dieses Pakets."
+msgstr "Nur direkte Dateien; Unterpakete sind separat. Isolation bezieht sich auf Abhängigkeiten innerhalb dieses Pakets."
 
 msgid "Internal share: {{share}} · internal / (internal + outgoing)"
 msgstr "Interner Anteil: {{share}} · intern / (intern + ausgehend)"
@@ -321,9 +321,6 @@ msgstr "teilweise analysiert"
 msgid "No matching measurements. Missing data is not evidence of good quality."
 msgstr "Keine passenden Messungen. Fehlende Daten belegen keine gute Qualität."
 
-msgid "{{shown}} / {{total}} matching records"
-msgstr "{{shown}} / {{total}} passende Einträge"
-
 msgid "Entire source scope"
 msgstr "Gesamter Quellumfang"
 
@@ -452,3 +449,6 @@ msgstr "WMC — Weighted Methods per Class (gewichtete Methoden). Summe der zykl
 
 msgid "LCOM4 — Lack of Cohesion in Methods, variant 4. Connected groups of instance methods sharing a non-static field/property or calling each other. One group is connected; multiple groups invite a responsibility review. Constructors, static members and local functions are excluded. Incomplete compiler evidence remains —."
 msgstr "LCOM4 — Lack of Cohesion in Methods, Variante 4 (Zusammenhalt). Gruppen von Instanzmethoden, die dasselbe nichtstatische Feld bzw. dieselbe Property nutzen oder einander aufrufen. Eine Gruppe ist zusammenhängend; mehrere Gruppen geben Anlass zur Verantwortungsprüfung. Konstruktoren, statische Mitglieder und lokale Funktionen zählen nicht. Unvollständige Compiler-Belege bleiben —."
+
+msgid "{{ratio}} matching records"
+msgstr "{{ratio}} passende Datensätze"

@@ -247,10 +247,13 @@ fn run<T: 'static, R>(cell: Rc<dyn Any>, f: impl FnOnce(&mut T) -> R) -> R {
     f(&mut cell.borrow_mut())
 }
 
-/// The sub-projects of a monorepo worth opening: manifest projects and
-/// local Compose build contexts, one per path, without the root itself.
-/// Empty unless the topology shows more than one project or a monorepo.
-pub fn sub_projects(topology: &ServiceTopology) -> Vec<SubProject> {
+/// The build units of a monorepo: directories below the opened folder that
+/// are built on their own, i.e. manifest projects and local Compose build
+/// contexts, one per path, without the root itself. Empty unless the
+/// topology shows more than one project or a monorepo. The header chip,
+/// its menu and the Services tab all count this list
+/// (`kpi::BUILD_UNITS`).
+pub fn build_units(topology: &ServiceTopology) -> Vec<SubProject> {
     let mut out: Vec<SubProject> = Vec::new();
     let mut add = |name: &str, kind: &str, path: &str| {
         let path = path.trim_start_matches("./").trim_end_matches('/');
@@ -629,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn sub_projects_list_projects_and_build_contexts_without_the_root() {
+    fn build_units_are_projects_and_build_contexts_without_the_root() {
         let t = topology(
             vec![
                 project("ws", ".", "workspace"),
@@ -643,7 +646,7 @@ mod tests {
             ],
             true,
         );
-        let subs = sub_projects(&t);
+        let subs = build_units(&t);
         let rows: Vec<(&str, &str, &str)> = subs
             .iter()
             .map(|p| (p.name.as_str(), p.kind.as_str(), p.path.as_str()))
@@ -658,9 +661,9 @@ mod tests {
     }
 
     #[test]
-    fn a_single_project_offers_no_sub_projects() {
+    fn a_single_project_has_no_build_units() {
         let t = topology(vec![project("one", ".", "application")], Vec::new(), false);
-        assert!(sub_projects(&t).is_empty());
+        assert!(build_units(&t).is_empty());
     }
 
     #[test]
@@ -690,7 +693,7 @@ mod tests {
             .canonicalize()
             .expect("fixture");
         let t = archguard_engine::analyze_services(&root).expect("service topology");
-        let subs = sub_projects(&t);
+        let subs = build_units(&t);
         let paths: Vec<&str> = subs.iter().map(|p| p.path.as_str()).collect();
         let mut contexts: Vec<String> = t
             .services

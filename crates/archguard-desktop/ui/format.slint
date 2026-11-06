@@ -1,0 +1,14 @@
+// Numbers in the window language's format, formatted by Rust
+// (`src/format.rs`): Slint never turns a number into text itself.
+// `locale` is set with the language, so bindings re-read on a switch.
+
+export global Fmt {
+    in property <string> locale: "en";
+    // What an unknown value reads as (`format::UNKNOWN`).
+    in property <string> unknown;
+    pure callback format-int(int, string) -> string;
+    // An integer with thousands separators: 2,374 / 2.374.
+    public pure function int(n: int) -> string {
+        return format-int(n, locale);
+    }
+}

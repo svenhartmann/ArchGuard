@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading } from "widgets.slint";
 
 export struct TreeRow {
     row: int,
@@ -38,25 +39,6 @@ export global TreeGeo {
 }
 
 // The web viewer's tree-priority badge (P1 high, P2 medium).
-export component PriorityBadge inherits Rectangle {
-    in property <int> priority;
-    in property <float> zoom: 1.0;
-    width: 26px * zoom;
-    height: 18px * zoom;
-    border-radius: 4px * zoom;
-    background: Theme.priority-fill;
-    border-width: 1px;
-    border-color: Theme.priority;
-    Text {
-        text: root.priority == 1 ? "P1" : "P2";
-        color: Theme.dark ? Theme.priority : #502500;
-        font-size: 10.5px * zoom;
-        font-weight: 700;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-}
-
 component RowCard inherits Rectangle {
     in property <TreeRow> data;
     in property <bool> selected;
@@ -116,8 +98,9 @@ component RowCard inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        if data.priority > 0: PriorityBadge {
-            priority: data.priority;
+        if data.priority > 0: Badge {
+            text: data.priority == 1 ? "P1" : "P2";
+            variant: data.priority == 1 ? "p1" : "p2";
             zoom: root.zoom;
             y: (parent.height - self.height) / 2;
         }
@@ -130,14 +113,14 @@ component RowCard inherits Rectangle {
         }
         Text {
             width: 64px * zoom;
-            text: @tr("In {}", data.in-count);
+            text: @tr("In {}", Fmt.int(data.in-count));
             color: Theme.incoming;
             font-size: 11.5px * zoom;
             vertical-alignment: center;
         }
         Text {
             width: 52px * zoom;
-            text: @tr("Out {}", data.out-count);
+            text: @tr("Out {}", Fmt.int(data.out-count));
             color: Theme.outgoing;
             font-size: 11.5px * zoom;
             horizontal-alignment: right;
@@ -212,30 +195,27 @@ export component TreeView inherits Rectangle {
         }
 
         // Column labels as in the web tree.
-        Text {
+        SectionHeading {
             x: 0;
             y: 8px * zoom;
             width: TreeGeo.lane-w * 1px * zoom;
-            text: @tr("INCOMING");
-            color: Theme.muted;
+            label: @tr("Incoming");
             font-size: 11px * zoom;
             font-weight: 700;
             horizontal-alignment: center;
         }
-        Text {
+        SectionHeading {
             x: (TreeGeo.lane-w * 1px + 10px) * zoom;
             y: 8px * zoom;
-            text: @tr("PACKAGES");
-            color: Theme.muted;
+            label: @tr("Packages");
             font-size: 11px * zoom;
             font-weight: 700;
         }
-        Text {
+        SectionHeading {
             x: (TreeGeo.lane-w + tree-w) * 1px * zoom;
             y: 8px * zoom;
             width: TreeGeo.lane-w * 1px * zoom;
-            text: @tr("OUTGOING · CYCLES");
-            color: Theme.muted;
+            label: @tr("Outgoing · cycles");
             font-size: 11px * zoom;
             font-weight: 700;
             horizontal-alignment: center;
@@ -301,10 +281,13 @@ export component TreeView inherits Rectangle {
         bar := HorizontalLayout {
             padding: 5px;
             spacing: 4px;
-            Button { icon: Icons.minus; compact: true; clicked => { root.zoom-by(1 / 1.25); } }
-            Button { icon: Icons.plus; compact: true; clicked => { root.zoom-by(1.25); } }
-            Button { text: round(root.zoom * 100) + "%"; compact: true; clicked => { root.zoom = 1; } }
-            Button { icon: Icons.fit; compact: true; clicked => { root.fit(); } }
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom-by(1 / 1.25); }
+                zoom-in => { root.zoom-by(1.25); }
+                reset => { root.zoom = 1; }
+                fit => { root.fit(); }
+            }
 
         }
     }

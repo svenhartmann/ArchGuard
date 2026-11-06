@@ -159,7 +159,8 @@ impl View {
 pub enum Tone {
     Accent,
     Muted,
-    Cycle,
+    /// A file with uncovered lines (test gaps lens).
+    Gap,
     Covered,
     Low,
     Medium,

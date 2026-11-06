@@ -3,7 +3,7 @@
 // set from src/architecture_ui.rs.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button } from "widgets.slint";
+import { Button, Disclosure, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 
@@ -23,6 +23,10 @@ export struct ArchitectureModel {
     chapters: [ArcChapter],
     chapter: int,
     chapter-title: string,
+    // "Document language: German" in an English window; the level of
+    // chapter 10's figures.
+    language-note: string,
+    chapter-note: string,
     blocks: [ArcBlock],
     source: string,
     about: [ArcBlock],
@@ -80,22 +84,6 @@ component ChapterButton inherits Rectangle {
     }
 }
 
-// A collapsible section like the web's <details>.
-component Disclosure inherits TouchArea {
-    in property <string> text;
-    in-out property <bool> open;
-    height: 30px;
-    mouse-cursor: pointer;
-    clicked => { root.open = !root.open; }
-    Text {
-        x: 0;
-        text: (root.open ? "▾ " : "▸ ") + root.text;
-        color: Theme.muted;
-        font-size: 12px;
-        vertical-alignment: center;
-    }
-}
-
 export component ArchitectureView inherits Rectangle {
     callback open-web();
     property <bool> source-open;
@@ -121,7 +109,7 @@ export component ArchitectureView inherits Rectangle {
         Text {
             text: @tr("No arc42 documentation in this report");
             color: Theme.text;
-            font-size: 22px;
+            font-size: Theme.font-page;
             font-weight: 700;
             horizontal-alignment: center;
         }
@@ -142,8 +130,8 @@ export component ArchitectureView inherits Rectangle {
             VerticalLayout {
                 spacing: 8px;
                 horizontal-stretch: 1;
-                Text { text: @tr("Architecture documentation"); color: Theme.text; font-size: 23px; font-weight: 700; }
-                Text { text: @tr("arc42 · Evidence, decisions and open questions"); color: Theme.muted; font-size: 14px; }
+                PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
+                if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: 12px; wrap: word-wrap; }
             }
             Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
             Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
@@ -192,12 +180,10 @@ export component ArchitectureView inherits Rectangle {
                             padding-top: 26px;
                             padding-bottom: 20px;
                             spacing: 0;
-                            Text {
-                                text: ArchitectureData.model.chapter-title;
-                                color: Theme.text;
-                                font-size: 23px;
-                                font-weight: 700;
-                                wrap: word-wrap;
+                            PageTitle { text: ArchitectureData.model.chapter-title; }
+                            if ArchitectureData.model.chapter-note != "": VerticalLayout {
+                                padding-top: 8px;
+                                Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
                             if ArchitectureData.model.map.kind >= 0: VerticalLayout {

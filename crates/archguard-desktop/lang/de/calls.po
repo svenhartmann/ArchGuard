@@ -22,15 +22,6 @@ msgstr "Externe Ziele · keine Projekt-Paketzuordnung"
 msgid "Unresolved targets · no package mapping"
 msgstr "Unaufgelöste Ziele · keine Paketzuordnung"
 
-msgid "ready"
-msgstr "vollständig"
-
-msgid "partial"
-msgstr "teilweise"
-
-msgid "unavailable"
-msgstr "nicht verfügbar"
-
 msgid "not applicable"
 msgstr "nicht anwendbar"
 
@@ -86,19 +77,19 @@ msgid "{} unresolved outgoing call sites are excluded from this evidence; resolv
 msgstr "{} unaufgelöste ausgehende Aufrufstellen sind nicht in diesen Belegen enthalten; ihre Auflösung kann die Rangfolge der Kandidaten ändern."
 
 msgid "Analysis coverage is incomplete. Review compiler diagnostics before acting on this plan."
-msgstr "Die Analyseabdeckung ist unvollständig. Prüfe die Compilerdiagnosen, bevor du diesen Plan umsetzt."
+msgstr "Die Analyseabdeckung ist unvollständig. Vor der Umsetzung dieses Plans die Compilerdiagnosen prüfen."
 
 msgid "Check whether an existing interface already covers {}. Reuse it if appropriate; otherwise consider a narrow contract owned by the consuming responsibility."
-msgstr "Prüfe, ob ein vorhandenes Interface bereits {} abdeckt. Verwende es gegebenenfalls wieder; andernfalls erwäge einen schmalen Vertrag im Verantwortungsbereich des Aufrufers."
+msgstr "Prüfen, ob ein vorhandenes Interface bereits {} abdeckt, und es gegebenenfalls wiederverwenden; andernfalls einen schmalen Vertrag im Verantwortungsbereich des Aufrufers erwägen."
 
 msgid "Let {} implement that contract and inject it into {} from the composition root. Keep concrete construction outside the consumer."
-msgstr "Lass {} diesen Vertrag implementieren und übergib die Implementierung von der zentralen Verdrahtung aus an {}. Erzeuge konkrete Instanzen außerhalb des Aufrufers."
+msgstr "{} diesen Vertrag implementieren lassen und die Implementierung von der zentralen Verdrahtung aus an {} übergeben. Konkrete Instanzen außerhalb des Aufrufers erzeugen."
 
 msgid "Review signatures, access modifiers and return/parameter types for dependencies that would preserve the cycle. An interface alone does not remove runtime call cycles; rescan after changing code."
-msgstr "Prüfe Signaturen, Zugriffsmodifikatoren sowie Rückgabe- und Parametertypen auf Abhängigkeiten, die den Zyklus erhalten würden. Ein Interface allein entfernt keine Aufrufzyklen zur Laufzeit; nach der Codeänderung erneut analysieren."
+msgstr "Signaturen, Zugriffsmodifikatoren sowie Rückgabe- und Parametertypen auf Abhängigkeiten prüfen, die den Zyklus erhalten würden. Ein Interface allein entfernt keine Aufrufzyklen zur Laufzeit; nach der Codeänderung erneut analysieren."
 
 msgid "Review moving concrete construction or static utility access behind an injected adapter or factory owned by the consumer."
-msgstr "Prüfe, ob die konkrete Objekterzeugung oder statische Hilfsaufrufe hinter einen übergebenen Adapter oder eine Factory im Verantwortungsbereich des Aufrufers verschoben werden können."
+msgstr "Prüfen, ob die konkrete Objekterzeugung oder statische Hilfsaufrufe hinter einen übergebenen Adapter oder eine Factory im Verantwortungsbereich des Aufrufers verschoben werden können."
 
 msgid "Choose the contract from the recorded operations; verify lifetime, state and error behavior before changing code. Static methods cannot directly implement an instance interface."
 msgstr "Leite den Vertrag aus den erfassten Operationen ab; prüfe vor der Codeänderung Lebensdauer, Zustand und Fehlerverhalten. Statische Methoden können kein Instanz-Interface direkt implementieren."
@@ -107,10 +98,10 @@ msgid "Rescan after the source change. This proposal does not modify source code
 msgstr "Nach der Quellcodeänderung erneut analysieren. Dieser Vorschlag verändert keinen Quellcode und belegt nicht, dass sämtliche Zyklen entfernt werden."
 
 msgid "Review whether this type or module belongs to the target package’s responsibility. Call affinity is evidence to inspect, not an architectural decision."
-msgstr "Prüfe, ob dieser Typ oder dieses Modul zum Verantwortungsbereich des Zielpakets gehört. Die Häufung von Aufrufen ist ein Prüfhinweis und keine Architekturentscheidung."
+msgstr "Prüfen, ob dieser Typ oder dieses Modul zum Verantwortungsbereich des Zielpakets gehört. Die Häufung von Aufrufen ist ein Prüfhinweis und keine Architekturentscheidung."
 
 msgid "Check incoming callers, restricted access, imports and public API compatibility"
-msgstr "Prüfe eingehende Aufrufer, eingeschränkte Zugriffsrechte, Imports und die Kompatibilität öffentlicher APIs"
+msgstr "Eingehende Aufrufer, eingeschränkte Zugriffsrechte, Imports und die Kompatibilität öffentlicher APIs prüfen"
 
 msgid "; this file contains {} type/module elements, so moving the file also affects them."
 msgstr "; diese Datei enthält {} Typ-/Modulelemente, die beim Verschieben ebenfalls betroffen sind."
@@ -146,7 +137,7 @@ msgid "Group {} · {} methods"
 msgstr "Gruppe {} · {} Methoden"
 
 msgid "Select a type/module connection to inspect its functions and methods and source call sites."
-msgstr "Wähle eine Typ-/Modulverbindung, um ihre Funktionen und Methoden und Aufrufstellen im Quellcode zu untersuchen."
+msgstr "Eine Typ-/Modul-Aufrufverbindung auswählen, um ihre Funktionen, Methoden und Aufrufstellen im Quellcode zu untersuchen."
 
 msgid "{} call sites · "
 msgstr "{} Aufrufstellen · "
@@ -170,7 +161,7 @@ msgid "Review plans based on the original source calls. They do not change code 
 msgstr "Prüfpläne auf Basis der ursprünglichen Quellcode-Aufrufe. Sie verändern weder Code noch den simulierten Abhängigkeitsgraphen."
 
 msgid "No supported suggestion for this connection. A dependency alone does not establish a misplaced responsibility or justify an interface."
-msgstr "Kein belegter Vorschlag für diese Verbindung. Eine Abhängigkeit allein belegt weder eine falsch zugeordnete Verantwortung noch rechtfertigt sie ein Interface."
+msgstr "Kein belegter Vorschlag für diese Aufrufverbindung. Eine Abhängigkeit allein belegt weder eine falsch zugeordnete Verantwortung noch rechtfertigt sie ein Interface."
 
 msgid "{} call sites · {} target methods · {}"
 msgstr "{} Aufrufstellen · {} Zielmethoden · {}"
@@ -179,7 +170,7 @@ msgid "No call relations available."
 msgstr "Keine Aufrufbeziehungen verfügbar."
 
 msgid "No matching call relations. Change the package, search, target filter or internal-call setting."
-msgstr "Keine passenden Aufrufbeziehungen. Ändere das Paket, die Suche, den Zielfilter oder die Einstellung für interne Aufrufe."
+msgstr "Keine passenden Aufrufverbindungen. Paket, Suche, Zielfilter oder die Einstellung für interne Aufrufe ändern."
 
 msgid "Show next 100 type/module connections"
 msgstr "Nächste 100 Typ-/Modulverbindungen anzeigen"
@@ -260,7 +251,7 @@ msgid "Methods / recursion"
 msgstr "Methoden / Rekursion"
 
 msgid "{} / {} recorded cyclic groups"
-msgstr "{} / {} erfasste zyklische Gruppen"
+msgstr "{} / {} erfasste Zyklusgruppen"
 
 msgid "functions / methods / recursion"
 msgstr "Funktionen / Methoden / Rekursion"
@@ -269,7 +260,7 @@ msgid "types / modules"
 msgstr "Typen / Module"
 
 msgid "No recorded cyclic group matches this scope."
-msgstr "Keine erfasste zyklische Gruppe passt zu diesem Umfang."
+msgstr "Keine erfasste Zyklusgruppe passt zu diesem Umfang."
 
 msgid "Incomplete analysis cannot rule out further cycles."
 msgstr "Eine unvollständige Analyse schließt weitere Zyklen nicht aus."
@@ -278,7 +269,7 @@ msgid "All cycle groups"
 msgstr "Alle Zyklusgruppen"
 
 msgid "Each group is a strongly connected component (SCC), shown with all its internal connections and one closed example path. This does not enumerate every possible elementary cycle. Type/module cycles aggregate calls; they do not necessarily form a function/method cycle. Module owners group top-level functions, not declared classes. Function/method cycles include direct and mutual recursion within one owner. "
-msgstr "Jede Gruppe ist eine stark zusammenhängende Komponente (SCC), mit allen internen Verbindungen und einem geschlossenen Beispielpfad. Es werden nicht alle möglichen elementaren Zyklen aufgezählt. Typ-/Modulzyklen fassen Aufrufe zusammen; sie ergeben nicht zwingend einen Funktions-/Methodenzyklus. Module gruppieren freie Funktionen und sind keine deklarierten Klassen. Funktions-/Methodenzyklen enthalten direkte und gegenseitige Rekursion innerhalb eines Elements. "
+msgstr "Jede Gruppe ist eine stark zusammenhängende Komponente (SCC), mit allen internen Aufrufverbindungen und einem geschlossenen Beispielpfad. Es werden nicht alle möglichen elementaren Zyklen aufgezählt. Typ-/Modulzyklen fassen Aufrufe zusammen; sie ergeben nicht zwingend einen Funktions-/Methodenzyklus. Module gruppieren freie Funktionen und sind keine deklarierten Klassen. Funktions-/Methodenzyklen enthalten direkte und gegenseitige Rekursion innerhalb eines Elements. "
 
 msgid "Language, package and search select complete groups when a member matches. Target and internal-call controls are paused here to preserve return paths. Static compiler targets do not prove that a loop occurs at runtime. "
 msgstr "Sprache, Paket und Suche wählen vollständige Gruppen, sobald ein Element passt. Ziel- und interne Aufruffilter sind hier ausgesetzt, damit Rückwege erhalten bleiben. Statische Compilerziele belegen keinen tatsächlich durchlaufenen Zyklus zur Laufzeit. "
@@ -287,19 +278,19 @@ msgid "{} unresolved target sites; {} project sites without complete method iden
 msgstr "{} unaufgelöste Ziel-Aufrufstellen; {} Projekt-Aufrufstellen ohne vollständige Methodenidentitäten im Quellcode-Snapshot."
 
 msgid "{} elements · {} connections · {} call sites"
-msgstr "{} Elemente · {} Verbindungen · {} Aufrufstellen"
+msgstr "{} Elemente · {} Aufrufverbindungen · {} Aufrufstellen"
 
 msgid "Next 20 groups"
 msgstr "Nächste 20 Gruppen"
 
 msgid "Selected group · {} elements · {} connections"
-msgstr "Gewählte Gruppe · {} Elemente · {} Verbindungen"
+msgstr "Gewählte Gruppe · {} Elemente · {} Aufrufverbindungen"
 
 msgid "Closed example path: "
 msgstr "Geschlossener Beispielpfad: "
 
 msgid "{} directed steps. Follow the numbered connections below; the full closed path is included in the export."
-msgstr "{} gerichtete Schritte. Folge den nummerierten Verbindungen unten; der vollständige geschlossene Pfad ist im Export enthalten."
+msgstr "{} gerichtete Schritte. Den nummerierten Aufrufverbindungen unten folgen; der vollständige geschlossene Pfad ist im Export enthalten."
 
 msgid "Next 20 path steps"
 msgstr "Nächste 20 Pfadschritte"
@@ -311,16 +302,13 @@ msgid "Next 50 members"
 msgstr "Nächste 50 Elemente"
 
 msgid "All {} internal connections"
-msgstr "Alle {} internen Verbindungen"
+msgstr "Alle {} internen Aufrufverbindungen"
 
 msgid "Next 50 connections"
-msgstr "Nächste 50 Verbindungen"
-
-msgid "CALL OVERVIEW"
-msgstr "Aufrufübersicht"
+msgstr "Nächste 50 Aufrufverbindungen"
 
 msgid "Connections"
-msgstr "Verbindungen"
+msgstr "Aufrufverbindungen"
 
 msgid "Most calls"
 msgstr "Meiste Aufrufe"
@@ -336,9 +324,6 @@ msgstr "Aufrufer"
 
 msgid "Target"
 msgstr "Ziel"
-
-msgid "CALL TREE"
-msgstr "AUFRUFBAUM"
 
 msgid "All elements"
 msgstr "Alle Elemente"
@@ -415,14 +400,8 @@ msgstr "Keine geeigneten Quelldateien für die Aufrufanalyse."
 msgid "Call analysis unavailable. "
 msgstr "Aufrufanalyse nicht verfügbar. "
 
-msgid "Analysis: {}"
-msgstr "Analyse: {}"
-
-msgid "Analysis"
-msgstr "Analyse"
-
 msgid "{} connections · {} call sites"
-msgstr "{} Verbindungen · {} Aufrufstellen"
+msgstr "{} Aufrufverbindungen · {} Aufrufstellen"
 
 msgid "Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."
 msgstr "Aufrufstellen im Quellcode → vom Compiler deklarierte Methoden. Zur Laufzeit können weitere Implementierungen aufgerufen werden. Konstruktoren sind enthalten; Importbeziehungen werden separat analysiert."
@@ -438,3 +417,9 @@ msgstr "Version {}"
 
 msgid "Analyzing calls …"
 msgstr "Aufrufe werden analysiert …"
+
+msgid "Call overview"
+msgstr "Aufrufübersicht"
+
+msgid "Call tree"
+msgstr "Aufrufbaum"

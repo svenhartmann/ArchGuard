@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use slint::{ModelRc, VecModel};
 
 use super::state::{Lens, Selection, StartState};
+use crate::format::{Locale, known};
 use crate::ui::{StartLine, StartModel};
 
 /// Line kinds shared with `start_details.slint`.
@@ -48,12 +49,17 @@ fn line(kind: i32, a: impl Into<String>, b: impl Into<String>, c: impl Into<Stri
     }
 }
 
-fn opt(v: Option<f64>) -> String {
-    v.map_or_else(|| "—".to_string(), super::state::number)
+fn opt(l: Locale, v: Option<f64>) -> String {
+    known(v, |v| l.num(v, 2))
+}
+
+/// A count in the window's number format.
+fn n(l: Locale, v: impl TryInto<i64>) -> String {
+    l.int(v.try_into().unwrap_or(i64::MAX))
 }
 
 /// Fill the panel fields of the model for the current selection.
-pub fn fill(m: &mut StartModel, s: &StartState) {
+pub fn fill(m: &mut StartModel, s: &StartState, l: Locale) {
     let Some(sel) = &s.selection else { return };
     let Some(area) = s.scope.areas.get(sel.area) else {
         return;
@@ -71,12 +77,12 @@ pub fn fill(m: &mut StartModel, s: &StartState) {
         .into();
     let mut lines = Vec::new();
     match s.lens {
-        Lens::Explore => explore(&mut lines, s, sel),
-        Lens::Coverage => coverage(&mut lines, s, sel),
-        Lens::Problems => problems(&mut lines, s, sel),
+        Lens::Explore => explore(l, &mut lines, s, sel),
+        Lens::Coverage => coverage(l, &mut lines, s, sel),
+        Lens::Problems => problems(l, &mut lines, s, sel),
     }
     if sel.entity.is_none() {
-        members(&mut lines, s, sel);
+        members(l, &mut lines, s, sel);
     }
     evidence(&mut lines, s, sel);
     m.detail_lines = ModelRc::new(VecModel::from(lines));
@@ -90,7 +96,7 @@ fn members_of<'a>(s: &'a StartState, sel: &'a Selection) -> Vec<usize> {
     }
 }
 
-fn explore(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
+fn explore(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     let Some(e) = sel.entity else {
         let values: Vec<f64> = members_of(s, sel)
             .into_iter()
@@ -99,9 +105,9 @@ fn explore(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
         let max = values.iter().copied().reduce(f64::max);
         out.push(line(
             kind::ENTRIES_MEASURED,
-            values.len().to_string(),
-            members_of(s, sel).len().to_string(),
-            opt(max),
+            n(l, values.len()),
+            n(l, members_of(s, sel).len()),
+            opt(l, max),
         ));
         out.push(line(kind::PICK_CLASS, "", "", ""));
         return;
@@ -116,29 +122,29 @@ fn explore(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
             .class_id
             .as_ref()
             .is_some_and(|id| s.ev.kpis.contains_key(id));
-        out.push(line(kind::KPI_VALUE, opt(s.value(e)), "", ""));
+        out.push(line(kind::KPI_VALUE, opt(l, s.value(e)), "", ""));
         if !known {
             out.push(line(kind::NO_KPI, "", "", ""));
         }
     } else {
         out.push(line(
             kind::MAX_CC,
-            opt(ent.max_complexity.map(f64::from)),
+            opt(l, ent.max_complexity.map(f64::from)),
             "",
             "",
         ));
         out.push(line(
             kind::MEASURED_METHODS,
-            ent.measured_methods.to_string(),
-            ent.declared_methods.to_string(),
+            n(l, ent.measured_methods),
+            n(l, ent.declared_methods),
             "",
         ));
     }
-    methods(out, s, e);
+    methods(l, out, s, e);
 }
 
 /// `worldClassMethods`, highest complexity first.
-fn methods(out: &mut Vec<StartLine>, s: &StartState, e: usize) {
+fn methods(l: Locale, out: &mut Vec<StartLine>, s: &StartState, e: usize) {
     let ent = s.ev.entity(e);
     let key = ent
         .class_id
@@ -156,18 +162,18 @@ fn methods(out: &mut Vec<StartLine>, s: &StartState, e: usize) {
     out.push(line(kind::METHODS, "", "", ""));
     out.push(line(
         kind::METHOD_RECORDS,
-        s.limit.min(rows.len()).to_string(),
-        rows.len().to_string(),
+        n(l, s.limit.min(rows.len())),
+        n(l, rows.len()),
         "",
     ));
     for m in rows.iter().take(s.limit) {
-        let cc = m.cyclomatic.map_or("—".to_string(), |c| c.to_string());
+        let cc = known(m.cyclomatic, |c| n(l, c));
         out.push(line(kind::METHOD, m.name.as_str(), cc, ""));
         out.push(line(kind::PATH, format!("{}:{}", m.file, m.line), "", ""));
     }
 }
 
-fn coverage(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
+fn coverage(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     let files: BTreeMap<&str, usize> = members_of(s, sel)
         .into_iter()
         .map(|e| (s.ev.entity(e).node.as_str(), e))
@@ -183,20 +189,20 @@ fn coverage(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
         let total: u64 = measured.iter().map(|l| l.total).sum();
         out.push(line(
             kind::FILE_COVERAGE,
-            covered.to_string(),
-            total.to_string(),
-            total.saturating_sub(covered).to_string(),
+            n(l, covered),
+            n(l, total),
+            n(l, total.saturating_sub(covered)),
         ));
     }
     out.push(line(
         kind::FILES_MEASURED,
-        measured.len().to_string(),
-        files.len().to_string(),
+        n(l, measured.len()),
+        n(l, files.len()),
         "",
     ));
 }
 
-fn problems(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
+fn problems(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     let area = &s.scope.areas[sel.area];
     out.push(line(
         if area.cyclic {
@@ -208,12 +214,7 @@ fn problems(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
         "",
         "",
     ));
-    out.push(line(
-        kind::FINDINGS,
-        area.findings.len().to_string(),
-        "",
-        "",
-    ));
+    out.push(line(kind::FINDINGS, n(l, area.findings.len()), "", ""));
     for &f in area.findings.iter().take(s.limit) {
         out.push(line(kind::TEXT, finding_text(s, f), "", ""));
     }
@@ -225,7 +226,7 @@ fn finding_text(s: &StartState, f: usize) -> String {
 }
 
 /// The member list of an area or a grouped surface.
-fn members(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
+fn members(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     let label = |e: usize| {
         let e = s.ev.entity(e);
         e.class_id.clone().unwrap_or_else(|| e.node.clone())
@@ -241,7 +242,7 @@ fn members(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     }
     for &e in rows.iter().take(s.limit) {
         let value = if s.lens == Lens::Explore {
-            opt(s.value(e))
+            opt(l, s.value(e))
         } else {
             String::new()
         };
@@ -251,7 +252,7 @@ fn members(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
         });
     }
     if rows.len() > s.limit {
-        out.push(line(kind::MORE, (rows.len() - s.limit).to_string(), "", ""));
+        out.push(line(kind::MORE, n(l, rows.len() - s.limit), "", ""));
     }
 }
 

@@ -223,7 +223,7 @@ fn context(b: &mut Builder, p: &CohesionPackage) {
             Kind::Text,
             lang.f(
                 "Internal share: {share} · internal / (internal + outgoing)",
-                &[("share", percent(p.internal_share.map(|s| s * 100.0)))],
+                &[("share", percent(lang, p.internal_share.map(|s| s * 100.0)))],
             ),
         ),
         Line::new(

@@ -3,7 +3,8 @@
 // src/calls_ui.rs.
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, SearchField } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Button, SearchField, StatusLine, Disclosure } from "widgets.slint";
 import { CallsData, CallsModel } from "calls_data.slint";
 import { Muted } from "calls_parts.slint";
 import { CallsTree } from "calls_tree.slint";
@@ -94,7 +95,7 @@ component Coverage inherits Muted {
             ? @tr("Partial Java call analysis; coverage is incomplete. ")
             : @tr("Partial call analysis; coverage is incomplete. "))
         : @tr("Static call analysis. ");
-    property <string> counts: @tr("{} files · {} types/modules · {} project call sites · {} external · {} unresolved.", m.files, m.classes, m.project, m.external, m.unresolved);
+    property <string> counts: @tr("{} files · {} types/modules · {} project call sites · {} external · {} unresolved.", Fmt.int(m.files), Fmt.int(m.classes), Fmt.int(m.project), Fmt.int(m.external), Fmt.int(m.unresolved));
     property <string> baseline: m.java-release > 0 && m.analyzers.length == 0
         ? " " + @tr("Java {} API/source baseline.", m.java-release)
         : m.unreported ? " " + @tr("Analyzer version unreported.") : "";
@@ -123,26 +124,19 @@ component Description inherits VerticalLayout {
             text: @tr("Call analysis unavailable. ") + m.diagnostic-line
                 + (m.unreported ? " " + @tr("Analyzer version unreported.") : "") + @tr(" Original source snapshot.");
         }
-        if !none && !unavailable: Muted {
-            font-size: 12px;
-            text: @tr("Analysis: {}", CallsData.coverage(m.status));
-            vertical-alignment: center;
-        }
-        TouchArea {
-            mouse-cursor: pointer;
+        if !none && !unavailable: StatusLine { status: m.status-slot; label: m.status-label; }
+        Disclosure {
+            text: @tr("Analysis");
+            tint: Theme.text;
+            // The state lives in Rust; the click only reports it.
+            open: m.analysis-open;
             clicked => { CallsData.toggle-analysis(); }
-            HorizontalLayout {
-                Text {
-                    text: (m.analysis-open ? "▾ " : "▸ ") + @tr("Analysis");
-                    color: Theme.text;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-            }
         }
         Muted {
             font-size: 12px;
-            text: @tr("{} connections · {} call sites", m.connections, m.sites);
+            // Without an analysis the counts are unknown, not zero.
+            text: none || unavailable ? @tr("{} connections · {} call sites", Fmt.unknown, Fmt.unknown)
+                : @tr("{} connections · {} call sites", Fmt.int(m.connections), Fmt.int(m.sites));
             vertical-alignment: center;
         }
     }
@@ -168,7 +162,7 @@ component Description inherits VerticalLayout {
                         font-size: 12px;
                         font-weight: 700;
                     }
-                    Muted { text: @tr("{} files", a.files) + (a.version != "" ? " · " + @tr("Version {}", a.version) : ""); }
+                    Muted { text: @tr("{} files", Fmt.int(a.files)) + (a.version != "" ? " · " + @tr("Version {}", a.version) : ""); }
                     if a.project != "": Muted { text: a.project; font-family: "Menlo"; }
                     for d in a.diagnostics: Muted { text: d; }
                 }

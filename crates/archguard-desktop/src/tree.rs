@@ -62,6 +62,8 @@ pub struct TreeView {
     pub incoming: Vec<u32>,
     pub outgoing: Vec<u32>,
     pub in_cycle: Vec<bool>,
+    /// Cycle groups of the scope rows, the base [`TreeView::acd`] uses
+    /// too (expanded containers carry no links).
     pub cycle_groups: usize,
 }
 
@@ -845,6 +847,21 @@ mod tests {
         assert_eq!(v.scope_rows(), [1, 2, 3, 4]);
         // x→b, y→b, b↔c over 4 nodes: reach 3 + 3 + 2 + 2 = 10.
         assert!((v.acd(&t) - 10.0 / 4.0).abs() < 1e-9, "{}", v.acd(&t));
+        // Cycle groups share ACD's base: the scope rows. The expanded
+        // container has no links, so it never joins a group.
+        let scope = v.as_graph(&t);
+        let groups = crate::tree_order::scc(
+            v.rows.len(),
+            scope
+                .edges
+                .iter()
+                .map(|e| (e.from.0 as usize, e.to.0 as usize)),
+        );
+        assert_eq!(
+            v.cycle_groups,
+            groups.iter().filter(|g| g.len() > 1).count()
+        );
+        assert_eq!(v.cycle_groups, 1, "b↔c");
     }
 
     #[test]

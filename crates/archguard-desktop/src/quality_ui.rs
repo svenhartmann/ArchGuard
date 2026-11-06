@@ -25,7 +25,6 @@ use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
 };
-use heatmap::State;
 use inputs::Inputs;
 use notes::Section;
 pub use state::QualityState;
@@ -204,6 +203,8 @@ fn page_model(lang: &Texts, p: Page) -> QualityModel {
         target_index: p.target_index as i32,
         target_note: p.target_note.into(),
         status: p.status.into(),
+        status_slot: p.status_slot,
+        status_detail: p.status_detail.into(),
         notes: card_model(p.notes),
         heatmap: p.heatmap,
         filter: p.filter as i32,
@@ -253,18 +254,6 @@ fn card_model(c: card::Card) -> QualityCard {
     }
 }
 
-/// `QualityCell.state` codes of `quality_cards.slint`.
-fn state_code(s: State) -> i32 {
-    match s {
-        State::Unknown => 0,
-        State::Low => 1,
-        State::Medium => 2,
-        State::High => 3,
-        State::Info => 4,
-        State::NotApplicable | State::Small | State::Equal => 5,
-    }
-}
-
 fn heat_row(r: state::HeatRow) -> QualityHeatRow {
     QualityHeatRow {
         class_id: r.class_id.into(),
@@ -273,7 +262,7 @@ fn heat_row(r: state::HeatRow) -> QualityHeatRow {
         selected: r.selected,
         cells: model(r.cells.into_iter().map(|c| QualityCell {
             text: c.text.into(),
-            state: state_code(c.state),
+            state: c.state.slot(),
             tip: c.tip.into(),
         })),
     }
