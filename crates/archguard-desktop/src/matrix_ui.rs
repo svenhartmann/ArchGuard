@@ -1,7 +1,9 @@
 //! Matrix view state, one per Matrix tab (`instances`), and its data for
 //! the pane that shows it.
 
-use std::collections::BTreeSet;
+mod names;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, SharedString, VecModel};
@@ -14,7 +16,7 @@ use crate::follow_ui;
 use crate::format::Locale;
 use crate::instances::{self, Instance};
 use crate::kpi::{self, Value};
-use crate::matrix::{Matrix, MatrixRow, Target};
+use crate::matrix::{Column, Matrix, MatrixRow, Target};
 use crate::model_sync::{sync_rows, sync_rows_with};
 use crate::panes::Layout;
 use crate::panes_ui;
@@ -37,6 +39,8 @@ pub struct MatrixState {
     /// Package nodes offered as scopes, sorted by name.
     scopes: Vec<usize>,
     matrix: Matrix,
+    /// Labels of the top rows (and their columns), see `names`.
+    labels: BTreeMap<usize, String>,
     expanded: BTreeSet<usize>,
     query: String,
     cycle: Option<usize>,
@@ -55,6 +59,7 @@ impl MatrixState {
         scopes.sort_by(|&a, &b| tree.nodes[a].name.cmp(&tree.nodes[b].name));
         let matrix = Matrix::build(&tree, None, &project);
         MatrixState {
+            labels: names::root_labels(&tree, &matrix.roots),
             tree,
             project,
             scope: None,
@@ -111,6 +116,7 @@ impl MatrixState {
     fn set_scope(&mut self, scope: Option<usize>) {
         self.scope = scope;
         self.matrix = Matrix::build(&self.tree, scope, &self.project);
+        self.labels = names::root_labels(&self.tree, &self.matrix.roots);
         self.expanded.clear();
         self.cycle = None;
         self.only = false;
@@ -363,7 +369,8 @@ fn row_items(m: &MatrixState, rows: &[MatrixRow], locale: Locale) -> Vec<MatrixR
             let cells = mx.cells.get(&r.node);
             MatrixRowItem {
                 node: r.node as i32,
-                label: n.label.clone().into(),
+                label: label(m, r).into(),
+                path: n.name.clone().into(),
                 depth: r.depth as i32,
                 package: !n.file,
                 expanded: m.expanded.contains(&r.node) || !m.query.trim().is_empty() || m.only,
@@ -418,10 +425,7 @@ fn data(
     let (title, lines) = evidence(m).unwrap_or_default();
     MatrixData {
         id: id as i32,
-        columns: sync_rows(
-            &old.columns,
-            mx.columns.iter().map(|c| column(&c.target, &c.name)),
-        ),
+        columns: sync_rows(&old.columns, mx.columns.iter().map(|c| column(m, c))),
         rows: sync_rows_with(&old.rows, row_items(m, rows, texts.locale()), |o, n| {
             n.cells = sync_rows(&o.cells, n.cells.iter());
         }),
@@ -448,27 +452,35 @@ fn data(
     }
 }
 
-fn column(target: &Target, name: &str) -> MatrixColumn {
-    let (label, context) = match name.trim_end_matches('/').rsplit_once('/') {
-        Some((ctx, last)) => (last.to_string(), ctx.to_string()),
-        None => (name.to_string(), String::new()),
+/// A top row's label (unique among them), else the node's own segment.
+fn label(m: &MatrixState, r: &MatrixRow) -> String {
+    let own = || m.tree.nodes[r.node].label.clone();
+    if r.depth > 0 {
+        return own();
+    }
+    m.labels.get(&r.node).cloned().unwrap_or_else(own)
+}
+
+/// A column: a package labelled as its top row, the label's last segment
+/// over the rest (the context); the full path for the tooltip.
+fn column(m: &MatrixState, c: &Column) -> MatrixColumn {
+    let name = c.name.as_str();
+    let (label, context, kind) = match c.target {
+        Target::Package(p) => {
+            let label = label(m, &MatrixRow { node: p, depth: 0 });
+            match label.rsplit_once('/') {
+                Some((ctx, last)) => (last.to_string(), ctx.to_string(), 0),
+                None => (label, String::new(), 0),
+            }
+        }
+        Target::Direct => (name.to_string(), String::new(), 1),
+        Target::Outside => (String::new(), String::new(), 2),
     };
-    match target {
-        Target::Package(_) => MatrixColumn {
-            label: label.into(),
-            context: context.into(),
-            kind: 0,
-        },
-        Target::Direct => MatrixColumn {
-            label: name.into(),
-            context: "".into(),
-            kind: 1,
-        },
-        Target::Outside => MatrixColumn {
-            label: "".into(),
-            context: "".into(),
-            kind: 2,
-        },
+    MatrixColumn {
+        label: label.into(),
+        context: context.into(),
+        path: name.into(),
+        kind,
     }
 }
 
@@ -540,6 +552,7 @@ fn evidence(m: &MatrixState) -> Option<(String, Vec<SharedString>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archguard_engine::core::{Graph, Node, NodeId, NodeKind};
 
     fn state() -> MatrixState {
         MatrixState::new(Rc::new(crate::matrix::tests::tree()), "p".into())
@@ -583,6 +596,156 @@ mod tests {
         assert!(m.query.is_empty());
         m.reveal(usize::MAX);
         assert_eq!(m.marked, Some(v), "unknown nodes are ignored");
+    }
+
+    /// A graph shaped like a Cargo workspace (`crates/<name>/src`):
+    /// analysis/src, cli/{src, build.rs}, engine/src/{semantic_calls, lib.rs}.
+    fn workspace() -> Tree {
+        use NodeKind::{File, Module};
+        graph_tree(&[
+            ("crates/archguard-analysis", Module, None),
+            ("crates/archguard-analysis/src", Module, Some(0)),
+            ("crates/archguard-analysis/src/lib.rs", File, Some(1)),
+            ("crates/archguard-cli", Module, None),
+            ("crates/archguard-cli/src", Module, Some(3)),
+            ("crates/archguard-cli/src/main.rs", File, Some(4)),
+            ("crates/archguard-cli/build.rs", File, Some(3)),
+            ("crates/archguard-engine", Module, None),
+            ("crates/archguard-engine/src", Module, Some(7)),
+            (
+                "crates/archguard-engine/src/semantic_calls",
+                Module,
+                Some(8),
+            ),
+            (
+                "crates/archguard-engine/src/semantic_calls/mod.rs",
+                File,
+                Some(9),
+            ),
+            ("crates/archguard-engine/src/lib.rs", File, Some(8)),
+        ])
+    }
+
+    /// `examples/service-shop`: `services/<name>/server.js` beside `dev.js`.
+    fn service_shop() -> Tree {
+        use NodeKind::{File, Module};
+        graph_tree(&[
+            ("services", Module, None),
+            ("services/catalog", Module, Some(0)),
+            ("services/catalog/server.js", File, Some(1)),
+            ("services/gateway", Module, Some(0)),
+            ("services/gateway/server.js", File, Some(3)),
+            ("dev.js", File, None),
+        ])
+    }
+
+    fn graph_tree(nodes: &[(&str, NodeKind, Option<u32>)]) -> Tree {
+        let nodes = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, &(name, kind, parent))| Node {
+                id: NodeId(i as u32),
+                name: name.into(),
+                kind,
+                parent: parent.map(NodeId),
+                lang: None,
+            })
+            .collect();
+        Tree::from_graph(&Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes,
+            edges: Vec::new(),
+            semantic: None,
+            review_kpis: None,
+        })
+    }
+
+    /// Top row labels and package column labels with their tooltips.
+    fn labels(m: &mut MatrixState) -> (Vec<String>, Vec<(String, String)>) {
+        let rows = m.visible_rows();
+        let items = row_items(m, &rows, Locale::En);
+        let rows = items
+            .iter()
+            .filter(|r| r.depth == 0)
+            .map(|r| r.label.to_string())
+            .collect();
+        let columns = m
+            .matrix
+            .columns
+            .iter()
+            .filter(|c| matches!(c.target, Target::Package(_)))
+            .map(|c| {
+                let col = column(m, c);
+                let label = match col.context.as_str() {
+                    "" => col.label.to_string(),
+                    ctx => format!("{ctx}/{}", col.label),
+                };
+                (label, col.path.to_string())
+            })
+            .collect();
+        (rows, columns)
+    }
+
+    /// Rows named after their crate instead of "src, src, src"; columns
+    /// use the same labels and keep the full path for the tooltip.
+    #[test]
+    fn workspace_rows_and_columns_are_named_after_their_crate() {
+        let mut m = MatrixState::new(Rc::new(workspace()), "p".into());
+        let (rows, columns) = labels(&mut m);
+        assert_eq!(
+            rows,
+            [
+                "archguard-analysis",
+                "archguard-cli",
+                "archguard-cli/build.rs",
+                "archguard-engine/semantic_calls",
+                "archguard-engine/lib.rs",
+            ]
+        );
+        assert_eq!(
+            columns,
+            [
+                (
+                    "archguard-analysis".into(),
+                    "crates/archguard-analysis/src".into()
+                ),
+                ("archguard-cli".into(), "crates/archguard-cli/src".into()),
+                (
+                    "archguard-engine/semantic_calls".into(),
+                    "crates/archguard-engine/src/semantic_calls".into()
+                ),
+            ]
+        );
+        // Inside a scope the labels are relative to it.
+        let engine = named(&m, "crates/archguard-engine/src");
+        m.set_scope(Some(engine));
+        assert_eq!(labels(&mut m).0, ["semantic_calls", "lib.rs"]);
+    }
+
+    #[test]
+    fn service_shop_rows_keep_their_folder() {
+        let mut m = MatrixState::new(Rc::new(service_shop()), "p".into());
+        let (rows, columns) = labels(&mut m);
+        assert_eq!(rows, ["services/catalog", "services/gateway", "dev.js"]);
+        assert_eq!(columns[0].0, "services/catalog");
+        let services = named(&m, "services");
+        m.set_scope(Some(services));
+        assert_eq!(labels(&mut m).0, ["catalog", "gateway"]);
+    }
+
+    /// Rows below the top ones keep their own name; every row carries its
+    /// full path for the tooltip.
+    #[test]
+    fn nested_rows_keep_their_segment_and_carry_the_path() {
+        let mut m = MatrixState::new(Rc::new(workspace()), "p".into());
+        m.expanded
+            .insert(named(&m, "crates/archguard-analysis/src"));
+        let rows = m.visible_rows();
+        let items = row_items(&m, &rows, Locale::En);
+        let lib = &items[1];
+        assert_eq!((lib.depth, lib.label.as_str()), (1, "lib.rs"));
+        assert_eq!(lib.path, "crates/archguard-analysis/src/lib.rs");
     }
 
     /// A cell without dependencies opens no evidence, not the last one's.
