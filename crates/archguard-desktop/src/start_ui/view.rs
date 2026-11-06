@@ -1,21 +1,21 @@
 //! `StartModel` from the tab state: the scene, the pins and the texts of
 //! `renderWorld`, `worldStatus` and `worldDraw`.
 
-use std::f64::consts::PI;
-use std::fmt::Write;
-
-use slint::{ComponentHandle, Model, SharedString};
+use slint::{ComponentHandle, SharedString};
 
 use super::details;
 use super::layout::Cell;
-use super::pins::{self, Rect, Spot};
-use super::scene::{self, Face, Paint, Tone, View};
-use super::state::{Lens, StartState};
+use super::overlay::{center, place_pins};
+use super::pins;
+use super::scene::{self, Paint, Tone, View};
+use super::services_view;
+use super::stage::{Look, fill_camera, fill_scene};
+use super::state::{Lens, Mode, StartState};
 use crate::format::Locale;
 use crate::kpi;
 use crate::model_sync::sync_rows;
 use crate::tab_support::Texts;
-use crate::ui::{AppWindow, StartCrumb, StartData, StartFace, StartModel, StartPin, StartPlate};
+use crate::ui::{AppWindow, StartCrumb, StartData, StartModel, StartPin};
 
 /// `worldComplexityColor`: hsl(175 → 15, 48 %, 55 %) on a log scale.
 pub fn complexity_color(value: f64) -> Tone {
@@ -98,63 +98,6 @@ fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
     }
 }
 
-fn face_row(f: Face) -> StartFace {
-    let (tone, rgb) = match f.tone {
-        Tone::Accent => (0, (0, 0, 0)),
-        Tone::Muted => (1, (0, 0, 0)),
-        Tone::Gap => (2, (0, 0, 0)),
-        Tone::Covered => (3, (0, 0, 0)),
-        Tone::Low => (4, (0, 0, 0)),
-        Tone::Medium => (5, (0, 0, 0)),
-        Tone::High => (6, (0, 0, 0)),
-        Tone::Rgb(r, g, b) => (7, (r, g, b)),
-    };
-    StartFace {
-        path: f.path.into(),
-        tone,
-        rgb: slint::Color::from_rgb_u8(rgb.0, rgb.1, rgb.2),
-        shade: f.shade,
-        alpha: f.alpha,
-        stroke: f.stroke,
-    }
-}
-
-/// Everything that changes the faces; pans and zooms do not.
-fn scene_key(s: &StartState) -> String {
-    format!(
-        "{:?}|{:?}|{}|{:.5}|{}",
-        s.within, s.lens, s.kpi, s.cam.rotation, s.query
-    )
-}
-
-/// Faces, plates and lattice: reused from the window when the key matches.
-fn fill_scene(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View) {
-    m.scene_key = scene_key(s).into();
-    if old.scene_key == m.scene_key {
-        m.faces = old.faces.clone();
-        m.plates = old.plates.clone();
-        m.lattice = old.lattice.clone();
-        return;
-    }
-    let rot = s.cam.rotation;
-    let faces = scene::faces(&s.layout, &v.frame, rot, |c| paint(s, c));
-    m.faces = sync_rows(&old.faces, faces.into_iter().map(face_row));
-    let plates = s
-        .layout
-        .plates
-        .iter()
-        .map(|p| {
-            let a = &s.scope.areas[p.area];
-            StartPlate {
-                path: scene::plate(&v.frame, p, rot).into(),
-                flagged: s.lens == Lens::Problems && (a.cyclic || !a.findings.is_empty()),
-            }
-        })
-        .collect::<Vec<_>>();
-    m.plates = sync_rows(&old.plates, plates);
-    m.lattice = scene::lattice(&v.frame, rot).into();
-}
-
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &StartState) {
     let d = ui.global::<StartData>();
@@ -174,10 +117,25 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         search: s.search.as_str().into(),
         ..Default::default()
     };
+    m.services.available = s.services.is_some();
+    if let (Some(w), Mode::Services) = (&s.services, s.mode) {
+        services_view::fill(&mut m, &old, s, w, &ui.get_project());
+        services_view::texts(&mut m, &old, w, &d);
+        d.set_model(m);
+        return;
+    }
     fill_texts(&mut m, &old, s, &Texts::of(ui), &ui.get_project());
     if let Some(v) = s.view() {
-        fill_scene(&mut m, &old, s, &v);
+        let look = Look {
+            paint: |c: &Cell| paint(s, c),
+            flagged: |area: usize| {
+                let a = &s.scope.areas[area];
+                s.lens == Lens::Problems && (a.cyclic || !a.findings.is_empty())
+            },
+        };
+        fill_scene(&mut m, &old, s, &v, look);
         fill_camera(&mut m, s, &v);
+        fill_outline(&mut m, s, &v);
         fill_overlay(&mut m, &old, s, &v, Texts::of(ui).locale());
     } else {
         m.empty = true;
@@ -186,28 +144,8 @@ pub fn push(ui: &AppWindow, s: &StartState) {
     d.set_model(m);
 }
 
-fn fill_camera(m: &mut StartModel, s: &StartState, v: &View) {
-    let [x, y, w, h] = v.viewbox();
-    (m.vb_x, m.vb_y, m.vb_w, m.vb_h) = (x as f32, y as f32, w as f32, h as f32);
-    m.zoom = (s.cam.zoom * 100.0).round() as i32;
-    m.angle = ((s.cam.rotation * 180.0 / PI).round() as i32).rem_euclid(360);
-    // The bearing arrow of the orientation control, turned with the world.
-    let (sin, cos) = s.cam.rotation.sin_cos();
-    let mut bearing = String::new();
-    for (i, (px, py)) in [(12.0, 2.0), (19.0, 21.0), (12.0, 17.0), (5.0, 21.0)]
-        .iter()
-        .enumerate()
-    {
-        let (dx, dy) = (px - 12.0, py - 12.0);
-        let (rx, ry) = (12.0 + dx * cos - dy * sin, 12.0 + dx * sin + dy * cos);
-        let _ = write!(
-            bearing,
-            "{} {rx:.2} {ry:.2} ",
-            if i == 0 { "M" } else { "L" }
-        );
-    }
-    bearing.push('Z');
-    m.bearing = bearing.into();
+/// The roof outline of the selected entity or area.
+fn fill_outline(m: &mut StartModel, s: &StartState, v: &View) {
     if let Some(sel) = &s.selection {
         let cells = (0..s.layout.cells.len()).filter(|&i| {
             let c = &s.layout.cells[i];
@@ -256,24 +194,6 @@ fn pinned(s: &StartState, max: &[Option<f64>]) -> Vec<usize> {
     order
 }
 
-/// The floating controls, which pins must not cover.
-fn controls(w: f64, h: f64) -> Vec<Rect> {
-    vec![
-        Rect {
-            x: w - 12.0 - 80.0,
-            y: 12.0 + 23.0,
-            w: 160.0,
-            h: 46.0,
-        },
-        Rect {
-            x: w / 2.0,
-            y: h - 12.0 - 23.0,
-            w: 330.0,
-            h: 46.0,
-        },
-    ]
-}
-
 fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) {
     let a = &s.scope.areas[area];
     let name = a.name.rsplit('/').next().unwrap_or(&a.name).to_string();
@@ -310,100 +230,19 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
     (pin, name)
 }
 
-/// Screen rectangles of every block and, per area, the one around its
-/// blocks.
-fn blocks(s: &StartState, v: &View) -> (Vec<Rect>, Vec<Rect>) {
-    let mut per_area: Vec<Vec<(f64, f64)>> = vec![Vec::new(); s.scope.areas.len()];
-    let cells = s
-        .layout
-        .cells
-        .iter()
-        .map(|c| {
-            let (x, y) = (c.x as f64, c.y as f64);
-            let pts = [
-                v.screen(x, y, 0.0),
-                v.screen(x + 1.0, y, 0.0),
-                v.screen(x, y + 1.0, 0.0),
-                v.screen(x + 1.0, y + 1.0, 0.0),
-                v.screen(x + 0.5, y + 0.5, c.z),
-            ];
-            per_area[c.area].extend(pts);
-            Rect::around(pts)
-        })
-        .collect();
-    (cells, per_area.into_iter().map(Rect::around).collect())
-}
-
-/// What the pins of `order` want: anchor, width, their blocks and the
-/// offset they had in the window's last frame.
-fn wants(
-    old: &StartModel,
-    rows: &[StartPin],
-    anchors: &[(f64, f64)],
-    areas: &[Rect],
-) -> Vec<pins::Want> {
-    let last = |area: i32| {
-        let p = old.pins.iter().find(|p| p.area == area && !p.collapsed)?;
-        let (x, y) = (
-            f64::from(p.x + p.w / 2.0),
-            f64::from(p.y) + pins::PIN_H / 2.0,
-        );
-        Some((x - f64::from(p.ax), y - f64::from(p.ay)))
-    };
-    rows.iter()
-        .zip(anchors)
-        .map(|(p, &anchor)| pins::Want {
-            anchor,
-            width: f64::from(p.w),
-            blocks: areas[p.area as usize],
-            last: last(p.area),
-        })
-        .collect()
-}
-
 /// Pins placed clear of each other and of the blocks, their leader lines
 /// and the cycle arrows of the Problems lens.
 fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, l: Locale) {
-    let center = |area: usize, z: f64| {
-        let p = s
-            .layout
-            .plates
-            .iter()
-            .find(|p| p.area == area)
-            .expect("plate per area");
-        v.screen(p.x + p.w / 2.0, p.y + p.h / 2.0, z)
-    };
+    let center = |area: usize, z: f64| center(&s.layout, v, area, z);
     let max = area_max(s);
     let order = pinned(s, &max);
-    let (cells, areas) = blocks(s, v);
-    let cover = pins::Cover::new(&cells, (v.w, v.h));
     let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(l, s, a, max[a]).0).collect();
     let anchors: Vec<(f64, f64)> = order.iter().map(|&a| center(a, 0.0)).collect();
-    let wants = wants(old, &rows, &anchors, &areas);
-    let placed = pins::place(&wants, (v.w, v.h), controls(v.w, v.h), &cover);
-    let mut leaders = String::new();
-    let mut shown = Vec::new();
-    for ((mut pin, spot), (ax, ay)) in rows.into_iter().zip(placed).zip(anchors) {
-        (pin.ax, pin.ay) = (ax as f32, ay as f32);
-        match spot {
-            Spot::Off => continue,
-            Spot::Collapsed => pin.collapsed = true,
-            Spot::Shown(r) => {
-                let (fx, fy) = r.nearest((ax, ay));
-                let _ = write!(leaders, "M {fx:.1} {fy:.1} L {ax:.1} {ay:.1} ");
-                (pin.x, pin.y) = ((r.x - r.w / 2.0) as f32, (r.y - r.h / 2.0) as f32);
-            }
-        }
-        shown.push(pin);
-    }
-    // Dots first: the shown pins stay on top of them.
-    shown.sort_by_key(|p| !p.collapsed);
-    m.pins = sync_rows(&old.pins, shown);
-    m.leaders = leaders.into();
+    place_pins(m, old, (&s.layout, s.scope.areas.len()), v, rows, anchors);
     if s.lens == Lens::Problems {
         let (mut curves, mut heads) = (String::new(), String::new());
         for c in s.scope.connections.iter().filter(|c| c.cyclic).take(60) {
-            scene::arrow(
+            super::arrows::arrow(
                 center(c.from, 0.2),
                 center(c.to, 0.2),
                 &mut curves,
@@ -418,15 +257,23 @@ fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, 
 fn fill_texts(m: &mut StartModel, old: &StartModel, s: &StartState, texts: &Texts, root: &str) {
     let crumbs = s.crumbs(root);
     let last = crumbs.len().saturating_sub(1);
+    // With a services World, its crumb leads (`renderWorldPath`).
+    let lead = s.services.is_some().then(|| StartCrumb {
+        services: true,
+        ..Default::default()
+    });
     m.crumbs = sync_rows(
         &old.crumbs,
-        crumbs
-            .into_iter()
-            .enumerate()
-            .map(|(i, (label, _))| StartCrumb {
-                label: label.into(),
-                last: i == last,
-            }),
+        lead.into_iter().chain(
+            crumbs
+                .into_iter()
+                .enumerate()
+                .map(|(i, (label, _))| StartCrumb {
+                    label: label.into(),
+                    last: i == last,
+                    services: false,
+                }),
+        ),
     );
     m.cycle_groups = kpi::AREA_CYCLE_GROUPS.item(texts, s.scope.cycle_groups);
     let cells = &s.layout.cells;

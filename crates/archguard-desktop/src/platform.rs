@@ -110,14 +110,6 @@ mod tests {
         }
     }
 
-    /// Views still being reworked elsewhere; they move to the tokens next.
-    const PENDING: [&str; 4] = [
-        "start_view.slint",
-        "start_world.slint",
-        "start_details.slint",
-        "start_data.slint",
-    ];
-
     /// `font-size`/`font-weight` values in `text` that name a number
     /// instead of a `Theme` token. Scaled values (zoomed diagram fonts such
     /// as `11px * zoom`, a size relative to its control) keep theirs.
@@ -153,10 +145,7 @@ mod tests {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.ends_with(".slint")
-                || name == "theme.slint"
-                || PENDING.contains(&name.as_str())
-            {
+            if !name.ends_with(".slint") || name == "theme.slint" {
                 continue;
             }
             let text = std::fs::read_to_string(entry.path()).unwrap();

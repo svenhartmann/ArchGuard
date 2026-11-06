@@ -6,11 +6,19 @@
 //! All tab state is one [`StartState`], built by [`Inputs::build`] and shown by
 //! [`push`] as one `StartModel` value.
 
+mod arrows;
 mod details;
 mod evidence;
+mod follow_place;
 mod layout;
+mod modes;
+mod overlay;
 mod pins;
 mod scene;
+mod services;
+mod services_view;
+mod services_wire;
+mod stage;
 mod state;
 mod view;
 
@@ -21,13 +29,14 @@ use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::deferred::{Coalesce, FRAME, TYPING};
-use crate::follow::Place;
-use crate::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, Shared, TabState, Topology, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
+use follow_place::navigation;
 use scene::Camera;
-use state::from_evidence;
-pub use state::{Lens, Selection, StartState};
+use services::ServicesWorld;
+pub use state::{Lens, StartState};
+use state::{Mode, from_evidence};
 
 pub use view::push;
 
@@ -38,6 +47,8 @@ struct Inputs {
     config: Config,
     graph: Graph,
     findings: Vec<Finding>,
+    /// The document's topology, read once (the Services tab shares it).
+    topology: Shared<Topology>,
 }
 
 impl Inputs {
@@ -48,6 +59,7 @@ impl Inputs {
             config: data.run.config.clone(),
             graph: data.run.graph.clone(),
             findings: data.run.report.findings.clone(),
+            topology: Shared::<Topology>::active(),
         }
     }
 
@@ -60,11 +72,13 @@ impl Inputs {
             config,
             graph,
             findings,
+            topology,
         } = self;
         let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
-        let mut state = from_evidence(Evidence::new(graph, findings, &calls, world));
+        let services = ServicesWorld::new(tab_support::topology(&topology, &root));
+        let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
         snapshot_overrides(&mut state);
         state
     }
@@ -87,15 +101,21 @@ pub fn wire(ui: &AppWindow) {
     d.on_crumb(navigation(
         ui,
         a.on(|s, ui, i: i32| {
+            // With a services World, its crumb leads the path.
+            let lead = i32::from(s.services.is_some());
+            if i < lead {
+                s.set_mode(Mode::Services);
+                return;
+            }
             let crumbs = s.crumbs(&ui.get_project());
-            if let Some((_, scope)) = index(i).and_then(|i| crumbs.get(i)) {
+            if let Some((_, scope)) = index(i - lead).and_then(|i| crumbs.get(i)) {
                 s.navigate(scope.clone());
             }
         }),
     ));
     d.on_open_area(navigation(
         ui,
-        a.on(|s, _, i: i32| s.open_area(index(i).unwrap_or(0))),
+        a.on(|s, _, i: i32| s.pin(index(i).unwrap_or(0))),
     ));
     d.on_resized(
         a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
@@ -123,9 +143,16 @@ pub fn wire(ui: &AppWindow) {
             ..Camera::default()
         }
     }));
-    let reset = navigation(ui, a.on(|s, _, ()| s.reset()));
+    let reset = navigation(
+        ui,
+        a.on(|s, _, ()| match s.mode {
+            Mode::Services => s.reset_services(),
+            Mode::Architecture => s.reset(),
+        }),
+    );
     d.on_reset(move || reset(()));
     wire_selection(ui, &d);
+    services_wire::wire(ui, &d);
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
@@ -141,66 +168,27 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     });
     let click = navigation(
         ui,
-        a.on(|s, _, (x, y): (f32, f32)| {
-            if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
-                s.select_cell(c);
-            }
-        }),
+        a.on(|s, _, (x, y): (f32, f32)| s.click_at(f64::from(x), f64::from(y))),
     );
     d.on_click(move |x, y| click((x, y)));
     let double = navigation(
         ui,
-        a.on(|s, _, (x, y): (f32, f32)| {
-            if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
-                s.open_area(s.layout.cells[c].area);
-            }
-        }),
+        a.on(|s, _, (x, y): (f32, f32)| s.double_at(f64::from(x), f64::from(y))),
     );
     d.on_double_click(move |x, y| double((x, y)));
-    d.on_pick_area(navigation(
-        ui,
-        a.on(|s, _, i: i32| {
-            // Entry 0 is "Select area…".
-            s.selection = index(i - 1)
-                .filter(|&a| a < s.scope.areas.len())
-                .map(|area| Selection {
-                    area,
-                    entity: None,
-                    members: None,
-                });
-        }),
-    ));
-    d.on_toggle_details(a.on0(|s, _| s.details_open = !s.details_open && s.selection.is_some()));
+    // Entry 0 is "Select area…" ("Open project…" on the services).
+    d.on_pick_area(navigation(ui, a.on(|s, _, i: i32| s.pick(i))));
+    d.on_toggle_details(a.on0(|s, _| s.details_open = !s.details_open && s.has_selection()));
     d.on_pick_entity(navigation(
         ui,
         a.on(|s, _, e: i32| {
-            if let (Some(sel), Some(e)) = (&mut s.selection, index(e)) {
-                sel.entity = Some(e);
-                s.limit = 20;
+            if let Some(e) = index(e) {
+                s.pick_entity(e);
             }
         }),
     ));
     d.on_more(a.on0(|s, _| s.limit += 20));
     d.on_source_graph(a.on0(source_graph));
-}
-
-/// A World callback that reports entering, leaving and selecting
-/// packages for "Follow left".
-fn navigation<A: 'static>(ui: &AppWindow, f: impl Fn(A) + 'static) -> impl Fn(A) + 'static {
-    crate::follow_ui::reporting(ui, "start", place, f)
-}
-
-/// The World's package and selection by node name: the selected entity,
-/// else the selected area.
-fn place(s: &StartState) -> Place {
-    let selected = s.selection.as_ref().and_then(|sel| match sel.entity {
-        Some(e) => Some(s.ev.entity(e).node.clone()),
-        None => Some(s.scope.areas.get(sel.area)?.name.clone()),
-    });
-    Place {
-        scope: s.within.clone(),
-        selected,
-    }
 }
 
 /// "Source graph": reveal the selection in the Graph tab.
@@ -257,6 +245,18 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut StartState) {
     let var = |k: &str| std::env::var(k).ok();
+    // The architecture hooks show the architecture World.
+    let architecture = [
+        "ARCHGUARD_DESKTOP_WORLD",
+        "ARCHGUARD_DESKTOP_PICK",
+        "ARCHGUARD_DESKTOP_LENS",
+    ];
+    if architecture.iter().any(|k| var(k).is_some())
+        || var("ARCHGUARD_DESKTOP_START_MODE").as_deref() == Some("architecture")
+    {
+        s.set_mode(Mode::Architecture);
+    }
+    services_wire::snapshot_overrides(s);
     if let Some(w) = var("ARCHGUARD_DESKTOP_WORLD") {
         s.navigate(Some(w));
     }
@@ -274,7 +274,7 @@ fn snapshot_overrides(s: &mut StartState) {
     if let Some(name) = var("ARCHGUARD_DESKTOP_PICK")
         && let Some(area) = s.scope.areas.iter().position(|a| a.name == name)
     {
-        s.select(Selection {
+        s.select(state::Selection {
             area,
             entity: None,
             members: None,
@@ -297,7 +297,24 @@ impl StartState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use state::Mode;
     use std::path::Path;
+
+    /// The Start state of the project at `root`.
+    fn fixture_state_at(root: &Path) -> StartState {
+        let root = root.canonicalize().expect("project");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let sources = Default::default();
+        Inputs::of(&Loaded {
+            root: &root,
+            run: &run,
+            sources: &sources,
+        })
+        .build()
+    }
 
     /// The Start state of a fixture project, and its top-level packages
     /// as the analysis reports them.
@@ -401,5 +418,60 @@ mod tests {
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
         assert_eq!(s.search, "");
         assert_eq!(s.selection, None);
+    }
+
+    /// Two npm projects side by side.
+    fn two_projects() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for name in ["api", "web"] {
+            let p = dir.path().join(name);
+            std::fs::create_dir_all(p.join("src")).expect("dir");
+            let manifest =
+                format!(r#"{{"name": "{name}", "version": "1.0.0", "main": "src/index.js"}}"#);
+            std::fs::write(p.join("package.json"), manifest).expect("manifest");
+            std::fs::write(p.join("src/index.js"), "export const x = 1;\n").expect("source");
+        }
+        dir
+    }
+
+    /// A repository opens on its services World; zooming into a project
+    /// shows its packages, and Back returns to the services.
+    #[test]
+    fn a_repository_opens_on_its_services() {
+        let dir = two_projects();
+        let mut s = fixture_state_at(dir.path());
+        assert_eq!(s.mode, Mode::Services);
+        let w = s.services.as_ref().expect("services World");
+        let api = w
+            .inventory
+            .iter()
+            .position(|i| i.path == "api")
+            .expect("the api project is an island");
+        let area = w.area(api).expect("shown");
+        assert_eq!(s.layout.plates.len(), w.shown.len());
+        s.pin(area);
+        assert_eq!(s.services.as_ref().unwrap().selected, Some(api));
+        assert!(
+            s.has_selection() && !s.details_open,
+            "a click selects, as the web"
+        );
+        let units = crate::documents::build_units(s.services.as_ref().unwrap().topology());
+        assert_eq!(
+            s.project_unit().map(|i| units[i].path.as_str()),
+            Some("api")
+        );
+        s.enter_area(area);
+        assert_eq!(s.mode, Mode::Architecture);
+        assert_eq!(s.within.as_deref(), Some("api"));
+        assert!(!s.scope.areas.is_empty());
+        assert!(s.scope.areas.iter().all(|a| a.name.starts_with("api/")));
+        s.back();
+        assert_eq!(s.mode, Mode::Services);
+        assert_eq!(
+            s.layout.plates.len(),
+            s.services.as_ref().unwrap().shown.len()
+        );
+        s.set_mode(Mode::Architecture);
+        assert_eq!((s.mode, s.entered), (Mode::Architecture, false));
     }
 }

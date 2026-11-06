@@ -1,7 +1,7 @@
 // Start tab: the web viewer's "Your architecture" world (#start-world in
 // viewer.html, viewer_world.js). Data and callbacks live in StartData, set
 // from src/start_ui.rs.
-import { ComboBox } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, SearchField, Legend, StatInline, HelpTip } from "widgets.slint";
 import { Fmt } from "format.slint";
@@ -23,7 +23,7 @@ component LensButton inherits Rectangle {
     label := Text {
         text: root.text;
         color: active ? Theme.panel : Theme.text;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -33,9 +33,44 @@ component LensButton inherits Rectangle {
     }
 }
 
+// A labelled picker of the services World's filter row.
+component FilterPick inherits HorizontalLayout {
+    in property <string> label;
+    in property <[string]> model;
+    in property <int> index;
+    in property <length> box-width: 150px;
+    callback picked(int);
+    spacing: 6px;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        vertical-alignment: center;
+    }
+    ComboBox {
+        width: root.box-width;
+        model: root.model;
+        current-index: root.index;
+        selected => { root.picked(self.current-index); }
+    }
+}
+
 export component StartView inherits Rectangle {
     callback open-web();
     property <StartModel> m: StartData.model;
+    property <bool> services: m.services.shown;
+    // `repositoryWorldControls`: the selection, its connections and notes.
+    property <bool> has-pick: m.services.selected != "";
+    property <string> picked-name: has-pick ? m.services.selected : @tr("All projects");
+    property <string> services-status: picked-name
+        + " · " + @tr("{0} connection" | "{0} connections" % m.services.connections, Fmt.int(m.services.connections))
+        + (has-pick && m.services.direction == 3 ? " · " + @tr("where the data flows, all hops")
+            : has-pick && m.services.direction == 4 ? " · " + @tr("where the data comes from, all hops") : "")
+        + (m.services.flow ? " · " + @tr("dots show call and event direction, not measured load") : "")
+        + (m.services.connections > 60 ? " · " + @tr("first 60 arrows; select a service to focus") : "")
+        + (m.services.cyclic ? " · " + @tr("cyclic communication marked") : "")
+        + (!m.services.complete ? " · " + @tr("Analysis incomplete; missing connections may be undetected") : "")
+        + (m.services.source == 3 && m.services.connections == 0 ? " · " + @tr("No usable trace connections in this selection") : "");
     // Typing ends the field's binding; Reset clears the field through this.
     property <string> search-text: m.search;
     changed search-text => { if search.text != self.search-text { search.text = self.search-text; } }
@@ -59,22 +94,74 @@ export component StartView inherits Rectangle {
                 padding-right: 24px;
                 padding-top: 20px;
                 padding-bottom: 10px;
+                spacing: 16px;
                 Text {
-                    text: @tr("Your architecture");
+                    text: root.services ? @tr("Your services") : @tr("Your architecture");
                     color: Theme.text;
                     font-size: Theme.font-page;
-                    font-weight: 700;
+                    font-weight: Theme.weight-title;
                     vertical-alignment: center;
                 }
+                // The web's repository overview and a project's World.
+                if m.services.available: LensButton { text: @tr("Services"); active: root.services; clicked => { StartData.set-mode(1); } }
+                if m.services.available: LensButton { text: @tr("Architecture"); active: !root.services; clicked => { StartData.set-mode(0); } }
                 Rectangle { horizontal-stretch: 1; }
-                HelpTip {
+                if root.services: HelpTip {
+                    size: 26px;
+                    y: (parent.height - self.height) / 2;
+                    tip: @tr("Each island represents one detected application, library or tool project, or one deployment of it. Equal island sizes and heights are navigation aids, not code or quality measurements. Click selects a service and its connections; Details shows their evidence. Double-click or Zoom into service shows the project's packages and classes; further wheel zoom at maximum does as well, and Back returns here. Open project analyzes the project as a document of its own. Red arrows are cyclic communication of one kind, accented arrows lead into the selection, events are dashed. Wheel: zoom; left-drag: pan; right-drag or Shift-drag: rotate.");
+                }
+                if !root.services: HelpTip {
                     size: 26px;
                     y: (parent.height - self.height) / 2;
                     tip: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match.");
                 }
             }
+            // The services World's filters (`repositoryWorldControls`).
+            if root.services: HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 10px;
+                if m.services.deployments.length > 2: FilterPick {
+                    label: @tr("Deployment");
+                    model: m.services.deployments;
+                    index: m.services.deployment;
+                    picked(i) => { StartData.services-filter(0, i); }
+                }
+                FilterPick {
+                    label: @tr("Evidence");
+                    model: [@tr("Combined"), @tr("Source code"), @tr("Configuration"), @tr("Observed traces")];
+                    index: m.services.source;
+                    box-width: 125px;
+                    picked(i) => { StartData.services-filter(1, i); }
+                }
+                FilterPick {
+                    label: @tr("Connection kind");
+                    model: [@tr("Communication"), StartTones.kind-label(0), StartTones.kind-label(1), StartTones.kind-label(2),
+                        StartTones.kind-label(3), StartTones.kind-label(4), StartTones.kind-label(5)];
+                    index: m.services.kind;
+                    box-width: 170px;
+                    picked(i) => { StartData.services-filter(2, i); }
+                }
+                FilterPick {
+                    label: @tr("Direction");
+                    model: [@tr("Both"), @tr("Incoming"), @tr("Outgoing"), @tr("Where data flows (all hops)"), @tr("Where data comes from (all hops)")];
+                    index: m.services.direction;
+                    box-width: 170px;
+                    picked(i) => { StartData.services-filter(3, i); }
+                }
+                LensButton { text: @tr("Cycles"); active: m.services.cycles-only; clicked => { StartData.services-toggle(0); } }
+                LensButton { text: @tr("Data flow"); active: m.services.flow; clicked => { StartData.services-toggle(1); } }
+                LensButton {
+                    text: m.services.all-projects ? @tr("Services only") : @tr("All projects");
+                    clicked => { StartData.services-toggle(2); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
             // Lenses, metric and legend.
-            HorizontalLayout {
+            if !root.services: HorizontalLayout {
                 padding-left: 24px;
                 padding-right: 24px;
                 padding-top: 8px;
@@ -113,7 +200,16 @@ export component StartView inherits Rectangle {
                 padding-top: 4px;
                 padding-bottom: 8px;
                 spacing: 4px;
-                LensButton { text: @tr("Back"); opacity: m.can-back ? 1 : 0.45; clicked => { StartData.go-back(); } }
+                if !root.services: LensButton { text: @tr("Back"); opacity: m.can-back ? 1 : 0.45; clicked => { StartData.go-back(); } }
+                // The selection's actions (`repositoryWorldControls`).
+                if root.services && m.has-selection: LensButton { text: @tr("Overview"); clicked => { StartData.services-toggle(3); } }
+                if root.services && m.has-selection && !m.services.external: Button {
+                    text: @tr("Zoom into service");
+                    primary: true;
+                    compact: true;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { StartData.zoom-into(); }
+                }
                 for c[i] in m.crumbs: HorizontalLayout {
                     spacing: 4px;
                     if i > 0: Text { text: "/"; color: Theme.muted; vertical-alignment: center; }
@@ -122,10 +218,10 @@ export component StartView inherits Rectangle {
                         border-radius: 6px;
                         background: !c.last && ct.has-hover ? Theme.panel-2 : transparent;
                         crumb := Text {
-                            text: c.label;
+                            text: c.services ? @tr("Your services") : c.label;
                             color: c.last ? Theme.text : Theme.accent;
-                            font-size: 14px;
-                            font-weight: c.last ? 600 : 400;
+                            font-size: Theme.font-body;
+                            font-weight: c.last ? Theme.weight-strong : Theme.weight-regular;
                             vertical-alignment: center;
                         }
                         ct := TouchArea {
@@ -136,13 +232,22 @@ export component StartView inherits Rectangle {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if m.lens == 0: StatInline { kpi: m.cycle-groups; }
-                if m.lens != 0: Text {
+                if root.services: Text {
+                    text: root.services-status;
+                    color: Theme.muted;
+                    font-size: Theme.font-caption;
+                    horizontal-stretch: 100;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if !root.services && m.lens == 0: StatInline { kpi: m.cycle-groups; }
+                if !root.services && m.lens != 0: Text {
                     text: m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {} / {} lines", Fmt.int(m.gaps), Fmt.int(m.covered-lines), Fmt.int(m.total-lines)) : @tr("Unknown · no usable coverage"))
                         : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
                         : @tr("Observed {} measurements", root.metric);
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-caption;
                     vertical-alignment: center;
                 }
             }
@@ -151,7 +256,7 @@ export component StartView inherits Rectangle {
                 if !m.ready: Text {
                     text: m.error != "" ? m.error : @tr("Analyzing calls and classes …");
                     color: Theme.muted;
-                    font-size: 14px;
+                    font-size: Theme.font-body;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -167,7 +272,7 @@ export component StartView inherits Rectangle {
                 search := SearchField {
                     width: 220px;
                     text: root.search-text;
-                    placeholder: @tr("Search classes / files…");
+                    placeholder: root.services ? @tr("Find service or project…") : @tr("Search classes / files…");
                     edited(t) => { StartData.search(t); }
                     accepted => { StartData.accept-search(); }
                 }
@@ -179,9 +284,10 @@ export component StartView inherits Rectangle {
                 }
                 Text {
                     horizontal-stretch: 1;
-                    text: @tr("{} elements · {} surfaces", Fmt.int(m.count), Fmt.int(m.tiles)) + (m.query != "" ? @tr(" · {} surfaces match", Fmt.int(m.matching)) : "");
+                    text: (root.services ? @tr("{} services / projects · {} local source projects", Fmt.int(m.services.islands), Fmt.int(m.services.local))
+                        : @tr("{} elements · {} surfaces", Fmt.int(m.count), Fmt.int(m.tiles))) + (m.query != "" ? @tr(" · {} surfaces match", Fmt.int(m.matching)) : "");
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-caption;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }

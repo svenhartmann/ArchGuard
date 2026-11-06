@@ -385,3 +385,23 @@ comparison of the native view against the web view on the same project
   Fluent with `ARCHGUARD_DESKTOP_PLATFORM=windows|linux` for the scales);
   the real Segoe UI, Consolas, Cantarell and the Linux fontconfig aliases
   were not seen.
+- **2026-11-06:** Services World on the Start tab, the web's repository
+  overview ("Your services"). A document whose topology has build units
+  and at least two islands opens on it, as `archguard serve` opens a
+  monorepo; Services / Architecture switch between the two Worlds.
+  Islands, connections (merged per from, to and kind, cycles per kind
+  with `tree_order::scc`), the deployment, evidence, kind, direction
+  (incl. every hop up or down the data flow), cycles-only and
+  all-projects filters are ports of `viewer_repository.js`; a JS-vs-Rust
+  test reads the same cases (`scripts/viewer/services_world_cases.json`,
+  19 cases on service-shop and compose-services). Arrows are canvas
+  paths, one per tone; events are dashed as segments, since Slint paths
+  have no dash pattern. The data flow dots move in Slint from
+  `animation-tick()` along the curves Rust pushes, so the animation
+  rebuilds nothing per frame. Decision: "Zoom into service" shows the
+  project's packages in this document's architecture World (the desktop
+  analyses the whole repository; the web reloads with `?project=`), with
+  a crumb and Back to the services; "Open project" opens the project as
+  a document of its own, as the Projects menu. Not ported: collapsible
+  connection entries, the "Analysis & traces" help, a reduced-motion
+  setting (the desktop has none), persisting mode and filters.

@@ -4,7 +4,7 @@
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, ZoomControls } from "widgets.slint";
 import { Fmt } from "format.slint";
-import { StartData, StartTones, StartPin } from "start_data.slint";
+import { StartData, StartTones, StartPin, StartFlow } from "start_data.slint";
 
 component Pin inherits Rectangle {
     in property <StartPin> pin;
@@ -13,6 +13,7 @@ component Pin inherits Rectangle {
     in property <length> at-x: pin.x * 1px;
     in property <length> at-y: pin.y * 1px;
     callback open();
+    callback enter();
     pure function join(a: string, b: string) -> string {
         return a == "" ? b : b == "" ? a : a + " · " + b;
     }
@@ -39,14 +40,17 @@ component Pin inherits Rectangle {
         Text {
             text: pin.name;
             color: Theme.text;
-            font-size: 14px;
-            font-weight: 600;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-strong;
             overflow: elide;
         }
         Text {
-            text: marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
+            // A service island: its kind and source project (`renderRepositoryWorld`).
+            text: pin.svc == 5 ? @tr("No local sources")
+                : pin.svc > 0 ? StartTones.project-kind(pin.svc) + " · " + pin.path
+                : marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
             color: Theme.muted;
-            font-size: 11px;
+            font-size: Theme.font-caption;
             overflow: elide;
         }
     }
@@ -62,6 +66,7 @@ component Pin inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
+        double-clicked => { root.enter(); }
     }
 }
 
@@ -71,6 +76,7 @@ component PinDot inherits Rectangle {
     in property <StartPin> pin;
     in property <int> kpi;
     callback open();
+    callback enter();
     x: pin.ax * 1px - 7px;
     y: pin.ay * 1px - 7px;
     width: 14px;
@@ -84,6 +90,7 @@ component PinDot inherits Rectangle {
     t := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
+        double-clicked => { root.enter(); }
     }
     if t.has-hover: Pin {
         pin: root.pin;
@@ -91,6 +98,42 @@ component PinDot inherits Rectangle {
         at-x: root.width / 2 - root.pin.w * 1px / 2;
         at-y: -56px;
         open => { root.open(); }
+        enter => { root.enter(); }
+    }
+}
+
+// One moving dot of a call or event (`worldFlowPackets`): a constant
+// 108 px/s along the curve, fading in and out at its ends.
+component FlowDot inherits Rectangle {
+    in property <StartFlow> flow;
+    in property <float> start;
+    in property <float> secs;
+    property <float> t: Math.mod(secs * 108 / max(1, flow.length) + start, 1);
+    property <float> s: 1 - t;
+    x: (s * s * flow.px + 2 * s * t * flow.cx + t * t * flow.qx) * 1px - 3.2px;
+    y: (s * s * flow.py + 2 * s * t * flow.cy + t * t * flow.qy) * 1px - 3.2px;
+    width: 6.4px;
+    height: 6.4px;
+    border-radius: 3.2px;
+    background: StartTones.edge(flow.tone);
+    border-width: 1px;
+    border-color: Theme.panel;
+    opacity: sin(t * 180deg);
+}
+
+// The data flow: Rust pushes the curves, the dots move here every frame.
+component FlowDots inherits Rectangle {
+    property <float> secs: animation-tick() / 1s;
+    for f in StartData.model.services.flows: Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        for i in f.count: FlowDot {
+            flow: f;
+            start: f.offset + i / f.count;
+            secs: root.secs;
+        }
     }
 }
 
@@ -157,7 +200,7 @@ export component StartStage inherits Rectangle {
     if root.empty: Text {
         text: @tr("No source areas");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -196,6 +239,24 @@ export component StartStage inherits Rectangle {
         commands: StartData.model.heads;
         fill: Theme.cycle;
         opacity: 0.85;
+    }
+    // The services World's connections, one path per tone (`worldDraw`).
+    for e in StartData.model.services.edges: PixelPath {
+        commands: e.curves;
+        stroke: StartTones.edge(e.tone);
+        stroke-width: 1.7px;
+        opacity: 0.85;
+    }
+    for e in StartData.model.services.edges: PixelPath {
+        commands: e.heads;
+        fill: StartTones.edge(e.tone);
+        opacity: 0.85;
+    }
+    if StartData.model.services.flow: FlowDots {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
     }
     if StartData.model.leaders != "": PixelPath {
         commands: StartData.model.leaders;
@@ -247,11 +308,13 @@ export component StartStage inherits Rectangle {
             pin: p;
             kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
             open => { StartData.open-area(p.area); }
+            enter => { StartData.enter-area(p.area); }
         }
         if !p.collapsed: Pin {
             pin: p;
             kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
             open => { StartData.open-area(p.area); }
+            enter => { StartData.enter-area(p.area); }
         }
     }
 
@@ -290,7 +353,7 @@ export component StartStage inherits Rectangle {
                     Text {
                         text: StartData.model.angle + "°";
                         color: Theme.text;
-                        font-size: 11px;
+                        font-size: Theme.font-caption;
                         vertical-alignment: center;
                     }
                 }

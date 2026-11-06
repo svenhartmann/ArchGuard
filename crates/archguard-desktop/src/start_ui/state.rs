@@ -6,6 +6,15 @@ use std::collections::HashMap;
 use super::evidence::{self, Evidence, Scope};
 use super::layout::{self, Layout, Region};
 use super::scene::{self, Camera};
+use super::services::ServicesWorld;
+
+/// Which World the tab shows: the packages of the analysed source, or the
+/// services of a repository (`isRepositoryOverview` in the web).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Architecture,
+    Services,
+}
 
 /// The three lenses of the web (`problems`, `complexity`, `coverage`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +44,12 @@ pub(super) struct Visit {
 /// Everything the tab knows: the evidence and the viewer's position.
 pub struct StartState {
     pub(super) ev: Evidence,
+    /// The services World, when the topology has one.
+    pub(super) services: Option<ServicesWorld>,
+    pub(super) mode: Mode,
+    /// The architecture World was entered from a service island: Back and
+    /// zooming out at the minimum return to the services.
+    pub(super) entered: bool,
     /// The scope of the overview (after skipping single-package chains).
     pub(super) home: Option<String>,
     pub(super) within: Option<String>,
@@ -57,9 +72,17 @@ pub struct StartState {
     pub(super) layout: Layout,
 }
 
-pub(super) fn from_evidence(ev: Evidence) -> StartState {
+pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> StartState {
     let mut s = StartState {
         ev,
+        // As the web, a repository opens on its services.
+        mode: if services.is_some() {
+            Mode::Services
+        } else {
+            Mode::Architecture
+        },
+        services,
+        entered: false,
         home: None,
         within: None,
         history: Vec::new(),
@@ -94,7 +117,10 @@ impl StartState {
         if self.within.is_none() {
             self.home = self.scope.name.clone();
         }
-        self.layout = plan(self);
+        self.layout = match (&self.services, self.mode) {
+            (Some(w), Mode::Services) => w.layout.clone(),
+            _ => plan(self),
+        };
     }
 
     pub(super) fn kpi_active(&self) -> bool {
@@ -138,16 +164,6 @@ impl StartState {
             ..Camera::default()
         };
         self.refresh();
-    }
-
-    pub(super) fn back(&mut self) {
-        if let Some(v) = self.history.pop() {
-            self.within = v.within;
-            self.cam = v.cam;
-            self.selection = v.selection;
-            self.limit = v.limit;
-            self.refresh();
-        }
     }
 
     /// `worldOpenArea`: packages open, files show their details.
@@ -217,8 +233,12 @@ impl StartState {
         self.search = text;
     }
 
-    /// `worldMatches`: the class id or file name contains the term.
+    /// `worldMatches`: the class id or file name contains the term; on
+    /// the services World the island's path.
     pub(super) fn matches(&self, cell: &layout::Cell) -> bool {
+        if let (Some(w), Mode::Services) = (&self.services, self.mode) {
+            return w.matches(cell.area, &self.query);
+        }
         self.query.is_empty()
             || cell.entities.iter().any(|&e| {
                 let e = self.ev.entity(e);
@@ -238,8 +258,15 @@ impl StartState {
                 let name = |i: usize| &self.scope.areas[self.layout.cells[i].area].name;
                 name(a).cmp(name(b))
             });
-        if let Some(i) = first {
-            self.select_cell(i);
+        match (first, self.mode) {
+            (Some(i), Mode::Services) => {
+                let area = self.layout.cells[i].area;
+                if let Some(w) = &mut self.services {
+                    w.select_area(Some(area));
+                }
+            }
+            (Some(i), Mode::Architecture) => self.select_cell(i),
+            (None, _) => {}
         }
     }
 
@@ -256,21 +283,6 @@ impl StartState {
     pub(super) fn cell_at(&self, x: f64, y: f64) -> Option<usize> {
         let v = self.view()?;
         scene::hit(&self.layout, &v.frame, self.cam.rotation, v.to_unit((x, y)))
-    }
-
-    /// Wheel zoom at the cursor. At the maximum, zooming on over a package
-    /// opens it; at the minimum, zooming out returns to the previous view.
-    pub(super) fn wheel(&mut self, x: f64, y: f64, factor: f64) {
-        let under = self.cell_at(x, y).map(|c| self.layout.cells[c].area);
-        let point = (x - self.canvas.0 / 2.0, y - self.canvas.1 / 2.0);
-        self.cam = scene::zoom(self.cam, factor, point);
-        let drill =
-            under.filter(|&a| factor > 1.0 && self.cam.zoom >= 8.0 && self.scope.areas[a].module);
-        if let Some(area) = drill {
-            self.open_area(area);
-        } else if factor < 1.0 && self.cam.zoom <= 0.4 && self.within.is_some() {
-            self.back();
-        }
     }
 
     /// The package path from the overview to the current scope.

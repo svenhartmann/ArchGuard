@@ -145,3 +145,107 @@ msgstr "{} Elemente · {} Flächen"
 
 msgid "{} surfaces with gaps · {} / {} lines"
 msgstr "{} Flächen mit Lücken · {} / {} Zeilen"
+
+msgid "Your services"
+msgstr "Deine Services"
+
+msgid "All variants"
+msgstr "Alle Varianten"
+
+msgid "No local sources"
+msgstr "Keine lokalen Quellen"
+
+msgid "All projects"
+msgstr "Alle Projekte"
+
+msgid "Services only"
+msgstr "Nur Services"
+
+msgid "{0} connection"
+msgid_plural "{0} connections"
+msgstr[0] "{0} Verbindung"
+msgstr[1] "{0} Verbindungen"
+
+msgid "where the data flows, all hops"
+msgstr "wohin die Daten fließen, alle Stationen"
+
+msgid "where the data comes from, all hops"
+msgstr "woher die Daten kommen, alle Stationen"
+
+msgid "dots show call and event direction, not measured load"
+msgstr "Punkte zeigen Aufruf- und Event-Richtung, keine gemessene Last"
+
+msgid "first 60 arrows; select a service to focus"
+msgstr "erste 60 Pfeile; Service auswählen zum Eingrenzen"
+
+msgid "cyclic communication marked"
+msgstr "zyklische Kommunikation markiert"
+
+msgid "Analysis incomplete; missing connections may be undetected"
+msgstr "Analyse unvollständig; fehlende Verbindungen können unerkannt sein"
+
+msgid "No usable trace connections in this selection"
+msgstr "Keine auswertbaren Trace-Verbindungen in dieser Auswahl"
+
+msgid "Each island represents one detected application, library or tool project, or one deployment of it. Equal island sizes and heights are navigation aids, not code or quality measurements. Click selects a service and its connections; Details shows their evidence. Double-click or Zoom into service shows the project's packages and classes; further wheel zoom at maximum does as well, and Back returns here. Open project analyzes the project as a document of its own. Red arrows are cyclic communication of one kind, accented arrows lead into the selection, events are dashed. Wheel: zoom; left-drag: pan; right-drag or Shift-drag: rotate."
+msgstr "Jede Insel steht für eine erkannte Anwendung, Bibliothek oder ein Werkzeugprojekt oder für eine Bereitstellung davon. Gleiche Inselgrößen und Höhen dienen der Navigation, nicht der Messung von Code oder Qualität. Ein Klick markiert den Service und seine Verbindungen; Details zeigt ihre Belege. Doppelklick oder In Service hineinzoomen zeigt Pakete und Klassen des Projekts; weiteres Zoomen am Maximum ebenfalls, Zurück kehrt hierher zurück. Projekt öffnen analysiert das Projekt als eigenes Dokument. Rote Pfeile sind zyklische Kommunikation einer Art, hervorgehobene Pfeile führen zur Auswahl, Events sind gestrichelt. Mausrad: zoomen; Linksziehen: verschieben; Rechtsziehen oder Umschalt + Ziehen: drehen."
+
+msgid "Deployment"
+msgstr "Deployment"
+
+msgid "Combined"
+msgstr "Kombiniert"
+
+msgid "Source code"
+msgstr "Quellcode"
+
+msgid "Configuration"
+msgstr "Konfiguration"
+
+msgid "Observed traces"
+msgstr "Beobachtete Traces"
+
+msgid "Communication"
+msgstr "Kommunikation"
+
+msgid "Where data flows (all hops)"
+msgstr "Wohin Daten fließen (alle Stationen)"
+
+msgid "Where data comes from (all hops)"
+msgstr "Woher Daten kommen (alle Stationen)"
+
+msgid "Data flow"
+msgstr "Datenfluss"
+
+msgid "Overview"
+msgstr "Übersicht"
+
+msgid "Zoom into service"
+msgstr "In Service hineinzoomen"
+
+msgid "Find service or project…"
+msgstr "Service oder Projekt suchen…"
+
+msgid "{} services / projects · {} local source projects"
+msgstr "{} Services / Projekte · {} lokale Quellprojekte"
+
+msgid "Evidence is filtered by source. Traces represent only the imported observation window, not complete traffic. Events can form intended workflows; a combined cycle may mix configured, inferred and observed edges."
+msgstr "Belege werden nach Quelle gefiltert. Traces zeigen nur das importierte Zeitfenster, nicht den gesamten Verkehr. Event-Zyklen können gewollte Abläufe sein; kombinierte Zyklen können konfigurierte, abgeleitete und beobachtete Kanten mischen."
+
+msgid "No local source project is associated with this service. Connections and trace evidence remain available."
+msgstr "Diesem Service ist kein lokales Quellprojekt zugeordnet. Verbindungen und Trace-Belege sind verfügbar."
+
+msgid "Cycle"
+msgstr "Zyklus"
+
+msgid "Select neighbor"
+msgstr "Nachbarn auswählen"
+
+msgid "No connections found for these filters. Missing evidence does not prove isolation."
+msgstr "Für diese Filter wurden keine Verbindungen erkannt. Fehlende Belege beweisen keine Isolation."
+
+msgid "Connection kind"
+msgstr "Verbindungsart"
+
+msgid "Service connections"
+msgstr "Verbindungen"
