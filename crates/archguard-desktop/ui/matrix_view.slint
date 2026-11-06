@@ -101,7 +101,8 @@ export component MatrixView inherits Rectangle {
 
     property <length> label-w: 280px;
     property <length> col-w: 96px;
-    property <int> col-size: max(2, min(12, floor((root.width - label-w - 32px) / col-w)));
+    // Columns never reach under the rows' overlay scroll bar.
+    property <int> col-size: max(2, min(12, floor((root.width - label-w - 32px - Theme.scrollbar-w) / col-w)));
     property <int> col-pages: max(1, ceil(columns.length / col-size));
     property <int> col-start: min(col-page, col-pages - 1) * col-size;
     property <int> col-count: max(0, min(col-size, columns.length - col-start));
@@ -240,12 +241,15 @@ export component MatrixView inherits Rectangle {
                             font-size: 11px;
                             font-weight: 600;
                             overflow: elide;
+                            // Centred over the cells' centred badges.
+                            horizontal-alignment: center;
                         }
                         if column.context != "" && column.kind == 0: Text {
                             text: column.context;
                             color: Theme.muted;
                             font-size: 9.5px;
                             overflow: elide;
+                            horizontal-alignment: center;
                         }
                     }
                 }
