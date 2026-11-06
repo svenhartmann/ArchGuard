@@ -20,7 +20,7 @@ use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use scene::Camera;

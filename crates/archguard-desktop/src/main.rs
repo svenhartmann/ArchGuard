@@ -27,6 +27,7 @@ mod shell_ui;
 mod snapshot;
 mod start_ui;
 mod state;
+mod tab_support;
 mod tree;
 mod tree_order;
 mod ui;

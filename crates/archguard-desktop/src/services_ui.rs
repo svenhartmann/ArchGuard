@@ -13,7 +13,7 @@ mod view;
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, Shared, TabState, Topology, index};
+use crate::tab_support::{self, Actions, Shared, TabState, Topology, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};

@@ -15,9 +15,10 @@ use slint::{ComponentHandle, SharedString};
 
 use crate::context::{Analysis, Loaded};
 use crate::documents::{self, DocId, Status, SubProject, with_store};
-use crate::graph_ui::{self, vec_model};
+use crate::graph_ui;
 use crate::settings::{self, ProjectView, Session};
 use crate::settings_file;
+use crate::tab_support::{self, Shared, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
     architecture_ui, calls_ui, matrix_ui, quality_ui, security_ui, services_ui, start_ui, web,
@@ -170,7 +171,10 @@ fn pick_folder(ui: &AppWindow) {
 
 /// The analysis of one document, as the CLI runs it, plus the monorepo's
 /// sub-projects. Blocking: runs on a worker thread.
-fn analyze(root: &Path) -> Result<(Analysis, Vec<SubProject>), String> {
+fn analyze(
+    root: &Path,
+    topology: &Shared<Topology>,
+) -> Result<(Analysis, Vec<SubProject>), String> {
     let loaded = load_config(None, root).map_err(|e| e.to_string())?;
     let run = analyze_run_quiet(root, &loaded, Level::Module).map_err(|e| e.to_string())?;
     // Git evidence for review priorities; without it the churn component
@@ -178,9 +182,11 @@ fn analyze(root: &Path) -> Result<(Analysis, Vec<SubProject>), String> {
     let sources =
         collect_review_sources(root, &run.config, &run.graph, &run.config.review.git_since)
             .unwrap_or_default();
-    let projects = archguard_engine::analyze_services(root)
-        .map(|t| documents::sub_projects(&t))
-        .unwrap_or_default();
+    // Read once per document; the Services tab reuses the same slot.
+    let projects = match &*tab_support::topology(topology, root) {
+        Ok(t) => documents::sub_projects(t),
+        Err(_) => Vec::new(),
+    };
     let analysis = Analysis {
         root: root.to_path_buf(),
         run,
@@ -190,9 +196,11 @@ fn analyze(root: &Path) -> Result<(Analysis, Vec<SubProject>), String> {
 }
 
 fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
+    let topology = Shared::<Topology>::new();
+    documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let result = analyze(&root);
+        let result = analyze(&root, &topology);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 finished(&ui, id, result);

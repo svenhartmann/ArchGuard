@@ -19,7 +19,7 @@ mod view;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;

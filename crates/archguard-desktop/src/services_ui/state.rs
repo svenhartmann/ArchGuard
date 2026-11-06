@@ -1,6 +1,6 @@
 //! The Services tab's state: the topology and the web's `serviceUi`.
 
-use crate::graph_ui::tab_support::Topology;
+use crate::tab_support::Topology;
 
 use archguard_engine::core::{ServiceDependencyKind, ServiceTopology};
 

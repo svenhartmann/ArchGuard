@@ -20,7 +20,7 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
 use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};

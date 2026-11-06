@@ -1,12 +1,6 @@
 //! Graph tab: tree, network and dependency displays of one
 //! [`GraphState`] per document (in [`documents`]).
 
-// The helpers all tabs share. They belong to the crate root, but `main.rs`
-// is the window shell's; declared in `context.rs` they would close the
-// cycle context -> tab_support -> documents -> context.
-#[path = "tab_support.rs"]
-pub mod tab_support;
-
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
@@ -17,9 +11,9 @@ use crate::context::Loaded;
 use crate::documents;
 use crate::network;
 use crate::state::{self, GraphState};
+use crate::tab_support::{self, Actions, TabState, index};
 use crate::tree::{EdgeMode, Sort};
 use crate::ui::*;
-use tab_support::{Actions, TabState, index};
 
 impl TabState for GraphState {
     fn push(&mut self, ui: &AppWindow) {
@@ -110,7 +104,7 @@ fn mode_index(m: EdgeMode) -> i32 {
 }
 
 /// For `documents_ui`, which imports the list model from here.
-pub use tab_support::model as vec_model;
+use crate::tab_support::model as vec_model;
 
 /// Show the active document's Graph tab, building its state on first use.
 pub fn show(ui: &AppWindow, data: &Loaded) {

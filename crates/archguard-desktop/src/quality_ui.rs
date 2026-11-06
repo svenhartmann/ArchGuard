@@ -20,7 +20,7 @@ use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::graph_ui::tab_support::{self, Actions, Calls, TabState, index, model};
+use crate::tab_support::{self, Actions, Calls, TabState, index, model};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,

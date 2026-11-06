@@ -255,6 +255,11 @@ impl<T: Send + Sync + 'static> Shared<T> {
             .unwrap_or_else(|| Shared(Arc::default()))
     }
 
+    /// A new, empty slot (to store into a document before its worker runs).
+    pub fn new() -> Self {
+        Shared(Arc::default())
+    }
+
     pub fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
         self.0.get_or_init(f)
     }

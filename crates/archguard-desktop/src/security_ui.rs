@@ -15,7 +15,7 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index, model as rows};
+use crate::tab_support::{self, Actions, TabState, index, model as rows};
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
 use snapshot::{SEVERITIES, safe_url};
 

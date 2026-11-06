@@ -6,8 +6,8 @@ use slint::SharedString;
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::graph_ui::tab_support::{self, Actions, TabState, index, model};
 use crate::matrix::{Matrix, MatrixRow, Target};
+use crate::tab_support::{self, Actions, TabState, index, model};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
 use std::rc::Rc;
