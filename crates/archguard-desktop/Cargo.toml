@@ -15,7 +15,9 @@ path = "src/main.rs"
 archguard-engine = { path = "../archguard-engine" }
 petgraph = "0.8"
 slint = "1.18"
-png = { version = "0.18", optional = true }
+# PNG for image export (`export.rs`) and the off-screen snapshot.
+png = "0.18"
+serde_json = "1"
 # Native folder picker for "Open project"; on Linux via the XDG desktop
 # portal only, without GTK.
 # Comment-preserving reads and writes of desktop.toml.
@@ -29,10 +31,14 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData"] }
 
+[dev-dependencies]
+# Parses exported SVG in tests.
+roxmltree = "0.21.1"
+
 [build-dependencies]
 slint-build = "1.18"
 
 [features]
 # `ARCHGUARD_DESKTOP_SNAPSHOT=<file.png>` renders the window to a PNG and
 # exits; used to check the real UI without screen-recording rights.
-snapshot = ["dep:png"]
+snapshot = []

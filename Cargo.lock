@@ -338,6 +338,8 @@ dependencies = [
  "petgraph",
  "png",
  "rfd",
+ "roxmltree",
+ "serde_json",
  "slint",
  "slint-build",
  "toml_edit",
