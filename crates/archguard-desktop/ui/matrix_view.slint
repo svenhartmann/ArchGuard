@@ -53,6 +53,28 @@ export struct MatrixData {
     marked-row: int,
 }
 
+// One pager style for rows and target packages: the range, then ‹ ›.
+component Pager inherits HorizontalLayout {
+    in property <string> text;
+    // A fixed width for the range; 0: its own.
+    in property <length> text-w: 0;
+    in property <bool> can-prev;
+    in property <bool> can-next;
+    callback prev();
+    callback next();
+    spacing: 6px;
+    Text {
+        width: root.text-w > 0 ? root.text-w : self.preferred-width;
+        text: root.text;
+        color: Theme.text;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Button { compact: true; icon: Icons.chevron-left; enabled: root.can-prev; clicked => { root.prev(); } }
+    Button { compact: true; icon: Icons.chevron-right; enabled: root.can-next; clicked => { root.next(); } }
+}
+
 export component MatrixView inherits Rectangle {
     in property <[MatrixColumn]> columns;
     in property <[MatrixRowItem]> rows;
@@ -100,12 +122,12 @@ export component MatrixView inherits Rectangle {
     // the window when switching to this tab).
     // Explicit horizontal constraints: the content depends on the width
     // (columns per page), so it must not feed back into the layout.
-    min-width: 640px;
+    min-width: 360px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
 
-    property <length> label-w: 280px;
+    property <length> label-w: min(280px, max(150px, (root.width - 32px) * 0.4));
     property <length> col-w: 96px;
     // Columns never reach under the rows' overlay scroll bar.
     property <int> col-size: max(2, min(12, floor((root.width - label-w - 32px - Theme.scrollbar-w) / col-w)));
@@ -145,71 +167,113 @@ export component MatrixView inherits Rectangle {
         padding-top: 10px;
         spacing: 8px;
 
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            Button { compact: true; text: @tr("Compact cells"); pressed-state: root.compact; clicked => { root.compact = !root.compact; } }
-            Button { compact: true; text: @tr("Previous"); enabled: root.col-page > 0; clicked => { root.col-page -= 1; } }
-            // Not in a layout: the label depends on the columns per page,
-            // which depend on the width.
-            Rectangle {
-                width: 170px;
-                Text {
-                    x: 0;
-                    width: parent.width;
-                    height: parent.height;
-                    text: @tr("Target packages {}–{} / {}", Fmt.int(root.col-count > 0 ? root.col-start + 1 : 0), Fmt.int(root.col-start + root.col-count), Fmt.int(root.columns.length));
-                    color: Theme.muted;
-                    font-size: 12px;
-                    vertical-alignment: center;
+        VerticalLayout {
+            spacing: 2px;
+            PageTitle { text: @tr("Dependencies in the tree"); section: true; }
+            // The figures stack in a narrow pane.
+            if root.width >= 600px: HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                for k in root.kpis: StatInline { kpi: k; }
+            }
+            if root.width < 600px: VerticalLayout {
+                spacing: 2px;
+                for k in root.kpis: HorizontalLayout {
+                    alignment: start;
+                    StatInline { kpi: k; }
                 }
             }
-            Button { compact: true; text: @tr("Next"); enabled: root.col-page < root.col-pages - 1; clicked => { root.col-page += 1; } }
         }
 
-        HorizontalLayout {
-            spacing: 10px;
-            VerticalLayout {
-                alignment: start;
-                PageTitle { text: @tr("Dependencies in the tree"); section: true; }
-                HorizontalLayout {
-                    spacing: 14px;
-                    alignment: start;
-                    for k in root.kpis: StatInline { kpi: k; }
-                }
-            }
-            Rectangle { horizontal-stretch: 1; }
+        // The controls flow into further rows when the pane is too narrow
+        // for one (from the view's width, never the content), as the Calls
+        // toolbar does.
+        bar := Rectangle {
+            property <length> gap: 8px;
+            property <length> h: Theme.control-h;
+            property <length> w1: min(260px, self.width);
+            property <length> w2: expand.preferred-width;
+            property <length> x2: self.fx(self.w1, self.w2);
+            property <int> r2: self.fr(self.w1, self.w2, 0);
+            property <length> w3: collapse.preferred-width;
+            property <length> x3: self.fx(self.x2 + self.w2, self.w3);
+            property <int> r3: self.fr(self.x2 + self.w2, self.w3, self.r2);
+            property <length> w4: min(300px, self.width);
+            property <length> x4: self.fx(self.x3 + self.w3, self.w4);
+            property <int> r4: self.fr(self.x3 + self.w3, self.w4, self.r3);
+            property <length> w5: min(220px, self.width);
+            property <length> x5: self.fx(self.x4 + self.w4, self.w5);
+            property <int> r5: self.fr(self.x4 + self.w4, self.w5, self.r4);
+            property <length> w6: only-button.preferred-width;
+            property <length> x6: self.fx(self.x5 + self.w5, self.w6);
+            property <int> r6: self.fr(self.x5 + self.w5, self.w6, self.r5);
+            property <length> w7: compact-button.preferred-width;
+            property <length> x7: self.fx(self.x6 + self.w6, self.w7);
+            property <int> r7: self.fr(self.x6 + self.w6, self.w7, self.r6);
+            // An item of width `w` after one ending at `end` stays on its
+            // row when it fits, else starts the next row.
+            pure function fits(end: length, w: length) -> bool { return end + self.gap + w <= self.width; }
+            pure function fx(end: length, w: length) -> length { return self.fits(end, w) ? end + self.gap : 0; }
+            pure function fr(end: length, w: length, r: int) -> int { return self.fits(end, w) ? r : r + 1; }
+            pure function row-y(r: int) -> length { return r * (self.h + self.gap); }
+            height: self.row-y(self.r7) + self.h;
+
             scope-box := ComboBox {
-                width: 260px;
+                x: 0;
+                y: 0;
+                width: parent.w1;
+                height: parent.h;
                 model: root.scopes;
                 current-index: root.scope-index;
                 selected => { root.scope-changed(self.current-index); }
             }
-            Button { text: @tr("Expand all"); compact: true; y: (parent.height - self.height) / 2; clicked => { root.expand-all(); } }
-            Button { text: @tr("Collapse all"); compact: true; y: (parent.height - self.height) / 2; clicked => { root.collapse-all(); } }
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
+            expand := Button {
+                x: parent.x2;
+                y: parent.row-y(parent.r2);
+                width: self.preferred-width;
+                text: @tr("Expand all");
+                clicked => { root.expand-all(); }
+            }
+            collapse := Button {
+                x: parent.x3;
+                y: parent.row-y(parent.r3);
+                width: self.preferred-width;
+                text: @tr("Collapse all");
+                clicked => { root.collapse-all(); }
+            }
             search-box := SearchField {
-                width: 340px;
+                x: parent.x4;
+                y: parent.row-y(parent.r4);
+                width: parent.w4;
                 text: root.query;
                 placeholder: @tr("Find package or file…");
                 edited(t) => { root.search(t); }
             }
             cycle-box := ComboBox {
-                width: 220px;
+                x: parent.x5;
+                y: parent.row-y(parent.r5);
+                width: parent.w5;
+                height: parent.h;
                 model: root.cycle-options;
                 current-index: root.cycle-index;
                 selected => { root.cycle-changed(self.current-index); }
             }
-            Button {
+            only-button := Button {
+                x: parent.x6;
+                y: parent.row-y(parent.r6);
+                width: self.preferred-width;
                 text: @tr("Cycle only");
                 pressed-state: root.only;
                 enabled: root.cycle-index > 0;
-                y: (parent.height - self.height) / 2;
                 clicked => { root.toggle-only(); }
+            }
+            compact-button := Button {
+                x: parent.x7;
+                y: parent.row-y(parent.r7);
+                width: self.preferred-width;
+                text: @tr("Compact cells");
+                pressed-state: root.compact;
+                clicked => { root.compact = !root.compact; }
             }
         }
 
@@ -230,17 +294,37 @@ export component MatrixView inherits Rectangle {
             }
         }
 
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            Text {
+        // Rows and target packages page alike; the second pager moves
+        // under the first when both do not fit side by side.
+        pagers := Rectangle {
+            property <length> h: Theme.control-h-sm;
+            property <bool> one-row: rows-pager.preferred-width + 24px + cols-pager.preferred-width <= self.width;
+            height: self.one-row ? self.h : 2 * self.h + 6px;
+            rows-pager := Pager {
+                x: 0;
+                y: 0;
+                width: self.preferred-width;
+                height: parent.h;
                 text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
-                color: Theme.text;
-                font-size: 13px;
-                vertical-alignment: center;
+                can-prev: root.row-start > 0;
+                can-next: root.row-start + root.rows.length < root.row-total;
+                prev => { root.page(-1); }
+                next => { root.page(1); }
             }
-            Button { compact: true; icon: Icons.chevron-left; enabled: root.row-start > 0; clicked => { root.page(-1); } }
-            Button { compact: true; icon: Icons.chevron-right; enabled: root.row-start + root.rows.length < root.row-total; clicked => { root.page(1); } }
+            cols-pager := Pager {
+                x: parent.one-row ? rows-pager.preferred-width + 24px : 0;
+                y: parent.one-row ? 0 : parent.h + 6px;
+                width: self.preferred-width;
+                height: parent.h;
+                // Fixed: the range depends on the columns per page, which
+                // depend on the width.
+                text-w: 170px;
+                text: @tr("Target packages {}–{} / {}", Fmt.int(root.col-count > 0 ? root.col-start + 1 : 0), Fmt.int(root.col-start + root.col-count), Fmt.int(root.columns.length));
+                can-prev: root.col-page > 0;
+                can-next: root.col-page < root.col-pages - 1;
+                prev => { root.col-page -= 1; }
+                next => { root.col-page += 1; }
+            }
         }
 
         // Header row.
@@ -431,7 +515,7 @@ export component MatrixView inherits Rectangle {
     if root.evidence-title != "": Rectangle {
         x: root.width - self.width - 16px;
         y: 60px;
-        width: 460px;
+        width: min(460px, root.width - 32px);
         height: root.height - 80px;
         background: Theme.panel;
         border-radius: Theme.radius;
