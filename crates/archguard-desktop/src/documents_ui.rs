@@ -23,20 +23,15 @@ use crate::settings_file;
 use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
-    architecture_ui, calls_ui, matrix_ui, quality_ui, security_ui, services_ui, start_ui, web,
+    architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, security_ui, services_ui,
+    start_ui, web,
 };
-
-/// What a document remembers of the window when another one is shown;
-/// its panes are its [`Layout`].
-struct ViewState {
-    display: i32,
-    explorer_tab: i32,
-}
 
 /// Register the callbacks of the document strip and of every tab.
 pub fn wire(ui: &AppWindow) {
     graph_ui::wire(ui);
     matrix_ui::wire(ui);
+    file_ui::wire(ui);
     start_ui::wire(ui);
     architecture_ui::wire(ui);
     calls_ui::wire(ui);
@@ -79,14 +74,13 @@ fn seed_view(id: DocId, root: &Path) {
     let Some(view) = settings_file::get(|s| s.project(root).cloned()) else {
         return;
     };
-    documents::set_state(
-        id,
-        ViewState {
-            display: view.display,
-            explorer_tab: view.explorer_tab,
-        },
-    );
-    documents::set_state(id, view.layout.unwrap_or_else(|| Layout::single(&view.tab)));
+    // A file written before panes has the Graph's display per project.
+    let layout = view.layout.unwrap_or_else(|| {
+        let mut l = Layout::single(&view.tab);
+        l.panes[0].tabs[0].display = view.display;
+        l
+    });
+    documents::set_state(id, layout);
 }
 
 /// Store the open documents as the session.
@@ -228,35 +222,35 @@ fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>
     }
 }
 
-/// Remember the active document's view, in the document and as the
-/// project's last view in the settings.
-pub fn save_view(ui: &AppWindow) {
-    let Some((id, root)) = with_store(|s| s.active().map(|d| (d.id, d.root.clone()))) else {
+/// Remember the active document's view as the project's last view in the
+/// settings; `display` and `explorer_tab` are those of the Graph the view
+/// bar shows (each Graph tab keeps its own, see `pane_store`).
+pub fn save_view(_ui: &AppWindow) {
+    let Some(root) = with_store(|s| s.active().map(|d| d.root.clone())) else {
         return;
     };
     let layout = panes_ui::layout();
+    let graph = layout
+        .find("graph")
+        .map(|(p, t)| layout.panes[p].tabs[t].id);
+    let (display, explorer_tab) = graph
+        .and_then(|id| {
+            instances::with(id, |s: &mut graph_ui::Graph| {
+                (s.g.display, s.g.explorer_tab)
+            })
+        })
+        .unwrap_or_default();
     let view = ProjectView {
         tab: layout.focused().to_string(),
-        display: ui.get_display(),
-        explorer_tab: ui.get_explorer_tab(),
+        display,
+        explorer_tab,
         layout: Some(layout),
     };
     settings_file::edit(|s| s.set_project(&root, view));
-    documents::set_state(
-        id,
-        ViewState {
-            display: ui.get_display(),
-            explorer_tab: ui.get_explorer_tab(),
-        },
-    );
 }
 
 fn restore_view(ui: &AppWindow) {
     panes_ui::push(ui);
-    documents::with_active_state(|v: &mut ViewState| {
-        ui.set_display(v.display);
-        ui.set_explorer_tab(v.explorer_tab);
-    });
 }
 
 fn push_strip(ui: &AppWindow) {
@@ -329,8 +323,9 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     services_ui::show(ui, data);
     quality_ui::show(ui, data);
     security_ui::show(ui, data);
-    matrix_ui::show(ui, data);
-    graph_ui::show(ui, data);
+    // Graph, Matrix and File tabs: their instances for the layout.
+    panes_ui::sync(ui);
+    graph_ui::show(ui);
     ui.invoke_fit_views();
 }
 

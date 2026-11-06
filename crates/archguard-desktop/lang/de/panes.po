@@ -9,3 +9,6 @@ msgstr "In neuem Tab öffnen"
 
 msgid "Open to the side"
 msgstr "Daneben öffnen"
+
+msgid "Open graph to the side"
+msgstr "Graph daneben öffnen"

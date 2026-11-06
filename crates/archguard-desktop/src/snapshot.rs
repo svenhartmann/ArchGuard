@@ -26,6 +26,7 @@ use std::cell::Cell;
 use slint::ComponentHandle;
 
 use crate::graph_ui::node_named;
+use crate::panes_ui;
 use crate::ui::AppWindow;
 
 thread_local! {
@@ -75,7 +76,9 @@ fn matrix_query_round_trip(ui: &AppWindow) {
         return;
     };
     ui.invoke_navigate("dsm".into());
-    ui.invoke_m_search(q.into());
+    if let Some(id) = shown("dsm") {
+        ui.invoke_m_search(id, q.into());
+    }
     ui.invoke_navigate("graph".into());
     let weak = ui.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(300), move || {
@@ -85,24 +88,67 @@ fn matrix_query_round_trip(ui: &AppWindow) {
     });
 }
 
+/// The id of a tab of `kind`, as the view bar would show it.
+fn shown(kind: &str) -> Option<i32> {
+    panes_ui::shown_id(kind).map(|id| id as i32)
+}
+
+/// `kind` or `kind:<node name>`.
+fn view_spec(v: &str) -> (&str, Option<&str>) {
+    match v.trim().split_once(':') {
+        Some((kind, node)) => (kind.trim(), Some(node.trim())),
+        None => (v.trim(), None),
+    }
+}
+
+/// Show `spec` in the focused pane: its view, opened on its node (a Graph
+/// on a package; a File view in a new tab).
+fn show_left(ui: &AppWindow, spec: &str) {
+    let (kind, node) = view_spec(spec);
+    match node {
+        Some(n) if kind == "graph" => {
+            ui.invoke_navigate("graph".into());
+            if let (Some(id), Some(n)) = (shown("graph"), node_named(n)) {
+                ui.invoke_open_node(id, n as i32);
+            }
+        }
+        Some(n) => {
+            panes_ui::open_node(ui, kind, n, false);
+        }
+        None => ui.invoke_navigate(kind.into()),
+    }
+}
+
 /// Panes, before the reveal hooks so those link across them: open views
 /// in new tabs of the focused pane
-/// (`ARCHGUARD_DESKTOP_VIEW_TABS=calls,quality`), split into two panes
-/// (`ARCHGUARD_DESKTOP_SPLIT=graph,dsm`, left and right view), set the
-/// divider (`ARCHGUARD_DESKTOP_RATIO=0.6`), close a view tab
+/// (`ARCHGUARD_DESKTOP_VIEW_TABS=calls,graph:crates/a,file:src/x.rs`),
+/// split into two panes (`ARCHGUARD_DESKTOP_SPLIT=graph:<scope>,file:<path>`,
+/// left and right view, each `kind` or `kind:<node name>`; two Graphs on
+/// different packages: `graph:a,graph:b`), set the divider
+/// (`ARCHGUARD_DESKTOP_RATIO=0.6`), close a view tab
 /// (`ARCHGUARD_DESKTOP_CLOSE_VIEW=<pane>:<tab>`) or focus a pane
 /// (`ARCHGUARD_DESKTOP_FOCUS=0`).
 fn apply_pane_hooks(ui: &AppWindow) {
     let tabs = std::env::var("ARCHGUARD_DESKTOP_VIEW_TABS").unwrap_or_default();
-    for v in tabs.split(',').map(str::trim).filter(|v| !v.is_empty()) {
-        ui.invoke_open_view_tab(v.into());
+    for v in tabs.split(',').filter(|v| !v.trim().is_empty()) {
+        match view_spec(v) {
+            (kind, Some(node)) => {
+                panes_ui::open_node(ui, kind, node, false);
+            }
+            (kind, None) => ui.invoke_open_view_tab(kind.into()),
+        }
     }
     if let Some((left, right)) = env::<String>("ARCHGUARD_DESKTOP_SPLIT")
         .as_deref()
         .and_then(|v| v.split_once(','))
     {
-        ui.invoke_navigate(left.trim().into());
-        ui.invoke_split_view(right.trim().into());
+        show_left(ui, left);
+        match view_spec(right) {
+            (kind, Some(node)) => {
+                panes_ui::open_node(ui, kind, node, true);
+            }
+            (kind, None) => ui.invoke_split_view(kind.into()),
+        }
     }
     if let Some(r) = env::<f32>("ARCHGUARD_DESKTOP_RATIO") {
         ui.invoke_set_pane_ratio(r);
@@ -119,27 +165,30 @@ fn apply_pane_hooks(ui: &AppWindow) {
     }
 }
 
+/// Graph hooks act on the Graph the view bar would show, Matrix hooks on
+/// that Matrix.
 fn apply_view_hooks(ui: &AppWindow) {
     matrix_query_round_trip(ui);
     apply_pane_hooks(ui);
+    let graph = shown("graph").unwrap_or(-1);
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_REVEAL").and_then(|n| node_named(&n)) {
-        ui.invoke_reveal(n as i32);
+        ui.invoke_reveal(graph, n as i32);
     }
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_OPEN").and_then(|n| node_named(&n)) {
-        ui.invoke_open_node(n as i32);
+        ui.invoke_open_node(graph, n as i32);
     }
     if let Some(h) = env("ARCHGUARD_DESKTOP_HOVER") {
         ui.set_tree_hovered(h);
     }
     if let Some(d) = env("ARCHGUARD_DESKTOP_DISPLAY") {
-        ui.set_display(d);
+        ui.invoke_set_display(graph, d);
     }
     let cell = env::<String>("ARCHGUARD_DESKTOP_MCELL").and_then(|v| {
         let (name, col) = v.rsplit_once(':')?;
         Some((node_named(name)?, col.parse::<i32>().ok()?))
     });
-    if let Some((n, c)) = cell {
-        ui.invoke_m_cell(n as i32, c);
+    if let (Some((n, c)), Some(id)) = (cell, shown("dsm")) {
+        ui.invoke_m_cell(id, n as i32, c);
     }
     if let Some(tab) = env::<String>("ARCHGUARD_DESKTOP_TAB") {
         ui.invoke_navigate(tab.into());

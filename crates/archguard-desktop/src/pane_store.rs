@@ -2,18 +2,21 @@
 //!
 //! ```toml
 //! [projects."/work/shop"]
-//! panes = [["graph", "dsm"], ["architecture"]]  # view tabs per pane
+//! # view tabs per pane: a view id, or a view instance with its node
+//! panes = [["graph", { view = "graph", node = "crates/core", display = 1 }],
+//!          [{ view = "file", node = "crates/core/src/lib.rs" }, "dsm"]]
 //! pane_active = [1, 0]                          # selected tab per pane
 //! pane_focus = 1
 //! pane_ratio = 0.5                              # left pane's share
 //! ```
 //!
-//! Reading repairs what does not fit ([`Layout::repaired`]); a table
-//! without `panes` has no layout.
+//! Reading repairs what does not fit (`panes::repaired`); a
+//! table without `panes` has no layout. Nodes are checked when the
+//! analysis is there (`instances::sync`).
 
-use toml_edit::{Array, Item, TableLike, value};
+use toml_edit::{Array, InlineTable, Item, TableLike, Value, value};
 
-use crate::panes::{Layout, Pane};
+use crate::panes::{self, Layout, Pane, Tab};
 
 /// The layout stored in a project table, if any.
 pub fn read(t: &dyn TableLike) -> Option<Layout> {
@@ -29,9 +32,8 @@ pub fn read(t: &dyn TableLike) -> Option<Layout> {
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            let tabs = p.as_array()?.iter().filter_map(|v| v.as_str());
             Some(Pane {
-                tabs: tabs.map(str::to_string).collect(),
+                tabs: p.as_array()?.iter().filter_map(read_tab).collect(),
                 active: active(i),
             })
         })
@@ -42,14 +44,51 @@ pub fn read(t: &dyn TableLike) -> Option<Layout> {
         .and_then(|n| usize::try_from(n).ok())
         .unwrap_or(0);
     let ratio = t.get("pane_ratio").and_then(Item::as_float).unwrap_or(0.5) as f32;
-    Some(
-        Layout {
-            panes,
-            focus,
-            ratio,
-        }
-        .repaired(),
-    )
+    Some(panes::repaired(Layout {
+        panes,
+        focus,
+        ratio,
+        next: 1,
+    }))
+}
+
+/// `"graph"` or `{ view = "graph", node = "…", display = 1 }`.
+fn read_tab(v: &Value) -> Option<Tab> {
+    let tab = |kind: &str| Tab {
+        kind: kind.to_string(),
+        id: 0,
+        node: None,
+        display: 0,
+    };
+    if let Some(kind) = v.as_str() {
+        return Some(tab(kind));
+    }
+    let t = v.as_inline_table()?;
+    let mut out = tab(t.get("view")?.as_str()?);
+    out.node = t.get("node").and_then(Value::as_str).map(str::to_string);
+    out.display = t
+        .get("display")
+        .and_then(Value::as_integer)
+        .and_then(|d| i32::try_from(d).ok())
+        .unwrap_or(0);
+    Some(out)
+}
+
+/// A tab as [`read_tab`] reads it: a plain view id when it has nothing of
+/// its own.
+fn tab_value(tab: &Tab) -> Value {
+    if tab.node.is_none() && tab.display == 0 {
+        return tab.kind.as_str().into();
+    }
+    let mut t = InlineTable::new();
+    t.insert("view", tab.kind.as_str().into());
+    if let Some(node) = &tab.node {
+        t.insert("node", node.as_str().into());
+    }
+    if tab.display != 0 {
+        t.insert("display", i64::from(tab.display).into());
+    }
+    Value::InlineTable(t)
 }
 
 /// The values to store for `layout`, as `(key, item)`.
@@ -57,7 +96,7 @@ pub fn items(layout: &Layout) -> [(&'static str, Item); 4] {
     let panes: Array = layout
         .panes
         .iter()
-        .map(|p| p.tabs.iter().map(String::as_str).collect::<Array>())
+        .map(|p| p.tabs.iter().map(tab_value).collect::<Array>())
         .collect();
     let active: Array = layout.panes.iter().map(|p| p.active as i64).collect();
     // Two decimals: the divider moves in whole pixels anyway.
