@@ -20,6 +20,7 @@ use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
+use crate::model_sync::{sync_rows, sync_rows_with};
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index, model};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
@@ -38,7 +39,8 @@ impl TabState for QualityState {
     /// The loading page, or the failure in place of the records.
     fn pending(ui: &AppWindow, error: Option<&str>) {
         let lang = Texts::of(ui);
-        let mut m = page_model(&lang, QualityState::loading(lang.clone()).page());
+        let old = QualityModel::default();
+        let mut m = page_model(&lang, QualityState::loading(lang.clone()).page(), &old);
         if let Some(e) = error {
             m.loading = false;
             m.empty = e.into();
@@ -213,35 +215,47 @@ pub fn export(ui: &AppWindow) -> Option<crate::export::Snapshot> {
     .flatten()
 }
 
+/// The page in the models the view shows, changed in place: a keystroke
+/// in a search field redraws only the cards that changed.
 pub fn push(ui: &AppWindow, s: &mut QualityState) {
     let page = s.page();
-    let mut m = page_model(&s.lang, page);
+    let old = ui.global::<QualityData>().get_model();
+    let mut m = page_model(&s.lang, page, &old);
     m.query = s.view.query.as_str().into();
     m.target_query = s.view.target_query.as_str().into();
     ui.global::<QualityData>().set_model(m);
 }
 
-fn page_model(lang: &Texts, p: Page) -> QualityModel {
+fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
+    let mut notes = card_model(p.notes);
+    adopt_card(&old.notes, &mut notes);
     QualityModel {
         loading: p.loading,
         section: p.section as i32,
         scope_summary: p.scope_summary.into(),
-        targets: model(p.targets.into_iter().map(SharedString::from)),
+        targets: sync_rows(&old.targets, p.targets.into_iter().map(SharedString::from)),
         target_index: p.target_index as i32,
         target_note: p.target_note.into(),
         status: p.status.into(),
         status_slot: p.status_slot,
         status_detail: p.status_detail.into(),
-        notes: card_model(p.notes),
+        notes,
         heatmap: p.heatmap,
         filter: p.filter as i32,
         sort: p.sort as i32,
-        heat: model(p.heat.into_iter().map(heat_row)),
-        heat_help: model(
+        heat: sync_rows_with(&old.heat, p.heat.into_iter().map(heat_row), |o, n| {
+            n.cells = sync_rows(&o.cells, n.cells.iter());
+        }),
+        heat_help: sync_rows(
+            &old.heat_help,
             (0..heatmap::METRICS.len()).map(|i| SharedString::from(heatmap_text::help(lang, i))),
         ),
-        detail: model(p.detail.into_iter().map(card_model)),
-        cards: model(p.cards.into_iter().map(card_model)),
+        detail: sync_rows_with(
+            &old.detail,
+            p.detail.into_iter().map(card_model),
+            adopt_card,
+        ),
+        cards: sync_rows_with(&old.cards, p.cards.into_iter().map(card_model), adopt_card),
         more: p.more,
         empty: p.empty.into(),
         ..Default::default()
@@ -279,6 +293,15 @@ fn card_model(c: card::Card) -> QualityCard {
         })),
         more_groups: c.more_groups,
     }
+}
+
+/// `new` takes over the inner models of `old`, synced to its contents.
+fn adopt_card(old: &QualityCard, new: &mut QualityCard) {
+    new.items = sync_rows_with(&old.items, new.items.iter(), |o, n| {
+        n.lines = sync_rows(&o.lines, n.lines.iter());
+    });
+    new.metrics = sync_rows(&old.metrics, new.metrics.iter());
+    new.groups = sync_rows(&old.groups, new.groups.iter());
 }
 
 fn heat_row(r: state::HeatRow) -> QualityHeatRow {
