@@ -59,7 +59,7 @@ pub fn graph_query(root: &Path, params: GraphQueryParams) -> Result<String, Erro
     // F02: the mirror path (parameter or the in-root default) goes through
     // the server-root policy as an *existing* file — nothing is created
     // before or after. F04: the open is read-only (no schema ensure, no
-    // kuzu aux files); a missing mirror is an error, never a creation.
+    // lbug aux files); a missing mirror is an error, never a creation.
     let db_arg = params.db.as_deref().unwrap_or(DEFAULT_DB_PATH);
     let db_path = resolve_file_in_root(root, Path::new(db_arg), false)?;
     let store = LadybugStore::open_for_query(&db_path)

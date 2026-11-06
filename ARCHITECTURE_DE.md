@@ -203,7 +203,7 @@ archguard/
 | `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset`, `serde_json` |
 | `archguard-analysis` | Tarjan-SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
-| `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `kuzu = "=0.11.3"` (Ladybug-/Kuzu-Lineage, nur hinter Cargo-Feature `db`) |
+| `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
 | `archguard-engine` | `analyze(path, config) -> Report`, Config-Parsing **+ Auflösung deklariert/abgeleitet/Default** (Kap. 11), Caching, DB-Sync | `toml` |
 | `archguard-mcp` | MCP-Tools, JSON-Schemas, Pagination-Guard | `rmcp` (offizielles MCP-Rust-SDK), `tokio` (nur hier), `schemars` |
 | `archguard-cli` | Argument-Parsing, Exit-Codes, Formatauswahl | `clap`, `anyhow` |
@@ -372,14 +372,14 @@ Workspace-Crates.
 
 Die Analyse-Algorithmen (Kap. 7) laufen in-memory auf `petgraph` und lesen nicht aus der Datenbank. `archguard-store` spiegelt Graph und Analyseergebnisse in eine embedded Graph-Datenbank für Persistenz, Ad-hoc-Queries und Visualisierung.
 
-### 8.1 Backend: Ladybug/Kuzu-Lineage hinter einem Trait
+### 8.1 Backend: LadybugDB hinter einem Trait
 
-Backend ist die **Kuzu-Lineage** (embedded, spaltenorientiert, openCypher, MIT-Lizenz, kein Server-Prozess). Das Kuzu-Projekt wurde im Oktober 2025 archiviert. **[LadybugDB](https://ladybugdb.com/)** ist ein Fork mit kompatiblem Dateiformat und Cypher-Dialekt.
+Backend ist **[LadybugDB](https://ladybugdb.com/)** (embedded, spaltenorientiert, openCypher, MIT-Lizenz, kein Server-Prozess), der gepflegte Nachfolger des im Oktober 2025 archivierten Kuzu mit demselben Cypher-Dialekt. Das Speicherformat (Version 49 in 0.22.1) kann Dateien von Kuzu 0.11.3 (Version 39) nicht lesen.
 
 Umsetzung:
 
 1. **Trait statt Direktabhängigkeit:** `archguard-store` definiert `GraphStore { sync(graph, report), query(cypher, limit) }`. Das DB-Backend ist dahinter austauschbar (Ladybug-Rust-SDK, CozoDB, …), ohne dass Engine, CLI oder MCP sich ändern.
-2. **v1-Binding:** gepinntes `kuzu = "=0.11.3"`-Crate (letztes Release der Lineage, dateikompatibel mit Ladybug und den Explorer-UIs). Migration auf das Ladybug-Rust-SDK, sobald verfügbar, ist ein isolierter Task im Store-Crate.
+2. **Binding:** gepinntes `lbug = "=0.22.1"`, das offizielle Rust-Crate von LadybugDB, gebaut aus den C++-Quellen im Crate (`LBUG_BUILD_FROM_SOURCE` in `.cargo/config.toml`; braucht CMake und OpenSSL 3). Eine vom früheren Backend `kuzu = "=0.11.3"` geschriebene `graph.db` lässt sich nicht öffnen: `.archguard/graph.db*` löschen und `archguard db sync` neu ausführen. Darin gespeicherte Trend-Snapshots gehen verloren.
 3. **Optionales Cargo-Feature `db`:** Das C++-Backend vergrößert Build-Zeit und Binary. Ohne `db` fehlen nur die `db`-Kommandos und `graph_query`; alle Analysen sind enthalten. Release-Archive enthalten den Build ohne `db` ([RELEASES.md](RELEASES.md)); `cargo build -p archguard-cli --features db` fügt es hinzu.
 4. **Read-only nach außen:** Query-Zugang (CLI/MCP) läuft durch einen Sanitizer — nur `MATCH`/`RETURN`, erzwungenes `LIMIT`. Schreiben kann ausschließlich `sync`.
 
@@ -416,7 +416,7 @@ RETURN DISTINCT a.name LIMIT 25;
 | `archguard graph --format html` | **Architektur-Dashboard** als eine HTML-Datei: Explorer, Graph/Matrix und kontextbezogener Inspektor; explizite Simulation mit bestätigten Aktionen und JSON-Export. Browse-Klicks inspizieren nur. Farben kennzeichnen Zyklus-/Simulationsstatus, Breiten die vollständigen Importzahlen. Bedienung und Prüfgrenzen: [README_DE.md](README_DE.md#mit-einem-projekt-starten) | keiner (Datei öffnen) |
 | `archguard serve [PATH]` | Derselbe Viewer über lokalen HTTP-Server; gecachte Analyse wird auf Browser-Polls aktualisiert, geänderte Berichte laden automatisch neu. Keine statische Freigabe von Projektdateien; Details in README | URL öffnen |
 | `archguard cycles --format html` | Gleicher Viewer, startet mit Fokus auf Zyklen | keiner (Datei öffnen) |
-| Explorer-Web-UI (Kuzu/Ladybug Explorer) direkt auf `.archguard/graph.db` | Interaktive Cypher-Exploration mit Graph-Rendering | Docker-Container starten |
+| Explorer-Web-UI (Ladybug Explorer) direkt auf `.archguard/graph.db` | Interaktive Cypher-Exploration mit Graph-Rendering | Docker-Container starten |
 | [G.V()](https://gdotv.com/) auf `.archguard/graph.db` | Graph-IDE: Query-Editor, Layouts, Debugging | Desktop-App |
 | `archguard graph --format graphml\|gexf` → Gephi Lite / yEd | Große Graphen, Layout-Algorithmen, Cluster-Analysen | Import-Klick |
 
@@ -595,7 +595,7 @@ Vorschläge.
 | Sync-Core, async nur im MCP-Crate | durchgängig async | Fachlogik ohne async; `tokio` nur im MCP-Crate |
 | Ein Binary mit `mcp`-Subkommando | zwei Binaries | Ein Release-Artefakt je Variante |
 | Zyklen-**Sampling** statt Vollaufzählung | Johnson vollständig | Begrenzte Antwortgröße und Laufzeit |
-| Embedded Graph-DB (Ladybug/Kuzu-Lineage) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher, Explorer-/G.V()-Visualisierung. Trait, Feature-Flag und gepinnte Version entkoppeln vom archivierten Kuzu-Projekt |
+| Embedded Graph-DB (LadybugDB) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher, Explorer-/G.V()-Visualisierung. Trait, Feature-Flag und gepinnte Version entkoppeln vom archivierten Kuzu-Projekt |
 | Analyse in-memory (petgraph), DB nur zur Exploration | Alles in der DB rechnen | SCC und Metriken sind O(V+E) in-memory ohne I/O; die DB dient Ad-hoc-Queries und Visualisierung |
 | Zustandsloser Zoom: Client sendet `expanded`-Liste mit | Server-Session je Client | MCP-Server ohne Session-Zustand; der HTML-Viewer hält seinen Zoom-Zustand selbst |
 | Hierarchie als Containment-Baum, Sichten = aggregierte Graphen | Separater Graph je Ebene | Ein Datenmodell; jede Zoomstufe ist ein `Graph`, Analysen und Formatter haben keinen ebenenspezifischen Code |

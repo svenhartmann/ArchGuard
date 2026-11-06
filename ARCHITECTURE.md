@@ -201,7 +201,7 @@ archguard/
 | `archguard-extract` | `.gitignore`-aware file discovery, `Extractor` trait, Java/C#/Python/TS/JS/PHP/Rust/Go scanners; two-stage resolution (path and declaration map/PSR-4) | `ignore`, `globset`, `serde_json` |
 | `archguard-analysis` | Tarjan SCC, bounded cycle enumeration, fan-in/out, instability, layer checks, **layer inference (ranking and name affinity)**, cut scoring, baseline diff | `petgraph` |
 | `archguard-report` | Serialize `Report` types into all output formats | `serde_json` |
-| `archguard-store` | `GraphStore` trait, DB mirror, read-only openCypher queries, query sanitizer | `kuzu = "=0.11.3"` (Ladybug/Kuzu lineage, only with Cargo feature `db`) |
+| `archguard-store` | `GraphStore` trait, DB mirror, read-only openCypher queries, query sanitizer | `lbug = "=0.22.1"` (LadybugDB, only with Cargo feature `db`) |
 | `archguard-engine` | `analyze(path, config) -> Report`, config parsing **and declared/derived/default resolution** (Section 11), caching, DB sync | `toml` |
 | `archguard-mcp` | MCP tools, JSON schemas, pagination guard | `rmcp` (official MCP Rust SDK), `tokio` (only here), `schemars` |
 | `archguard-cli` | Argument parsing, exit codes, format selection | `clap`, `anyhow` |
@@ -370,17 +370,18 @@ Analysis algorithms (Section 7) run in memory on `petgraph` and do not read from
 the database. `archguard-store` mirrors the graph and analysis results into an
 embedded graph database for persistence, ad hoc queries and visualization.
 
-### 8.1 Backend: Ladybug/Kuzu lineage behind a trait
+### 8.1 Backend: LadybugDB behind a trait
 
-The backend is the **Kuzu lineage**: an embedded, column-oriented, MIT-licensed
-openCypher database without a server process. The Kuzu project was archived in
-October 2025. **[LadybugDB](https://ladybugdb.com/)** is a fork with a compatible
-file format and Cypher dialect.
+The backend is **[LadybugDB](https://ladybugdb.com/)**: an embedded, column-oriented,
+MIT-licensed openCypher database without a server process. It is the maintained
+successor of Kuzu, which was archived in October 2025, and keeps its Cypher
+dialect. Its storage format (version 49 in 0.22.1) cannot read Kuzu 0.11.3 files
+(version 39).
 
 Implementation:
 
 1. **Trait instead of direct dependency:** `archguard-store` defines `GraphStore { sync(graph, report), query(cypher, limit) }`. The backend can be replaced (Ladybug Rust SDK, CozoDB, …) without changing engine, CLI or MCP.
-2. **v1 binding:** pinned `kuzu = "=0.11.3"` crate, the lineage's last release, file-compatible with Ladybug and explorer UIs. Migration to the Ladybug Rust SDK when available is an isolated store-crate task.
+2. **Binding:** pinned `lbug = "=0.22.1"`, LadybugDB's official Rust crate, built from the crate's C++ sources (`LBUG_BUILD_FROM_SOURCE` in `.cargo/config.toml`; needs CMake and OpenSSL 3). A `graph.db` written by the former `kuzu = "=0.11.3"` backend cannot be opened: delete `.archguard/graph.db*` and run `archguard db sync` again. Trend snapshots stored in the old file are lost.
 3. **Optional Cargo feature `db`:** the C++ backend increases build time and binary size. Without `db`, only the `db` commands and `graph_query` are absent; all analyses are included. Release archives contain the build without `db` ([RELEASES.md](RELEASES.md)); `cargo build -p archguard-cli --features db` adds it.
 4. **Read-only external access:** CLI/MCP queries pass through a sanitizer allowing only `MATCH`/`RETURN` and enforcing `LIMIT`. Only `sync` can write.
 
@@ -417,7 +418,7 @@ RETURN DISTINCT a.name LIMIT 25;
 | `archguard graph --format html` | **Architecture dashboard** in one HTML file: explorer, graph/matrix and contextual inspector; explicit simulation with confirmed actions and JSON export. Browse clicks only inspect. Colors indicate cycle/simulation state; widths show full import counts. Usage and verification limits: [README.md](README.md) | None (open the file) |
 | `archguard serve [PATH]` | Same viewer over a local HTTP server; browser polls update cached analysis, changed reports reload automatically. No static project-file sharing; see README | Open the URL |
 | `archguard cycles --format html` | Same viewer, starts focused on cycles | None (open the file) |
-| Kuzu/Ladybug Explorer web UI on `.archguard/graph.db` | Interactive Cypher exploration and graph rendering | Start a Docker container |
+| Ladybug Explorer web UI on `.archguard/graph.db` | Interactive Cypher exploration and graph rendering | Start a Docker container |
 | [G.V()](https://gdotv.com/) on `.archguard/graph.db` | Graph IDE: query editor, layouts, debugging | Desktop app |
 | `archguard graph --format graphml\|gexf` → Gephi Lite / yEd | Large graphs, layout algorithms, cluster analysis | Import the file |
 
@@ -605,7 +606,7 @@ commented-out suggestions.
 | Synchronous core, async only in MCP | Async throughout | Domain logic without async; `tokio` only in the MCP crate |
 | One binary with `mcp` subcommand | Two binaries | One release artifact per variant |
 | Cycle **sampling** | Full Johnson enumeration | Bounded response size and runtime |
-| Embedded graph DB (Ladybug/Kuzu lineage) as a mirror | Server-based graph database, CozoDB | No daemon, one file, openCypher, explorer/G.V() visualization. Trait, feature flag and pinned version decouple from the archived Kuzu project |
+| Embedded graph DB (LadybugDB) as a mirror | Server-based graph database, CozoDB | No daemon, one file, openCypher, explorer/G.V() visualization. Trait, feature flag and pinned version decouple from the archived Kuzu project |
 | In-memory analysis (`petgraph`), DB for exploration | All computation in DB | SCC and metrics are O(V+E) in memory without I/O; the DB serves ad hoc queries and visualization |
 | Stateless zoom: clients send `expanded` | Per-client server sessions | MCP server without session state; the HTML viewer keeps its own zoom state |
 | Containment hierarchy, views as aggregated graphs | Separate graph per level | One data model; every zoom level is a `Graph`, analyses and formatters have no level-specific code |
