@@ -13,6 +13,7 @@ import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
+import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
@@ -24,6 +25,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
+export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
 // The theme's mode, read by the SVG export.
@@ -304,6 +306,11 @@ export component AppWindow inherits Window {
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
                 }
+            }
+            MenuItem {
+                title: @tr("Settings" => "Settings");
+                enabled: root.has-doc;
+                activated => { root.open-view-tab("settings"); }
             }
             MenuSeparator { }
             MenuItem {
@@ -638,6 +645,9 @@ export component AppWindow inherits Window {
                     if p.view == "security": SecurityView {
                         vertical-stretch: 1;
                         open-web => { root.open-web("security"); }
+                    }
+                    if p.view == "settings": SettingsView {
+                        vertical-stretch: 1;
                     }
 
                     if p.view == "graph": GraphView {

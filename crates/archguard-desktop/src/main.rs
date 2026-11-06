@@ -40,6 +40,7 @@ mod security_ui;
 mod services_ui;
 mod settings;
 mod settings_file;
+mod settings_view_ui;
 mod shell;
 mod shell_ui;
 #[cfg(feature = "snapshot")]

@@ -20,7 +20,8 @@
 //! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
 //! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
-//! Export without the save dialog: [`export_hook`].
+//! Export without the save dialog: [`export_hook`]. View → Settings:
+//! `crate::settings_view_ui::snapshot_hook`.
 
 use std::cell::Cell;
 
@@ -272,6 +273,7 @@ fn apply_view_hooks(ui: &AppWindow) {
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);
     }
+    crate::settings_view_ui::snapshot_hook(ui);
 }
 
 fn mark_dirty(tabs: &str) {
