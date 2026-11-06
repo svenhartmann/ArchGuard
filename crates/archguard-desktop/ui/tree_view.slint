@@ -245,10 +245,12 @@ export component TreeView inherits Rectangle {
             viewbox-height: canvas-h;
             commands: l.path;
             fill: transparent;
-            stroke: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
+            // Hover dims the other links through their stroke colour: an
+            // opacity below 1 (and its animation) would render every
+            // canvas-tall path into a layer of its own on each change.
+            property <brush> base: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
+            stroke: root.hovered >= 0 && !traced ? base.transparentize(0.85) : base;
             stroke-width: traced ? 2.6px : l.kind == 0 ? 1.3px : 1.8px;
-            opacity: root.hovered >= 0 && !traced ? 0.15 : 1.0;
-            animate opacity { duration: 120ms; }
         }
 
         for r in root.rows: Port {

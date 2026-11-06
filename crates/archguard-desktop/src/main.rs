@@ -6,9 +6,12 @@
 //! `settings.rs`), on the first start the current directory.
 
 mod architecture_ui;
+#[cfg(feature = "snapshot")]
+mod bench;
 mod calls_ui;
 mod config_editor;
 mod context;
+mod deferred;
 mod documents;
 mod documents_ui;
 mod export;
@@ -24,6 +27,7 @@ mod instances;
 mod kpi;
 mod matrix;
 mod matrix_ui;
+mod model_sync;
 mod network;
 mod node_view;
 mod pane_store;
@@ -35,6 +39,7 @@ mod security_ui;
 mod services_ui;
 mod settings;
 mod settings_file;
+mod settings_view_ui;
 mod shell;
 mod shell_ui;
 #[cfg(feature = "snapshot")]
@@ -43,6 +48,7 @@ mod start_ui;
 mod state;
 mod status;
 mod tab_support;
+mod timing;
 mod tree;
 mod tree_order;
 mod ui;

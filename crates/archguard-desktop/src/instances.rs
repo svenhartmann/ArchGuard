@@ -57,7 +57,7 @@ pub fn update<T: Instance, R>(
     with(id, |s: &mut T| {
         let r = f(s);
         if let Some(p) = pane {
-            s.show(ui, p, id);
+            crate::timing::measure(std::any::type_name::<T>(), || s.show(ui, p, id));
         }
         r
     })
@@ -90,7 +90,7 @@ pub fn sync<T: Instance>(
                 continue;
             };
             if let Some(s) = m.0.get_mut(&t.id) {
-                s.show(ui, p, t.id);
+                crate::timing::measure(std::any::type_name::<T>(), || s.show(ui, p, t.id));
             }
         }
     });

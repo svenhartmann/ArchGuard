@@ -19,6 +19,7 @@ mod view;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::deferred::{Coalesce, TYPING};
 use crate::status::Status;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
@@ -118,7 +119,8 @@ pub fn wire(ui: &AppWindow) {
         let package = pick(s.idx.packages(s.filter.language.as_deref()), i);
         actions::set_package(s, package);
     }));
-    d.on_set_query(a.on(|s, _, q: SharedString| actions::set_query(s, q.into())));
+    let query = a.on(|s, _, q: SharedString| actions::set_query(s, q.into()));
+    d.on_set_query(Coalesce::debounce(TYPING, query).callback());
     d.on_set_resolution(a.on(|s, _, i: i32| actions::set_resolution(s, Resolution::from_index(i))));
     d.on_toggle_internal(a.on0(|s, _| actions::toggle_internal(s)));
     d.on_toggle_analysis(a.on0(|s, _| s.analysis_open = !s.analysis_open));

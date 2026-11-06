@@ -13,6 +13,7 @@ import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
+import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
@@ -24,6 +25,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
+export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
 // The theme's mode, read by the SVG export.
@@ -34,7 +36,8 @@ export component AppWindow inherits Window {
     icon: @image-url("../assets/icon.png");
     preferred-width: 1480px;
     preferred-height: 920px;
-    min-width: 1000px;
+    // The header at its tightest (app shell below), whatever the language.
+    min-width: header.tight;
     min-height: 620px;
     background: Theme.bg;
     default-font-size: 13px;
@@ -304,6 +307,11 @@ export component AppWindow inherits Window {
                     activated => { root.open-view-tab(v); }
                 }
             }
+            MenuItem {
+                title: @tr("Settings" => "Settings");
+                enabled: root.has-doc;
+                activated => { root.open-view-tab("settings"); }
+            }
             MenuSeparator { }
             MenuItem {
                 title: @tr("Dark theme");
@@ -353,12 +361,49 @@ export component AppWindow inherits Window {
         header := Rectangle {
             height: 56px;
             background: Theme.panel;
+            clip: true;
+            // The header's width decides how much it shows (never its
+            // content, so no width -> content -> layout loop): level 0 all
+            // labels, 1 icon-only buttons and the build-unit count, 2 also
+            // without the project title (the document tab shows it) and the
+            // theme and About buttons (the View and Help menus have them).
+            property <bool> graph: root.focused-view == "graph";
+            property <length> gap: 14px;
+            property <length> fixed: 28px + logo.preferred-width + tabs.preferred-width + 5 * self.gap;
+            property <length> chip-full: root.sub-projects.length > 0 ? m-chip.min-width + self.gap : 0;
+            property <length> chip-count: root.sub-projects.length > 0 ? m-count.min-width + self.gap : 0;
+            property <length> full: self.fixed + min(title.preferred-width, 180px) + self.chip-full + 200px
+                + m-web.min-width + (self.graph ? m-explorer.min-width + m-details.min-width + 2 * self.gap : 0)
+                + 2 * (Theme.control-h + self.gap);
+            property <length> icons: self.fixed + min(title.preferred-width, 180px) + self.chip-count + 160px
+                + Theme.control-h + (self.graph ? 4 : 2) * (Theme.control-h + self.gap);
+            // Level 2 in the Graph: the window is never narrower.
+            out property <length> tight: 28px + logo.preferred-width + tabs.preferred-width + self.chip-count + 120px
+                + 3 * Theme.control-h + 6 * self.gap;
+            property <int> level: self.width >= self.full ? 0 : self.width >= self.icons ? 1 : 2;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            // Off-screen copies that measure the full-width controls.
+            Rectangle {
+                visible: false;
+                width: 0;
+                height: 0;
+                m-chip := Button { compact: true; icon: Icons.package; text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length)); }
+                m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
+                m-web := Button { text: @tr("Web viewer"); icon: Icons.external; }
+                m-explorer := Button { text: @tr("Explorer"); icon: Icons.panel-left; }
+                m-details := Button { text: @tr("Details"); icon: Icons.panel-right; }
+            }
+            // Placed with an explicit size, so the header's own size never
+            // depends on what the level shows.
             HorizontalLayout {
+                x: 0;
+                y: 0;
+                width: header.width;
+                height: header.height;
                 padding-left: 16px;
                 padding-right: 12px;
-                spacing: 14px;
-                Text {
+                spacing: header.gap;
+                logo := Text {
                     text: "AG";
                     color: Theme.accent;
                     font-size: 22px;
@@ -366,21 +411,20 @@ export component AppWindow inherits Window {
                     font-italic: true;
                     vertical-alignment: center;
                 }
-                Text {
+                if header.level < 2: Text {
+                    width: min(title.preferred-width, 180px);
                     text: root.project;
                     color: Theme.text;
                     font-size: 18px;
                     font-weight: 700;
                     vertical-alignment: center;
                     overflow: elide;
-                    min-width: min(self.preferred-width, 180px);
-                    max-width: 180px;
                 }
                 if root.sub-projects.length > 0: Button {
                     y: (parent.height - self.height) / 2;
                     compact: true;
                     icon: Icons.package;
-                    text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length));
+                    text: header.level == 0 ? m-chip.text : m-count.text;
                     pressed-state: root.projects-open;
                     clicked => { root.projects-open = !root.projects-open; }
                 }
@@ -410,8 +454,7 @@ export component AppWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 SearchField {
-                    min-width: 120px;
-                    preferred-width: 200px;
+                    width: header.level == 0 ? 200px : header.level == 1 ? 160px : 120px;
                     y: (parent.height - self.height) / 2;
                     placeholder: @tr("Search modules");
                     edited(t) => { root.search(t); root.show-explorer = true; }
@@ -419,23 +462,26 @@ export component AppWindow inherits Window {
                 }
                 Button {
                     y: (parent.height - self.height) / 2;
-                    text: @tr("Web viewer");
+                    text: header.level == 0 ? m-web.text : "";
                     icon: Icons.external;
                     clicked => { root.open-web(root.tab); }
                 }
-                Button {
+                // Explorer and details belong to the Graph view.
+                if header.graph: Button {
                     y: (parent.height - self.height) / 2;
-                    text: @tr("Explorer");
+                    text: header.level == 0 ? m-explorer.text : "";
+                    icon: Icons.panel-left;
                     pressed-state: root.show-explorer;
                     clicked => { root.show-explorer = !root.show-explorer; }
                 }
-                Button {
+                if header.graph: Button {
                     y: (parent.height - self.height) / 2;
-                    text: @tr("Details");
+                    text: header.level == 0 ? m-details.text : "";
+                    icon: Icons.panel-right;
                     pressed-state: root.show-details;
                     clicked => { root.show-details = !root.show-details; }
                 }
-                Button {
+                if header.level < 2: Button {
                     y: (parent.height - self.height) / 2;
                     icon: Theme.dark ? Icons.sun : Icons.moon;
                     clicked => {
@@ -443,11 +489,17 @@ export component AppWindow inherits Window {
                         root.choose-theme(Theme.dark);
                     }
                 }
-                Button {
+                if header.level < 2: Button {
                     y: (parent.height - self.height) / 2;
                     icon: Icons.info;
                     clicked => { about.show(); }
                 }
+            }
+            title := Text {
+                visible: false;
+                text: root.project;
+                font-size: 18px;
+                font-weight: 700;
             }
         }
 
@@ -517,7 +569,9 @@ export component AppWindow inherits Window {
                 // A click on a pane's background focuses it.
                 TouchArea { clicked => { root.focus-pane(i); } }
                 VerticalLayout {
-                    if root.panes.length > 1 || p.tabs.length > 1: PaneStrip {
+                    // Always shown, so the view does not jump down when a
+                    // second tab or pane opens.
+                    PaneStrip {
                         pane: p;
                         split: root.panes.length > 1;
                         show-follow: root.panes.length > 1 && i == 1;
@@ -591,6 +645,9 @@ export component AppWindow inherits Window {
                     if p.view == "security": SecurityView {
                         vertical-stretch: 1;
                         open-web => { root.open-web("security"); }
+                    }
+                    if p.view == "settings": SettingsView {
+                        vertical-stretch: 1;
                     }
 
                     if p.view == "graph": GraphView {

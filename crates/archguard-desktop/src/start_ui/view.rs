@@ -4,7 +4,7 @@
 use std::f64::consts::PI;
 use std::fmt::Write;
 
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, SharedString};
 
 use super::details;
 use super::layout::Cell;
@@ -13,6 +13,7 @@ use super::scene::{self, Face, Paint, Tone, View};
 use super::state::{Lens, StartState};
 use crate::format::Locale;
 use crate::kpi;
+use crate::model_sync::sync_rows;
 use crate::tab_support::Texts;
 use crate::ui::{AppWindow, StartCrumb, StartData, StartFace, StartModel, StartPin, StartPlate};
 
@@ -118,26 +119,6 @@ fn face_row(f: Face) -> StartFace {
     }
 }
 
-/// Replace the rows of a model in place, so unchanged rows keep their
-/// items and the repeater never rebuilds all faces at once.
-fn sync<T: Clone + 'static>(old: &ModelRc<T>, rows: Vec<T>) -> ModelRc<T> {
-    let Some(vec) = old.as_any().downcast_ref::<VecModel<T>>() else {
-        return ModelRc::new(VecModel::from(rows));
-    };
-    let keep = vec.row_count().min(rows.len());
-    while vec.row_count() > rows.len() {
-        vec.remove(vec.row_count() - 1);
-    }
-    let mut rows = rows.into_iter();
-    for i in 0..keep {
-        vec.set_row_data(i, rows.next().expect("row"));
-    }
-    for row in rows {
-        vec.push(row);
-    }
-    old.clone()
-}
-
 /// Everything that changes the faces; pans and zooms do not.
 fn scene_key(s: &StartState) -> String {
     format!(
@@ -157,7 +138,7 @@ fn fill_scene(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View) {
     }
     let rot = s.cam.rotation;
     let faces = scene::faces(&s.layout, &v.frame, rot, |c| paint(s, c));
-    m.faces = sync(&old.faces, faces.into_iter().map(face_row).collect());
+    m.faces = sync_rows(&old.faces, faces.into_iter().map(face_row));
     let plates = s
         .layout
         .plates
@@ -169,8 +150,8 @@ fn fill_scene(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View) {
                 flagged: s.lens == Lens::Problems && (a.cyclic || !a.findings.is_empty()),
             }
         })
-        .collect();
-    m.plates = sync(&old.plates, plates);
+        .collect::<Vec<_>>();
+    m.plates = sync_rows(&old.plates, plates);
     m.lattice = scene::lattice(&v.frame, rot).into();
 }
 
@@ -193,11 +174,11 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         search: s.search.as_str().into(),
         ..Default::default()
     };
-    fill_texts(&mut m, s, &Texts::of(ui), &ui.get_project());
+    fill_texts(&mut m, &old, s, &Texts::of(ui), &ui.get_project());
     if let Some(v) = s.view() {
         fill_scene(&mut m, &old, s, &v);
         fill_camera(&mut m, s, &v);
-        fill_overlay(&mut m, s, &v, Texts::of(ui).locale());
+        fill_overlay(&mut m, &old, s, &v, Texts::of(ui).locale());
     } else {
         m.empty = true;
     }
@@ -330,7 +311,7 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
 }
 
 /// Pins with their leader lines, and the cycle arrows of the Problems lens.
-fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View, l: Locale) {
+fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, l: Locale) {
     let center = |area: usize, z: f64| {
         let p = s
             .layout
@@ -361,7 +342,7 @@ fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View, l: Locale) {
         (pin.x, pin.y) = ((r.x - r.w / 2.0) as f32, (r.y - r.h / 2.0) as f32);
         shown.push(pin);
     }
-    m.pins = ModelRc::new(VecModel::from(shown));
+    m.pins = sync_rows(&old.pins, shown);
     m.leaders = leaders.into();
     if s.lens == Lens::Problems {
         let (mut curves, mut heads) = (String::new(), String::new());
@@ -378,19 +359,19 @@ fn fill_overlay(m: &mut StartModel, s: &StartState, v: &View, l: Locale) {
 }
 
 /// Breadcrumbs, the status line, counts and the area picker.
-fn fill_texts(m: &mut StartModel, s: &StartState, texts: &Texts, root: &str) {
+fn fill_texts(m: &mut StartModel, old: &StartModel, s: &StartState, texts: &Texts, root: &str) {
     let crumbs = s.crumbs(root);
     let last = crumbs.len().saturating_sub(1);
-    m.crumbs = ModelRc::new(VecModel::from(
+    m.crumbs = sync_rows(
+        &old.crumbs,
         crumbs
             .into_iter()
             .enumerate()
             .map(|(i, (label, _))| StartCrumb {
                 label: label.into(),
                 last: i == last,
-            })
-            .collect::<Vec<_>>(),
-    ));
+            }),
+    );
     m.cycle_groups = kpi::AREA_CYCLE_GROUPS.item(texts, s.scope.cycle_groups);
     let cells = &s.layout.cells;
     m.count = cells.iter().map(|c| c.entities.len()).sum::<usize>() as i32;
@@ -412,7 +393,7 @@ fn fill_texts(m: &mut StartModel, s: &StartState, texts: &Texts, root: &str) {
             .iter()
             .map(|a| SharedString::from(a.name.as_str())),
     );
-    m.areas = ModelRc::new(VecModel::from(areas));
+    m.areas = sync_rows(&old.areas, areas);
     m.area_index = s.selection.as_ref().map_or(0, |sel| sel.area as i32 + 1);
 }
 

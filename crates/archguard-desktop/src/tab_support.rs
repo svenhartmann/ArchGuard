@@ -41,7 +41,7 @@ pub fn update<T: TabState>(ui: &AppWindow, f: impl FnOnce(&mut T, &AppWindow)) {
     documents::with_active_state(|s: &mut T| {
         f(s, ui);
         s.changed();
-        s.push(ui);
+        crate::timing::measure(std::any::type_name::<T>(), || s.push(ui));
     });
 }
 

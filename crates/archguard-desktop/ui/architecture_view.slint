@@ -51,8 +51,10 @@ export global ArchitectureData {
 component ChapterButton inherits Rectangle {
     in property <ArcChapter> chapter;
     in property <bool> current;
+    // A narrow pane: the chapter number only.
+    in property <bool> compact;
     callback clicked();
-    height: title.preferred-height + 20px;
+    height: root.compact ? 34px : title.preferred-height + 20px;
     border-radius: 7px;
     background: current || touch.has-hover ? Theme.panel-2 : transparent;
     if current: Rectangle { x: 0; width: 3px; background: Theme.accent; }
@@ -69,6 +71,7 @@ component ChapterButton inherits Rectangle {
             vertical-alignment: center;
         }
         title := Text {
+            visible: !root.compact;
             text: chapter.title;
             color: current ? Theme.accent : Theme.text;
             font-size: 14px;
@@ -90,8 +93,11 @@ export component ArchitectureView inherits Rectangle {
     property <bool> about-open;
     property <bool> setup-open;
     background: Theme.bg;
-    // Tabs must not change the window's preferred size.
-    min-width: 640px;
+    // Tabs must not change the window's preferred size; a split pane can
+    // be narrow.
+    min-width: 360px;
+    // A split pane: chapter numbers only, download buttons below the title.
+    property <bool> narrow: root.width < 900px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
@@ -121,9 +127,9 @@ export component ArchitectureView inherits Rectangle {
         }
     }
     if ArchitectureData.model.state == 1: VerticalLayout {
-        padding-left: 20px;
-        padding-right: 20px;
-        padding-top: 18px;
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: Theme.page-pad;
         spacing: 18px;
         HorizontalLayout {
             spacing: 10px;
@@ -133,8 +139,14 @@ export component ArchitectureView inherits Rectangle {
                 PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
                 if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: 12px; wrap: word-wrap; }
             }
-            Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
-            Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
+            if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
+            if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
+        }
+        if root.narrow: HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            Button { compact: true; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
+            Button { compact: true; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
         }
         if ArchitectureData.model.saved != "": Text {
             text: @tr("Saved {}", ArchitectureData.model.saved);
@@ -142,10 +154,10 @@ export component ArchitectureView inherits Rectangle {
             font-size: 12px;
         }
         HorizontalLayout {
-            spacing: 22px;
+            spacing: root.narrow ? 10px : 22px;
             vertical-stretch: 1;
             VerticalLayout {
-                width: 236px;
+                width: root.narrow ? 58px : 236px;
                 alignment: start;
                 Rectangle {
                     background: Theme.panel;
@@ -156,6 +168,7 @@ export component ArchitectureView inherits Rectangle {
                         padding: 8px;
                         spacing: 3px;
                         for c in ArchitectureData.model.chapters: ChapterButton {
+                            compact: root.narrow;
                             chapter: c;
                             current: c.number == ArchitectureData.model.chapter;
                             clicked => { ArchitectureData.select-chapter(c.number); }
@@ -175,8 +188,8 @@ export component ArchitectureView inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.border;
                         VerticalLayout {
-                            padding-left: 30px;
-                            padding-right: 30px;
+                            padding-left: root.narrow ? Theme.page-pad : 30px;
+                            padding-right: root.narrow ? Theme.page-pad : 30px;
                             padding-top: 26px;
                             padding-bottom: 20px;
                             spacing: 0;
@@ -190,6 +203,7 @@ export component ArchitectureView inherits Rectangle {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
                                 ArcVisual {
+                                    compact: root.narrow;
                                     map: ArchitectureData.model.map;
                                     navigate(s) => { ArchitectureData.navigate(s); }
                                     scope-selected(i) => { ArchitectureData.scope-selected(i); }
