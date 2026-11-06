@@ -6,6 +6,10 @@
 //! array": `layers[].name`. Concrete paths carry the index:
 //! `layers[0].name`. A test probes `archguard_core::Config` with
 //! `deny_unknown_fields` so a new config field cannot be forgotten.
+//!
+//! Group labels and descriptions are English; each is also a template in
+//! `ui/texts.slint` with its German text in `lang/de/settings_view.po`
+//! (a test of the Settings view checks that none is missing).
 
 /// The form section a field is shown in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

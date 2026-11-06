@@ -12,6 +12,7 @@ use archguard_engine::core::Config;
 use crate::config_editor::SaveError;
 use crate::config_editor::{self, ConfigEditor, FIELDS, FieldError, Group, Kind};
 use crate::documents::{self, DocId};
+use crate::tab_support::Texts;
 
 use super::preview_panel::PreviewStatus;
 
@@ -42,6 +43,8 @@ pub struct SettingsState {
     pub(super) changed_on_disk: bool,
     pub(super) save_error: String,
     pub(super) preview: PreviewStatus,
+    /// The window language's group names and field descriptions.
+    pub(super) texts: Texts,
 }
 
 impl SettingsState {
@@ -62,6 +65,7 @@ impl SettingsState {
             changed_on_disk: false,
             save_error: String::new(),
             preview: PreviewStatus::Idle,
+            texts: Texts::default(),
         };
         s.reload();
         s

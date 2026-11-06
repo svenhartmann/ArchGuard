@@ -12,7 +12,7 @@ use crate::config_editor::{
     ConfigEditor, EntryState, FIELDS, Field, FieldError, FieldState, FieldValue, Group, Kind,
     Provenance, catalogue,
 };
-use crate::tab_support::model;
+use crate::tab_support::{Texts, model};
 use crate::ui::{SettingsGroupItem, SettingsItem};
 
 use super::session::SettingsState;
@@ -52,7 +52,7 @@ impl SettingsState {
                 self.push_field(&mut out, &editor, &rows, f, &query);
             }
             if !query.is_empty() && out.len() > start {
-                out.insert(start, heading(group.label()));
+                out.insert(start, heading(self.texts.t(group.label())));
             }
         }
         let placed = self.place_error(&mut out);
@@ -70,13 +70,13 @@ impl SettingsState {
     ) {
         let in_array = f.path.contains("[]");
         match f.kind {
-            Kind::TableArray if query.is_empty() || array_matches(f, query) => {
-                out.push(array_head(f));
+            Kind::TableArray if query.is_empty() || array_matches(f, query, &self.texts) => {
+                out.push(array_head(f, &self.texts));
                 self.push_entries(out, &editor.entries(f.path, self.effective.as_ref()), f);
             }
             // Nested sections (`semantic.java`); top-level ones are the group.
             Kind::Table if query.is_empty() && f.path.contains('.') => out.push(heading(f.path)),
-            _ if in_array || !f.kind.is_value() || !matches(f, query) => {}
+            _ if in_array || !f.kind.is_value() || !matches(f, query, &self.texts) => {}
             _ => out.extend(rows.get(f.path).map(|s| self.field_item(s, false))),
         }
     }
@@ -107,7 +107,7 @@ impl SettingsState {
             kind: FIELD,
             path: s.path.as_str().into(),
             label: last_segment(&s.path).into(),
-            description: s.field.description.into(),
+            description: self.texts.t(s.field.description).into(),
             widget,
             text: typed.map_or(s.text.as_str(), |d| d.raw.as_str()).into(),
             checked: s.value == Some(FieldValue::Bool(true)),
@@ -160,7 +160,7 @@ impl SettingsState {
         Group::ALL
             .into_iter()
             .map(|g| SettingsGroupItem {
-                label: g.label().into(),
+                label: self.texts.t(g.label()).into(),
                 edited: edited.contains(&g),
                 failed: failed(g),
                 matches: if query.is_empty() {
@@ -168,7 +168,9 @@ impl SettingsState {
                 } else {
                     FIELDS
                         .iter()
-                        .filter(|f| f.group == g && f.kind.is_value() && matches(f, &query))
+                        .filter(|f| {
+                            f.group == g && f.kind.is_value() && matches(f, &query, &self.texts)
+                        })
                         .count() as i32
                 },
             })
@@ -216,12 +218,12 @@ fn heading(label: &str) -> SettingsItem {
     }
 }
 
-fn array_head(f: &Field) -> SettingsItem {
+fn array_head(f: &Field, texts: &Texts) -> SettingsItem {
     SettingsItem {
         kind: ARRAY,
         path: f.path.into(),
         label: last_segment(f.path).into(),
-        description: f.description.into(),
+        description: texts.t(f.description).into(),
         index: -1,
         ..Default::default()
     }
@@ -249,19 +251,22 @@ fn entry_head(array: &Field, e: &EntryState, written: usize) -> SettingsItem {
     }
 }
 
-fn matches(f: &Field, query: &str) -> bool {
+/// Whether `query` (lower case) is in the field's path or in its
+/// description, English or in the window language.
+fn matches(f: &Field, query: &str, texts: &Texts) -> bool {
     query.is_empty()
         || f.path.to_lowercase().contains(query)
         || f.description.to_lowercase().contains(query)
+        || texts.t(f.description).to_lowercase().contains(query)
 }
 
 /// A table array is shown when it or one of its entry fields matches.
-fn array_matches(array: &Field, query: &str) -> bool {
+fn array_matches(array: &Field, query: &str, texts: &Texts) -> bool {
     let scope = format!("{}[].", array.path);
     FIELDS
         .iter()
         .filter(|f| f.path == array.path || f.path.starts_with(&scope))
-        .any(|f| matches(f, query))
+        .any(|f| matches(f, query, texts))
 }
 
 fn last_segment(path: &str) -> &str {

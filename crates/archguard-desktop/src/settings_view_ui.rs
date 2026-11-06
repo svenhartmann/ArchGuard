@@ -5,8 +5,9 @@
 //! One [`SettingsState`] per document, built when its Settings tab is
 //! first shown; it binds the editor to the document, so every edit marks
 //! it dirty and the "Save changes?" prompt saves it. Text inputs are
-//! debounced and flushed before any other action. Field descriptions
-//! come from the catalogue and stay English for now.
+//! debounced and flushed before any other action. Group names and field
+//! descriptions come from the catalogue in English and are translated
+//! through `ui/texts.slint` like other text Rust builds.
 
 mod edits;
 mod form;
@@ -26,7 +27,7 @@ use crate::documents::{self, with_store};
 use crate::model_sync::sync_rows;
 use crate::panes::{Layout, SETTINGS};
 use crate::panes_ui;
-use crate::tab_support::{Actions, TabState, index};
+use crate::tab_support::{Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, SettingsData, SettingsEdit, SettingsModel};
 use session::SettingsState;
 
@@ -183,6 +184,7 @@ fn show(ui: &AppWindow) {
 }
 
 fn push(ui: &AppWindow, s: &mut SettingsState) {
+    s.texts = Texts::of(ui);
     preview_panel::collect(s.doc, &mut s.preview);
     let d = ui.global::<SettingsData>();
     let old = d.get_model();
