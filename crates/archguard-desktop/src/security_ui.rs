@@ -12,13 +12,14 @@ use std::path::Path;
 
 use archguard_engine::core::Config;
 use archguard_engine::{SecurityFinding, SecurityReport};
-use slint::{ComponentHandle, ModelRc, SharedString};
+use slint::{ComponentHandle, Model, ModelRc, SharedString};
 
 use crate::context::Loaded;
 use crate::deferred::{Coalesce, TYPING};
 use crate::documents;
 use crate::format::UNKNOWN;
 use crate::kpi;
+use crate::model_sync::{sync_rows, sync_rows_with};
 use crate::status::Status;
 use crate::tab_support::{self, Actions, TabState, Texts, index, model as rows};
 use crate::ui::{AppWindow, SecurityData, SecurityFindingItem, SecurityLine, SecurityModel};
@@ -115,10 +116,12 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     });
 }
 
-/// Show the state in the window.
+/// Show the state in the window, in the models the view already shows.
 pub fn push(ui: &AppWindow, s: &SecurityState) {
-    ui.global::<SecurityData>()
-        .set_model(model(s, &Texts::of(ui)));
+    let d = ui.global::<SecurityData>();
+    let mut m = model(s, &Texts::of(ui));
+    keep(&d.get_model(), &mut m);
+    d.set_model(m);
 }
 
 fn model(s: &SecurityState, texts: &Texts) -> SecurityModel {
@@ -176,6 +179,18 @@ fn model(s: &SecurityState, texts: &Texts) -> SecurityModel {
     }
 }
 
+/// `new` takes over the list models of `old`, synced to its contents, so
+/// a filter change redraws only the finding cards that changed.
+fn keep(old: &SecurityModel, new: &mut SecurityModel) {
+    new.metrics = sync_rows(&old.metrics, new.metrics.iter());
+    new.severities = sync_rows(&old.severities, new.severities.iter());
+    new.targets = sync_rows(&old.targets, new.targets.iter());
+    new.diagnostics = sync_rows(&old.diagnostics, new.diagnostics.iter());
+    new.findings = sync_rows_with(&old.findings, new.findings.iter(), |o, n| {
+        n.targets = sync_rows(&o.targets, n.targets.iter());
+    });
+}
+
 fn finding(f: &SecurityFinding) -> SecurityFindingItem {
     SecurityFindingItem {
         severity: SEVERITIES[snapshot::severity_rank(&f.severity)].into(),
@@ -204,7 +219,6 @@ fn strings<const N: usize>(items: [String; N]) -> ModelRc<SharedString> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slint::Model;
     use snapshot::tests::{finding as row, report};
 
     fn temp_project(name: &str) -> std::path::PathBuf {
@@ -296,6 +310,37 @@ mod tests {
         assert_eq!(m.empty, 0);
         assert!(s.command.starts_with("archguard security -- '"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A filter change keeps the shown models and leaves them equal to a
+    /// fresh build of the new state.
+    #[test]
+    fn a_push_keeps_the_shown_models() {
+        let findings = (0..30)
+            .map(|i| {
+                let severity = ["high", "low"][i % 2];
+                row(&format!("CVE-{i:03}"), "pkg", "1.0.0", severity)
+            })
+            .collect();
+        let mut s = state(report("stale", findings));
+        let old = model(&s, &Texts::default());
+        s.severity = 2;
+        let mut new = model(&s, &Texts::default());
+        let fresh = model(&s, &Texts::default());
+        keep(&old, &mut new);
+        assert_eq!(new.findings, old.findings, "the same findings model");
+        assert_eq!(new.metrics, old.metrics);
+        assert_eq!(new.severities, old.severities);
+        assert_eq!(new.targets, old.targets);
+        assert_eq!(new.diagnostics, old.diagnostics);
+        let ids = |m: &SecurityModel| m.findings.iter().map(|f| f.id).collect::<Vec<_>>();
+        assert_eq!(ids(&new), ids(&fresh));
+        assert_eq!(new.findings.row_count(), 15);
+        let first = new.findings.row_data(0).expect("finding");
+        assert_eq!(
+            first.targets,
+            old.findings.row_data(0).expect("old").targets
+        );
     }
 
     /// 250 findings page by 100, as "Load more findings"; filters reset paging
