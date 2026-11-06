@@ -17,6 +17,7 @@ mod architecture;
 mod calls;
 mod config;
 mod model;
+mod quality_goal;
 mod semantic_details;
 mod settings;
 pub use semantic_details::{
@@ -57,6 +58,10 @@ pub use model::{
 pub use performance::{
     AbstractionMetric, ContractCandidate, CyclicBuildGroup, EntryClosure, PerformanceConfig,
     PerformanceReport, SourceCostFinding,
+};
+pub use quality_goal::{
+    EvidenceSource, GoalAdvisory, GoalAssessment, GoalEvidenceSource, GoalKpi, GoalStatus,
+    ImportedEvidence, QualityAttribute,
 };
 pub use review::{
     GitEvidence, GitStatus, ModuleReview, OrphanCandidate, OrphanPolicy, ReviewConfig,

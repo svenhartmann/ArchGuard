@@ -11,6 +11,7 @@
 
 mod arc42;
 mod arc42_blocks;
+mod arc42_goals;
 mod architecture_doc;
 mod dot;
 mod dsm;

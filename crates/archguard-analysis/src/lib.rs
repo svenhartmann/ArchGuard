@@ -16,6 +16,11 @@ mod baseline;
 mod cuts;
 mod cycles;
 mod derive;
+mod goals;
+// Declared here, not in goals.rs: a test file importing its parent back
+// would close a file cycle.
+#[cfg(test)]
+mod goals_tests;
 mod health;
 mod lakos;
 mod layer_drift;
@@ -37,6 +42,7 @@ pub use baseline::{Baseline, BaselineDiff, cycle_hash, diff};
 pub use cuts::suggest_cuts;
 pub use cycles::{CycleSample, DEFAULT_EDGE_BUDGET, sample_cycles, sample_cycles_bounded};
 pub use derive::{DerivedLayers, infer_layers, suggest_depth};
+pub use goals::{assess_goals, finding_attribute, goal_evidence_sources};
 pub use health::health_index;
 pub use lakos::lakos_metrics;
 pub use layer_drift::layer_drift;

@@ -113,6 +113,14 @@ orphans = "off"             # opt-in candidates: off | info | warning | error
 # name = "Availability"
 # priority = "above infrastructure cost"
 # rationale = "State the organization's reason."
+# # Optional (docs/adr/0003-quality-goal-assessment.md): ISO/IEC 25010
+# # characteristic functional_suitability, performance_efficiency,
+# # compatibility, usability, reliability, security, maintainability or
+# # portability; scope = node-name globs (empty = whole system); scenario =
+# # stimulus, response and measure. Without attribute the goal stays unclassified.
+# attribute = "reliability"
+# scope = ["checkout/**"]
+# scenario = "A failed payment provider call is retried; the order completes within 5 s."
 # [[architecture.constraints]]
 # name = "Compatibility"
 # rationale = "State the contract or other evidence."
@@ -372,15 +380,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
             ));
         }
     }
-    let mut goals = BTreeSet::new();
-    for (index, goal) in config.architecture.goals.iter().enumerate() {
-        if goal.name.trim().is_empty() || !goals.insert(&goal.name) {
-            return Err(invalid(
-                &format!("architecture.goals[{index}].name"),
-                "must be nonempty and unique".into(),
-            ));
-        }
-    }
+    validate_goals(config)?;
     let mut constraints = BTreeSet::new();
     for (index, constraint) in config.architecture.constraints.iter().enumerate() {
         if constraint.name.trim().is_empty() || !constraints.insert(&constraint.name) {
@@ -420,6 +420,27 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     }
     if !config.derive_layers {
         validate_layer_targets(config)?;
+    }
+    Ok(())
+}
+
+/// Goal names are unique; scope globs use the matcher of `layers[].contains`.
+/// `attribute` values are checked by serde against the ISO 25010 enum.
+fn validate_goals(config: &Config) -> Result<(), ArchguardError> {
+    let mut goals = BTreeSet::new();
+    for (index, goal) in config.architecture.goals.iter().enumerate() {
+        if goal.name.trim().is_empty() || !goals.insert(&goal.name) {
+            return Err(ArchguardError::Config(format!(
+                "architecture.goals[{index}].name: must be nonempty and unique"
+            )));
+        }
+        for (glob_index, pattern) in goal.scope.iter().enumerate() {
+            globset::Glob::new(pattern).map_err(|err| {
+                ArchguardError::Config(format!(
+                    "architecture.goals[{index}].scope[{glob_index}]: {err}"
+                ))
+            })?;
+        }
     }
     Ok(())
 }

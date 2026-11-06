@@ -1,7 +1,9 @@
 //! Evidence-driven arc42 sections shared by CLI, MCP and the viewer.
 //! Chapter structure adapted from arc42 by Gernot Starke and Peter Hruschka,
 //! CC BY-SA 4.0. All explanatory text and projections below are ArchGuard's.
-use archguard_core::{CallAnalysis, Config, Graph, Report, ServiceDependencyKind, ServiceTopology};
+use archguard_core::{
+    CallAnalysis, Config, GoalAssessment, Graph, Report, ServiceDependencyKind, ServiceTopology,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, fmt::Write};
@@ -51,6 +53,8 @@ pub struct Arc42Inputs<'a> {
     /// Logical compiler paths -> unambiguous physical project-relative paths.
     pub source_paths: &'a BTreeMap<String, String>,
     pub blocks: &'a Arc42Blocks,
+    /// One assessment per declared goal (ADR 0003).
+    pub goals: &'a [GoalAssessment],
 }
 
 pub use crate::arc42_blocks::Arc42Blocks;
@@ -314,21 +318,8 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     c.markdown.push_str("### Deklarierte Qualitätsziele\n\nQuelle: `architecture.goals` in der wirksamen Konfiguration.\n\n");
     table(
         &mut c.markdown,
-        "| Ziel | Priorität | Begründung |\n| --- | --- | --- |",
-        config
-            .architecture
-            .goals
-            .iter()
-            .take(LIMIT)
-            .map(|g| {
-                format!(
-                    "| {} | {} | {} |",
-                    cell(&g.name),
-                    cell(&g.priority),
-                    cell(&g.rationale)
-                )
-            })
-            .collect(),
+        "| Ziel | Priorität | Begründung | Merkmal (ISO/IEC 25010) | Umfang | Status |\n| --- | --- | --- | --- | --- | --- |",
+        crate::arc42_goals::goal_rows(config, input.goals, LIMIT, cell),
         "Keine Qualitätsziele deklariert.",
     );
     note(&mut c.markdown, config.architecture.goals.len());
@@ -336,6 +327,8 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         c.questions
             .push("Qualitätsziele und Prioritäten sind nicht deklariert.".into());
     }
+    c.questions
+        .extend(crate::arc42_goals::goal_questions(config, cell));
     c.questions.push("Fachlicher Zweck, wesentliche Anforderungen und Stakeholder mit ihren Erwartungen ergänzen.".into());
 
     let c = &mut chapters[1];
@@ -597,6 +590,12 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         "Qualitätsziele siehe Kapitel 1. Messwerte sind Beobachtungen, keine automatisch festgelegten Anforderungen.\n\n### Abhängigkeitskennzahlen\n\nQuelle: Analysebericht des in Kapitel 5 genannten Umfangs.\n\n| Kennzahl | Wert |\n| --- | ---: |\n| CCD | {} |\n| ACD | {:.3} |\n| NCCD | {:.3} |\n| Zyklische Gruppen | {} |\n| Größte zyklische Gruppe | {} |\n",
         s.ccd, s.acd, s.nccd, s.sccs, s.largest_scc
     );
+    c.markdown.push_str(&crate::arc42_goals::assessment_section(
+        config,
+        input.goals,
+        LIMIT,
+        cell,
+    ));
     let _ = writeln!(
         c.markdown,
         "Konfigurierte Prüfkriterien: Zyklen verboten {}, maximale SCC-Größe {}, ACD-Grenze {} (0 = deaktiviert). Quelle: `rules`.\n",
@@ -866,6 +865,7 @@ mod tests {
             insights: &serde_json::json!({"contracts":{"status":"ready","contracts":contracts},"patterns":{"assessments":[{"pattern":"layered","status":"candidate","scope":"."}]}}),
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
+            goals: &[],
         });
         assert!(!doc.chapters[3].markdown.contains("Musterhypothesen"));
         assert!(!doc.chapters[3].markdown.contains("layered"));
@@ -924,6 +924,7 @@ mod tests {
             insights: &serde_json::json!({}),
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
+            goals: &[],
         });
         let chapter = &doc.chapters[4].markdown;
         let fence = char::from(96).to_string().repeat(3);
@@ -968,6 +969,7 @@ mod tests {
             insights: &serde_json::json!({}),
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
+            goals: &[],
         });
         let md = &doc.chapters[4].markdown;
         assert!(!md.contains("Weitere 1 Pakete"), "{md}");
@@ -1048,6 +1050,7 @@ mod tests {
             insights: &serde_json::json!({}),
             source_paths: &source_paths,
             blocks: &blocks,
+            goals: &[],
         });
         let chapter = &doc.chapters[4];
         let md = &chapter.markdown;
@@ -1132,6 +1135,7 @@ mod tests {
             }),
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
+            goals: &[],
         });
         let all = doc.markdown(None);
         let lines: Vec<_> = all.lines().collect();

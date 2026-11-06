@@ -52,6 +52,7 @@ mod project_files;
 mod python_calls;
 mod quality_findings;
 mod quality_gate;
+mod quality_goals;
 mod quality_history;
 mod reference_paths;
 mod review_metrics;
@@ -129,6 +130,7 @@ pub use quality_gate::{
     ChangedCodeCoverage, ChangedFileCoverage, QualityGateFinding, QualityGateMethod,
     QualityGateOptions, QualityGateReport, evaluate_quality_gate,
 };
+pub use quality_goals::quality_goal_assessment;
 pub use quality_history::{
     ModuleQualityDelta, ModuleQualitySnapshot, QualityAnalyzerIdentity, QualityComparison,
     QualityHistoryEntry, QualityHistoryPoint, QualityHistoryReport, QualityMetricDelta,
