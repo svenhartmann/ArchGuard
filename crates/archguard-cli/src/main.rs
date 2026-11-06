@@ -120,6 +120,20 @@ impl Command {
         }
     }
 
+    /// `--measure-zones` on `scan`/`check`.
+    fn measure_zones(&self) -> bool {
+        matches!(
+            self,
+            Command::Scan {
+                measure_zones: true,
+                ..
+            } | Command::Check {
+                measure_zones: true,
+                ..
+            }
+        )
+    }
+
     fn level(&self) -> Level {
         match self {
             Command::Scan { level, .. }
@@ -132,6 +146,24 @@ impl Command {
 
 fn main() -> ExitCode {
     ExitCode::from(run(&Cli::parse()) as u8)
+}
+
+/// The shared analysis run. The pipeline leaves zones unmeasured; only the
+/// explicit `--measure-zones` opt-in pays for the compiler-backed call
+/// analysis that measures them.
+fn analyze_with_zones(
+    cli: &Cli,
+    root: &Path,
+    loaded: &LoadedConfig,
+) -> Result<archguard_engine::AnalysisRun, archguard_engine::core::ArchguardError> {
+    let mut run = analyze_run(root, loaded, cli.command.level())?;
+    if cli.command.measure_zones()
+        && let Some(kpis) = run.report.review_kpis.as_mut()
+    {
+        kpis.zones =
+            archguard_engine::measure_review_zones(root, &run.config, &run.graph, &run.view)?;
+    }
+    Ok(run)
 }
 
 /// Parse-free core: everything after argument parsing, mapped to a Kap. 9
@@ -306,7 +338,7 @@ fn run(cli: &Cli) -> i32 {
     // a declared `archguard.toml` section must keep its provenance and its
     // values (`analyze` would re-derive `project` and `modules` over the
     // user's word — see the contract note in `archguard_engine::pipeline`).
-    let run = match analyze_run(&root, &loaded, cli.command.level()) {
+    let run = match analyze_with_zones(cli, &root, &loaded) {
         Ok(run) => run,
         Err(err) => return analysis_error(err),
     };
@@ -1131,5 +1163,28 @@ impl Cli {
     /// The CLI spelling of the selected global format (for usage errors).
     fn format_name(&self) -> &'static str {
         format_label(self.format)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measure_zones_is_an_opt_in_on_scan_and_check_only() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).map(|cli| cli.command);
+        assert!(!parse(&["archguard", "scan"]).unwrap().measure_zones());
+        assert!(!parse(&["archguard", "check"]).unwrap().measure_zones());
+        assert!(
+            parse(&["archguard", "scan", "--measure-zones"])
+                .unwrap()
+                .measure_zones()
+        );
+        assert!(
+            parse(&["archguard", "check", "--measure-zones"])
+                .unwrap()
+                .measure_zones()
+        );
+        assert!(parse(&["archguard", "metrics", "--measure-zones"]).is_err());
     }
 }
