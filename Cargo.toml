@@ -19,9 +19,12 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 # Keep target/debug small: line tables are enough for backtraces with file:line,
-# dependencies carry no debug info at all.
+# dependencies carry no debug info at all. Dependencies are optimized, so the
+# desktop app's renderer (Slint) runs smoothly with a plain `cargo run`; the
+# workspace's own crates stay unoptimized for fast rebuilds.
 [profile.dev]
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 2
