@@ -50,7 +50,11 @@ pub struct Arc42Inputs<'a> {
     pub insights: &'a Value,
     /// Logical compiler paths -> unambiguous physical project-relative paths.
     pub source_paths: &'a BTreeMap<String, String>,
+    pub blocks: &'a Arc42Blocks,
 }
+
+pub use crate::arc42_blocks::Arc42Blocks;
+use crate::arc42_blocks::Blocks;
 
 /// Escapes only what changes Markdown structure inside a line, so paths and
 /// sentences stay readable in the hand-edited file.
@@ -233,165 +237,57 @@ impl Arc42Document {
     }
 }
 
-fn package_markdown(graph: &Graph) -> String {
-    use archguard_core::{Node, NodeId, NodeKind};
-    let by_id: BTreeMap<_, _> = graph.nodes.iter().map(|n| (n.id, n)).collect();
-    let mut children: BTreeMap<Option<NodeId>, Vec<&Node>> = BTreeMap::new();
-    for node in &graph.nodes {
-        children.entry(node.parent).or_default().push(node);
-    }
-    let mut frontier = Vec::new();
-    for mut root in children.get(&None).cloned().unwrap_or_default() {
-        if root.kind != NodeKind::Module {
-            continue;
-        }
-        loop {
-            let kids = children
-                .get(&Some(root.id))
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            if kids.len() == 1 && kids[0].kind == NodeKind::Module {
-                root = kids[0];
-            } else {
-                break;
-            }
-        }
-        let kids = children
-            .get(&Some(root.id))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let packages: Vec<_> = kids
-            .iter()
-            .filter(|n| n.kind == NodeKind::Module)
-            .copied()
-            .collect();
-        if packages.is_empty() {
-            frontier.push(root);
-        } else {
-            frontier.extend(packages);
-            if kids.iter().any(|n| n.kind == NodeKind::File) {
-                frontier.push(root);
-            }
-        }
-    }
-    let mut names: Vec<_> = frontier.iter().map(|n| n.name.clone()).collect();
-    let loose = names.len();
-    if graph
-        .nodes
-        .iter()
-        .any(|n| n.kind == NodeKind::File && n.parent.is_none())
-    {
-        names.push("Dateien ohne Paket".into());
-    }
-    let index: BTreeMap<_, _> = frontier
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id, i))
-        .collect();
-    let mut owner = BTreeMap::new();
-    let mut files = vec![0usize; names.len()];
-    for node in &graph.nodes {
-        let mut current = Some(node.id);
-        let mut group = None;
-        // Canonical graphs are trees; the bound also protects legacy hand-built reports.
-        for _ in 0..graph.nodes.len() {
-            let Some(id) = current else { break };
-            if let Some(&i) = index.get(&id) {
-                group = Some(i);
-                break;
-            }
-            current = by_id.get(&id).and_then(|n| n.parent);
-        }
-        if node.kind == NodeKind::File && node.parent.is_none() {
-            group = Some(loose);
-        }
-        if let Some(i) = group {
-            owner.insert(node.id, i);
-            if node.kind == NodeKind::File {
-                files[i] += 1;
-            }
-        }
-    }
-    let mut order: Vec<_> = (0..names.len()).collect();
-    order.sort_by(|&a, &b| files[b].cmp(&files[a]).then(names[a].cmp(&names[b])));
-    let mut shown: Vec<_> = order.iter().take(8).map(|&i| names[i].clone()).collect();
-    if names.len() > 8 {
-        shown.push(format!("Weitere {} Pakete", names.len() - 8));
-    }
-    let display: BTreeMap<_, _> = order
-        .iter()
-        .enumerate()
-        .map(|(position, &i)| (i, position.min(8)))
-        .collect();
-    let mut relations = BTreeMap::<(usize, usize), usize>::new();
-    let mut incoming = vec![0usize; names.len()];
-    let mut outgoing = vec![0usize; names.len()];
-    let mut internal = 0;
-    let mut covered = 0;
-    for edge in &graph.edges {
-        let (Some(&a), Some(&b)) = (owner.get(&edge.from), owner.get(&edge.to)) else {
-            continue;
-        };
-        covered += 1;
-        if a != b {
-            outgoing[a] += 1;
-            incoming[b] += 1;
-        }
-        let (a, b) = (display[&a], display[&b]);
-        if a == b {
-            internal += 1;
-        } else {
-            *relations.entry((a, b)).or_default() += 1;
-        }
-    }
-    let mut out = format!(
-        "### Paketübersicht\n\nQuelle: vollständiger ursprünglicher Quellgraph. {} Datei-/Symbolknoten, {} Paketgruppen, {} Quellverbindungen. Ein Pfeil bündelt gerichtete Quellverbindungen zwischen Paketen; {} Verbindungen liegen innerhalb dargestellter Gruppen. Ansichtfilter und Simulationen gehen nicht ein.\n\n",
-        files.iter().sum::<usize>(),
-        names.len(),
-        covered,
-        internal
+/// Chapter 5: packages become building blocks with the responsibility their
+/// manifest declares, the layer they belong to and the blocks they use.
+fn package_markdown(input: &Arc42Inputs<'_>, questions: &mut Vec<String>) -> String {
+    let blocks = Blocks::new(
+        input.source_graph,
+        input.config,
+        input.services,
+        input.source_paths,
+        input.blocks,
     );
-    if !shown.is_empty() {
-        out.push_str("```mermaid\nflowchart LR\n");
-        for (i, name) in shown.iter().enumerate() {
-            let label: String = name
-                .chars()
-                .map(|ch| {
-                    if ch.is_ascii_alphanumeric() || " /._-".contains(ch) {
-                        ch.to_string()
-                    } else {
-                        format!("#{};", ch as u32)
-                    }
-                })
-                .collect();
-            let _ = writeln!(out, "  n{i}[\"{label}\"]");
-        }
-        for ((a, b), count) in relations {
-            let _ = writeln!(out, "  n{a} -->|{count}| n{b}");
-        }
-        out.push_str("```\n\n");
-    }
-    out.push_str("Die Übersicht bündelt alle erfassten Quellen. Weitere Pakete, Unterpakete und einzelne Beziehungen sind im Viewer auswählbar. Paketzyklen beschreiben die aggregierte Paketsicht, nicht automatisch einen Zyklus zwischen einzelnen Dateien.\n\n");
+    let mut out = format!(
+        "### Bausteine\n\nQuelle: vollständiger ursprünglicher Quellgraph. {} Datei-/Symbolknoten, {} Paketgruppen, {} Quellverbindungen; {} davon liegen innerhalb dargestellter Bausteine. Verantwortung: `description` des zugehörigen Manifests. Schicht: erste passende Schicht aus `layers`. „Nutzt“ nennt Bausteine mit Quellverbindungen dorthin, die häufigsten zuerst.\n\n",
+        blocks.files.iter().sum::<usize>(),
+        blocks.labels.len(),
+        blocks.covered,
+        blocks.internal
+    );
+    out.push_str(&blocks.mermaid());
     table(
         &mut out,
-        "| Paket | Datei-/Symbolknoten | Quellverbindungen eingehend | Quellverbindungen ausgehend |\n| --- | ---: | ---: | ---: |",
-        order
+        "| Baustein | Verantwortung | Schicht | Dateien | Nutzt |\n| --- | --- | --- | ---: | --- |",
+        blocks
+            .order
             .iter()
             .take(LIMIT)
-            .map(|&i| {
-                format!(
-                    "| {} | {} | {} | {} |",
-                    cell(&names[i]),
-                    files[i],
-                    incoming[i],
-                    outgoing[i]
-                )
-            })
+            .map(|&i| block_row(&blocks, i))
             .collect(),
         "Keine Pakete im Quellgraph erfasst.",
     );
-    note(&mut out, names.len());
+    note(&mut out, blocks.labels.len());
+    questions.extend(blocks.missing_question());
+    questions.push(
+        "Schnittstellen der Bausteine und bei Bedarf eine feinere Zerlegung erläutern.".into(),
+    );
     out
+}
+
+fn block_row(blocks: &Blocks<'_>, i: usize) -> String {
+    let used: Vec<_> = blocks.used(i).into_iter().map(cell).collect();
+    format!(
+        "| {} | {} | {} | {} | {} |",
+        cell(&blocks.labels[i]),
+        blocks.describe(i).map_or("–".into(), cell),
+        blocks.layer_name(i).map_or("–".into(), cell),
+        blocks.files[i],
+        if used.is_empty() {
+            "–".into()
+        } else {
+            used.join(", ")
+        }
+    )
 }
 
 pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
@@ -531,8 +427,8 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     c.questions.push("Tragende Entwurfsentscheidungen und ihre Zuordnung zu Qualitätszielen erläutern. Erfasste Entscheidungen stehen in Kapitel 9.".into());
 
     let c = &mut chapters[4];
-    c.markdown.push_str(&package_markdown(input.source_graph));
-    c.questions.push("Fachliche Verantwortlichkeiten, Schnittstellen und bei Bedarf eine feinere Zerlegung der Bausteine erläutern.".into());
+    c.markdown
+        .push_str(&package_markdown(&input, &mut c.questions));
 
     let c = &mut chapters[5];
     let _ = writeln!(
@@ -969,6 +865,7 @@ mod tests {
             services: &services,
             insights: &serde_json::json!({"contracts":{"status":"ready","contracts":contracts},"patterns":{"assessments":[{"pattern":"layered","status":"candidate","scope":"."}]}}),
             source_paths: &BTreeMap::new(),
+            blocks: &Arc42Blocks::default(),
         });
         assert!(!doc.chapters[3].markdown.contains("Musterhypothesen"));
         assert!(!doc.chapters[3].markdown.contains("layered"));
@@ -1026,6 +923,7 @@ mod tests {
             services: &services,
             insights: &serde_json::json!({}),
             source_paths: &BTreeMap::new(),
+            blocks: &Arc42Blocks::default(),
         });
         let chapter = &doc.chapters[4].markdown;
         let fence = char::from(96).to_string().repeat(3);
@@ -1043,6 +941,149 @@ mod tests {
         assert!(chapter.contains("40 Paketgruppen"));
         assert!(chapter.contains("40 Quellverbindungen"));
         assert!(diagram.contains("Weitere 32 Pakete"));
+    }
+
+    #[test]
+    fn a_single_remaining_package_is_drawn_instead_of_a_remainder_box() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        for i in 0..9 {
+            builder.ensure_path(&format!("org/demo/p{i}/Source.java"), Some("java"));
+        }
+        let graph = builder.build("test".into());
+        let report: Report = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"summary":{"nodes":0,"edges":0,"sccs":0,"largest_scc":0,"layer_violations":0,"status":"pass"},
+            "findings":[],"metrics":{}
+        })).unwrap();
+        let services: ServiceTopology = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"root":"test","monorepo":false,"monorepo_reason":"",
+            "compose_files":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true
+        })).unwrap();
+        let doc = render_arc42(Arc42Inputs {
+            source_graph: &graph,
+            view: &graph,
+            report: &report,
+            config: &Config::default(),
+            calls: &CallAnalysis::default(),
+            services: &services,
+            insights: &serde_json::json!({}),
+            source_paths: &BTreeMap::new(),
+            blocks: &Arc42Blocks::default(),
+        });
+        let md = &doc.chapters[4].markdown;
+        assert!(!md.contains("Weitere 1 Pakete"), "{md}");
+        assert!(md.contains("p8\"]"), "the ninth package is drawn: {md}");
+    }
+
+    #[test]
+    fn building_blocks_name_their_project_responsibility_layer_and_dependencies() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        let cli = builder.ensure_path("cli/src/main.rs", Some("rust"));
+        let engine = builder.ensure_path("engine/src/lib.rs", Some("rust"));
+        let core = builder.ensure_path("core/src/lib.rs", Some("rust"));
+        let tool = builder.ensure_path("tool/src/lib.rs", Some("rust"));
+        let reference = |file: &str| archguard_core::Ref {
+            file: file.into(),
+            line: 1,
+            raw: "use".into(),
+        };
+        for (from, to) in [(cli, engine), (engine, core), (cli, core), (tool, core)] {
+            builder.edge(from, to, reference("x")).unwrap();
+        }
+        let graph = builder.build("repo".into());
+        let report: Report = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"summary":{"nodes":0,"edges":0,"sccs":0,"largest_scc":0,"layer_violations":0,"status":"pass"},
+            "findings":[],"metrics":{}
+        })).unwrap();
+        let project = |id: &str| serde_json::json!({"id":id,"name":format!("app-{id}"),"path":format!("crates/{id}"),"manifest":format!("crates/{id}/Cargo.toml"),"ecosystem":"cargo","kind":"library","runtime":null,"evidence":[]});
+        let services: ServiceTopology = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"root":"repo","monorepo":true,"monorepo_reason":"","compose_files":[],"services":[],
+            "projects":[{"id":"root","name":"workspace","path":".","manifest":"Cargo.toml","ecosystem":"cargo","kind":"workspace","runtime":null,"evidence":[]},project("cli"),project("engine"),project("core"),project("tool")],
+            "dependencies":[],"cycles":[],"diagnostics":[],"complete":true
+        })).unwrap();
+        let layer = |name: &str, may: &[&str]| archguard_core::LayerConfig {
+            name: name.into(),
+            contains: vec![format!("{name}/**")],
+            may_depend_on: may.iter().map(|s| s.to_string()).collect(),
+            origin: archguard_core::LayerOrigin::Declared,
+        };
+        let config = Config {
+            layers: vec![
+                layer("core", &[]),
+                layer("engine", &["core"]),
+                layer("cli", &["engine", "core"]),
+            ],
+            ..Config::default()
+        };
+        let source_paths: BTreeMap<_, _> = [
+            "cli/src/main.rs",
+            "engine/src/lib.rs",
+            "core/src/lib.rs",
+            "tool/src/lib.rs",
+        ]
+        .into_iter()
+        .map(|p| (p.to_string(), format!("crates/{p}")))
+        .collect();
+        let layer_of = |name: &str| graph.nodes.iter().find(|n| n.name == name).unwrap().id;
+        let blocks = Arc42Blocks {
+            layers: [("core/src", 0), ("engine/src", 1), ("cli/src", 2)]
+                .into_iter()
+                .map(|(name, i)| (layer_of(name), i))
+                .collect(),
+            descriptions: [
+                ("cli", "the command-line interface"),
+                ("engine", "pipeline orchestration"),
+                ("core", "shared types"),
+            ]
+            .into_iter()
+            .map(|(id, text)| (id.to_string(), text.to_string()))
+            .collect(),
+        };
+        let doc = render_arc42(Arc42Inputs {
+            source_graph: &graph,
+            view: &graph,
+            report: &report,
+            config: &config,
+            calls: &CallAnalysis::default(),
+            services: &services,
+            insights: &serde_json::json!({}),
+            source_paths: &source_paths,
+            blocks: &blocks,
+        });
+        let chapter = &doc.chapters[4];
+        let md = &chapter.markdown;
+        assert!(
+            md.contains("| app-engine | pipeline orchestration | engine | 1 | app-core |"),
+            "{md}"
+        );
+        assert!(
+            md.contains(
+                "| app-cli | the command-line interface | cli | 1 | app-core, app-engine |"
+            ),
+            "{md}"
+        );
+        assert!(md.contains("| app-tool | – | – | 1 | app-core |"), "{md}");
+        let cli_row = md.find("| app-cli |").unwrap();
+        assert!(
+            cli_row < md.find("| app-engine |").unwrap()
+                && md.find("| app-engine |").unwrap() < md.find("| app-core |").unwrap(),
+            "consumers before providers"
+        );
+        assert!(
+            md.contains("subgraph l2[\"Schicht cli\"]"),
+            "the diagram groups blocks by layer: {md}"
+        );
+        assert!(
+            !md.contains("cli/src"),
+            "project names replace source-root paths"
+        );
+        assert!(
+            chapter
+                .questions
+                .iter()
+                .any(|q| q.contains("app-tool") && !q.contains("app-core")),
+            "only blocks without a responsibility are asked for: {:?}",
+            chapter.questions
+        );
     }
 
     #[test]
@@ -1090,6 +1131,7 @@ mod tests {
                 "quality":{"status":"not_imported","findings":[]},"security":{"status":"not_scanned","findings":[]}
             }),
             source_paths: &BTreeMap::new(),
+            blocks: &Arc42Blocks::default(),
         });
         let all = doc.markdown(None);
         let lines: Vec<_> = all.lines().collect();

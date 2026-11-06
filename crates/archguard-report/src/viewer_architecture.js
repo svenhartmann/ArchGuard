@@ -374,13 +374,14 @@ function arc42BuildingNavigation(shell,levels,navigate){
   `));
   const layout=element('div',undefined,'arc42-building-layout'),nav=element('nav',undefined,'arc42-building-nav'),body=element('div',undefined,'arc42-building-content');layout.appendChild(nav);layout.appendChild(body);shell.appendChild(layout);
   nav.setAttribute('data-arc42-levels','true');nav.setAttribute('data-current-level',levels.level);nav.setAttribute('aria-label',t('Building-block levels','Bausteinebenen'));nav.appendChild(element('strong',t('Building blocks · Level {level} of 3','Bausteine · Ebene {level} von 3',{level:levels.level})));
-  function entry(id,name,level){const b=button('',()=>navigate(id),'');b.setAttribute('data-arc42-level-scope',id??'');b.setAttribute('data-level',level);b.setAttribute('aria-label',t('Level {level}: {name}','Ebene {level}: {name}',{level,name}));b.title=name;b.appendChild(element('small',String(level)));b.appendChild(element('span',id==null?name:name.split('/').pop()));if(id===levels.scope)b.setAttribute('aria-current','page');nav.appendChild(b);}
+  const short=arc42ShortNames([...[...levels.entries.values()].map(item=>item.node.name),...levels.path.map(item=>item.node.name)]);
+  function entry(id,name,level){const b=button('',()=>navigate(id),'');b.setAttribute('data-arc42-level-scope',id??'');b.setAttribute('data-level',level);b.setAttribute('aria-label',t('Level {level}: {name}','Ebene {level}: {name}',{level,name}));b.title=name;b.appendChild(element('small',String(level)));b.appendChild(element('span',id==null?name:short.get(String(name))||name));if(id===levels.scope)b.setAttribute('aria-current','page');nav.appendChild(b);}
   entry(null,t('Project overview','Projektübersicht'),1);
   const expanded=levels.path[0]?.node.id;
   for(const [id,item]of levels.entries)if(item.level===2){entry(id,item.node.name,2);if(String(expanded)===id)for(const [child,childItem]of levels.entries)if(childItem.parent===id)entry(child,childItem.node.name,3);}
   const path=element('nav',undefined,'arc42-building-path');path.setAttribute('data-arc42-breadcrumb','true');path.setAttribute('aria-label',t('Building-block path','Bausteinpfad'));body.appendChild(path);
   const crumbs=[{id:null,name:t('Project overview','Projektübersicht'),level:1},...levels.path.map(item=>({id:String(item.node.id),name:item.node.name,level:item.level}))];
-  for(const [index,crumb]of crumbs.entries()){if(index)path.appendChild(element('span','›','muted'));const b=button(crumb.level+' · '+(crumb.id==null?crumb.name:crumb.name.split('/').pop()),()=>navigate(crumb.id),'btn btn-secondary');b.title=crumb.name;if(index===crumbs.length-1)b.setAttribute('aria-current','page');path.appendChild(b);}
+  for(const [index,crumb]of crumbs.entries()){if(index)path.appendChild(element('span','›','muted'));const b=button(crumb.level+' · '+(crumb.id==null?crumb.name:short.get(String(crumb.name))||crumb.name),()=>navigate(crumb.id),'btn btn-secondary');b.title=crumb.name;if(index===crumbs.length-1)b.setAttribute('aria-current','page');path.appendChild(b);}
   return body;
 }
 function renderArc42PackageMap(parent,kind='dependencies'){
@@ -461,11 +462,29 @@ function arc42LayoutEngine(){
   });
   return arc42VizPromise;
 }
+// Shortest trailing path that no other name shares: Rust crates and Maven
+// modules all end in src or main, so the last segment alone is ambiguous.
+function arc42ShortNames(names){
+  const unique=[...new Set(names.map(String))],parts=new Map(unique.map(n=>[n,n.split('/').filter(Boolean)])),short=new Map();
+  for(let k=1;short.size<unique.length;k++){
+    const open=unique.filter(n=>!short.has(n)),suffix=n=>parts.get(n).slice(-k).join('/'),seen=new Map();
+    for(const n of unique)seen.set(suffix(n),(seen.get(suffix(n))||0)+1);
+    for(const n of open)if(seen.get(suffix(n))===1||k>=parts.get(n).length)short.set(n,suffix(n)||n);
+  }
+  return short;
+}
 function arc42StandardGraph(model,selected){
-  const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i]));
+  const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i])),short=arc42ShortNames(model.nodes.map(n=>n.name));
   const deployment=model.nodes.some(n=>n.kind==='deployment');
-  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:'#b6c4d8'},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:'#1c2b42',fontcolor:'#ecf2fa',color:'#607796',penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:'#c3cfe2',arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:(n.name.split('/').pop()||n.name)+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?'#a7c4ff':n.cycle?'#ee7d87':'#607796',penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map((e,i)=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{id:'arc42-standard-edge-'+i,xlabel:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?'#45556c':e.cycle?'#ee7d87':'#92b6ef',style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
-  if(deployment){graph.subgraphs=[{name:'cluster_deployment',graphAttributes:{label:t('Deployment configuration · ','Deployment-Konfiguration · ')+model.scope,style:'dashed',color:'#607796',fontcolor:'#b6c4d8',labelloc:'t'},nodes:graph.nodes}];graph.nodes=[];}
+  // Graphviz needs concrete colours; read the active theme so light mode is not drawn in the dark palette.
+  const css=typeof getComputedStyle==='function'?getComputedStyle(document.documentElement):null,token=(name,fallback)=>css?.getPropertyValue(name).trim()||fallback;
+  const muted=token('--muted','#b6c4d8'),border=token('--muted','#607796'),accent=token('--accent','#92b6ef'),cycle=token('--c-cycle','#ee7d87');
+  const graph={directed:true,graphAttributes:{rankdir:model.nodes.length>4?'TB':'LR',label:'',bgcolor:'transparent',pad:'.3',nodesep:'.55',ranksep:'1',splines:'spline',fontname:'Arial',fontcolor:muted},nodeAttributes:{fontname:'Arial',fontsize:'12',margin:'.18,.14',style:'filled',fillcolor:token('--panel','#1c2b42'),fontcolor:token('--text','#ecf2fa'),color:border,penwidth:'1.4'},edgeAttributes:{fontname:'Arial',fontsize:'10',fontcolor:token('--muted','#c3cfe2'),arrowsize:'.7'},nodes:model.nodes.map((n,i)=>({name:ids.get(n.id),attributes:{id:'arc42-standard-node-'+i,shape:n.kind==='package'?'folder':n.kind==='component'?'component':'box',label:short.get(String(n.name))+'\n['+(n.kind==='deployment'?'Container · Docker':n.kind==='package'?'Package':n.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):n.kind==='context'?t('Project context','Projektkontext'):n.kind==='component'?'Component':t('Source files','Quelldateien'))+']'+(n.files!=null?'\n'+n.files+' '+t('source nodes','Quellknoten'):''),tooltip:n.name,color:selected===n.id?accent:n.cycle?cycle:border,penwidth:selected===n.id?'3':'1.4'}})),edges:model.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map((e,i)=>({tail:ids.get(e.from),head:ids.get(e.to),attributes:{id:'arc42-standard-edge-'+i,xlabel:e.kind==='startup'?'startup':e.kind==='http'?'HTTP':String(e.count??1),tooltip:model.nodes.find(n=>n.id===e.from).name+' → '+model.nodes.find(n=>n.id===e.to).name+' · '+(e.count??1)+' '+(model.unit||''),color:selected&&e.from!==selected&&e.to!==selected?token('--c-dim','#45556c'):e.cycle?cycle:accent,style:e.kind==='startup'?'dashed':'solid',penwidth:selected&&(e.from===selected||e.to===selected)?'2.5':'1.3'}}))};
+  // dot puts unconnected nodes into one rank: a single unreadable row. Invisible edges stack them
+  // into a grid; Graphviz packing would also do that but drops the edge-count xlabels.
+  const linked=new Set(graph.edges.flatMap(e=>[e.tail,e.head])),loose=graph.nodes.map(n=>n.name).filter(n=>!linked.has(n)),columns=Math.ceil(Math.sqrt(loose.length));
+  for(let i=0;i+columns<loose.length;i++)graph.edges.push({tail:loose[i],head:loose[i+columns],attributes:{style:'invis'}});
+  if(deployment){graph.subgraphs=[{name:'cluster_deployment',graphAttributes:{label:t('Deployment configuration · ','Deployment-Konfiguration · ')+model.scope,style:'dashed',color:border,fontcolor:muted,labelloc:'t'},nodes:graph.nodes}];graph.nodes=[];}
   return graph;
 }
 function arc42PlantUml(model){
@@ -491,7 +510,7 @@ function arc42LayoutSvg(viz,model,selected){
   const svg=layout.cloneNode(true);if(selected==null)return svg;
   const styled=arc42StandardGraph(model,selected),paint=(id,{color,penwidth},fill)=>{for(const shape of svg.querySelector('#'+id)?.querySelectorAll('path,polygon,ellipse,polyline')||[]){if(shape.getAttribute('stroke')&&shape.getAttribute('stroke')!=='transparent')shape.setAttribute('stroke',color);if(fill&&shape.tagName.toLowerCase()==='polygon')shape.setAttribute('fill',color);shape.setAttribute('stroke-width',penwidth);}};
   for(const node of [...styled.nodes,...(styled.subgraphs||[]).flatMap(s=>s.nodes)])paint(node.attributes.id,node.attributes,false);
-  for(const edge of styled.edges)paint(edge.attributes.id,edge.attributes,true);
+  for(const edge of styled.edges)if(edge.attributes.id)paint(edge.attributes.id,edge.attributes,true);
   return svg;
 }
 function arc42UpgradeDiagram(box,model,{title,onNode,selected}={}){

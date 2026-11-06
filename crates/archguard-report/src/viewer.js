@@ -538,6 +538,7 @@ function applyTheme(pref) {
   if (fg) { fg.backgroundColor(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()); fg.nodeCanvasObject(drawNode); }
   if(ui.workspace==='graph'&&ui.diagram==='overview')renderPackageTree();
   if(ui.workspace==='services')renderServices();
+  if(ui.workspace==='architecture'&&typeof renderArchitecture==='function')renderArchitecture(); // Graphviz colours are baked in per theme
   if(ui.workspace==='start')worldDraw();
 }
 function storedTheme() {

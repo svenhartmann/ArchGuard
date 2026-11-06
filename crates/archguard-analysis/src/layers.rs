@@ -66,6 +66,15 @@ pub fn check_layers(graph: &Graph, layers: &[LayerConfig]) -> Result<Vec<Finding
         .collect())
 }
 
+/// Node id -> index of its layer in `layers`, by the same first-match rule
+/// the layer check uses; unconstrained nodes are absent.
+pub fn layer_assignment(
+    graph: &Graph,
+    layers: &[LayerConfig],
+) -> Result<BTreeMap<NodeId, usize>, ArchguardError> {
+    Ok(assign_layers(graph, &compile_layers(layers)?))
+}
+
 /// The untruncated directed-pair form used by revision comparison. Display
 /// samples cannot determine whether a new violation was introduced.
 pub fn check_layer_pairs(

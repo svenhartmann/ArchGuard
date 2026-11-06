@@ -40,7 +40,7 @@ pub use derive::{DerivedLayers, infer_layers, suggest_depth};
 pub use health::health_index;
 pub use lakos::lakos_metrics;
 pub use layer_drift::layer_drift;
-pub use layers::{check_layer_pairs, check_layers};
+pub use layers::{check_layer_pairs, check_layers, layer_assignment};
 pub use leaky::leaky_encapsulation;
 pub use metrics::{compute_metrics, summarize};
 pub use pc::propagation_cost;
