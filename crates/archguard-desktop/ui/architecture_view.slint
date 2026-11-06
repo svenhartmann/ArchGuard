@@ -72,6 +72,7 @@ export global ArchitectureData {
 component ChapterEditor inherits VerticalLayout {
     in property <bool> narrow;
     spacing: 12px;
+    alignment: start;
     Text {
         text: ArchitectureData.model.file != "" ? @tr("Editing {}. Generated archguard blocks are refreshed from the analysis when you save; your text outside them is kept.", ArchitectureData.model.file) : @tr("Editing the generated chapter. The project has no arc42 text yet; saving asks where to create it.");
         color: Theme.muted;
