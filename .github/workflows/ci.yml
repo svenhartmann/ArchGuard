@@ -202,6 +202,7 @@ jobs:
         run: |
           node --test examples/service-shop/test/*.test.js
           node scripts/viewer/test_service_shop.js
+          node scripts/viewer/test_viewer_services_world_cases.js
 
       - name: Java call analysis with real compiler
         run: |
