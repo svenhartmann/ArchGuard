@@ -102,6 +102,10 @@ fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
 pub fn push(ui: &AppWindow, s: &StartState) {
     let d = ui.global::<StartData>();
     let old = d.get_model();
+    // The scene moves under the pointer; its next move shows the tooltip.
+    if d.get_hover().shown {
+        d.set_hover(Default::default());
+    }
     let mut m = StartModel {
         ready: true,
         lens: match s.lens {

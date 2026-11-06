@@ -168,8 +168,27 @@ export struct StartModel {
     services: StartServices,
 }
 
+// The surface under the pointer (src/start_ui/hover.rs): x, y in canvas
+// pixels; title "" for a group of `grouped` entries; kpi 0 complexity;
+// value "" unknown; svc a service island's kind (StartPin.svc).
+export struct StartHover {
+    shown: bool,
+    x: float,
+    y: float,
+    title: string,
+    grouped: int,
+    kpi: int,
+    value: string,
+    svc: int,
+    outline: string,
+}
+
 export global StartData {
     in-out property <StartModel> model;
+    in-out property <StartHover> hover;
+    // The pointer rests at a canvas point; it left the stage or pressed.
+    callback hover-at(float, float);
+    callback hover-end();
     // Texts Rust puts into pickers.
     out property <string> all-variants: @tr("All variants");
     out property <string> open-project-entry: @tr("Open project…");

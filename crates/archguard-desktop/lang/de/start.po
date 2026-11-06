@@ -303,3 +303,8 @@ msgstr "Ereignisse"
 
 msgid "Dashed arrows are inferred event flows, from the producing to the consuming service."
 msgstr "Gestrichelte Pfeile sind abgeleitete Ereignisflüsse, vom erzeugenden zum verarbeitenden Service."
+
+msgid "{0} grouped entry"
+msgid_plural "{0} grouped entries"
+msgstr[0] "{0} gebündelter Eintrag"
+msgstr[1] "{0} gebündelte Einträge"

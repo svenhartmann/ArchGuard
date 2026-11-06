@@ -43,7 +43,7 @@ impl StartState {
         }
     }
 
-    fn services_mode(&self) -> bool {
+    pub(super) fn services_mode(&self) -> bool {
         self.mode == Mode::Services && self.services.is_some()
     }
 

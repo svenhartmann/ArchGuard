@@ -14,5 +14,6 @@ mod world;
 mod agreement;
 
 pub use draw::{Drawn, draw, tone_index};
+pub use inventory::Island;
 pub use links::{Direction, Source};
 pub use world::{KINDS, ServicesWorld};

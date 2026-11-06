@@ -129,6 +129,18 @@ pub fn texts(m: &mut StartModel, old: &StartModel, w: &ServicesWorld, d: &StartD
     m.services.deployments = sync_rows(&old.services.deployments, variants);
 }
 
+/// An island's kind as `StartPin.svc`: 1 application, 2 library, 3 test /
+/// tooling, 4 unclassified, 5 no local sources.
+pub(super) fn svc(i: &super::services::Island) -> i32 {
+    match i.kind.as_str() {
+        _ if i.external => 5,
+        "application" => 1,
+        "library" => 2,
+        "tooling" => 3,
+        _ => 4,
+    }
+}
+
 /// One pin per island: its name and kind with its source path, or that it
 /// has no local sources.
 fn pins(
@@ -142,13 +154,7 @@ fn pins(
     let rows = (0..w.shown.len())
         .map(|area| {
             let i = w.island(area);
-            let svc: i32 = match i.kind.as_str() {
-                _ if i.external => 5,
-                "application" => 1,
-                "library" => 2,
-                "tooling" => 3,
-                _ => 4,
-            };
+            let svc = svc(i);
             let detail = i.detail();
             // English widths; German labels are about as long.
             let label = [

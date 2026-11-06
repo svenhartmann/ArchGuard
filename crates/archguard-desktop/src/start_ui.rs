@@ -10,6 +10,7 @@ mod arrows;
 mod details;
 mod evidence;
 mod follow_place;
+mod hover;
 mod layout;
 mod modes;
 mod overlay;
@@ -189,6 +190,20 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     ));
     d.on_more(a.on0(|s, _| s.limit += 20));
     d.on_source_graph(a.on0(source_graph));
+    wire_hover(ui, d);
+}
+
+/// The surface tooltip follows the pointer at most once per frame; it
+/// changes no state, so nothing else is pushed.
+fn wire_hover(ui: &AppWindow, d: &StartData<'_>) {
+    let at = tab_support::with_ui(ui, |ui, p: Option<(f32, f32)>| {
+        let p = p.map(|(x, y)| (f64::from(x), f64::from(y)));
+        crate::documents::with_active_state(|s: &mut StartState| hover::show(ui, s, p));
+    });
+    let at = Coalesce::throttle(FRAME, |_, b| b, at);
+    let moved = at.clone();
+    d.on_hover_at(move |x, y| moved.call(Some((x, y))));
+    d.on_hover_end(move || at.call(None));
 }
 
 /// "Source graph": reveal the selection in the Graph tab.
@@ -418,6 +433,32 @@ mod tests {
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
         assert_eq!(s.search, "");
         assert_eq!(s.selection, None);
+    }
+
+    /// The tooltip names the surface under the pointer: a single entity by
+    /// its class or file, a group by its size, with the lens value; off
+    /// the surfaces there is none.
+    #[test]
+    fn hover_names_the_surface_under_the_pointer() {
+        let (mut s, _) = fixture_state("py-layers");
+        let v = s.view().expect("view");
+        let at = |c: &layout::Cell| v.screen(c.x as f64 + 0.5, c.y as f64 + 0.5, c.z);
+        let (i, cell) = s
+            .layout
+            .cells
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.entities.len() == 1)
+            .expect("a single surface");
+        let (x, y) = at(cell);
+        let h = s.hover_at(x, y).expect("a surface");
+        assert_eq!(h.cell, i);
+        let e = s.ev.entity(cell.entities[0]);
+        assert_eq!(h.title, e.class_id.clone().unwrap_or(e.node.clone()));
+        assert_eq!((h.grouped, h.kpi, h.value), (0, 0, cell.value));
+        assert_eq!(s.hover_at(-50.0, -50.0), None);
+        s.set_kpi(2);
+        assert_eq!(s.hover_at(x, y).expect("a surface").kpi, 2);
     }
 
     /// Two npm projects side by side.
