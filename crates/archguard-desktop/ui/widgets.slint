@@ -20,6 +20,9 @@ export global Icons {
     out property <string> split: "M 4 5 L 20 5 L 20 19 L 4 19 Z M 12 5 L 12 19";
     out property <string> link: "M 10 14 L 14 10 M 8.5 11.5 L 6.5 13.5 A 3.5 3.5 0 0 0 11.5 18.5 L 13.5 16.5 M 10.5 7.5 L 12.5 5.5 A 3.5 3.5 0 0 1 17.5 10.5 L 15.5 12.5";
     out property <string> cycle: "M 19 12 A 7 7 0 1 1 16.5 6.6 M 17 3 L 17 7 L 13 7";
+    // Show or hide a side panel: the Graph's explorer (left), details (right).
+    out property <string> panel-left: "M 4 5 L 20 5 L 20 19 L 4 19 Z M 9.5 5 L 9.5 19";
+    out property <string> panel-right: "M 4 5 L 20 5 L 20 19 L 4 19 Z M 14.5 5 L 14.5 19";
 }
 
 export component Icon inherits Path {
@@ -43,7 +46,7 @@ export component Button inherits Rectangle {
     in property <bool> compact;
     in property <bool> enabled: true;
     callback clicked;
-    height: compact ? 28px : 34px;
+    height: compact ? Theme.control-h-sm : Theme.control-h;
     // Never narrower than the label: toolbars shrink their texts instead.
     min-width: max(self.height, content.min-width);
     horizontal-stretch: 0;
@@ -91,7 +94,9 @@ export component Tab inherits Rectangle {
     // press, so a surrounding ContextMenuArea would never see it.
     callback context-menu(length, length);
     height: 30px;
-    width: label.preferred-width + 24px;
+    // Sized by the bold label, so the tab keeps its width when it becomes
+    // active and the tabs beside it do not move.
+    width: bold.preferred-width + 24px;
     border-radius: 7px;
     background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
     animate background { duration: 100ms; }
@@ -102,6 +107,12 @@ export component Tab inherits Rectangle {
         font-weight: active ? 650 : 450;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+    bold := Text {
+        visible: false;
+        text: root.text;
+        font-size: 14px;
+        font-weight: 650;
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -144,7 +155,7 @@ export component SearchField inherits Rectangle {
     in-out property <string> text <=> input.text;
     callback edited(string);
     callback accepted(string);
-    height: 34px;
+    height: Theme.control-h;
     border-radius: Theme.radius-sm;
     background: Theme.panel;
     border-width: 1px;
@@ -179,6 +190,7 @@ export component SearchField inherits Rectangle {
                 color: Theme.muted;
                 font-size: 13px;
                 vertical-alignment: center;
+                overflow: elide;
             }
         }
     }
