@@ -102,7 +102,9 @@ export struct CallsSuggestion {
     open: bool,
 }
 
+// note: the lead sentence of `CallsData.note-text` (src/calls_ui/notes.rs).
 export struct CallsAnalyzer {
+    note: int,
     language: string,
     backend: string,
     status: string,
@@ -158,11 +160,14 @@ export struct CallsModel {
     unresolved: int,
     java-release: int,
     unreported: bool,
+    // Diagnostics no analyzer shows already.
     diagnostics: [string],
-    // The diagnostics as one line (unavailable analysis).
+    // The engine's diagnostics as one line (a tooltip).
     diagnostic-line: string,
     analyzers: [CallsAnalyzer],
     analysis-open: bool,
+    // The analysis ran but recorded no call site at all.
+    no-calls: bool,
     connections: int,
     sites: int,
     // 0 connections, 1 most calls, 2 cycles.
@@ -228,6 +233,22 @@ export global CallsData {
         if status == "unavailable" { return @tr("unavailable"); }
         if status == "not_applicable" { return @tr("not applicable"); }
         return status;
+    }
+    // What an analyzer's coverage means and what it needs (Note in
+    // src/calls_ui/notes.rs); the engine's own text is the detail.
+    pure public function note-text(note: int, language: string) -> string {
+        if note == 1 { return @tr("Java call analysis needs a JDK 17+ with java on PATH."); }
+        if note == 2 { return @tr("C# call analysis needs the .NET SDK 8+ with dotnet on PATH."); }
+        if note == 3 { return @tr("TypeScript/JavaScript call analysis needs Node.js and the project's own TypeScript compiler (npm install --save-dev typescript); running it needs ARCHGUARD_TRUST_PROJECT_COMPILER=1."); }
+        if note == 4 { return @tr("Python call analysis needs Python 3.9+ (or ARCHGUARD_PYTHON set to its executable)."); }
+        if note == 5 { return @tr("Go call analysis needs the Go SDK (or ARCHGUARD_GO set to its executable)."); }
+        if note == 6 { return @tr("Rust is read from syntax only, so its calls stay unresolved. To resolve them, install rust-analyzer and start ArchGuard with ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository."); }
+        if note == 7 { return @tr("Rust calls are resolved with rust-analyzer; code from build scripts and proc macros stays unresolved."); }
+        if note == 8 { return @tr("{} is read token by token: calls and types are not resolved.", language); }
+        if note == 9 { return @tr("Python calls are resolved statically; calls on other values stay unresolved."); }
+        if note == 10 { return @tr("{} call analysis is unavailable.", language); }
+        if note == 11 { return @tr("{} call analysis is partial; coverage is incomplete.", language); }
+        return "";
     }
     pure public function resolution-label(r: int) -> string {
         if r == 0 { return @tr("project"); }

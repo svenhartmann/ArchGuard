@@ -11,6 +11,7 @@ mod cycles;
 mod evidence;
 mod evidence_view;
 mod model;
+mod notes;
 mod rankings;
 mod state;
 mod tree;

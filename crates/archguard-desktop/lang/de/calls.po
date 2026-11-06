@@ -423,3 +423,45 @@ msgstr "Aufrufübersicht"
 
 msgid "Call tree"
 msgstr "Aufrufbaum"
+
+msgid "Java call analysis needs a JDK 17+ with java on PATH."
+msgstr "Die Java-Aufrufanalyse braucht ein JDK 17+ mit java im PATH."
+
+msgid "C# call analysis needs the .NET SDK 8+ with dotnet on PATH."
+msgstr "Die C#-Aufrufanalyse braucht das .NET SDK 8+ mit dotnet im PATH."
+
+msgid "TypeScript/JavaScript call analysis needs Node.js and the project's own TypeScript compiler (npm install --save-dev typescript); running it needs ARCHGUARD_TRUST_PROJECT_COMPILER=1."
+msgstr "Die TypeScript-/JavaScript-Aufrufanalyse braucht Node.js und den TypeScript-Compiler des Projekts (npm install --save-dev typescript); ausgeführt wird er nur mit ARCHGUARD_TRUST_PROJECT_COMPILER=1."
+
+msgid "Python call analysis needs Python 3.9+ (or ARCHGUARD_PYTHON set to its executable)."
+msgstr "Die Python-Aufrufanalyse braucht Python 3.9+ (oder ARCHGUARD_PYTHON mit dem Pfad zum Interpreter)."
+
+msgid "Go call analysis needs the Go SDK (or ARCHGUARD_GO set to its executable)."
+msgstr "Die Go-Aufrufanalyse braucht das Go SDK (oder ARCHGUARD_GO mit dem Pfad zum go-Programm)."
+
+msgid "Rust is read from syntax only, so its calls stay unresolved. To resolve them, install rust-analyzer and start ArchGuard with ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository."
+msgstr "Rust wird nur aus der Syntax gelesen, daher bleiben die Aufrufe unaufgelöst. Zum Auflösen rust-analyzer installieren und ArchGuard mit ARCHGUARD_TRUST_PROJECT_COMPILER=1 starten (außerhalb des Repositorys gesetzt)."
+
+msgid "Rust calls are resolved with rust-analyzer; code from build scripts and proc macros stays unresolved."
+msgstr "Rust-Aufrufe werden mit rust-analyzer aufgelöst; Code aus Build-Skripten und Proc-Makros bleibt unaufgelöst."
+
+msgid "{} is read token by token: calls and types are not resolved."
+msgstr "{} wird Token für Token gelesen: Aufrufe und Typen werden nicht aufgelöst."
+
+msgid "Python calls are resolved statically; calls on other values stay unresolved."
+msgstr "Python-Aufrufe werden statisch aufgelöst; Aufrufe auf anderen Werten bleiben unaufgelöst."
+
+msgid "{} call analysis is unavailable."
+msgstr "Die {}-Aufrufanalyse ist nicht verfügbar."
+
+msgid "{} call analysis is partial; coverage is incomplete."
+msgstr "Die {}-Aufrufanalyse ist teilweise; die Abdeckung ist unvollständig."
+
+msgid "Engine messages ({})"
+msgstr "Meldungen der Analyse ({})"
+
+msgid "This project has no recorded call sites."
+msgstr "Für dieses Projekt sind keine Aufrufstellen erfasst."
+
+msgid "Run archguard doctor in a terminal to see which analyzers this machine has. Import connections are analyzed without them."
+msgstr "archguard doctor im Terminal zeigt, welche Analysewerkzeuge auf diesem Rechner vorhanden sind. Importbeziehungen werden auch ohne sie analysiert."

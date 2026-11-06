@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use slint::SharedString;
 
 use super::evidence_view::{ends, fill_evidence, int, model, resolution_index};
-use super::model::{ElementKind, language_label};
+use super::model::{ElementKind, file_module, language_label};
+use super::notes;
 use super::rankings;
 use super::state::{Mode, State};
 use super::tree::Kind;
@@ -13,6 +14,7 @@ use crate::ui::{
     CallsAnalyzer, CallsCycleRow, CallsModel, CallsRankRow, CallsRelationRow, CallsStep,
     CallsTreeRow,
 };
+use archguard_engine::core::CallClass;
 
 /// Names the window translates but Rust places in lists.
 pub struct UiLabels {
@@ -89,8 +91,14 @@ fn fill_coverage(m: &mut CallsModel, s: &State) {
     m.java_release = i32::try_from(a.java_release).unwrap_or(0);
     m.unreported = a.analyzers.is_empty() && a.status != "not_applicable";
     m.diagnostic_line = a.diagnostics.join(" ").into();
-    m.diagnostics = model(a.diagnostics.iter().map(|d| SharedString::from(d.as_str())));
+    m.diagnostics = model(
+        notes::extra_diagnostics(a)
+            .into_iter()
+            .map(SharedString::from),
+    );
+    m.no_calls = a.calls.is_empty() && a.status != "not_applicable";
     m.analyzers = model(a.analyzers.iter().map(|x| CallsAnalyzer {
+        note: notes::note(x) as i32,
         language: language_label(&x.language, &s.labels).into(),
         backend: x.backend.as_str().into(),
         status: x.status.as_str().into(),
@@ -195,7 +203,11 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
         .into();
 }
 
-fn short(label: String) -> String {
+/// The type name without its package; a file name stays whole.
+fn short(label: String, cls: Option<&CallClass>) -> String {
+    if cls.is_some_and(file_module) {
+        return label;
+    }
     label.rsplit('.').next().unwrap_or_default().to_string()
 }
 
@@ -205,12 +217,17 @@ fn fill_relations(m: &mut CallsModel, s: &State) {
     m.relations = model(v.relations.iter().take(s.limit).map(|r| {
         let (from, to) = ends(s, r);
         let short_to = if r.to.is_some() {
-            short(to.clone())
+            short(to.clone(), s.idx.class(r.to.as_deref()))
         } else {
             to.clone()
         };
         CallsRelationRow {
-            title: format!("{} → {}", short(from.clone()), short_to).into(),
+            title: format!(
+                "{} → {}",
+                short(from.clone(), s.idx.class(Some(&r.from))),
+                short_to
+            )
+            .into(),
             language: s
                 .idx
                 .class(Some(&r.from))
@@ -365,4 +382,22 @@ fn fill_group(m: &mut CallsModel, s: &State) {
         )
     }));
     m.edges_more = s.cycle.edges < g.edges.len();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::model::fixture;
+    use super::*;
+
+    #[test]
+    fn short_names_drop_the_package_but_keep_file_names() {
+        let java = fixture::class("blue.Blue", "blue");
+        assert_eq!(short("blue.Blue".into(), Some(&java)), "Blue");
+        let mut module = fixture::class("api/http.py::(module)", "api");
+        module.name = "(module)".into();
+        module.kind = "module".into();
+        module.file = "api/http.py".into();
+        assert_eq!(short("http.py".into(), Some(&module)), "http.py");
+        assert_eq!(short("x.Unknown".into(), None), "Unknown");
+    }
 }
