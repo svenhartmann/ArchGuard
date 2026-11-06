@@ -78,6 +78,12 @@ fn member(name: &str, id: &str) -> bool {
     ) && id.matches('#').count() == 1
 }
 
+/// Go embedding is composition and Rust has no implementation inheritance:
+/// DIT and NOC do not apply to their types.
+fn no_inheritance(class: &archguard_core::CallClass) -> bool {
+    matches!(class.language.as_deref(), Some("go" | "rust"))
+}
+
 pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
     let class_nodes: BTreeMap<_, _> = calls.classes.iter().map(|c| (&c.id, c)).collect();
     let details = calls
@@ -127,7 +133,8 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
     }
     let mut classes = Vec::new();
     for class in &calls.classes {
-        if class.kind == "module" {
+        // Function groups and Rust markers for undeclarable types are no classes.
+        if matches!(class.kind.as_str(), "module" | "unknown") {
             continue;
         }
         let methods = class_methods.get(&class.id).cloned().unwrap_or_default();
@@ -193,7 +200,7 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
                 complete,
                 responses.into_iter().collect(),
             ),
-            dit: if class.language.as_deref() == Some("go") {
+            dit: if no_inheritance(class) {
                 not_applicable()
             } else {
                 count(
@@ -205,7 +212,7 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
                         .collect(),
                 )
             },
-            noc: if class.language.as_deref() == Some("go") {
+            noc: if no_inheritance(class) {
                 not_applicable()
             } else {
                 count(
@@ -215,7 +222,7 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
                             .classes
                             .iter()
                             .filter(|c| {
-                                c.language.as_deref() != Some("go")
+                                !no_inheritance(c)
                                     && !matches!(
                                         c.kind.as_str(),
                                         "module" | "interface" | "annotation"
@@ -362,7 +369,7 @@ pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
         "java"=>"Java: supply existing dependencies via [semantic.java].classpath or .archguard/java-classpath.txt (one platform-separated path list), and the matching Java release. ArchGuard reads dependencies without running Maven/Gradle or annotation processors.",
         "csharp"=>"C#: use the project target framework's installed .NET reference pack and existing restored obj/project.assets.json. Configure [semantic.csharp].project/target_framework when selection is ambiguous. ArchGuard never restores packages or runs MSBuild.",
         "typescript"|"javascript"=>"TypeScript/JavaScript: supply the project's installed compiler and tsconfig via [semantic.typescript].compiler/project and set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for trusted repositories. Missing dependencies and compiler errors remain explicit.",
-        "rust"=>"Rust: complexity, cognitive and Halstead come from syntax. Calls are resolved only with rust-analyzer and miss code from build scripts and proc macros; types are not resolved, so CBO, RFC, DIT and NOC stay unmeasured.",
+        "rust"=>"Rust: complexity, cognitive and Halstead come from syntax, as do abstractness and implemented traits. Calls and type references are resolved only with rust-analyzer and miss code from build scripts and proc macros, so CBO and RFC stay partial. DIT and NOC are not applicable: Rust has no implementation inheritance.",
         _=>"This language has no compiler-backed class/method metrics. Import/dependency and Git measurements remain available."
     }.to_owned());
         }

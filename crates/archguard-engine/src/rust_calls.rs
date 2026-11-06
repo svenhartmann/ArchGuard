@@ -1,5 +1,6 @@
-//! Rust measurements: declarations and per-function complexity from `syn`, and
-//! call targets from rust-analyzer once the repository is trusted (`rust_scip`).
+//! Rust measurements: declarations and per-function complexity from `syn`, type
+//! relations (`rust_types`), and call targets and type references from
+//! rust-analyzer once the repository is trusted (`rust_scip`).
 //! Nothing is compiled and no project code runs; the report stays `partial`. The counts follow `ast-decisions-v1` and
 //! `source-maintainability/v1` of the compiler-backed scanners, mapped to Rust:
 //! - cyclomatic: `if`, `for`, `while`, `loop`, `let … else`, each `match` arm except
@@ -23,10 +24,13 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, ImplItem, Item, Signature, TraitItem, Visibility};
 
+use proc_macro2::Span;
+
 use crate::rust_scip::CallSite;
+use crate::rust_types::{Parsed, Region, TraitSite, TypeSites};
 
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
-const LIMITATION: &str = "Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.";
+const LIMITATION: &str = "Declarations, complexity and Halstead per function come from syntax. Traits count as abstract; structs, enums and unions as concrete. Implemented traits (impl Trait for Type) and supertraits resolve from syntax within the crate; traits of std, core and alloc are external, other crates' traits, prelude names and blanket impls stay unresolved. Rust has no implementation inheritance: DIT/NOC are not applicable. Files with item macro invocations or syntax errors keep their types unknown, and macro bodies that are not expressions stay opaque.";
 
 #[derive(Default)]
 struct Measure {
@@ -264,10 +268,39 @@ fn test_only(attrs: &[Attribute]) -> bool {
 
 struct Collector<'a> {
     file: &'a str,
+    rel_path: &'a str,
     package: &'a str,
     report: &'a mut CallAnalysis,
     metrics: &'a mut Vec<SourceMethodMetrics>,
     sites: &'a mut Vec<(String, String, CallSite)>,
+    types: &'a mut TypeSites,
+}
+
+/// A measured declaration. `unknown` marks a file whose types syntax cannot
+/// enumerate, so its abstractness stays unknown.
+fn new_class(
+    file: &str,
+    package: &str,
+    name: &str,
+    kind: &str,
+    line: usize,
+    visibility: Option<&Visibility>,
+) -> CallClass {
+    CallClass {
+        language: Some("rust".into()),
+        id: format!("{file}::{name}"),
+        name: name.into(),
+        package: package.into(),
+        file: file.into(),
+        graph_node: file.into(),
+        line: line as u32,
+        kind: kind.into(),
+        is_abstract: (kind != "unknown").then_some(kind == "trait"),
+        visibility: visibility.map(visibility_name),
+        supertypes: Vec::new(),
+        supertype_sites: None,
+        declaration_files: None,
+    }
 }
 
 impl Collector<'_> {
@@ -278,27 +311,52 @@ impl Collector<'_> {
         line: usize,
         visibility: Option<&Visibility>,
     ) -> String {
-        let id = format!("{}::{name}", self.file);
-        if !self.report.classes.iter().any(|class| class.id == id) {
-            self.report.classes.push(CallClass {
-                language: Some("rust".into()),
-                id: id.clone(),
-                name: name.into(),
-                package: self.package.into(),
-                file: self.file.into(),
-                graph_node: self.file.into(),
-                line: line as u32,
-                kind: kind.into(),
-                is_abstract: Some(kind == "trait"),
-                visibility: visibility.map(visibility_name),
-                supertypes: Vec::new(),
-                supertype_sites: None,
-                declaration_files: None,
-            });
+        let class = new_class(self.file, self.package, name, kind, line, visibility);
+        let id = class.id.clone();
+        match self.report.classes.iter_mut().find(|c| c.id == id) {
+            // An impl block written before the declaration of its type.
+            Some(existing)
+                if existing.kind == "impl" && !matches!(kind, "impl" | "module" | "unknown") =>
+            {
+                *existing = class;
+            }
+            Some(_) => {}
+            None => self.report.classes.push(class),
         }
         id
     }
-    fn function(&mut self, class_id: &str, signature: &Signature, block: &syn::Block) {
+    fn region(&mut self, class_id: &str, method_id: Option<&str>, role: &'static str, span: Span) {
+        let (start, end) = (span.start(), span.end());
+        self.types.regions.push(Region {
+            class_id: class_id.into(),
+            method_id: method_id.map(str::to_owned),
+            role,
+            rel_path: self.rel_path.into(),
+            start: (start.line as u32, start.column as u32),
+            end: (end.line as u32, end.column as u32),
+        });
+    }
+    fn trait_site(&mut self, class_id: &str, path: &syn::Path, prefix: &str, evidence_line: usize) {
+        let Some(last) = path.segments.last() else {
+            return;
+        };
+        let start = last.ident.span().start();
+        self.types.traits.push(TraitSite {
+            class_id: class_id.into(),
+            rel_path: self.rel_path.into(),
+            inline: prefix
+                .split("::")
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            path: path.segments.iter().map(|s| s.ident.to_string()).collect(),
+            line: start.line as u32,
+            column: start.column as u32,
+            evidence_line: evidence_line as u32,
+        });
+    }
+    /// `typed` records the signature and body as type-reference regions of the class.
+    fn function(&mut self, class_id: &str, signature: &Signature, block: &syn::Block, typed: bool) {
         let line = signature.span().start().line as u32;
         let id = format!("{class_id}#{}@{line}", signature.ident);
         let mut measure = Measure {
@@ -308,6 +366,15 @@ impl Collector<'_> {
         measure.visit_block(block);
         for site in std::mem::take(&mut measure.calls) {
             self.sites.push((class_id.into(), id.clone(), site));
+        }
+        if typed {
+            if !signature.inputs.is_empty() {
+                self.region(class_id, Some(&id), "parameter", signature.inputs.span());
+            }
+            if let syn::ReturnType::Type(_, output) = &signature.output {
+                self.region(class_id, Some(&id), "return", output.span());
+            }
+            self.region(class_id, Some(&id), "local", block.span());
         }
         self.report.methods.push(CallMethod {
             id: id.clone(),
@@ -335,9 +402,69 @@ impl Collector<'_> {
             source_lines: measure.lines.len() as u32,
         });
     }
+    /// A struct, enum or union; `fields` holds its field types.
+    fn data(
+        &mut self,
+        name: String,
+        kind: &str,
+        item: &dyn Spanned,
+        vis: &Visibility,
+        fields: Option<Span>,
+    ) {
+        let class = self.class(&name, kind, item.span().start().line, Some(vis));
+        if let Some(fields) = fields {
+            self.region(&class, None, "field", fields);
+        }
+    }
+    fn trait_item(&mut self, node: &syn::ItemTrait, prefix: &str) {
+        let line = node.span().start().line;
+        let name = format!("{prefix}{}", node.ident);
+        let class = self.class(&name, "trait", line, Some(&node.vis));
+        for bound in &node.supertraits {
+            if let syn::TypeParamBound::Trait(bound) = bound {
+                self.trait_site(&class, &bound.path, prefix, line);
+            }
+        }
+        for member in &node.items {
+            if let TraitItem::Fn(function) = member
+                && let Some(block) = &function.default
+                && !test_only(&function.attrs)
+            {
+                self.function(&class, &function.sig, block, true);
+            }
+        }
+    }
+    fn impl_item(&mut self, node: &syn::ItemImpl, prefix: &str) {
+        let syn::Type::Path(path) = node.self_ty.as_ref() else {
+            return;
+        };
+        let Some(segment) = path.path.segments.last() else {
+            return;
+        };
+        let line = node.span().start().line;
+        let class = self.class(&format!("{prefix}{}", segment.ident), "impl", line, None);
+        // `impl<T> Trait for T` names no type; `impl !Send for X` implements nothing.
+        let blanket = path.path.segments.len() == 1
+            && node
+                .generics
+                .type_params()
+                .any(|p| p.ident == segment.ident);
+        if let Some((None, trait_path, _)) = &node.trait_
+            && !blanket
+        {
+            self.trait_site(&class, trait_path, prefix, line);
+        }
+        for member in &node.items {
+            if let ImplItem::Fn(function) = member
+                && !test_only(&function.attrs)
+            {
+                self.function(&class, &function.sig, &function.block, !blanket);
+            }
+        }
+    }
     fn items(&mut self, items: &[Item], prefix: &str) {
         for item in items {
-            let scoped = |name: String| format!("{prefix}{name}");
+            let scoped = |name: &syn::Ident| format!("{prefix}{name}");
             match item {
                 Item::Fn(function) if !test_only(&function.attrs) => {
                     let name = if prefix.is_empty() {
@@ -346,79 +473,40 @@ impl Collector<'_> {
                         prefix.trim_end_matches("::").to_owned()
                     };
                     let class = self.class(&name, "module", 1, None);
-                    self.function(&class, &function.sig, &function.block);
+                    self.function(&class, &function.sig, &function.block, false);
                 }
                 Item::Struct(node) if !test_only(&node.attrs) => {
-                    self.class(
-                        &scoped(node.ident.to_string()),
-                        "struct",
-                        node.span().start().line,
-                        Some(&node.vis),
-                    );
+                    let fields = (!node.fields.is_empty()).then(|| node.fields.span());
+                    self.data(scoped(&node.ident), "struct", node, &node.vis, fields);
                 }
                 Item::Enum(node) if !test_only(&node.attrs) => {
-                    self.class(
-                        &scoped(node.ident.to_string()),
-                        "enum",
-                        node.span().start().line,
-                        Some(&node.vis),
-                    );
+                    let variants = (!node.variants.is_empty()).then(|| node.variants.span());
+                    self.data(scoped(&node.ident), "enum", node, &node.vis, variants);
                 }
                 Item::Union(node) if !test_only(&node.attrs) => {
-                    self.class(
-                        &scoped(node.ident.to_string()),
-                        "union",
-                        node.span().start().line,
-                        Some(&node.vis),
-                    );
+                    let fields = Some(node.fields.span());
+                    self.data(scoped(&node.ident), "union", node, &node.vis, fields);
                 }
-                Item::Trait(node) if !test_only(&node.attrs) => {
-                    let class = self.class(
-                        &scoped(node.ident.to_string()),
-                        "trait",
-                        node.span().start().line,
-                        Some(&node.vis),
-                    );
-                    for member in &node.items {
-                        if let TraitItem::Fn(function) = member
-                            && let Some(block) = &function.default
-                            && !test_only(&function.attrs)
-                        {
-                            self.function(&class, &function.sig, block);
-                        }
-                    }
-                }
-                Item::Impl(node) if !test_only(&node.attrs) => {
-                    let syn::Type::Path(path) = node.self_ty.as_ref() else {
-                        continue;
-                    };
-                    let Some(segment) = path.path.segments.last() else {
-                        continue;
-                    };
-                    let class = self.class(
-                        &scoped(segment.ident.to_string()),
-                        "impl",
-                        node.span().start().line,
-                        None,
-                    );
-                    for member in &node.items {
-                        if let ImplItem::Fn(function) = member
-                            && !test_only(&function.attrs)
-                        {
-                            self.function(&class, &function.sig, &function.block);
-                        }
-                    }
-                }
+                Item::Trait(node) if !test_only(&node.attrs) => self.trait_item(node, prefix),
+                Item::Impl(node) if !test_only(&node.attrs) => self.impl_item(node, prefix),
                 Item::Mod(node) if !test_only(&node.attrs) => {
                     if let Some((_, inner)) = &node.content {
                         self.items(inner, &format!("{prefix}{}::", node.ident));
                     }
+                }
+                // An invocation may declare types; a `macro_rules!` definition alone does not.
+                Item::Macro(node)
+                    if !test_only(&node.attrs) && !node.mac.path.is_ident("macro_rules") =>
+                {
+                    self.class(UNKNOWN_TYPES, "unknown", node.span().start().line, None);
                 }
                 _ => {}
             }
         }
     }
 }
+
+const UNKNOWN_TYPES: &str = "(unknown types)";
 
 fn visibility_name(visibility: &Visibility) -> String {
     match visibility {
@@ -430,8 +518,8 @@ fn visibility_name(visibility: &Visibility) -> String {
 
 /// Set to `1` outside the repository to let rust-analyzer load it and resolve calls.
 const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
-const UNTRUSTED: &str = "Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
-const RESOLVED: &str = "Calls are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
+const UNTRUSTED: &str = "Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
+const RESOLVED: &str = "Calls, implemented traits, supertraits and type references in fields, signatures and impl bodies are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
 
 pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     let trusted = std::env::var_os(TRUST_ENV).is_some_and(|value| value == "1");
@@ -440,8 +528,76 @@ pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     analyze_with(root, config, trusted.then_some(executable.as_os_str()))
 }
 
+/// What the syntax pass collects for the resolution passes.
+#[derive(Default)]
+struct Collected {
+    metrics: Vec<SourceMethodMetrics>,
+    sites: Vec<(String, String, CallSite)>,
+    sources: Vec<crate::rust_scip::Source>,
+    types: TypeSites,
+    parsed: Parsed,
+}
+
+fn collect(
+    root: &Path,
+    config: &Config,
+    files: &[archguard_extract::SourceFile],
+    report: &mut CallAnalysis,
+) -> Collected {
+    let mut collected = Collected::default();
+    for file in files.iter().filter(|file| file.lang == Lang::Rust) {
+        report.files += 1;
+        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
+        let package = stripped
+            .rsplit_once('/')
+            .map_or("", |(dir, _)| dir)
+            .to_owned();
+        let text =
+            crate::project_files::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()));
+        let parsed = text.and_then(|text| {
+            syn::parse_file(&text)
+                .map(|syntax| (syntax, text))
+                .map_err(|error| error.to_string())
+        });
+        let (syntax, text) = match parsed {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                report.diagnostics.push(format!("{stripped}: {error}"));
+                let marker = new_class(&stripped, &package, UNKNOWN_TYPES, "unknown", 1, None);
+                report.classes.push(marker);
+                continue;
+            }
+        };
+        Collector {
+            file: &stripped,
+            rel_path: &file.rel_path,
+            package: &package,
+            report,
+            metrics: &mut collected.metrics,
+            sites: &mut collected.sites,
+            types: &mut collected.types,
+        }
+        .items(&syntax.items, "");
+        let parsed = &mut collected.parsed;
+        parsed
+            .stripped
+            .insert(file.rel_path.clone(), stripped.clone());
+        parsed
+            .syntax
+            .insert(file.rel_path.clone(), (text.clone(), syntax));
+        collected.sources.push(crate::rust_scip::Source {
+            rel_path: file.rel_path.clone(),
+            stripped,
+            text,
+        });
+    }
+    collected
+}
+
 /// `analyzer` is the rust-analyzer executable once the repository is trusted.
-fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr>) -> CallAnalysis {
+pub(crate) fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr>) -> CallAnalysis {
     let mut report = CallAnalysis {
         java_release: 0,
         ..Default::default()
@@ -454,62 +610,42 @@ fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr>) -> CallA
             return report;
         }
     };
-    let mut metrics = Vec::new();
-    let mut sites = Vec::new();
-    let mut sources = Vec::new();
-    for file in files.iter().filter(|file| file.lang == Lang::Rust) {
-        report.files += 1;
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let text =
-            crate::project_files::read_repo_file(root, Path::new(&file.rel_path), SOURCE_LIMIT)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()));
-        let parsed = text.and_then(|text| {
-            syn::parse_file(&text)
-                .map(|syntax| (syntax, text))
-                .map_err(|error| error.to_string())
-        });
-        match parsed {
-            Ok((syntax, text)) => {
-                let package = stripped
-                    .rsplit_once('/')
-                    .map_or("", |(dir, _)| dir)
-                    .to_owned();
-                Collector {
-                    file: &stripped,
-                    package: &package,
-                    report: &mut report,
-                    metrics: &mut metrics,
-                    sites: &mut sites,
-                }
-                .items(&syntax.items, "");
-                sources.push(crate::rust_scip::Source {
-                    rel_path: file.rel_path.clone(),
-                    stripped,
-                    text,
-                });
-            }
-            Err(error) => report.diagnostics.push(format!("{stripped}: {error}")),
-        }
-    }
+    let collected = collect(root, config, &files, &mut report);
     if report.files == 0 {
         return report;
     }
     let mut backend = "syn";
     let mut version = None;
     let mut notes = vec![LIMITATION.to_string()];
-    match analyzer {
-        None => notes.push(UNTRUSTED.into()),
-        Some(executable) => match crate::rust_scip::index(root, executable, &sources) {
+    let index = match analyzer {
+        None => {
+            notes.push(UNTRUSTED.into());
+            None
+        }
+        Some(executable) => match crate::rust_scip::index(root, executable, &collected.sources) {
             Ok(index) => {
-                report.calls = crate::rust_scip::resolve(&index, &report, &sources, &sites);
+                report.calls = crate::rust_scip::resolve(
+                    &index,
+                    &report,
+                    &collected.sources,
+                    &collected.sites,
+                );
                 backend = "syn + rust-analyzer scip";
-                version = Some(index.version);
+                version = Some(index.version.clone());
                 notes.push(RESOLVED.into());
+                Some(index)
             }
-            Err(error) => notes.push(format!("rust-analyzer: {error}")),
+            Err(error) => {
+                notes.push(format!("rust-analyzer: {error}"));
+                None
+            }
         },
-    }
+    };
+    let parsed = &collected.parsed;
+    crate::rust_types::supertypes(&mut report, parsed, &collected.types.traits, index.as_ref());
+    let type_uses = index.as_ref().map_or_else(Vec::new, |index| {
+        crate::rust_types::type_uses(index, &report, parsed, &collected.types.regions)
+    });
     report.status = "partial".into();
     report.diagnostics.extend(notes.iter().cloned());
     report.analyzers.push(CallAnalyzer {
@@ -523,7 +659,8 @@ fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr>) -> CallA
     });
     report.details = Some(SemanticDetails {
         enumeration_complete: Some(false),
-        method_metrics: metrics,
+        method_metrics: collected.metrics,
+        type_uses,
         ..Default::default()
     });
     report
