@@ -73,6 +73,7 @@ graph TD
     subgraph L3["Schicht 3 — Interfaces"]
         CLI["archguard-cli (bin)"]
         MCP["archguard-mcp (lib)"]
+        DESK["archguard-desktop (bin)"]
     end
     subgraph L2["Schicht 2 — Orchestrierung"]
         ENG["archguard-engine"]
@@ -90,6 +91,7 @@ graph TD
     CLI --> MCP
     CLI --> ENG
     MCP --> ENG
+    DESK --> ENG
     ENG --> EXT
     ENG --> ANA
     ENG --> REP
@@ -102,7 +104,7 @@ graph TD
 ```
 
 Jede Kante führt von einer höheren zu einer niedrigeren Schicht. Innerhalb von Schicht 1 gibt es
-keine Kanten. Die zwölf Kanten sind die vollständige Allowlist von
+keine Kanten. Die dreizehn Kanten sind die vollständige Allowlist von
 `scripts/checks/check_architecture.py` (Kap. 12). `archguard-mcp` ist eine Library; das Binary
 `archguard` startet den MCP-Server über das Subkommando `archguard mcp`.
 
@@ -563,7 +565,7 @@ Vorschläge.
 
 ## 12. Sicherungen der eigenen Architektur
 
-1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die acht Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind zwölf Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
+1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die neun Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind dreizehn Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
 2. **Dependency Sink:** Gemeinsame Typen liegen in `archguard-core`. Die L1-Crates (`extract`, `analysis`, `report`, `store`) haben keine Abhängigkeiten untereinander; ein Typ, den mehrere L1-Crates brauchen, gehört nach `archguard-core`.
 3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Er löst Importe zwischen den Workspace-Crates auf, aber nur die im gescannten Quellcode ohne Tests genutzten; die Manifest-Allowlist prüft zusätzlich deklarierte Build-, Dev-, optionale und zielspezifische Abhängigkeiten, deshalb ersetzt der Scan sie nicht.
 

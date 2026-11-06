@@ -73,6 +73,7 @@ graph TD
     subgraph L3["Layer 3 — Interfaces"]
         CLI["archguard-cli (bin)"]
         MCP["archguard-mcp (lib)"]
+        DESK["archguard-desktop (bin)"]
     end
     subgraph L2["Layer 2 — Orchestration"]
         ENG["archguard-engine"]
@@ -90,6 +91,7 @@ graph TD
     CLI --> MCP
     CLI --> ENG
     MCP --> ENG
+    DESK --> ENG
     ENG --> EXT
     ENG --> ANA
     ENG --> REP
@@ -102,7 +104,7 @@ graph TD
 ```
 
 Every edge leads from a higher to a lower layer. Layer 1 has no internal edges.
-The twelve edges are the complete allowlist in `scripts/checks/check_architecture.py`
+The thirteen edges are the complete allowlist in `scripts/checks/check_architecture.py`
 (Section 12). `archguard-mcp` is a library; the `archguard` binary starts the MCP
 server through the `archguard mcp` subcommand.
 
@@ -573,7 +575,7 @@ commented-out suggestions.
 
 ## 12. Safeguards for ArchGuard's architecture
 
-1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the eight workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Twelve edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
+1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the nine workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Thirteen edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
 2. **Dependency sink:** shared types live in `archguard-core`. L1 crates (`extract`, `analysis`, `report`, `store`) have no dependencies on one another; a type needed by several L1 crates belongs in `archguard-core`.
 3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. It resolves imports between the workspace crates, but only those used in scanned non-test source; the manifest allowlist also covers declared build, dev, optional and target-specific dependencies, so the scan does not replace it.
 
