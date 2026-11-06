@@ -15,11 +15,13 @@ export { StartData }
 component LensButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
+    in property <bool> enabled: true;
     callback clicked;
     height: 32px;
     width: label.preferred-width + 26px;
     border-radius: Theme.radius-sm;
-    background: active ? Theme.text : t.has-hover ? Theme.panel-2 : transparent;
+    opacity: enabled ? 1 : 0.45;
+    background: active ? Theme.text : t.has-hover && enabled ? Theme.panel-2 : transparent;
     label := Text {
         text: root.text;
         color: active ? Theme.panel : Theme.text;
@@ -28,7 +30,8 @@ component LensButton inherits Rectangle {
         vertical-alignment: center;
     }
     t := TouchArea {
-        mouse-cursor: pointer;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
     }
 }
@@ -200,7 +203,7 @@ export component StartView inherits Rectangle {
                 padding-top: 4px;
                 padding-bottom: 8px;
                 spacing: 4px;
-                if !root.services: LensButton { text: @tr("Back"); opacity: m.can-back ? 1 : 0.45; clicked => { StartData.go-back(); } }
+                if !root.services: LensButton { text: @tr("Back"); enabled: m.can-back; clicked => { StartData.go-back(); } }
                 // The selection's actions (`repositoryWorldControls`).
                 if root.services && m.has-selection: LensButton { text: @tr("Overview"); clicked => { StartData.services-toggle(3); } }
                 if root.services && m.has-selection && !m.services.external: Button {
