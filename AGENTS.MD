@@ -13,6 +13,12 @@
   worktree starts from the last commit and does not contain uncommitted changes.
   If your task depends on them, stop and tell the user. Return your branch name
   when you finish. Do not merge into main unless the user asks.
+- Clean up right after a merge; worktrees with commits are never removed
+  automatically. Whoever merges a branch checks that the branch is contained in
+  its target (`git merge-base --is-ancestor <branch> <target>`) and that the
+  worktree has no uncommitted changes. Then they run `git worktree remove
+  <path>`, delete the branch and its `worktree-agent-*` branch, and run `git
+  worktree prune`. Leave worktrees of running agents and of other sessions alone.
 - Track parallel work in `$(git rev-parse --git-common-dir)/agent-tasks.md`, which
   all worktrees share and git never commits. Before you start, add one line:
   task, owner, files. Remove it when you finish. Do not take a file another line
