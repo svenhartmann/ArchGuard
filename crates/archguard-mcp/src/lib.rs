@@ -427,7 +427,7 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
+        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared database (same datastore and database name) versus shared server only; configuration does not prove runtime use and tables are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
     )]
     async fn service_topology(
         &self,
@@ -1045,27 +1045,44 @@ pub struct HotspotsParams {
 /// service graph has several lists, so the common single-list guard alone
 /// cannot bound it. Shrink the largest list first, keeping its stable prefix.
 fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) -> Value {
-    use archguard_engine::core::ServiceDependencyKind;
+    use archguard_engine::core::{ServiceDependencyKind, SharedDatastoreScope};
     let mut value = serde_json::to_value(topology).expect("service topology serializes");
+    // (total name, JSON pointer) of every list that may be sampled.
     let lists = [
-        "projects",
-        "compose_files",
-        "services",
-        "dependencies",
-        "cycles",
-        "diagnostics",
+        ("projects", "/projects"),
+        ("compose_files", "/compose_files"),
+        ("services", "/services"),
+        ("dependencies", "/dependencies"),
+        ("cycles", "/cycles"),
+        ("diagnostics", "/diagnostics"),
+        ("datastores", "/datastores/nodes"),
+        ("datastore_usages", "/datastores/usages"),
+        ("shared_datastores", "/datastores/shared"),
     ];
     value["totals"] = Value::Object(
         lists
             .iter()
-            .map(|key| {
-                (
-                    (*key).into(),
-                    json!(value[*key].as_array().map_or(0, Vec::len)),
-                )
+            .map(|(name, pointer)| {
+                let total = value
+                    .pointer(pointer)
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                ((*name).into(), json!(total))
             })
             .collect(),
     );
+    let shared = |scope| {
+        topology
+            .datastores
+            .shared
+            .iter()
+            .filter(|s| s.scope == scope)
+            .count()
+    };
+    value["shared_datastore_counts"] = json!({
+        "database": shared(SharedDatastoreScope::Database),
+        "server": shared(SharedDatastoreScope::Server)
+    });
     value["project_counts"] = json!({
         "application":topology.projects.iter().filter(|project|project.kind=="application").count(),
         "library":topology.projects.iter().filter(|project|project.kind=="library").count(),
@@ -1089,14 +1106,17 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
         );
         let largest = lists
             .iter()
-            .filter(|key| {
-                value[**key]
-                    .as_array()
-                    .is_some_and(|items| !items.is_empty())
+            .filter_map(|(_, pointer)| {
+                let items = value.pointer(pointer)?.as_array()?;
+                (!items.is_empty())
+                    .then(|| (*pointer, Value::from(items.clone()).to_string().len()))
             })
-            .max_by_key(|key| value[**key].to_string().len());
-        let Some(key) = largest else { break };
-        let items = value[*key].as_array_mut().expect("topology lists");
+            .max_by_key(|(_, size)| *size);
+        let Some((pointer, _)) = largest else { break };
+        let items = value
+            .pointer_mut(pointer)
+            .and_then(Value::as_array_mut)
+            .expect("topology lists");
         items.truncate(items.len() / 2);
     }
     tools::guarded(&value)
@@ -2581,6 +2601,30 @@ links = ["docs/adr/1.md"]
         assert!(value["projects"].as_array().unwrap().len() < 100);
         assert_eq!(value["projects"][0]["id"], "project:apps/0/pom.xml");
         assert_eq!(value["projects"][0]["evidence"][0]["line"], 5);
+    }
+
+    #[test]
+    fn service_topology_datastores_have_exact_totals_within_the_budget() {
+        let evidence = json!([{"file":"compose.yaml","pointer":"/services/app/environment/DATABASE_URL","line":null,"description":"Literal datastore connection URL; host, port and database name only. Credentials and options omitted."}]);
+        let usages: Vec<_> = (0..400)
+            .map(|i| json!({"service":format!("compose.yaml::app{i}"),"datastore":"compose.yaml::db","database":"shop","evidence":evidence}))
+            .collect();
+        let services: Vec<_> = (0..400).map(|i| format!("compose.yaml::app{i}")).collect();
+        let topology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":["compose.yaml"],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
+            "datastores":{"nodes":[{"id":"compose.yaml::db","engine":"postgresql","service":"compose.yaml::db","host":null,"port":null,"evidence":evidence}],
+            "usages":usages,
+            "shared":[{"datastore":"compose.yaml::db","scope":"database","database":"shop","services":services}],
+            "note":"Datastore references come from static configuration."}})).unwrap();
+        let value = service_topology_value(&topology);
+        assert!(value.to_string().len() <= tools::MAX_RESPONSE_BYTES);
+        assert_eq!(value["truncated"], true);
+        assert_eq!(value["totals"]["datastore_usages"], 400);
+        assert_eq!(value["totals"]["datastores"], 1);
+        assert_eq!(value["totals"]["shared_datastores"], 1);
+        assert_eq!(value["shared_datastore_counts"]["database"], 1);
+        assert_eq!(value["shared_datastore_counts"]["server"], 0);
+        assert!(value["datastores"]["usages"].as_array().unwrap().len() < 400);
+        assert!(!value["datastores"]["note"].as_str().unwrap().is_empty());
     }
 
     #[test]

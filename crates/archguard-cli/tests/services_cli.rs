@@ -150,3 +150,28 @@ fn services_reports_manifest_apps_and_tools_without_compose_or_source_analysis()
         "read-only inventory must not build or scan imports"
     );
 }
+
+#[test]
+fn services_text_reports_shared_databases_without_failing_the_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("compose.yaml"),
+        "services:\n  orders:\n    environment: {DATABASE_URL: 'postgres://u:hunter2@db/shop'}\n  billing:\n    environment: {DB_HOST: db, DB_NAME: shop}\n  db:\n    image: postgres:16\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["services", "--fail-on-found"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains(
+            "shared database: compose.yaml::db database shop: compose.yaml::billing, compose.yaml::orders"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("do not prove runtime use"), "{text}");
+    assert!(!text.contains("hunter2"), "{text}");
+}
