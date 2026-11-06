@@ -13,6 +13,8 @@ mod documents_ui;
 mod export;
 mod export_ui;
 mod file_ui;
+mod follow;
+mod follow_ui;
 mod format;
 mod graph_ui;
 #[cfg(feature = "snapshot")]

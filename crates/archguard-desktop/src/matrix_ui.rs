@@ -8,6 +8,8 @@ use slint::{ComponentHandle, SharedString, VecModel};
 
 use crate::documents::with_store;
 use crate::export::GraphInput;
+use crate::follow::{self, Nav};
+use crate::follow_ui;
 use crate::format::Locale;
 use crate::instances::{self, Instance};
 use crate::kpi::{self, Value};
@@ -115,6 +117,45 @@ impl MatrixState {
         self.marked = None;
     }
 
+    /// Where the matrix stands, for "Follow left": scope, open packages,
+    /// the row of the open cell.
+    fn marks(&self) -> follow::Marks {
+        follow::Marks {
+            scope: self.scope,
+            open: self.expanded.clone(),
+            selected: self.evidence.map(|(row, _)| row),
+        }
+    }
+
+    /// "Follow left": do what the left pane did. A scope the matrix does
+    /// not offer (a file) is revealed instead.
+    pub fn follow(&mut self, nav: &Nav) {
+        let node = |name: &str| instances::node_named(&self.tree, name);
+        match nav {
+            Nav::Scope(None) => self.set_scope(None),
+            Nav::Scope(Some(name)) => match node(name) {
+                Some(n) if self.scopes.contains(&n) => self.set_scope(Some(n)),
+                Some(n) => self.reveal(n),
+                None => {}
+            },
+            Nav::Expand { open, close } => {
+                let (open, close): (Vec<_>, Vec<_>) = (
+                    open.iter().filter_map(|n| node(n)).collect(),
+                    close.iter().filter_map(|n| node(n)).collect(),
+                );
+                self.expanded.extend(open);
+                for n in close {
+                    self.expanded.remove(&n);
+                }
+            }
+            Nav::Select(name) => {
+                if let Some(n) = node(name) {
+                    self.reveal(n);
+                }
+            }
+        }
+    }
+
     /// The export's input: every row of the scope at the open packages
     /// (all pages, no search) and every link between them, as the web
     /// exports the complete matrix scope.
@@ -181,15 +222,20 @@ fn act(ui: &AppWindow, id: i32, f: impl FnOnce(&mut MatrixState)) {
         return;
     };
     let layout = panes_ui::layout();
-    let changed = instances::update(ui, &layout, id, |m: &mut MatrixState| {
-        let before = m.scope;
+    let result = instances::update(ui, &layout, id, |m: &mut MatrixState| {
+        let was = m.marks();
         f(m);
-        (m.scope != before).then(|| m.scope.map(|n| m.tree.nodes[n].name.clone()))
-    })
-    .flatten();
+        let navs = follow::navs(&m.tree, &was, &m.marks());
+        let changed = (m.scope != was.scope).then(|| m.scope.map(|n| m.tree.nodes[n].name.clone()));
+        (changed, navs)
+    });
+    let Some((changed, navs)) = result else {
+        return;
+    };
     if let Some(node) = changed {
         panes_ui::describe(ui, id, node, 0);
     }
+    follow_ui::navigated(ui, id, navs);
 }
 
 /// A Matrix callback with the instance id and one argument.
@@ -214,6 +260,7 @@ fn on0(ui: &AppWindow, f: impl Fn(&mut MatrixState) + 'static) -> impl Fn(i32) +
 pub fn wire(ui: &AppWindow) {
     ui.set_matrix_panes(PANES.with(|m| m.clone()).into());
     panes_ui::on_sync("dsm", sync);
+    follow_ui::on_follow("dsm", |ui, id, nav| act(ui, id as i32, |m| m.follow(nav)));
     // Linked selection from the pane beside.
     panes_ui::on_reveal("dsm", |ui, id, node| act(ui, id as i32, |m| m.reveal(node)));
     ui.on_m_toggle(on(ui, |m, n: i32| {

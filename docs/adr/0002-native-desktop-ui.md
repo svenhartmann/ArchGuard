@@ -254,3 +254,30 @@ comparison of the native view against the web view on the same project
   `ARCHGUARD_DESKTOP_EXPORT=<format>:<path>[,…]`. Checked with unit tests
   and headless snapshot runs on macOS (fixtures/ts-cyclic,
   examples/service-shop); the save dialog itself was not opened.
+- **2026-11-06:** "Follow left" (`feat/desktop-export-follow`), asked
+  for by the user: in a split layout the right pane follows the left
+  pane's navigation where the two views share a context, mapped by tree
+  node name (`src/follow.rs`, `src/follow_ui.rs`). A chain toggle
+  on the right pane's strip switches it; it is disabled, with its reason
+  on hover, when the pair has no common context. Pairs: Start/World →
+  Graph (entering a package, also by zooming in, opens and expands it in
+  the Graph; leaving it, also by zooming out, collapses the Graph; a
+  selected area or entity is revealed), Graph → Graph and Graph → Matrix
+  (scope, expanded and collapsed packages), Graph or Matrix → File view
+  (the selected node, a Matrix cell's row, becomes the File view's node),
+  Architecture → Graph (the building-block map's scope and selected
+  package). Selections between Graph and Matrix stay with the existing
+  linked selection. Not supported: Matrix → Graph, anything → Calls,
+  Services, Quality, Security, Start or Architecture. One direction only:
+  views report their navigations (Graph and Matrix as the difference of
+  scope, open packages and selection per callback; World and
+  Architecture per wrapped callback); a navigation reported by the right
+  pane switches Follow off, and the follow runs inside the link guard, so
+  the right pane's own reports while it follows are ignored. Switching
+  Follow on does not copy the left pane's current state; the next left
+  navigation is followed. The toggle is stored with the layout
+  (`pane_follow` in `desktop.toml`) and dropped when the split closes.
+  Checked with unit tests and headless snapshots on macOS
+  (fixtures/py-layers, fixtures/ts-cyclic; snapshot hooks
+  `ARCHGUARD_DESKTOP_FOLLOW`, `…_LEFT_OPEN`, `…_LEFT_EXPAND`,
+  `…_WORLD_OPEN`, `…_WORLD_BACK`, `…_ARC_OPEN` in `src/snapshot.rs`).

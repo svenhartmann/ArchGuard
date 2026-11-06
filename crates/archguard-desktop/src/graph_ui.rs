@@ -11,6 +11,8 @@ use slint::{ComponentHandle, SharedString, VecModel};
 
 use crate::documents::{self, with_store};
 use crate::export::{Diagram, GraphInput};
+use crate::follow::{self, Nav};
+use crate::follow_ui;
 use crate::instances::{self, Instance};
 use crate::panes::Layout;
 use crate::panes_ui;
@@ -53,16 +55,54 @@ fn act(ui: &AppWindow, id: i32, f: impl FnOnce(&mut GraphState)) {
         return;
     };
     let layout = panes_ui::layout();
-    let changed = instances::update(ui, &layout, id, |s: &mut Graph| {
+    let result = instances::update(ui, &layout, id, |s: &mut Graph| {
         let before = (s.g.scope, s.g.display);
+        let was = marks(&s.g);
         f(&mut s.g);
+        let navs = follow::navs(&s.g.tree, &was, &marks(&s.g));
         let name = |n: usize| s.g.tree.nodes[n].name.clone();
-        ((s.g.scope, s.g.display) != before).then(|| (s.g.scope.map(name), s.g.display))
-    })
-    .flatten();
+        let changed =
+            ((s.g.scope, s.g.display) != before).then(|| (s.g.scope.map(name), s.g.display));
+        (changed, navs)
+    });
+    let Some((changed, navs)) = result else {
+        return;
+    };
     if let Some((node, display)) = changed {
         panes_ui::describe(ui, id, node, display);
     }
+    follow_ui::navigated(ui, id, navs);
+}
+
+fn marks(g: &GraphState) -> follow::Marks {
+    follow::Marks {
+        scope: g.scope,
+        open: g.expanded.clone(),
+        selected: g.selected,
+    }
+}
+
+/// "Follow left": do in Graph `id` what the left pane did.
+fn follow_nav(ui: &AppWindow, id: u32, nav: &Nav) {
+    act(ui, id as i32, |g| {
+        let tree = g.tree.clone();
+        let node = |name: &str| instances::node_named(&tree, name);
+        let nodes = |names: &[String]| names.iter().filter_map(|n| node(n)).collect::<Vec<_>>();
+        match nav {
+            Nav::Scope(None) => g.reset(),
+            Nav::Scope(Some(name)) => {
+                if let Some(n) = node(name) {
+                    g.open(n);
+                }
+            }
+            Nav::Expand { open, close } => g.set_open(&nodes(open), &nodes(close)),
+            Nav::Select(name) => {
+                if let Some(n) = node(name) {
+                    g.reveal(n);
+                }
+            }
+        }
+    });
 }
 
 /// A Graph callback with the instance id and one argument.
@@ -85,6 +125,7 @@ pub fn wire(ui: &AppWindow) {
         act(ui, id as i32, |g| g.reveal(node));
     });
     panes_ui::on_sync("graph", sync);
+    follow_ui::on_follow("graph", follow_nav);
     let select = on(ui, |g, r: i32| g.select_row(index(r)));
     ui.on_select_row(link(ui, select));
     let reveal = on(ui, |g, n: i32| g.reveal(index(n).unwrap_or(0)));

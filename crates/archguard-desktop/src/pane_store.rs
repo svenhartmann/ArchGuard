@@ -8,6 +8,7 @@
 //! pane_active = [1, 0]                          # selected tab per pane
 //! pane_focus = 1
 //! pane_ratio = 0.5                              # left pane's share
+//! pane_follow = false                           # right pane follows the left
 //! ```
 //!
 //! Reading repairs what does not fit (`panes::repaired`); a
@@ -44,11 +45,16 @@ pub fn read(t: &dyn TableLike) -> Option<Layout> {
         .and_then(|n| usize::try_from(n).ok())
         .unwrap_or(0);
     let ratio = t.get("pane_ratio").and_then(Item::as_float).unwrap_or(0.5) as f32;
+    let follow = t
+        .get("pane_follow")
+        .and_then(Item::as_bool)
+        .unwrap_or(false);
     Some(panes::repaired(Layout {
         panes,
         focus,
         ratio,
         next: 1,
+        follow_left: follow,
     }))
 }
 
@@ -92,7 +98,7 @@ fn tab_value(tab: &Tab) -> Value {
 }
 
 /// The values to store for `layout`, as `(key, item)`.
-pub fn items(layout: &Layout) -> [(&'static str, Item); 4] {
+pub fn items(layout: &Layout) -> [(&'static str, Item); 5] {
     let panes: Array = layout
         .panes
         .iter()
@@ -106,5 +112,6 @@ pub fn items(layout: &Layout) -> [(&'static str, Item); 4] {
         ("pane_active", value(active)),
         ("pane_focus", value(layout.focus as i64)),
         ("pane_ratio", value(ratio)),
+        ("pane_follow", value(layout.follow_left)),
     ]
 }

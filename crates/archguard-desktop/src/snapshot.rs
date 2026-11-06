@@ -193,11 +193,56 @@ fn apply_pane_hooks(ui: &AppWindow) {
     }
 }
 
+/// "Follow left", after the pane hooks: switch it on
+/// (`ARCHGUARD_DESKTOP_FOLLOW=1`), then navigate in the left pane as the
+/// user would: open a package in a left Graph as a breadcrumb does
+/// (`ARCHGUARD_DESKTOP_LEFT_OPEN=<name>`), expand a package row there
+/// (`ARCHGUARD_DESKTOP_LEFT_EXPAND=<name>`), enter a World package
+/// (`ARCHGUARD_DESKTOP_WORLD_OPEN=<area name>`, as a double-click) and go
+/// back out (`ARCHGUARD_DESKTOP_WORLD_BACK=1`), or open a building-block
+/// scope (`ARCHGUARD_DESKTOP_ARC_OPEN=<package>`). Logs the result.
+fn follow_hooks(ui: &AppWindow) {
+    use crate::ui::{ArchitectureData, StartData};
+    if env::<String>("ARCHGUARD_DESKTOP_FOLLOW").as_deref() == Some("1") {
+        ui.invoke_toggle_follow();
+    }
+    let left = panes_ui::layout().view(0).map_or(-1, |t| t.id as i32);
+    if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_LEFT_OPEN").and_then(|n| node_named(&n)) {
+        ui.invoke_open_node(left, n as i32);
+    }
+    if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_LEFT_EXPAND").and_then(|n| node_named(&n)) {
+        let row = crate::instances::with(left as u32, |g: &mut crate::graph_ui::Graph| {
+            g.g.view.rows.iter().position(|r| r.node == n)
+        });
+        if let Some(Some(row)) = row {
+            ui.invoke_toggle_row(left, row as i32);
+        }
+    }
+    if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_WORLD_OPEN") {
+        let area = crate::documents::with_active_state(|s: &mut crate::start_ui::StartState| {
+            s.area_named(&name)
+        });
+        if let Some(Some(area)) = area {
+            ui.global::<StartData>().invoke_open_area(area as i32);
+        }
+    }
+    if env::<String>("ARCHGUARD_DESKTOP_WORLD_BACK").as_deref() == Some("1") {
+        ui.global::<StartData>().invoke_go_back();
+    }
+    if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_ARC_OPEN").and_then(|n| node_named(&n)) {
+        ui.global::<ArchitectureData>().invoke_navigate(n as i32);
+    }
+    let l = panes_ui::layout();
+    let tabs: Vec<_> = (0..l.panes.len()).filter_map(|p| l.view(p)).collect();
+    eprintln!("follow: {} tabs {tabs:?}", l.follow_left);
+}
+
 /// Graph hooks act on the Graph the view bar would show, Matrix hooks on
 /// that Matrix.
 fn apply_view_hooks(ui: &AppWindow) {
     matrix_query_round_trip(ui);
     apply_pane_hooks(ui);
+    follow_hooks(ui);
     let graph = shown("graph").unwrap_or(-1);
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_REVEAL").and_then(|n| node_named(&n)) {
         ui.invoke_reveal(graph, n as i32);

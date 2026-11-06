@@ -146,6 +146,8 @@ pub fn push(ui: &AppWindow) {
     ui.set_tab(l.focused().into());
     ui.set_focused_pane(l.focus as i32);
     ui.set_pane_ratio(l.ratio);
+    ui.set_follow(l.follow_left);
+    ui.set_follow_blocked(crate::follow::blocked(&l));
 }
 
 /// Make `model` hold `rows`, touching only rows that differ.

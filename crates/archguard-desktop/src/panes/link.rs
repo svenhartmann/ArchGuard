@@ -35,10 +35,22 @@ pub fn follow(target: Option<(&str, u32)>, f: impl FnOnce(&str, u32)) -> bool {
     let Some((kind, id)) = target.filter(|(kind, _)| reveals(kind)) else {
         return false;
     };
+    guarded(|| f(kind, id))
+}
+
+/// Run `f` as the one running link (also "Follow left", `follow.rs`)
+/// unless a link is running. Returns whether `f` ran.
+pub fn guarded(f: impl FnOnce()) -> bool {
     if LINKING.replace(true) {
         return false;
     }
     let _running = Running;
-    f(kind, id);
+    f();
     true
+}
+
+/// Whether a link runs: views changed now are changed by it, not by the
+/// user.
+pub fn running() -> bool {
+    LINKING.get()
 }

@@ -130,6 +130,11 @@ export component AppWindow inherits Window {
     callback close-view-tab(int, int);
     callback focus-pane(int);
     callback set-pane-ratio(float);
+    // "Follow left" (src/follow_ui.rs): on, and whether the right view
+    // cannot follow the left one.
+    in property <bool> follow;
+    in property <bool> follow-blocked;
+    callback toggle-follow();
     in-out property <bool> show-explorer: true;
     in-out property <bool> show-details: true;
 
@@ -515,6 +520,10 @@ export component AppWindow inherits Window {
                     if root.panes.length > 1 || p.tabs.length > 1: PaneStrip {
                         pane: p;
                         split: root.panes.length > 1;
+                        show-follow: root.panes.length > 1 && i == 1;
+                        follow: root.follow;
+                        follow-blocked: root.follow-blocked;
+                        toggle-follow => { root.toggle-follow(); }
                         select(j) => { root.select-view-tab(i, j); }
                         close(j) => { root.close-view-tab(i, j); }
                         close-pane => { root.close-pane(i); }
