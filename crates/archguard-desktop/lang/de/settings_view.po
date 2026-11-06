@@ -147,3 +147,273 @@ msgstr "{} Fehler · {} Warnungen · {} Hinweise"
 msgctxt "Settings"
 msgid "… and {} more"
 msgstr "… und {} weitere"
+
+msgid "Layers"
+msgstr "Schichten"
+
+msgid "Dependency rules"
+msgstr "Abhängigkeitsregeln"
+
+msgid "Ownership rules"
+msgstr "Zuständigkeitsregeln"
+
+msgid "Rules and thresholds"
+msgstr "Regeln und Schwellenwerte"
+
+msgid "Performance"
+msgstr "Leistung"
+
+msgid "Semantic analysis"
+msgstr "Semantische Analyse"
+
+msgid "Store"
+msgstr "Graphdatenbank"
+
+msgid "Where to look for sources and what to skip. Derived from the project when not written."
+msgstr "Wo Quellen gesucht werden und was übersprungen wird. Ohne Eintrag aus dem Projekt abgeleitet."
+
+msgid "Directories holding the sources, relative to the project root."
+msgstr "Verzeichnisse mit den Quellen, relativ zum Projektstamm."
+
+msgid "Globs excluded from the analysis. An explicit list replaces the defaults."
+msgstr "Globs, die von der Analyse ausgeschlossen sind. Eine eigene Liste ersetzt die Standardwerte."
+
+msgid "\"auto\" or explicit language ids, e.g. ts, py, rs, java, cs, php, go, kt."
+msgstr "\"auto\" oder ausdrückliche Sprach-IDs, z. B. ts, py, rs, java, cs, php, go, kt."
+
+msgid "The zoom level at which modules are named."
+msgstr "Die Zoomstufe, auf der Module benannt werden."
+
+msgid "Module depth: with 2, app/billing/x.ts is seen as module app/billing. Derived when not written."
+msgstr "Modultiefe: Bei 2 gilt app/billing/x.ts als Modul app/billing. Ohne Eintrag abgeleitet."
+
+msgid "Derive layers from the dependency ranking; off keeps only the declared layers."
+msgstr "Schichten aus der Abhängigkeitsrangfolge ableiten; aus behält nur die deklarierten Schichten."
+
+msgid "Declared layers; a declared layer wins over a derived one of the same name."
+msgstr "Deklarierte Schichten; eine deklarierte Schicht hat Vorrang vor einer abgeleiteten gleichen Namens."
+
+msgid "Unique layer name."
+msgstr "Eindeutiger Schichtname."
+
+msgid "Globs matching module names (source-root-relative)."
+msgstr "Globs über Modulnamen (relativ zum Quellstamm)."
+
+msgid "Layers this one may depend on; empty means bottom layer."
+msgstr "Schichten, von denen diese abhängen darf; leer bedeutet unterste Schicht."
+
+msgid "Forbidden dependency directions between source modules."
+msgstr "Verbotene Abhängigkeitsrichtungen zwischen Quellmodulen."
+
+msgid "Unique rule name."
+msgstr "Eindeutiger Regelname."
+
+msgid "Globs over source module names the rule applies to, independent of the view depth."
+msgstr "Globs über die Quellmodulnamen, für die die Regel gilt, unabhängig von der Ansichtstiefe."
+
+msgid "Globs over the forbidden targets."
+msgstr "Globs über die verbotenen Ziele."
+
+msgid "Severity of a violation; error fails the check."
+msgstr "Schweregrad eines Verstoßes; error lässt die Prüfung scheitern."
+
+msgid "Explanation shown with each violation."
+msgstr "Erklärung, die bei jedem Verstoß erscheint."
+
+msgid "Forbidden dependency directions between CODEOWNERS owners."
+msgstr "Verbotene Abhängigkeitsrichtungen zwischen CODEOWNERS-Zuständigen."
+
+msgid "Exact CODEOWNERS token of the depending side, e.g. @example/frontend."
+msgstr "Exaktes CODEOWNERS-Token der abhängigen Seite, z. B. @example/frontend."
+
+msgid "Exact CODEOWNERS token of the forbidden target."
+msgstr "Exaktes CODEOWNERS-Token des verbotenen Ziels."
+
+msgid "Cycle policy and quality gates."
+msgstr "Zyklusregel und Qualitäts-Gates."
+
+msgid "Forbid cycles between modules, even between files, or allow them."
+msgstr "Zyklen zwischen Modulen verbieten, sogar zwischen Dateien, oder erlauben."
+
+msgid "Largest allowed cycle group; 0 and 1 both reject every cycle."
+msgstr "Größte erlaubte Zyklusgruppe; 0 und 1 lehnen beide jeden Zyklus ab."
+
+msgid "Path of the baseline file with accepted cycles."
+msgstr "Pfad der Baseline-Datei mit akzeptierten Zyklen."
+
+msgid "Gate for the average component dependency of the module view; 0 disables it."
+msgstr "Gate für die durchschnittliche Komponentenabhängigkeit der Modulansicht; 0 schaltet es ab."
+
+msgid "Gate for the instability (0 to 1) of bottom-layer modules; 0 disables it."
+msgstr "Gate für die Instabilität (0 bis 1) der Module der untersten Schicht; 0 schaltet es ab."
+
+msgid "Review settings and key-figure gates."
+msgstr "Prüfeinstellungen und Kennzahl-Gates."
+
+msgid "History window for change counts: a date (2026-01-31) or e.g. 180.days."
+msgstr "Zeitfenster der Historie für Änderungszahlen: ein Datum (2026-01-31) oder z. B. 180.days."
+
+msgid "Globs of entry files that are never orphan candidates."
+msgstr "Globs der Einstiegsdateien, die nie als verwaist gelten."
+
+msgid "Opt-in file-level orphan gate; a candidate is not proof of dead code."
+msgstr "Optionales Gate für verwaiste Dateien; ein Kandidat belegt keinen toten Code."
+
+msgid "Weights of the health index parts (name = weight); unlisted parts weigh 1."
+msgstr "Gewichte der Teile des Gesundheitsindex (Name = Gewicht); nicht genannte Teile wiegen 1."
+
+msgid "Gate: maximum number of stable-dependencies violations; absent = off."
+msgstr "Gate: höchste Zahl von Verstößen gegen stabile Abhängigkeiten; fehlt = aus."
+
+msgid "Gate: maximum share (0 to 1) of modules in cycles; absent = off."
+msgstr "Gate: höchster Anteil (0 bis 1) von Modulen in Zyklen; fehlt = aus."
+
+msgid "Gate: maximum propagation cost (0 to 1) of a cycle group; absent = off."
+msgstr "Gate: höchste Ausbreitungskosten (0 bis 1) einer Zyklusgruppe; fehlt = aus."
+
+msgid "Accept-risk review decisions must link an ADR."
+msgstr "Prüfentscheidungen mit akzeptiertem Risiko müssen auf eine ADR verweisen."
+
+msgid "Structural performance hints."
+msgstr "Strukturelle Hinweise zur Leistung."
+
+msgid "External module prefixes flagged for review, not measured costs."
+msgstr "Präfixe externer Module, die zur Prüfung markiert werden; keine gemessenen Kosten."
+
+msgid "Re-exports from which a file counts as a barrel; at least 1."
+msgstr "Anzahl Re-Exporte, ab der eine Datei als Barrel gilt; mindestens 1."
+
+msgid "Share (0 to 1) of re-exporting lines from which a file counts as a barrel."
+msgstr "Anteil (0 bis 1) re-exportierender Zeilen, ab dem eine Datei als Barrel gilt."
+
+msgid "Explicit organization intent: goals, constraints, decisions, target model."
+msgstr "Ausdrückliche Absicht der Organisation: Ziele, Randbedingungen, Entscheidungen, Zielmodell."
+
+msgid "Quality goals of the organization."
+msgstr "Qualitätsziele der Organisation."
+
+msgid "Unique goal name."
+msgstr "Eindeutiger Zielname."
+
+msgid "The organization's own priority wording; empty means unspecified."
+msgstr "Die eigene Prioritätsangabe der Organisation; leer bedeutet nicht angegeben."
+
+msgid "Why the goal matters."
+msgstr "Warum das Ziel wichtig ist."
+
+msgid "Constraints the architecture must respect."
+msgstr "Randbedingungen, die die Architektur einhalten muss."
+
+msgid "Unique constraint name."
+msgstr "Eindeutiger Name der Randbedingung."
+
+msgid "The contract or other evidence behind it."
+msgstr "Der Vertrag oder ein anderer Beleg dahinter."
+
+msgid "Recorded architecture decisions."
+msgstr "Erfasste Architekturentscheidungen."
+
+msgid "Unique decision id, e.g. ADR-1."
+msgstr "Eindeutige Entscheidungs-ID, z. B. ADR-1."
+
+msgid "Decision title."
+msgstr "Titel der Entscheidung."
+
+msgid "User-supplied status, e.g. proposed, accepted, superseded."
+msgstr "Selbst angegebener Status, z. B. proposed, accepted, superseded."
+
+msgid "The chosen alternative."
+msgstr "Die gewählte Alternative."
+
+msgid "Other options considered."
+msgstr "Weitere erwogene Optionen."
+
+msgid "Explicitly accepted disadvantages."
+msgstr "Ausdrücklich akzeptierte Nachteile."
+
+msgid "References; never followed automatically."
+msgstr "Verweise; werden nie automatisch geöffnet."
+
+msgid "Target architecture: logical components and their allowed directions."
+msgstr "Zielarchitektur: logische Komponenten und ihre erlaubten Richtungen."
+
+msgid "Name of the target architecture."
+msgstr "Name der Zielarchitektur."
+
+msgid "Severity of a forbidden component dependency."
+msgstr "Schweregrad einer verbotenen Komponentenabhängigkeit."
+
+msgid "Every source module must belong to a component."
+msgstr "Jedes Quellmodul muss zu einer Komponente gehören."
+
+msgid "Logical components, assigned from source module names."
+msgstr "Logische Komponenten, zugeordnet über Quellmodulnamen."
+
+msgid "Component name."
+msgstr "Komponentenname."
+
+msgid "Globs of the source modules in this component."
+msgstr "Globs der Quellmodule dieser Komponente."
+
+msgid "Globs other components may use; absent = all, empty = none."
+msgstr "Globs, die andere Komponenten nutzen dürfen; fehlt = alle, leer = keine."
+
+msgid "Maximum number of components depending on this one."
+msgstr "Höchstzahl der Komponenten, die von dieser abhängen."
+
+msgid "Maximum number of components this one depends on."
+msgstr "Höchstzahl der Komponenten, von denen diese abhängt."
+
+msgid "Allowed directions between components; all others are denied."
+msgstr "Erlaubte Richtungen zwischen Komponenten; alle anderen sind verboten."
+
+msgid "Depending component."
+msgstr "Abhängige Komponente."
+
+msgid "Component it may depend on."
+msgstr "Komponente, von der sie abhängen darf."
+
+msgid "Extra local AsyncAPI documents; root asyncapi files are read anyway."
+msgstr "Zusätzliche lokale AsyncAPI-Dokumente; asyncapi-Dateien im Projektstamm werden ohnehin gelesen."
+
+msgid "Compiler-backed call analysis."
+msgstr "Compilergestützte Aufrufanalyse."
+
+msgid "Java compiler settings."
+msgstr "Einstellungen des Java-Compilers."
+
+msgid "Java release (at least 6); otherwise build metadata, then the running JDK."
+msgstr "Java-Release (mindestens 6); sonst Build-Metadaten, dann das laufende JDK."
+
+msgid "Existing jars or class directories, relative to the project root."
+msgstr "Vorhandene JARs oder Klassenverzeichnisse, relativ zum Projektstamm."
+
+msgid "C# compiler settings."
+msgstr "Einstellungen des C#-Compilers."
+
+msgid "Project file to analyze, e.g. src/App/App.csproj."
+msgstr "Zu analysierende Projektdatei, z. B. src/App/App.csproj."
+
+msgid "Build configuration."
+msgstr "Build-Konfiguration."
+
+msgid "Target framework of a multi-target project, e.g. net8.0."
+msgstr "Ziel-Framework eines Projekts mit mehreren Zielen, z. B. net8.0."
+
+msgid "TypeScript compiler settings."
+msgstr "Einstellungen des TypeScript-Compilers."
+
+msgid "Existing tsconfig; defaults to the root tsconfig.json."
+msgstr "Vorhandene tsconfig; Standard ist tsconfig.json im Projektstamm."
+
+msgid "Installed typescript/lib/typescript.js; never downloaded."
+msgstr "Installierte typescript/lib/typescript.js; wird nie heruntergeladen."
+
+msgid "The graph database mirror."
+msgstr "Der Spiegel in der Graphdatenbank."
+
+msgid "Path of the graph database."
+msgstr "Pfad der Graphdatenbank."
+
+msgid "Refresh the database on every check."
+msgstr "Die Datenbank bei jeder Prüfung aktualisieren."

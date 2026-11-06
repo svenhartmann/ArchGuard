@@ -10,8 +10,10 @@ use slint::Model;
 use super::form::{ARRAY, ENTRY, FIELD, HEADING, NOTE};
 use super::preview_panel::{self, LISTED, PreviewStatus};
 use super::session::SettingsState;
+use crate::config_editor::FIELDS;
 use crate::config_editor::{CheckSummary, Group, Preview};
 use crate::documents::{self, DocId, with_store};
+use crate::tab_support::Texts;
 use crate::ui::SettingsItem;
 
 /// A project with `text` as `.archguard/archguard.toml`, open as a
@@ -277,6 +279,33 @@ fn a_search_finds_a_field_by_its_description() {
         row.description
             .starts_with("History window for change counts")
     );
+}
+
+/// Every group name and field description of the catalogue has a
+/// German template, so a new field cannot stay English.
+#[test]
+fn every_catalogue_text_has_german() {
+    let de = Texts::german();
+    let texts = Group::ALL.iter().map(|g| g.label());
+    let texts = texts.chain(FIELDS.iter().map(|f| f.description));
+    let missing: Vec<_> = texts.filter(|t| de.t(t) == *t).collect();
+    assert!(missing.is_empty(), "no German for {missing:?}");
+}
+
+/// In German, groups, headings and descriptions read German, and the
+/// search finds a field by its German or English description.
+#[test]
+fn german_texts_are_searchable_in_both_languages() {
+    let (_dir, _, mut s) = project("");
+    s.texts = Texts::german();
+    assert_eq!(s.groups()[2].label, "Schichten");
+    for query in ["zeitfenster", "history window"] {
+        s.query = query.into();
+        let items = s.items().0;
+        assert_eq!(items[0].label, "Prüfung", "heading for {query}");
+        let row = item(&items, "review.git_since");
+        assert!(row.description.starts_with("Zeitfenster"), "{query}");
+    }
 }
 
 /// Save writes the file and makes the document clean; a file changed

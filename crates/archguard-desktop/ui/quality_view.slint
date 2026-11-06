@@ -30,7 +30,10 @@ export struct QualityModel {
     detail: [QualityCard],
     cards: [QualityCard],
     more: bool,
-    empty: string,
+    // An empty section: what is missing, how to get it and the command.
+    empty-title: string,
+    empty-reason: string,
+    empty-command: string,
     // The search fields' texts, kept across a recreated view.
     query: string,
     target-query: string,
@@ -51,6 +54,48 @@ export global QualityData {
     callback group(int);
     callback more-groups();
     callback locate(string);
+}
+
+// The shared empty state, with the CLI command that creates the data.
+component QualityEmpty inherits VerticalLayout {
+    in property <string> title;
+    in property <string> reason;
+    in property <string> command;
+    property <string> copied;
+    spacing: 4px;
+    EmptyState { title: root.title; reason: root.reason; padding-bottom: 4px; }
+    if root.command != "": HorizontalLayout {
+        alignment: center;
+        spacing: 10px;
+        Rectangle {
+            background: Theme.panel-2;
+            border-radius: 6px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                command := TextInput {
+                    text: root.command;
+                    read-only: true;
+                    color: Theme.text;
+                    font-family: "Menlo";
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Button {
+            text: @tr("Copy command");
+            clicked => {
+                command.select-all();
+                command.copy();
+                command.clear-selection();
+                root.copied = @tr("Copied.");
+            }
+        }
+    }
+    if root.copied != "": Text { text: root.copied; color: Theme.muted; font-size: 12px; horizontal-alignment: center; }
 }
 
 // A field label above its control.
@@ -380,7 +425,11 @@ export component QualityView inherits Rectangle {
                     more-groups => { QualityData.more-groups(); }
                 }
 
-                if root.m.empty != "" && !root.m.loading: EmptyState { reason: root.m.empty; }
+                if root.m.empty-title != "" && !root.m.loading: QualityEmpty {
+                    title: root.m.empty-title;
+                    reason: root.m.empty-reason;
+                    command: root.m.empty-command;
+                }
 
                 if root.m.more: HorizontalLayout {
                     alignment: start;

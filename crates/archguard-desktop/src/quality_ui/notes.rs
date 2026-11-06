@@ -63,19 +63,21 @@ impl Section {
         )
     }
 
-    /// The CLI command that measures or imports the section's data.
-    pub fn command(self) -> &'static str {
-        match self {
-            Section::Cohesion => "archguard cohesion . --format json",
+    /// The CLI command that measures or imports the section's data;
+    /// none for cohesion, which the analysis computes from the sources.
+    pub fn command(self) -> Option<&'static str> {
+        Some(match self {
+            Section::Cohesion => return None,
             Section::History => "archguard quality-history . --record --tag after-refactoring",
             Section::Tests => {
                 "archguard test-evidence . --report junit.xml --mapping test-map.json"
             }
             Section::Mutations => "archguard mutations . --report mutation-report.json",
-            Section::Duplicates => "archguard duplicates . --report cpd.xml",
+            Section::Duplicates => "archguard duplicates . --scan",
             Section::Measurements => "archguard metrics . --extended --report runs.json",
-            _ => "archguard metrics . --extended --format json",
-        }
+            // Computed from the compiler-backed calls and Git: their prerequisites.
+            _ => "archguard doctor",
+        })
     }
 
     pub fn description(self, lang: &Texts) -> &str {

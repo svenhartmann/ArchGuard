@@ -464,3 +464,57 @@ msgstr "LCOM4 — Lack of Cohesion in Methods, Variante 4 (Zusammenhalt). Gruppe
 
 msgid "{{ratio}} matching records"
 msgstr "{{ratio}} passende Datensätze"
+
+msgid "No compiler-backed class or method measurements."
+msgstr "Keine compilergestützten Klassen- oder Methodenmessungen."
+
+msgid "They come from the compiler-backed call analysis. List the toolchains it is missing:"
+msgstr "Sie stammen aus der compilergestützten Aufrufanalyse. Fehlende Werkzeuge auflisten:"
+
+msgid "No Git history in the configured window."
+msgstr "Keine Git-Historie im eingestellten Zeitfenster."
+
+msgid "Knowledge concentration reads Git within review.git_since. Check that Git is available:"
+msgstr "Die Wissenskonzentration liest Git innerhalb von review.git_since. Prüfen, ob Git verfügbar ist:"
+
+msgid "No build, runtime or repeated-test runs imported."
+msgstr "Keine Build-, Laufzeit- oder Testwiederholungsläufe importiert."
+
+msgid "Import revision-labelled observations as JSON:"
+msgstr "Nach Revision gekennzeichnete Beobachtungen als JSON importieren:"
+
+msgid "No package with source files in this scope."
+msgstr "Kein Paket mit Quelldateien in diesem Bereich."
+
+msgid "Package cohesion is computed from the scanned sources; there is nothing to import."
+msgstr "Die Paketkohäsion wird aus den gescannten Quellen berechnet; es gibt nichts zu importieren."
+
+msgid "No quality snapshot recorded."
+msgstr "Kein Qualitäts-Snapshot erfasst."
+
+msgid "Record the current per-package measurements; deltas need two snapshots:"
+msgstr "Die aktuellen Messungen je Paket erfassen; Veränderungen brauchen zwei Snapshots:"
+
+msgid "No test results imported."
+msgstr "Keine Testergebnisse importiert."
+
+msgid "Import a JUnit XML report and optionally an exact test-to-source mapping:"
+msgstr "JUnit-XML-Bericht und optional eine exakte Zuordnung von Tests zu Quellen importieren:"
+
+msgid "No mutation report imported."
+msgstr "Kein Mutationsbericht importiert."
+
+msgid "Import a mutation-testing-elements JSON report; ArchGuard runs no tests:"
+msgstr "JSON-Bericht im Format mutation-testing-elements importieren; ArchGuard führt keine Tests aus:"
+
+msgid "No duplicate groups saved."
+msgstr "Keine Duplikatgruppen gespeichert."
+
+msgid "Run the built-in token clone scan, or import CPD XML with --report:"
+msgstr "Den eingebauten Token-Klonscan ausführen oder CPD-XML mit --report importieren:"
+
+msgid "Copy command"
+msgstr "Befehl kopieren"
+
+msgid "Copied."
+msgstr "Kopiert."

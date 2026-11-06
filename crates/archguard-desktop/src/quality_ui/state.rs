@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use super::card::{Card, Kind, Line};
 use super::cohesion::Selection;
+use super::empty::{self, Empty};
 use super::heatmap::{self, Cohorts, Filter, METRICS, Rating, Sort};
 use super::heatmap_text;
 use super::inputs::Inputs;
@@ -96,7 +97,7 @@ pub struct Page {
     pub detail: Option<Card>,
     pub cards: Vec<Card>,
     pub more: bool,
-    pub empty: String,
+    pub empty: Empty,
 }
 
 impl QualityState {
@@ -162,10 +163,7 @@ impl QualityState {
             ..Page::default()
         };
         if total == 0 {
-            page.empty = self
-                .lang
-                .t("No matching measurements. Missing data is not evidence of good quality.")
-                .into();
+            page.empty = empty::of(&self.lang, inputs, self.view.section);
         }
         self.targets(inputs, &mut page);
         page.detail = self.detail(inputs);
@@ -459,10 +457,12 @@ impl QualityState {
             b.details(lang.t("Measurement coverage and definitions"), lines);
         }
         let status = source_status(inputs, section);
-        if matches!(status, None | Some("not_imported" | "not_recorded"))
-            || section == Section::History
+        let missing = matches!(status, None | Some("not_imported" | "not_recorded"));
+        if let Some(command) = section
+            .command()
+            .filter(|_| missing || section == Section::History)
         {
-            b.push(Kind::Pre, section.command());
+            b.push(Kind::Pre, command);
         }
         self.section_notes(&mut b, inputs);
         b.done()
@@ -603,7 +603,8 @@ mod tests {
         let page = s.page();
         assert_eq!(page.status, "Import: not imported");
         assert_eq!(page.status_slot, 4);
-        assert!(page.empty.starts_with("No matching measurements."));
+        assert_eq!(page.empty.title, "No test results imported.");
+        assert!(page.empty.command.starts_with("archguard test-evidence"));
         assert!(
             page.notes
                 .items
