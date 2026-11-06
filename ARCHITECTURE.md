@@ -29,7 +29,7 @@ Section 15 describes the feature set.
 - No general cross-language semantic model or universal DIP/LSP verification. Java, C#, TypeScript/JavaScript and Go add compiler-backed evidence with explicit coverage limits.
 - Imported runtime/build observations are separate from static source evidence; they do not make static dependencies a complete runtime graph.
 - Line-based import scanners remain distinct from compiler helpers. A future tree-sitter backend can implement the `Extractor` trait.
-- No native GUI: an embedded HTML viewer and local live server supplement exports.
+- The embedded HTML viewer and local live server supplement exports; a native desktop viewer (`archguard-desktop`, Slint) is a prototype, see [ADR 0002](docs/adr/0002-native-desktop-ui.md).
 
 ---
 
@@ -189,7 +189,8 @@ archguard/
 │   ├── archguard-store/          # L1: GraphStore trait, Graph DB mirror (openCypher), query guard
 │   ├── archguard-engine/         # L2: load config, orchestrate pipeline, graph cache
 │   ├── archguard-mcp/            # L3: MCP server (stdio), tool registration
-│   └── archguard-cli/            # L3: Binary `archguard`, clap commands
+│   ├── archguard-cli/            # L3: Binary `archguard`, clap commands
+│   └── archguard-desktop/        # L3: native desktop viewer (Slint prototype)
 ├── fixtures/                  # test projects (ts-cyclic, py-layers, rs-clean, java-packages, …)
 └── .github/workflows/ci.yml   # fmt, clippy, test, architecture check
 ```
@@ -204,6 +205,7 @@ archguard/
 | `archguard-engine` | `analyze(path, config) -> Report`, config parsing **and declared/derived/default resolution** (Section 11), caching, DB sync | `toml` |
 | `archguard-mcp` | MCP tools, JSON schemas, pagination guard | `rmcp` (official MCP Rust SDK), `tokio` (only here), `schemars` |
 | `archguard-cli` | Argument parsing, exit codes, format selection | `clap`, `anyhow` |
+| `archguard-desktop` | Native desktop viewer on the engine API ([ADR 0002](docs/adr/0002-native-desktop-ui.md)) | `slint`, `rfd` |
 
 `tokio` is a direct dependency of `archguard-mcp` only. `archguard-engine` and
 layers 0–1 are synchronous.
@@ -302,7 +304,7 @@ and their `refs` merged. Edges connect only `file` nodes. All lists are stably s
 ## 6. Analysis pipeline (in `archguard-engine`)
 
 1. **Load declarations:** read project config using the [file priority](README.md#configuration-and-project-data). Sections and values not written there take their documented default (Section 11); a section header without values declares nothing. Resolution: `declared ⇐ derived ⇐ default`.
-2. **Infer project setup:** if `[project]` is absent, infer source roots and languages from manifests (PSR-4, `Cargo.toml`, tsconfig, pyproject) and extension statistics (Section 7, "Project inference"). `--no-derive` skips steps 2 and 7.
+2. **Infer project setup:** if `[project]` is absent, infer source roots and languages from manifests (PSR-4, `Cargo.toml`, tsconfig, pyproject) and extension statistics (Section 7, "Project inference").
 3. **Walk:** use the `ignore` crate (respecting `.gitignore`), filtering known extensions and `exclude` globs.
 4. **Extract:** the scanner for each file yields imports (`RawImport` with `TargetSpec::Path` for relative paths or `TargetSpec::Symbol` for package/namespace imports) **and** declarations (the file's `package`/`namespace`).
 5. **Resolve in two stages:** resolve path specs against the file tree and symbol specs against the **declaration map** (module path → declaring files, supplemented by PHP PSR-4 mappings from `composer.json`). A unique file gives a file edge; a known package gives a pseudo-node `package/*`; no match means external, a warning and no edge.
@@ -379,7 +381,7 @@ Implementation:
 
 1. **Trait instead of direct dependency:** `archguard-store` defines `GraphStore { sync(graph, report), query(cypher, limit) }`. The backend can be replaced (Ladybug Rust SDK, CozoDB, …) without changing engine, CLI or MCP.
 2. **v1 binding:** pinned `kuzu = "=0.11.3"` crate, the lineage's last release, file-compatible with Ladybug and explorer UIs. Migration to the Ladybug Rust SDK when available is an isolated store-crate task.
-3. **Optional Cargo feature `db`:** the C++ backend increases build time and binary size. Without `db`, only the `db` commands and `graph_query` are absent; all analyses are included. Releases: `archguard` (slim) and `archguard-full`.
+3. **Optional Cargo feature `db`:** the C++ backend increases build time and binary size. Without `db`, only the `db` commands and `graph_query` are absent; all analyses are included. Release archives contain the build without `db` ([RELEASES.md](RELEASES.md)); `cargo build -p archguard-cli --features db` adds it.
 4. **Read-only external access:** CLI/MCP queries pass through a sanitizer allowing only `MATCH`/`RETURN` and enforcing `LIMIT`. Only `sync` can write.
 
 ### 8.2 DB schema
@@ -423,12 +425,13 @@ RETURN DISTINCT a.name LIMIT 25;
 
 ## 9. CLI specification
 
-One binary: `archguard`. Global flags: `--config <path>`, `--format text|json`
-(default `text`), `--quiet`, `-v`, `--no-derive` (declared state and defaults only,
-without inference, for reproducible comparisons).
+One binary: `archguard`. Global flags: `--config <path>`, `--format`
+(default `text`), `--quiet`, `-v`. For reproducible comparisons without layer
+inference, set `derive_layers = false` in the config.
 
-The current command inventory and runnable examples are maintained in
-[README.md](README.md).
+The command catalog is in [site/docs/cli.html](site/docs/cli.html); the
+everyday commands are in [README.md](README.md#common-workflows).
+`archguard --help` and `archguard <command> --help` show the exact arguments.
 
 **Exit codes:** `0` success · `1` violations found (`check`, `cycles --fail-on-found`)
 · `2` usage error · `3` analysis error, such as an unreadable path.
@@ -457,8 +460,9 @@ context and are therefore short.
 
 ### 10.2 Tool interface
 
-The complete current tool list, count and response limits are in the
-[README](README.md). Finding queries share `generate_review` with the CLI; they
+The server reports its current tools and their schemas through MCP
+`tools/list`; the definitions are in `crates/archguard-mcp/src/`. Response limits
+are in Section 10.1. Finding queries share `generate_review` with the CLI; they
 neither introduce a second error classification nor save reviews or decisions.
 
 ### 10.3 Typical agent workflow
@@ -510,7 +514,7 @@ Modules **in** cycles cannot be ranked. They receive an informational
 
 **Corrections by name:** a declared `[[layers]]` entry overrides the inferred
 entry with the same name (`contains`, `may_depend_on`); additional declared
-entries are added. `derive_layers = false` (top-level key, or `--no-derive`)
+entries are added. `derive_layers = false` (top-level key)
 disables layer inference entirely, leaving only explicit configuration.
 
 **Example — deviations only:**
@@ -633,7 +637,8 @@ the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
 | Review metrics | Analysis payload `review_kpis` block: propagation cost, SDP, zones, tangledness, hub Gini, layer drift, debt density, API surface, leaks, risk gaps and health; definitions and limits below | Implemented; measurement limits below |
 | Decision register | `archguard review-decision` / MCP `review_decisions`; `.archguard/reviews.json`, atomic upsert by ID (format below) | Implemented |
 | PR comment | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; format below | Implemented |
-| GUI application / IDE plugins | Not planned; HTML viewer, DB explorer UI and G.V() instead | — |
+| Native desktop viewer | `archguard-desktop` (Slint) on the engine API; decision and scope in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototype |
+| IDE plugins | Not planned; HTML viewer, DB explorer UI and G.V() instead | — |
 
 ### Review metrics and their limits
 

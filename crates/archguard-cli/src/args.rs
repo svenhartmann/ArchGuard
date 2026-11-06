@@ -26,7 +26,8 @@ pub(crate) struct Cli {
     #[arg(long, global = true, value_name = "PFAD")]
     pub(crate) config: Option<PathBuf>,
     /// Output format. `mermaid` is only valid for `cycles`, `sarif`
-    /// only for `check`; `graph` has its own `--format`.
+    /// only for `check`; `graph` has its own `--format` (dot, mermaid,
+    /// json, html, graphml, gexf).
     #[arg(
         long,
         global = true,
