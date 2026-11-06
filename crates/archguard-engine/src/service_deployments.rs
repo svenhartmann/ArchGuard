@@ -1,4 +1,6 @@
-//! Bounded static deployment declarations. Never contacts a cluster or executes interpolation.
+//! Bounded static deployment declarations. Never contacts a cluster or executes interpolation;
+//! Helm charts and Kustomize overlays are rendered only after opt-in (`manifest_render`).
+use super::manifest_render::{self as render, Tools};
 use super::service_datastore_settings::{self as datastores, Settings};
 use super::support::{diagnostic, relative};
 use archguard_core::{
@@ -336,12 +338,28 @@ fn is_yaml_file(entry: &ignore::DirEntry) -> bool {
             Some("yaml" | "yml")
         )
 }
+/// One Kubernetes document with its evidence file and deployment scope directory.
+pub(super) struct Manifest {
+    pub file: String,
+    /// The manifest directory, or the chart or overlay directory of a rendered document.
+    pub bundle: String,
+    pub doc: Value,
+}
 /// Adds a manifest document, flattening the items of a Kubernetes `List`.
-fn push_document(documents: &mut Vec<(String, Value)>, file: &str, doc: Value) {
-    if doc["kind"].as_str() != Some("List") {
-        documents.push((file.to_owned(), doc));
-    } else if let Some(items) = doc["items"].as_sequence() {
-        documents.extend(items.iter().cloned().map(|d| (file.to_owned(), d)));
+/// Secrets are dropped unread.
+pub(super) fn push_document(documents: &mut Vec<Manifest>, file: &str, bundle: &str, doc: Value) {
+    let items = match doc["kind"].as_str() {
+        Some("List") => doc["items"].as_sequence().cloned().unwrap_or_default(),
+        _ => vec![doc],
+    };
+    for doc in items {
+        if doc["kind"].as_str() != Some("Secret") {
+            documents.push(Manifest {
+                file: file.to_owned(),
+                bundle: bundle.to_owned(),
+                doc,
+            });
+        }
     }
 }
 impl Deployment {
@@ -363,6 +381,7 @@ impl Deployment {
 /// One statically named Kubernetes workload and the deployment scope it belongs to.
 struct Workload<'d> {
     file: &'d str,
+    bundle: &'d str,
     name: &'d str,
     namespace: &'d str,
     scope: String,
@@ -370,7 +389,8 @@ struct Workload<'d> {
     pod: &'d Value,
 }
 impl<'d> Workload<'d> {
-    fn parse(file: &'d str, doc: &'d Value) -> Option<Self> {
+    fn parse(manifest: &'d Manifest) -> Option<Self> {
+        let (file, bundle, doc) = (&manifest.file, &manifest.bundle, &manifest.doc);
         let kind = doc["kind"]
             .as_str()
             .filter(|kind| WORKLOAD_KINDS.contains(kind))?;
@@ -386,14 +406,11 @@ impl<'d> Workload<'d> {
             "CronJob" => &doc["spec"]["jobTemplate"]["spec"]["template"],
             _ => &doc["spec"]["template"],
         };
-        let bundle = Path::new(file)
-            .parent()
-            .and_then(Path::to_str)
-            .unwrap_or("");
         let scope = format!("{KUBERNETES}{bundle}:{namespace}");
         let id = format!("{scope}:{kind}:{name}");
         Some(Self {
             file,
+            bundle,
             name,
             namespace,
             scope,
@@ -402,12 +419,12 @@ impl<'d> Workload<'d> {
         })
     }
     /// Cluster hostnames of the Services that select this workload's pod labels.
-    fn aliases(&self, documents: &[(String, Value)]) -> BTreeSet<String> {
+    fn aliases(&self, documents: &[Manifest]) -> BTreeSet<String> {
         let pod_labels = labels(&self.pod["metadata"]["labels"]);
         let namespace = self.namespace;
         let mut aliases = BTreeSet::new();
-        for (file, service) in documents {
-            if let Some(host) = self.selecting_service(file, service, &pod_labels) {
+        for service in documents {
+            if let Some(host) = self.selecting_service(service, &pod_labels) {
                 aliases.extend([
                     host.to_lowercase(),
                     format!("{host}.{namespace}"),
@@ -422,22 +439,22 @@ impl<'d> Workload<'d> {
     /// Differing declarations under that name are ambiguous and resolve to nothing.
     fn config_map<'v>(
         &self,
-        documents: &'v [(String, Value)],
+        documents: &'v [Manifest],
         name: &str,
     ) -> Option<(&'v str, &'v Value)> {
-        let mut found = documents.iter().filter(|(file, doc)| {
-            self.same_bundle(file, doc)
-                && doc["kind"].as_str() == Some("ConfigMap")
-                && doc["metadata"]["name"].as_str() == Some(name)
+        let mut found = documents.iter().filter(|m| {
+            self.same_bundle(m)
+                && m.doc["kind"].as_str() == Some("ConfigMap")
+                && m.doc["metadata"]["name"].as_str() == Some(name)
         });
-        let (file, doc) = found.next()?;
+        let first = found.next()?;
         found
-            .all(|(_, other)| other == doc)
-            .then_some((file.as_str(), &doc["data"]))
+            .all(|other| other.doc == first.doc)
+            .then_some((first.file.as_str(), &first.doc["data"]))
     }
-    fn same_bundle(&self, file: &str, doc: &Value) -> bool {
-        Path::new(file).parent() == Path::new(self.file).parent()
-            && doc["metadata"]["namespace"]
+    fn same_bundle(&self, manifest: &Manifest) -> bool {
+        manifest.bundle == self.bundle
+            && manifest.doc["metadata"]["namespace"]
                 .as_str()
                 .unwrap_or(DEFAULT_NAMESPACE)
                 == self.namespace
@@ -446,11 +463,11 @@ impl<'d> Workload<'d> {
     /// non-empty selector matches `pod_labels`.
     fn selecting_service<'v>(
         &self,
-        file: &str,
-        service: &'v Value,
+        manifest: &'v Manifest,
         pod_labels: &BTreeMap<String, String>,
     ) -> Option<&'v str> {
-        if !self.same_bundle(file, service) || service["kind"].as_str() != Some("Service") {
+        let service = &manifest.doc;
+        if !self.same_bundle(manifest) || service["kind"].as_str() != Some("Service") {
             return None;
         }
         let selector = labels(&service["spec"]["selector"]);
@@ -465,6 +482,8 @@ struct Deployments<'a> {
     root: &'a Path,
     report: &'a mut ServiceTopology,
     out: Vec<Deployment>,
+    /// Evidence file of rendered documents -> how they were rendered.
+    rendered: BTreeMap<String, String>,
 }
 impl Deployments<'_> {
     fn compose_file(&mut self, file: &str) {
@@ -551,19 +570,34 @@ impl Deployments<'_> {
             );
         }
     }
-    /// Non-Compose YAML documents within the discovery input limits.
-    fn manifests(&mut self, discovery: &super::support::Discovery) -> Vec<(String, Value)> {
-        let mut documents = Vec::new();
-        let mut budget = 0usize;
+    /// Non-Compose YAML documents within the discovery input limits. Files that a
+    /// rendered chart or overlay consumes are taken only from its rendered output.
+    fn manifests(&mut self, discovery: &super::support::Discovery, tools: &Tools) -> Vec<Manifest> {
+        let mut files = Vec::new();
+        let mut sources = Vec::new();
         for entry in discovery.walk(self.root).take(50_000).flatten() {
-            if !is_yaml_file(&entry) {
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
             let file = relative(self.root, entry.path());
-            if self.report.compose_files.contains(&file) {
+            if render::is_source(&file) {
+                sources.push(file.clone());
+            }
+            if is_yaml_file(&entry) && !self.report.compose_files.contains(&file) {
+                files.push((
+                    file,
+                    entry.metadata().map(|m| m.len() as usize).unwrap_or(0),
+                ));
+            }
+        }
+        let renders = render::render(self.root, self.report, &sources, tools);
+        let mut documents = Vec::new();
+        let mut budget = 0usize;
+        for (file, size) in files {
+            if renders.iter().any(|r| r.covers(&file)) {
                 continue;
             }
-            budget += entry.metadata().map(|m| m.len() as usize).unwrap_or(0);
+            budget += size;
             if budget > 32_000_000 || documents.len() >= 2000 {
                 diagnostic(
                     self.report,
@@ -573,17 +607,28 @@ impl Deployments<'_> {
                 );
                 break;
             }
+            let bundle = Path::new(&file)
+                .parent()
+                .and_then(Path::to_str)
+                .unwrap_or("")
+                .to_owned();
             for doc in yaml(self.root, &file, self.report) {
-                push_document(&mut documents, &file, doc);
+                push_document(&mut documents, &file, &bundle, doc);
+            }
+        }
+        for render in renders {
+            for (file, doc) in render.documents {
+                self.rendered.insert(file.clone(), render.note.clone());
+                push_document(&mut documents, &file, &render.bundle, doc);
             }
         }
         documents
     }
-    fn workloads(&mut self, documents: &[(String, Value)]) {
+    fn workloads(&mut self, documents: &[Manifest]) {
         let mut seen = BTreeMap::new();
-        for (file, doc) in documents {
-            if let Some(workload) = Workload::parse(file, doc) {
-                self.workload(&workload, doc, documents, &mut seen);
+        for manifest in documents {
+            if let Some(workload) = Workload::parse(manifest) {
+                self.workload(&workload, &manifest.doc, documents, &mut seen);
             }
         }
     }
@@ -591,7 +636,7 @@ impl Deployments<'_> {
         &mut self,
         workload: &Workload,
         doc: &Value,
-        documents: &[(String, Value)],
+        documents: &[Manifest],
         seen: &mut BTreeMap<String, Value>,
     ) {
         // Repeated manifests may be variants: only identical declarations are merged.
@@ -664,7 +709,7 @@ impl Deployments<'_> {
         &mut self,
         workload: &Workload,
         containers: &[Value],
-        documents: &[(String, Value)],
+        documents: &[Manifest],
     ) -> Env {
         let mut env = Env::default();
         for container in containers {
@@ -682,7 +727,7 @@ impl Deployments<'_> {
         &mut self,
         workload: &Workload,
         source: &Value,
-        documents: &[(String, Value)],
+        documents: &[Manifest],
         env: &mut Env,
     ) {
         let found = source["configMapRef"]["name"]
@@ -708,7 +753,7 @@ impl Deployments<'_> {
         &mut self,
         workload: &Workload,
         entry: &Value,
-        documents: &[(String, Value)],
+        documents: &[Manifest],
         env: &mut Env,
     ) {
         let Some(name) = entry["name"].as_str() else {
@@ -790,25 +835,52 @@ impl Deployments<'_> {
         }
     }
 }
+/// The deployments, and for evidence files of rendered documents how they were rendered.
 pub(super) fn augment(
     root: &Path,
     discovery: &super::support::Discovery,
     report: &mut ServiceTopology,
-) -> Vec<Deployment> {
+    tools: &Tools,
+) -> (Vec<Deployment>, BTreeMap<String, String>) {
     let compose_files = report.compose_files.clone();
     let mut deployments = Deployments {
         root,
         report,
         out: Vec::new(),
+        rendered: BTreeMap::new(),
     };
     for file in &compose_files {
         deployments.compose_file(file);
     }
-    // Workloads and selectors, never Helm evaluation, Secret reads or cluster queries.
-    let documents = deployments.manifests(discovery);
+    // Workloads and selectors, never Secret reads or cluster queries.
+    let documents = deployments.manifests(discovery, tools);
     deployments.workloads(&documents);
     deployments.drop_mapped_project_services();
     deployments.link();
     deployments.report.services.sort_by(|a, b| a.id.cmp(&b.id));
-    deployments.out
+    (deployments.out, deployments.rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_are_dropped_before_any_reader_sees_them() {
+        let text = "kind: Secret\nmetadata: {name: s}\nstringData: {DB_URL: 'postgres://u:hunter2@db/x'}\n---\nkind: List\nitems:\n- {kind: Secret, metadata: {name: t}, data: {A_URL: aHVudGVyMg==}}\n- {kind: ConfigMap, metadata: {name: c}}\n---\nkind: Deployment\nmetadata: {name: web}\n";
+        let mut documents = Vec::new();
+        for doc in serde_yaml_ng::Deserializer::from_str(text) {
+            push_document(
+                &mut documents,
+                "k.yaml",
+                "",
+                Value::deserialize(doc).unwrap(),
+            );
+        }
+        let kinds: Vec<_> = documents
+            .iter()
+            .map(|m| m.doc["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["ConfigMap", "Deployment"]);
+    }
 }

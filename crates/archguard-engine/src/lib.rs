@@ -65,6 +65,8 @@ mod security;
 // Declared here, not in their modules: a test file that imports its parent
 // back would close a file cycle.
 #[cfg(test)]
+mod manifest_render_tests;
+#[cfg(test)]
 mod rust_imports_tests;
 #[cfg(test)]
 mod security_tests;
