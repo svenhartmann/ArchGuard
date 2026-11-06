@@ -7,6 +7,7 @@
 //! [`push`] as one `StartModel` value.
 
 mod arrows;
+mod connections;
 mod details;
 mod evidence;
 mod follow_place;
@@ -190,6 +191,19 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     ));
     d.on_more(a.on0(|s, _| s.limit += 20));
     d.on_source_graph(a.on0(source_graph));
+    d.on_toggle_entry(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.toggle_entry(i);
+        }
+    }));
+    d.on_pick_neighbor(navigation(
+        ui,
+        a.on(|s, _, area: i32| {
+            if let Some(area) = index(area) {
+                s.select_neighbor(area);
+            }
+        }),
+    ));
     wire_hover(ui, d);
 }
 
@@ -459,6 +473,26 @@ mod tests {
         assert_eq!(s.hover_at(-50.0, -50.0), None);
         s.set_kpi(2);
         assert_eq!(s.hover_at(x, y).expect("a surface").kpi, 2);
+    }
+
+    /// A connection in the details opens and closes; its neighbour is
+    /// selected with the details kept open.
+    #[test]
+    fn a_connection_selects_its_neighbour() {
+        let (mut s, _) = fixture_state("py-layers");
+        let c = s.scope.connections.first().cloned().expect("a connection");
+        s.pick(c.from as i32 + 1);
+        s.details_open = true;
+        assert!(!s.connection_open(0));
+        s.toggle_connection(0);
+        assert!(s.connection_open(0));
+        s.select_neighbor(c.to);
+        let sel = s.selection.clone().expect("the neighbour");
+        assert_eq!((sel.area, sel.entity), (c.to, None));
+        assert!(s.details_open, "the details stay open");
+        assert!(s.connection_open(0), "open entries stay open");
+        s.toggle_connection(0);
+        assert!(!s.connection_open(0));
     }
 
     /// Two npm projects side by side.

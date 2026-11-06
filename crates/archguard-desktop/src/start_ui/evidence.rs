@@ -121,6 +121,8 @@ pub struct Connection {
     pub from: usize,
     pub to: usize,
     pub cyclic: bool,
+    /// Dependencies behind the connection, when the atlas counts them.
+    pub references: Option<u64>,
 }
 
 /// `worldScope`: the atlas of one scope with entities and findings per area.
@@ -178,6 +180,7 @@ pub fn scope(ev: &Evidence, within: Option<&str>) -> Option<Scope> {
                 from: *by_name.get(c.from.as_str())?,
                 to: *by_name.get(c.to.as_str())?,
                 cyclic: c.cyclic,
+                references: c.evidence_count,
             })
         })
         .collect();

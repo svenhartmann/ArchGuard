@@ -230,9 +230,12 @@ fn details(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usi
     lines.push(line(kind::SVC_NOTE, "", "", ""));
     for &i in visible.iter().take(s.limit) {
         let l = &w.links[i];
+        let open = w.is_open(i);
         lines.push(StartLine {
             entity: position(&KINDS, &l.kind),
             flag: l.cyclic,
+            id: i as i32,
+            open,
             ..line(
                 kind::SVC_LINK,
                 w.inventory[l.from].title(),
@@ -240,6 +243,9 @@ fn details(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usi
                 "",
             )
         });
+        if !open {
+            continue;
+        }
         for proof in &l.evidence {
             let at = proof.line.map_or(String::new(), |n| format!(":{n}"));
             let pointer = Some(&proof.pointer)

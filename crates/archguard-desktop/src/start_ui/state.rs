@@ -1,7 +1,7 @@
 //! The Start tab's state: navigation, lenses, selection and camera, as
 //! `worldUi` in `viewer_world.js`. Views read it; they never write it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::evidence::{self, Evidence, Scope};
 use super::layout::{self, Layout, Region};
@@ -67,6 +67,8 @@ pub struct StartState {
     pub(super) canvas: (f64, f64),
     pub(super) details_open: bool,
     pub(super) limit: usize,
+    /// Connection entries opened in the details, by area names.
+    pub(super) open_connections: BTreeSet<(String, String)>,
     // Derived from the above by `refresh`.
     pub(super) scope: Scope,
     pub(super) layout: Layout,
@@ -95,6 +97,7 @@ pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> St
         canvas: (1200.0, 520.0),
         details_open: false,
         limit: 20,
+        open_connections: BTreeSet::new(),
         scope: Scope::default(),
         layout: Layout::default(),
     };

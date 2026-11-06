@@ -50,6 +50,8 @@ export struct StartCrumb {
 }
 
 // One detail line; kind selects the template (src/start_ui/details.rs).
+// A connection entry: id its index for toggle-entry, open whether its
+// evidence follows.
 export struct StartLine {
     kind: int,
     a: string,
@@ -57,6 +59,8 @@ export struct StartLine {
     c: string,
     entity: int,
     flag: bool,
+    id: int,
+    open: bool,
 }
 
 // The connections of one tone in canvas pixels: 0 cyclic, 1 into the
@@ -216,6 +220,9 @@ export global StartData {
     callback pick-entity(int);
     callback more();
     callback source-graph();
+    // A connection entry of the details (StartLine.id); its neighbour area.
+    callback toggle-entry(int);
+    callback pick-neighbor(int);
     // 0 architecture, 1 services.
     callback set-mode(int);
     // which: 0 deployment, 1 source, 2 kind, 3 direction (StartServices).

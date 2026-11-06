@@ -308,3 +308,9 @@ msgid "{0} grouped entry"
 msgid_plural "{0} grouped entries"
 msgstr[0] "{0} gebündelter Eintrag"
 msgstr[1] "{0} gebündelte Einträge"
+
+msgid "The number of source references behind this connection is unknown."
+msgstr "Die Zahl der Quellverweise hinter dieser Verbindung ist unbekannt."
+
+msgid "{} source references behind this connection."
+msgstr "{} Quellverweise hinter dieser Verbindung."

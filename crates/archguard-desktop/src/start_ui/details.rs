@@ -37,6 +37,10 @@ pub mod kind {
     pub const EVIDENCE: i32 = 40;
     pub const CONNECTION: i32 = 41;
     pub const NO_EVIDENCE: i32 = 42;
+    /// An open connection's dependency count (`a`, "" unknown).
+    pub const REFERENCES: i32 = 43;
+    /// "Select neighbor" in the architecture World: `entity` the area.
+    pub const NEIGHBOR: i32 = 44;
     // The services World (`services/view.rs`).
     pub const SVC_NOTE: i32 = 50;
     pub const SVC_EXTERNAL: i32 = 51;
@@ -61,6 +65,8 @@ pub(super) fn line(
         c: c.into().into(),
         entity: -1,
         flag: false,
+        id: -1,
+        open: false,
     }
 }
 
@@ -271,24 +277,45 @@ fn members(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection)
     }
 }
 
+/// The entry of connection `i` of the scope; open, its dependency count
+/// and the way to the neighbour of `area`.
+fn connection(out: &mut Vec<StartLine>, s: &StartState, area: usize, i: usize) {
+    let c = &s.scope.connections[i];
+    let areas = &s.scope.areas;
+    let open = s.connection_open(i);
+    out.push(StartLine {
+        id: i as i32,
+        open,
+        ..line(
+            kind::CONNECTION,
+            areas[c.from].name.as_str(),
+            areas[c.to].name.as_str(),
+            if c.cyclic { "1" } else { "" },
+        )
+    });
+    if open {
+        let count = c.references.map_or(String::new(), |n| n.to_string());
+        out.push(line(kind::REFERENCES, count, "", ""));
+        let other = if c.from == area { c.to } else { c.from };
+        out.push(StartLine {
+            entity: other as i32,
+            ..line(kind::NEIGHBOR, "", "", "")
+        });
+    }
+}
+
 /// Connections of the area at this level and its findings with evidence.
 fn evidence(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     out.push(line(kind::EVIDENCE, "", "", ""));
     let areas = &s.scope.areas;
-    let edges: Vec<_> = s
-        .scope
-        .connections
-        .iter()
-        .filter(|c| c.from == sel.area || c.to == sel.area)
+    let edges: Vec<_> = (0..s.scope.connections.len())
+        .filter(|&i| {
+            let c = &s.scope.connections[i];
+            c.from == sel.area || c.to == sel.area
+        })
         .collect();
-    for c in edges.iter().take(s.limit) {
-        let cyclic = if c.cyclic { "1" } else { "" };
-        out.push(line(
-            kind::CONNECTION,
-            areas[c.from].name.as_str(),
-            areas[c.to].name.as_str(),
-            cyclic,
-        ));
+    for &i in edges.iter().take(s.limit) {
+        connection(out, s, sel.area, i);
     }
     let findings = &areas[sel.area].findings;
     for &f in findings.iter().take(s.limit) {
