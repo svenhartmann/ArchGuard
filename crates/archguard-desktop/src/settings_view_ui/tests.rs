@@ -266,6 +266,19 @@ fn a_search_spans_the_groups() {
     assert_eq!(kinds(&items), [HEADING, ARRAY, NOTE], "the whole array");
 }
 
+/// Descriptions moved into tooltips stay searchable and reach the row.
+#[test]
+fn a_search_finds_a_field_by_its_description() {
+    let (_dir, _, mut s) = project("");
+    s.query = "history window".into();
+    let items = s.items().0;
+    let row = item(&items, "review.git_since");
+    assert!(
+        row.description
+            .starts_with("History window for change counts")
+    );
+}
+
 /// Save writes the file and makes the document clean; a file changed
 /// on disk is reported, and Overwrite writes over it.
 #[test]
