@@ -111,8 +111,17 @@ msgstr "Beitragsverteilung"
 msgid "Bus factor 50: {{factor}} · largest share {{share}}"
 msgstr "Bus-Faktor 50: {{factor}} · größter Anteil {{share}}"
 
-msgid "{{people}} contributors · {{touches}} file changes"
-msgstr "{{people}} Beitragende · {{touches}} Dateiänderungen"
+msgid "{{n}} contributor"
+msgstr "{{n}} beitragende Person"
+
+msgid "{{n}} contributors"
+msgstr "{{n}} Beitragende"
+
+msgid "{{n}} file change"
+msgstr "{{n}} Dateiänderung"
+
+msgid "{{n}} file changes"
+msgstr "{{n}} Dateiänderungen"
 
 msgid "Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown."
 msgstr "Kleinste Anzahl von Personen mit mindestens 50% der Datei-/Commit-Berührungen im Git-Zeitfenster. Ein Hinweis auf Konzentration, keine Aussage über tatsächliches Wissen oder Verfügbarkeit. Bei unvollständiger Historie bleibt der Faktor unbekannt."

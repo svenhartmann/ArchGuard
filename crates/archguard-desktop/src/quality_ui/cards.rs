@@ -104,6 +104,24 @@ pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Ca
     b.done()
 }
 
+/// "2 contributors · 4 file changes", singular for a count of one.
+fn people_and_touches(lang: &Texts, row: &KnowledgeMetric) -> String {
+    let people = match row.contributors {
+        1 => "{n} contributor",
+        _ => "{n} contributors",
+    };
+    let touches = match row.touches {
+        1 => "{n} file change",
+        _ => "{n} file changes",
+    };
+    let count = |key, n: String| lang.f(key, &[("n", n)]);
+    format!(
+        "{} · {}",
+        count(people, row.contributors.to_string()),
+        count(touches, row.touches.to_string())
+    )
+}
+
 pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) -> Card {
     let mut b = Builder::new(lang, nodes, &row.node);
     let share = row.top_share.map(|s| s * 100.0);
@@ -119,16 +137,7 @@ pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) 
             ),
         )
         .bar(row.top_share.filter(|s| s.is_finite()).unwrap_or(0.0))
-        .push(
-            Kind::Text,
-            lang.f(
-                "{people} contributors · {touches} file changes",
-                &[
-                    ("people", row.contributors.to_string()),
-                    ("touches", row.touches.to_string()),
-                ],
-            ),
-        );
+        .push(Kind::Text, people_and_touches(lang, row));
     let mut lines = vec![Line::new(Kind::Text, lang.t("Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown.",
     ))];
     lines.extend(
@@ -263,6 +272,24 @@ mod tests {
             !card.items.iter().any(|i| i.kind == Kind::Locate),
             "not in the graph"
         );
+    }
+
+    #[test]
+    fn knowledge_counts_use_the_singular_for_one() {
+        let row = KnowledgeMetric {
+            node: "a/x.rs".into(),
+            touches: 1,
+            contributors: 1,
+            top_share: Some(1.0),
+            bus_factor_50: Some(1),
+            authors: Vec::new(),
+            status: "ready".into(),
+        };
+        let nodes = BTreeSet::new();
+        let card = knowledge(&Texts::default(), &nodes, &row);
+        assert_eq!(texts(&card)[3], "1 contributor · 1 file change");
+        let de = knowledge(&Texts::german(), &nodes, &row);
+        assert_eq!(texts(&de)[3], "1 beitragende Person · 1 Dateiänderung");
     }
 
     #[test]
