@@ -157,6 +157,16 @@ impl GraphState {
         self.refresh();
     }
 
+    /// Open the packages `open`, close `close` (the left pane's
+    /// expansion, for "Follow left").
+    pub fn set_open(&mut self, open: &[usize], close: &[usize]) {
+        self.expanded.extend(open.iter().copied());
+        for n in close {
+            self.expanded.remove(n);
+        }
+        self.refresh();
+    }
+
     pub fn collapse_all(&mut self) {
         self.expanded.clear();
         self.refresh();

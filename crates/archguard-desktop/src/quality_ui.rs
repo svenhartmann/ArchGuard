@@ -186,6 +186,33 @@ fn snapshot_view(s: &mut QualityState) {
 fn snapshot_view(_: &mut QualityState) {}
 
 /// Write the state's page into `QualityData.model`.
+/// The active document's Quality tab as the export's snapshot: every
+/// loaded report, with the tab's section, target and search.
+pub fn export(ui: &AppWindow) -> Option<crate::export::Snapshot> {
+    use crate::export::{QualityFilters, QualityInput, quality_snapshot};
+    let project = ui.get_project();
+    documents::with_active_state(|s: &mut QualityState| {
+        let i = s.inputs.as_ref()?;
+        let input = QualityInput {
+            code: &i.code,
+            knowledge: i.knowledge.as_ref(),
+            measurements: &i.measurements,
+            cohesion: &i.cohesion,
+            history: &i.history,
+            tests: &i.tests,
+            mutations: &i.mutations,
+            duplicates: &i.duplicates,
+        };
+        let filters = QualityFilters {
+            section: s.view.section.key().into(),
+            target: Some(s.view.target.clone()).filter(|t| !t.is_empty()),
+            query: s.view.query.clone(),
+        };
+        Some(quality_snapshot(&project, &input, &filters))
+    })
+    .flatten()
+}
+
 pub fn push(ui: &AppWindow, s: &mut QualityState) {
     let page = s.page();
     let mut m = page_model(&s.lang, page);

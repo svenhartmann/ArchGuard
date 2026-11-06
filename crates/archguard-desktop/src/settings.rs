@@ -408,6 +408,35 @@ mod tests {
         assert_eq!(s.projects["/w/shop"].layout, None);
     }
 
+    /// "Follow left" is stored with the split layout and read back; a
+    /// layout without the key does not follow.
+    #[test]
+    fn follow_is_stored_with_the_pane_layout() {
+        let mut l = split_layout();
+        l.follow_left = true;
+        let mut s = Settings::default();
+        s.set_project(
+            Path::new("/w/shop"),
+            ProjectView {
+                layout: Some(l.clone()),
+                ..ProjectView::default()
+            },
+        );
+        let text = render(&mut DocumentMut::new(), &s);
+        assert!(text.contains("pane_follow = true"), "{text}");
+        let (_, back) = parse(&text).expect("own output parses");
+        assert_eq!(back.projects["/w/shop"].layout, Some(l));
+        let (_, old) =
+            parse("[projects.\"/w/shop\"]\npanes = [[\"graph\"], [\"dsm\"]]\n").expect("valid");
+        assert!(
+            !old.projects["/w/shop"]
+                .layout
+                .as_ref()
+                .expect("layout")
+                .follow_left
+        );
+    }
+
     #[test]
     fn an_empty_file_is_the_default() {
         let (_, s) = parse("").expect("empty toml");

@@ -12,7 +12,10 @@ mod context;
 mod documents;
 mod documents_ui;
 mod export;
+mod export_ui;
 mod file_ui;
+mod follow;
+mod follow_ui;
 mod format;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
@@ -43,6 +46,7 @@ mod tab_support;
 mod tree;
 mod tree_order;
 mod ui;
+mod view_export;
 mod web;
 
 use std::path::PathBuf;

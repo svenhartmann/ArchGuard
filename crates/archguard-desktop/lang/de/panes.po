@@ -12,3 +12,12 @@ msgstr "Daneben öffnen"
 
 msgid "Open graph to the side"
 msgstr "Graph daneben öffnen"
+
+msgid "This view cannot follow the left view."
+msgstr "Diese Ansicht kann der linken Ansicht nicht folgen."
+
+msgid "Follows the left pane; navigating here stops it."
+msgstr "Folgt dem linken Bereich; Navigieren hier beendet das Folgen."
+
+msgid "Follow left: scope, expanded packages and selection."
+msgstr "Links folgen: Ausschnitt, aufgeklappte Pakete und Auswahl."

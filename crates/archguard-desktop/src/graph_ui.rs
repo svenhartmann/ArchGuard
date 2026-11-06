@@ -10,6 +10,9 @@ use std::rc::Rc;
 use slint::{ComponentHandle, SharedString, VecModel};
 
 use crate::documents::{self, with_store};
+use crate::export::{Diagram, GraphInput};
+use crate::follow::{self, Nav};
+use crate::follow_ui;
 use crate::instances::{self, Instance};
 use crate::panes::Layout;
 use crate::panes_ui;
@@ -17,6 +20,7 @@ use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
 use crate::tree::{EdgeMode, Sort, Tree};
 use crate::ui::*;
+use crate::view_export;
 
 /// One Graph instance: its state and the document's cycle findings on
 /// its tree.
@@ -51,16 +55,54 @@ fn act(ui: &AppWindow, id: i32, f: impl FnOnce(&mut GraphState)) {
         return;
     };
     let layout = panes_ui::layout();
-    let changed = instances::update(ui, &layout, id, |s: &mut Graph| {
+    let result = instances::update(ui, &layout, id, |s: &mut Graph| {
         let before = (s.g.scope, s.g.display);
+        let was = marks(&s.g);
         f(&mut s.g);
+        let navs = follow::navs(&s.g.tree, &was, &marks(&s.g));
         let name = |n: usize| s.g.tree.nodes[n].name.clone();
-        ((s.g.scope, s.g.display) != before).then(|| (s.g.scope.map(name), s.g.display))
-    })
-    .flatten();
+        let changed =
+            ((s.g.scope, s.g.display) != before).then(|| (s.g.scope.map(name), s.g.display));
+        (changed, navs)
+    });
+    let Some((changed, navs)) = result else {
+        return;
+    };
     if let Some((node, display)) = changed {
         panes_ui::describe(ui, id, node, display);
     }
+    follow_ui::navigated(ui, id, navs);
+}
+
+fn marks(g: &GraphState) -> follow::Marks {
+    follow::Marks {
+        scope: g.scope,
+        open: g.expanded.clone(),
+        selected: g.selected,
+    }
+}
+
+/// "Follow left": do in Graph `id` what the left pane did.
+fn follow_nav(ui: &AppWindow, id: u32, nav: &Nav) {
+    act(ui, id as i32, |g| {
+        let tree = g.tree.clone();
+        let node = |name: &str| instances::node_named(&tree, name);
+        let nodes = |names: &[String]| names.iter().filter_map(|n| node(n)).collect::<Vec<_>>();
+        match nav {
+            Nav::Scope(None) => g.reset(),
+            Nav::Scope(Some(name)) => {
+                if let Some(n) = node(name) {
+                    g.open(n);
+                }
+            }
+            Nav::Expand { open, close } => g.set_open(&nodes(open), &nodes(close)),
+            Nav::Select(name) => {
+                if let Some(n) = node(name) {
+                    g.reveal(n);
+                }
+            }
+        }
+    });
 }
 
 /// A Graph callback with the instance id and one argument.
@@ -83,6 +125,7 @@ pub fn wire(ui: &AppWindow) {
         act(ui, id as i32, |g| g.reveal(node));
     });
     panes_ui::on_sync("graph", sync);
+    follow_ui::on_follow("graph", follow_nav);
     let select = on(ui, |g, r: i32| g.select_row(index(r)));
     ui.on_select_row(link(ui, select));
     let reveal = on(ui, |g, n: i32| g.reveal(index(n).unwrap_or(0)));
@@ -197,6 +240,25 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
             cycles: cycles.collect(),
             g,
         })
+    })
+}
+
+/// Graph `id` as the export's input with its display settings, and its
+/// tree display for the SVG (the web exports SVG from Graph → Tree only).
+pub fn export(ui: &AppWindow, id: u32) -> Option<(GraphInput, Option<Diagram>)> {
+    let project = ui.get_project().to_string();
+    let search = SEARCH.with_borrow(|s| s.to_string());
+    instances::with(id, |s: &mut Graph| {
+        let g = &s.g;
+        let selected = g.selected_row();
+        let shown: Vec<usize> = g.view.shown(selected, g.mode).iter().map(|s| s.0).collect();
+        let mut input = view_export::tree_input(&g.tree, &g.view, &shown, |_| true);
+        input.project = project;
+        let reference = g.selected.map(|n| g.tree.nodes[n].name.clone());
+        input.filters = view_export::graph_filters(g.display, g.mode, reference, &search);
+        let diagram =
+            (g.display == 0).then(|| view_export::tree_diagram(&g.tree, &g.view, selected, g.mode));
+        (input, diagram)
     })
 }
 

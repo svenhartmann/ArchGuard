@@ -7,10 +7,10 @@ use std::collections::BTreeSet;
 use archguard_engine::{SecurityFinding, SecurityReport};
 
 /// `SECURITY_SEVERITIES`, in display and sort order.
-pub const SEVERITIES: [&str; 5] = ["critical", "high", "medium", "low", "unknown"];
+pub(crate) const SEVERITIES: [&str; 5] = ["critical", "high", "medium", "low", "unknown"];
 
 /// Position in [`SEVERITIES`]; unrecognized values count as "unknown".
-pub fn severity_rank(value: &str) -> usize {
+pub(crate) fn severity_rank(value: &str) -> usize {
     SEVERITIES
         .iter()
         .position(|s| *s == value)
@@ -19,7 +19,7 @@ pub fn severity_rank(value: &str) -> usize {
 
 /// `securityCounts`: original snapshot totals, before display filters.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct Counts {
+pub(crate) struct Counts {
     pub packages_scanned: usize,
     pub affected_packages: usize,
     pub findings: usize,
@@ -27,7 +27,7 @@ pub struct Counts {
     pub by_severity: [usize; 5],
 }
 
-pub fn counts(report: &SecurityReport) -> Counts {
+pub(crate) fn counts(report: &SecurityReport) -> Counts {
     let mut by_severity = [0; 5];
     for f in &report.findings {
         by_severity[severity_rank(&f.severity)] += 1;
@@ -47,12 +47,12 @@ pub fn counts(report: &SecurityReport) -> Counts {
 }
 
 /// Totals are shown only for a usable scan (`available` in `renderSecurity`).
-pub fn available(report: &SecurityReport, counts: &Counts) -> bool {
+pub(crate) fn available(report: &SecurityReport, counts: &Counts) -> bool {
     !matches!(report.status.as_str(), "not_scanned" | "error") && counts.packages_scanned > 0
 }
 
 /// `filteredSecurityFindings`: `severity` 0 is "all", else 1 + rank.
-pub fn filtered<'a>(
+pub(crate) fn filtered<'a>(
     report: &'a SecurityReport,
     query: &str,
     severity: usize,
@@ -80,7 +80,7 @@ pub fn filtered<'a>(
 
 /// Which text the empty findings list shows (`renderSecurity`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Empty {
+pub(crate) enum Empty {
     /// The list has findings.
     None = 0,
     Filtered = 1,
@@ -91,7 +91,7 @@ pub enum Empty {
     Incomplete = 6,
 }
 
-pub fn empty(report: &SecurityReport, counts: &Counts, matching: usize) -> Empty {
+pub(crate) fn empty(report: &SecurityReport, counts: &Counts, matching: usize) -> Empty {
     match report.status.as_str() {
         _ if matching > 0 => Empty::None,
         _ if counts.findings > 0 => Empty::Filtered,
@@ -104,7 +104,7 @@ pub fn empty(report: &SecurityReport, counts: &Counts, matching: usize) -> Empty
 }
 
 /// `safeSecurityUrl`: only absolute http(s) links open.
-pub fn safe_url(value: Option<&str>) -> Option<&str> {
+pub(crate) fn safe_url(value: Option<&str>) -> Option<&str> {
     let value = value?;
     let lower = value.to_ascii_lowercase();
     let rest = lower
@@ -116,7 +116,7 @@ pub fn safe_url(value: Option<&str>) -> Option<&str> {
 }
 
 /// `securityScanCommand`: the root in POSIX single quotes.
-pub fn scan_command(root: &str) -> String {
+pub(crate) fn scan_command(root: &str) -> String {
     format!("archguard security -- '{}'", root.replace('\'', "'\\''"))
 }
 

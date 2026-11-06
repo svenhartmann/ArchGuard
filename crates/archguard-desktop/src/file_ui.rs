@@ -8,6 +8,8 @@ use std::rc::Rc;
 use slint::{SharedString, VecModel};
 
 use crate::documents::{self, with_store};
+use crate::follow::Nav;
+use crate::follow_ui;
 use crate::instances::{self, Instance};
 use crate::node_view::{self, NodeView};
 use crate::panes::{FILE, Layout};
@@ -80,6 +82,21 @@ fn name_of(node: usize) -> Option<String> {
     documents::with_active_state(|t: &mut Rc<Tree>| Some(t.nodes.get(node)?.name.clone())).flatten()
 }
 
+/// "Follow left": File view `id` shows the node named `name`; its tab
+/// follows.
+fn show_node(ui: &AppWindow, id: u32, name: &str) {
+    let layout = panes_ui::layout();
+    let shown = instances::update(ui, &layout, id, |s: &mut FileState| {
+        let node = instances::node_named(&s.tree, name)?;
+        s.view = node_view::node_view(&s.tree, node)?;
+        Some(())
+    })
+    .flatten();
+    if shown.is_some() {
+        panes_ui::describe(ui, id, Some(name.to_string()), 0);
+    }
+}
+
 pub fn wire(ui: &AppWindow) {
     ui.set_file_panes(PANES.with(|m| m.clone()).into());
     panes_ui::on_sync(FILE, sync);
@@ -93,7 +110,15 @@ pub fn wire(ui: &AppWindow) {
     // A dependency of the File view is revealed in the pane beside.
     let select = with_ui(ui, |ui, (id, node): (i32, i32)| {
         if let (Ok(id), Some(node)) = (u32::try_from(id), index(node)) {
+            // Its own navigation: a following File view stops following.
+            let nav = name_of(node).map(Nav::Select);
+            follow_ui::navigated(ui, id, nav.into_iter().collect());
             panes_ui::link_from(ui, id, node);
+        }
+    });
+    follow_ui::on_follow(FILE, |ui, id, nav| {
+        if let Nav::Select(name) = nav {
+            show_node(ui, id, name);
         }
     });
     ui.on_file_select(move |id, node| select((id, node)));

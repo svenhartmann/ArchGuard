@@ -93,6 +93,9 @@ pub struct Layout {
     pub ratio: f32,
     /// The id the next new tab gets.
     pub next: u32,
+    /// "Follow left": the right pane follows the left pane's navigation
+    /// (`crate::follow`); only in a split layout.
+    pub follow_left: bool,
 }
 
 impl Default for Layout {
@@ -132,6 +135,7 @@ impl Layout {
             focus: 0,
             ratio: 0.5,
             next: 1,
+            follow_left: false,
         };
         let tab = l.new_tab(view, None);
         l.panes[0].tabs.push(tab);
@@ -282,6 +286,7 @@ impl Layout {
         if self.is_split() && pane < self.panes.len() {
             self.panes.remove(pane);
             self.focus = 0;
+            self.follow_left = false;
         }
     }
 
@@ -381,6 +386,7 @@ pub fn repaired(layout: Layout) -> Layout {
     }
     let mut l = Layout {
         focus: layout.focus.min(panes.len() - 1),
+        follow_left: layout.follow_left && panes.len() > 1,
         panes,
         ratio: 0.5,
         next,
@@ -658,6 +664,7 @@ mod tests {
             focus: 7,
             ratio: f32::INFINITY,
             next: 0,
+            follow_left: false,
         };
         let l = repaired(broken);
         assert_eq!(
@@ -675,6 +682,7 @@ mod tests {
             focus: 0,
             ratio: 0.5,
             next: 1,
+            follow_left: false,
         };
         assert_eq!(repaired(empty), Layout::default());
     }
@@ -699,6 +707,7 @@ mod tests {
             focus: 0,
             ratio: 0.5,
             next: 1,
+            follow_left: false,
         });
         let id = only.view(0).expect("tab").id;
         drop_tab(&mut only, id);
@@ -720,9 +729,16 @@ mod tests {
             // Revealing in the target selects there, which links again.
             let back = link::follow(linked(target), |_, t| seen.push(t));
             assert!(!back, "no link back while one runs");
+            assert!(link::running(), "the target sees the running link");
+            assert!(!link::guarded(|| ()), "no follow while a link runs");
         });
         assert!(ran);
         assert_eq!(seen, [dsm]);
+        assert!(!link::running());
+        assert!(
+            link::guarded(|| assert!(link::running())),
+            "a follow runs alone"
+        );
         assert!(
             link::follow(linked(dsm), |_, _| ()),
             "the guard is released"

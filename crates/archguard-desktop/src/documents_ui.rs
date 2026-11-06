@@ -38,6 +38,8 @@ pub fn wire(ui: &AppWindow) {
     services_ui::wire(ui);
     quality_ui::wire(ui);
     security_ui::wire(ui);
+    crate::export_ui::wire(ui);
+    crate::follow_ui::wire(ui);
     panes_ui::wire(ui);
     ui.on_select_doc(with_ui(ui, |ui, i: i32| activate(ui, index(i))));
     ui.on_open_sub_project(with_ui(ui, |ui, i: i32| open_sub_project(ui, index(i))));

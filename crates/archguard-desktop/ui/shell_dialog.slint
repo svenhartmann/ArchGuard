@@ -94,9 +94,11 @@ export component SaveDialog inherits Rectangle {
 // failed save), until dismissed.
 export component NoticeBar inherits Rectangle {
     in property <string> text;
+    // A finished action (an export) instead of a warning.
+    in property <bool> done;
     callback dismiss();
     height: 32px;
-    background: Theme.warning.with-alpha(0.18);
+    background: root.done ? Theme.accent.with-alpha(0.14) : Theme.warning.with-alpha(0.18);
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 8px;

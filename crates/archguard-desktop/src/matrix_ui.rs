@@ -7,6 +7,9 @@ use std::rc::Rc;
 use slint::{ComponentHandle, SharedString, VecModel};
 
 use crate::documents::with_store;
+use crate::export::GraphInput;
+use crate::follow::{self, Nav};
+use crate::follow_ui;
 use crate::format::Locale;
 use crate::instances::{self, Instance};
 use crate::kpi::{self, Value};
@@ -14,8 +17,9 @@ use crate::matrix::{Matrix, MatrixRow, Target};
 use crate::panes::Layout;
 use crate::panes_ui;
 use crate::tab_support::{self, Texts, index, model};
-use crate::tree::Tree;
+use crate::tree::{Sort, Tree};
 use crate::ui::{AppWindow, MatrixColumn, MatrixData, MatrixRowItem};
+use crate::view_export;
 
 /// Rows per page, as the web viewer's matrix.
 const PAGE: usize = 120;
@@ -112,6 +116,74 @@ impl MatrixState {
         self.evidence = None;
         self.marked = None;
     }
+
+    /// Where the matrix stands, for "Follow left": scope, open packages,
+    /// the row of the open cell.
+    fn marks(&self) -> follow::Marks {
+        follow::Marks {
+            scope: self.scope,
+            open: self.expanded.clone(),
+            selected: self.evidence.map(|(row, _)| row),
+        }
+    }
+
+    /// "Follow left": do what the left pane did. A scope the matrix does
+    /// not offer (a file) is revealed instead.
+    pub fn follow(&mut self, nav: &Nav) {
+        let node = |name: &str| instances::node_named(&self.tree, name);
+        match nav {
+            Nav::Scope(None) => self.set_scope(None),
+            Nav::Scope(Some(name)) => match node(name) {
+                Some(n) if self.scopes.contains(&n) => self.set_scope(Some(n)),
+                Some(n) => self.reveal(n),
+                None => {}
+            },
+            Nav::Expand { open, close } => {
+                let (open, close): (Vec<_>, Vec<_>) = (
+                    open.iter().filter_map(|n| node(n)).collect(),
+                    close.iter().filter_map(|n| node(n)).collect(),
+                );
+                self.expanded.extend(open);
+                for n in close {
+                    self.expanded.remove(&n);
+                }
+            }
+            Nav::Select(name) => {
+                if let Some(n) = node(name) {
+                    self.reveal(n);
+                }
+            }
+        }
+    }
+
+    /// The export's input: every row of the scope at the open packages
+    /// (all pages, no search) and every link between them, as the web
+    /// exports the complete matrix scope.
+    pub fn export_input(&self) -> GraphInput {
+        let rows: BTreeSet<usize> = self
+            .matrix
+            .rows(&self.tree, &self.expanded, "", None, false)
+            .iter()
+            .map(|r| r.node)
+            .collect();
+        // The tree view shows a matrix row once its ancestors are open.
+        let mut open = self.expanded.clone();
+        for &row in &rows {
+            let mut cur = self.tree.nodes[row].parent;
+            while let Some(n) = cur {
+                open.insert(n);
+                cur = self.tree.nodes[n].parent;
+            }
+        }
+        let view = self.tree.view_sorted(&open, Sort::Alphabetical);
+        let links: Vec<usize> = (0..view.links.len()).collect();
+        let keep = |r: usize| rows.contains(&view.rows[r].node);
+        let mut input = view_export::tree_input(&self.tree, &view, &links, keep);
+        input.project = self.project.clone();
+        input.matrix = true;
+        input.filters.reference = self.marked.map(|n| self.tree.nodes[n].name.clone());
+        input
+    }
 }
 
 thread_local! {
@@ -150,15 +222,20 @@ fn act(ui: &AppWindow, id: i32, f: impl FnOnce(&mut MatrixState)) {
         return;
     };
     let layout = panes_ui::layout();
-    let changed = instances::update(ui, &layout, id, |m: &mut MatrixState| {
-        let before = m.scope;
+    let result = instances::update(ui, &layout, id, |m: &mut MatrixState| {
+        let was = m.marks();
         f(m);
-        (m.scope != before).then(|| m.scope.map(|n| m.tree.nodes[n].name.clone()))
-    })
-    .flatten();
+        let navs = follow::navs(&m.tree, &was, &m.marks());
+        let changed = (m.scope != was.scope).then(|| m.scope.map(|n| m.tree.nodes[n].name.clone()));
+        (changed, navs)
+    });
+    let Some((changed, navs)) = result else {
+        return;
+    };
     if let Some(node) = changed {
         panes_ui::describe(ui, id, node, 0);
     }
+    follow_ui::navigated(ui, id, navs);
 }
 
 /// A Matrix callback with the instance id and one argument.
@@ -183,6 +260,7 @@ fn on0(ui: &AppWindow, f: impl Fn(&mut MatrixState) + 'static) -> impl Fn(i32) +
 pub fn wire(ui: &AppWindow) {
     ui.set_matrix_panes(PANES.with(|m| m.clone()).into());
     panes_ui::on_sync("dsm", sync);
+    follow_ui::on_follow("dsm", |ui, id, nav| act(ui, id as i32, |m| m.follow(nav)));
     // Linked selection from the pane beside.
     panes_ui::on_reveal("dsm", |ui, id, node| act(ui, id as i32, |m| m.reveal(node)));
     ui.on_m_toggle(on(ui, |m, n: i32| {
@@ -497,5 +575,41 @@ mod tests {
         assert!(evidence(&m).is_some());
         m.evidence = Some((row, m.matrix.columns.len() + 1));
         assert_eq!(evidence(&m), None);
+    }
+
+    /// The export holds every row of the scope (not one page) and the
+    /// links between them, without the rows outside the scope.
+    #[test]
+    fn the_export_is_the_complete_scope() {
+        let mut m = state();
+        let all = m.export_input();
+        assert!(all.matrix);
+        assert!(
+            all.nodes.iter().any(|n| n.name == "top.rs"),
+            "{:?}",
+            all.nodes
+        );
+        assert!(all.nodes.len() > 1, "{:?}", all.nodes);
+        let lib = named(&m, "lib");
+        m.set_scope(Some(lib));
+        m.expanded.insert(named(&m, "lib/src"));
+        let scoped = m.export_input();
+        let names: Vec<&str> = scoped.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"lib/src/a.rs"), "{names:?}");
+        assert!(!names.iter().any(|n| n.starts_with("app")), "{names:?}");
+        let pairs: Vec<_> = scoped
+            .edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str()))
+            .collect();
+        assert!(
+            pairs.contains(&("lib/src/a.rs", "lib/src/b.rs")),
+            "{pairs:?}"
+        );
+        assert!(
+            pairs
+                .iter()
+                .all(|(f, t)| f.starts_with("lib") && t.starts_with("lib"))
+        );
     }
 }

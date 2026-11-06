@@ -231,3 +231,53 @@ comparison of the native view against the web view on the same project
   view, not per instance: switching between two instances in one pane
   keeps the view's scroll offset. Checked with unit tests and headless
   snapshots on macOS only.
+- **2026-11-06:** Export wired (`feat/desktop-export-follow`). File →
+  Export (native menu bar) and a view tab's context menu ("Export") write
+  the focused pane's view instance with its scope and filters through
+  the UI-free export core (`src/export.rs`): Markdown + Mermaid and JSON
+  data + evidence for Graph, Matrix, Services, Security, Quality and
+  Architecture; arc42 documentation (the CLI's document) and a PNG of
+  the pane (cropped from `Window::take_snapshot`, logical × scale) for
+  every view; an SVG diagram for Graph → Tree and Services only, as in
+  the web, which the menu disables with the web's hint otherwise. Start,
+  Calls and the File view have no export snapshot yet, so Markdown and
+  JSON are disabled there with a hint. The views hand over plain input
+  structs (`view_export.rs` for Graph and Matrix, `services_ui/export.rs`,
+  `quality_ui::export`, `security_ui::export_state`); the security filter
+  and totals are shared with the tab (`security_ui/snapshot.rs`) instead
+  of a copy in `export/`. The save dialog is `rfd`'s blocking
+  `FileDialog::save_file`, as the existing "Open project" dialog
+  (`documents_ui::pick_folder`), started in the project folder with the
+  web's file name; the result shows in the notice bar in the web's
+  wording ("Exported archguard-graph.svg with the current scope and
+  filter settings."). Snapshot builds export without a dialog with
+  `ARCHGUARD_DESKTOP_EXPORT=<format>:<path>[,…]`. Checked with unit tests
+  and headless snapshot runs on macOS (fixtures/ts-cyclic,
+  examples/service-shop); the save dialog itself was not opened.
+- **2026-11-06:** "Follow left" (`feat/desktop-export-follow`), asked
+  for by the user: in a split layout the right pane follows the left
+  pane's navigation where the two views share a context, mapped by tree
+  node name (`src/follow.rs`, `src/follow_ui.rs`). A chain toggle
+  on the right pane's strip switches it; it is disabled, with its reason
+  on hover, when the pair has no common context. Pairs: Start/World →
+  Graph (entering a package, also by zooming in, opens and expands it in
+  the Graph; leaving it, also by zooming out, collapses the Graph; a
+  selected area or entity is revealed), Graph → Graph and Graph → Matrix
+  (scope, expanded and collapsed packages), Graph or Matrix → File view
+  (the selected node, a Matrix cell's row, becomes the File view's node),
+  Architecture → Graph (the building-block map's scope and selected
+  package). Selections between Graph and Matrix stay with the existing
+  linked selection. Not supported: Matrix → Graph, anything → Calls,
+  Services, Quality, Security, Start or Architecture. One direction only:
+  views report their navigations (Graph and Matrix as the difference of
+  scope, open packages and selection per callback; World and
+  Architecture per wrapped callback); a navigation reported by the right
+  pane switches Follow off, and the follow runs inside the link guard, so
+  the right pane's own reports while it follows are ignored. Switching
+  Follow on does not copy the left pane's current state; the next left
+  navigation is followed. The toggle is stored with the layout
+  (`pane_follow` in `desktop.toml`) and dropped when the split closes.
+  Checked with unit tests and headless snapshots on macOS
+  (fixtures/py-layers, fixtures/ts-cyclic; snapshot hooks
+  `ARCHGUARD_DESKTOP_FOLLOW`, `…_LEFT_OPEN`, `…_LEFT_EXPAND`,
+  `…_WORLD_OPEN`, `…_WORLD_BACK`, `…_ARC_OPEN` in `src/snapshot.rs`).

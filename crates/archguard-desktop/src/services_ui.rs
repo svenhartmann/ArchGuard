@@ -5,6 +5,7 @@
 //! All tab state is one [`ServicesState`], built by [`build_from`] and shown by
 //! [`push`] as one `ServicesModel` value.
 
+mod export;
 mod layout;
 mod paths;
 mod state;
@@ -13,6 +14,7 @@ mod view;
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::tab_support::{self, Actions, Shared, TabState, Texts, Topology, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
@@ -111,6 +113,19 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 pub fn push(ui: &AppWindow, s: &ServicesState) {
     let d = ui.global::<ServicesData>();
     d.set_model(view::build(s, Texts::of(ui).t("Unmapped service")));
+}
+
+/// The active document's Services tab as the export's snapshot and its
+/// drawn tree, once its topology is read.
+pub fn export_data(ui: &AppWindow) -> Option<(crate::export::Snapshot, crate::export::Diagram)> {
+    let project = ui.get_project();
+    let unmapped = Texts::of(ui).t("Unmapped service").to_string();
+    documents::with_active_state(|s: &mut ServicesState| {
+        let snapshot =
+            crate::export::services_snapshot(&project, s.topology()?, &export::filters(s));
+        Some((snapshot, export::diagram(s, &unmapped)))
+    })
+    .flatten()
 }
 
 /// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`
