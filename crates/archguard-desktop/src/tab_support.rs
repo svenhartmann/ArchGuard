@@ -88,6 +88,19 @@ impl<T: TabState> Actions<T> {
     }
 }
 
+/// A callback that runs `f` while the window exists.
+pub fn with_ui<A: 'static>(
+    ui: &AppWindow,
+    f: impl Fn(&AppWindow, A) + 'static,
+) -> impl Fn(A) + 'static {
+    let w = ui.as_weak();
+    move |a| {
+        if let Some(ui) = w.upgrade() {
+            f(&ui, a);
+        }
+    }
+}
+
 /// A Slint list model of `items`.
 pub fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
@@ -111,12 +124,6 @@ pub fn snapshot_mode() -> bool {
 pub fn tree(data: &Loaded) -> Rc<Tree> {
     let build = || Rc::new(Tree::from_graph(&data.run.graph));
     documents::with_active_state_or(build, |t: &mut Rc<Tree>| t.clone()).unwrap_or_else(build)
-}
-
-/// Show `node` (an index into the analysed graph's nodes) in the Graph tab.
-pub fn reveal(ui: &AppWindow, node: usize) {
-    ui.set_tab("graph".into());
-    ui.invoke_reveal(node as i32);
 }
 
 /// Marks a document whose `T` is built on a worker thread, or whose build

@@ -9,13 +9,14 @@
 //! (`ARCHGUARD_DESKTOP_HOVER`), switch display (`ARCHGUARD_DESKTOP_DISPLAY`,
 //! 0 tree, 1 network, 2 dependencies), open a matrix cell
 //! (`ARCHGUARD_DESKTOP_MCELL=<name>:<col>`), switch tab
-//! (`ARCHGUARD_DESKTOP_TAB`) or open the Projects menu
-//! (`ARCHGUARD_DESKTOP_MENU=projects`).
+//! (`ARCHGUARD_DESKTOP_TAB`, in the focused pane) or open the Projects
+//! menu (`ARCHGUARD_DESKTOP_MENU=projects`). Pane hooks: see
+//! [`apply_pane_hooks`].
 //!
 //! App shell: mark tabs dirty (`ARCHGUARD_DESKTOP_DIRTY=0,1`, before the
 //! closes, so closing one shows the save prompt), press the window's close
 //! button (`ARCHGUARD_DESKTOP_QUIT=1`), click at logical points
-//! (`ARCHGUARD_DESKTOP_CLICK=x:y,x:y`, e.g. the menu bar Slint draws with
+//! (`ARCHGUARD_DESKTOP_CLICK=x:y,rx:y`, `r`: right button; e.g. the menu bar Slint draws with
 //! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
 //! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
@@ -73,19 +74,54 @@ fn matrix_query_round_trip(ui: &AppWindow) {
     let Ok(q) = std::env::var("ARCHGUARD_DESKTOP_MQUERY") else {
         return;
     };
-    ui.set_tab("dsm".into());
+    ui.invoke_navigate("dsm".into());
     ui.invoke_m_search(q.into());
-    ui.set_tab("graph".into());
+    ui.invoke_navigate("graph".into());
     let weak = ui.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(300), move || {
         if let Some(ui) = weak.upgrade() {
-            ui.set_tab("dsm".into());
+            ui.invoke_navigate("dsm".into());
         }
     });
 }
 
+/// Panes, before the reveal hooks so those link across them: open views
+/// in new tabs of the focused pane
+/// (`ARCHGUARD_DESKTOP_VIEW_TABS=calls,quality`), split into two panes
+/// (`ARCHGUARD_DESKTOP_SPLIT=graph,dsm`, left and right view), set the
+/// divider (`ARCHGUARD_DESKTOP_RATIO=0.6`), close a view tab
+/// (`ARCHGUARD_DESKTOP_CLOSE_VIEW=<pane>:<tab>`) or focus a pane
+/// (`ARCHGUARD_DESKTOP_FOCUS=0`).
+fn apply_pane_hooks(ui: &AppWindow) {
+    let tabs = std::env::var("ARCHGUARD_DESKTOP_VIEW_TABS").unwrap_or_default();
+    for v in tabs.split(',').map(str::trim).filter(|v| !v.is_empty()) {
+        ui.invoke_open_view_tab(v.into());
+    }
+    if let Some((left, right)) = env::<String>("ARCHGUARD_DESKTOP_SPLIT")
+        .as_deref()
+        .and_then(|v| v.split_once(','))
+    {
+        ui.invoke_navigate(left.trim().into());
+        ui.invoke_split_view(right.trim().into());
+    }
+    if let Some(r) = env::<f32>("ARCHGUARD_DESKTOP_RATIO") {
+        ui.invoke_set_pane_ratio(r);
+    }
+    let close = env::<String>("ARCHGUARD_DESKTOP_CLOSE_VIEW").and_then(|v| {
+        let (p, t) = v.split_once(':')?;
+        Some((p.trim().parse().ok()?, t.trim().parse().ok()?))
+    });
+    if let Some((p, t)) = close {
+        ui.invoke_close_view_tab(p, t);
+    }
+    if let Some(p) = env::<i32>("ARCHGUARD_DESKTOP_FOCUS") {
+        ui.invoke_focus_pane(p);
+    }
+}
+
 fn apply_view_hooks(ui: &AppWindow) {
     matrix_query_round_trip(ui);
+    apply_pane_hooks(ui);
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_REVEAL").and_then(|n| node_named(&n)) {
         ui.invoke_reveal(n as i32);
     }
@@ -106,7 +142,7 @@ fn apply_view_hooks(ui: &AppWindow) {
         ui.invoke_m_cell(n as i32, c);
     }
     if let Some(tab) = env::<String>("ARCHGUARD_DESKTOP_TAB") {
-        ui.set_tab(tab.into());
+        ui.invoke_navigate(tab.into());
     }
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);
@@ -141,8 +177,13 @@ fn apply_shell_hooks(ui: &AppWindow) {
         ui.window().dispatch_event(WindowEvent::CloseRequested);
     }
     let clicks = std::env::var("ARCHGUARD_DESKTOP_CLICK").unwrap_or_default();
-    for position in clicks.split(',').filter_map(point) {
-        let button = PointerEventButton::Left;
+    // `r` before a point clicks the right button (context menus).
+    for v in clicks.split(',') {
+        let (button, v) = match v.trim().strip_prefix('r') {
+            Some(v) => (PointerEventButton::Right, v),
+            None => (PointerEventButton::Left, v),
+        };
+        let Some(position) = point(v) else { continue };
         ui.window()
             .dispatch_event(WindowEvent::PointerMoved { position });
         ui.window()
@@ -154,6 +195,34 @@ fn apply_shell_hooks(ui: &AppWindow) {
         ui.window()
             .dispatch_event(WindowEvent::PointerMoved { position });
     }
+    drag(ui);
+}
+
+/// `ARCHGUARD_DESKTOP_DRAG=x:y,x:y`: press at the first point, move to the
+/// second and release there (e.g. the pane divider).
+fn drag(ui: &AppWindow) {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let Ok(v) = std::env::var("ARCHGUARD_DESKTOP_DRAG") else {
+        return;
+    };
+    let Some((from, to)) = v
+        .split_once(',')
+        .and_then(|(a, b)| Some((point(a)?, point(b)?)))
+    else {
+        return;
+    };
+    let button = PointerEventButton::Left;
+    let w = ui.window();
+    w.dispatch_event(WindowEvent::PointerMoved { position: from });
+    w.dispatch_event(WindowEvent::PointerPressed {
+        position: from,
+        button,
+    });
+    w.dispatch_event(WindowEvent::PointerMoved { position: to });
+    w.dispatch_event(WindowEvent::PointerReleased {
+        position: to,
+        button,
+    });
 }
 
 fn write_png(ui: &AppWindow, path: &std::ffi::OsStr) {

@@ -9,7 +9,7 @@ use crate::documents;
 use crate::format::Locale;
 use crate::kpi::{self, Value};
 use crate::matrix::{Matrix, MatrixRow, Target};
-use crate::tab_support::{self, Actions, TabState, Texts, index, model};
+use crate::tab_support::{self, Actions, TabState, Texts, index, model, with_ui};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
 use std::rc::Rc;
@@ -34,6 +34,8 @@ pub struct MatrixState {
     only: bool,
     page: usize,
     evidence: Option<(usize, usize)>,
+    /// The node revealed from the pane beside the matrix, highlighted.
+    marked: Option<usize>,
 }
 
 impl MatrixState {
@@ -55,6 +57,7 @@ impl MatrixState {
             only: false,
             page: 0,
             evidence: None,
+            marked: None,
         }
     }
 
@@ -72,6 +75,30 @@ impl MatrixState {
         rows
     }
 
+    /// Show `node` (a tree node, as the Graph tab's): leave a scope that
+    /// does not hold it, drop filters, open its packages, page to its row
+    /// and mark it.
+    pub fn reveal(&mut self, node: usize) {
+        if node >= self.tree.nodes.len() {
+            return;
+        }
+        if self.scope.is_some() && !self.matrix.included.contains(&node) {
+            self.set_scope(None);
+        }
+        self.query.clear();
+        self.only = false;
+        let mut cur = self.tree.nodes[node].parent;
+        while let Some(p) = cur {
+            self.expanded.insert(p);
+            cur = self.tree.nodes[p].parent;
+        }
+        self.marked = Some(node);
+        let rows = self.visible_rows();
+        if let Some(i) = rows.iter().position(|r| r.node == node) {
+            self.page = i / PAGE;
+        }
+    }
+
     fn set_scope(&mut self, scope: Option<usize>) {
         self.scope = scope;
         self.matrix = Matrix::build(&self.tree, scope, &self.project);
@@ -80,6 +107,7 @@ impl MatrixState {
         self.only = false;
         self.page = 0;
         self.evidence = None;
+        self.marked = None;
     }
 }
 
@@ -100,6 +128,10 @@ impl TabState for MatrixState {
 }
 
 pub fn wire(ui: &AppWindow) {
+    // Linked selection from the Graph pane.
+    crate::panes_ui::on_reveal("dsm", |ui, node| {
+        tab_support::update(ui, |m: &mut MatrixState, _| m.reveal(node));
+    });
     let a = Actions::<MatrixState>::new(ui);
     ui.on_m_toggle(a.on(|m, _, n: i32| {
         let n = index(n).unwrap_or(0);
@@ -135,9 +167,16 @@ pub fn wire(ui: &AppWindow) {
     ui.on_m_page(a.on(|m, _, d: i32| {
         m.page = (m.page as i64 + d as i64).max(0) as usize;
     }));
-    ui.on_m_cell(a.on2(|m, _, row: i32, col: i32| {
+    let cell = a.on2(|m, _, row: i32, col: i32| {
         m.evidence = Some((index(row).unwrap_or(0), index(col).unwrap_or(0)));
-    }));
+    });
+    let link = with_ui(ui, move |ui, (row, col): (i32, i32)| {
+        cell(row, col);
+        if let Some(node) = index(row) {
+            crate::panes_ui::link_from(ui, "dsm", node);
+        }
+    });
+    ui.on_m_cell(move |row, col| link((row, col)));
     ui.on_m_close_evidence(a.on0(|m, _| m.evidence = None));
 }
 
@@ -190,6 +229,7 @@ fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
             package: !n.file,
             expanded: m.expanded.contains(&r.node) || !m.query.trim().is_empty() || m.only,
             in_cycle_path: path.contains(&r.node),
+            marked: m.marked == Some(r.node),
             badges: badges(mx, r.node).into(),
             cells: model((0..mx.columns.len()).map(|c| {
                 cells
@@ -210,6 +250,7 @@ fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
         kpi::DEPENDENCY_EVIDENCE.item(&texts, evidence),
         kpi::FILE_CYCLE_GROUPS.item(&texts, mx.cycles.len()),
     ]));
+    push_marked(ui, m, rows);
     ui.set_m_row_start((page * PAGE) as i32);
     ui.set_m_row_total(rows.len() as i32);
     ui.set_m_only(m.only);
@@ -292,6 +333,13 @@ fn cycle_path(m: &MatrixState) -> String {
     format!("{} · {} · {}", c.id, c.path.len() - 1, steps.join(" → "))
 }
 
+/// The marked row's index on the shown page, for the view to scroll to.
+fn push_marked(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
+    let shown = rows.iter().skip(m.page * PAGE).take(PAGE);
+    let marked = shown.into_iter().position(|r| m.marked == Some(r.node));
+    ui.set_m_marked_row(marked.map_or(-1, |i| i as i32));
+}
+
 /// Title and list of the open cell; both empty when no cell with
 /// dependencies is open.
 fn push_evidence(ui: &AppWindow, m: &MatrixState) {
@@ -344,6 +392,35 @@ mod tests {
         let rows = m.visible_rows();
         assert!(rows.len() <= PAGE);
         assert_eq!(m.page, 0);
+    }
+
+    fn named(m: &MatrixState, name: &str) -> usize {
+        m.tree
+            .nodes
+            .iter()
+            .position(|n| n.name == name)
+            .expect("node in the test tree")
+    }
+
+    /// Revealing a node from the pane beside it (linked selection) opens
+    /// its packages, leaves a scope or search that hides it and marks it.
+    #[test]
+    fn reveal_shows_and_marks_a_hidden_node() {
+        let mut m = state();
+        let lib = named(&m, "lib");
+        let app = named(&m, "app");
+        let v = named(&m, "app/ui/v.rs");
+        m.set_scope(Some(lib));
+        m.query = "a.rs".into();
+        m.reveal(v);
+        let rows = m.visible_rows();
+        assert!(rows.iter().any(|r| r.node == v), "v.rs is a row");
+        assert_eq!(m.marked, Some(v));
+        assert!(m.expanded.contains(&app));
+        assert_eq!(m.scope, None);
+        assert!(m.query.is_empty());
+        m.reveal(usize::MAX);
+        assert_eq!(m.marked, Some(v), "unknown nodes are ignored");
     }
 
     /// A cell without dependencies opens no evidence, not the last one's.

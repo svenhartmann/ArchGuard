@@ -157,7 +157,7 @@ fn source_graph(s: &mut StartState, ui: &AppWindow) {
         .unwrap_or_else(|| s.scope.areas[sel.area].name.clone());
     // Graph-tab nodes are the graph's nodes.
     if let Some(n) = s.ev.graph.nodes.iter().position(|n| n.name == name) {
-        tab_support::reveal(ui, n);
+        crate::panes_ui::reveal(ui, n);
     }
 }
 

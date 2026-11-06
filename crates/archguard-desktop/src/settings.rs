@@ -18,6 +18,7 @@
 //! tab = "graph"
 //! display = 0
 //! explorer_tab = 0
+//! panes = [["graph"], ["dsm"]]  # optional: the pane layout (pane_store.rs)
 //! ```
 //!
 //! The last view of a project lives under `[projects]` only; the session
@@ -28,6 +29,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{Array, DocumentMut, Item, Table, value};
+
+use crate::panes::Layout;
 
 /// How many projects "Open recent" lists.
 pub const RECENT_MAX: usize = 10;
@@ -41,11 +44,14 @@ pub enum Theme {
 }
 
 /// The last view of one project.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ProjectView {
+    /// The focused pane's view.
     pub tab: String,
     pub display: i32,
     pub explorer_tab: i32,
+    /// Panes and view tabs; `None` in files written before panes existed.
+    pub layout: Option<Layout>,
 }
 
 /// The documents open at the last quit, in tab order.
@@ -55,7 +61,7 @@ pub struct Session {
     pub active: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Settings {
     pub theme: Theme,
     /// Empty: follow the system.
@@ -209,6 +215,7 @@ fn read_projects(item: Option<&Item>) -> BTreeMap<String, ProjectView> {
                     .to_string(),
                 display: int(t, "display"),
                 explorer_tab: int(t, "explorer_tab"),
+                layout: crate::pane_store::read(t),
             };
             Some((path.to_string(), view))
         })
@@ -266,6 +273,9 @@ fn render_projects(doc: &mut DocumentMut, projects: &BTreeMap<String, ProjectVie
         set(t, "tab", value(view.tab.as_str()));
         set(t, "display", value(i64::from(view.display)));
         set(t, "explorer_tab", value(i64::from(view.explorer_tab)));
+        for (k, item) in view.layout.iter().flat_map(crate::pane_store::items) {
+            set(t, k, item);
+        }
     }
 }
 
@@ -326,9 +336,47 @@ mod tests {
                 tab: "dsm".into(),
                 display: 1,
                 explorer_tab: 2,
+                layout: Some(split_layout()),
             },
         );
         s
+    }
+
+    fn split_layout() -> Layout {
+        let mut l = Layout::single("graph");
+        l.open_tab("quality");
+        l.split_right(Some("dsm"));
+        l.set_ratio(0.62);
+        l.focus(1);
+        l
+    }
+
+    #[test]
+    fn the_pane_layout_is_stored_per_project_and_keeps_comments() {
+        let text = "[projects.\"/w/shop\"]\ntab = \"graph\"\n# my split\npanes = [[\"graph\"]]\nnote = \"mine\"\n";
+        let (mut doc, mut s) = parse(text).expect("valid");
+        assert_eq!(
+            s.projects["/w/shop"].layout,
+            Some(Layout::single("graph")),
+            "read"
+        );
+        s.projects.get_mut("/w/shop").expect("project").layout = Some(split_layout());
+        let out = render(&mut doc, &s);
+        for kept in ["# my split", "note = \"mine\""] {
+            assert!(out.contains(kept), "{kept} lost:\n{out}");
+        }
+        assert!(
+            out.contains("panes = [[\"graph\", \"quality\"], [\"dsm\"]]"),
+            "{out}"
+        );
+        let (_, back) = parse(&out).expect("own output parses");
+        assert_eq!(back.projects["/w/shop"].layout, Some(split_layout()));
+    }
+
+    #[test]
+    fn a_project_without_panes_has_no_layout() {
+        let (_, s) = parse("[projects.\"/w/shop\"]\ntab = \"dsm\"\n").expect("valid");
+        assert_eq!(s.projects["/w/shop"].layout, None);
     }
 
     #[test]

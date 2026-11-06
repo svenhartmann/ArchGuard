@@ -17,6 +17,8 @@ export struct MatrixRowItem {
     package: bool,
     expanded: bool,
     in-cycle-path: bool,
+    // Revealed from the pane beside the matrix (linked selection).
+    marked: bool,
     badges: string,
     // One entry per column (all columns, not only the visible page).
     cells: [string],
@@ -44,6 +46,14 @@ export component MatrixView inherits Rectangle {
     in property <string> cycle-path;
     in-out property <bool> compact;
     in-out property <int> col-page: 0;
+    // The marked row's index in `rows` (-1: none); the body scrolls to it.
+    in property <int> marked-row: -1;
+    changed marked-row => { root.scroll-to-marked(); }
+    function scroll-to-marked() {
+        if (root.marked-row >= 0) {
+            body.content-y = -max(0px, root.marked-row * root.row-h - body.visible-height / 2);
+        }
+    }
 
     callback toggle(int);
     callback expand-all();
@@ -217,8 +227,10 @@ export component MatrixView inherits Rectangle {
         }
 
         // Body.
-        ScrollView {
+        body := ScrollView {
             vertical-stretch: 1;
+            // A view created after the reveal (a new pane) scrolls on start.
+            init => { root.scroll-to-marked(); }
             VerticalLayout {
                 alignment: start;
                 for r[i] in root.rows: Rectangle {
@@ -232,7 +244,7 @@ export component MatrixView inherits Rectangle {
                         Rectangle {
                             x: 0;
                             width: root.label-w;
-                            background: r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
+                            background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
                             HorizontalLayout {
                                 padding-left: 6px + r.depth * 16px;
                                 spacing: 6px;

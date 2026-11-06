@@ -12,7 +12,7 @@ use crate::documents;
 use crate::kpi;
 use crate::network;
 use crate::state::{self, GraphState};
-use crate::tab_support::{self, Actions, TabState, Texts, index};
+use crate::tab_support::{self, Actions, TabState, Texts, index, with_ui};
 use crate::tree::{EdgeMode, Sort};
 use crate::ui::*;
 
@@ -29,12 +29,21 @@ fn node_of_row(g: &GraphState, r: i32) -> Option<usize> {
 /// Register the Graph tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let a = Actions::<GraphState>::new(ui);
-    ui.on_select_row(a.on(|g, _, r: i32| g.select_row(index(r))));
+    crate::panes_ui::on_reveal("graph", |ui, node| ui.invoke_reveal(node as i32));
+    let select = a.on(|g, _, r: i32| g.select_row(index(r)));
+    ui.on_select_row(with_ui(ui, move |ui, r: i32| {
+        select(r);
+        link_selection(ui);
+    }));
     ui.on_toggle_row(a.on(|g, _, r: i32| g.toggle_row(index(r).unwrap_or(0))));
     ui.on_expand_all(a.on0(|g, _| g.expand_all()));
     ui.on_collapse_all(a.on0(|g, _| g.collapse_all()));
     ui.on_reset_tree(a.on0(|g, _| g.reset()));
-    ui.on_reveal(a.on(|g, _, n: i32| g.reveal(index(n).unwrap_or(0))));
+    let reveal = a.on(|g, _, n: i32| g.reveal(index(n).unwrap_or(0)));
+    ui.on_reveal(with_ui(ui, move |ui, n: i32| {
+        reveal(n);
+        link_selection(ui);
+    }));
     ui.on_open_node(a.on(|g, _, n: i32| g.open(index(n).unwrap_or(0))));
     ui.on_open_row(a.on(|g, _, r: i32| {
         if let Some(node) = node_of_row(g, r) {
@@ -50,6 +59,14 @@ pub fn wire(ui: &AppWindow) {
         });
     }));
     wire_search(ui);
+}
+
+/// The Graph's selected node is revealed in the pane beside it.
+fn link_selection(ui: &AppWindow) {
+    let node = documents::with_active_state(|g: &mut GraphState| g.selected).flatten();
+    if let Some(node) = node {
+        crate::panes_ui::link_from(ui, "graph", node);
+    }
 }
 
 thread_local! {

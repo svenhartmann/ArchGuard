@@ -16,6 +16,8 @@ use slint::{ComponentHandle, SharedString};
 use crate::context::{Analysis, Loaded};
 use crate::documents::{self, DocId, Status, SubProject, with_store};
 use crate::graph_ui;
+use crate::panes::Layout;
+use crate::panes_ui;
 use crate::settings::{self, ProjectView, Session};
 use crate::settings_file;
 use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
@@ -24,9 +26,9 @@ use crate::{
     architecture_ui, calls_ui, matrix_ui, quality_ui, security_ui, services_ui, start_ui, web,
 };
 
-/// What a document remembers of the window when another one is shown.
+/// What a document remembers of the window when another one is shown;
+/// its panes are its [`Layout`].
 struct ViewState {
-    tab: SharedString,
     display: i32,
     explorer_tab: i32,
 }
@@ -41,6 +43,7 @@ pub fn wire(ui: &AppWindow) {
     services_ui::wire(ui);
     quality_ui::wire(ui);
     security_ui::wire(ui);
+    panes_ui::wire(ui);
     ui.on_select_doc(with_ui(ui, |ui, i: i32| activate(ui, index(i))));
     ui.on_open_sub_project(with_ui(ui, |ui, i: i32| open_sub_project(ui, index(i))));
     let add = with_ui(ui, |ui, ()| pick_folder(ui));
@@ -50,17 +53,7 @@ pub fn wire(ui: &AppWindow) {
     documents::on_dirty_changed(move || strip(()));
 }
 
-pub fn with_ui<A: 'static>(
-    ui: &AppWindow,
-    f: impl Fn(&AppWindow, A) + 'static,
-) -> impl Fn(A) + 'static {
-    let w = ui.as_weak();
-    move |a| {
-        if let Some(ui) = w.upgrade() {
-            f(&ui, a);
-        }
-    }
-}
+pub use crate::tab_support::with_ui;
 
 pub fn index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
@@ -89,11 +82,11 @@ fn seed_view(id: DocId, root: &Path) {
     documents::set_state(
         id,
         ViewState {
-            tab: view.tab.into(),
             display: view.display,
             explorer_tab: view.explorer_tab,
         },
     );
+    documents::set_state(id, view.layout.unwrap_or_else(|| Layout::single(&view.tab)));
 }
 
 /// Store the open documents as the session.
@@ -241,16 +234,17 @@ pub fn save_view(ui: &AppWindow) {
     let Some((id, root)) = with_store(|s| s.active().map(|d| (d.id, d.root.clone()))) else {
         return;
     };
+    let layout = panes_ui::layout();
     let view = ProjectView {
-        tab: ui.get_tab().into(),
+        tab: layout.focused().to_string(),
         display: ui.get_display(),
         explorer_tab: ui.get_explorer_tab(),
+        layout: Some(layout),
     };
     settings_file::edit(|s| s.set_project(&root, view));
     documents::set_state(
         id,
         ViewState {
-            tab: ui.get_tab(),
             display: ui.get_display(),
             explorer_tab: ui.get_explorer_tab(),
         },
@@ -258,8 +252,8 @@ pub fn save_view(ui: &AppWindow) {
 }
 
 fn restore_view(ui: &AppWindow) {
+    panes_ui::push(ui);
     documents::with_active_state(|v: &mut ViewState| {
-        ui.set_tab(v.tab.clone());
         ui.set_display(v.display);
         ui.set_explorer_tab(v.explorer_tab);
     });

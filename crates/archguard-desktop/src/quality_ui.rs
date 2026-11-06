@@ -132,7 +132,7 @@ fn wire_targets(ui: &AppWindow) {
         })
         .flatten();
         if let Some(n) = node {
-            tab_support::reveal(&ui, n);
+            crate::panes_ui::reveal(&ui, n);
         }
     });
 }

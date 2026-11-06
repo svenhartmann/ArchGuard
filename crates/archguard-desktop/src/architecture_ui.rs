@@ -226,7 +226,7 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
         Action::None => {}
         Action::OpenLevel(n) | Action::OpenPackage(n) => open_scope(s, kind, Some(n)),
         // Graph-tab nodes are the graph's nodes.
-        Action::OpenInGraph(n) => tab_support::reveal(ui, n),
+        Action::OpenInGraph(n) => crate::panes_ui::reveal(ui, n),
     }
 }
 

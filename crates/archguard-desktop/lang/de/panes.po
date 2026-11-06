@@ -1,0 +1,11 @@
+msgid "Split right"
+msgstr "Rechts teilen"
+
+msgid "Close pane"
+msgstr "Bereich schließen"
+
+msgid "Open in new tab"
+msgstr "In neuem Tab öffnen"
+
+msgid "Open to the side"
+msgstr "Daneben öffnen"

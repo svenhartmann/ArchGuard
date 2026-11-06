@@ -1,0 +1,145 @@
+// Panes of a document (ADR 0002 decision 6): the view bar's tabs with a
+// context menu, and the tab strip above each pane. The layout comes from
+// src/panes_ui.rs; the panes themselves are placed in app.slint.
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button, Tab } from "widgets.slint";
+
+// One pane: its view tabs (view ids) and the view shown.
+export struct PaneItem {
+    view: string,
+    tabs: [string],
+    active: int,
+    focused: bool,
+}
+
+export global Views {
+    // The view bar's label of a view id.
+    public pure function label(view: string) -> string {
+        if view == "start" { return @tr("Start"); }
+        if view == "architecture" { return @tr("Architecture"); }
+        if view == "graph" { return @tr("Graph"); }
+        if view == "dsm" { return @tr("Matrix"); }
+        if view == "calls" { return @tr("Calls"); }
+        if view == "services" { return @tr("Services"); }
+        if view == "quality" { return @tr("Quality"); }
+        if view == "security" { return @tr("Security"); }
+        return view;
+    }
+}
+
+// A view bar entry; right-click opens it in a new tab or beside.
+export component ViewBarTab inherits Rectangle {
+    in property <string> view;
+    in property <bool> active;
+    callback navigate(string);
+    callback open-tab(string);
+    callback open-side(string);
+    width: tab.width;
+    height: tab.height;
+    menu := ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: @tr("Open in new tab");
+                activated => { root.open-tab(root.view); }
+            }
+            MenuItem {
+                title: @tr("Open to the side");
+                activated => { root.open-side(root.view); }
+            }
+        }
+        tab := Tab {
+            text: Views.label(root.view);
+            active: root.active;
+            clicked => { root.navigate(root.view); }
+            context-menu(x, y) => { menu.show({ x: x, y: y }); }
+        }
+    }
+}
+
+component ViewTabChip inherits Rectangle {
+    in property <string> view;
+    in property <bool> active;
+    in property <bool> closable;
+    callback select();
+    callback close();
+    height: 26px;
+    width: row.preferred-width;
+    border-radius: 6px;
+    background: active ? Theme.bg : touch.has-hover ? Theme.panel : transparent;
+    border-width: active ? 1px : 0px;
+    border-color: Theme.border;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+    }
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: root.closable ? 3px : 10px;
+        spacing: 4px;
+        Text {
+            text: Views.label(root.view);
+            color: root.active ? Theme.text : Theme.muted;
+            font-size: 12px;
+            font-weight: root.active ? 650 : 450;
+            vertical-alignment: center;
+        }
+        if root.closable: Rectangle {
+            width: 20px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: close-touch.has-hover ? Theme.panel-2 : transparent;
+            Icon {
+                icon: Icons.close;
+                tint: close-touch.has-hover ? Theme.text : Theme.muted;
+                width: 10px;
+                height: 10px;
+            }
+            close-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.close(); }
+            }
+        }
+    }
+}
+
+// The tab strip above a pane, shown when the document has two panes or
+// the pane has more than one tab.
+export component PaneStrip inherits Rectangle {
+    in property <PaneItem> pane;
+    in property <bool> split;
+    callback select(int);
+    callback close(int);
+    callback close-pane();
+    callback split-right();
+    height: 34px;
+    background: root.pane.focused && root.split ? Theme.panel : Theme.panel-2;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    if root.split && root.pane.focused: Rectangle { y: 0; height: 2px; background: Theme.accent; }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 2px;
+        for t[j] in root.pane.tabs: ViewTabChip {
+            y: (parent.height - self.height) / 2;
+            view: t;
+            active: j == root.pane.active;
+            closable: root.pane.tabs.length > 1;
+            select => { root.select(j); }
+            close => { root.close(j); }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if !root.split: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.split;
+            clicked => { root.split-right(); }
+        }
+        if root.split: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.close;
+            clicked => { root.close-pane(); }
+        }
+    }
+}
