@@ -34,7 +34,9 @@ export { Theme }
 export { Tips }
 
 export component AppWindow inherits Window {
-    title: "ArchGuard";
+    // The open project, as a document window names its document; the app
+    // name stays in the menu bar and Dock.
+    title: root.project == "" ? "ArchGuard" : root.project;
     icon: @image-url("../assets/icon.png");
     preferred-width: 1480px;
     preferred-height: 920px;
@@ -42,7 +44,7 @@ export component AppWindow inherits Window {
     min-width: header.tight;
     min-height: 620px;
     background: Theme.bg;
-    default-font-size: 13px;
+    default-font-size: Theme.font-body;
     default-font-family: Theme.font-family;
 
     // Documents: one tab per open project (src/documents_ui.rs).
@@ -409,8 +411,8 @@ export component AppWindow inherits Window {
                 logo := Text {
                     text: "AG";
                     color: Theme.accent;
-                    font-size: 22px;
-                    font-weight: 900;
+                    font-size: Theme.font-display;
+                    font-weight: Theme.weight-title;
                     font-italic: true;
                     vertical-alignment: center;
                 }
@@ -418,8 +420,8 @@ export component AppWindow inherits Window {
                     width: min(title.preferred-width, 180px);
                     text: root.project;
                     color: Theme.text;
-                    font-size: 18px;
-                    font-weight: 700;
+                    font-size: Theme.font-page;
+                    font-weight: Theme.weight-title;
                     vertical-alignment: center;
                     overflow: elide;
                 }
@@ -432,7 +434,7 @@ export component AppWindow inherits Window {
                     clicked => { root.projects-open = !root.projects-open; }
                 }
                 Rectangle {
-                    height: 40px;
+                    height: Theme.control-h-sm + 10px;
                     y: (parent.height - self.height) / 2;
                     width: tabs.preferred-width;
                     border-radius: Theme.radius;
@@ -501,8 +503,8 @@ export component AppWindow inherits Window {
             title := Text {
                 visible: false;
                 text: root.project;
-                font-size: 18px;
-                font-weight: 700;
+                font-size: Theme.font-page;
+                font-weight: Theme.weight-title;
             }
         }
 
@@ -518,7 +520,7 @@ export component AppWindow inherits Window {
             Text {
                 text: root.web-status;
                 color: Theme.text;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -541,13 +543,13 @@ export component AppWindow inherits Window {
                     text: root.error != "" ? @tr("Analysis failed") : @tr("Analyzing architecture …");
                     color: root.error != "" ? Theme.danger : Theme.text;
                     font-size: Theme.font-section;
-                    font-weight: 600;
+                    font-weight: Theme.weight-title;
                     horizontal-alignment: center;
                 }
                 Text {
                     text: root.error != "" ? root.error : root.status;
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
@@ -731,8 +733,8 @@ export component AppWindow inherits Window {
             VerticalLayout {
                 padding: 22px;
                 spacing: 10px;
-                Text { text: "ArchGuard Desktop"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                Text { text: @tr("Native viewer. License: MIT OR Apache-2.0."); color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                Text { text: "ArchGuard Desktop"; color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; }
+                Text { text: @tr("Native viewer. License: MIT OR Apache-2.0."); color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                 AboutSlint { }
             }
         }

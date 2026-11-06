@@ -29,9 +29,9 @@ component Card inherits Rectangle {
         HorizontalLayout {
             spacing: 10px;
             alignment: start;
-            Text { text: dep.from; color: dep.kind == 1 ? Theme.incoming : Theme.text; font-size: 13px; }
-            Text { text: "→"; color: dep.kind == 3 ? Theme.cycle : Theme.muted; font-size: 13px; }
-            Text { text: dep.to; color: dep.kind == 2 ? Theme.outgoing : Theme.text; font-size: 13px; }
+            Text { text: dep.from; color: dep.kind == 1 ? Theme.incoming : Theme.text; font-size: Theme.font-body; }
+            Text { text: "→"; color: dep.kind == 3 ? Theme.cycle : Theme.muted; font-size: Theme.font-body; }
+            Text { text: dep.to; color: dep.kind == 2 ? Theme.outgoing : Theme.text; font-size: Theme.font-body; }
         }
         HorizontalLayout {
             spacing: 6px;
@@ -39,7 +39,7 @@ component Card inherits Rectangle {
             Text {
                 text: @tr("{} dependency evidence records", Fmt.int(dep.weight));
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 vertical-alignment: center;
             }
             Text { text: "·"; color: Theme.muted; vertical-alignment: center; }
@@ -59,8 +59,8 @@ component Card inherits Rectangle {
                 width: parent.width - 20px;
                 text: dep.ref-count == 0 ? @tr("No source references recorded.") : dep.refs;
                 color: Theme.text;
-                font-family: "Menlo";
-                font-size: 11.5px;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-caption;
                 wrap: word-wrap;
             }
         }
@@ -79,18 +79,18 @@ export component DepsView inherits Rectangle {
             text: root.reference == "" ? @tr("All dependencies") : @tr("Dependencies of {}", root.reference);
             color: Theme.text;
             font-size: Theme.font-section;
-            font-weight: 700;
+            font-weight: Theme.weight-title;
         }
         Text {
             text: @tr("{} directed dependencies match this view. Each arrow reads source → target.", Fmt.int(root.deps.length));
             color: Theme.muted;
-            font-size: 12px;
+            font-size: Theme.font-small;
         }
         Text {
             text: root.reference == "" ? @tr("All dependencies in this scope · {}", Fmt.int(root.total)) : @tr("Shown · {} of {}", Fmt.int(root.deps.length), Fmt.int(root.total));
             color: Theme.text;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-strong;
         }
         ListView {
             vertical-stretch: 1;

@@ -103,7 +103,7 @@ component DiskNotice inherits Rectangle {
         Text {
             text: @tr("Settings" => "Not saved: the file changed on disk since it was loaded.");
             color: Theme.text;
-            font-size: 12px;
+            font-size: Theme.font-small;
             wrap: word-wrap;
             vertical-alignment: center;
             horizontal-stretch: 1;
@@ -115,7 +115,7 @@ component DiskNotice inherits Rectangle {
 
 component Message inherits Text {
     color: Theme.danger;
-    font-size: 12px;
+    font-size: Theme.font-small;
     wrap: word-wrap;
 }
 
@@ -149,7 +149,7 @@ component TextPane inherits VerticalLayout {
             toml.text = root.value;
         }
     }
-    if model.text-error != "": Message { text: model.text-error; font-family: "Menlo"; }
+    if model.text-error != "": Message { text: model.text-error; font-family: Theme.mono-family; }
     Rectangle {
         vertical-stretch: 1;
         background: Theme.panel;
@@ -168,8 +168,8 @@ component TextPane inherits VerticalLayout {
                 single-line: false;
                 wrap: no-wrap;
                 color: Theme.text;
-                font-family: "Menlo";
-                font-size: 12.5px;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-small;
                 edited => { SettingsData.edit-text(self.text); }
             }
         }
@@ -202,7 +202,7 @@ export component SettingsView inherits Rectangle {
     if !root.model.loaded: Text {
         text: @tr("Settings" => "Reading archguard.toml …");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }

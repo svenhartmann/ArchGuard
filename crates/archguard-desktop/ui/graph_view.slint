@@ -119,7 +119,7 @@ component ExplorerRow inherits Rectangle {
         Text {
             text: data.label;
             color: selected ? Theme.accent : Theme.text;
-            font-size: 13px;
+            font-size: Theme.font-body;
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
@@ -155,8 +155,8 @@ component PlainRow inherits Rectangle {
         padding-left: 8px;
         padding-right: 8px;
         alignment: center;
-        Text { text: root.label; color: root.tone; font-size: 13px; overflow: elide; }
-        if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: 11px; overflow: elide; }
+        Text { text: root.label; color: root.tone; font-size: Theme.font-body; overflow: elide; }
+        if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: Theme.font-caption; overflow: elide; }
     }
 }
 
@@ -179,8 +179,8 @@ component NeighborRow inherits Rectangle {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 8px;
-        Text { text: root.item.label; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+        Text { text: root.item.label; color: Theme.text; font-size: Theme.font-body; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -236,7 +236,7 @@ export component GraphView inherits HorizontalLayout {
         VerticalLayout {
             padding: 14px;
             spacing: 10px;
-            Text { text: @tr("Explorer"); color: Theme.text; font-size: 16px; font-weight: 700; }
+            Text { text: @tr("Explorer"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; }
             HorizontalLayout {
                 spacing: 2px;
                 alignment: start;
@@ -253,7 +253,7 @@ export component GraphView inherits HorizontalLayout {
             if root.data.explorer-tab == 0: Text {
                 text: root.searching ? @tr("{} matches", Fmt.int(root.hits.length)) : @tr("{} of {} modules shown", Fmt.int(root.data.rows.length), Fmt.int(root.data.node-total));
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
             }
             if root.data.explorer-tab == 0 && !root.searching: ListView {
                 vertical-stretch: 1;
@@ -293,7 +293,7 @@ export component GraphView inherits HorizontalLayout {
                 Text {
                     text: @tr("Review priorities are not native yet.");
                     color: Theme.muted;
-                    font-size: 13px;
+                    font-size: Theme.font-body;
                     wrap: word-wrap;
                 }
                 Button { text: @tr("Open in web viewer"); icon: Icons.external; compact: true; clicked => { root.open-web(); } }
@@ -327,9 +327,9 @@ export component GraphView inherits HorizontalLayout {
                             crumb := Text {
                                 text: c.label;
                                 color: i == root.data.crumbs.length - 1 ? Theme.text : Theme.accent;
-                                font-family: "Menlo";
-                                font-size: 13px;
-                                font-weight: 700;
+                                font-family: Theme.mono-family;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-strong;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }
@@ -426,7 +426,7 @@ export component GraphView inherits HorizontalLayout {
                 height: Theme.control-h-sm;
                 text: root.data.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.data.reference);
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -474,10 +474,10 @@ export component GraphView inherits HorizontalLayout {
             padding: 16px;
             spacing: 12px;
             HorizontalLayout {
-                Text { text: root.data.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                Text { text: root.data.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; overflow: elide; horizontal-stretch: 1; }
                 Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.select-row(-1); } }
             }
-            Text { text: root.data.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+            Text { text: root.data.reference; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; overflow: elide; }
             // The selected node as a view of its own (`FileView`).
             // Side by side in the wide panel, stacked in the narrow one.
             if root.details-w >= 320px: HorizontalLayout {
@@ -496,7 +496,7 @@ export component GraphView inherits HorizontalLayout {
                 VerticalLayout {
                     alignment: start;
                     spacing: 2px;
-                    Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                    Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                     for n in root.data.outgoing: NeighborRow {
                         item: n;
                         tone: Theme.outgoing;
@@ -504,7 +504,7 @@ export component GraphView inherits HorizontalLayout {
                         clicked => { root.select-row(n.row); }
                     }
                     Rectangle { height: 12px; }
-                    Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                    Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                     for n in root.data.incoming: NeighborRow {
                         item: n;
                         tone: Theme.incoming;

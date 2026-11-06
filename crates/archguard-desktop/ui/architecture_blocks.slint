@@ -29,8 +29,8 @@ component Heading inherits VerticalLayout {
     Text {
         text: block.plain;
         color: block.open ? Theme.accent : Theme.text;
-        font-size: block.level <= 2 ? 21px : block.level == 3 ? 17px : 14px;
-        font-weight: 700;
+        font-size: block.level <= 2 ? Theme.font-page : block.level == 3 ? Theme.font-section : Theme.font-body;
+        font-weight: block.level <= 3 ? Theme.weight-title : Theme.weight-strong;
         wrap: word-wrap;
     }
 }
@@ -42,7 +42,7 @@ component Paragraph inherits VerticalLayout {
     StyledText {
         text: block.text;
         default-color: block.kind == 7 ? Theme.muted : Theme.text;
-        default-font-size: block.kind == 7 ? 12px : 14px;
+        default-font-size: block.kind == 7 ? Theme.font-small : Theme.font-body;
         link-color: Theme.accent;
     }
 }
@@ -57,13 +57,13 @@ component Item inherits HorizontalLayout {
         width: 18px;
         text: block.marker;
         color: Theme.text;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: right;
     }
     StyledText {
         text: block.text;
         default-color: Theme.text;
-        default-font-size: 14px;
+        default-font-size: Theme.font-body;
         link-color: Theme.accent;
     }
 }
@@ -89,7 +89,7 @@ component TableRow inherits Rectangle {
                     padding: 10px;
                     padding-left: 12px;
                     padding-right: 12px;
-                    Text { text: h; color: Theme.text; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+                    Text { text: h; color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; wrap: word-wrap; }
                 }
             }
         }
@@ -104,7 +104,7 @@ component TableRow inherits Rectangle {
                     StyledText {
                         text: c;
                         default-color: Theme.text;
-                        default-font-size: 13px;
+                        default-font-size: Theme.font-body;
                         link-color: Theme.accent;
                         horizontal-alignment: block.align[i] == 2 ? right : block.align[i] == 1 ? center : left;
                     }
@@ -114,7 +114,7 @@ component TableRow inherits Rectangle {
         if block.kind == 8: VerticalLayout {
             padding: 10px;
             padding-left: 12px;
-            Text { text: @tr("No entries recorded."); color: Theme.muted; font-size: 13px; }
+            Text { text: @tr("No entries recorded."); color: Theme.muted; font-size: Theme.font-body; }
         }
     }
 }
@@ -131,8 +131,8 @@ component Code inherits VerticalLayout {
             Text {
                 text: block.plain;
                 color: Theme.text;
-                font-family: "Menlo";
-                font-size: 12px;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-small;
                 wrap: word-wrap;
             }
         }

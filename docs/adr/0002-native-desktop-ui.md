@@ -338,3 +338,50 @@ comparison of the native view against the web view on the same project
   became `arc42-09.md`); not checked yet: typing in the editor and the
   save dialog. The editor names the file the chapter is saved to (in a
   folder the chapter file, also one a save would create).
+- **2026-11-06:** Platform look (`feat/desktop-typography`), asked for by
+  the user ("the type does not match macOS, so not Windows or Linux
+  either"). Widget style per target in `build.rs`: Cupertino on macOS,
+  Fluent elsewhere (`SLINT_STYLE` overrides). UI font per platform in
+  `src/platform.rs`: "System Font" (San Francisco) on macOS, "Segoe UI"
+  on Windows, fontconfig's sans-serif on Linux; monospace ".SF NS Mono"
+  (SF Mono, checked by snapshot against Menlo and an unknown family),
+  Consolas, "monospace". The window renders with Skia on macOS, which
+  draws SF's weights (FemtoVG fell back to Helvetica); this replaces the
+  FemtoVG decision of the measurement above for macOS only. One type scale
+  in `ui/theme.slint`, chosen by `Theme.platform` at start, sizes in px /
+  weights:
+
+  | Role (token) | macOS (HIG) | Windows (Fluent 2) | Linux (Adwaita) |
+  |---|---|---|---|
+  | micro: matrix and diagram labels | 10 / 400 | 11 / 400 | 11 / 400 |
+  | caption: notes, legends, badges | 11 / 400 | 12 / 400 | 12 / 400 |
+  | small: table cells, field labels | 12 / 400 | 13 / 400 | 13 / 400 |
+  | body: text and controls | 13 / 400 | 14 / 400 | 14 / 400 |
+  | mono: code, paths | 12 / 400 | 13 / 400 | 13 / 400 |
+  | heading: uppercase group label | 11 / 600 | 12 / 600 | 12 / 700 |
+  | section: panel and card titles | 15 / 700 | 16 / 600 | 16 / 700 |
+  | page: a tab's title | 17 / 700 | 20 / 600 | 20 / 700 |
+  | display: key figures | 22 / 600 | 24 / 600 | 24 / 700 |
+
+  Emphasis in running text uses `weight-strong` (600, Adwaita 700),
+  buttons regular. Fluent's subtitle (20) and title (28) are scaled down
+  to 16/20/24 for this dense UI; Adwaita's 11 pt body (≈14.7 px) is 14.
+  SF's optical tracking (its `trak` table) is not applied by Skia or the
+  software renderer; no letter spacing is added to imitate it. Control
+  metrics follow the platform too: control height 28/32/34 px (compact
+  24/28/28), control radius 6/4/6, card radius 10/8/12, focus ring 3 px
+  soft accent on macOS, 2 px solid elsewhere. The style's ComboBox kept
+  its own colours (Cupertino: a grey box with a bright blue stepper in
+  the dark theme), as did LineEdit and TextEdit (grey fields), so
+  `ui/combo.slint` and `ui/fields.slint` draw them like the app's fields
+  in both themes, with the same properties and keyboard handling (the
+  text fields have no right-click menu yet; the shortcuts work).
+  The window title names the open project; the app name stays in menu bar
+  and Dock. Traffic-light placement is left to the system (Slint exposes
+  no title bar style without the unstable winit API). A unit test keeps
+  literal font sizes and weights out of the views (scaled diagram fonts
+  excepted); the Start tab (`ui/start_*.slint`, reworked in parallel)
+  is exempt until it moves to the tokens and the own ComboBox. Checked with headless snapshots on macOS only (Cupertino, and
+  Fluent with `ARCHGUARD_DESKTOP_PLATFORM=windows|linux` for the scales);
+  the real Segoe UI, Consolas, Cantarell and the Linux fontconfig aliases
+  were not seen.

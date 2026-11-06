@@ -42,15 +42,15 @@ component Para inherits Text {
     in property <bool> muted;
     in property <bool> mono;
     color: muted ? Theme.muted : Theme.text;
-    font-size: 12px;
-    font-family: mono ? "Menlo" : "";
+    font-size: Theme.font-small;
+    font-family: mono ? Theme.mono-family : "";
     wrap: word-wrap;
 }
 
 component Heading inherits Text {
     color: Theme.text;
-    font-size: 13px;
-    font-weight: 700;
+    font-size: Theme.font-body;
+    font-weight: Theme.weight-strong;
     wrap: word-wrap;
 }
 
@@ -60,7 +60,7 @@ component EvidenceBox inherits VerticalLayout {
     padding-top: 10px;
     padding-bottom: 10px;
     Rectangle { height: 1px; background: Theme.border; }
-    Text { text: item.location; color: Theme.text; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+    Text { text: item.location; color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; wrap: word-wrap; }
     Para { text: item.description; }
 }
 
@@ -75,7 +75,7 @@ component LinkButton inherits Rectangle {
         width: parent.width - 16px;
         text: root.text;
         color: Theme.accent;
-        font-size: 12px;
+        font-size: Theme.font-small;
         wrap: word-wrap;
         vertical-alignment: center;
     }
@@ -109,7 +109,7 @@ export component ServicesInspector inherits Rectangle {
                     text: data.title;
                     color: Theme.text;
                     font-size: Theme.font-section;
-                    font-weight: 700;
+                    font-weight: Theme.weight-title;
                     wrap: word-wrap;
                     horizontal-stretch: 1;
                 }

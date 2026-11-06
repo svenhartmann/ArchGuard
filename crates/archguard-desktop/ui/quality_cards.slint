@@ -71,8 +71,8 @@ component LineView inherits VerticalLayout {
             Text {
                 text: root.text;
                 color: Theme.text;
-                font-size: 11px;
-                font-family: "Menlo";
+                font-size: Theme.font-caption;
+                font-family: Theme.mono-family;
                 wrap: word-wrap;
             }
         }
@@ -80,9 +80,9 @@ component LineView inherits VerticalLayout {
     if kind != 4 && kind != 7: Text {
         text: root.text;
         color: kind == 1 || kind == 2 ? Theme.muted : kind == 5 ? Theme.priority : Theme.text;
-        font-size: kind == 6 ? 12px : kind == 2 || kind == 3 ? 11px : 12px;
-        font-weight: kind == 6 || kind == 5 ? 700 : 400;
-        font-family: kind == 3 ? "Menlo" : "";
+        font-size: kind == 6 ? Theme.font-small : kind == 2 || kind == 3 ? Theme.font-caption : Theme.font-small;
+        font-weight: kind == 6 || kind == 5 ? Theme.weight-strong : Theme.weight-regular;
+        font-family: kind == 3 ? Theme.mono-family : "";
         wrap: word-wrap;
     }
 }
@@ -94,7 +94,7 @@ component DetailsView inherits VerticalLayout {
     callback locate(string);
     property <bool> open;
     spacing: 4px;
-    Disclosure { text: root.summary; open <=> root.open; tint: Theme.text; weight: 600; }
+    Disclosure { text: root.summary; open <=> root.open; tint: Theme.text; weight: Theme.weight-strong; }
     if root.open: VerticalLayout {
         padding-left: 14px;
         spacing: 4px;
@@ -129,8 +129,8 @@ export component QualityCardView inherits Rectangle {
             title := Text {
                 text: root.card.title;
                 color: Theme.text;
-                font-size: 14px;
-                font-weight: 700;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-strong;
                 wrap: word-wrap;
                 horizontal-stretch: 1;
             }
@@ -163,8 +163,8 @@ export component QualityCardView inherits Rectangle {
                 for m in root.card.metrics: Text {
                     text: m;
                     color: Theme.text;
-                    font-size: 12px;
-                    font-weight: 700;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.weight-strong;
                 }
             }
             if item.kind == 11: VerticalLayout {
@@ -177,8 +177,8 @@ export component QualityCardView inherits Rectangle {
                     VerticalLayout {
                         padding: 10px;
                         spacing: 4px;
-                        Text { text: g.label; color: Theme.text; font-size: 12px; }
-                        Text { text: g.files; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: g.label; color: Theme.text; font-size: Theme.font-small; }
+                        Text { text: g.files; color: Theme.muted; font-size: Theme.font-caption; wrap: word-wrap; }
                     }
                     TouchArea {
                         mouse-cursor: pointer;

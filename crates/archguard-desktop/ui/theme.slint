@@ -48,21 +48,65 @@ export global Theme {
     out property <color> sev-unknown: muted;
     out property <color> shadow: dark ? #00000073 : #17203314;
 
-    // One size scale for titles and headings.
-    out property <length> font-page: 22px;
-    out property <length> font-section: 16px;
-    out property <length> font-heading: 12px;
+    // ---- Platform look, set at start (src/platform.rs): 0 macOS, 1 Windows,
+    // 2 Linux. The type scale follows each platform's guidelines, scaled
+    // to this dense UI (ADR 0002, 2026-11-06):
+    // macOS (HIG, SF): body 13, secondary 12/11, headline 13 semibold,
+    //   titles 15/17, large figures 22.
+    // Windows (Fluent 2, Segoe UI): caption 12, body 14, body strong 14
+    //   semibold; subtitle 20 and title 28 scaled to 16/20/24.
+    // Linux (Adwaita, Cantarell/Noto 11 pt ≈ 14.7 px): body 14, caption 12,
+    //   heading bold, title-4/-2 ≈ 16/20 px.
+    in-out property <int> platform: 0;
+    // The platform's monospace font, set at start; empty: Slint's default.
+    in-out property <string> mono-family;
+    property <bool> mac: platform != 1 && platform != 2;
+    property <bool> win: platform == 1;
 
-    // Page titles, field labels above controls and the page's inner padding.
+    // Sizes, smallest first. micro: dense diagram and matrix labels only.
+    out property <length> font-micro: mac ? 10px : 11px;
+    // Notes, legends, badges, secondary lines.
+    out property <length> font-caption: mac ? 11px : 12px;
+    // Table cells, dense lists, field labels, compact controls.
+    out property <length> font-small: mac ? 12px : 13px;
+    // Running text and controls (the window's default size).
+    out property <length> font-body: mac ? 13px : 14px;
+    // Code, paths and identifiers in `mono-family`.
+    out property <length> font-mono: mac ? 12px : 13px;
+    // Uppercase group labels (SectionHeading).
+    out property <length> font-heading: mac ? 11px : 12px;
+    // Section and panel titles, card titles.
+    out property <length> font-section: mac ? 15px : 16px;
+    // A tab's page title.
+    out property <length> font-page: mac ? 17px : 20px;
+    // Large key figures (StatCard).
+    out property <length> font-display: mac ? 22px : 24px;
+
+    // Weights. strong: emphasis in running text, headings and labels
+    // (macOS headline and Fluent body strong are semibold, Adwaita's
+    // heading bold); title: page and section titles.
+    out property <int> weight-regular: 400;
+    out property <int> weight-medium: 500;
+    out property <int> weight-strong: mac || win ? 600 : 700;
+    out property <int> weight-title: win ? 600 : 700;
+
+    // Former names, kept for views that still use them.
     out property <length> page-title: font-page;
-    out property <length> field-label: 12px;
+    out property <length> field-label: font-small;
+
+    // Page padding; control heights follow the platform: macOS regular and
+    // small controls, Fluent's standard and compact, Adwaita's buttons.
     out property <length> page-pad: 16px;
-    // Height of buttons, fields and combo boxes; compact toolbar controls.
-    out property <length> control-h: 34px;
-    out property <length> control-h-sm: 28px;
+    out property <length> control-h: mac ? 28px : win ? 32px : 34px;
+    out property <length> control-h-sm: mac ? 24px : 28px;
     // Room a vertical scroll bar takes at the right edge of a ScrollView.
     out property <length> scrollbar-w: 14px;
 
-    out property <length> radius: 10px;
-    out property <length> radius-sm: 8px;
+    // Cards and panels; controls (macOS 6, Fluent 4, Adwaita 6).
+    out property <length> radius: mac ? 10px : win ? 8px : 12px;
+    out property <length> radius-sm: win ? 4px : 6px;
+    // Keyboard focus: macOS draws a soft accent ring outside the control,
+    // Fluent and Adwaita a solid one.
+    out property <length> focus-w: mac ? 3px : 2px;
+    out property <color> focus: mac ? accent.with-alpha(0.45) : win ? text : accent.with-alpha(0.6);
 }

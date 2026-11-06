@@ -38,7 +38,7 @@ component TreeLine inherits Rectangle {
             Text {
                 text: item.expandable ? (item.expanded ? "−" : "+") : "";
                 color: Theme.text;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -61,9 +61,9 @@ component TreeLine inherits Rectangle {
                 width: parent.width - 12px;
                 text: root.prefix + item.label;
                 color: Theme.text;
-                font-size: item.kind == 3 ? 11px : 12px;
-                font-family: item.kind == 3 ? "Menlo" : "";
-                font-weight: item.kind == 1 ? 650 : 400;
+                font-size: item.kind == 3 ? Theme.font-caption : Theme.font-small;
+                font-family: item.kind == 3 ? Theme.mono-family : "";
+                font-weight: item.kind == 1 ? Theme.weight-strong : Theme.weight-regular;
                 overflow: elide;
                 vertical-alignment: center;
             }
@@ -75,25 +75,25 @@ component TreeLine inherits Rectangle {
         if item.module: Text {
             text: @tr("module");
             color: Theme.muted;
-            font-size: 10px;
+            font-size: Theme.font-micro;
             vertical-alignment: center;
         }
         if item.cycle: Text {
             text: "↻";
             color: Theme.cycle;
-            font-size: 11px;
+            font-size: Theme.font-caption;
             vertical-alignment: center;
         }
         if item.role > 0: Text {
             text: item.role == 3 ? @tr("Caller / target") : item.role == 1 ? @tr("Caller") : @tr("Target");
             color: root.role-color;
-            font-size: 10px;
+            font-size: Theme.font-micro;
             vertical-alignment: center;
         }
         if item.count > 0: Text {
             text: Fmt.int(item.count);
             color: root.role-color;
-            font-size: 10px;
+            font-size: Theme.font-micro;
             vertical-alignment: center;
         }
     }
@@ -150,7 +150,7 @@ export component CallsTree inherits CallsColumn {
         if m.tree.length == 0: Text {
             text: @tr("No call elements match the current scope and filters.");
             color: Theme.text;
-            font-size: 13px;
+            font-size: Theme.font-body;
             wrap: word-wrap;
             height: 60px;
             vertical-alignment: center;
