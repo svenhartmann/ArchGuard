@@ -157,7 +157,28 @@ fn tree_rows(
     )
 }
 
+/// Up to this many arrows, every arrow shows its reference count.
+const NET_LABELS: usize = 24;
+
 type Network = (ModelRc<NetCard>, ModelRc<NetArrow>, f32, f32);
+
+/// Shown links between network cards: (from slot, to slot, weight, kind).
+fn network_links(
+    g: &GraphState,
+    selected: Option<usize>,
+    slot: &[usize],
+) -> Vec<(usize, usize, u64, i32)> {
+    let v = &g.view;
+    v.shown(selected, g.mode)
+        .into_iter()
+        .filter_map(|(i, lane)| {
+            let l = &v.links[i];
+            let (a, b) = (slot[l.from], slot[l.to]);
+            let kind = v.link_kind(i, lane, selected, g.mode) as i32;
+            (a != usize::MAX && b != usize::MAX && a != b).then_some((a, b, l.weight, kind))
+        })
+        .collect()
+}
 
 /// The network display shows the rows that are not expanded: exactly the
 /// rows that carry links. Empty while another display is shown.
@@ -171,7 +192,14 @@ fn network_data(g: &GraphState, selected: Option<usize>, old: &GraphData) -> Net
     for (i, &r) in leaves.iter().enumerate() {
         slot[r] = i;
     }
-    let net = network::place(leaves.len());
+    let links = if shown {
+        network_links(g, selected, &slot)
+    } else {
+        Vec::new()
+    };
+    let ends: Vec<_> = links.iter().map(|&(a, b, w, _)| (a, b, w)).collect();
+    // The gaps between the cards widen to the lanes the arrows need.
+    let (net, routes) = network::layout(leaves.len(), &ends);
     let cards = sync_rows(
         &old.net_cards,
         leaves.iter().zip(&net.cards).map(|(&r, c)| {
@@ -190,21 +218,22 @@ fn network_data(g: &GraphState, selected: Option<usize>, old: &GraphData) -> Net
             }
         }),
     );
-    let links = shown.then(|| v.shown(selected, g.mode));
+    // Counts on every arrow while few are shown, else on the highlighted ones.
+    let few = links.len() <= NET_LABELS;
     let arrows = sync_rows(
         &old.net_arrows,
-        links.into_iter().flatten().filter_map(|(i, lane)| {
-            let l = &v.links[i];
-            let (a, b) = (slot[l.from], slot[l.to]);
-            (a != usize::MAX && b != usize::MAX).then(|| {
-                let arrow = network::arrow(&net.cards[a], &net.cards[b], l.weight);
-                NetArrow {
-                    path: arrow.path.into(),
-                    width: arrow.width,
-                    kind: v.link_kind(i, lane, selected, g.mode) as i32,
-                }
-            })
-        }),
+        routes
+            .into_iter()
+            .zip(&links)
+            .map(|(arrow, &(_, _, weight, kind))| NetArrow {
+                path: arrow.path.into(),
+                width: arrow.width,
+                kind,
+                count: weight.min(i32::MAX as u64) as i32,
+                labeled: few || kind != 0,
+                lx: arrow.label.0,
+                ly: arrow.label.1,
+            }),
     );
     (cards, arrows, net.width, net.height)
 }

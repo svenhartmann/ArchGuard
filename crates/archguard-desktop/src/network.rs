@@ -1,128 +1,138 @@
 //! The web viewer's "Network" display: package cards in a grid and
-//! dependency arrows between them, stroke width by reference count.
+//! dependency arrows between them, stroke width by reference count. The
+//! arrows run through the gaps of the grid ([`route`]), not across cards.
 
-pub const CARD_W: f32 = 270.0;
-pub const CARD_H: f32 = 124.0;
-const GAP_X: f32 = 90.0;
-const GAP_Y: f32 = 80.0;
-const MARGIN: f32 = 40.0;
+mod draw;
+mod grid;
+mod route;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Card {
-    pub x: f32,
-    pub y: f32,
-}
+pub use grid::{Arrow, Network, place};
+pub use route::route;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Arrow {
-    pub path: String,
-    pub width: f32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Network {
-    pub cards: Vec<Card>,
-    pub width: f32,
-    pub height: f32,
-}
-
-/// Grid placement in input order, `ceil(sqrt(n))` columns.
-pub fn place(n: usize) -> Network {
-    let cols = ((n as f32).sqrt().ceil() as usize).max(1);
-    let rows = n.div_ceil(cols);
-    let cards = (0..n)
-        .map(|i| Card {
-            x: MARGIN + (i % cols) as f32 * (CARD_W + GAP_X),
-            y: MARGIN + (i / cols) as f32 * (CARD_H + GAP_Y),
-        })
-        .collect();
-    let span = |k: usize, size: f32, gap: f32| {
-        2.0 * MARGIN + k as f32 * size + k.saturating_sub(1) as f32 * gap
-    };
-    Network {
-        cards,
-        width: span(cols, CARD_W, GAP_X),
-        height: if n == 0 {
-            0.0
-        } else {
-            span(rows, CARD_H, GAP_Y)
-        },
-    }
-}
-
-/// Stroke width for `count` references, as the web legend
-/// (`min(8, 1.5 + log2(count))`).
-pub fn stroke_width(count: u64) -> f32 {
-    (1.5 + (count.max(1) as f32).log2()).min(8.0)
-}
-
-/// Arrow from card `a` to card `b`, leaving and entering at the card
-/// borders, bent to the left of its direction so that `a→b` and `b→a`
-/// stay apart. Ends with an arrow head at `b`.
-pub fn arrow(a: &Card, b: &Card, count: u64) -> Arrow {
-    let center = |c: &Card| (c.x + CARD_W / 2.0, c.y + CARD_H / 2.0);
-    let ((ax, ay), (bx, by)) = (center(a), center(b));
-    let len = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt().max(1.0);
-    let (dx, dy) = ((bx - ax) / len, (by - ay) / len);
-    // Distance from a card centre to its border along (dx, dy).
-    let exit = {
-        let sx = if dx.abs() > 1e-6 {
-            CARD_W / 2.0 / dx.abs()
-        } else {
-            f32::MAX
-        };
-        let sy = if dy.abs() > 1e-6 {
-            CARD_H / 2.0 / dy.abs()
-        } else {
-            f32::MAX
-        };
-        sx.min(sy) + 4.0
-    };
-    let (sx, sy) = (ax + dx * exit, ay + dy * exit);
-    let (tx, ty) = (bx - dx * exit, by - dy * exit);
-    let (nx, ny) = (-dy, dx);
-    // Bend relative to the visible segment, not the centre distance.
-    let seg = ((tx - sx).powi(2) + (ty - sy).powi(2)).sqrt();
-    let bend = 0.15 * seg;
-    let at = |f: f32| {
-        (
-            sx + (tx - sx) * f + nx * bend,
-            sy + (ty - sy) * f + ny * bend,
-        )
-    };
-    let ((c1x, c1y), (c2x, c2y)) = (at(1.0 / 3.0), at(2.0 / 3.0));
-    // Arrow head along the last segment of the curve.
-    let (hx, hy) = (tx - c2x, ty - c2y);
-    let hl = (hx * hx + hy * hy).sqrt().max(1.0);
-    let (ux, uy) = (hx / hl, hy / hl);
-    let w = stroke_width(count);
-    let (back, side) = (8.0 + w, 4.5 + w / 2.0);
-    let wing = |s: f32| {
-        (
-            tx - ux * back - uy * side * s,
-            ty - uy * back + ux * side * s,
-        )
-    };
-    let ((w1x, w1y), (w2x, w2y)) = (wing(1.0), wing(-1.0));
-    Arrow {
-        path: format!(
-            "M {sx:.1} {sy:.1} C {c1x:.1} {c1y:.1} {c2x:.1} {c2y:.1} {tx:.1} {ty:.1} \
-             M {w1x:.1} {w1y:.1} L {tx:.1} {ty:.1} L {w2x:.1} {w2y:.1}"
-        ),
-        width: w,
-    }
+/// The grid with every gap widened to the lanes its arrows need, and the
+/// arrows for `links` (from card, to card, reference count).
+pub fn layout(n: usize, links: &[(usize, usize, u64)]) -> (Network, Vec<Arrow>) {
+    let (cols, rows) = route::gaps(&place(n), links);
+    let net = grid::grid(n, &cols, &rows);
+    let arrows = route(&net, links);
+    (net, arrows)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::grid::{CARD_H, CARD_W, Card, TAB_H, stroke_width};
     use super::*;
 
     fn inside(c: &Card, x: f32, y: f32) -> bool {
         x > c.x + 1.0 && x < c.x + CARD_W - 1.0 && y > c.y + 1.0 && y < c.y + CARD_H - 1.0
     }
 
-    fn numbers(path: &str) -> Vec<f32> {
-        path.split(' ').filter_map(|t| t.parse().ok()).collect()
+    /// Points along an SVG path of M/L/Q/C commands, every few pixels.
+    fn samples(path: &str) -> Vec<Vec<(f32, f32)>> {
+        let mut out: Vec<Vec<(f32, f32)>> = Vec::new();
+        let toks: Vec<&str> = path.split_whitespace().collect();
+        let (mut i, mut at) = (0, (0.0, 0.0));
+        let num = |k: usize| toks[k].parse::<f32>().unwrap();
+        while i < toks.len() {
+            let n = match toks[i] {
+                "M" => 1,
+                "L" => 1,
+                "Q" => 2,
+                "C" => 3,
+                t => panic!("command {t}"),
+            };
+            let pts: Vec<(f32, f32)> = (0..n)
+                .map(|k| (num(i + 1 + 2 * k), num(i + 2 + 2 * k)))
+                .collect();
+            if toks[i] == "M" {
+                out.push(vec![pts[0]]);
+            } else {
+                let mut ctl = vec![at];
+                ctl.extend(&pts);
+                // About one sample per 4 px of the control polygon.
+                let len: f32 = ctl
+                    .windows(2)
+                    .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
+                    .sum();
+                let steps = ((len / 4.0).ceil() as usize).max(2);
+                for s in 1..=steps {
+                    let mut q = ctl.clone();
+                    let t = s as f32 / steps as f32;
+                    while q.len() > 1 {
+                        q = q
+                            .windows(2)
+                            .map(|w| {
+                                (
+                                    w[0].0 + (w[1].0 - w[0].0) * t,
+                                    w[0].1 + (w[1].1 - w[0].1) * t,
+                                )
+                            })
+                            .collect();
+                    }
+                    out.last_mut().unwrap().push(q[0]);
+                }
+            }
+            at = *pts.last().unwrap();
+            i += 1 + 2 * n;
+        }
+        out
+    }
+
+    fn near_line(p: (f32, f32), line: &[(f32, f32)], d: f32) -> bool {
+        line.windows(2).any(|w| {
+            let ((ax, ay), (bx, by)) = (w[0], w[1]);
+            let (vx, vy) = (bx - ax, by - ay);
+            let l2 = (vx * vx + vy * vy).max(1e-6);
+            let t = (((p.0 - ax) * vx + (p.1 - ay) * vy) / l2).clamp(0.0, 1.0);
+            ((ax + vx * t - p.0).powi(2) + (ay + vy * t - p.1).powi(2)).sqrt() < d
+        })
+    }
+
+    fn all_pairs(n: usize) -> Vec<(usize, usize, u64)> {
+        (0..n)
+            .flat_map(|a| (0..n).filter(move |&b| b != a).map(move |b| (a, b, 3)))
+            .collect()
+    }
+
+    #[test]
+    fn routes_avoid_foreign_cards() {
+        let links = all_pairs(9);
+        let (net, arrows) = layout(9, &links);
+        for (arrow, &(a, b, _)) in arrows.iter().zip(&links) {
+            for part in samples(&arrow.path) {
+                for &(x, y) in &part {
+                    for (k, c) in net.cards.iter().enumerate() {
+                        assert!(
+                            k == a || k == b || !inside(c, x, y),
+                            "arrow {a}->{b} crosses card {k} at ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_routes_keep_apart() {
+        // No two arrows share a stretch of line: crossings touch in a point,
+        // lanes keep parallel runs at least a few pixels apart.
+        let links = all_pairs(9);
+        let lines: Vec<Vec<(f32, f32)>> = layout(9, &links)
+            .1
+            .iter()
+            .map(|a| samples(&a.path).swap_remove(0))
+            .collect();
+        for (i, p) in lines.iter().enumerate() {
+            for (j, q) in lines.iter().enumerate().skip(i + 1) {
+                let close = p.iter().filter(|&&a| near_line(a, q, 1.5)).count();
+                assert!(
+                    close <= 6,
+                    "arrows {:?} and {:?} overlap on {close} samples",
+                    links[i],
+                    links[j]
+                );
+            }
+        }
     }
 
     #[test]
@@ -148,36 +158,44 @@ mod tests {
     fn arrows_start_and_end_on_card_borders() {
         let n = place(4);
         let (a, b) = (&n.cards[0], &n.cards[3]);
-        let p = numbers(&arrow(a, b, 10).path);
-        let (sx, sy) = (p[0], p[1]);
-        let (tx, ty) = (p[6], p[7]);
-        assert!(!inside(a, sx, sy) && !inside(b, tx, ty));
+        let line = samples(&route(&n, &[(0, 3, 10)])[0].path).swap_remove(0);
+        let ((sx, sy), (tx, ty)) = (line[0], line[line.len() - 1]);
+        // The head enters from above, beside the package tab: it must stay
+        // out of the card body.
+        let body = Card {
+            x: b.x,
+            y: b.y + TAB_H,
+        };
+        assert!(!inside(a, sx, sy) && !inside(&body, tx, ty));
         let near = |c: &Card, x: f32, y: f32| {
-            // Arrows keep a 4 px gap to the border (plus rounding).
-            let t = 5.0;
+            // Heads keep a 2 px gap to the border (plus rounding).
+            let t = 3.0;
             x >= c.x - t && x <= c.x + CARD_W + t && y >= c.y - t && y <= c.y + CARD_H + t
         };
         assert!(near(a, sx, sy) && near(b, tx, ty));
     }
 
     #[test]
-    fn neighbour_arrows_stay_gentle() {
-        // Adjacent cards: the bend must stay small against the visible
-        // segment, or the arrow turns into a hook.
+    fn neighbour_arrows_run_straight() {
         let n = place(2);
-        let p = numbers(&arrow(&n.cards[0], &n.cards[1], 1).path);
-        let seg = ((p[6] - p[0]).powi(2) + (p[7] - p[1]).powi(2)).sqrt();
-        let bend = (p[3] - p[1]).abs();
-        assert!(seg >= 40.0, "visible segment {seg}");
-        assert!(bend <= seg * 0.3, "bend {bend} on segment {seg}");
+        let path = &route(&n, &[(0, 1, 1)])[0].path;
+        let line = &samples(path)[0];
+        assert!(line.iter().all(|p| (p.1 - line[0].1).abs() < 0.1), "{path}");
+        assert!(line[line.len() - 1].0 - line[0].0 >= 100.0, "{path}");
     }
 
     #[test]
-    fn opposite_arrows_bend_apart() {
+    fn opposite_arrows_stay_apart() {
         let n = place(2);
-        let ab = numbers(&arrow(&n.cards[0], &n.cards[1], 1).path);
-        let ba = numbers(&arrow(&n.cards[1], &n.cards[0], 1).path);
-        // Control points of a horizontal pair lie on different sides.
-        assert!((ab[3] - ab[1]) * (ba[3] - ba[1]) < 0.0);
+        let both = route(&n, &[(0, 1, 1), (1, 0, 1)]);
+        let (ab, ba) = (&samples(&both[0].path)[0], &samples(&both[1].path)[0]);
+        assert!((ab[0].1 - ba[0].1).abs() >= 10.0);
+    }
+
+    #[test]
+    fn labels_sit_on_the_route() {
+        let n = place(9);
+        let a = &route(&n, &[(0, 8, 5)])[0];
+        assert!(near_line(a.label, &samples(&a.path)[0], 0.5));
     }
 }

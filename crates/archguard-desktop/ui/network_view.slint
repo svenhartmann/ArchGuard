@@ -15,10 +15,15 @@ export struct NetCard {
 }
 
 // kind as TreeLink: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
+// lx, ly: canvas point of the reference count (shown when labeled).
 export struct NetArrow {
     path: string,
     width: float,
     kind: int,
+    count: int,
+    labeled: bool,
+    lx: float,
+    ly: float,
 }
 
 // Geometry shared with src/network.rs (CARD_W, CARD_H).
@@ -51,7 +56,8 @@ component PackageCard inherits Rectangle {
         tab-label := Text {
             text: (card.file ? @tr("File") : @tr("Package")).to-uppercase();
             color: Theme.text;
-            font-size: max(9px, 11px * zoom);
+            // Small at low zoom: arrows from above end right of the tab.
+            font-size: max(6px, 11px * zoom);
             font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -117,6 +123,10 @@ export component NetworkView inherits Rectangle {
     // Opening the details panel narrows the view; keep all cards visible.
     changed width => { self.fit(); }
 
+    pure function tone(kind: int) -> brush {
+        return kind == 1 ? Theme.incoming : kind == 2 ? Theme.outgoing : kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.85);
+    }
+
     public function fit() {
         if (canvas-w > 0 && canvas-h > 0) {
             zoom = max(0.3, min(1.0, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
@@ -152,7 +162,7 @@ export component NetworkView inherits Rectangle {
             viewbox-height: root.canvas-h;
             commands: a.path;
             fill: transparent;
-            stroke: a.kind == 1 ? Theme.incoming : a.kind == 2 ? Theme.outgoing : a.kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.85);
+            stroke: root.tone(a.kind);
             stroke-width: a.width * 1px * root.zoom;
         }
         for c in root.cards: PackageCard {
@@ -161,6 +171,25 @@ export component NetworkView inherits Rectangle {
             selected: c.row == root.selected;
             clicked => { root.select(c.row); }
             open => { root.open(c.row); }
+        }
+        // Reference counts on their route, in the gaps between the cards.
+        for a in root.arrows: Rectangle {
+            visible: a.labeled;
+            property <length> size: max(10px, 11px * root.zoom);
+            width: count.preferred-width + 10px * max(0.7, root.zoom);
+            height: count.preferred-height + 2px;
+            x: a.lx * 1px * root.zoom - self.width / 2;
+            y: a.ly * 1px * root.zoom - self.height / 2;
+            border-radius: self.height / 2;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: root.tone(a.kind);
+            count := Text {
+                text: Fmt.int(a.count);
+                color: Theme.text;
+                font-size: parent.size;
+                font-weight: 600;
+            }
         }
       }
     }
