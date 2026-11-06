@@ -271,6 +271,17 @@ pub(crate) enum Command {
         #[arg(long, requires = "report", value_name = "PFAD")]
         source_root: Option<PathBuf>,
     },
+    /// Compare findings with an expert assessment: recall, precision, unjudged findings (ADR 0004).
+    Evaluate {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Assessment file (default: <project>/.archguard/assessment.toml).
+        #[arg(long, value_name = "DATEI")]
+        assessment: Option<PathBuf>,
+        /// Write a template with every current finding as an unjudged stub; never overwrites.
+        #[arg(long)]
+        init: bool,
+    },
     /// Assess architecture pattern candidates from original graph, compiler and contract evidence.
     Patterns {
         #[arg(value_name = "PFAD")]
