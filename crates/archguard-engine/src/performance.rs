@@ -546,6 +546,39 @@ fn abstraction_metric(
         reason,
     }
 }
+/// The review chain behind the structural performance report: review
+/// sources, configured entry points, call analysis (runs compiler helpers
+/// such as javac, hence expensive) and [`analyze_performance`].
+pub fn review_performance(
+    root: &Path,
+    config: &Config,
+    full: &Graph,
+    view: &Graph,
+) -> Result<PerformanceReport, ArchguardError> {
+    let sources = crate::review_sources::collect_review_sources(
+        root,
+        config,
+        full,
+        &config.review.git_since,
+    )?;
+    let ids =
+        archguard_analysis::match_review_entry_points(full, &sources, &config.review.entry_points)?;
+    let calls = crate::semantic_calls::analyze_calls(root, config);
+    analyze_performance(root, config, full, view, &sources, &calls, &ids)
+}
+/// Opt-in zone measurement for consumers whose pipeline KPI block leaves
+/// `zones` unmeasured: [`review_performance`] then [`review_zones`].
+pub fn measure_review_zones(
+    root: &Path,
+    config: &Config,
+    full: &Graph,
+    view: &Graph,
+) -> Result<Option<ZoneStats>, ArchguardError> {
+    Ok(review_zones(
+        view,
+        &review_performance(root, config, full, view)?,
+    ))
+}
 /// Martin A/I zone counts for the review KPIs from the node-scope
 /// abstraction metrics of `report`. SCC metrics are skipped because their
 /// members already count as nodes. `None` while no boundary is measurable.
