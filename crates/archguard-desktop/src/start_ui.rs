@@ -6,18 +6,26 @@
 //! All tab state is one [`StartState`], built by [`Inputs::build`] and shown by
 //! [`push`] as one `StartModel` value.
 
+mod actions;
 mod arrows;
+mod camera_wire;
+mod connections;
 mod details;
 mod evidence;
 mod follow_place;
+mod hover;
+mod keys;
 mod layout;
+mod memo;
 mod modes;
+mod motion;
 mod overlay;
 mod pins;
 mod scene;
 mod services;
 mod services_view;
 mod services_wire;
+mod source_deps;
 mod stage;
 mod state;
 mod view;
@@ -33,7 +41,6 @@ use crate::tab_support::{self, Actions, Calls, Shared, TabState, Topology, index
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use follow_place::navigation;
-use scene::Camera;
 use services::ServicesWorld;
 pub use state::{Lens, StartState};
 use state::{Mode, from_evidence};
@@ -49,6 +56,8 @@ struct Inputs {
     findings: Vec<Finding>,
     /// The document's topology, read once (the Services tab shares it).
     topology: Shared<Topology>,
+    /// The World view kept with the pane layout.
+    memo: memo::Memo,
 }
 
 impl Inputs {
@@ -60,6 +69,7 @@ impl Inputs {
             graph: data.run.graph.clone(),
             findings: data.run.report.findings.clone(),
             topology: Shared::<Topology>::active(),
+            memo: memo::kept(),
         }
     }
 
@@ -73,12 +83,15 @@ impl Inputs {
             graph,
             findings,
             topology,
+            memo,
         } = self;
         let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
         let services = ServicesWorld::new(tab_support::topology(&topology, &root));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
+        state.root = root.display().to_string();
+        state.restore(&memo);
         snapshot_overrides(&mut state);
         state
     }
@@ -121,28 +134,27 @@ pub fn wire(ui: &AppWindow) {
         a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
     );
     // A drag moves the camera at most once per frame, by the summed steps.
+    // A drag or the wheel stops a glide and moves at once.
     let pan = a.on(|s, _, (dx, dy): (f32, f32)| {
+        camera_wire::stop();
         s.cam.x += f64::from(dx);
         s.cam.y += f64::from(dy);
     });
     let pan = Coalesce::throttle(FRAME, |a, b| (a.0 + b.0, a.1 + b.1), pan);
     d.on_pan(move |dx, dy| pan.call((dx, dy)));
     let wheel = a.on(|s, _, (x, y, delta): (f32, f32, f32)| {
+        camera_wire::stop();
         let delta = f64::from(delta).clamp(-180.0, 180.0);
         s.wheel(f64::from(x), f64::from(y), (delta * 0.005).exp())
     });
     let wheel = navigation(ui, wheel);
     d.on_wheel(move |x, y, delta| wheel((x, y, delta)));
-    d.on_zoom_by(a.on(|s, _, f: f32| s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))));
-    let rotate = a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r)));
+    let rotate = a.on(|s, _, r: f32| {
+        camera_wire::stop();
+        s.cam = scene::rotate(s.cam, f64::from(r));
+    });
     d.on_rotate_by(Coalesce::throttle(FRAME, |a, b| a + b, rotate).callback());
-    d.on_orient(a.on0(|s, _| s.cam.rotation = 0.0));
-    d.on_fit(a.on0(|s, _| {
-        s.cam = Camera {
-            rotation: s.cam.rotation,
-            ..Camera::default()
-        }
-    }));
+    camera_wire::wire(ui, &d);
     let reset = navigation(
         ui,
         a.on(|s, _, ()| match s.mode {
@@ -153,6 +165,10 @@ pub fn wire(ui: &AppWindow) {
     d.on_reset(move || reset(()));
     wire_selection(ui, &d);
     services_wire::wire(ui, &d);
+    // The World beside a Graph follows its package and selection.
+    crate::follow_ui::on_follow("start", |ui, _, nav| {
+        tab_support::update(ui, |s: &mut StartState, _| s.follow(nav));
+    });
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
@@ -189,6 +205,59 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     ));
     d.on_more(a.on0(|s, _| s.limit += 20));
     d.on_source_graph(a.on0(source_graph));
+    d.on_toggle_entry(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.toggle_entry(i);
+        }
+    }));
+    d.on_pick_neighbor(navigation(
+        ui,
+        a.on(|s, _, area: i32| {
+            if let Some(area) = index(area) {
+                s.select_neighbor(area);
+            }
+        }),
+    ));
+    wire_hover(ui, d);
+    d.on_detail_action(tab_support::with_ui(ui, detail_action));
+    d.on_open_source(tab_support::with_ui(ui, |ui, name: slint::SharedString| {
+        let node = crate::documents::with_active_state(|s: &mut StartState| {
+            s.ev.graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name.as_str())
+        });
+        if let Some(Some(n)) = node {
+            crate::panes_ui::reveal(ui, n);
+        }
+    }));
+}
+
+/// Cycles, Matrix, Calls, Class metrics or Quality scope for the
+/// selection; the Start state is released before the other view runs.
+fn detail_action(ui: &AppWindow, which: i32) {
+    let target = crate::documents::with_active_state(|s: &mut StartState| {
+        let t = s.action_target()?;
+        let node = s.ev.graph.nodes.iter().position(|n| n.name == t.node);
+        Some((t, node))
+    })
+    .flatten();
+    if let Some((t, node)) = target {
+        actions::run(ui, t, node, which);
+    }
+}
+
+/// The surface tooltip follows the pointer at most once per frame; it
+/// changes no state, so nothing else is pushed.
+fn wire_hover(ui: &AppWindow, d: &StartData<'_>) {
+    let at = tab_support::with_ui(ui, |ui, p: Option<(f32, f32)>| {
+        let p = p.map(|(x, y)| (f64::from(x), f64::from(y)));
+        crate::documents::with_active_state(|s: &mut StartState| hover::show(ui, s, p));
+    });
+    let at = Coalesce::throttle(FRAME, |_, b| b, at);
+    let moved = at.clone();
+    d.on_hover_at(move |x, y| moved.call(Some((x, y))));
+    d.on_hover_end(move || at.call(None));
 }
 
 /// "Source graph": reveal the selection in the Graph tab.
@@ -207,6 +276,7 @@ fn source_graph(s: &mut StartState, ui: &AppWindow) {
 impl TabState for StartState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
+        memo::keep(ui, self);
     }
 
     /// Keeps the canvas size the view reported.
@@ -418,6 +488,185 @@ mod tests {
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
         assert_eq!(s.search, "");
         assert_eq!(s.selection, None);
+    }
+
+    /// The tooltip names the surface under the pointer: a single entity by
+    /// its class or file, a group by its size, with the lens value; off
+    /// the surfaces there is none.
+    #[test]
+    fn hover_names_the_surface_under_the_pointer() {
+        let (mut s, _) = fixture_state("py-layers");
+        let v = s.view().expect("view");
+        let at = |c: &layout::Cell| v.screen(c.x as f64 + 0.5, c.y as f64 + 0.5, c.z);
+        let (i, cell) = s
+            .layout
+            .cells
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.entities.len() == 1)
+            .expect("a single surface");
+        let (x, y) = at(cell);
+        let h = s.hover_at(x, y).expect("a surface");
+        assert_eq!(h.cell, i);
+        let e = s.ev.entity(cell.entities[0]);
+        assert_eq!(h.title, e.class_id.clone().unwrap_or(e.node.clone()));
+        assert_eq!((h.grouped, h.kpi, h.value), (0, 0, cell.value));
+        assert_eq!(s.hover_at(-50.0, -50.0), None);
+        s.set_kpi(2);
+        assert_eq!(s.hover_at(x, y).expect("a surface").kpi, 2);
+    }
+
+    /// A connection in the details opens and closes; its neighbour is
+    /// selected with the details kept open.
+    #[test]
+    fn a_connection_selects_its_neighbour() {
+        let (mut s, _) = fixture_state("py-layers");
+        let c = s.scope.connections.first().cloned().expect("a connection");
+        s.pick(c.from as i32 + 1);
+        s.details_open = true;
+        assert!(!s.connection_open(0));
+        s.toggle_connection(0);
+        assert!(s.connection_open(0));
+        s.select_neighbor(c.to);
+        let sel = s.selection.clone().expect("the neighbour");
+        assert_eq!((sel.area, sel.entity), (c.to, None));
+        assert!(s.details_open, "the details stay open");
+        assert!(s.connection_open(0), "open entries stay open");
+        s.toggle_connection(0);
+        assert!(!s.connection_open(0));
+    }
+
+    /// Copy path gives `file:line` of an entity, else the area; AI context
+    /// the web's three read-only MCP requests for the selection.
+    #[test]
+    fn copy_path_and_ai_context() {
+        let (mut s, _) = fixture_state("py-layers");
+        assert_eq!(
+            (s.copy_value(), s.ai_context()),
+            (String::new(), String::new())
+        );
+        let domain = s
+            .scope
+            .areas
+            .iter()
+            .position(|a| a.name == "domain")
+            .expect("domain");
+        s.pick(domain as i32 + 1);
+        assert_eq!(s.copy_value(), "domain");
+        let t = s.action_target().expect("a target");
+        assert_eq!((t.node.as_str(), t.module), ("domain", true));
+        let e = s.scope.areas[domain].entities[0];
+        s.pick_entity(e);
+        let entity = s.ev.entity(e).clone();
+        let expected = match (&entity.file, entity.line) {
+            (Some(f), Some(l)) => format!("{f}:{l}"),
+            (Some(f), None) => f.clone(),
+            _ => entity.node.clone(),
+        };
+        assert_eq!(s.copy_value(), expected);
+        let v: serde_json::Value = serde_json::from_str(&s.ai_context()).expect("JSON");
+        let tools: Vec<&str> = v["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                "architecture_world",
+                "architecture_atlas",
+                "architecture_findings"
+            ]
+        );
+        assert_eq!(v["tools"][0]["arguments"]["within"], entity.node.as_str());
+        assert_eq!(v["tools"][1]["arguments"]["within"], "domain");
+        assert_eq!(v["project"], s.root.as_str());
+        assert!(!s.root.is_empty());
+    }
+
+    /// The kept view comes back in a new state of the same project; a
+    /// package or area that no longer exists is left out.
+    #[test]
+    fn the_world_view_is_kept_and_restored() {
+        let (mut s, _) = fixture_state("py-layers");
+        assert_eq!(s.memo(), Vec::new(), "defaults are not kept");
+        s.set_kpi(3);
+        let domain = s.scope.areas.iter().position(|a| a.name == "domain");
+        s.pick(domain.expect("domain") as i32 + 1);
+        let memo = s.memo();
+        let (mut back, _) = fixture_state("py-layers");
+        back.restore(&memo);
+        assert_eq!((back.lens, back.kpi), (Lens::Explore, 3));
+        let sel = back.selection.clone().expect("the area");
+        assert_eq!(back.scope.areas[sel.area].name, "domain");
+        assert_eq!(back.memo(), memo);
+        let gone: memo::Memo = vec![
+            ("within".into(), "no/such/package".into()),
+            ("area".into(), "gone".into()),
+            ("lens".into(), "2".into()),
+        ];
+        let (mut other, _) = fixture_state("py-layers");
+        other.restore(&gone);
+        assert_eq!(
+            (other.within.clone(), other.selection.clone()),
+            (None, None)
+        );
+        assert_eq!(other.lens, Lens::Coverage);
+    }
+
+    /// The services World keeps its filters, the architecture mode and
+    /// the selected island.
+    #[test]
+    fn the_services_view_is_kept_and_restored() {
+        let dir = two_projects();
+        let mut s = fixture_state_at(dir.path());
+        let api = {
+            let w = s.services.as_mut().expect("services");
+            w.filter.cycles_only = true;
+            w.filter.direction = services::Direction::Outgoing;
+            let api = w
+                .inventory
+                .iter()
+                .position(|i| i.path == "api")
+                .expect("api");
+            w.selected = Some(api);
+            api
+        };
+        let memo = s.memo();
+        let mut back = fixture_state_at(dir.path());
+        back.restore(&memo);
+        let w = back.services.as_ref().expect("services");
+        assert!(w.filter.cycles_only && !w.filter.flow);
+        assert_eq!(w.filter.direction, services::Direction::Outgoing);
+        assert_eq!((w.selected, back.mode), (Some(api), Mode::Services));
+        s.set_mode(Mode::Architecture);
+        let mut arch = fixture_state_at(dir.path());
+        arch.restore(&s.memo());
+        assert_eq!(arch.mode, Mode::Architecture);
+    }
+
+    /// Beside a Graph, the World enters its package and selects its node:
+    /// an area by name, else the entity of a file or class node.
+    #[test]
+    fn the_world_follows_a_graph() {
+        use crate::follow::Nav;
+        let (mut s, _) = fixture_state("py-layers");
+        s.follow(&Nav::Select("domain".into()));
+        let sel = s.selection.clone().expect("the area");
+        assert_eq!(s.scope.areas[sel.area].name, "domain");
+        s.follow(&Nav::Scope(Some("domain".into())));
+        assert_eq!(s.within.as_deref(), Some("domain"));
+        let e = s.scope.areas[0].entities[0];
+        let node = s.ev.entity(e).node.clone();
+        s.follow(&Nav::Select(node.clone()));
+        let sel = s.selection.clone().expect("a selection");
+        let picked = sel.entity.map(|e| s.ev.entity(e).node.clone());
+        let area = s.scope.areas[sel.area].name.clone();
+        assert!(picked.as_deref() == Some(&node) || area == node, "{node}");
+        s.follow(&Nav::Scope(None));
+        assert_eq!(s.within, None);
+        s.follow(&Nav::Select("no/such/node".into()));
     }
 
     /// Two npm projects side by side.

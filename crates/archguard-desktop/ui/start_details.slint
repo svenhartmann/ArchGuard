@@ -31,38 +31,61 @@ component DetailLine inherits Rectangle {
         : line.kind == 40 ? @tr("Evidence")
         : line.kind == 41 ? line.a + " → " + line.b + (line.c == "" ? "" : " · " + @tr("package cycle"))
         : line.kind == 42 ? @tr("No connections or findings recorded at this level.")
+        : line.kind == 43 ? (line.a == "" ? @tr("The number of source references behind this connection is unknown.") : @tr("{} source references behind this connection.", line.a))
+        : line.kind == 44 ? @tr("Select neighbor")
         : line.kind == 50 ? @tr("Evidence is filtered by source. Traces represent only the imported observation window, not complete traffic. Events can form intended workflows; a combined cycle may mix configured, inferred and observed edges.")
         : line.kind == 51 ? @tr("No local source project is associated with this service. Connections and trace evidence remain available.")
         : line.kind == 52 ? line.a + " → " + line.b + " · " + StartTones.kind-label(line.entity) + (line.flag ? " · " + @tr("Cycle") : "")
         : line.kind == 54 ? @tr("Select neighbor")
         : line.kind == 55 ? @tr("No connections found for these filters. Missing evidence does not prove isolation.")
+        : line.kind == 60 ? (line.flag ? @tr("Source file dependencies: {}. Classes in the same file share this graph evidence.", line.a)
+            : @tr("Original source graph · dependencies crossing this selection.")) + " " + @tr("{} incoming · {} outgoing", line.b, line.c)
+        : line.kind == 61 ? (line.entity == 0 ? @tr("Used by") : @tr("Depends on")) + " · " + line.a
+        : line.kind == 62 ? @tr("{} · {} references · Open in source graph", line.a, line.b)
+        : line.kind == 63 ? @tr("No recorded dependencies in this direction.")
         : line.a;
-    property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 54;
-    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52;
+    property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 44 || line.kind == 54 || line.kind == 62;
+    // A connection entry: opens and closes its evidence.
+    property <bool> entry: line.kind == 41 || line.kind == 52;
+    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52 || line.kind == 61;
     // Paths, class ids and evidence locations.
     property <bool> mono: line.kind == 2 || line.kind == 10 || line.kind == 53;
-    height: label.preferred-height + (button ? 14px : heading ? 12px : 4px);
-    border-radius: button ? Theme.radius-sm : 0;
-    background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : transparent;
+    property <length> inset: button ? 10px : entry ? 18px : 0;
+    height: label.preferred-height + (button ? 14px : heading ? 12px : entry ? 8px : 4px);
+    border-radius: button || entry ? Theme.radius-sm : 0;
+    background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : entry && t.has-hover ? Theme.panel-2 : transparent;
     border-width: button ? 1px : 0;
     border-color: Theme.border;
+    if entry: Text {
+        x: 2px;
+        y: label.y;
+        text: line.open ? "▾" : "▸";
+        color: Theme.muted;
+        font-size: Theme.font-body;
+    }
     label := Text {
-        x: button ? 10px : 0;
-        y: heading ? 8px : button ? 7px : 2px;
-        width: parent.width - (button ? 20px : 0);
+        x: root.inset;
+        y: heading ? 8px : button ? 7px : entry ? 4px : 2px;
+        width: parent.width - root.inset - (button ? 10px : 0);
         text: root.text;
         wrap: word-wrap;
-        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 ? Theme.muted
+        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 || line.kind == 60 || line.kind == 63 ? Theme.muted
             : line.kind == 52 && line.flag ? Theme.cycle : Theme.text;
         font-size: heading ? Theme.font-body : line.kind == 12 ? Theme.font-section : mono ? Theme.font-mono : Theme.font-body;
         font-weight: heading || line.kind == 12 || line.kind == 53 ? Theme.weight-strong : Theme.weight-regular;
         font-family: mono ? Theme.mono-family : "";
     }
     t := TouchArea {
-        enabled: root.button;
-        mouse-cursor: root.button ? MouseCursor.pointer : MouseCursor.default;
+        enabled: root.button || root.entry;
+        mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
-            if (line.kind == 30 || line.kind == 54) {
+            if (root.entry) {
+                StartData.toggle-entry(line.id);
+            } else if (line.kind == 62) {
+                StartData.open-source(line.a);
+            } else if (line.kind == 44) {
+                StartData.pick-neighbor(line.entity);
+            } else if (line.kind == 30 || line.kind == 54) {
                 StartData.pick-entity(line.entity);
             } else {
                 StartData.more();
@@ -81,8 +104,26 @@ export component StartDetails inherits Rectangle {
     drop-shadow-blur: 28px;
     drop-shadow-offset-x: -8px;
     drop-shadow-color: Theme.shadow;
+    // What the last copy put on the clipboard; another selection clears it.
+    property <string> copied;
+    property <string> title: StartData.model.detail-title;
+    changed title => { self.copied = ""; }
+    function copy(text: string, done: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+        self.copied = done;
+    }
     // Clicks and wheel stay in the panel.
     TouchArea { }
+    // Holds what Copy path and AI context put on the clipboard.
+    clipboard := TextInput {
+        width: 0;
+        height: 0;
+        opacity: 0;
+        read-only: true;
+    }
     VerticalLayout {
         HorizontalLayout {
             padding-left: 16px;
@@ -134,6 +175,16 @@ export component StartDetails inherits Rectangle {
                         compact: true;
                         clicked => { StartData.source-graph(); }
                     }
+                    if !services: Button {
+                        text: @tr("Cycles");
+                        compact: true;
+                        clicked => { StartData.detail-action(0); }
+                    }
+                    if !services: Button {
+                        text: @tr("Matrix");
+                        compact: true;
+                        clicked => { StartData.detail-action(1); }
+                    }
                     // In this document's analysis, or as a document of its own.
                     if services && !StartData.model.services.external: Button {
                         text: @tr("Zoom into service");
@@ -146,6 +197,42 @@ export component StartDetails inherits Rectangle {
                         compact: true;
                         clicked => { StartData.open-project(); }
                     }
+                }
+                // Into the other views, and the selection to the clipboard.
+                if !services: HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    padding-bottom: 6px;
+                    if StartData.model.detail-class: Button {
+                        text: @tr("Calls");
+                        compact: true;
+                        clicked => { StartData.detail-action(2); }
+                    }
+                    if StartData.model.detail-class: Button {
+                        text: @tr("Class metrics");
+                        compact: true;
+                        clicked => { StartData.detail-action(3); }
+                    }
+                    if StartData.model.can-explore: Button {
+                        text: @tr("Quality scope");
+                        compact: true;
+                        clicked => { StartData.detail-action(4); }
+                    }
+                    Button {
+                        text: @tr("Copy path");
+                        compact: true;
+                        clicked => { root.copy(StartData.model.detail-copy, @tr("Path copied.")); }
+                    }
+                    Button {
+                        text: @tr("AI context");
+                        compact: true;
+                        clicked => { root.copy(StartData.model.detail-ai, @tr("Read-only MCP requests for this selection copied.")); }
+                    }
+                }
+                if root.copied != "": Text {
+                    text: root.copied;
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
                 }
                 for l in StartData.model.detail-lines: DetailLine {
                     line: l;

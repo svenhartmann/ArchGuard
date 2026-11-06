@@ -37,7 +37,7 @@ export struct StartPin {
     ay: float,
     // A service island's kind: 0 none (a package), 1 application,
     // 2 library, 3 test / tooling, 4 unclassified, 5 no local sources;
-    // path: its source project.
+    // path: its technology and source project ("" at the root).
     svc: int,
     path: string,
 }
@@ -50,6 +50,8 @@ export struct StartCrumb {
 }
 
 // One detail line; kind selects the template (src/start_ui/details.rs).
+// A connection entry: id its index for toggle-entry, open whether its
+// evidence follows.
 export struct StartLine {
     kind: int,
     a: string,
@@ -57,6 +59,8 @@ export struct StartLine {
     c: string,
     entity: int,
     flag: bool,
+    id: int,
+    open: bool,
 }
 
 // The connections of one tone in canvas pixels: 0 cyclic, 1 into the
@@ -165,11 +169,35 @@ export struct StartModel {
     can-explore: bool,
     detail-title: string,
     detail-lines: [StartLine],
+    // The selection is a class (Calls, Class metrics); the texts of
+    // Copy path and AI context (src/start_ui/actions.rs).
+    detail-class: bool,
+    detail-copy: string,
+    detail-ai: string,
     services: StartServices,
+}
+
+// The surface under the pointer (src/start_ui/hover.rs): x, y in canvas
+// pixels; title "" for a group of `grouped` entries; kpi 0 complexity;
+// value "" unknown; svc a service island's kind (StartPin.svc).
+export struct StartHover {
+    shown: bool,
+    x: float,
+    y: float,
+    title: string,
+    grouped: int,
+    kpi: int,
+    value: string,
+    svc: int,
+    outline: string,
 }
 
 export global StartData {
     in-out property <StartModel> model;
+    in-out property <StartHover> hover;
+    // The pointer rests at a canvas point; it left the stage or pressed.
+    callback hover-at(float, float);
+    callback hover-end();
     // Texts Rust puts into pickers.
     out property <string> all-variants: @tr("All variants");
     out property <string> open-project-entry: @tr("Open project…");
@@ -184,7 +212,13 @@ export global StartData {
     callback pan(float, float);
     callback wheel(float, float, float);
     callback zoom-by(float);
+    // A drag turns at once; the buttons and keys glide (turn).
     callback rotate-by(float);
+    callback turn(float);
+    // A key on the stage (its text); whether it was used.
+    callback key(string) -> bool;
+    // A pinch or twist step: scale factor, radians, centre in the canvas.
+    callback pinch(float, float, float, float);
     callback orient();
     callback fit();
     callback reset();
@@ -197,6 +231,13 @@ export global StartData {
     callback pick-entity(int);
     callback more();
     callback source-graph();
+    // A connection entry of the details (StartLine.id); its neighbour area.
+    callback toggle-entry(int);
+    callback pick-neighbor(int);
+    // 0 Cycles, 1 Matrix, 2 Calls, 3 Class metrics, 4 Quality scope.
+    callback detail-action(int);
+    // "Open in source graph" for a node of the source dependencies.
+    callback open-source(string);
     // 0 architecture, 1 services.
     callback set-mode(int);
     // which: 0 deployment, 1 source, 2 kind, 3 direction (StartServices).

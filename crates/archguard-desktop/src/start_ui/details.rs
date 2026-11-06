@@ -37,6 +37,10 @@ pub mod kind {
     pub const EVIDENCE: i32 = 40;
     pub const CONNECTION: i32 = 41;
     pub const NO_EVIDENCE: i32 = 42;
+    /// An open connection's dependency count (`a`, "" unknown).
+    pub const REFERENCES: i32 = 43;
+    /// "Select neighbor" in the architecture World: `entity` the area.
+    pub const NEIGHBOR: i32 = 44;
     // The services World (`services/view.rs`).
     pub const SVC_NOTE: i32 = 50;
     pub const SVC_EXTERNAL: i32 = 51;
@@ -46,6 +50,14 @@ pub mod kind {
     /// "Select neighbor": `entity` the island.
     pub const SVC_NEIGHBOR: i32 = 54;
     pub const SVC_NONE: i32 = 55;
+    // Source dependencies (`source_deps.rs`).
+    /// `a` the node, `b`/`c` incoming/outgoing; `flag`: a class's file.
+    pub const SRC_HEAD: i32 = 60;
+    /// "Used by" (`entity` 0) or "Depends on" (1) · `a`.
+    pub const SRC_DIR: i32 = 61;
+    /// A neighbour `a` with `b` references: opens it in the Graph.
+    pub const SRC_NODE: i32 = 62;
+    pub const SRC_NONE: i32 = 63;
 }
 
 pub(super) fn line(
@@ -61,6 +73,8 @@ pub(super) fn line(
         c: c.into().into(),
         entity: -1,
         flag: false,
+        id: -1,
+        open: false,
     }
 }
 
@@ -100,7 +114,13 @@ pub fn fill(m: &mut StartModel, s: &StartState, l: Locale) {
         members(l, &mut lines, s, sel);
     }
     evidence(&mut lines, s, sel);
+    source_dependencies(&mut lines, s);
     m.detail_lines = ModelRc::new(VecModel::from(lines));
+    m.detail_class = sel
+        .entity
+        .is_some_and(|e| s.ev.entity(e).class_id.is_some());
+    m.detail_copy = s.copy_value().into();
+    m.detail_ai = s.ai_context().into();
 }
 
 fn members_of<'a>(s: &'a StartState, sel: &'a Selection) -> Vec<usize> {
@@ -271,24 +291,80 @@ fn members(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection)
     }
 }
 
+/// The source dependencies of the selection ([`super::source_deps`]).
+fn source_dependencies(out: &mut Vec<StartLine>, s: &StartState) {
+    let Some(t) = s.action_target() else { return };
+    let Some(deps) = super::source_deps::of(&s.ev.graph, &t.node) else {
+        return;
+    };
+    let (ins, outs) = (deps.incoming.len(), deps.outgoing.len());
+    out.push(StartLine {
+        flag: t.class_id.is_some(),
+        ..line(
+            kind::SRC_HEAD,
+            deps.name.as_str(),
+            ins.to_string(),
+            outs.to_string(),
+        )
+    });
+    for (dir, rows) in [(0, &deps.incoming), (1, &deps.outgoing)] {
+        out.push(StartLine {
+            entity: dir,
+            ..line(kind::SRC_DIR, rows.len().to_string(), "", "")
+        });
+        for n in rows.iter().take(s.limit) {
+            let weight = n.weight.to_string();
+            out.push(line(kind::SRC_NODE, n.node.as_str(), weight, ""));
+            out.extend(n.refs.iter().map(|r| line(kind::PATH, r.as_str(), "", "")));
+        }
+        if rows.is_empty() {
+            out.push(line(kind::SRC_NONE, "", "", ""));
+        }
+        if rows.len() > s.limit {
+            out.push(line(kind::MORE, (rows.len() - s.limit).to_string(), "", ""));
+        }
+    }
+}
+
+/// The entry of connection `i` of the scope; open, its dependency count
+/// and the way to the neighbour of `area`.
+fn connection(out: &mut Vec<StartLine>, s: &StartState, area: usize, i: usize) {
+    let c = &s.scope.connections[i];
+    let areas = &s.scope.areas;
+    let open = s.connection_open(i);
+    out.push(StartLine {
+        id: i as i32,
+        open,
+        ..line(
+            kind::CONNECTION,
+            areas[c.from].name.as_str(),
+            areas[c.to].name.as_str(),
+            if c.cyclic { "1" } else { "" },
+        )
+    });
+    if open {
+        let count = c.references.map_or(String::new(), |n| n.to_string());
+        out.push(line(kind::REFERENCES, count, "", ""));
+        let other = if c.from == area { c.to } else { c.from };
+        out.push(StartLine {
+            entity: other as i32,
+            ..line(kind::NEIGHBOR, "", "", "")
+        });
+    }
+}
+
 /// Connections of the area at this level and its findings with evidence.
 fn evidence(out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {
     out.push(line(kind::EVIDENCE, "", "", ""));
     let areas = &s.scope.areas;
-    let edges: Vec<_> = s
-        .scope
-        .connections
-        .iter()
-        .filter(|c| c.from == sel.area || c.to == sel.area)
+    let edges: Vec<_> = (0..s.scope.connections.len())
+        .filter(|&i| {
+            let c = &s.scope.connections[i];
+            c.from == sel.area || c.to == sel.area
+        })
         .collect();
-    for c in edges.iter().take(s.limit) {
-        let cyclic = if c.cyclic { "1" } else { "" };
-        out.push(line(
-            kind::CONNECTION,
-            areas[c.from].name.as_str(),
-            areas[c.to].name.as_str(),
-            cyclic,
-        ));
+    for &i in edges.iter().take(s.limit) {
+        connection(out, s, sel.area, i);
     }
     let findings = &areas[sel.area].findings;
     for &f in findings.iter().take(s.limit) {

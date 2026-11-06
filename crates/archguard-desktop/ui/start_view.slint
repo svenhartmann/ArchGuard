@@ -3,7 +3,8 @@
 // from src/start_ui.rs.
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
-import { Button, SearchField, Legend, StatInline, HelpTip } from "widgets.slint";
+import { Button, SearchField, StatInline, HelpTip } from "widgets.slint";
+import { WorldLegend, ServicesLegend } from "start_legend.slint";
 import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
@@ -15,11 +16,13 @@ export { StartData }
 component LensButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
+    in property <bool> enabled: true;
     callback clicked;
     height: 32px;
     width: label.preferred-width + 26px;
     border-radius: Theme.radius-sm;
-    background: active ? Theme.text : t.has-hover ? Theme.panel-2 : transparent;
+    opacity: enabled ? 1 : 0.45;
+    background: active ? Theme.text : t.has-hover && enabled ? Theme.panel-2 : transparent;
     label := Text {
         text: root.text;
         color: active ? Theme.panel : Theme.text;
@@ -28,7 +31,8 @@ component LensButton inherits Rectangle {
         vertical-alignment: center;
     }
     t := TouchArea {
-        mouse-cursor: pointer;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
     }
 }
@@ -114,7 +118,7 @@ export component StartView inherits Rectangle {
                 if !root.services: HelpTip {
                     size: 26px;
                     y: (parent.height - self.height) / 2;
-                    tip: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match.");
+                    tip: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag or arrow keys: pan. Right-, Shift- or Ctrl-drag, Q/E or a two-finger twist: rotate; pinch or + / −: zoom, 0: fit; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match. On the World, Enter shows the details and Esc closes them without clearing the selection.");
                 }
             }
             // The services World's filters (`repositoryWorldControls`).
@@ -178,20 +182,7 @@ export component StartView inherits Rectangle {
                     selected => { StartData.set-kpi(self.current-index); }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if m.lens == 0: Legend { text: @tr("Cycle / finding"); outline: true; }
-                if m.lens == 0: Legend { text: @tr("Classes / files"); swatch: Theme.accent; }
-                if m.lens == 1 && m.kpi == 0: Legend {
-                    text: @tr("Low → high");
-                    swatch-w: 56px;
-                    swatch: Theme.rate-scale;
-                }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Low"); swatch: Theme.rate-low; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("Elevated"); swatch: Theme.rate-medium; }
-                if m.lens == 1 && m.kpi > 0: Legend { text: @tr("High"); swatch: Theme.rate-high; }
-                if m.lens == 1 && m.kpi == 4: Legend { text: @tr("Informational"); swatch: Theme.accent; }
-                if m.lens == 2: Legend { text: @tr("Test gaps"); swatch: Theme.danger; }
-                if m.lens == 2: Legend { text: @tr("Covered"); swatch: Theme.success; }
-                if m.lens != 0: Legend { text: @tr("Unknown"); swatch: Theme.muted; }
+                WorldLegend { lens: m.lens; kpi: m.kpi; }
             }
             // Back, package path and status.
             HorizontalLayout {
@@ -200,7 +191,7 @@ export component StartView inherits Rectangle {
                 padding-top: 4px;
                 padding-bottom: 8px;
                 spacing: 4px;
-                if !root.services: LensButton { text: @tr("Back"); opacity: m.can-back ? 1 : 0.45; clicked => { StartData.go-back(); } }
+                if !root.services: LensButton { text: @tr("Back"); enabled: m.can-back; clicked => { StartData.go-back(); } }
                 // The selection's actions (`repositoryWorldControls`).
                 if root.services && m.has-selection: LensButton { text: @tr("Overview"); clicked => { StartData.services-toggle(3); } }
                 if root.services && m.has-selection && !m.services.external: Button {
@@ -231,6 +222,8 @@ export component StartView inherits Rectangle {
                         }
                     }
                 }
+                if root.services: Rectangle { width: 12px; }
+                if root.services: ServicesLegend { }
                 Rectangle { horizontal-stretch: 1; }
                 if root.services: Text {
                     text: root.services-status;

@@ -1,7 +1,7 @@
 //! The Start tab's state: navigation, lenses, selection and camera, as
 //! `worldUi` in `viewer_world.js`. Views read it; they never write it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::evidence::{self, Evidence, Scope};
 use super::layout::{self, Layout, Region};
@@ -44,6 +44,8 @@ pub(super) struct Visit {
 /// Everything the tab knows: the evidence and the viewer's position.
 pub struct StartState {
     pub(super) ev: Evidence,
+    /// The project root as the MCP requests of "AI context" name it.
+    pub(super) root: String,
     /// The services World, when the topology has one.
     pub(super) services: Option<ServicesWorld>,
     pub(super) mode: Mode,
@@ -67,6 +69,8 @@ pub struct StartState {
     pub(super) canvas: (f64, f64),
     pub(super) details_open: bool,
     pub(super) limit: usize,
+    /// Connection entries opened in the details, by area names.
+    pub(super) open_connections: BTreeSet<(String, String)>,
     // Derived from the above by `refresh`.
     pub(super) scope: Scope,
     pub(super) layout: Layout,
@@ -75,6 +79,7 @@ pub struct StartState {
 pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> StartState {
     let mut s = StartState {
         ev,
+        root: String::new(),
         // As the web, a repository opens on its services.
         mode: if services.is_some() {
             Mode::Services
@@ -95,6 +100,7 @@ pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> St
         canvas: (1200.0, 520.0),
         details_open: false,
         limit: 20,
+        open_connections: BTreeSet::new(),
         scope: Scope::default(),
         layout: Layout::default(),
     };

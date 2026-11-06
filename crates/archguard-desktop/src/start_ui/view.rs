@@ -102,6 +102,10 @@ fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
 pub fn push(ui: &AppWindow, s: &StartState) {
     let d = ui.global::<StartData>();
     let old = d.get_model();
+    // The scene moves under the pointer; its next move shows the tooltip.
+    if d.get_hover().shown {
+        d.set_hover(Default::default());
+    }
     let mut m = StartModel {
         ready: true,
         lens: match s.lens {
@@ -194,6 +198,16 @@ fn pinned(s: &StartState, max: &[Option<f64>]) -> Vec<usize> {
     order
 }
 
+/// The pin's maximum as `start_world.slint` writes it (English, for the
+/// width): "max 4" for complexity, "CBO max. 4" for a class KPI.
+fn max_mark(kpi: usize, max: &str) -> String {
+    const KPIS: [&str; 6] = ["CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
+    match kpi.checked_sub(1).and_then(|k| KPIS.get(k)) {
+        Some(label) => format!("{label} max. {max}"),
+        None => format!("max {max}"),
+    }
+}
+
 fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPin, String) {
     let a = &s.scope.areas[area];
     let name = a.name.rsplit('/').next().unwrap_or(&a.name).to_string();
@@ -209,7 +223,7 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
         marks.push(format!("{} findings", a.findings.len()));
     }
     if !max.is_empty() {
-        marks.push(format!("CBO max. {max}"));
+        marks.push(max_mark(s.kpi, &max));
     }
     let sub = if marks.is_empty() {
         format!("{} elements", l.count(a.entities.len()))
@@ -318,6 +332,14 @@ fn fill_coverage(m: &mut StartModel, s: &StartState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The width estimate names the shown KPI, as the pin does.
+    #[test]
+    fn the_pin_maximum_names_the_kpi() {
+        assert_eq!(max_mark(0, "4"), "max 4");
+        assert_eq!(max_mark(6, "1.5"), "LCOM4 max. 1.5");
+        assert_eq!(max_mark(2, "9"), "RFC max. 9");
+    }
 
     #[test]
     fn complexity_colors_run_from_teal_to_orange() {

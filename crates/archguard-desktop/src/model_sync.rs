@@ -27,12 +27,14 @@ pub fn sync_rows_with<T: Clone + PartialEq + 'static>(
         return ModelRc::new(VecModel::from(rows.into_iter().collect::<Vec<_>>()));
     };
     let mut count = 0;
+    let mut first_set = None;
     for (i, mut row) in rows.into_iter().enumerate() {
         count = i + 1;
         match vec.row_data(i) {
             Some(prev) => {
                 adopt(&prev, &mut row);
                 if prev != row {
+                    first_set.get_or_insert(i);
                     vec.set_row_data(i, row);
                 }
             }
@@ -42,7 +44,25 @@ pub fn sync_rows_with<T: Clone + PartialEq + 'static>(
     while vec.row_count() > count {
         vec.remove(vec.row_count() - 1);
     }
+    if let Some(i) = first_set {
+        schedule_update(vec, i);
+    }
     old.clone()
+}
+
+/// Make the views update the rows set from `first` on. Slint 1.18's
+/// repeater (`RepeaterTracker::row_changed`) only marks an item dirty,
+/// without scheduling the update, when its model binding is dirty itself,
+/// i.e. when the view's struct was set again since the last frame (two
+/// pushes per frame, or pushes to a hidden tab): the item then kept the
+/// old row until rows were added or removed. An insert and removal at
+/// `first` schedules it; items before `first` are untouched and the
+/// others only get their row again, none is rebuilt.
+fn schedule_update<T: Clone + 'static>(vec: &VecModel<T>, first: usize) {
+    if let Some(row) = vec.row_data(first) {
+        vec.insert(first, row);
+        vec.remove(first);
+    }
 }
 
 #[cfg(test)]
@@ -107,5 +127,68 @@ mod tests {
         let after = outer.row_data(0).expect("row");
         assert_eq!(after, kept, "the inner model stays");
         assert_eq!(after.iter().collect::<Vec<_>>(), [1, 3]);
+    }
+
+    slint::slint! {
+        export struct Rows { tag: int, values: [int] }
+        export component Strip inherits Window {
+            width: 3px;
+            height: 1px;
+            background: black;
+            in property <Rows> rows;
+            for v[i] in rows.values: Rectangle {
+                x: i * 1px;
+                width: 1px;
+                background: v == 0 ? black : white;
+            }
+        }
+    }
+
+    struct Pixels(Rc<slint::platform::software_renderer::MinimalSoftwareWindow>);
+
+    impl slint::platform::Platform for Pixels {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Whether each of the strip's three pixels is lit.
+    fn lit(window: &slint::platform::software_renderer::MinimalSoftwareWindow) -> Vec<bool> {
+        use slint::platform::software_renderer::PremultipliedRgbaColor as Px;
+        let mut buf = vec![Px::default(); 3];
+        window.request_redraw();
+        window.draw_if_needed(|r| {
+            r.render(&mut buf, 3);
+        });
+        buf.iter().map(|p| p.red > 128).collect()
+    }
+
+    /// A row synced while the view's model binding is still dirty (a
+    /// second push before the next frame) reaches the drawn item: Slint's
+    /// repeater marks such an item dirty without scheduling its update.
+    #[test]
+    fn a_row_changed_between_two_pushes_is_drawn() {
+        use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        window.set_size(slint::PhysicalSize::new(3, 1));
+        slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
+        let strip = Strip::new().expect("component");
+        strip.show().expect("shown");
+        let values = sync_rows(&ModelRc::default(), [0, 0, 0]);
+        strip.set_rows(Rows {
+            tag: 0,
+            values: values.clone(),
+        });
+        assert_eq!(lit(&window), [false, false, false]);
+        // Push 1 changes another field; push 2 a row, before a frame.
+        strip.set_rows(Rows {
+            tag: 1,
+            values: values.clone(),
+        });
+        let values = sync_rows(&values, [0, 1, 0]);
+        strip.set_rows(Rows { tag: 2, values });
+        assert_eq!(lit(&window), [false, true, false]);
     }
 }

@@ -4,7 +4,7 @@
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, ZoomControls } from "widgets.slint";
 import { Fmt } from "format.slint";
-import { StartData, StartTones, StartPin, StartFlow } from "start_data.slint";
+import { StartData, StartTones, StartPin, StartFlow, StartHover } from "start_data.slint";
 
 component Pin inherits Rectangle {
     in property <StartPin> pin;
@@ -45,9 +45,10 @@ component Pin inherits Rectangle {
             overflow: elide;
         }
         Text {
-            // A service island: its kind and source project (`renderRepositoryWorld`).
+            // A service island: its kind, technology and source project
+            // (`renderRepositoryWorld`).
             text: pin.svc == 5 ? @tr("No local sources")
-                : pin.svc > 0 ? StartTones.project-kind(pin.svc) + " · " + pin.path
+                : pin.svc > 0 ? join(StartTones.project-kind(pin.svc), pin.path)
                 : marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
             color: Theme.muted;
             font-size: Theme.font-caption;
@@ -137,6 +138,29 @@ component FlowDots inherits Rectangle {
     }
 }
 
+// The surface under the pointer: its entity or group and the lens value.
+component HoverTip inherits Rectangle {
+    in property <StartHover> hover;
+    width: min(320px, label.preferred-width + 20px);
+    height: label.preferred-height + 12px;
+    border-radius: Theme.radius-sm;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: Theme.shadow;
+    label := Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: hover.svc > 0 ? hover.title + " · " + (hover.svc == 5 ? @tr("No local sources") : StartTones.project-kind(hover.svc))
+            : (hover.grouped > 0 ? @tr("{0} grouped entry" | "{0} grouped entries" % hover.grouped, Fmt.int(hover.grouped)) : hover.title)
+                + " · " + StartTones.kpi-label(hover.kpi) + ": " + (hover.value != "" ? hover.value : @tr("unknown"));
+        color: Theme.text;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+}
+
 // A Path in unit coordinates, mapped to the canvas through the camera's
 // viewbox.
 component UnitPath inherits Path {
@@ -223,8 +247,16 @@ export component StartStage inherits Rectangle {
         stroke: f.stroke ? Theme.border : transparent;
         stroke-width: 0.65px;
     }
+    // The selected roofs lit and outlined (the web's stronger roof and
+    // light pool for the selection).
     if StartData.model.selection != "": UnitPath {
         commands: StartData.model.selection;
+        fill: StartTones.light.with-alpha(0.22);
+        stroke: Theme.text;
+        stroke-width: 2px;
+    }
+    if StartData.hover.shown: UnitPath {
+        commands: StartData.hover.outline;
         fill: transparent;
         stroke: Theme.text;
         stroke-width: 2px;
@@ -264,7 +296,30 @@ export component StartStage inherits Rectangle {
         stroke-width: 0.7px;
     }
 
-    // Left-drag pans; right- or Shift-drag rotates; wheel zooms at the cursor.
+    // Keys while the stage has focus (a press on it gives it).
+    keys := FocusScope {
+        width: 0;
+        height: 0;
+        key-pressed(e) => { return StartData.key(e.text) ? accept : reject; }
+    }
+
+    // Two fingers or the trackpad: pinch zooms, twist turns.
+    ScaleRotateGestureHandler {
+        property <float> last-scale: 1;
+        property <angle> last-rotation;
+        started => {
+            self.last-scale = 1;
+            self.last-rotation = 0deg;
+            StartData.hover-end();
+        }
+        updated => {
+            StartData.pinch(self.scale / max(0.01, self.last-scale), (self.rotation - self.last-rotation) / 1rad,
+                self.center.x / 1px, self.center.y / 1px);
+            self.last-scale = self.scale;
+            self.last-rotation = self.rotation;
+        }
+
+    // Left-drag pans; right-, Shift- or Ctrl-drag rotates; wheel zooms at the cursor.
     TouchArea {
         property <length> last-x;
         property <length> last-y;
@@ -276,8 +331,15 @@ export component StartStage inherits Rectangle {
                 self.last-x = self.mouse-x;
                 self.last-y = self.mouse-y;
                 self.dragged = false;
-                self.turning = e.button == PointerEventButton.right || e.modifiers.shift;
+                self.turning = e.button == PointerEventButton.right || e.modifiers.shift || e.modifiers.control;
+                keys.focus();
+                StartData.hover-end();
+            } else if (e.kind == PointerEventKind.move && !self.pressed) {
+                StartData.hover-at(self.mouse-x / 1px, self.mouse-y / 1px);
             }
+        }
+        changed has-hover => {
+            if (!self.has-hover) { StartData.hover-end(); }
         }
         moved => {
             if (self.dragged || abs(self.mouse-x - self.last-x) > 4px || abs(self.mouse-y - self.last-y) > 4px) {
@@ -302,6 +364,7 @@ export component StartStage inherits Rectangle {
             return accept;
         }
     }
+    }
 
     for p in StartData.model.pins: Rectangle {
         if p.collapsed: PinDot {
@@ -316,6 +379,12 @@ export component StartStage inherits Rectangle {
             open => { StartData.open-area(p.area); }
             enter => { StartData.enter-area(p.area); }
         }
+    }
+
+    if StartData.hover.shown: HoverTip {
+        hover: StartData.hover;
+        x: max(8px, min(parent.width - self.width - 8px, StartData.hover.x * 1px + 12px));
+        y: max(8px, min(parent.height - self.height - 8px, StartData.hover.y * 1px + 16px));
     }
 
     // Orientation: rotate in 15° steps, restore the original direction.
@@ -333,7 +402,7 @@ export component StartStage inherits Rectangle {
         orbit := HorizontalLayout {
             padding: 4px;
             spacing: 2px;
-            OrbitButton { clicked => { StartData.rotate-by(-0.2617994); } }
+            OrbitButton { clicked => { StartData.turn(-0.2617994); } }
             Rectangle {
                 width: 66px;
                 border-radius: 8px;
@@ -362,7 +431,7 @@ export component StartStage inherits Rectangle {
                     clicked => { StartData.orient(); }
                 }
             }
-            OrbitButton { right: true; clicked => { StartData.rotate-by(0.2617994); } }
+            OrbitButton { right: true; clicked => { StartData.turn(0.2617994); } }
         }
     }
 

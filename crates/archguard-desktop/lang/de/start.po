@@ -13,8 +13,8 @@ msgstr "Klasse: {}"
 msgid "Classes / files"
 msgstr "Klassen / Dateien"
 
-msgid "Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match."
-msgstr "Paketnamen anklicken oder eine Fläche doppelklicken, um ein Paket zu öffnen. Über Pfad und Zurück navigieren. Mausrad: Zoom am Zeiger; am Maximum öffnet weiteres Zoomen über einem Paket dieses, am Minimum kehrt es zur vorherigen Ansicht zurück. Linksziehen: verschieben. Rechtsziehen oder Umschalt + Ziehen: drehen; die Pfeile drehen in 15°-Schritten, die Richtungsanzeige stellt die Ausgangsrichtung wieder her. Jede Fläche steht für eine Klasse oder eine Datei ohne Klassendaten. Große Ausschnitte bündeln Flächen; Auswählen zeigt alle Mitglieder. Höhe im Flächenmittelpunkt: logarithmisch skalierte, erfasste maximale Methodenkomplexität. Farben zeigen Beobachtungen, kein Qualitätsurteil. Abdeckung bezieht sich auf Dateien. Paketzyklen können ohne Dateizyklen bestehen. Die Suche blendet Flächen aus, deren Klassen- oder Dateiname den Begriff nicht enthält; Enter wählt den ersten Treffer."
+msgid "Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag or arrow keys: pan. Right-, Shift- or Ctrl-drag, Q/E or a two-finger twist: rotate; pinch or + / −: zoom, 0: fit; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match. On the World, Enter shows the details and Esc closes them without clearing the selection."
+msgstr "Paketnamen anklicken oder eine Fläche doppelklicken, um ein Paket zu öffnen. Über Pfad und Zurück navigieren. Mausrad: Zoom am Zeiger; am Maximum öffnet weiteres Zoomen über einem Paket dieses, am Minimum kehrt es zur vorherigen Ansicht zurück. Linksziehen oder Pfeiltasten: verschieben. Rechts-, Umschalt- oder Strg-Ziehen, Q/E oder eine Zwei-Finger-Drehung: drehen; Auseinanderziehen oder + / −: Zoom, 0: einpassen; die Pfeile drehen in 15°-Schritten, die Richtungsanzeige stellt die Ausgangsrichtung wieder her. Jede Fläche steht für eine Klasse oder eine Datei ohne Klassendaten. Große Ausschnitte bündeln Flächen; Auswählen zeigt alle Mitglieder. Höhe im Flächenmittelpunkt: logarithmisch skalierte, erfasste maximale Methodenkomplexität. Farben zeigen Beobachtungen, kein Qualitätsurteil. Abdeckung bezieht sich auf Dateien. Paketzyklen können ohne Dateizyklen bestehen. Die Suche blendet Flächen aus, deren Klassen- oder Dateiname den Begriff nicht enthält; Enter wählt den ersten Treffer. In der World zeigt Enter die Details, Esc schließt sie, ohne die Auswahl zu löschen."
 
 msgid "Complexity"
 msgstr "Komplexität"
@@ -249,3 +249,104 @@ msgstr "Verbindungsart"
 
 msgid "Service connections"
 msgstr "Verbindungen"
+
+msgid "Red outlines mark areas in a cycle or with recorded findings. Red arrows show cyclic dependencies at this level; opposite directions have separate curves. A package cycle does not mean every class participates, or that a file cycle exists."
+msgstr "Rote Umrisse markieren Bereiche mit Zyklus oder erfassten Befunden. Rote Pfeile zeigen zyklische Abhängigkeiten dieser Ebene; Gegenrichtungen verlaufen getrennt. Ein Paketzyklus bedeutet nicht, dass jede Klasse beteiligt ist oder ein Dateizyklus vorliegt."
+
+msgid "Blue surfaces represent classes or files, including inside cyclic packages. Their color is neutral: it does not rate their quality or claim they are free of findings."
+msgstr "Blaue Flächen stehen für Klassen oder Dateien, auch innerhalb zyklischer Pakete. Die Farbe ist neutral: Sie bewertet weder deren Qualität noch behauptet sie Befundfreiheit."
+
+msgid "Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange. Grouped surfaces use the largest recorded value. The scale is continuous, not a good/bad threshold."
+msgstr "Erfasste maximale zyklomatische Methodenkomplexität, logarithmisch von Türkis nach Orange eingefärbt. Gebündelte Flächen verwenden den größten erfassten Wert. Die Skala ist kontinuierlich, keine Gut-/Schlecht-Grenze."
+
+msgid "Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange; grouped surfaces use the largest recorded value and heights are log-scaled. The scale is continuous, not a good/bad threshold."
+msgstr "Erfasste maximale zyklomatische Methodenkomplexität, logarithmisch von Türkis nach Orange eingefärbt; gebündelte Flächen verwenden den größten erfassten Wert und die Höhen sind logarithmiert. Die Skala ist kontinuierlich, keine Gut-/Schlecht-Grenze."
+
+msgid "Colors compare with measured classes of the same source language exactly as in the class heatmap: below 50% low, from 50% elevated, from 80% high; unmeasured stays gray. Grouped surfaces use their highest value; heights normalise to the highest value in this view."
+msgstr "Die Farben vergleichen mit gemessenen Klassen derselben Quellsprache wie in der Klassen-Heatmap: unter 50% niedrig, ab 50% erhöht, ab 80% hoch; nicht Gemessenes bleibt grau. Gebündelte Flächen verwenden ihren höchsten Wert; die Höhen sind auf den höchsten Wert dieser Ansicht normiert."
+
+msgid "The imported file coverage contains uncovered executable lines. Grouped surfaces are red if all members have usable coverage and at least one has a gap. This does not identify missing test cases."
+msgstr "Die importierte Dateiabdeckung enthält nicht abgedeckte ausführbare Zeilen. Gebündelte Flächen sind rot, wenn alle Mitglieder nutzbare Abdeckung haben und mindestens eines eine Lücke hat. Daraus lassen sich keine konkreten fehlenden Testfälle ablesen."
+
+msgid "All executable lines recorded in the imported file coverage are covered. This does not prove current, complete or passing tests; the report revision at import is unverified."
+msgstr "Alle in der importierten Dateiabdeckung erfassten ausführbaren Zeilen sind abgedeckt. Das beweist keine aktuellen, vollständigen oder bestandenen Tests; die Berichtsrevision beim Import ist ungeprüft."
+
+msgid "Coverage is missing, stale or cannot be mapped unambiguously. A grouped surface stays gray when any member lacks usable file coverage."
+msgstr "Die Abdeckung ist fehlend, veraltet oder nicht eindeutig zuordenbar. Eine gebündelte Fläche bleibt grau, sobald einem Mitglied eine nutzbare Dateiabdeckung fehlt."
+
+msgid "No method complexity has been recorded for this surface. Gray does not mean low complexity."
+msgstr "Für diese Fläche ist keine Methodenkomplexität erfasst. Grau bedeutet nicht geringe Komplexität."
+
+msgid "No measurement for {} in the imported class metrics for this surface. Gray does not mean a low value; missing class data stays unknown."
+msgstr "Für diese Fläche fehlt in den importierten Klassenkennzahlen ein Messwert für {}. Grau bedeutet nicht niedriger Wert; fehlende Klassendaten bleiben unbekannt."
+
+msgid "Cyclic"
+msgstr "Zyklisch"
+
+msgid "Red arrows are cyclic communication of one kind: following connections of that kind leads back to the service. Opposite directions have separate curves."
+msgstr "Rote Pfeile sind zyklische Kommunikation einer Art: Verbindungen dieser Art führen zum Service zurück. Gegenrichtungen verlaufen getrennt."
+
+msgid "Into the selection"
+msgstr "Zur Auswahl"
+
+msgid "Accented arrows lead into the selected service."
+msgstr "Hervorgehobene Pfeile führen zum ausgewählten Service."
+
+msgid "Other connections"
+msgstr "Andere Verbindungen"
+
+msgid "Green arrows are the other shown connections, from caller, producer or referencing service to its target."
+msgstr "Grüne Pfeile sind die übrigen gezeigten Verbindungen, vom aufrufenden, erzeugenden oder verweisenden Service zu seinem Ziel."
+
+msgid "Events"
+msgstr "Ereignisse"
+
+msgid "Dashed arrows are inferred event flows, from the producing to the consuming service."
+msgstr "Gestrichelte Pfeile sind abgeleitete Ereignisflüsse, vom erzeugenden zum verarbeitenden Service."
+
+msgid "{0} grouped entry"
+msgid_plural "{0} grouped entries"
+msgstr[0] "{0} gebündelter Eintrag"
+msgstr[1] "{0} gebündelte Einträge"
+
+msgid "The number of source references behind this connection is unknown."
+msgstr "Die Zahl der Quellverweise hinter dieser Verbindung ist unbekannt."
+
+msgid "{} source references behind this connection."
+msgstr "{} Quellverweise hinter dieser Verbindung."
+
+msgid "Quality scope"
+msgstr "Qualitätsumfang"
+
+msgid "Copy path"
+msgstr "Pfad kopieren"
+
+msgid "AI context"
+msgstr "KI-Kontext"
+
+msgid "Path copied."
+msgstr "Pfad kopiert."
+
+msgid "Read-only MCP requests for this selection copied."
+msgstr "Lesende MCP-Abfragen für diese Auswahl kopiert."
+
+msgid "Source file dependencies: {}. Classes in the same file share this graph evidence."
+msgstr "Abhängigkeiten der Quelldatei: {}. Klassen derselben Datei teilen diese Graphbelege."
+
+msgid "Original source graph · dependencies crossing this selection."
+msgstr "Ursprünglicher Quellgraph · Abhängigkeiten über die Grenze dieser Auswahl."
+
+msgid "{} incoming · {} outgoing"
+msgstr "{} eingehend · {} ausgehend"
+
+msgid "Used by"
+msgstr "Verwendet von"
+
+msgid "Depends on"
+msgstr "Abhängig von"
+
+msgid "{} · {} references · Open in source graph"
+msgstr "{} · {} Verweise · Im Quellgraph öffnen"
+
+msgid "No recorded dependencies in this direction."
+msgstr "Keine erfassten Abhängigkeiten in dieser Richtung."

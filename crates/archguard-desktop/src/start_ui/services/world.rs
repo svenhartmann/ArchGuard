@@ -1,6 +1,8 @@
 //! The services World's state: islands, connections and filters
 //! (`repositoryWorldState` and `renderRepositoryWorld` in the web).
 
+use std::collections::BTreeSet;
+
 use archguard_engine::core::{ServiceDependencyKind as Kind, ServiceTopology};
 
 use super::super::layout::{Cell, Layout, Plate};
@@ -54,6 +56,8 @@ pub struct ServicesWorld {
     /// The selected island (inventory index).
     pub(crate) selected: Option<usize>,
     pub(crate) layout: Layout,
+    /// Detail entries opened, by the connection's ends and kind.
+    open: BTreeSet<(usize, usize, Kind)>,
 }
 
 impl ServicesWorld {
@@ -84,6 +88,7 @@ impl ServicesWorld {
             links: Vec::new(),
             selected: None,
             layout: Layout::default(),
+            open: BTreeSet::new(),
         };
         w.refresh();
         Some(w)
@@ -165,6 +170,22 @@ impl ServicesWorld {
     /// Select the island of a layout area, or none.
     pub(crate) fn select_area(&mut self, area: Option<usize>) {
         self.selected = area.and_then(|a| self.shown.get(a).copied());
+    }
+
+    /// Open or close the detail entry of connection `i` (of `links`).
+    pub(crate) fn toggle_link(&mut self, i: usize) {
+        let Some(l) = self.links.get(i) else { return };
+        let key = (l.from, l.to, l.kind);
+        if !self.open.remove(&key) {
+            self.open.insert(key);
+        }
+    }
+
+    /// Whether the detail entry of connection `i` shows its evidence.
+    pub(crate) fn is_open(&self, i: usize) -> bool {
+        self.links
+            .get(i)
+            .is_some_and(|l| self.open.contains(&(l.from, l.to, l.kind)))
     }
 
     /// A filter that changes which islands are shown: selection off.
@@ -261,5 +282,31 @@ mod tests {
         assert!(w.matches(0, "a") && !w.matches(0, "zz"));
         w.set_islands(None, true);
         assert_eq!(w.selected, None, "changing the islands drops the selection");
+    }
+
+    /// A connection entry opens and closes by its ends and kind, so it
+    /// stays open when the filters renumber the connections.
+    #[test]
+    fn connection_entries_toggle_by_their_ends() {
+        let topology = std::sync::Arc::new(Ok(inventory::tests::topology(
+            vec![
+                inventory::tests::project("a", "application"),
+                inventory::tests::project("b", "application"),
+            ],
+            Vec::new(),
+        )));
+        let mut w = ServicesWorld::new(topology).expect("two projects");
+        w.links = vec![link(0, 1, false), link(1, 0, false)];
+        assert!(
+            !w.is_open(0) && !w.is_open(1),
+            "closed at first, as the web"
+        );
+        w.toggle_link(1);
+        assert!(w.is_open(1) && !w.is_open(0));
+        w.links.reverse();
+        assert!(w.is_open(0), "the same connection at a new index");
+        w.toggle_link(0);
+        assert!(!w.is_open(0));
+        w.toggle_link(7);
     }
 }

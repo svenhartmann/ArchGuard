@@ -29,12 +29,13 @@ pub enum Nav {
 }
 
 /// Whether a right pane showing `right` can follow a left pane showing
-/// `left`: World → Graph, Graph → Graph, Graph → Matrix, Graph or Matrix
+/// `left`: World → Graph, Graph → World, Graph → Graph, Graph → Matrix, Graph or Matrix
 /// → File view, Architecture → Graph.
 pub fn pair(left: &str, right: &str) -> bool {
     matches!(
         (left, right),
         ("start", "graph")
+            | ("graph", "start")
             | ("graph", "graph")
             | ("graph", "dsm")
             | ("graph", "file")
@@ -55,6 +56,7 @@ pub fn map(left: &str, right: &str, nav: &Nav) -> Option<Nav> {
         Nav::Select(_) if linked => None,
         Nav::Select(_) => Some(nav.clone()),
         _ if right == panes::FILE => None,
+        Nav::Expand { .. } if right == "start" => None,
         Nav::Expand { .. } if !matches!(left, "graph" | "dsm") => None,
         _ => Some(nav.clone()),
     }
@@ -199,6 +201,11 @@ mod tests {
         );
         assert_eq!(map("architecture", "graph", &select), Some(select.clone()));
         assert_eq!(map("start", "security", &scope("src")), None);
+        // Graph → World: packages entered and selections; the World has
+        // no tree to expand.
+        assert_eq!(map("graph", "start", &scope("src")), Some(scope("src")));
+        assert_eq!(map("graph", "start", &select), Some(select.clone()));
+        assert_eq!(map("graph", "start", &expand), None);
         assert_eq!(
             map("dsm", "graph", &scope("src")),
             None,

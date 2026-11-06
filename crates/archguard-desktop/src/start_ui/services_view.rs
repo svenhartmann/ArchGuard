@@ -70,7 +70,7 @@ pub fn fill(m: &mut StartModel, old: &StartModel, s: &StartState, w: &ServicesWo
     }
     pins(m, old, s, w, &v, &cyclic);
     let drawn = draw(w, &visible, |a| center(&s.layout, &v, a, 0.2));
-    edges(m, drawn);
+    edges(m, old, drawn);
     details(m, s, w, &visible);
 }
 
@@ -129,6 +129,18 @@ pub fn texts(m: &mut StartModel, old: &StartModel, w: &ServicesWorld, d: &StartD
     m.services.deployments = sync_rows(&old.services.deployments, variants);
 }
 
+/// An island's kind as `StartPin.svc`: 1 application, 2 library, 3 test /
+/// tooling, 4 unclassified, 5 no local sources.
+pub(super) fn svc(i: &super::services::Island) -> i32 {
+    match i.kind.as_str() {
+        _ if i.external => 5,
+        "application" => 1,
+        "library" => 2,
+        "tooling" => 3,
+        _ => 4,
+    }
+}
+
 /// One pin per island: its name and kind with its source path, or that it
 /// has no local sources.
 fn pins(
@@ -142,14 +154,8 @@ fn pins(
     let rows = (0..w.shown.len())
         .map(|area| {
             let i = w.island(area);
-            let svc: i32 = match i.kind.as_str() {
-                _ if i.external => 5,
-                "application" => 1,
-                "library" => 2,
-                "tooling" => 3,
-                _ => 4,
-            };
-            let path = i.source.as_deref().unwrap_or(&i.path);
+            let svc = svc(i);
+            let detail = i.detail();
             // English widths; German labels are about as long.
             let label = [
                 "",
@@ -160,7 +166,8 @@ fn pins(
             ];
             let sub = match svc {
                 5 => "No local sources".to_string(),
-                k => format!("{} · {path}", label[k as usize]),
+                k if detail.is_empty() => label[k as usize].to_string(),
+                k => format!("{} · {detail}", label[k as usize]),
             };
             StartPin {
                 area: area as i32,
@@ -169,7 +176,7 @@ fn pins(
                 entries: 1,
                 cyclic: cyclic[area],
                 svc,
-                path: path.into(),
+                path: detail.as_str().into(),
                 w: super::pins::width(i.label(), &sub, !i.external) as f32,
                 ..Default::default()
             }
@@ -181,9 +188,8 @@ fn pins(
     place_pins(m, old, (&s.layout, w.shown.len()), v, rows, anchors);
 }
 
-/// New models on every push: few rows, and rows of a model nested in
-/// `StartServices` updated in place did not reach the snapshot renderer.
-fn edges(m: &mut StartModel, drawn: Drawn) {
+/// The connections, one row per tone, and the flow curves.
+fn edges(m: &mut StartModel, old: &StartModel, drawn: Drawn) {
     let strokes = drawn
         .strokes
         .into_iter()
@@ -193,7 +199,7 @@ fn edges(m: &mut StartModel, drawn: Drawn) {
             heads: s.heads.into(),
             tone: tone as i32,
         });
-    m.services.edges = ModelRc::new(VecModel::from(strokes.collect::<Vec<_>>()));
+    m.services.edges = sync_rows(&old.services.edges, strokes);
     let flows = drawn.flows.into_iter().map(|f| StartFlow {
         px: f.p.0 as f32,
         py: f.p.1 as f32,
@@ -206,7 +212,7 @@ fn edges(m: &mut StartModel, drawn: Drawn) {
         count: f.count,
         tone: tone_index(f.tone) as i32,
     });
-    m.services.flows = ModelRc::new(VecModel::from(flows.collect::<Vec<_>>()));
+    m.services.flows = sync_rows(&old.services.flows, flows);
 }
 
 /// `repositoryWorldDetails`: every visible connection with its evidence
@@ -224,9 +230,12 @@ fn details(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usi
     lines.push(line(kind::SVC_NOTE, "", "", ""));
     for &i in visible.iter().take(s.limit) {
         let l = &w.links[i];
+        let open = w.is_open(i);
         lines.push(StartLine {
             entity: position(&KINDS, &l.kind),
             flag: l.cyclic,
+            id: i as i32,
+            open,
             ..line(
                 kind::SVC_LINK,
                 w.inventory[l.from].title(),
@@ -234,6 +243,9 @@ fn details(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usi
                 "",
             )
         });
+        if !open {
+            continue;
+        }
         for proof in &l.evidence {
             let at = proof.line.map_or(String::new(), |n| format!(":{n}"));
             let pointer = Some(&proof.pointer)

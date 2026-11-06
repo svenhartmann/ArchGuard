@@ -405,3 +405,29 @@ comparison of the native view against the web view on the same project
   a document of its own, as the Projects menu. Not ported: collapsible
   connection entries, the "Analysis & traces" help, a reduced-motion
   setting (the desktop has none), persisting mode and filters.
+- **2026-11-06:** Second World round. Rows synced in place
+  (`model_sync::sync_rows`) could stay stale: Slint 1.18's repeater
+  (`RepeaterTracker::row_changed`, unchanged upstream) only marks an item
+  dirty, without scheduling its update, when the row changes while the
+  repeater's model binding is dirty itself, i.e. after the view's struct
+  was set again since the last frame. Two pushes per frame or pushes to a
+  hidden tab did that in real windows too, not only in snapshots.
+  `sync_rows` now schedules the update with an insert and removal at the
+  first changed row (items are updated, not rebuilt); the services
+  World's arrows sync in place again. The World gained the web's legend
+  and KPI help, a hover tooltip with outline, collapsible connection
+  entries with Select neighbor in both Worlds, the detail actions
+  (Cycles, Matrix, Calls, Class metrics, Quality scope, Copy path, AI
+  context; the other views are reached through their own callbacks once
+  their state exists), source dependencies in the details, keys (+ / =,
+  -, 0, Q / E, arrows, Enter, Esc), Ctrl-drag, pinch and twist (Slint's
+  `ScaleRotateGestureHandler`), 320 ms cubic camera glides for buttons
+  and keys (drags, wheel and gestures stay immediate) and a lit selected
+  roof. Decision: the World view (mode, scope, lens, KPI, services
+  filters, selected area or island; not the camera) is kept per project
+  as a `world` table of the Start tab's entry in the pane layout, so it
+  is stored with the layout and only when it changes. A Graph on the left
+  now leads a World on the right ("Follow left"). Not done: the Start
+  KPI section, the Explore and Test gaps details depth, fullscreen; Calls
+  and Class metrics search rather than select the class; gestures and
+  the clipboard were not tried on real hardware (headless snapshots only).
