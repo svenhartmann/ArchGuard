@@ -13,10 +13,13 @@ import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
+import { Templates, Template } from "texts.slint";
 
 export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
+// Templates for text the Rust side composes (`tab_support::Texts`).
+export { Templates, Template }
 
 export struct Crumb {
     node: int,
@@ -255,8 +258,6 @@ export component AppWindow inherits Window {
     in property <[string]> m-evidence;
     in property <string> m-evidence-title;
     in property <string> m-cycle-path;
-    out property <string> m-overview-label: @tr("Project overview");
-    out property <string> m-all-label: @tr("All dependencies");
     callback m-toggle(int);
     callback m-expand-all();
     callback m-collapse-all();

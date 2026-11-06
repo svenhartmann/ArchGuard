@@ -13,7 +13,7 @@ mod view;
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
-use crate::tab_support::{self, Actions, Shared, TabState, Topology, index};
+use crate::tab_support::{self, Actions, Shared, TabState, Texts, Topology, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
@@ -67,7 +67,7 @@ pub fn wire(ui: &AppWindow) {
     }));
     d.on_zoom_by(a.on(|s, _, f: f32| s.zoom_by(f)));
     d.on_fit(a.on2(|s, ui, w: f32, h: f32| {
-        view::fit(s, w, h, &ui.global::<ServicesData>().get_label_unmapped());
+        view::fit(s, w, h, Texts::of(ui).t("Unmapped service"));
     }));
     d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
 }
@@ -110,7 +110,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &ServicesState) {
     let d = ui.global::<ServicesData>();
-    d.set_model(view::build(s, &d.get_label_unmapped()));
+    d.set_model(view::build(s, Texts::of(ui).t("Unmapped service")));
 }
 
 /// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`

@@ -681,14 +681,37 @@ mod tests {
         assert!(project_root(&repo, &p).is_dir());
     }
 
-    /// The monorepo example of this repository: its ten local service
-    /// build contexts, as `archguard services examples/service-shop` lists.
+    /// A compose project: every service with a build context is offered
+    /// once, at a folder below the project, and image-only services are not.
     #[test]
-    fn service_shop_offers_its_services() {
-        let shop = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/service-shop");
-        let t = archguard_engine::analyze_services(&shop).expect("service topology");
-        let paths: Vec<String> = sub_projects(&t).into_iter().map(|p| p.path).collect();
-        assert_eq!(paths.len(), 10, "{paths:?}");
-        assert!(paths.contains(&"services/gateway".to_string()));
+    fn compose_project_offers_its_build_contexts() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/compose-services")
+            .canonicalize()
+            .expect("fixture");
+        let t = archguard_engine::analyze_services(&root).expect("service topology");
+        let subs = sub_projects(&t);
+        let paths: Vec<&str> = subs.iter().map(|p| p.path.as_str()).collect();
+        let mut contexts: Vec<String> = t
+            .services
+            .iter()
+            .filter_map(|s| s.build_context.as_deref())
+            .map(|c| c.trim_start_matches("./").trim_end_matches('/').to_string())
+            .collect();
+        contexts.sort();
+        contexts.dedup();
+        assert!(!contexts.is_empty(), "{:?}", t.services);
+        for c in &contexts {
+            assert_eq!(
+                paths.iter().filter(|p| *p == c).count(),
+                1,
+                "{c} in {paths:?}"
+            );
+        }
+        assert!(t.services.iter().any(|s| s.build_context.is_none()), "db");
+        assert!(
+            subs.iter().all(|p| project_root(&root, p).is_dir()),
+            "{paths:?}"
+        );
     }
 }

@@ -220,16 +220,6 @@ export struct CallsModel {
 export global CallsData {
     in-out property <CallsModel> model;
 
-    // Translated names Rust needs in lists and labels.
-    out property <string> label-all-languages: @tr("All languages");
-    out property <string> label-all-packages: @tr("All packages");
-    out property <string> label-default-package: @tr("(default package)");
-    out property <string> label-unreported-language: @tr("Unreported language");
-    out property <string> label-unresolved-target: @tr("Unresolved target");
-    out property <string> label-initializer: @tr("initializer");
-    out property <string> label-external-group: @tr("External targets · no project package mapping");
-    out property <string> label-unresolved-group: @tr("Unresolved targets · no package mapping");
-
     pure public function coverage(status: string) -> string {
         if status == "ready" { return @tr("ready"); }
         if status == "partial" { return @tr("partial"); }

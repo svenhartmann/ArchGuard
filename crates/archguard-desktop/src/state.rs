@@ -342,9 +342,30 @@ mod tests {
             s.priorities,
             [Some(ReviewPriority::Medium), Some(ReviewPriority::Medium)]
         );
+        // Expanded, the links run between the files: view.rs ↔ lib.rs
+        // carry the cycle and the badge, the package rows hold no link
+        // of their own and show none.
         let mut s = s;
         s.expand_all();
-        assert_eq!(s.priorities.len(), s.view.rows.len());
+        let rows: Vec<(&str, Option<ReviewPriority>)> = s
+            .view
+            .rows
+            .iter()
+            .zip(&s.priorities)
+            .map(|(r, p)| (s.tree.nodes[r.node].name.as_str(), *p))
+            .collect();
+        let medium = Some(ReviewPriority::Medium);
+        assert_eq!(
+            rows,
+            [
+                ("app/ui", None),
+                ("app/ui/view.rs", medium),
+                ("core", None),
+                ("core/lib.rs", medium)
+            ]
+        );
+        s.collapse_all();
+        assert_eq!(s.priorities, [medium, medium], "back on the packages");
     }
 
     #[test]

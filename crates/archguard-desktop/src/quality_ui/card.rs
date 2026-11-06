@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use super::lang::Lang;
+use crate::tab_support::Texts;
 
 /// How an item renders (`QualityItem.kind` in `quality_cards.slint`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,13 +95,13 @@ impl Line {
 
 /// Card builder; `nodes` are the source graph's names ("Locate" needs one).
 pub struct Builder<'a> {
-    pub lang: Lang,
+    pub lang: &'a Texts,
     pub nodes: &'a BTreeSet<String>,
     pub card: Card,
 }
 
 impl<'a> Builder<'a> {
-    pub fn new(lang: Lang, nodes: &'a BTreeSet<String>, title: impl Into<String>) -> Self {
+    pub fn new(lang: &'a Texts, nodes: &'a BTreeSet<String>, title: impl Into<String>) -> Self {
         let title = title.into();
         Builder {
             lang,
@@ -124,10 +124,9 @@ impl<'a> Builder<'a> {
             lines: Vec::new(),
         });
         if text.chars().count() > MAX_TEXT {
-            let note = self.lang.t(
-                "Text shortened; full evidence is included in the export.",
-                "Text gekürzt; vollständige Belege stehen im Export.",
-            );
+            let note = self
+                .lang
+                .t("Text shortened; full evidence is included in the export.");
             self.push(Kind::Small, note);
         }
         self
@@ -172,11 +171,11 @@ impl<'a> Builder<'a> {
 }
 
 /// A "Locate in graph" line, if `node` is in the source graph.
-pub fn locate(lang: Lang, nodes: &BTreeSet<String>, node: Option<&str>) -> Option<Line> {
+pub fn locate(lang: &Texts, nodes: &BTreeSet<String>, node: Option<&str>) -> Option<Line> {
     let node = node.filter(|n| nodes.contains(*n))?;
     Some(Line {
         kind: Kind::Locate,
-        text: lang.t("Locate in graph", "Im Graphen anzeigen").into(),
+        text: lang.t("Locate in graph").into(),
         node: node.into(),
     })
 }

@@ -290,31 +290,28 @@ impl Scorer {
 
     /// Crossings dominate, total link length breaks ties.
     fn score(&self, children: &Children) -> u64 {
-        let position: BTreeMap<usize, i64> = preorder(children)
-            .into_iter()
-            .enumerate()
-            .map(|(i, n)| (n, i as i64))
+        let order = preorder(children);
+        let mut position = vec![0_i64; order.iter().max().map_or(0, |&n| n + 1)];
+        for (i, &n) in order.iter().enumerate() {
+            position[n] = i as i64;
+        }
+        let spans: Vec<(i64, i64)> = self
+            .endpoints
+            .iter()
+            .map(|&(a, b)| {
+                let (x, y) = (position[a], position[b]);
+                (x.min(y), x.max(y))
+            })
             .collect();
-        let span = |(a, b): (usize, usize)| {
-            let (x, y) = (position[&a], position[&b]);
-            (x.min(y), x.max(y))
-        };
         let crossings = self
             .pairs
             .iter()
             .filter(|&&(i, j)| {
-                let ((lo, hi), (olo, ohi)) = (span(self.endpoints[i]), span(self.endpoints[j]));
+                let ((lo, hi), (olo, ohi)) = (spans[i], spans[j]);
                 (lo < olo && olo < hi && hi < ohi) || (olo < lo && lo < ohi && ohi < hi)
             })
             .count() as u64;
-        let length: u64 = self
-            .endpoints
-            .iter()
-            .map(|&e| {
-                let (lo, hi) = span(e);
-                (hi - lo) as u64
-            })
-            .sum();
+        let length: u64 = spans.iter().map(|&(lo, hi)| (hi - lo) as u64).sum();
         crossings * self.scale + length
     }
 }

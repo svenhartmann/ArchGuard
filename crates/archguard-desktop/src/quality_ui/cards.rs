@@ -8,7 +8,8 @@ use archguard_engine::{ClassMetrics, KnowledgeMetric, MeasurementGroup, MethodMe
 
 use super::card::{Builder, Card, Kind, Line};
 use super::heatmap::{METRICS, not_applicable, value};
-use super::lang::{Lang, number, percent};
+use super::lang::{number, percent};
+use crate::tab_support::Texts;
 
 /// Evidence per metric is listed up to this many references.
 const EVIDENCE: usize = 100;
@@ -24,14 +25,14 @@ fn evidence<'a>(row: &'a ClassMetrics, key: &str) -> &'a [String] {
     }
 }
 
-pub fn class(lang: Lang, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card {
+pub fn class(lang: &Texts, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card {
     let mut b = Builder::new(lang, nodes, &row.class_id);
     b.card.key = row.class_id.clone();
     b.card.metrics = METRICS
         .iter()
         .map(|k| {
             let v = if not_applicable(row, k) {
-                lang.t("n/a", "n. a.").to_string()
+                lang.t("n/a").to_string()
             } else {
                 number(value(row, k))
             };
@@ -46,18 +47,15 @@ pub fn class(lang: Lang, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card {
         let refs = evidence(row, key);
         lines.extend(refs.iter().take(EVIDENCE).map(|r| Line::new(Kind::Path, r)));
         if refs.len() > EVIDENCE {
-            let note = lang.t(
-                "First 100; export contains all evidence.",
-                "Erste 100; der Export enthält alle Belege.",
-            );
+            let note = lang.t("First 100; export contains all evidence.");
             lines.push(Line::new(Kind::Text, note));
         }
     }
-    b.details(lang.t("Dependency evidence", "Abhängigkeitsbelege"), lines);
+    b.details(lang.t("Dependency evidence"), lines);
     b.done()
 }
 
-pub fn method(lang: Lang, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Card {
+pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Card {
     let mut b = Builder::new(lang, nodes, &row.method_id);
     b.push(Kind::Small, format!("{}:{}", row.file, row.line))
         .push(
@@ -70,61 +68,49 @@ pub fn method(lang: Lang, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Card
         );
     let h = row.halstead.as_ref();
     let lines = vec![
-        Line::new(Kind::Text, format!("{}: {}", lang.t("Volume", "Volumen"), number(h.map(|h| h.volume)))),
+        Line::new(Kind::Text, format!("{}: {}", lang.t("Volume"), number(h.map(|h| h.volume)))),
         Line::new(
             Kind::Text,
-            format!("{}: {}", lang.t("Difficulty", "Schwierigkeit"), number(h.and_then(|h| h.difficulty))),
+            format!("{}: {}", lang.t("Difficulty"), number(h.and_then(|h| h.difficulty))),
         ),
-        Line::new(Kind::Text, format!("{}: {}", lang.t("Effort", "Aufwand"), number(h.and_then(|h| h.effort)))),
+        Line::new(Kind::Text, format!("{}: {}", lang.t("Effort"), number(h.and_then(|h| h.effort)))),
         Line::new(
             Kind::Text,
-            lang.f(
-                "Source lines: {lines} · source-maintainability/v1. Compare the same language and measurement definition.",
-                "Quellzeilen: {lines} · source-maintainability/v1. Nur gleiche Sprache und Messdefinition vergleichen.",
+            lang.f("Source lines: {lines} · source-maintainability/v1. Compare the same language and measurement definition.",
                 &[("lines", row.source_lines.map_or("—".into(), |l| l.to_string()))],
             ),
         ),
     ];
-    b.details(
-        lang.t("Halstead and measurement rules", "Halstead und Messregeln"),
-        lines,
-    );
+    b.details(lang.t("Halstead and measurement rules"), lines);
     b.done()
 }
 
-pub fn knowledge(lang: Lang, nodes: &BTreeSet<String>, row: &KnowledgeMetric) -> Card {
+pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) -> Card {
     let mut b = Builder::new(lang, nodes, &row.node);
     let share = row.top_share.map(|s| s * 100.0);
-    b.push(
-        Kind::Small,
-        lang.t("Contribution concentration", "Beitragsverteilung"),
-    )
-    .push(
-        Kind::Text,
-        lang.f(
-            "Bus factor 50: {factor} · largest share {share}",
-            "Bus-Faktor 50: {factor} · größter Anteil {share}",
-            &[
-                ("factor", number(row.bus_factor_50.map(|f| f as f64))),
-                ("share", percent(share)),
-            ],
-        ),
-    )
-    .bar(row.top_share.filter(|s| s.is_finite()).unwrap_or(0.0))
-    .push(
-        Kind::Text,
-        lang.f(
-            "{people} contributors · {touches} file changes",
-            "{people} Beitragende · {touches} Dateiänderungen",
-            &[
-                ("people", row.contributors.to_string()),
-                ("touches", row.touches.to_string()),
-            ],
-        ),
-    );
-    let mut lines = vec![Line::new(Kind::Text, lang.t(
-        "Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown.",
-        "Kleinste Anzahl von Personen mit mindestens 50% der Datei-/Commit-Berührungen im Git-Zeitfenster. Ein Hinweis auf Konzentration, keine Aussage über tatsächliches Wissen oder Verfügbarkeit. Bei unvollständiger Historie bleibt der Faktor unbekannt.",
+    b.push(Kind::Small, lang.t("Contribution concentration"))
+        .push(
+            Kind::Text,
+            lang.f(
+                "Bus factor 50: {factor} · largest share {share}",
+                &[
+                    ("factor", number(row.bus_factor_50.map(|f| f as f64))),
+                    ("share", percent(share)),
+                ],
+            ),
+        )
+        .bar(row.top_share.filter(|s| s.is_finite()).unwrap_or(0.0))
+        .push(
+            Kind::Text,
+            lang.f(
+                "{people} contributors · {touches} file changes",
+                &[
+                    ("people", row.contributors.to_string()),
+                    ("touches", row.touches.to_string()),
+                ],
+            ),
+        );
+    let mut lines = vec![Line::new(Kind::Text, lang.t("Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown.",
     ))];
     lines.extend(
         row.authors
@@ -132,43 +118,28 @@ pub fn knowledge(lang: Lang, nodes: &BTreeSet<String>, row: &KnowledgeMetric) ->
             .take(50)
             .map(|a| Line::new(Kind::Text, format!("{} · {}", a.author, a.touches))),
     );
-    b.details(
-        lang.t(
-            "Contributors and interpretation",
-            "Beitragende und Einordnung",
-        ),
-        lines,
-    );
+    b.details(lang.t("Contributors and interpretation"), lines);
     b.locate(Some(&row.node));
     b.done()
 }
 
-fn kind_label(lang: Lang, kind: &str) -> String {
+fn kind_label(lang: &Texts, kind: &str) -> String {
     match kind {
-        "test" => lang.t("Repeated test", "Wiederholter Test").into(),
-        "build" => lang.t("Build duration", "Build-Dauer").into(),
-        "runtime" => lang.t("Runtime measurement", "Laufzeitmessung").into(),
+        "test" => lang.t("Repeated test").into(),
+        "build" => lang.t("Build duration").into(),
+        "runtime" => lang.t("Runtime measurement").into(),
         _ => kind.into(),
     }
 }
 
-pub fn measurement(lang: Lang, nodes: &BTreeSet<String>, row: &MeasurementGroup) -> Card {
+pub fn measurement(lang: &Texts, nodes: &BTreeSet<String>, row: &MeasurementGroup) -> Card {
     let mut b = Builder::new(lang, nodes, &row.name);
     b.push(Kind::Small, kind_label(lang, &row.kind));
     if row.kind == "test" {
         let verdict = match row.inconsistent {
-            Some(true) => lang.t(
-                "Mixed results in the same context",
-                "Wechselnde Ergebnisse im selben Kontext",
-            ),
-            Some(false) => lang.t(
-                "Consistent observed results",
-                "Gleichbleibende beobachtete Ergebnisse",
-            ),
-            None => lang.t(
-                "Too few runs to assess stability",
-                "Zu wenige Läufe für eine Stabilitätsbewertung",
-            ),
+            Some(true) => lang.t("Mixed results in the same context"),
+            Some(false) => lang.t("Consistent observed results"),
+            None => lang.t("Too few runs to assess stability"),
         };
         b.push(Kind::Text, verdict);
     }
@@ -185,7 +156,6 @@ pub fn measurement(lang: Lang, nodes: &BTreeSet<String>, row: &MeasurementGroup)
         Kind::Text,
         lang.f(
             "{passed} passed · {failed} failed · {skipped} skipped",
-            "{passed} erfolgreich · {failed} fehlgeschlagen · {skipped} übersprungen",
             &[
                 ("passed", row.passed.to_string()),
                 ("failed", row.failed.to_string()),
@@ -197,11 +167,9 @@ pub fn measurement(lang: Lang, nodes: &BTreeSet<String>, row: &MeasurementGroup)
         .iter()
         .map(|v| Line::new(Kind::Path, v))
         .collect();
-    lines.push(Line::new(Kind::Text, lang.t(
-        "Producer-declared context, unverified. Durations use successful runs. Different revisions and environments remain separate; mixed results indicate instability, not its cause.",
-        "Vom Messwerkzeug angegebener, unverifizierter Kontext. Zeitwerte verwenden erfolgreiche Läufe. Revisionen und Umgebungen bleiben getrennt; wechselnde Ergebnisse zeigen Instabilität, nicht deren Ursache.",
+    lines.push(Line::new(Kind::Text, lang.t("Producer-declared context, unverified. Durations use successful runs. Different revisions and environments remain separate; mixed results indicate instability, not its cause.",
     )));
-    b.details(lang.t("Measurement context", "Messkontext"), lines);
+    b.details(lang.t("Measurement context"), lines);
     b.done()
 }
 
@@ -221,7 +189,7 @@ mod tests {
         row.wmc = count(Some(11), "ready");
         row.dit = count(None, "not_applicable");
         row.cbo.evidence = vec!["a/x.rs:3 B".into()];
-        let card = class(Lang::default(), &nodes, &row);
+        let card = class(&Texts::default(), &nodes, &row);
         assert_eq!(card.title, "rust:a/x.rs::A");
         assert_eq!(
             card.metrics,
@@ -242,7 +210,7 @@ mod tests {
             .expect("evidence");
         assert_eq!(evidence.text, "Dependency evidence");
         assert_eq!(evidence.lines[1].text, "a/x.rs:3 B");
-        let de = class(Lang { de: true }, &nodes, &row);
+        let de = class(&Texts::german(), &nodes, &row);
         assert_eq!(de.metrics[2], "DIT: n. a.");
     }
 
@@ -261,7 +229,7 @@ mod tests {
             status: "ready".into(),
         };
         let nodes = BTreeSet::new();
-        let card = knowledge(Lang::default(), &nodes, &row);
+        let card = knowledge(&Texts::default(), &nodes, &row);
         assert_eq!(
             texts(&card)[..4],
             [
@@ -291,7 +259,7 @@ mod tests {
             source_lines: Some(12),
             maintainability_index: Some(61.234),
         };
-        let card = method(Lang::default(), &BTreeSet::new(), &row);
+        let card = method(&Texts::default(), &BTreeSet::new(), &row);
         assert_eq!(texts(&card)[..3], ["a/x.rs:7", "Cognitive: 4", "MI: 61.23"]);
     }
 }

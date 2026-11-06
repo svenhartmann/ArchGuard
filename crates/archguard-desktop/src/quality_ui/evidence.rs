@@ -7,15 +7,16 @@ use std::collections::BTreeSet;
 use archguard_engine::{DuplicateGroup, QualityHistoryReport};
 
 use super::card::{Builder, Card, Kind, Line};
-use super::lang::{Lang, number, percent};
+use super::lang::{self, number, percent};
 use super::rows::{HistoryRow, MutationRow, TestRow};
+use crate::tab_support::Texts;
 
 fn opt<T: ToString>(v: Option<T>) -> String {
     v.map_or("—".into(), |v| v.to_string())
 }
 
 pub fn history(
-    lang: Lang,
+    lang: &Texts,
     nodes: &BTreeSet<String>,
     report: &QualityHistoryReport,
     row: &HistoryRow,
@@ -23,14 +24,7 @@ pub fn history(
     let p = row.snapshot;
     let title = match p {
         Some(_) => row.node.clone(),
-        None => format!(
-            "{} · {}",
-            row.node,
-            lang.t(
-                "absent from latest snapshot",
-                "im letzten Snapshot nicht vorhanden"
-            )
-        ),
+        None => format!("{} · {}", row.node, lang.t("absent from latest snapshot")),
     };
     let mut b = Builder::new(lang, nodes, title);
     let revision = report
@@ -44,14 +38,12 @@ pub fn history(
     };
     let files = opt(p.map(|p| p.files));
     let status = |s: Option<&str>| {
-        lang.status(s.filter(|s| !s.is_empty()).unwrap_or("unavailable"))
-            .to_string()
+        lang::status(lang, s.filter(|s| !s.is_empty()).unwrap_or("unavailable")).to_string()
     };
     b.push(
         Kind::Muted,
         lang.f(
             "Latest snapshot · {files} files · producer revision: {revision}",
-            "Letzter Snapshot · {files} Dateien · Producer-Revision: {revision}",
             &[("files", files.clone()), ("revision", revision.into())],
         ),
     )
@@ -59,7 +51,6 @@ pub fn history(
         Kind::Muted,
         lang.f(
             "Coverage: {status} · {known} / {total} files",
-            "Abdeckung: {status} · {known} / {total} Dateien",
             &[
                 ("status", status(p.map(|p| p.coverage_status.as_str()))),
                 ("known", opt(p.map(|p| p.coverage_files))),
@@ -71,7 +62,6 @@ pub fn history(
         Kind::Muted,
         lang.f(
             "Compiler analysis: {status} · {measured} / {declared} methods measured",
-            "Compileranalyse: {status} · {measured} / {declared} Methoden gemessen",
             &[
                 ("status", status(p.map(|p| p.semantic_status.as_str()))),
                 ("measured", opt(p.map(|p| p.measured_methods))),
@@ -83,7 +73,6 @@ pub fn history(
         Kind::Muted,
         lang.f(
             "Findings: {status}",
-            "Befunde: {status}",
             &[("status", status(p.map(|p| p.findings_status.as_str())))],
         ),
     );
@@ -105,22 +94,22 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
         .map(|c| 100.0 * c.covered as f64 / c.total as f64);
     let metrics = [
         (
-            lang.t("Line coverage", "Zeilenabdeckung"),
+            lang.t("Line coverage"),
             percent(coverage),
             delta.map(|d| &d.line_coverage),
         ),
         (
-            lang.t("Mean complexity", "Mittlere Komplexität"),
+            lang.t("Mean complexity"),
             number(p.and_then(|p| p.mean_complexity)),
             delta.map(|d| &d.mean_complexity),
         ),
         (
-            lang.t("Max. complexity", "Max. Komplexität"),
+            lang.t("Max. complexity"),
             number(p.and_then(|p| p.max_complexity).map(f64::from)),
             delta.map(|d| &d.max_complexity),
         ),
         (
-            lang.t("Active findings", "Aktive Befunde"),
+            lang.t("Active findings"),
             number(p.and_then(|p| p.active_findings).map(|v| v as f64)),
             delta.map(|d| &d.active_findings),
         ),
@@ -132,7 +121,7 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
                 number(m.before),
                 number(m.after),
                 number(m.delta),
-                lang.status(&m.status)
+                lang::status(lang, &m.status)
             )
         });
         b.push(Kind::Text, format!("{label}: {value}{change}"));
@@ -143,10 +132,7 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
     if delta.is_none() {
         b.push(
             Kind::Muted,
-            lang.t(
-                "No comparable previous module measurement.",
-                "Keine vergleichbare vorherige Modulmessung.",
-            ),
+            lang.t("No comparable previous module measurement."),
         );
     }
     if let Some(p) = p.filter(|p| !p.extended.is_empty()) {
@@ -169,7 +155,11 @@ fn extended(
                 let change = delta
                     .and_then(|d| d.extended.get(key))
                     .map_or(String::new(), |c| {
-                        format!(" · Δ {} · {}", number(c.delta), lang.status(&c.status))
+                        format!(
+                            " · Δ {} · {}",
+                            number(c.delta),
+                            lang::status(lang, &c.status)
+                        )
                     });
                 Line::new(
                     Kind::Text,
@@ -182,17 +172,11 @@ fn extended(
                 )
             })
             .collect();
-        b.details(
-            lang.t(
-                "Class, method and package history",
-                "Klassen-, Methoden- und Paketverlauf",
-            ),
-            lines,
-        );
+        b.details(lang.t("Class, method and package history"), lines);
     }
 }
 
-pub fn test(lang: Lang, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
+pub fn test(lang: &Texts, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
     let t = row.test;
     let mut b = Builder::new(lang, nodes, format!("{} · {}", t.suite, t.name));
     b.push(
@@ -202,26 +186,16 @@ pub fn test(lang: Lang, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
             t.outcome,
             lang.f(
                 "Duration: {duration} s",
-                "Dauer: {duration} s",
                 &[("duration", number(t.duration_seconds))]
             )
         ),
     );
     let verdict = if !row.matched.is_empty() {
-        lang.t(
-            "Conservative candidate: mapped code is affected by the selected dependency change.",
-            "Konservativer Kandidat: zugeordneter Code ist von der gewählten Abhängigkeitsänderung betroffen.",
-        )
+        lang.t("Conservative candidate: mapped code is affected by the selected dependency change.")
     } else if row.unknown {
-        lang.t(
-            "Code mapping unknown or stale; no safe exclusion is possible.",
-            "Codezuordnung unbekannt oder veraltet; kein sicherer Ausschluss möglich.",
-        )
+        lang.t("Code mapping unknown or stale; no safe exclusion is possible.")
     } else {
-        lang.t(
-            "Explicit test-to-code mapping.",
-            "Explizite Test-zu-Code-Zuordnung.",
-        )
+        lang.t("Explicit test-to-code mapping.")
     };
     b.push(Kind::Muted, verdict);
     for m in t.mappings.iter().take(20) {
@@ -237,10 +211,7 @@ pub fn test(lang: Lang, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
     if t.mappings.len() > 20 {
         b.push(
             Kind::Muted,
-            lang.t(
-                "Additional mappings remain in the export.",
-                "Weitere Zuordnungen stehen im Export.",
-            ),
+            lang.t("Additional mappings remain in the export."),
         );
     }
     if let Some(message) = &t.message {
@@ -249,7 +220,7 @@ pub fn test(lang: Lang, nodes: &BTreeSet<String>, row: &TestRow) -> Card {
     b.done()
 }
 
-pub fn mutation(lang: Lang, nodes: &BTreeSet<String>, row: &MutationRow) -> Card {
+pub fn mutation(lang: &Texts, nodes: &BTreeSet<String>, row: &MutationRow) -> Card {
     let (file, m) = (row.file, row.mutant);
     let mut b = Builder::new(
         lang,
@@ -263,7 +234,6 @@ pub fn mutation(lang: Lang, nodes: &BTreeSet<String>, row: &MutationRow) -> Card
             m.mutator_name,
             lang.f(
                 "{count} distinct incoming files",
-                "{count} unterschiedliche eingehende Dateien",
                 &[("count", row.incoming.to_string())]
             )
         ),
@@ -278,13 +248,7 @@ pub fn mutation(lang: Lang, nodes: &BTreeSet<String>, row: &MutationRow) -> Card
         ),
     );
     if m.original_truncated {
-        b.push(
-            Kind::Small,
-            lang.t(
-                "Original source excerpt shortened.",
-                "Ursprünglicher Quellausschnitt gekürzt.",
-            ),
-        );
+        b.push(Kind::Small, lang.t("Original source excerpt shortened."));
     }
     if let Some(d) = &m.description {
         b.push(Kind::Text, d);
@@ -293,10 +257,9 @@ pub fn mutation(lang: Lang, nodes: &BTreeSet<String>, row: &MutationRow) -> Card
     b.done()
 }
 
-pub fn duplicate(lang: Lang, nodes: &BTreeSet<String>, group: &DuplicateGroup) -> Card {
+pub fn duplicate(lang: &Texts, nodes: &BTreeSet<String>, group: &DuplicateGroup) -> Card {
     let title = lang.f(
         "Duplicate block · {tokens} tokens",
-        "Duplikatblock · {tokens} Tokens",
         &[("tokens", group.tokens.to_string())],
     );
     let mut b = Builder::new(lang, nodes, title);
@@ -304,10 +267,9 @@ pub fn duplicate(lang: Lang, nodes: &BTreeSet<String>, group: &DuplicateGroup) -
         Kind::Text,
         format!(
             "{} · {}",
-            lang.status(&group.status),
+            lang::status(lang, &group.status),
             lang.f(
                 "{lines} reported lines · {count} locations",
-                "{lines} gemeldete Zeilen · {count} Fundstellen",
                 &[
                     ("lines", group.lines.to_string()),
                     ("count", group.occurrences.len().to_string())
@@ -323,7 +285,7 @@ pub fn duplicate(lang: Lang, nodes: &BTreeSet<String>, group: &DuplicateGroup) -
                 o.path,
                 o.line,
                 o.end_line,
-                lang.status(&o.status)
+                lang::status(lang, &o.status)
             ),
         );
         b.locate(o.node.as_deref());
@@ -332,9 +294,7 @@ pub fn duplicate(lang: Lang, nodes: &BTreeSet<String>, group: &DuplicateGroup) -
         b.push(Kind::Pre, &group.snippet);
     }
     if group.snippet_truncated {
-        b.push(Kind::Small, lang.t(
-            "Producer excerpt shortened to 4096 characters during import; use the original CPD report for the full fragment.",
-            "Producer-Ausschnitt beim Import auf 4096 Zeichen gekürzt; der vollständige Ausschnitt steht im ursprünglichen CPD-Bericht.",
+        b.push(Kind::Small, lang.t("Producer excerpt shortened to 4096 characters during import; use the original CPD report for the full fragment.",
         ));
     }
     b.done()
@@ -368,7 +328,7 @@ mod tests {
             fragment_sha256: String::new(),
         };
         let nodes = BTreeSet::from(["a/x.rs".to_string()]);
-        let card = duplicate(Lang::default(), &nodes, &group);
+        let card = duplicate(&Texts::default(), &nodes, &group);
         assert_eq!(card.title, "Duplicate block · 120 tokens");
         assert_eq!(
             card.items[0].text,
