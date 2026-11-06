@@ -29,6 +29,11 @@
 //! markers, unterminated strings/comments and malformed SKIP/LIMIT
 //! clauses. The former keyword denylist is subsumed by the reserved
 //! set; keyword matching never acts inside quoted content.
+//!
+//! "kuzu" below names the grammar lineage: the `lbug = "=0.22.1"` backend
+//! keeps Kuzu 0.11.3's `CypherComment` and `WHITESPACE` rules unchanged
+//! (`Cypher.g4` compared), and its new statements (`ANALYZE`, `CREATE
+//! INDEX/ROLE/GRAPH`, `USE GRAPH`) cannot start with `MATCH`/`RETURN`.
 
 use archguard_core::ArchguardError;
 

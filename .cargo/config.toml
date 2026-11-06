@@ -1,0 +1,6 @@
+[env]
+# lbug's build script otherwise downloads the newest prebuilt liblbug from
+# GitHub without a checksum, regardless of the pinned crate version. Build the
+# native library from the C++ sources inside the pinned crate instead (see
+# crates/archguard-store/Cargo.toml).
+LBUG_BUILD_FROM_SOURCE = "1"
