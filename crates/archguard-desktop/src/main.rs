@@ -5,6 +5,7 @@
 //! pipeline as the CLI. Without arguments the last session reopens (see
 //! `settings.rs`), on the first start the current directory.
 
+mod arc42_file;
 mod architecture_ui;
 #[cfg(feature = "snapshot")]
 mod bench;
