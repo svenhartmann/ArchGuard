@@ -286,8 +286,10 @@ export component StartStage inherits Rectangle {
                 reset => { StartData.zoom-by(100 / max(1, StartData.model.zoom)); }
                 fit => { StartData.fit(); }
             }
-            // Placed by the layout like the zoom buttons, so both lines match.
-            Button { text: @tr("Reset"); compact: true; clicked => { StartData.reset(); } }
+            // In a row of its own like the zoom buttons, so both centre alike.
+            HorizontalLayout {
+                Button { text: @tr("Reset"); compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.reset(); } }
+            }
         }
     }
 }
