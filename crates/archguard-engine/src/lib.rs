@@ -139,12 +139,13 @@ pub use quality_history::{
 pub use reference_paths::source_reference_paths;
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
-    REGISTER_REL_PATH, load_register, register_path, save_register, upsert_decision,
+    LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, iso_from_unix, load_register, register_path,
+    save_register, upsert_decision,
 };
 pub use review_session::{
-    ReviewDecision, ReviewDecisions, ReviewFinding, ReviewReport, SavedReview,
-    apply_review_decisions, generate_review, import_review_decisions, read_saved_review,
-    review_session_fingerprint, save_review,
+    ReviewDecisionImport, ReviewFinding, ReviewReport, SavedReview, apply_review_decisions,
+    generate_review, import_review_decisions, read_saved_review, review_session_fingerprint,
+    save_review,
 };
 pub use review_sources::collect_review_sources;
 pub use risk_gap::risk_coverage_gaps;

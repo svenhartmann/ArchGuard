@@ -293,7 +293,7 @@ def main():
                                                        "expected_revision": review["metadata"]["revision"]}))
             assert following["status"] == "current", following
             assert record_path.read_bytes() == record_bytes
-            assert not (root / ".archguard/review-decisions.json").exists(), "MCP must not create decisions"
+            assert not (root / ".archguard/reviews.json").exists(), "MCP must not create decisions"
             original_source = (root / "B.ts").read_text()
             (root / "B.ts").write_text(original_source + "// Change after the recorded review\n")
             try:

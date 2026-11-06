@@ -195,6 +195,7 @@ mod tests {
             note: String::new(),
             author: "sven".to_string(),
             ts: "2026-10-30T09:00:00Z".to_string(),
+            ..Default::default()
         }
     }
 

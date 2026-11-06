@@ -65,9 +65,9 @@ fn issue(report: &Value) -> &Value {
 }
 fn decision_document(report: &Value) -> Value {
     let item = issue(report);
-    json!({"schema_version":1,"review_revision":report["revision"],"decisions":[{
-        "finding_id":item["id"],"finding_fingerprint":item["fingerprint"],
-        "status":"accepted_risk","owner":"@team/orders","reason":"Temporary migration boundary",
+    json!({"schema_version":2,"review_revision":report["revision"],"decisions":[{
+        "id":item["id"],"finding_ref":item["id"],"finding_fingerprint":item["fingerprint"],
+        "decision":"accept-risk","author":"@team/orders","note":"Temporary migration boundary",
         "expires_on":"2099-12-31","links":["docs/adr/001.md"]
     }]})
 }
@@ -76,7 +76,7 @@ fn decision_document(report: &Value) -> Value {
 fn review_compares_worktree_and_exposes_missing_evidence_without_implicit_recording() {
     let root = project();
     let report = value(run(root.path(), &["--base", "HEAD", "--format", "json"]));
-    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["schema_version"], 2);
     assert_eq!(report["revision"].as_str().unwrap().len(), 64);
     assert_eq!(report["status"], "needs_review");
     assert_eq!(issue(&report)["change"], "new");
@@ -140,7 +140,7 @@ fn decisions_are_explicit_bound_to_evidence_and_do_not_disable_existing_gates() 
         ],
     ));
     assert_eq!(issue(&reviewed)["disposition"], "accepted_risk");
-    assert_eq!(issue(&reviewed)["decision"]["owner"], "@team/orders");
+    assert_eq!(issue(&reviewed)["decision"]["author"], "@team/orders");
     assert!(root.path().join(".archguard/review.json").exists());
     assert_eq!(
         fs::read_dir(root.path().join(".archguard/reviews"))
@@ -148,7 +148,7 @@ fn decisions_are_explicit_bound_to_evidence_and_do_not_disable_existing_gates() 
             .count(),
         1
     );
-    let saved = fs::read(root.path().join(".archguard/review-decisions.json")).unwrap();
+    let saved = fs::read(root.path().join(".archguard/reviews.json")).unwrap();
     let mut foreign = decision_document(&initial);
     foreign["review_revision"] = json!("f".repeat(64));
     fs::write(&path, serde_json::to_vec(&foreign).unwrap()).unwrap();
@@ -162,7 +162,7 @@ fn decisions_are_explicit_bound_to_evidence_and_do_not_disable_existing_gates() 
         Some(3)
     );
     assert_eq!(
-        fs::read(root.path().join(".archguard/review-decisions.json")).unwrap(),
+        fs::read(root.path().join(".archguard/reviews.json")).unwrap(),
         saved
     );
     let gate = Command::new(assert_cmd::cargo::cargo_bin!("archguard"))

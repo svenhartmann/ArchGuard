@@ -680,9 +680,21 @@ Erneutes Aufzeichnen derselben Id ersetzt den Eintrag (Upsert per Id).
 Geschrieben wird ausschließlich über die Engine
 (`archguard-engine/src/review_register.rs`): Serialisieren in eine temporäre
 Datei im selben Verzeichnis, dann Umbenennen — ein Crash hinterlässt kein
-halbgeschriebenes Register, und ein abgelehnter Body erreicht den Writer nie.
+halbgeschriebenes Register, und eine abgelehnte Eingabe erreicht den Writer nie.
 `accept-risk` ohne ADR-Link läuft in das `[review]`-Gate
 `adr_required_on_accept_risk` (CLI: Exit 2, MCP: Invalid Params).
+
+`archguard review --decisions DATEI` nutzt dasselbe Register. Dessen Einträge
+sind an einen Review-Befund gebunden: `id` und `finding_ref` sind die
+SHA-256-Id des Befunds, dazu `finding_fingerprint`, optional `expires_on`
+(einschließlicher UTC-Tag, Pflicht bei `accept-risk`) und `links`. Ein
+geänderter Fingerprint öffnet den Befund wieder; `fix` erscheint als geplant,
+`defer` als zurückgestellt. Die Importdatei ist der Review-Export des Viewers
+(`schema_version` 2, `review_revision`, `decision_revision`, `decisions[]`); sie
+ersetzt die review-gebundenen Einträge und lässt mit `review-decision` oder MCP
+erfasste Einträge stehen. Ältere Versionen hielten Review-Entscheidungen in
+`.archguard/review-decisions.json`: Lesen führt diese Datei mit, der nächste
+Schreibvorgang übernimmt ihre Einträge in `reviews.json` und löscht sie.
 
 Der **PR-Kommentar** (`archguard-report/src/pr_comment.rs`) rendert fest
 definierte Abschnitte: `## Architektur-Review`, `### Zusammenfassung`

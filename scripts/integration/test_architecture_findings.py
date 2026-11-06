@@ -122,7 +122,7 @@ to='Core'
             assert call('architecture_finding', finding_id=cycle['id'], path='../outside').get('error', {}).get('code') == -32602
             assert all((root / name).read_text() == content for name, content in sources.items())
             assert not (root / '.archguard/review.json').exists()
-            assert not (root / '.archguard/review-decisions.json').exists()
+            assert not (root / '.archguard/reviews.json').exists()
             # A real source repair invalidates paging and removes the old observation.
             (root / 'src/core/B.ts').write_text('export const b=1;\n')
             assert call('architecture_findings', expected_revision=first['metadata']['revision'], offset=1).get('error', {}).get('code') == -32602

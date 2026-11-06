@@ -658,8 +658,19 @@ ID), `finding_ref`, `decision` (`fix`/`defer`/`accept-risk`), `adr_link`, `note`
 replaces its entry (upsert by ID). Only the engine writes it
 (`archguard-engine/src/review_register.rs`): serialize to a temporary file in the
 same directory, then rename. A crash leaves no partially written register, and a
-rejected body never reaches the writer. `accept-risk` without an ADR link triggers
+rejected input never reaches the writer. `accept-risk` without an ADR link triggers
 the `[review]` gate `adr_required_on_accept_risk` (CLI: exit 2, MCP: Invalid Params).
+
+`archguard review --decisions FILE` uses the same register. Its entries are bound
+to a review finding: `id` and `finding_ref` are the finding's SHA-256 ID, plus
+`finding_fingerprint`, optional `expires_on` (inclusive UTC day, required for
+`accept-risk`) and `links`. A changed fingerprint reopens the finding; `fix` shows
+as planned, `defer` as deferred. The import file is the viewer's Review export
+(`schema_version` 2, `review_revision`, `decision_revision`, `decisions[]`); it
+replaces the review-bound entries and keeps entries recorded with
+`review-decision` or MCP. Older versions kept review decisions in
+`.archguard/review-decisions.json`: reads merge that file, and the next register
+write moves its entries into `reviews.json` and deletes it.
 
 The **PR comment** (`archguard-report/src/pr_comment.rs`) renders fixed sections:
 `## Architektur-Review`, `### Zusammenfassung` (deltas for prioritized findings, cyclic

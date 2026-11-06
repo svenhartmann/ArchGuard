@@ -262,6 +262,7 @@ mod tests {
                     note: String::new(),
                     author: "reviewer".to_string(),
                     ts: "2026-01-01T00:00:00Z".to_string(),
+                    ..Default::default()
                 },
                 ReviewDecision {
                     id: "d-1".to_string(),
@@ -271,6 +272,7 @@ mod tests {
                     note: "bewusst in Kauf genommen".to_string(),
                     author: "reviewer".to_string(),
                     ts: "2026-01-01T00:00:00Z".to_string(),
+                    ..Default::default()
                 },
                 ReviewDecision {
                     id: "d-3".to_string(),
@@ -280,6 +282,7 @@ mod tests {
                     note: String::new(),
                     author: "reviewer".to_string(),
                     ts: "2026-01-01T00:00:00Z".to_string(),
+                    ..Default::default()
                 },
             ],
         };
