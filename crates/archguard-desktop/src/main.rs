@@ -26,6 +26,7 @@ mod instances;
 mod kpi;
 mod matrix;
 mod matrix_ui;
+mod model_sync;
 mod network;
 mod node_view;
 mod pane_store;

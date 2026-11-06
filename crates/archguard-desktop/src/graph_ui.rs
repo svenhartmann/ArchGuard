@@ -7,7 +7,7 @@ mod data;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, SharedString, VecModel};
+use slint::{ComponentHandle, Model, SharedString, VecModel};
 
 use crate::documents::{self, with_store};
 use crate::export::{Diagram, GraphInput};
@@ -39,7 +39,8 @@ thread_local! {
 
 impl Instance for Graph {
     fn show(&mut self, ui: &AppWindow, pane: usize, id: u32) {
-        let row = data::graph_data(ui, &self.g, &self.cycles, id);
+        let old = PANES.with(|m| m.row_data(pane)).unwrap_or_default();
+        let row = data::graph_data(ui, &self.g, &self.cycles, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
