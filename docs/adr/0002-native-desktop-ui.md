@@ -281,3 +281,33 @@ comparison of the native view against the web view on the same project
   (fixtures/py-layers, fixtures/ts-cyclic; snapshot hooks
   `ARCHGUARD_DESKTOP_FOLLOW`, `…_LEFT_OPEN`, `…_LEFT_EXPAND`,
   `…_WORLD_OPEN`, `…_WORLD_BACK`, `…_ARC_OPEN` in `src/snapshot.rs`).
+- **2026-11-06:** Settings view (`feat/desktop-settings-view`), the
+  first view on the configuration editor core (`src/config_editor/`).
+  View → Settings opens one tab per document ("Settings ·
+  archguard.toml", view kind `settings`, not in the view bar). Left: the
+  catalogue's 11 groups with a dot for edits (compared with the file as
+  loaded or saved) or errors, and a search over field paths and
+  descriptions that lists matches of all groups. Right: the group's form,
+  one row per field with a widget by kind (switch, line input, choice,
+  one entry per line for lists and `name = number` maps), the provenance
+  (File, Default, Derived), Reset for written values, derived values
+  read-only; table arrays as entry cards with add, remove and move,
+  derived layers read-only after the declared ones. Input that is no value
+  of its field stays as typed with its error; the engine's validation
+  problem shows on the row it names (also when the engine puts the path
+  only at the start of its message), else under the top bar. Top bar:
+  status, Text (the raw TOML with the parse error and its line), Preview
+  (`preview::run` on a worker thread; pass/fail and counts before and
+  after, added and removed findings, the note that baseline and the
+  `[review]` gates are not included), Revert and Save (disabled with
+  errors). The editor is bound to the document, so edits mark it dirty
+  and the existing "Save changes?" prompt saves it; a file changed on
+  disk shows Reload and Overwrite. Text inputs are debounced and applied
+  before any other action. Field descriptions and group names come from
+  the catalogue and stay English for now. Snapshot hooks
+  `ARCHGUARD_DESKTOP_SETTINGS=<group>[,text][,preview]` and
+  `ARCHGUARD_DESKTOP_SETTINGS_EDIT`. Checked with unit tests and headless
+  snapshots on macOS (temp copies of fixtures/ts-cyclic,
+  fixtures/py-layers, examples/service-shop; light and dark, en and de);
+  the view needs its import, route and menu entry in `ui/app.slint` and
+  its label in `ui/panes.slint`, which the integration adds.
