@@ -18,7 +18,9 @@
 //! button (`ARCHGUARD_DESKTOP_QUIT=1`), click at logical points
 //! (`ARCHGUARD_DESKTOP_CLICK=x:y,rx:y`, `r`: right button; e.g. the menu bar Slint draws with
 //! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
-//! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu). Settings come from
+//! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu; over a help
+//! trigger it shows the tooltip after its delay), or pin a sample tooltip
+//! at a point ([`tip_hook`]). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
 //! Export without the save dialog: [`export_hook`]. View → Settings:
 //! `crate::settings_view_ui::snapshot_hook`.
@@ -323,6 +325,39 @@ fn apply_shell_hooks(ui: &AppWindow) {
             .dispatch_event(WindowEvent::PointerMoved { position });
     }
     drag(ui);
+    tip_hook(ui);
+}
+
+/// `ARCHGUARD_DESKTOP_TIP=x:y`: a pinned tooltip for a 22 px trigger at
+/// that window point, to check the bubble's placement at any edge (no
+/// trigger may sit there). The timer stands in for the trigger's
+/// heartbeat, which keeps a bubble alive.
+fn tip_hook(ui: &AppWindow) {
+    use crate::ui::Tips;
+    let Some(at) = env::<String>("ARCHGUARD_DESKTOP_TIP").and_then(|v| point(&v)) else {
+        return;
+    };
+    let tips = ui.global::<Tips>();
+    tips.set_text("Tooltip placement check: below the anchor when it fits, otherwise above it; shifted left at the right edge; never wider than 320 px.".into());
+    tips.set_anchor_x(at.x);
+    tips.set_anchor_y(at.y);
+    tips.set_anchor_w(22.0);
+    tips.set_anchor_h(22.0);
+    tips.set_owner(-1);
+    tips.set_pinned(true);
+    let weak = ui.as_weak();
+    let beat = slint::Timer::default();
+    beat.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(100),
+        move || {
+            if let Some(ui) = weak.upgrade() {
+                let tips = ui.global::<Tips>();
+                tips.set_beat(tips.get_beat() + 1);
+            }
+        },
+    );
+    std::mem::forget(beat);
 }
 
 /// `ARCHGUARD_DESKTOP_DRAG=x:y,x:y`: press at the first point, move to the

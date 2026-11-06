@@ -1,6 +1,6 @@
 import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab, Divider, SearchField, KpiItem } from "widgets.slint";
+import { Icon, Icons, Button, Tab, Divider, SearchField, KpiItem, TipLayer, Tips } from "widgets.slint";
 import { TreeRow, TreeLink } from "tree_view.slint";
 import { NetCard, NetArrow } from "network_view.slint";
 import { DepCard } from "deps_view.slint";
@@ -30,6 +30,8 @@ export { SettingsData, SettingsEdit, SettingsModel }
 export { Templates, Template, Fmt, KpiItem }
 // The theme's mode, read by the SVG export.
 export { Theme }
+// The tooltip, placed by the snapshot hook `ARCHGUARD_DESKTOP_TIP`.
+export { Tips }
 
 export component AppWindow inherits Window {
     title: "ArchGuard";
@@ -709,6 +711,9 @@ export component AppWindow inherits Window {
         what: root.prompt-what;
         answered(a) => { root.prompt-answered(a); }
     }
+
+    // Tooltips above everything else, menus and the save prompt included.
+    TipLayer { }
 
     about := PopupWindow {
         x: (root.width - 420px) / 2;

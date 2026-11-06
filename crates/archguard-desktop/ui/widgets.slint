@@ -234,25 +234,224 @@ export component TabPlaceholder inherits Rectangle {
 // Rust formatted and the scope note shown as help on hover.
 export struct KpiItem { label: string, value: string, note: string }
 
-// The scope note of a key figure, under its value while hovered.
-component KpiNote inherits Rectangle {
-    in property <string> note;
-    width: 300px;
-    height: tip.preferred-height + 16px;
-    border-radius: Theme.radius-sm;
-    background: Theme.panel;
+// ---- Tooltips: the web viewer's #metric-tooltip. One bubble for the
+// whole window, drawn by `TipLayer` as AppWindow's topmost element, so
+// panes, scroll views and clips do not cut it and nothing moves.
+
+export global Tips {
+    // The text shown; empty: no bubble.
+    in-out property <string> text;
+    // The anchor in window coordinates.
+    in-out property <length> anchor-x;
+    in-out property <length> anchor-y;
+    in-out property <length> anchor-w;
+    in-out property <length> anchor-h;
+    // The `TipArea` showing it; it alone hides it again.
+    in-out property <int> owner;
+    in-out property <bool> hovered;
+    in-out property <bool> focused;
+    // Clicked: stays until a click outside, Escape or focus elsewhere.
+    in-out property <bool> pinned;
+    // Raised by the owner while it exists; a stale beat hides the bubble
+    // of a trigger that was removed (tab switch, recreated view).
+    in-out property <int> beat;
+    in-out property <int> last-id;
+    public function claim() -> int {
+        self.last-id += 1;
+        return self.last-id;
+    }
+    public function hide() {
+        self.text = "";
+        self.owner = 0;
+        self.hovered = false;
+        self.focused = false;
+        self.pinned = false;
+    }
+}
+
+// Makes its parent a tooltip trigger: hover (after 400 ms) or keyboard
+// focus shows `tip`, a click pins it. With `pin-on-click: false` a click
+// is the parent's action (`activated`) instead.
+export component TipArea inherits TouchArea {
+    in property <string> tip;
+    in property <bool> pin-on-click: true;
+    out property <bool> focused: fs.has-focus;
+    callback activated();
+    property <int> id;
+    property <bool> mine: Tips.owner == self.id && Tips.text != "";
+    init => { self.id = Tips.claim(); }
+    function show() {
+        if (root.tip == "") { return; }
+        Tips.text = root.tip;
+        Tips.owner = root.id;
+        Tips.anchor-x = root.absolute-position.x;
+        Tips.anchor-y = root.absolute-position.y;
+        Tips.anchor-w = root.width;
+        Tips.anchor-h = root.height;
+        Tips.beat += 1;
+    }
+    changed has-hover => {
+        if (self.has-hover && Tips.text != "" && !Tips.pinned) {
+            // Moving from one trigger to the next needs no second wait.
+            root.show();
+        }
+        if (root.mine) { Tips.hovered = self.has-hover; }
+    }
+    clicked => {
+        if (!root.pin-on-click) {
+            root.activated();
+            return;
+        }
+        fs.focus();
+        root.show();
+        Tips.pinned = true;
+    }
+    // Hover delay.
+    Timer {
+        interval: 400ms;
+        running: root.has-hover && !root.mine && !Tips.pinned && root.tip != "";
+        triggered => {
+            root.show();
+            Tips.hovered = true;
+        }
+    }
+    // Heartbeat while shown: follows a changed text, hides when the
+    // anchor moved (scrolling, resizing), as the web hides on scroll.
+    Timer {
+        interval: 150ms;
+        running: root.mine;
+        triggered => {
+            if (root.tip == "" || Tips.anchor-x != root.absolute-position.x || Tips.anchor-y != root.absolute-position.y) {
+                Tips.hide();
+                return;
+            }
+            Tips.text = root.tip;
+            Tips.beat += 1;
+        }
+    }
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        focus-on-click: false;
+        focus-gained(reason) => {
+            if (reason == FocusReason.tab-navigation || reason == FocusReason.programmatic) {
+                root.show();
+                Tips.focused = true;
+            }
+        }
+        focus-lost(reason) => {
+            if (root.mine) {
+                Tips.focused = false;
+                Tips.pinned = false;
+            }
+        }
+        key-pressed(e) => {
+            if (e.text == Key.Escape && root.mine) {
+                Tips.hide();
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") {
+                if (root.mine && Tips.pinned) {
+                    Tips.hide();
+                } else {
+                    root.show();
+                    Tips.pinned = true;
+                }
+                return accept;
+            }
+            reject
+        }
+    }
+}
+
+// The web's .context-help-trigger: a round "?" whose help is a tooltip.
+export component HelpTip inherits Rectangle {
+    in property <string> tip;
+    in property <length> size: 22px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
     border-width: 1px;
-    border-color: Theme.border;
-    drop-shadow-blur: 8px;
-    drop-shadow-color: Theme.shadow;
-    tip := Text {
-        x: 8px;
-        y: 8px;
-        width: parent.width - 16px;
-        text: root.note;
+    border-color: area.focused || area.has-hover ? Theme.accent : Theme.border;
+    background: area.has-hover ? Theme.panel-2 : transparent;
+    accessible-role: button;
+    accessible-label: @tr("Help");
+    accessible-description: root.tip;
+    Text {
+        text: "?";
         color: Theme.text;
+        font-size: root.size * 0.52;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    area := TipArea { tip: root.tip; mouse-cursor: pointer; }
+}
+
+// The bubble, as AppWindow's last child at the window's size: below the
+// anchor, above it when there is no room, shifted left at the right edge.
+export component TipLayer inherits Rectangle {
+    property <length> gap: 6px;
+    property <length> edge: 8px;
+    property <length> bubble-w: min(320px, measure.preferred-width + 20px, root.width - 2 * root.edge);
+    property <length> bubble-h: min(body.preferred-height + 16px, root.height - 2 * root.edge);
+    // The anchor in this layer's coordinates: window coordinates count a
+    // menu bar Slint draws, the layer starts below it.
+    property <length> left: Tips.anchor-x - root.absolute-position.x;
+    property <length> top: Tips.anchor-y - root.absolute-position.y;
+    property <length> below: root.top + Tips.anchor-h + root.gap;
+    property <int> seen;
+    // Hide once the pointer left anchor and bubble (the web's 120 ms).
+    Timer {
+        interval: 120ms;
+        running: Tips.text != "" && !Tips.hovered && !Tips.focused && !Tips.pinned && !bubble-touch.has-hover;
+        triggered => { Tips.hide(); }
+    }
+    Timer {
+        interval: 500ms;
+        running: Tips.text != "";
+        triggered => {
+            if (Tips.beat == root.seen) { Tips.hide(); }
+            root.seen = Tips.beat;
+        }
+    }
+    // A pinned tip closes on a click outside; that click does nothing else.
+    if Tips.pinned: TouchArea {
+        clicked => { Tips.hide(); }
+        scroll-event(e) => {
+            Tips.hide();
+            return reject;
+        }
+    }
+    measure := Text {
+        visible: false;
+        text: Tips.text;
         font-size: 12px;
-        wrap: word-wrap;
+    }
+    bubble := Rectangle {
+        visible: Tips.text != "";
+        x: max(root.edge, min(root.left, root.width - self.width - root.edge));
+        y: root.below + self.height <= root.height - root.edge ? root.below
+            : max(root.edge, root.top - self.height - root.gap);
+        width: root.bubble-w;
+        height: root.bubble-h;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: Theme.shadow;
+        clip: true;
+        bubble-touch := TouchArea { }
+        body := Text {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            text: Tips.text;
+            color: Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
     }
 }
 
@@ -272,8 +471,7 @@ export component StatCard inherits Rectangle {
         Text { text: root.kpi.value; color: Theme.text; font-size: 24px; font-weight: 700; }
         Text { text: root.kpi.label; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
     }
-    touch := TouchArea { }
-    if touch.has-hover && root.kpi.note != "": KpiNote { x: 0; y: root.height + 4px; note: root.kpi.note; }
+    TipArea { tip: root.kpi.note; }
 }
 
 // The compact form of `StatCard` for toolbars and headers: "13 Dependencies".
@@ -287,8 +485,7 @@ export component StatInline inherits HorizontalLayout {
         color: Theme.muted;
         font-size: 12px;
         vertical-alignment: center;
-        touch := TouchArea { }
-        if touch.has-hover && root.kpi.note != "": KpiNote { x: 0; y: parent.height + 4px; note: root.kpi.note; }
+        TipArea { tip: root.kpi.note; }
     }
 }
 
