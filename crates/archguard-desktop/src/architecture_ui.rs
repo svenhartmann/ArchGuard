@@ -8,6 +8,7 @@
 
 mod blocks;
 mod diagram;
+mod edit;
 mod markdown;
 mod projection;
 mod view;
@@ -45,6 +46,8 @@ pub struct ArchitectureState {
     maps: [MapState; 3],
     /// Path of the last export, or its error.
     saved: String,
+    /// The project's own arc42 text and its chapter editor.
+    editor: edit::Editor,
 }
 
 /// Build the tab state (writes the arc42 document, runs the call analysis).
@@ -76,6 +79,7 @@ fn build_from(
         chapter,
         maps: Default::default(),
         saved: String::new(),
+        editor: edit::Editor::new(root),
     };
     snapshot_overrides(&mut state);
     state
@@ -86,7 +90,36 @@ pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ArchitectureData>();
     let a = Actions::<ArchitectureState>::new(ui);
     d.on_select_chapter(a.on(|s, _, n: i32| {
-        s.chapter = u8::try_from(n).unwrap_or(5);
+        if !s.editor.is_open() {
+            s.chapter = u8::try_from(n).unwrap_or(5);
+        }
+    }));
+    d.on_start_edit(a.on0(|s, ui| {
+        if let Ok(doc) = &s.doc {
+            s.editor.start(ui, doc, s.chapter);
+        }
+    }));
+    d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
+        crate::documents::with_active_state(|s: &mut ArchitectureState| {
+            s.editor.preview(ui, &text);
+        });
+    }));
+    d.on_save_edit(a.on0(|s, ui| {
+        if let Ok(doc) = &s.doc {
+            s.saved = s
+                .editor
+                .save(ui, doc)
+                .unwrap_or(std::mem::take(&mut s.saved));
+        }
+    }));
+    d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
+    d.on_choose_location(a.on(|s, ui, choice: i32| {
+        if let Ok(doc) = &s.doc {
+            s.saved = s
+                .editor
+                .choose(ui, doc, choice)
+                .unwrap_or(std::mem::take(&mut s.saved));
+        }
     }));
     d.on_navigate(navigation(
         ui,
@@ -120,6 +153,14 @@ pub fn wire(ui: &AppWindow) {
 impl TabState for ArchitectureState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
+    }
+
+    fn arrive(&mut self, ui: &AppWindow) {
+        if let Ok(doc) = &self.doc
+            && let Some(path) = self.editor.snapshot(ui, doc, self.chapter)
+        {
+            self.saved = path;
+        }
     }
 
     fn pending(ui: &AppWindow, error: Option<&str>) {
@@ -282,6 +323,10 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
             view::fill_document(
                 &mut m,
                 doc,
+                view::Sources {
+                    chapter: &s.editor.chapter(doc, s.chapter),
+                    whole: &s.editor.preamble(doc),
+                },
                 s.chapter,
                 Texts::of(ui)
                     .t("Diagram source · this diagram syntax is not supported in the viewer."),
@@ -301,6 +346,7 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
             }
         }
     }
+    s.editor.fill(&mut m);
     d.set_model(m);
 }
 

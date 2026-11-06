@@ -1,7 +1,7 @@
 // Architecture tab: the web viewer's arc42 reader (renderArc42Documentation
 // in viewer_architecture.js). Data and callbacks live in ArchitectureData,
 // set from src/architecture_ui.rs.
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Button, Disclosure, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
@@ -33,6 +33,15 @@ export struct ArchitectureModel {
     has-model: bool,
     saved: string,
     map: ArcMap,
+    // The project's arc42 file or folder, relative to the project; empty
+    // while the project has none.
+    file: string,
+    file-error: string,
+    // The chapter editor is open.
+    editing: bool,
+    // No arc42 text in the project yet: where should it go?
+    ask-location: bool,
+    edit-error: string,
 }
 
 export global ArchitectureData {
@@ -46,6 +55,101 @@ export global ArchitectureData {
     callback card-action();
     callback more-relations();
     callback plantuml(string);
+
+    // The chapter editor: its Markdown and the preview of it.
+    in-out property <string> draft;
+    in-out property <[ArcBlock]> preview;
+    callback start-edit();
+    callback draft-changed(string);
+    callback save-edit();
+    callback cancel-edit();
+    // 0 arc42.md in the project folder, 1 another file, 2 cancel.
+    callback choose-location(int);
+}
+
+// Markdown on the left, the chapter as the reader shows it on the right;
+// one above the other in a narrow pane.
+component ChapterEditor inherits VerticalLayout {
+    in property <bool> narrow;
+    spacing: 12px;
+    alignment: start;
+    Text {
+        text: ArchitectureData.model.file != "" ? @tr("Editing {}. Generated archguard blocks are refreshed from the analysis when you save; your text outside them is kept.", ArchitectureData.model.file) : @tr("Editing the generated chapter. The project has no arc42 text yet; saving asks where to create it.");
+        color: Theme.muted;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    if ArchitectureData.model.ask-location: Rectangle {
+        background: Theme.panel-2;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.accent;
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            Text {
+                text: @tr("This project has no arc42.md and no arc42 folder. Where should the architecture documentation be created?");
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 650;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
+                Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
+                Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
+            }
+        }
+    }
+    if ArchitectureData.model.edit-error != "": Text {
+        text: ArchitectureData.model.edit-error;
+        color: Theme.danger;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    if !root.narrow: HorizontalLayout {
+        spacing: 18px;
+        TextEdit {
+            preferred-width: 100px;
+            horizontal-stretch: 1;
+            height: 620px;
+            font-size: 12px;
+            text <=> ArchitectureData.draft;
+            edited(t) => { ArchitectureData.draft-changed(t); }
+        }
+        Rectangle {
+            preferred-width: 100px;
+            horizontal-stretch: 1;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                padding: 14px;
+                alignment: start;
+                Text { text: @tr("Preview"); color: Theme.muted; font-size: 11px; }
+                for b in ArchitectureData.preview: ArcBlockView { block: b; }
+            }
+        }
+    }
+    if root.narrow: VerticalLayout {
+        spacing: 12px;
+        TextEdit {
+            height: 360px;
+            font-size: 12px;
+            text <=> ArchitectureData.draft;
+            edited(t) => { ArchitectureData.draft-changed(t); }
+        }
+        Text { text: @tr("Preview"); color: Theme.muted; font-size: 11px; }
+        for b in ArchitectureData.preview: ArcBlockView { block: b; }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Button { primary: true; text: @tr("Save chapter"); clicked => { ArchitectureData.save-edit(); } }
+        Button { text: @tr("Cancel"); clicked => { ArchitectureData.cancel-edit(); } }
+    }
 }
 
 component ChapterButton inherits Rectangle {
@@ -139,14 +243,22 @@ export component ArchitectureView inherits Rectangle {
                 PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
                 if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: 12px; wrap: word-wrap; }
             }
+            if !root.narrow && !ArchitectureData.model.editing: Button { y: (parent.height - self.height) / 2; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
         }
         if root.narrow: HorizontalLayout {
             spacing: 10px;
             alignment: start;
+            if !ArchitectureData.model.editing: Button { compact: true; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
             Button { compact: true; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
             Button { compact: true; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
+        }
+        if ArchitectureData.model.file-error != "": Text {
+            text: @tr("The project's arc42 text could not be read: {}", ArchitectureData.model.file-error);
+            color: Theme.danger;
+            font-size: 12px;
+            wrap: word-wrap;
         }
         if ArchitectureData.model.saved != "": Text {
             text: @tr("Saved {}", ArchitectureData.model.saved);
@@ -199,7 +311,8 @@ export component ArchitectureView inherits Rectangle {
                                 Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
-                            if ArchitectureData.model.map.kind >= 0: VerticalLayout {
+                            if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
+                            if !ArchitectureData.model.editing && ArchitectureData.model.map.kind >= 0: VerticalLayout {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
                                 ArcVisual {
@@ -213,7 +326,9 @@ export component ArchitectureView inherits Rectangle {
                                     plantuml(u) => { ArchitectureData.plantuml(u); }
                                 }
                             }
-                            for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
+                            if !ArchitectureData.model.editing: VerticalLayout {
+                                for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
+                            }
                             Rectangle { height: 24px; }
                             Rectangle { height: 1px; background: Theme.border; }
                             Rectangle { height: 10px; }

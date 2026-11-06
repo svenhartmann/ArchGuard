@@ -121,3 +121,36 @@ msgstr "Beziehungen und Anzahl"
 
 msgid "More relationships"
 msgstr "Weitere Beziehungen"
+
+msgid "Edit chapter"
+msgstr "Kapitel bearbeiten"
+
+msgid "Editing {}. Generated archguard blocks are refreshed from the analysis when you save; your text outside them is kept."
+msgstr "Bearbeitung von {}. Die generierten archguard-Blöcke werden beim Speichern aus der Analyse aktualisiert; dein Text außerhalb davon bleibt erhalten."
+
+msgid "Editing the generated chapter. The project has no arc42 text yet; saving asks where to create it."
+msgstr "Bearbeitung des generierten Kapitels. Das Projekt hat noch keinen arc42-Text; beim Speichern wird gefragt, wo er angelegt werden soll."
+
+msgid "This project has no arc42.md and no arc42 folder. Where should the architecture documentation be created?"
+msgstr "Dieses Projekt hat keine arc42.md und keinen arc42-Ordner. Wo soll die Architekturdokumentation angelegt werden?"
+
+msgid "arc42.md in the project folder"
+msgstr "arc42.md im Projektordner"
+
+msgid "Other place …"
+msgstr "Anderer Ort …"
+
+msgid "Preview"
+msgstr "Vorschau"
+
+msgid "Save chapter"
+msgstr "Kapitel speichern"
+
+msgid "The project's arc42 text could not be read: {}"
+msgstr "Der arc42-Text des Projekts konnte nicht gelesen werden: {}"
+
+msgid "Choose a place inside the project folder, so the app finds the file next time."
+msgstr "Bitte einen Ort im Projektordner wählen, damit die App die Datei beim nächsten Mal findet."
+
+msgid "Create the arc42 documentation"
+msgstr "arc42-Dokumentation anlegen"

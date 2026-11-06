@@ -17,9 +17,17 @@ fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
+/// The Markdown the reader shows: the open chapter from its heading on,
+/// and the whole document (or its part before the first chapter).
+pub struct Sources<'a> {
+    pub chapter: &'a str,
+    pub whole: &'a str,
+}
+
 pub fn fill_document(
     m: &mut ArchitectureModel,
     doc: &Arc42Document,
+    text: Sources<'_>,
     chapter: u8,
     note: &str,
     derived: bool,
@@ -29,7 +37,7 @@ pub fn fill_document(
         label: format!("{:02}", c.number).into(),
         title: c.title.into(),
     }));
-    let about = markdown::parse(blocks::preamble(&doc.markdown(None)));
+    let about = markdown::parse(blocks::preamble(text.whole));
     m.about = model(blocks::ui_blocks(&about, note));
     let Some(c) = doc
         .chapters
@@ -39,8 +47,8 @@ pub fn fill_document(
     else {
         return;
     };
-    let markdown = doc.markdown(Some(c.number));
-    let body = blocks::chapter_body(&markdown, c.number, derived);
+    let markdown = text.chapter;
+    let body = blocks::chapter_body(markdown, c.number, derived);
     m.chapter = c.number.into();
     m.chapter_title = format!("{}. {}", c.number, c.title).into();
     m.blocks = model(blocks::ui_blocks(&markdown::parse(&body), note));
