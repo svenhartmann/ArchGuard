@@ -1,6 +1,7 @@
 // The call overview column: connections, "Most calls" and cycles
 // (renderCalls, renderCallRankings, renderCallCycles in the web viewer).
-import { ScrollView, ComboBox } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Button, SectionHeading, Badge, Disclosure, HelpTip } from "widgets.slint";
@@ -19,8 +20,8 @@ component Connections inherits VerticalLayout {
             Text {
                 text: r.title;
                 color: r.selected ? Theme.accent : Theme.text;
-                font-size: 14px;
-                font-weight: 500;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-medium;
                 overflow: elide;
                 vertical-alignment: center;
             }
@@ -37,8 +38,8 @@ component Connections inherits VerticalLayout {
         Text {
             text: @tr("This project has no recorded call sites.");
             color: Theme.text;
-            font-size: 13px;
-            font-weight: 600;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-strong;
             wrap: word-wrap;
         }
         for a in m.analyzers: Text {
@@ -46,11 +47,11 @@ component Connections inherits VerticalLayout {
             max-height: a.note != 0 ? 100000px : 0px;
             text: CallsData.note-text(a.note, a.language);
             color: Theme.text;
-            font-size: 13px;
+            font-size: Theme.font-body;
             wrap: word-wrap;
         }
         Muted {
-            font-size: 12px;
+            font-size: Theme.font-small;
             text: @tr("Run archguard doctor in a terminal to see which analyzers this machine has. Import connections are analyzed without them.");
         }
     }
@@ -59,7 +60,7 @@ component Connections inherits VerticalLayout {
             ? @tr("No call relations available.")
             : @tr("No matching call relations. Change the package, search, target filter or internal-call setting.");
         color: Theme.text;
-        font-size: 13px;
+        font-size: Theme.font-body;
         wrap: word-wrap;
     }
     if m.relations-more: HorizontalLayout {
@@ -75,7 +76,7 @@ component Connections inherits VerticalLayout {
 component Labeled inherits VerticalLayout {
     in property <string> label;
     spacing: 4px;
-    Text { text: root.label; color: Theme.muted; font-size: 11px; }
+    Text { text: root.label; color: Theme.muted; font-size: Theme.font-caption; }
     @children
 }
 
@@ -137,8 +138,8 @@ component Rankings inherits VerticalLayout {
         Text {
             text: (i + 1) + ". " + r.label;
             color: Theme.text;
-            font-size: 12px;
-            font-weight: 700;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-strong;
             wrap: word-wrap;
         }
         Muted { text: @tr("Incoming {} · Outgoing {} · Involved sites {}", Fmt.int(r.incoming), Fmt.int(r.outgoing), Fmt.int(r.total)); }
@@ -155,7 +156,7 @@ component Rankings inherits VerticalLayout {
             ? @tr("No measured method bodies in this declaration scope. Missing metrics are unknown, not zero.")
             : @tr("No recorded call sites for this direction and these filters.");
         color: Theme.text;
-        font-size: 13px;
+        font-size: Theme.font-body;
         wrap: word-wrap;
     }
     if m.rank-more: HorizontalLayout {
@@ -233,8 +234,8 @@ component Cycles inherits VerticalLayout {
         Text {
             text: g.number + ". ↻ " + g.preview;
             color: g.selected ? Theme.accent : Theme.text;
-            font-size: 12px;
-            font-weight: 700;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-strong;
             wrap: word-wrap;
         }
         Muted { text: @tr("{} elements · {} connections · {} call sites", Fmt.int(g.members), Fmt.int(g.edges), Fmt.int(g.sites)); }
@@ -254,16 +255,16 @@ component Cycles inherits VerticalLayout {
         Text {
             text: @tr("Selected group · {} elements · {} connections", Fmt.int(m.group-members), Fmt.int(m.group-edges));
             color: Theme.cycle;
-            font-size: 12px;
-            font-weight: 700;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-strong;
             wrap: word-wrap;
         }
         Text {
             text: @tr("Closed example path: ") + (m.witness != "" ? m.witness
                 : @tr("{} directed steps. Follow the numbered connections below; the full closed path is included in the export.", Fmt.int(m.witness-steps)));
             color: Theme.text;
-            font-size: 11px;
-            font-family: "Menlo";
+            font-size: Theme.font-caption;
+            font-family: Theme.mono-family;
             wrap: word-wrap;
         }
         Steps {

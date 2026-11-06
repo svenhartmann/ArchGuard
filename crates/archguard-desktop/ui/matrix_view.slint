@@ -1,4 +1,5 @@
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, SearchField, KpiItem, StatInline, PageTitle } from "widgets.slint";
 import { Fmt } from "format.slint";
@@ -67,7 +68,7 @@ component Pager inherits HorizontalLayout {
         width: root.text-w > 0 ? root.text-w : self.preferred-width;
         text: root.text;
         color: Theme.text;
-        font-size: 12px;
+        font-size: Theme.font-small;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -287,7 +288,7 @@ export component MatrixView inherits Rectangle {
                 x: 12px;
                 text: root.cycle-path;
                 color: Theme.text;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 vertical-alignment: center;
                 height: 100%;
                 overflow: elide;
@@ -337,7 +338,7 @@ export component MatrixView inherits Rectangle {
             Rectangle {
                 x: 0;
                 width: root.label-w;
-                Text { x: 8px; text: @tr("Tree / source"); color: Theme.muted; font-size: 11px; vertical-alignment: center; height: 100%; }
+                Text { x: 8px; text: @tr("Tree / source"); color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; height: 100%; }
             }
             for j in root.col-count: Rectangle {
                     property <MatrixColumn> column: root.columns[root.col-start + j];
@@ -352,8 +353,8 @@ export component MatrixView inherits Rectangle {
                         Text {
                             text: column.kind == 1 ? column.label + " / " + @tr("direct files") : column.kind == 2 ? @tr("Outside this scope") : column.label;
                             color: Theme.text;
-                            font-size: 11px;
-                            font-weight: 600;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-strong;
                             wrap: column.context == "" ? word-wrap : no-wrap;
                             height: min(self.preferred-height, 28px);
                             overflow: elide;
@@ -364,7 +365,7 @@ export component MatrixView inherits Rectangle {
                         if column.context != "": Text {
                             text: column.context;
                             color: Theme.muted;
-                            font-size: 9.5px;
+                            font-size: Theme.font-micro;
                             overflow: elide;
                             horizontal-alignment: center;
                         }
@@ -431,8 +432,8 @@ export component MatrixView inherits Rectangle {
                                 Text {
                                     text: r.label;
                                     color: Theme.text;
-                                    font-size: 12px;
-                                    font-weight: r.package ? 650 : 400;
+                                    font-size: Theme.font-small;
+                                    font-weight: r.package ? Theme.weight-strong : Theme.weight-regular;
                                     vertical-alignment: center;
                                     overflow: elide;
                                     horizontal-stretch: 1;
@@ -440,8 +441,8 @@ export component MatrixView inherits Rectangle {
                                 if r.badges != "": Text {
                                     text: r.badges;
                                     color: Theme.cycle;
-                                    font-size: 10.5px;
-                                    font-weight: 700;
+                                    font-size: Theme.font-micro;
+                                    font-weight: Theme.weight-strong;
                                     vertical-alignment: center;
                                 }
                             }
@@ -459,8 +460,8 @@ export component MatrixView inherits Rectangle {
                                 label := Text {
                                     text: value;
                                     color: Theme.accent;
-                                    font-size: 11.5px;
-                                    font-weight: 600;
+                                    font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-strong;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
@@ -482,7 +483,7 @@ export component MatrixView inherits Rectangle {
                 if root.rows.length == 0: Text {
                     text: @tr("No matching files or packages. Adjust the search or cycle filter.");
                     color: Theme.muted;
-                    font-size: 13px;
+                    font-size: Theme.font-body;
                 }
             }
         }
@@ -505,8 +506,8 @@ export component MatrixView inherits Rectangle {
             width: parent.width - 16px;
             text: root.tip;
             color: Theme.text;
-            font-size: 12px;
-            font-family: "Menlo";
+            font-size: Theme.font-small;
+            font-family: Theme.mono-family;
             overflow: elide;
         }
     }
@@ -527,10 +528,10 @@ export component MatrixView inherits Rectangle {
             padding: 16px;
             spacing: 10px;
             HorizontalLayout {
-                Text { text: @tr("Dependency evidence"); color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; }
+                Text { text: @tr("Dependency evidence"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; horizontal-stretch: 1; }
                 Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.close-evidence(); } }
             }
-            Text { text: root.evidence-title; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+            Text { text: root.evidence-title; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -539,8 +540,8 @@ export component MatrixView inherits Rectangle {
                     for line in root.evidence: Text {
                         text: line;
                         color: Theme.text;
-                        font-family: "Menlo";
-                        font-size: 11px;
+                        font-family: Theme.mono-family;
+                        font-size: Theme.font-caption;
                         wrap: word-wrap;
                     }
                 }

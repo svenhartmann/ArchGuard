@@ -58,7 +58,7 @@ component PackageCard inherits Rectangle {
             color: Theme.text;
             // Small at low zoom: arrows from above end right of the tab.
             font-size: max(6px, 11px * zoom);
-            font-weight: 700;
+            font-weight: Theme.weight-strong;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -80,8 +80,8 @@ component PackageCard inherits Rectangle {
                 Text {
                     text: card.label;
                     color: Theme.text;
-                    font-size: max(11px, 17px * zoom);
-                    font-weight: 650;
+                    font-size: max(Theme.font-caption, 17px * zoom);
+                    font-weight: Theme.weight-strong;
                     overflow: elide;
                     horizontal-stretch: 1;
                 }
@@ -97,7 +97,7 @@ component PackageCard inherits Rectangle {
                 text: card.file ? @tr("source file") : @tr("{0} file" | "{0} files" % card.files, Fmt.int(card.files))
                     + " · " + @tr("{0} package" | "{0} packages" % card.packages, Fmt.int(card.packages));
                 color: Theme.muted;
-                font-size: max(10px, 13px * zoom);
+                font-size: max(Theme.font-micro, 13px * zoom);
                 overflow: elide;
             }
         }
@@ -188,7 +188,7 @@ export component NetworkView inherits Rectangle {
                 text: Fmt.int(a.count);
                 color: Theme.text;
                 font-size: parent.size;
-                font-weight: 600;
+                font-weight: Theme.weight-strong;
             }
         }
       }

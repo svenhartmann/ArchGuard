@@ -138,8 +138,8 @@ component ViewTabChip inherits Rectangle {
             max-width: 220px;
             overflow: elide;
             color: root.active ? Theme.text : Theme.muted;
-            font-size: 12px;
-            font-weight: root.active ? 650 : 450;
+            font-size: Theme.font-small;
+            font-weight: root.active ? Theme.weight-strong : Theme.weight-regular;
             vertical-alignment: center;
         }
         if root.closable: Rectangle {

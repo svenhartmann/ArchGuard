@@ -1,0 +1,153 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { FocusRing, Icon, Icons } from "widgets.slint";
+
+// A drop-down choice drawn like the app's own fields (SearchField,
+// Button) in both themes and on every platform. The style's ComboBox keeps
+// the style's colours: Cupertino's grey box with a bright blue stepper in
+// the dark theme, Fluent's grey field. Same properties and callback as the
+// std-widgets ComboBox it replaces; `current-value` is read-only here.
+export component ComboBox {
+    in property <[string]> model;
+    in property <bool> enabled: true;
+    in-out property <int> current-index: 0;
+    out property <string> current-value: current-index >= 0 && current-index < model.length ? model[current-index] : "";
+    out property <bool> has-focus: fs.has-focus || popup-focus;
+    callback selected(string);
+    property <bool> popup-focus;
+    property <length> item-h: Theme.control-h-sm;
+    property <int> visible-items: min(8, model.length);
+    min-width: max(100px, label.min-width + 44px);
+    min-height: Theme.control-h;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    forward-focus: fs;
+    accessible-role: combobox;
+    accessible-enabled: root.enabled;
+    accessible-value: root.current-value;
+    accessible-expandable: true;
+    accessible-expanded: root.popup-focus;
+    accessible-action-expand => { popup.show(); }
+
+    changed model => {
+        root.current-index = root.model.length == 0 ? 0 : root.current-index.clamp(0, root.model.length - 1);
+    }
+
+    function select(index: int) {
+        if (!root.enabled || index < 0 || index >= root.model.length) { return; }
+        root.current-index = index;
+        root.selected(root.current-value);
+    }
+
+    function step(e: KeyEvent) -> EventResult {
+        if (e.text == Key.UpArrow) {
+            root.select(max(root.current-index - 1, 0));
+            return accept;
+        }
+        if (e.text == Key.DownArrow) {
+            root.select(min(root.current-index + 1, root.model.length - 1));
+            return accept;
+        }
+        reject
+    }
+
+    FocusRing { has-focus: fs.has-focus && root.enabled; }
+    box := Rectangle {
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: fs.has-focus ? Theme.accent : Theme.border;
+        background: !root.enabled ? Theme.panel-2 : touch.pressed ? Theme.panel-2.mix(Theme.border, 0.7) : touch.has-hover ? Theme.panel-2 : Theme.panel;
+        opacity: root.enabled ? 1 : 0.55;
+        animate background { duration: 100ms; }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 8px;
+            spacing: 6px;
+            label := Text {
+                text: root.current-value;
+                color: Theme.text;
+                font-size: Theme.font-body;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+            Icon {
+                icon: Icons.chevron-down;
+                tint: Theme.muted;
+                width: 14px;
+                height: 14px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == Key.Return || e.text == " ") {
+                popup.show();
+                return accept;
+            }
+            root.step(e)
+        }
+        touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                fs.focus();
+                popup.show();
+            }
+        }
+    }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: max(root.width, 160px);
+        height: root.visible-items * root.item-h + 10px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-fs;
+        popup-fs := FocusScope {
+            focus-changed-event => { root.popup-focus = self.has-focus; }
+            key-pressed(e) => {
+                if (e.text == Key.Return || e.text == Key.Escape) {
+                    popup.close();
+                    return accept;
+                }
+                root.step(e)
+            }
+            Rectangle {
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.panel;
+                drop-shadow-blur: 12px;
+                drop-shadow-color: Theme.shadow;
+                ScrollView {
+                    VerticalLayout {
+                        padding: 5px;
+                        for value[i] in root.model: Rectangle {
+                            height: root.item-h;
+                            border-radius: Theme.radius-sm - 2px;
+                            background: i == root.current-index ? Theme.accent : item.has-hover ? Theme.panel-2 : transparent;
+                            Text {
+                                x: 8px;
+                                width: parent.width - 16px;
+                                text: value;
+                                color: i == root.current-index ? Theme.accent-contrast : Theme.text;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            item := TouchArea {
+                                clicked => {
+                                    root.select(i);
+                                    popup.close();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

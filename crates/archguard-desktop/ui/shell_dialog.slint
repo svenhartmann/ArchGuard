@@ -50,8 +50,8 @@ export component SaveDialog inherits Rectangle {
                 Text {
                     text: @tr("Save changes to {}?", root.project);
                     color: Theme.text;
-                    font-size: 16px;
-                    font-weight: 700;
+                    font-size: Theme.font-section;
+                    font-weight: Theme.weight-title;
                     wrap: word-wrap;
                     horizontal-stretch: 1;
                 }
@@ -59,13 +59,13 @@ export component SaveDialog inherits Rectangle {
             if root.what != "": Text {
                 text: @tr("Unsaved: {}", root.what);
                 color: Theme.text;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 wrap: word-wrap;
             }
             Text {
                 text: @tr("Your changes will be lost if you don't save them.");
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 wrap: word-wrap;
             }
             Rectangle { height: 6px; }
@@ -113,7 +113,7 @@ export component NoticeBar inherits Rectangle {
         Text {
             text: root.text;
             color: Theme.text;
-            font-size: 12px;
+            font-size: Theme.font-small;
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;

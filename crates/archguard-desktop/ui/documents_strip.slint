@@ -55,8 +55,8 @@ component DocTab inherits Rectangle {
         Text {
             text: root.item.name;
             color: root.active ? Theme.text : Theme.muted;
-            font-size: 13px;
-            font-weight: root.active ? 650 : 450;
+            font-size: Theme.font-body;
+            font-weight: root.active ? Theme.weight-strong : Theme.weight-regular;
             vertical-alignment: center;
             overflow: elide;
             max-width: 200px;
@@ -150,8 +150,8 @@ export component ProjectsMenu inherits Rectangle {
                 height: 26px;
                 text: @tr("Build units in this repository ({})", Fmt.int(root.items.length));
                 color: Theme.muted;
-                font-size: 12px;
-                font-weight: 600;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-strong;
                 vertical-alignment: center;
             }
             ListView {
@@ -177,10 +177,10 @@ export component ProjectsMenu inherits Rectangle {
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
-                            Text { text: p.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
-                            Text { text: p.path; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                            Text { text: p.name; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; overflow: elide; }
+                            Text { text: p.path; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; overflow: elide; }
                         }
-                        Text { text: p.kind; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                        Text { text: p.kind; color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; }
                     }
                 }
             }
@@ -201,13 +201,13 @@ export component EmptyStart inherits Rectangle {
             text: @tr("No project open");
             color: Theme.text;
             font-size: Theme.font-page;
-            font-weight: 700;
+            font-weight: Theme.weight-title;
             horizontal-alignment: center;
         }
         Text {
             text: @tr("Open a project folder to analyze its architecture.");
             color: Theme.muted;
-            font-size: 13px;
+            font-size: Theme.font-body;
             horizontal-alignment: center;
         }
         HorizontalLayout {
@@ -229,8 +229,8 @@ export component EmptyStart inherits Rectangle {
                     height: 26px;
                     text: @tr("Recent projects");
                     color: Theme.muted;
-                    font-size: 12px;
-                    font-weight: 600;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.weight-strong;
                     vertical-alignment: center;
                 }
                 for r[i] in root.recent: Rectangle {
@@ -255,8 +255,8 @@ export component EmptyStart inherits Rectangle {
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
-                            Text { text: r.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
-                            Text { text: r.path; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                            Text { text: r.name; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; overflow: elide; }
+                            Text { text: r.path; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; overflow: elide; }
                         }
                     }
                 }

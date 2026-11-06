@@ -1,7 +1,8 @@
 // Calls tab: the web viewer's compiler call-site explorer (#tab-calls in
 // viewer.html). Data and callbacks live in CallsData, set from
 // src/calls_ui.rs.
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Button, SearchField, StatusLine, Disclosure, HelpTip } from "widgets.slint";
@@ -130,7 +131,7 @@ component Coverage inherits Muted {
         ? " " + @tr("Java {} API/source baseline.", m.java-release)
         : m.unreported ? " " + @tr("Analyzer version unreported.") : "";
     text: root.lead + root.counts + root.baseline + @tr(" Original source snapshot.");
-    font-size: 12px;
+    font-size: Theme.font-small;
 }
 
 component Description inherits VerticalLayout {
@@ -150,12 +151,12 @@ component Description inherits VerticalLayout {
         alignment: start;
         if none: Muted {
             horizontal-stretch: 1;
-            font-size: 12px;
+            font-size: Theme.font-small;
             text: @tr("No applicable source files for call analysis.") + @tr(" Original source snapshot.");
         }
         if unavailable: Muted {
             horizontal-stretch: 1;
-            font-size: 12px;
+            font-size: Theme.font-small;
             vertical-alignment: center;
             // The reasons are translated in the call overview and the
             // Analysis panel; the engine's text is the tooltip.
@@ -173,20 +174,20 @@ component Description inherits VerticalLayout {
         }
         // Without an analysis the counts are unknown, not zero.
         if !root.narrow: Muted {
-            font-size: 12px;
+            font-size: Theme.font-small;
             wrap: no-wrap;
             text: root.counts;
             vertical-alignment: center;
         }
     }
-    if root.narrow: Muted { font-size: 12px; text: root.counts; }
+    if root.narrow: Muted { font-size: Theme.font-small; text: root.counts; }
     // Like the web's .calls-description (max-height 30%, scrolls).
     if m.analysis-open: ScrollView {
         height: 190px;
         VerticalLayout {
             spacing: 6px;
-            Muted { font-size: 12px; text: @tr("Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."); }
-            Muted { font-size: 12px; text: @tr("Packages → types/modules → functions/methods in the matching call connections."); }
+            Muted { font-size: Theme.font-small; text: @tr("Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."); }
+            Muted { font-size: Theme.font-small; text: @tr("Packages → types/modules → functions/methods in the matching call connections."); }
             if !none && !unavailable: Coverage { }
             for a in m.analyzers: Rectangle {
                 border-radius: 8px;
@@ -201,15 +202,15 @@ component Description inherits VerticalLayout {
                     Text {
                         text: a.language + " · " + a.backend + " · " + CallsData.coverage(a.status);
                         color: Theme.text;
-                        font-size: 12px;
-                        font-weight: 700;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-strong;
                     }
                     Muted { text: @tr("{} files", Fmt.int(a.files)) + (a.version != "" ? " · " + @tr("Version {}", a.version) : ""); }
-                    if a.project != "": Muted { text: a.project; font-family: "Menlo"; }
+                    if a.project != "": Muted { text: a.project; font-family: Theme.mono-family; }
                     if a.note != 0: Text {
                         text: CallsData.note-text(a.note, a.language);
                         color: Theme.text;
-                        font-size: 12px;
+                        font-size: Theme.font-small;
                         wrap: word-wrap;
                     }
                     // The engine's own (English) text, folded.
@@ -223,7 +224,7 @@ component Description inherits VerticalLayout {
                     }
                 }
             }
-            for d in m.diagnostics: Muted { text: d; font-size: 12px; }
+            for d in m.diagnostics: Muted { text: d; font-size: Theme.font-small; }
         }
     }
 }
@@ -246,7 +247,7 @@ export component CallsView inherits Rectangle {
     if CallsData.model.state == 0: Text {
         text: CallsData.model.error != "" ? CallsData.model.error : @tr("Analyzing calls …");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }

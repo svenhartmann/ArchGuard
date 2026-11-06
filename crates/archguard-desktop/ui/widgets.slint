@@ -53,10 +53,11 @@ export component Button inherits Rectangle {
     border-radius: Theme.radius-sm;
     background: primary ? Theme.accent
         : pressed-state ? Theme.accent.with-alpha(0.16)
+        : touch.pressed ? Theme.panel-2.mix(Theme.border, 0.7)
         : touch.has-hover ? Theme.panel-2 : Theme.panel;
     border-width: 1px;
     border-color: pressed-state ? Theme.accent : Theme.border;
-    opacity: enabled ? 1 : 0.45;
+    opacity: enabled ? 1 : 0.5;
     animate background { duration: 100ms; }
     content := HorizontalLayout {
         padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
@@ -73,8 +74,8 @@ export component Button inherits Rectangle {
         if root.text != "": Text {
             text: root.text;
             color: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
-            font-size: compact ? 12px : 13px;
-            font-weight: pressed-state || primary ? 600 : 500;
+            font-size: compact ? Theme.font-small : Theme.font-body;
+            font-weight: primary ? Theme.weight-medium : Theme.weight-regular;
             vertical-alignment: center;
         }
     }
@@ -93,26 +94,26 @@ export component Tab inherits Rectangle {
     // Right button, at a point inside the tab: the TouchArea takes the
     // press, so a surrounding ContextMenuArea would never see it.
     callback context-menu(length, length);
-    height: 30px;
+    height: Theme.control-h-sm + 2px;
     // Sized by the bold label, so the tab keeps its width when it becomes
     // active and the tabs beside it do not move.
     width: bold.preferred-width + 24px;
-    border-radius: 7px;
+    border-radius: Theme.radius-sm;
     background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
     animate background { duration: 100ms; }
     label := Text {
         text: root.text;
         color: active ? Theme.accent : Theme.text;
-        font-size: 14px;
-        font-weight: active ? 650 : 450;
+        font-size: Theme.font-body;
+        font-weight: active ? Theme.weight-strong : Theme.weight-regular;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
     bold := Text {
         visible: false;
         text: root.text;
-        font-size: 14px;
-        font-weight: 650;
+        font-size: Theme.font-body;
+        font-weight: Theme.weight-strong;
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -138,15 +139,32 @@ export component Metric inherits HorizontalLayout {
     Text {
         text: root.value;
         color: Theme.text;
-        font-size: 15px;
-        font-weight: 700;
+        font-size: Theme.font-body;
+        font-weight: Theme.weight-strong;
         vertical-alignment: center;
     }
     Text {
         text: root.label;
         color: Theme.muted;
-        font-size: 12px;
+        font-size: Theme.font-small;
         vertical-alignment: center;
+    }
+}
+
+// Keyboard focus around its parent control, in the platform's form
+// (`Theme.focus`, `Theme.focus-w`); it fills the parent, the ring lies
+// outside.
+export component FocusRing inherits Rectangle {
+    in property <bool> has-focus;
+    in property <length> radius: Theme.radius-sm;
+    Rectangle {
+        x: -Theme.focus-w;
+        y: -Theme.focus-w;
+        width: root.width + 2 * Theme.focus-w;
+        height: root.height + 2 * Theme.focus-w;
+        border-radius: root.radius + Theme.focus-w;
+        border-width: Theme.focus-w;
+        border-color: root.has-focus ? Theme.focus : transparent;
     }
 }
 
@@ -160,6 +178,7 @@ export component SearchField inherits Rectangle {
     background: Theme.panel;
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
+    FocusRing { has-focus: input.has-focus; }
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
@@ -176,7 +195,7 @@ export component SearchField inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 color: Theme.text;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 vertical-alignment: center;
                 single-line: true;
                 edited => { root.edited(self.text); }
@@ -188,7 +207,7 @@ export component SearchField inherits Rectangle {
                 height: 100%;
                 text: root.placeholder;
                 color: Theme.muted;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -207,13 +226,13 @@ export component TabPlaceholder inherits Rectangle {
             text: root.title;
             color: Theme.text;
             font-size: Theme.font-page;
-            font-weight: 700;
+            font-weight: Theme.weight-title;
             horizontal-alignment: center;
         }
         Text {
             text: @tr("This view is not native yet. The web viewer shows it for the same project.");
             color: Theme.muted;
-            font-size: 13px;
+            font-size: Theme.font-body;
             horizontal-alignment: center;
         }
         HorizontalLayout {
@@ -381,7 +400,7 @@ export component HelpTip inherits Rectangle {
         text: "?";
         color: Theme.text;
         font-size: root.size * 0.52;
-        font-weight: 700;
+        font-weight: Theme.weight-strong;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -426,7 +445,7 @@ export component TipLayer inherits Rectangle {
     measure := Text {
         visible: false;
         text: Tips.text;
-        font-size: 12px;
+        font-size: Theme.font-small;
     }
     bubble := Rectangle {
         visible: Tips.text != "";
@@ -449,7 +468,7 @@ export component TipLayer inherits Rectangle {
             width: parent.width - 20px;
             text: Tips.text;
             color: Theme.text;
-            font-size: 12px;
+            font-size: Theme.font-small;
             wrap: word-wrap;
         }
     }
@@ -468,8 +487,8 @@ export component StatCard inherits Rectangle {
     VerticalLayout {
         padding: 12px;
         spacing: 4px;
-        Text { text: root.kpi.value; color: Theme.text; font-size: 24px; font-weight: 700; }
-        Text { text: root.kpi.label; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        Text { text: root.kpi.value; color: Theme.text; font-size: Theme.font-display; font-weight: Theme.weight-strong; }
+        Text { text: root.kpi.label; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
     }
     TipArea { tip: root.kpi.note; }
 }
@@ -479,11 +498,11 @@ export component StatInline inherits HorizontalLayout {
     in property <KpiItem> kpi;
     spacing: 5px;
     horizontal-stretch: 0;
-    value := Text { text: root.kpi.value; color: Theme.text; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+    value := Text { text: root.kpi.value; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; }
     label := Text {
         text: root.kpi.label;
         color: Theme.muted;
-        font-size: 12px;
+        font-size: Theme.font-small;
         vertical-alignment: center;
         TipArea { tip: root.kpi.note; }
     }
@@ -512,8 +531,8 @@ export component Badge inherits Rectangle {
     label := Text {
         text: root.text;
         color: root.tint;
-        font-size: 10.5px * root.zoom;
-        font-weight: 700;
+        font-size: Theme.font-micro * root.zoom;
+        font-weight: Theme.weight-strong;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -549,8 +568,8 @@ export component SeverityChip inherits Rectangle {
         padding-top: 4px;
         padding-bottom: 4px;
         spacing: 6px;
-        if root.value != "": Text { text: root.value; color: root.tint; font-size: 12px; font-weight: 700; vertical-alignment: center; }
-        Text { text: Severity.label(root.key); color: root.tint; font-size: 12px; vertical-alignment: center; }
+        if root.value != "": Text { text: root.value; color: root.tint; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; }
+        Text { text: Severity.label(root.key); color: root.tint; font-size: Theme.font-small; vertical-alignment: center; }
     }
 }
 
@@ -601,7 +620,7 @@ component Dashes inherits Rectangle {
 export component RatingChip inherits Rectangle {
     in property <int> rating;
     in property <string> text;
-    in property <length> font: 12px;
+    in property <length> font: Theme.font-small;
     in property <bool> bold-high: true;
     // Width of the label, for legend entries sized to their text.
     out property <length> label-w: label.preferred-width;
@@ -620,7 +639,7 @@ export component RatingChip inherits Rectangle {
         text: root.text;
         color: root.rating == 0 ? Theme.muted : Theme.text;
         font-size: root.font;
-        font-weight: root.rating == 3 && root.bold-high ? 700 : 400;
+        font-weight: root.rating == 3 && root.bold-high ? Theme.weight-strong : Theme.weight-regular;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -644,7 +663,7 @@ export component Legend inherits HorizontalLayout {
         border-width: root.outline ? 2px : 0;
         border-color: root.outline-color;
     }
-    Text { text: root.text; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+    Text { text: root.text; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
 }
 
 // Colours of an analysis or import status (`Status::slot` in
@@ -674,14 +693,14 @@ export component StatusLine inherits HorizontalLayout {
     Text {
         text: root.label;
         color: root.status == 0 ? Theme.text : Statuses.color(root.status);
-        font-size: 12px;
-        font-weight: 600;
+        font-size: Theme.font-small;
+        font-weight: Theme.weight-strong;
         vertical-alignment: center;
     }
     if root.detail != "": Text {
         text: "· " + root.detail;
         color: Theme.muted;
-        font-size: 12px;
+        font-size: Theme.font-small;
         wrap: word-wrap;
         horizontal-stretch: 1;
         vertical-alignment: center;
@@ -695,8 +714,8 @@ export component EmptyState inherits VerticalLayout {
     padding: 24px;
     spacing: 6px;
     alignment: center;
-    if root.title != "": Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
-    if root.reason != "": Text { text: root.reason; color: Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+    if root.title != "": Text { text: root.title; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; horizontal-alignment: center; wrap: word-wrap; }
+    if root.reason != "": Text { text: root.reason; color: Theme.muted; font-size: Theme.font-small; horizontal-alignment: center; wrap: word-wrap; }
 }
 
 // A column or group heading, uppercased here; texts stay in sentence case.
@@ -705,7 +724,7 @@ export component SectionHeading inherits Text {
     text: label.to-uppercase();
     color: Theme.muted;
     font-size: Theme.font-heading;
-    font-weight: 700;
+    font-weight: Theme.weight-strong;
     letter-spacing: 0.4px;
     vertical-alignment: center;
 }
@@ -716,8 +735,8 @@ export component PageTitle inherits VerticalLayout {
     in property <string> sub;
     in property <bool> section;
     spacing: 2px;
-    Text { text: root.text; color: Theme.text; font-size: root.section ? Theme.font-section : Theme.font-page; font-weight: 700; wrap: word-wrap; }
-    if root.sub != "": Text { text: root.sub; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+    Text { text: root.text; color: Theme.text; font-size: root.section ? Theme.font-section : Theme.font-page; font-weight: Theme.weight-strong; wrap: word-wrap; }
+    if root.sub != "": Text { text: root.sub; color: Theme.muted; font-size: Theme.font-body; wrap: word-wrap; }
 }
 
 // A collapsible section's summary: chevron and text.
@@ -725,8 +744,8 @@ export component Disclosure inherits TouchArea {
     in property <string> text;
     in-out property <bool> open;
     in property <color> tint: Theme.muted;
-    in property <length> size: 12px;
-    in property <int> weight: 400;
+    in property <length> size: Theme.font-small;
+    in property <int> weight: Theme.weight-regular;
     height: max(22px, label.preferred-height + 8px);
     mouse-cursor: pointer;
     clicked => { root.open = !root.open; }
@@ -783,8 +802,8 @@ export component ZoomControls inherits HorizontalLayout {
             overflow: elide;
             text: Fmt.int(round(root.zoom * 100)) + "%";
             color: Theme.text;
-            font-size: root.compact ? 12px : 13px;
-            font-weight: 500;
+            font-size: root.compact ? Theme.font-small : Theme.font-body;
+            font-weight: Theme.weight-medium;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
