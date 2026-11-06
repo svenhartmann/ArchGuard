@@ -70,8 +70,18 @@ msgstr "Quellverbindungen"
 msgid "recorded call sites"
 msgstr "erfasste Aufrufstellen"
 
-msgid "{} {} · {} inside the shown groups"
-msgstr "{} {} · {} innerhalb der dargestellten Gruppen"
+msgid "{} · {} inside the shown groups"
+msgstr "{} · {} innerhalb der dargestellten Gruppen"
+
+msgid "{0} recorded call site"
+msgid_plural "{0} recorded call sites"
+msgstr[0] "{0} erfasste Aufrufstelle"
+msgstr[1] "{0} erfasste Aufrufstellen"
+
+msgid "{0} source connection"
+msgid_plural "{0} source connections"
+msgstr[0] "{0} Quellverbindung"
+msgstr[1] "{0} Quellverbindungen"
 
 msgid "Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order."
 msgstr "Compilerstatus: {} · Enthaltene, aufgelöste Projektaufrufe mit Quellzuordnung. Aufrufstellen belegen keine Laufzeitreihenfolge."

@@ -225,6 +225,11 @@ export component ArcVisual inherits Rectangle {
     property <float> fit-zoom: map.dw > 0 ? min(1, (box-width / 1px - 2) / map.dw) : 1;
     property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
     property <string> unit: map.kind == 1 ? @tr("recorded call sites") : @tr("source connections");
+    // A count with its unit in the plural form the count needs.
+    pure function counted(n: int) -> string {
+        return map.kind == 1 ? @tr("{0} recorded call site" | "{0} recorded call sites" % n, Fmt.int(n))
+            : @tr("{0} source connection" | "{0} source connections" % n, Fmt.int(n));
+    }
     changed dw => { root.user-zoom = 0; }
     property <float> dw: map.dw;
     // ComboBox keeps its own index once used; follow the model's.
@@ -300,7 +305,7 @@ export component ArcVisual inherits Rectangle {
                 spacing: 14px;
                 alignment: start;
                 Text {
-                    text: @tr("{} {} · {} inside the shown groups", Fmt.int(root.map.total), root.unit, Fmt.int(root.map.internal));
+                    text: @tr("{} · {} inside the shown groups", root.counted(root.map.total), Fmt.int(root.map.internal));
                     color: Theme.muted;
                     font-size: 12px;
                     vertical-alignment: center;
@@ -392,7 +397,7 @@ export component ArcVisual inherits Rectangle {
                         padding-bottom: 7px;
                         spacing: 7px;
                         Text {
-                            text: r.from + " → " + r.to + " · " + Fmt.int(r.count) + " " + root.unit;
+                            text: r.from + " → " + r.to + " · " + root.counted(r.count);
                             color: Theme.text;
                             font-size: 12px;
                             wrap: word-wrap;
