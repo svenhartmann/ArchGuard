@@ -71,10 +71,10 @@ pub fn map_model(
         internal: map.projection.internal as i32,
         cycles: kpi::PACKAGE_CYCLES.item(texts, map.projection.cycle_groups()),
         calls_status: calls_status.into(),
-        scopes: model(map.scopes.iter().map(|sc| match sc {
-            None => overview.clone(),
-            Some(n) => graph.nodes[*n].name.as_str().into(),
-        })),
+        scopes: model(
+            std::iter::once(overview.clone())
+                .chain(visual::scope_labels(map, graph).into_iter().map(Into::into)),
+        ),
         scope_index: map
             .scopes
             .iter()
@@ -106,14 +106,8 @@ fn fill_levels(m: &mut ArcMap, map: &Map, graph: &Graph, overview: &SharedString
             .into_iter()
             .map(|(s, l, label)| item(s, l, label)),
     );
-    let short = |n: usize| {
-        graph.nodes[n]
-            .name
-            .rsplit('/')
-            .next()
-            .unwrap_or_default()
-            .to_string()
-    };
+    let labels = visual::level_labels(levels, graph);
+    let short = |n: usize| labels[&n].clone();
     m.crumbs = model(
         std::iter::once(item(None, 1, String::new())).chain(
             levels
@@ -126,7 +120,7 @@ fn fill_levels(m: &mut ArcMap, map: &Map, graph: &Graph, overview: &SharedString
 
 fn card(map: &Map, i: usize) -> ArcCard {
     let (n, c) = (&map.shown.nodes[i], &map.layout.cards[i]);
-    let (name1, name2) = diagram::name_lines(&n.name);
+    let (name1, name2) = diagram::name_lines(&n.label);
     ArcCard {
         index: i as i32,
         x: c.x,
@@ -163,7 +157,15 @@ fn fill_diagram(m: &mut ArcMap, map: &Map) {
         strong: touches(e.from, e.to) == Some(true),
     }));
     let selected = map.selected.map(|s| &map.shown.nodes[s]);
-    m.selected_name = selected.map(|n| n.name.as_str()).unwrap_or_default().into();
+    m.selected_name = selected
+        .map(|n| n.label.as_str())
+        .unwrap_or_default()
+        .into();
+    m.selected_path = selected
+        .filter(|n| n.name != n.label)
+        .map(|n| n.name.as_str())
+        .unwrap_or_default()
+        .into();
     m.selected_action = match map.action {
         Action::None => 0,
         Action::OpenLevel(_) => 1,
@@ -177,8 +179,8 @@ fn fill_relations(m: &mut ArcMap, map: &Map, limit: usize) {
     m.relation_total = map.shown.edges.len() as i32;
     m.relations_more = all.len() > limit;
     m.relations = model(all.iter().take(limit).map(|e| ArcRelation {
-        from: map.shown.nodes[e.from].name.as_str().into(),
-        to: map.shown.nodes[e.to].name.as_str().into(),
+        from: map.shown.nodes[e.from].label.as_str().into(),
+        to: map.shown.nodes[e.to].label.as_str().into(),
         count: e.count as i32,
     }));
 }

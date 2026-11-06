@@ -10,6 +10,7 @@ mod blocks;
 mod diagram;
 mod edit;
 mod markdown;
+mod names;
 mod projection;
 mod view;
 mod visual;

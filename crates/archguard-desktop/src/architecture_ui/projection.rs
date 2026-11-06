@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet};
 
 use archguard_engine::core::{CallAnalysis, Graph, NodeId, NodeKind};
 
+use super::names;
+
 /// Containment indexes over `graph.nodes` (positions, not ids).
 pub struct SourceModel {
     index: HashMap<NodeId, usize>,
@@ -113,7 +115,10 @@ pub enum Group {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PNode {
     pub group: Group,
+    /// The full path (synthetic groups: their label).
     pub name: String,
+    /// What the views show ([`super::names`]); `name` stays the tooltip.
+    pub label: String,
     pub files: usize,
     pub cycle: bool,
 }
@@ -241,29 +246,13 @@ pub fn project(
         None => model.overview.clone(),
         Some(s) => model.modules(graph, Some(s)),
     };
-    let mut nodes: Vec<PNode> = candidates
-        .iter()
-        .map(|&c| PNode {
-            group: Group::Package(c),
-            name: graph.nodes[c].name.clone(),
-            files: 0,
-            cycle: false,
-        })
-        .collect();
+    let mut nodes = package_nodes(graph, &candidates);
     let has_direct = model
         .kids(scope)
         .iter()
         .any(|&k| graph.nodes[k].kind == NodeKind::File);
     if has_direct {
-        nodes.push(PNode {
-            group: Group::Direct,
-            name: match scope {
-                None => labels.direct_root.clone(),
-                Some(s) => format!("{} / {}", graph.nodes[s].name, labels.direct),
-            },
-            files: 0,
-            cycle: false,
-        });
+        nodes.push(direct_node(graph, scope, labels));
     }
     let owner = owners(model, graph, scope, &candidates, has_direct);
     for (i, n) in graph.nodes.iter().enumerate() {
@@ -275,6 +264,47 @@ pub fn project(
     }
     nodes.sort_by(|a, b| b.files.cmp(&a.files).then_with(|| a.name.cmp(&b.name)));
     bundle(nodes, &owner, edges, &labels.outside)
+}
+
+/// One node per candidate package, named among each other.
+fn package_nodes(graph: &Graph, candidates: &[usize]) -> Vec<PNode> {
+    let names: Vec<&str> = candidates
+        .iter()
+        .map(|&c| graph.nodes[c].name.as_str())
+        .collect();
+    candidates
+        .iter()
+        .zip(names::short_names(&names))
+        .map(|(&c, label)| PNode {
+            group: Group::Package(c),
+            name: graph.nodes[c].name.clone(),
+            label,
+            files: 0,
+            cycle: false,
+        })
+        .collect()
+}
+
+/// The direct files of the scope, or the files without a package.
+fn direct_node(graph: &Graph, scope: Option<usize>, labels: &Labels) -> PNode {
+    let (name, label) = match scope {
+        None => (labels.direct_root.clone(), labels.direct_root.clone()),
+        Some(s) => {
+            let path = graph.nodes[s].name.as_str();
+            let short = names::short_names(&[path]).remove(0);
+            (
+                format!("{path} / {}", labels.direct),
+                format!("{short} / {}", labels.direct),
+            )
+        }
+    };
+    PNode {
+        group: Group::Direct,
+        name,
+        label,
+        files: 0,
+        cycle: false,
+    }
 }
 
 /// The shown group of every node in the scope; `None` outside it.
@@ -339,6 +369,7 @@ fn bundle(
         nodes.push(PNode {
             group: Group::Outside,
             name: outside_label.to_string(),
+            label: outside_label.to_string(),
             files: outside.len(),
             cycle: false,
         });
@@ -531,6 +562,10 @@ mod tests {
             ]
         );
         // x→p, p→x between packages; z↔y, x→y inside a; top→x from direct.
+        assert_eq!(
+            p.nodes.iter().map(|n| n.label.as_str()).collect::<Vec<_>>(),
+            vec!["a", "Files without a package", "b"]
+        );
         assert_eq!(p.total, 6);
         assert_eq!(p.internal, 3);
         let e: Vec<(usize, usize, usize, bool)> = p
@@ -549,6 +584,10 @@ mod tests {
         let edges = dependency_edges(&m, &g);
         // Scope crates/a/src: package sub, direct files x, y; outside: p, top.
         let p = project(&m, &g, Some(2), &edges, &labels());
+        assert_eq!(
+            p.nodes.iter().map(|n| n.label.as_str()).collect::<Vec<_>>(),
+            vec!["a / direct files", "sub", "Other project packages"]
+        );
         assert_eq!(
             names(&p),
             vec![
