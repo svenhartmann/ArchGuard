@@ -3,7 +3,7 @@
 // src/services_ui.rs.
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icons, Button, Disclosure, ZoomControls } from "widgets.slint";
+import { Icons, Button, Disclosure, ZoomControls, HelpTip } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
@@ -253,7 +253,6 @@ export component ServicesView inherits Rectangle {
     property <bool> patterns-open;
     property <bool> contracts-open;
     property <bool> diagnostics-open;
-    property <bool> legend-open;
     background: Theme.bg;
     // Tabs must not change the window's preferred size; a split pane can
     // be narrow.
@@ -335,10 +334,12 @@ export component ServicesView inherits Rectangle {
                             clicked => { ServicesData.select-cycle(i); }
                         }
                     }
-                    Details {
-                        text: @tr("Legend");
-                        open <=> root.legend-open;
-                        if root.legend-open: Note { text: root.reference(); }
+                    // The web's services-reference-help.
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 6px;
+                        Note { text: @tr("Legend"); vertical-alignment: center; }
+                        HelpTip { tip: root.reference(); }
                     }
                 }
             }
