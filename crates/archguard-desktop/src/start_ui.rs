@@ -8,13 +8,16 @@
 
 mod actions;
 mod arrows;
+mod camera_wire;
 mod connections;
 mod details;
 mod evidence;
 mod follow_place;
 mod hover;
+mod keys;
 mod layout;
 mod modes;
+mod motion;
 mod overlay;
 mod pins;
 mod scene;
@@ -36,7 +39,6 @@ use crate::tab_support::{self, Actions, Calls, Shared, TabState, Topology, index
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
 use follow_place::navigation;
-use scene::Camera;
 use services::ServicesWorld;
 pub use state::{Lens, StartState};
 use state::{Mode, from_evidence};
@@ -125,28 +127,27 @@ pub fn wire(ui: &AppWindow) {
         a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
     );
     // A drag moves the camera at most once per frame, by the summed steps.
+    // A drag or the wheel stops a glide and moves at once.
     let pan = a.on(|s, _, (dx, dy): (f32, f32)| {
+        camera_wire::stop();
         s.cam.x += f64::from(dx);
         s.cam.y += f64::from(dy);
     });
     let pan = Coalesce::throttle(FRAME, |a, b| (a.0 + b.0, a.1 + b.1), pan);
     d.on_pan(move |dx, dy| pan.call((dx, dy)));
     let wheel = a.on(|s, _, (x, y, delta): (f32, f32, f32)| {
+        camera_wire::stop();
         let delta = f64::from(delta).clamp(-180.0, 180.0);
         s.wheel(f64::from(x), f64::from(y), (delta * 0.005).exp())
     });
     let wheel = navigation(ui, wheel);
     d.on_wheel(move |x, y, delta| wheel((x, y, delta)));
-    d.on_zoom_by(a.on(|s, _, f: f32| s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))));
-    let rotate = a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r)));
+    let rotate = a.on(|s, _, r: f32| {
+        camera_wire::stop();
+        s.cam = scene::rotate(s.cam, f64::from(r));
+    });
     d.on_rotate_by(Coalesce::throttle(FRAME, |a, b| a + b, rotate).callback());
-    d.on_orient(a.on0(|s, _| s.cam.rotation = 0.0));
-    d.on_fit(a.on0(|s, _| {
-        s.cam = Camera {
-            rotation: s.cam.rotation,
-            ..Camera::default()
-        }
-    }));
+    camera_wire::wire(ui, &d);
     let reset = navigation(
         ui,
         a.on(|s, _, ()| match s.mode {

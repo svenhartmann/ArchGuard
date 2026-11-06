@@ -11,7 +11,7 @@
 //! (`ARCHGUARD_DESKTOP_MCELL=<name>:<col>`), switch tab
 //! (`ARCHGUARD_DESKTOP_TAB`, in the focused pane) or open the Projects
 //! menu (`ARCHGUARD_DESKTOP_MENU=projects`). Pane hooks: see
-//! [`apply_pane_hooks`].
+//! [`apply_pane_hooks`]; keys on the Start World: [`start_keys`].
 //!
 //! App shell: mark tabs dirty (`ARCHGUARD_DESKTOP_DIRTY=0,1`, before the
 //! closes, so closing one shows the save prompt), press the window's close
@@ -275,7 +275,27 @@ fn apply_view_hooks(ui: &AppWindow) {
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);
     }
+    start_keys(ui);
     crate::settings_view_ui::snapshot_hook(ui);
+}
+
+/// `ARCHGUARD_DESKTOP_START_KEYS=e,+,left,enter,esc`: keys on the Start
+/// tab's World, in order (letters and signs as typed).
+fn start_keys(ui: &AppWindow) {
+    let keys = std::env::var("ARCHGUARD_DESKTOP_START_KEYS").unwrap_or_default();
+    let d = ui.global::<crate::ui::StartData>();
+    for k in keys.split(',').filter(|k| !k.is_empty()) {
+        let text = match k {
+            "left" => "\u{F702}",
+            "right" => "\u{F703}",
+            "up" => "\u{F700}",
+            "down" => "\u{F701}",
+            "enter" => "\n",
+            "esc" => "\u{1b}",
+            other => other,
+        };
+        d.invoke_key(text.into());
+    }
 }
 
 fn mark_dirty(tabs: &str) {

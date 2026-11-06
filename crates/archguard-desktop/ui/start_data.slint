@@ -212,7 +212,13 @@ export global StartData {
     callback pan(float, float);
     callback wheel(float, float, float);
     callback zoom-by(float);
+    // A drag turns at once; the buttons and keys glide (turn).
     callback rotate-by(float);
+    callback turn(float);
+    // A key on the stage (its text); whether it was used.
+    callback key(string) -> bool;
+    // A pinch or twist step: scale factor, radians, centre in the canvas.
+    callback pinch(float, float, float, float);
     callback orient();
     callback fit();
     callback reset();
