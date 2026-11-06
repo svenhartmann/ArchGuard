@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "review_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "decision_revision": null,
+  "decisions": [
+    {
+      "finding_id": "1111111111111111111111111111111111111111111111111111111111111111",
+      "finding_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "accepted_risk",
+      "owner": "@team/orders",
+      "reason": "Temporary migration boundary",
+      "expires_on": "2099-12-31",
+      "links": ["docs/adr/001.md"]
+    },
+    {
+      "finding_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "finding_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "planned",
+      "owner": "@core",
+      "reason": "Split the module",
+      "expires_on": null
+    },
+    {
+      "finding_id": "3333333333333333333333333333333333333333333333333333333333333333",
+      "finding_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "status": "open",
+      "owner": "@core",
+      "reason": "Needs discussion",
+      "expires_on": null,
+      "links": []
+    }
+  ]
+}

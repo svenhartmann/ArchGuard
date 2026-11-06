@@ -18,6 +18,13 @@ pub(crate) fn error(message: impl std::fmt::Display) -> ArchguardError {
 pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+/// Content hash of a project file, or why it is unavailable.
+pub(crate) fn file_fingerprint(root: &Path, name: &str, max_bytes: u64) -> String {
+    match crate::project_files::read_repo_file(root, Path::new(name), max_bytes) {
+        Ok(bytes) => hash(&bytes),
+        Err(e) => format!("unavailable:{:?}", e.kind()),
+    }
+}
 pub(crate) fn valid_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }

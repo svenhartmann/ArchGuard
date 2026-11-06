@@ -11,7 +11,7 @@
 //! `[review] adr_required_on_accept_risk` gate (R30/R31) as -32602.
 
 use archguard_engine::core::{DecisionKind, ReviewDecision, ReviewRegister};
-use archguard_engine::{REGISTER_REL_PATH, load_register, upsert_decision};
+use archguard_engine::{REGISTER_REL_PATH, iso_from_unix, load_register, upsert_decision};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ErrorData, schemars, tool, tool_router};
 use serde::Deserialize;
@@ -86,29 +86,6 @@ pub fn validate(params: &ReviewDecisionParams) -> Result<(), ErrorData> {
         }
     }
     Ok(())
-}
-
-/// Unix seconds to `YYYY-MM-DDTHH:MM:SSZ` (proleptic Gregorian, UTC) —
-/// the civil-from-days conversion of the CLI (R29), no date crate needed.
-fn iso_from_unix(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        rem / 3_600,
-        (rem / 60) % 60,
-        rem % 60
-    )
 }
 
 fn register_error(err: archguard_engine::core::ArchguardError) -> ErrorData {
@@ -240,6 +217,7 @@ pub fn record_value(root: &Path, params: &ReviewDecisionParams) -> Result<Value,
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "mcp".to_string()),
         ts: iso_from_unix(now),
+        ..Default::default()
     };
     let id = decision.id.clone();
     let register = upsert_decision(root, decision).map_err(register_error)?;
@@ -297,6 +275,7 @@ mod tests {
             note: String::new(),
             author: "sven".to_string(),
             ts: "2026-10-30T09:00:00Z".to_string(),
+            ..Default::default()
         }
     }
 
@@ -628,13 +607,5 @@ mod tests {
         ] {
             assert!(validate(&bad).is_err(), "must reject: {bad:?}");
         }
-    }
-
-    #[test]
-    fn iso_civil_from_unix_is_exact() {
-        assert_eq!(iso_from_unix(0), "1970-01-01T00:00:00Z");
-        assert_eq!(iso_from_unix(951_868_800), "2000-03-01T00:00:00Z");
-        assert_eq!(iso_from_unix(1_767_225_600), "2026-01-01T00:00:00Z");
-        assert_eq!(iso_from_unix(42_611), "1970-01-01T11:50:11Z");
     }
 }

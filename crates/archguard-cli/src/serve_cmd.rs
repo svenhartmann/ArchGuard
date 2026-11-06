@@ -16,9 +16,6 @@ use std::time::{Duration, Instant};
 use archguard_engine::{Level, analyze_run_quiet, load_config};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
-/// R41: bound for `POST /api/decisions` bodies; a decision record is far
-/// smaller, so exceeding the bound is abuse or a client bug, never intent.
-const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_CACHED_PROJECTS: usize = 8;
 const MAX_PAGE_AGE: Duration = Duration::from_secs(60);
 const MAX_INPUT_BYTES: u64 = 3 * 1024 * 1024;
@@ -788,20 +785,6 @@ fn handle(
     let (path, query) = request[1]
         .split_once('?')
         .map_or((request[1], None), |(path, query)| (path, Some(query)));
-    // R41: the dashboard endpoints. POST reaches only the decisions route;
-    // everything else keeps the old GET-only contract.
-    if request[0] == "POST" {
-        if path == "/api/decisions" && query.is_none() {
-            let body_prefix = bytes.get(header_end + 4..).unwrap_or_default();
-            return handle_decision_post(stream, headers, hosts[0], body_prefix, root, config);
-        }
-        return respond(
-            stream,
-            405,
-            "text/plain",
-            "Only GET and POST /api/decisions are supported",
-        );
-    }
     if request[0] != "GET" {
         return respond(stream, 405, "text/plain", "Only GET is supported");
     }
@@ -810,9 +793,6 @@ fn handle(
         "/__archguard/compare" | "/__archguard/refs" | "/__archguard/diff"
     ) {
         return handle_comparison(stream, path, query, root, config);
-    }
-    if path == "/api/review-dashboard" && query.is_none() {
-        return handle_review_dashboard(stream, root, config);
     }
     let payload_section = path.strip_prefix("/__archguard/payload/");
     if payload_section.is_none()
@@ -886,231 +866,6 @@ fn handle(
                 "status":if page.revision.is_empty() {"loading"} else if page.scheduled.is_some() {"refreshing"} else {"ready"}})
         };
         respond(stream, 200, "application/json", &body.to_string())
-    }
-}
-
-/// R41: `GET /api/review-dashboard` — the live dashboard payload the
-/// viewer's `loadDashboardPayload` fetches: the KPI block of a fresh
-/// module-level run plus the persisted decision register. A corrupt
-/// register is a 500, never a silently empty register.
-fn handle_review_dashboard(
-    stream: &mut TcpStream,
-    root: &Path,
-    config: Option<&Path>,
-) -> io::Result<()> {
-    let loaded = match load_config(config, root) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            eprintln!("serve: review dashboard config failed: {error}");
-            return respond(
-                stream,
-                500,
-                "application/json",
-                &json_error(format!("config: {error}")),
-            );
-        }
-    };
-    let run = match analyze_run_quiet(root, &loaded, Level::Module) {
-        Ok(run) => run,
-        Err(error) => {
-            eprintln!("serve: review dashboard analysis failed: {error}");
-            return respond(
-                stream,
-                500,
-                "application/json",
-                &json_error(format!("analysis: {error}")),
-            );
-        }
-    };
-    let review_kpis = run
-        .report
-        .review_kpis
-        .clone()
-        .or_else(|| run.graph.review_kpis.clone());
-    let register = match archguard_engine::load_register(root) {
-        Ok(register) => Some(register),
-        Err(error) => {
-            eprintln!("serve: review dashboard register failed: {error}");
-            return respond(
-                stream,
-                500,
-                "application/json",
-                &json_error(format!("register: {error}")),
-            );
-        }
-    };
-    let body = serde_json::json!({"review_kpis": review_kpis, "register": register});
-    respond(stream, 200, "application/json", &body.to_string())
-}
-
-fn json_error(message: String) -> String {
-    serde_json::json!({ "error": message }).to_string()
-}
-
-/// The Host check stops DNS rebinding, not a page on another origin posting to
-/// loopback. A foreign `Origin` is refused; requiring JSON forces browsers into
-/// a preflight this server never answers, also for clients that omit `Origin`.
-fn cross_site_rejection(headers: &str, host: &str) -> Option<(u16, &'static str)> {
-    let values = |wanted: &'static str| {
-        headers
-            .lines()
-            .skip(1)
-            .filter_map(|line| line.split_once(':'))
-            .filter(move |(name, _)| name.eq_ignore_ascii_case(wanted))
-            .map(|(_, value)| value.trim())
-    };
-    let same_origin = format!("http://{host}");
-    if values("origin").any(|origin| !origin.eq_ignore_ascii_case(&same_origin)) {
-        return Some((403, "Cross-origin requests are not accepted"));
-    }
-    let mut types = values("content-type");
-    let json = types.next().is_some_and(|value| {
-        value
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .eq_ignore_ascii_case("application/json")
-    });
-    if !json || types.next().is_some() {
-        return Some((415, "Decision body must be application/json"));
-    }
-    None
-}
-
-/// R41: `POST /api/decisions` — upsert one decision through the engine
-/// (atomic tmp+rename, R19). Any failure goes to stderr as a 500 and the
-/// register on disk stays byte-identical: a corrupt register is never
-/// overwritten, a rejected body never reaches the writer.
-fn handle_decision_post(
-    stream: &mut TcpStream,
-    headers: &str,
-    host: &str,
-    body_prefix: &[u8],
-    root: &Path,
-    config: Option<&Path>,
-) -> io::Result<()> {
-    if let Some((status, message)) = cross_site_rejection(headers, host) {
-        return respond(stream, status, "text/plain", message);
-    }
-    let content_length = headers
-        .lines()
-        .filter_map(|line| line.split_once(':'))
-        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .map(|(_, value)| value.trim().parse::<usize>())
-        .collect::<Result<Vec<_>, _>>();
-    let content_length = match content_length {
-        Ok(lengths) if lengths.len() == 1 => lengths[0],
-        _ => {
-            return respond(
-                stream,
-                400,
-                "text/plain",
-                "Invalid or duplicate Content-Length",
-            );
-        }
-    };
-    if content_length > MAX_BODY_BYTES {
-        return respond(stream, 413, "text/plain", "Decision body too large");
-    }
-    let mut body = body_prefix.to_vec();
-    let mut buffer = [0; 4096];
-    while body.len() < content_length {
-        let count = match stream.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(count) => count,
-        };
-        body.extend_from_slice(&buffer[..count]);
-    }
-    if body.len() != content_length {
-        return respond(
-            stream,
-            400,
-            "text/plain",
-            "Request body shorter than Content-Length",
-        );
-    }
-    let Ok(text) = std::str::from_utf8(&body) else {
-        return respond(
-            stream,
-            400,
-            "text/plain",
-            "Decision body is not valid UTF-8",
-        );
-    };
-    let decision = match serde_json::from_str::<archguard_engine::core::ReviewDecision>(text) {
-        Ok(decision) => decision,
-        Err(error) => {
-            return respond(
-                stream,
-                400,
-                "text/plain",
-                &format!("Invalid decision record: {error}"),
-            );
-        }
-    };
-    if decision.id.trim().is_empty()
-        || decision.finding_ref.trim().is_empty()
-        || decision.note.trim().is_empty()
-        || decision.author.trim().is_empty()
-    {
-        return respond(
-            stream,
-            400,
-            "text/plain",
-            "Decision needs a non-empty id, finding_ref, note and author",
-        );
-    }
-    let decision = if decision.ts.trim().is_empty() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        archguard_engine::core::ReviewDecision {
-            ts: crate::review_session_cmd::iso_from_unix(now),
-            ..decision
-        }
-    } else {
-        decision
-    };
-    // A second write path must not bypass the ADR gate the CLI (R31) and
-    // MCP (R34) enforce: accept-risk without an ADR is a 400 while the
-    // config requires one.
-    if matches!(
-        decision.decision,
-        archguard_engine::core::DecisionKind::AcceptRisk
-    ) && decision.adr_link.as_deref().is_none_or(str::is_empty)
-    {
-        match load_config(config, root) {
-            Ok(loaded) if loaded.config.review.adr_required_on_accept_risk => {
-                return respond(
-                    stream,
-                    400,
-                    "text/plain",
-                    "accept_risk requires an adr_link ([review] adr_required_on_accept_risk is set)",
-                );
-            }
-            Ok(_) => {}
-            Err(error) => {
-                eprintln!("serve: decision gate config failed: {error}");
-                return respond(stream, 500, "text/plain", &format!("Config error: {error}"));
-            }
-        }
-    }
-    match archguard_engine::upsert_decision(root, decision) {
-        Ok(register) => {
-            let body = serde_json::json!({"status": "ok", "register": register});
-            respond(stream, 200, "application/json", &body.to_string())
-        }
-        Err(error) => {
-            eprintln!("serve: decision not saved: {error}");
-            respond(
-                stream,
-                500,
-                "application/json",
-                &json_error(format!("decision not saved: {error}")),
-            )
-        }
     }
 }
 

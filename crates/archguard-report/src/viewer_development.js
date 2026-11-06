@@ -54,14 +54,14 @@ function bindExplanation(helpId,sourceId){
   explainAction(help,()=>source.children.length?Array.from(source.children).map(node=>node.textContent).join('\n\n'):source.textContent);help.addEventListener('click',()=>{showMetricTooltip(help);metricTooltipPinned=true;});
 }
 function initDevelopment(){
-  for(const tab of document.querySelectorAll('#tabs button'))if(['assessment','review-dashboard'].includes(tab.dataset.tab)){tab.hidden=true;tab.setAttribute('tabindex','-1');}
+  for(const tab of document.querySelectorAll('#tabs button'))if(tab.dataset.tab==='assessment'){tab.hidden=true;tab.setAttribute('tabindex','-1');}
   for(const [help,source]of [['workspace-info','workspace-description'],['engineering-help','engineering-note'],['services-reference-help','services-reference'],['calls-counting-help','calls-counting-note'],['calls-cycle-help','calls-cycles-coverage']])bindExplanation(help,source);
   const mcp=document.getElementById('workspace-mcp');
   explainAction(mcp,()=>t('Copy the MCP entry for this project and view. The guide links source evidence, change planning and verification tools.','MCP-Einstieg für dieses Projekt und diese Ansicht kopieren. Der Wegweiser verbindet Quellbelege, Änderungsplanung und Prüfwerkzeuge.'));
   mcp.addEventListener('click',()=>{closeWorkspaceMenu('export-menu');copyText(JSON.stringify({name:'development_guide',arguments:{path:data.root,...(ui.workspace==='start'?{}:{view:ui.workspace})}},null,2));});
 }
 
-// Project-wide measurements share the dashboard renderer and its evidence links.
+// Project-wide measurements share the KPI renderer and its evidence links.
 function scrollStartWorld(){
   const panel=document.getElementById('tab-start'),world=document.getElementById('start-world');
   const offset=world.getBoundingClientRect().top-panel.getBoundingClientRect().top;

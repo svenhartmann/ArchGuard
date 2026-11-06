@@ -1,5 +1,5 @@
 'use strict';
-// Review Dashboard A/I zone scatter (R38). Hand-rolled SVG: axes A
+// Start A/I zone scatter (R38). Hand-rolled SVG: axes A
 // (abstractness) and I (instability) from 0..1, the main-sequence diagonal
 // A+I=1, shaded zone-of-pain / zone-of-uselessness regions and one point
 // per AbstractionMetric with scope 'node' and a measured abstractness.

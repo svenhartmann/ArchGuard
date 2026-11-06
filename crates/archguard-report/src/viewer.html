@@ -282,17 +282,7 @@
   #tab-graph, #tab-dsm, #tab-calls, #tab-services, #tab-architecture, #tab-security { position: absolute; inset: 0; padding: 0; }
   #tab-security { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
   #tab-security h2 { margin: 0 0 8px; }
-  /* Review Dashboard (R36): panel containers are filled by viewer_dash_*.js (R37–R42). */
-  #tab-review-dashboard { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
-  #tab-review-dashboard h2 { margin: 0 0 8px; }
-  #dashboard-status { font-weight: 650; }
-  #dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
-  .dash-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
-  .dash-panel h3 { margin: 0; font-size: 14px; }
-  .dash-panel.dash-wide { grid-column: 1 / -1; }
-  .dash-panel .empty { color: var(--muted); }
-  /* R37 KPI cards (viewer_dash_kpis.js). */
-  #dashboard-kpis .dash-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  /* R37 KPI cards (viewer_dash_kpis.js), shown on Start. */
   .dash-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
   .dash-card strong { font-size: 22px; font-variant-numeric: tabular-nums; }
   .dash-card > span { color: var(--muted); font-size: 12px; }
@@ -304,12 +294,9 @@
   .dash-card[data-node]:hover { border-color: var(--accent); }
   .dash-card[data-node]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* R38 A/I zone scatter (viewer_dash_zones.js). */
-  #dashboard-zones svg { width: 100%; height: auto; max-width: 360px; }
-  #dashboard-zones .dash-zone-counts { font-variant-numeric: tabular-nums; }
   .dash-zone-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
   .dash-zone-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
-  .dash-zone-point, #dashboard-zones circle[tabindex] { cursor: pointer; }
-  #dashboard-zones circle[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dash-zone-point { cursor: pointer; }
   #security-status { font-weight: 650; }
   #security-status[data-status=error], #security-status[data-status=stale] { color: var(--c-priority); }
   #security-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 16px 0 8px; }
@@ -914,7 +901,6 @@
   <div id="tabs" role="tablist" aria-label="Workspace" data-i18n-aria-label-de="Arbeitsbereich">
     <button type="button" data-tab="start" role="tab" aria-selected="false" data-i18n-de="Start">Start</button>
     <button type="button" data-tab="architecture" role="tab" aria-selected="false" data-i18n-de="Architektur">Architecture</button>
-    <button type="button" data-tab="review-dashboard" role="tab" aria-selected="false" data-i18n-de="Dashboard">Dashboard</button>
     <span class="tab-divider" aria-hidden="true"></span>
     <button type="button" data-tab="graph" role="tab" aria-selected="true" class="active" data-i18n-de="Graph">Graph</button>
     <button type="button" data-tab="dsm" role="tab" aria-selected="false" data-i18n-de="Matrix">Matrix</button>
@@ -1060,7 +1046,7 @@
       <section id="tab-start" class="panel-hidden" aria-label="Project entry" data-i18n-aria-label-de="Projekteinstieg">
         <section id="start-world" hidden>
           <div class="world-heading"><h2 data-i18n-de="Deine Architektur">Your architecture</h2><button id="world-help" class="btn btn-secondary" aria-label="Landscape help" data-i18n-aria-label-de="Hilfe zur Landschaft">?</button></div>
-          <div class="world-bar" role="group" aria-label="Perspective" data-i18n-aria-label-de="Perspektive"><button id="world-lens-problems" class="btn" data-i18n-de="Probleme">Problems</button><button id="world-lens-complexity" class="btn" data-i18n-de="Erkunden">Explore</button><button id="world-lens-coverage" class="btn" data-i18n-de="Testlücken">Test gaps</button><button id="world-lens-change" class="btn" data-i18n-de="Änderung">Change</button><select id="world-kpi" aria-label="Surface metric" data-i18n-aria-label-de="Flächenkennzahl"><option value="complexity" title="Maximum cyclomatic complexity per method" data-i18n-de="Komplexität" data-i18n-title-de="Maximale zyklomatische Komplexität je Methode">Complexity</option><option value="cbo" title="Coupling Between Objects – number of other classes a class uses" data-i18n-title-de="Coupling Between Objects – Anzahl anderer Klassen, die eine Klasse verwendet">CBO</option><option value="rfc" title="Response For a Class – methods callable from an instance" data-i18n-title-de="Response For a Class – von einer Instanz aufrufbare Methoden">RFC</option><option value="dit" title="Depth of Inheritance Tree – inheritance levels" data-i18n-title-de="Depth of Inheritance Tree – Vererbungstiefe">DIT</option><option value="noc" title="Number of Children – direct subclasses (informational)" data-i18n-title-de="Number of Children – direkte Unterklassen (Information)">NOC</option><option value="wmc" title="Weighted Methods per Class – sum of method complexity" data-i18n-title-de="Weighted Methods per Class – Summe der Methodenkomplexität">WMC</option><option value="lcom4" title="LCOM4 – connected method groups (1 = cohesive)" data-i18n-title-de="LCOM4 – zusammenhängende Methodengruppen (1 = kohäsent)">LCOM4</option></select><button id="world-kpi-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button><div id="world-legend" class="world-legend" role="group" aria-label="Color legend" data-i18n-aria-label-de="Farblegende"></div></div>
+          <div class="world-bar" role="group" aria-label="Perspective" data-i18n-aria-label-de="Perspektive"><button id="world-lens-problems" class="btn" data-i18n-de="Probleme">Problems</button><button id="world-lens-complexity" class="btn" data-i18n-de="Erkunden">Explore</button><button id="world-lens-coverage" class="btn" data-i18n-de="Testlücken">Test gaps</button><select id="world-kpi" aria-label="Surface metric" data-i18n-aria-label-de="Flächenkennzahl"><option value="complexity" title="Maximum cyclomatic complexity per method" data-i18n-de="Komplexität" data-i18n-title-de="Maximale zyklomatische Komplexität je Methode">Complexity</option><option value="cbo" title="Coupling Between Objects – number of other classes a class uses" data-i18n-title-de="Coupling Between Objects – Anzahl anderer Klassen, die eine Klasse verwendet">CBO</option><option value="rfc" title="Response For a Class – methods callable from an instance" data-i18n-title-de="Response For a Class – von einer Instanz aufrufbare Methoden">RFC</option><option value="dit" title="Depth of Inheritance Tree – inheritance levels" data-i18n-title-de="Depth of Inheritance Tree – Vererbungstiefe">DIT</option><option value="noc" title="Number of Children – direct subclasses (informational)" data-i18n-title-de="Number of Children – direkte Unterklassen (Information)">NOC</option><option value="wmc" title="Weighted Methods per Class – sum of method complexity" data-i18n-title-de="Weighted Methods per Class – Summe der Methodenkomplexität">WMC</option><option value="lcom4" title="LCOM4 – connected method groups (1 = cohesive)" data-i18n-title-de="LCOM4 – zusammenhängende Methodengruppen (1 = kohäsent)">LCOM4</option></select><button id="world-kpi-help" type="button" class="context-help-trigger" aria-label="Help" data-i18n-aria-label-de="Hilfe">?</button><div id="world-legend" class="world-legend" role="group" aria-label="Color legend" data-i18n-aria-label-de="Farblegende"></div></div>
           <div class="world-bar"><button id="world-back" class="btn" data-i18n-de="Zurück">Back</button><nav id="world-scope" class="world-path" tabindex="-1" aria-label="Package path" data-i18n-aria-label-de="Paketpfad"></nav><span id="world-status" class="muted" role="status"></span></div>
           <div class="world-stage"><canvas id="world-canvas" tabindex="0" role="img" aria-label="Architecture landscape. Wheel to zoom, drag to pan, Shift-drag or Q/E to rotate. Use the area selector for accessible navigation." data-i18n-aria-label-de="Architekturlandschaft. Mausrad zum Zoomen, Ziehen zum Verschieben, Umschalt + Ziehen oder Q/E zum Drehen. Bereichsauswahl für barrierefreie Navigation."></canvas><div id="world-labels"></div><div id="world-tip" hidden></div>
             <div class="world-orbit" role="group" aria-label="Orientation" data-i18n-aria-label-de="Ausrichtung"><button id="world-rotate-left" class="btn" aria-label="Rotate left" data-i18n-aria-label-de="Links drehen">↶</button><button id="world-orientation" class="btn" aria-label="Restore original orientation" data-i18n-aria-label-de="Ausgangsrichtung wiederherstellen"><svg id="world-bearing" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L19 21L12 17L5 21Z" fill="currentColor"/></svg><output id="world-angle">0°</output></button><button id="world-rotate-right" class="btn" aria-label="Rotate right" data-i18n-aria-label-de="Rechts drehen">↷</button></div>
@@ -1192,18 +1178,6 @@
         <p id="security-count" class="muted" role="status" aria-live="polite"></p>
         <div id="security-findings"></div>
         <button id="security-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Befunde laden">Load more findings</button>
-      </section>
-      <section id="tab-review-dashboard" class="panel-hidden" aria-label="Review dashboard" data-i18n-aria-label-de="Review-Dashboard">
-        <h2 class="visually-hidden" data-i18n-de="Review-Dashboard">Review dashboard</h2>
-        <p id="dashboard-status" role="status" aria-live="polite"></p>
-        <button id="dashboard-refresh" type="button" class="btn btn-secondary" data-i18n-de="Payload neu laden">Reload payload</button>
-        <div id="dashboard-grid">
-          <div id="dashboard-kpis" class="dash-panel dash-wide"><h3 data-i18n-de="Kennzahlen">KPIs</h3></div>
-          <div id="dashboard-health" class="dash-panel"><h3 data-i18n-de="Gesundheit">Health</h3></div>
-          <div id="dashboard-zones" class="dash-panel"><h3 data-i18n-de="A-I-Zonen">A/I zones</h3></div>
-          <div id="dashboard-decisions" class="dash-panel dash-wide"><h3 data-i18n-de="Entscheidungen">Decisions</h3></div>
-          <div id="dashboard-pr" class="dash-panel dash-wide"><h3 data-i18n-de="PR-Kommentar">PR comment</h3></div>
-        </div>
       </section>
       <div id="tab-dsm" class="panel-hidden">
         <div class="matrix-controls"><span data-i18n-de="Zeilen → Spalten · Zahlen = Abhängigkeitsbelege · ↻ = Zyklus">Rows → columns · numbers = dependency evidence · ↻ = cycle</span>

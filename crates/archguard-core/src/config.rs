@@ -19,8 +19,8 @@ use crate::settings::{LayerConfig, ModulesConfig, ProjectConfig, RulesConfig, St
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Top-level switch of the layer derivation (Kap. 11); `false` (or
-    /// `--no-derive`) keeps only what is written in `archguard.toml`.
+    /// Top-level switch of the layer derivation (Kap. 11); `false` keeps
+    /// only the layers written in `archguard.toml`.
     pub derive_layers: bool,
     pub project: ProjectConfig,
     pub modules: ModulesConfig,

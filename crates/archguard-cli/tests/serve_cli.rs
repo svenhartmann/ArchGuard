@@ -1293,207 +1293,27 @@ fn package_comparison_endpoint_lists_branches_and_compares_committed_sources() {
     );
 }
 
-// ---- R41: review dashboard endpoints -------------------------------------
+// ---- Removed review dashboard endpoints ----------------------------------
 
-fn decision_json(id: &str, kind: &str, adr: Option<&str>) -> String {
-    serde_json::json!({
-        "id": id,
-        "finding_ref": "cycle-ab",
-        "decision": kind,
-        "adr_link": adr,
-        "note": "served from the dashboard",
-        "author": "e2e",
-        "ts": ""
+#[test]
+fn serve_has_no_review_dashboard_or_decision_endpoints() {
+    // The viewer's Review Dashboard tab is gone; decisions are recorded
+    // through `archguard review-decision` and the MCP tools only.
+    let server = Server::start();
+    let (status, _) = server.request("GET", "/api/review-dashboard", None);
+    assert_eq!(status, 404);
+    let decision = serde_json::json!({
+        "id": "d1", "finding_ref": "cycle-ab", "decision": "defer",
+        "note": "served", "author": "e2e", "ts": ""
     })
-    .to_string()
-}
-
-#[test]
-fn serve_review_dashboard_serves_kpis_and_register_json() {
-    let server = Server::start();
-    let (status, body) = server.request("GET", "/api/review-dashboard", None);
-    assert_eq!(status, 200, "{body}");
-    let value: Value = serde_json::from_str(&body).expect("valid JSON");
-    // Both keys are always present; a not-measured KPI block stays null.
-    assert!(value.get("review_kpis").is_some(), "{value}");
-    assert!(value["register"]["decisions"].is_array(), "{value}");
-    assert!(
-        value["register"]["decisions"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    // The host guard covers the new routes as well.
-    let (status, _) = server.request("GET", "/api/review-dashboard", Some("evil.example"));
-    assert_eq!(status, 403);
-}
-
-#[test]
-fn serve_post_decisions_upserts_and_rejects_bad_bodies_without_overwrite() {
-    let server = Server::start();
-    let register = server.root.path().join(".archguard/reviews.json");
-    let (status, body) = server.post_json("/api/decisions", &decision_json("d1", "defer", None));
-    assert_eq!(status, 200, "{body}");
-    let value: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(value["status"], "ok");
-    assert_eq!(value["register"]["decisions"].as_array().unwrap().len(), 1);
-    let first = fs::read_to_string(&register).unwrap();
-    assert!(first.contains("\"d1\""), "{first}");
-    // The empty ts from the client is filled server-side, never left blank.
-    assert!(
-        !value["register"]["decisions"][0]["ts"]
-            .as_str()
-            .unwrap()
-            .is_empty()
-    );
-    // Same id: upsert replaces, the register never grows duplicates.
-    let (status, _) = server.post_json("/api/decisions", &decision_json("d1", "fix", None));
-    assert_eq!(status, 200);
-    let second = fs::read_to_string(&register).unwrap();
-    assert!(
-        second.contains("\"fix\"") && !second.contains("\"defer\""),
-        "{second}"
-    );
-    assert_eq!(second.matches("\"id\"").count(), 1, "upsert, not append");
-    // Bad bodies are 400s and the file on disk stays byte-identical.
-    for bad in ["not json", "{}", &decision_json("", "defer", None)] {
-        let (status, _) = server.post_json("/api/decisions", bad);
-        assert_eq!(status, 400, "must reject body: {bad}");
-        assert_eq!(fs::read_to_string(&register).unwrap(), second);
-    }
-    // Unknown methods keep the old contract.
-    let (status, _) = server.request("POST", "/__archguard/version", None);
+    .to_string();
+    let (status, _) = server.post_json("/api/decisions", &decision);
     assert_eq!(status, 405);
-}
-
-#[test]
-fn serve_post_decisions_honours_adr_gate_and_never_overwrites_a_corrupt_register() {
-    let root = tempdir().unwrap();
-    fs::create_dir(root.path().join("one")).unwrap();
-    fs::write(root.path().join("one/A.ts"), "export const a = 1;\n").unwrap();
-    fs::write(
-        root.path().join("archguard.toml"),
-        "[project]\nsource_roots = []\nlanguages = ['ts']\n[review]\nadr_required_on_accept_risk = true\n",
-    )
-    .unwrap();
-    let (child, address) = Server::spawn(root.path());
-    let server = Server {
-        child,
-        address,
-        root,
-    };
-    // accept-risk without an ADR is refused while the gate is on…
-    let (status, body) =
-        server.post_json("/api/decisions", &decision_json("d1", "accept-risk", None));
-    assert_eq!(status, 400, "{body}");
-    assert!(body.contains("adr"), "{body}");
-    // …and recorded with one.
-    let (status, _) = server.post_json(
-        "/api/decisions",
-        &decision_json("d1", "accept-risk", Some("docs/adr/1.md")),
-    );
-    assert_eq!(status, 200);
-    let register = server.root.path().join(".archguard/reviews.json");
+    assert!(!server.root.path().join(".archguard/reviews.json").exists());
     assert!(
-        fs::read_to_string(&register)
-            .unwrap()
-            .contains("docs/adr/1.md")
+        !server
+            .request("GET", "/", None)
+            .1
+            .contains("/api/review-dashboard")
     );
-    // A corrupt register is an honest 500 — and the bytes stay untouched,
-    // because the engine refuses to overwrite a file it cannot parse.
-    let corrupt = "{ this is not the register";
-    fs::write(&register, corrupt).unwrap();
-    let (status, _) = server.post_json("/api/decisions", &decision_json("d2", "defer", None));
-    assert_eq!(status, 500);
-    assert_eq!(fs::read_to_string(&register).unwrap(), corrupt);
-}
-
-fn post_decision_with_headers(server: &Server, headers: &str, body: &str) -> (u16, String) {
-    let mut socket = TcpStream::connect(&server.address).unwrap();
-    socket
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let request = format!(
-        "POST /api/decisions HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n{headers}Content-Length: {}\r\n\r\n{body}",
-        server.address,
-        body.len()
-    );
-    socket.write_all(request.as_bytes()).unwrap();
-    let mut response = String::new();
-    socket.read_to_string(&mut response).unwrap();
-    let (headers, body) = response.split_once("\r\n\r\n").expect("HTTP response");
-    let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
-    (status, body.to_owned())
-}
-
-#[test]
-fn serve_post_decisions_rejects_cross_site_requests_without_writing() {
-    let server = Server::start();
-    let register = server.root.path().join(".archguard/reviews.json");
-    let body = decision_json("csrf", "accept-risk", Some("docs/adr.md"));
-    let json = "Content-Type: application/json\r\n";
-    for (headers, expected) in [
-        (format!("Origin: https://evil.example\r\n{json}"), 403),
-        (format!("Origin: null\r\n{json}"), 403),
-        (
-            format!(
-                "Origin: http://localhost:{}\r\n{json}",
-                server.address.rsplit(':').next().unwrap()
-            ),
-            403,
-        ),
-        // CORS "simple" types reach the server without a preflight.
-        ("Content-Type: text/plain\r\n".to_owned(), 415),
-        (
-            "Content-Type: application/x-www-form-urlencoded\r\n".to_owned(),
-            415,
-        ),
-        (String::new(), 415),
-    ] {
-        let (status, response) = post_decision_with_headers(&server, &headers, &body);
-        assert_eq!(status, expected, "{headers:?}: {response}");
-        assert!(!register.exists(), "{headers:?} must not write");
-    }
-    let same_origin = format!(
-        "Origin: http://{}\r\nContent-Type: application/json; charset=utf-8\r\n",
-        server.address
-    );
-    let (status, response) = post_decision_with_headers(&server, &same_origin, &body);
-    assert_eq!(status, 200, "{response}");
-    assert!(register.exists());
-}
-
-#[test]
-fn serve_post_decisions_accepts_multibyte_text_across_the_read_boundary() {
-    let server = Server::start();
-    // Either parity leaves one umlaut cut in half by the first 1024-byte read.
-    for pad in 0..2 {
-        let note = format!("{}{}", "x".repeat(pad), "ä".repeat(1500));
-        let body = serde_json::json!({
-            "id": format!("umlaut-{pad}"),
-            "finding_ref": "cycle-ab",
-            "decision": "defer",
-            "note": note,
-            "author": "e2e",
-        })
-        .to_string();
-        let (status, response) =
-            post_decision_with_headers(&server, "Content-Type: application/json\r\n", &body);
-        assert_eq!(status, 200, "pad {pad}: {response}");
-    }
-    let register: Value = serde_json::from_str(
-        &fs::read_to_string(server.root.path().join(".archguard/reviews.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(register["decisions"].as_array().unwrap().len(), 2);
-}
-
-#[test]
-fn serve_review_dashboard_errors_stay_valid_json() {
-    let server = Server::start();
-    fs::write(server.root.path().join("archguard.toml"), "[project\n\"x\"").unwrap();
-    let (status, body) = server.request("GET", "/api/review-dashboard", None);
-    assert_eq!(status, 500, "{body}");
-    let value: Value = serde_json::from_str(&body).expect("a JSON error body");
-    assert!(value["error"].as_str().unwrap().starts_with("config:"));
 }

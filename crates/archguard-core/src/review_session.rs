@@ -1,7 +1,5 @@
-//! Persistent review decision register.
-//!
-//! Stub created by the R01 skeleton task; the decision semantics
-//! (idempotent upsert, open-vs-decided filtering) are implemented in R02.
+//! Persistent review decision register: one model for decisions recorded
+//! through `review-decision`, the MCP tool and `archguard review --decisions`.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +45,17 @@ pub struct ReviewDecision {
     pub author: String,
     /// ISO-8601 timestamp as recorded.
     pub ts: String,
+    /// Evidence fingerprint of the review finding this decision is bound
+    /// to (`archguard review`); a changed fingerprint reopens the finding.
+    /// `None` for decisions recorded without a review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding_fingerprint: Option<String>,
+    /// Last valid day (`YYYY-MM-DD`, inclusive UTC) of a review decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_on: Option<String>,
+    /// ADR or issue references of a review decision; never fetched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 /// The register persisted to `.archguard/reviews.json`.
@@ -102,6 +111,7 @@ mod tests {
             note: "checked".to_string(),
             author: "sven".to_string(),
             ts: "2026-10-30T09:00:00Z".to_string(),
+            ..Default::default()
         }
     }
 

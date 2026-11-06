@@ -10,7 +10,7 @@ assert.ok(between('<div id="graph-options"','<div id="viewport"').includes('id="
 const bar=between('<div class="workspace-bar"','<div id="graph-options"');
 for(const id of ['breadcrumbs','summary'])assert.ok(bar.includes('id="'+id+'"'),id+' shares the compact context row');
 const tabs=between('<div id="tabs"','</div>');
-assert.deepEqual([...tabs.matchAll(/data-tab="([^"]+)"/g)].map(m=>m[1]),['start','architecture','review-dashboard','graph','dsm','calls','services','quality','security','assessment'],'tabs are ordered as overview | structure | findings');
+assert.deepEqual([...tabs.matchAll(/data-tab="([^"]+)"/g)].map(m=>m[1]),['start','architecture','graph','dsm','calls','services','quality','security','assessment'],'tabs are ordered as overview | structure | findings');
 assert.equal((tabs.match(/class="tab-divider"/g)||[]).length,2,'two dividers separate the three tab groups');
 assert.match(html,/\.report-workspace #toggle-explorer[^{]*\{\s*visibility:\s*hidden;/,'hidden panel toggles keep their place so the top bar does not jump');
 const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
