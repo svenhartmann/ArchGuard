@@ -110,6 +110,83 @@ mod tests {
         }
     }
 
+    /// Views still being reworked elsewhere; they move to the tokens next.
+    const PENDING: [&str; 4] = [
+        "start_view.slint",
+        "start_world.slint",
+        "start_details.slint",
+        "start_data.slint",
+    ];
+
+    /// `font-size`/`font-weight` values in `text` that name a number
+    /// instead of a `Theme` token. Scaled values (zoomed diagram fonts such
+    /// as `11px * zoom`, a size relative to its control) keep theirs.
+    fn literal_fonts(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|line| {
+                line.split("font-size:")
+                    .skip(1)
+                    .chain(line.split("font-weight:").skip(1))
+                    .any(literal_value)
+            })
+            .map(|line| line.trim().to_string())
+            .collect()
+    }
+
+    fn literal_value(rest: &str) -> bool {
+        let value = rest.split(';').next().unwrap_or(rest);
+        !value.contains('*')
+            && value
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
+                .any(|w| {
+                    let px = w
+                        .strip_suffix("px")
+                        .is_some_and(|n| n.parse::<f32>().is_ok());
+                    // A weight (100–1000); smaller numbers are comparisons.
+                    px || w.parse::<u32>().is_ok_and(|n| n >= 100)
+                })
+    }
+
+    #[test]
+    fn views_take_font_sizes_and_weights_from_the_theme() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".slint")
+                || name == "theme.slint"
+                || PENDING.contains(&name.as_str())
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(entry.path()).unwrap();
+            found.extend(
+                literal_fonts(&text)
+                    .into_iter()
+                    .map(|l| format!("{name}: {l}")),
+            );
+        }
+        assert!(
+            found.is_empty(),
+            "use Theme.font-*/weight-* tokens:\n{}",
+            found.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_literal_font_is_found_and_a_zoomed_one_allowed() {
+        assert_eq!(literal_fonts("x { font-size: 12px; }").len(), 1);
+        assert_eq!(
+            literal_fonts("font-weight: a ? 700 : Theme.weight-regular;").len(),
+            1
+        );
+        assert!(
+            literal_fonts("font-size: Theme.font-body; font-weight: Theme.weight-strong;")
+                .is_empty()
+        );
+        assert!(literal_fonts("font-size: max(6px, 11px * zoom);").is_empty());
+    }
+
     #[test]
     fn every_platform_names_a_monospace_font() {
         for p in [Platform::MacOs, Platform::Windows, Platform::Linux] {
