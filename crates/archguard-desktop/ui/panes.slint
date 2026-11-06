@@ -2,7 +2,7 @@
 // context menu, and the tab strip above each pane. The layout comes from
 // src/panes_ui.rs; the panes themselves are placed in app.slint.
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab } from "widgets.slint";
+import { Icon, Icons, Button, Tab, TipArea } from "widgets.slint";
 
 // One view tab: an instance of a view kind and the label of the node it
 // is about ("" for none).
@@ -162,12 +162,11 @@ component ViewTabChip inherits Rectangle {
     }
 }
 
-// "Follow left": a chain toggle; disabled (but hoverable for its reason)
-// when the view cannot follow.
+// "Follow left": a chain toggle; disabled (but its tooltip still gives
+// the reason) when the view cannot follow.
 component FollowToggle inherits Rectangle {
     in property <bool> on;
     in property <bool> blocked;
-    out property <bool> hovered: touch.has-hover;
     callback toggle();
     width: 28px;
     height: 28px;
@@ -182,9 +181,13 @@ component FollowToggle inherits Rectangle {
         width: 14px;
         height: 14px;
     }
-    touch := TouchArea {
+    touch := TipArea {
+        tip: root.blocked ? @tr("This view cannot follow the left view.")
+            : root.on ? @tr("Follows the left pane; navigating here stops it.")
+            : @tr("Follow left: scope, expanded packages and selection.");
+        pin-on-click: false;
         mouse-cursor: root.blocked ? default : pointer;
-        clicked => {
+        activated => {
             if (!root.blocked) {
                 root.toggle();
             }
@@ -225,18 +228,7 @@ export component PaneStrip inherits Rectangle {
             export(format) => { root.export(j, format); }
         }
         Rectangle { horizontal-stretch: 1; }
-        if root.show-follow && follow.hovered: Text {
-            text: root.follow-blocked ? @tr("This view cannot follow the left view.")
-                : root.follow ? @tr("Follows the left pane; navigating here stops it.")
-                : @tr("Follow left: scope, expanded packages and selection.");
-            color: Theme.muted;
-            font-size: 11px;
-            vertical-alignment: center;
-            overflow: elide;
-            max-width: 300px;
-        }
-        // Not in an `if`, so the hint can read its hover state.
-        follow := FollowToggle {
+        FollowToggle {
             visible: root.show-follow;
             width: root.show-follow ? 28px : 0;
             y: (parent.height - self.height) / 2;

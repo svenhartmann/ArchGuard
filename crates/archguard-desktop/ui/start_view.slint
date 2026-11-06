@@ -3,7 +3,7 @@
 // from src/start_ui.rs.
 import { ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, SearchField, Legend, StatInline } from "widgets.slint";
+import { Button, SearchField, Legend, StatInline, HelpTip } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
@@ -40,7 +40,6 @@ export component StartView inherits Rectangle {
     property <string> search-text: m.search;
     changed search-text => { if search.text != self.search-text { search.text = self.search-text; } }
     property <string> metric: StartTones.kpi-label(m.kpi);
-    property <bool> help;
     background: Theme.bg;
 
     card := Rectangle {
@@ -68,21 +67,11 @@ export component StartView inherits Rectangle {
                     vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; }
-                Button {
-                    text: "?";
-                    compact: true;
-                    pressed-state: root.help;
+                HelpTip {
+                    size: 26px;
                     y: (parent.height - self.height) / 2;
-                    clicked => { root.help = !root.help; }
+                    tip: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match.");
                 }
-            }
-            if root.help: Text {
-                x: 24px;
-                width: parent.width - 48px;
-                text: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match.");
-                color: Theme.muted;
-                font-size: 12px;
-                wrap: word-wrap;
             }
             // Lenses, metric and legend.
             HorizontalLayout {

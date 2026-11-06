@@ -180,7 +180,6 @@ fn wire_rankings(ui: &AppWindow) {
         }
     }));
     d.on_rank_more(a.on0(|s, _| s.rank_limit += RANK_PAGE));
-    d.on_toggle_rank_help(a.on0(|s, _| s.rank_help = !s.rank_help));
 }
 
 fn cycle_kind(method: bool) -> ElementKind {
@@ -202,7 +201,6 @@ fn wire_cycles(ui: &AppWindow) {
     }));
     d.on_cycles_show_all(a.on0(|s, _| actions::cycles_show_all(s)));
     d.on_cycles_more(a.on0(|s, _| s.cycle.groups += state::CYCLE_PAGE));
-    d.on_toggle_cycle_help(a.on0(|s, _| s.cycle_help = !s.cycle_help));
     d.on_path_select(a.on(|s, _, i: i32| {
         let Some(i) = index(i) else { return };
         let step = s

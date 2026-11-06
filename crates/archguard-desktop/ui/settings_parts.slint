@@ -4,7 +4,7 @@
 import { LineEdit, TextEdit, Switch, ComboBox, ScrollView, Spinner } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
-import { Button, Badge, Icons, SectionHeading } from "widgets.slint";
+import { Button, Badge, Icons, SectionHeading, HelpTip } from "widgets.slint";
 
 // One item of the form, flat: headings, field rows, table arrays and
 // their entries follow each other.
@@ -183,8 +183,16 @@ component FieldRow inherits Rectangle {
                 width: 30%;
                 spacing: 2px;
                 alignment: start;
-                Text { text: item.label; color: Theme.text; font-size: 13px; font-weight: 600; wrap: word-wrap; }
-                Text { text: item.description; color: Theme.muted; font-size: 11.5px; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    Text { text: item.label; color: Theme.text; font-size: 13px; font-weight: 600; wrap: word-wrap; }
+                    if item.description != "": VerticalLayout {
+                        alignment: start;
+                        horizontal-stretch: 0;
+                        HelpTip { size: 18px; tip: item.description; }
+                    }
+                }
             }
             ValueWidget { item: item; horizontal-stretch: 1; }
             VerticalLayout {
@@ -226,7 +234,9 @@ component ArrayHead inherits VerticalLayout {
     spacing: 4px;
     HorizontalLayout {
         spacing: 10px;
-        SectionHeading { label: item.label; horizontal-stretch: 1; }
+        SectionHeading { label: item.label; horizontal-stretch: 0; }
+        if item.description != "": HelpTip { size: 18px; y: (parent.height - self.height) / 2; tip: item.description; }
+        Rectangle { horizontal-stretch: 1; }
         Button {
             compact: true;
             icon: Icons.plus;
@@ -234,7 +244,6 @@ component ArrayHead inherits VerticalLayout {
             clicked => { SettingsEdit.add-entry(item.path); }
         }
     }
-    Text { text: item.description; color: Theme.muted; font-size: 11.5px; wrap: word-wrap; }
     if item.error != "": Text { text: item.error; color: Theme.danger; font-size: 12px; wrap: word-wrap; }
 }
 
