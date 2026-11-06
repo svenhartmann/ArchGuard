@@ -105,7 +105,7 @@ component RowCard inherits Rectangle {
             text: data.label;
             color: Theme.text;
             font-size: 13px * zoom;
-            font-weight: data.file ? 500 : 650;
+            font-weight: data.file ? Theme.weight-medium : Theme.weight-strong;
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
@@ -215,7 +215,7 @@ export component TreeView inherits Rectangle {
             width: TreeGeo.lane-w * 1px * zoom;
             label: @tr("Incoming");
             font-size: 11px * zoom;
-            font-weight: 700;
+            font-weight: Theme.weight-strong;
             horizontal-alignment: center;
         }
         SectionHeading {
@@ -223,7 +223,7 @@ export component TreeView inherits Rectangle {
             y: 8px * zoom;
             label: @tr("Packages");
             font-size: 11px * zoom;
-            font-weight: 700;
+            font-weight: Theme.weight-strong;
         }
         SectionHeading {
             x: (TreeGeo.lane-w + tree-w) * 1px * zoom;
@@ -231,7 +231,7 @@ export component TreeView inherits Rectangle {
             width: TreeGeo.lane-w * 1px * zoom;
             label: @tr("Outgoing · cycles");
             font-size: 11px * zoom;
-            font-weight: 700;
+            font-weight: Theme.weight-strong;
             horizontal-alignment: center;
         }
 
