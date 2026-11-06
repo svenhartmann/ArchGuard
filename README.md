@@ -120,6 +120,23 @@ Review the generated rules before using them as gates. Derived layers are inform
 
 Project-local output lives under `.archguard/`: configuration, imported evidence, reports, caches, and recorded history. Generated reports and caches can be regenerated; retain intentional configuration, baselines, scenarios, and recorded measurements. Details and examples are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+### Quality goals
+
+A quality goal can name the ISO/IEC 25010 characteristic it addresses, the part of the system it covers and a quality scenario. All three fields are optional:
+
+```toml
+[[architecture.goals]]
+name = "Changeable checkout"
+priority = "first"                       # your own wording; never ranked
+rationale = "Weekly price changes"
+attribute = "maintainability"            # functional_suitability, performance_efficiency, compatibility,
+                                         # usability, reliability, security, maintainability, portability
+scope = ["checkout/**"]                  # node-name globs; empty = whole system
+scenario = "A price rule change ships within one day"
+```
+
+`architecture_context` (MCP and `archguard review`), `archguard doc` and arc42 chapters 1 and 10 then show per goal the matching finding ids, KPIs, the evidence sources and a status: `unclassified`, `not_assessable`, `no_evidence`, `findings` or `no_findings` (no findings from the available sources, not "goal met"). The mapping from evidence to characteristics is fixed: structural findings and review KPIs count for maintainability, a saved `archguard security` scan for security, imported measurements, test results, coverage and mutation reports for performance efficiency and reliability. ArchGuard has no evidence for the other four characteristics. Goals do not change `[review] health_weights`. Decision: [ADR 0003](docs/adr/0003-quality-goal-assessment.md).
+
 ## MCP for coding agents
 
 Register ArchGuard as a stdio MCP server in your client, using an absolute project path:

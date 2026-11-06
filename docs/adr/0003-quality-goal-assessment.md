@@ -40,9 +40,9 @@ characteristic must be the same for every project.
    | Characteristic | Evidence sources | What is used |
    |---|---|---|
    | maintainability | `static_analysis` (report findings), `review_kpis` | Findings of kind `cycle`, `layer_violation`, `layer_unranked`, `dependency_rule`, `ownership_rule`, `target_architecture`, `metric_threshold`, `orphan`; KPIs: highest propagation cost, tangledness, SDP violation count, zone of pain and zone of uselessness counts when zones are measured |
-   | security | `dependency_advisories` (`.archguard/security.json`) | Saved advisories as findings (`<advisory id>@<package>`), counted by the advisory's own severity |
+   | security | `dependency_advisories` (`.archguard/security.json`) | Saved advisories as findings (`<advisory id>@<package>`), counted by the advisory's own severity; KPI: packages scanned |
    | performance_efficiency | `measurement_runs` (`.archguard/measurement-runs.json`) | Presence and counts the reader already reports (runs, groups, test groups with mixed results, their share) |
-   | reliability | `test_results` (`.archguard/tests.json`), `coverage` (`.archguard/coverage.json`), `mutation` (`.archguard/mutation.json`), `measurement_runs` | Presence and counts the readers already report (tests, failed tests, coverage files, mutants, killed share, runs) |
+   | reliability | `test_results` (`.archguard/tests.json`), `coverage` (`.archguard/coverage.json`), `mutation` (`.archguard/mutation.json`), `measurement_runs` | Presence and counts the readers already report (tests, failed tests, coverage files, unmatched coverage files, mutants, survived mutants, killed share, runs) |
    | functional_suitability, compatibility, usability, portability | none | ArchGuard has no evidence for them |
 
    A saved snapshot counts as present when its reader reports `ready`,
@@ -74,7 +74,10 @@ characteristic must be the same for every project.
 7. **Surfaces.** `ArchitectureContext.goal_assessment` (MCP
    `architecture_context`, `archguard review`), the architecture document,
    arc42 chapter 1 (characteristic, scope and status columns) and arc42
-   chapter 10 (per goal: scenario, status, linked finding ids, KPIs, gaps).
+   chapter 10 (per goal: scenario, status, linked finding ids, KPIs,
+   evidence sources; the English gap texts stay in `architecture_context`).
+   Over the MCP 4 KiB budget, every goal keeps its status; only its finding
+   id list is shortened and counted in `omitted_arrays`.
 
 ## Alternatives
 

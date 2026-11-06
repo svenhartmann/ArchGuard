@@ -628,6 +628,7 @@ CLI, MCP und den HTML-Viewer. Analysegrenzen stehen in [README_DE.md](README_DE.
 | Entscheidungsregister | `archguard review-decision` / MCP `review_decisions`; Register `.archguard/reviews.json`, atomarer Upsert per Id (Format unten) | implementiert |
 | PR-Kommentar | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; Format unten | implementiert |
 | Nativer Desktop-Viewer | `archguard-desktop` (Slint) auf der Engine-API; Entscheidung und Umfang in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototyp |
+| Bewertung der Qualitätsziele | `[[architecture.goals]]` mit optionalem ISO/IEC-25010-`attribute`, `scope`-Globs und `scenario`; `archguard-analysis/src/goals.rs` ordnet Befunde, Review-Kennzahlen und gespeicherte Belege den Zielen nach einer festen Zuordnung zu; angezeigt in `architecture_context`, `archguard doc` und den arc42-Kapiteln 1 und 10 ([ADR 0003](docs/adr/0003-quality-goal-assessment.md)) | Implementiert |
 | IDE-Plugins | nicht vorgesehen; stattdessen HTML-Viewer, Explorer-UI auf der DB, G.V() | — |
 
 ### Review-Kennzahlen und ihre Grenzen

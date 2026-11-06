@@ -639,6 +639,7 @@ the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
 | Decision register | `archguard review-decision` / MCP `review_decisions`; `.archguard/reviews.json`, atomic upsert by ID (format below) | Implemented |
 | PR comment | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; format below | Implemented |
 | Native desktop viewer | `archguard-desktop` (Slint) on the engine API; decision and scope in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototype |
+| Quality goal assessment | `[[architecture.goals]]` with optional ISO/IEC 25010 `attribute`, `scope` globs and `scenario`; `archguard-analysis/src/goals.rs` links findings, review KPIs and saved evidence to goals by a fixed mapping; shown in `architecture_context`, `archguard doc` and arc42 chapters 1 and 10 ([ADR 0003](docs/adr/0003-quality-goal-assessment.md)) | Implemented |
 | IDE plugins | Not planned; HTML viewer, DB explorer UI and G.V() instead | — |
 
 ### Review metrics and their limits
