@@ -333,6 +333,6 @@ comparison of the native view against the web view on the same project
   outside the project is refused. Snapshot hook `ARCHGUARD_DESKTOP_ARC_EDIT`
   (`1` opens the editor, `save` also saves). Checked with unit tests and
   headless snapshots on macOS (temp copy of fixtures/py-layers, with and
-  without an `arc42.md` written by the CLI); not checked yet: typing in
-  the editor, the save dialog, narrow panes, the German window and the
-  folder layout in the window.
+  without an `arc42.md` written by the CLI; en and de; a split pane, where
+  editor and preview stack); not checked yet: typing in the editor, the
+  save dialog and the folder layout in the window.
