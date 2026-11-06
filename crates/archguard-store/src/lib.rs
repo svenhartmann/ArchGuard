@@ -3,7 +3,7 @@
 //!
 //! The database backend sits behind the cargo feature `db`; the trait and the
 //! in-memory store do not (ARCHITECTURE.md Kap. 8.1: trait instead of a
-//! direct dependency, pinned `kuzu = "=0.11.3"` behind the optional feature).
+//! direct dependency, pinned `lbug = "=0.22.1"` behind the optional feature).
 
 mod api;
 mod sanitize;

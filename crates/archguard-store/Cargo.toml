@@ -8,26 +8,20 @@ license.workspace = true
 [dependencies]
 archguard-core = { path = "../archguard-core" }
 serde_json = "1"
-# Pinned Kuzu/Ladybug-lineage backend (ARCHITECTURE.md Kap. 8.1), file-compatible
-# with the Explorer UIs. Optional: enabled only via the `db` feature.
-# Keep kuzu's default features (algo/fts/json/vector): its CMake always
-# statically links those four extensions into libkuzu.a, and build.rs only
-# hands the extension archives to the linker when the matching cargo feature
-# is on — with default-features = false the test binary has unresolved
-# extension symbols (upstream packaging behavior, verified on 0.11.3).
-kuzu = { version = "=0.11.3", optional = true }
-
-[build-dependencies]
-# Resolver alignment only: kuzu 0.11.3 pins its `cxx` (Rust bridge side) to
-# =1.0.138 but requests `cxx-build` (C++ bridge side) as an open range, so a
-# fresh lock can pair cxx 1.0.138 with cxx-build 1.0.205, whose generated
-# symbol names differ — the test binary then fails to link. Pinning the
-# host-side cxx-build here forces both bridge halves onto 1.0.138.
-cxx-build = { version = "=1.0.138", optional = true }
+# Pinned LadybugDB backend (ARCHITECTURE.md Kap. 8.1): `lbug` is the official
+# Rust crate of LadybugDB, the maintained successor of the archived Kuzu.
+# Optional: enabled only via the `db` feature. lbug requests `cxx` and
+# `cxx-build` as caret ranges, so Cargo.lock moves both bridge halves together
+# and no resolver pin is needed any more.
+# lbug's build script downloads the newest prebuilt liblbug release (no
+# checksum, independent of this pin) unless LBUG_BUILD_FROM_SOURCE is set;
+# /.cargo/config.toml sets it, so the native library is built from the C++
+# sources inside this pinned crate.
+lbug = { version = "=0.22.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3.27.0"
 
 [features]
-# Enables the graph-database backend (LadybugStore on top of kuzu).
-db = ["dep:kuzu", "dep:cxx-build"]
+# Enables the graph-database backend (LadybugStore on top of lbug).
+db = ["dep:lbug"]

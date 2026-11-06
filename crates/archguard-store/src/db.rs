@@ -1,8 +1,8 @@
 //! The `db` backend: [`LadybugStore`], the file-based graph-DB mirror on top
-//! of the pinned `kuzu = "=0.11.3"` crate (Kuzu/Ladybug lineage, file-
-//! compatible with the Explorer UIs — ARCHITECTURE.md Kap. 8.1/8.2).
+//! of the pinned `lbug = "=0.22.1"` crate (LadybugDB, the maintained Kuzu fork;
+//! storage format 49, see ARCHITECTURE.md Kap. 8.1/8.2).
 //!
-//! kuzu's `Connection` borrows the `Database`, so the store keeps only the
+//! lbug's `Connection` borrows the `Database`, so the store keeps only the
 //! `Database` and creates a fresh `Connection` per operation.
 
 use std::collections::{BTreeSet, HashSet};
@@ -11,7 +11,7 @@ use std::path::Path;
 use archguard_core::{
     ArchguardError, Finding, FindingKind, Graph, ModuleMetrics, Report, Severity,
 };
-use kuzu::{Connection, Database, LogicalType, SystemConfig, Value};
+use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
 use serde_json::{Number, Value as JsonValue};
 
 use crate::api::{GraphStore, QueryResult, SnapshotRecord};
@@ -49,11 +49,29 @@ const SCHEMA_STATEMENTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Map a kuzu error onto the shared error type. [`ArchguardError`] has no
+/// Map a lbug error onto the shared error type. [`ArchguardError`] has no
 /// dedicated storage variant (core is frozen), so database failures surface
-/// as analysis errors carrying the kuzu message.
-fn db_error(err: kuzu::Error) -> ArchguardError {
+/// as analysis errors carrying the lbug message.
+fn db_error(err: lbug::Error) -> ArchguardError {
     ArchguardError::Analysis(format!("graph db error: {err}"))
+}
+
+/// Like [`db_error`] for `Database::new`: when lbug cannot read the file's
+/// format — a mirror written by the former `kuzu = "=0.11.3"` backend, or
+/// by an lbug release with another storage version — the message names the
+/// remedy. The file is never removed here: its `snapshot` rows are the T41
+/// trend history, so deleting it stays the user's decision.
+fn open_error(path: &Path, err: lbug::Error) -> ArchguardError {
+    let message = err.to_string();
+    if message.contains("not a valid Lbug database file") || message.contains("different version") {
+        return ArchguardError::Analysis(format!(
+            "graph db error: {message} {} uses a format this LadybugDB build cannot read \
+             (e.g. written by the former Kuzu 0.11.3 backend); delete it together with its \
+             `.wal` file and run `archguard db sync` again (its recorded trend snapshots are lost)",
+            path.display()
+        ));
+    }
+    db_error(err)
 }
 
 /// Server-owned maximum rows for a single query (F05). A caller-supplied
@@ -69,12 +87,12 @@ pub const MAX_QUERY_ROWS: usize = 1_000;
 /// Column definitions are never dropped, and the MCP response guard caps
 /// the total on top. Note what the budget does *not* cover: the engine
 /// materializes the full result before this conversion ever runs (the
-/// timeout interrupts only at kuzu's coarse check points), so the query
+/// timeout interrupts only at lbug's coarse check points), so the query
 /// guard additionally blocks the known list/string amplifier functions
 /// and deployment-level resource limits remain the backstop.
 pub const MAX_CELL_BYTES: usize = 2_048;
 
-/// kuzu execution timeout for queries (F05). The row/cell budgets bound
+/// lbug execution timeout for queries (F05). The row/cell budgets bound
 /// memory and serialization; only the engine's own timeout stops
 /// expensive *execution* (row truncation is not a CPU limit).
 pub const QUERY_TIMEOUT_MS: u64 = 5_000;
@@ -83,16 +101,16 @@ pub const QUERY_TIMEOUT_MS: u64 = 5_000;
 /// structures from a hostile database become a `…` marker.
 const MAX_JSON_DEPTH: usize = 16;
 
-/// A [`GraphStore`] mirroring graph and report into a Kuzu/Ladybug database
+/// A [`GraphStore`] mirroring graph and report into a LadybugDB database
 /// file (Kap. 8.2 schema). Open an existing or new database with
 /// [`LadybugStore::open`]; `sync` clears all rows and bulk-inserts — the
 /// T41 `snapshot` table excepted —, `query` runs read-only openCypher and
 /// [`GraphStore::record_snapshot`] upserts one trend row.
 pub struct LadybugStore {
-    /// kuzu's `Connection` borrows the `Database`, so only the `Database` is
+    /// lbug's `Connection` borrows the `Database`, so only the `Database` is
     /// stored and a fresh `Connection` is created per operation.
     db: Database,
-    /// kuzu execution timeout applied to every `query` (F05);
+    /// lbug execution timeout applied to every `query` (F05);
     /// [`LadybugStore::set_query_timeout_ms`] adjusts it (tests).
     query_timeout_ms: u64,
 }
@@ -104,9 +122,9 @@ impl LadybugStore {
         Self::open_with(path.as_ref(), SystemConfig::default())
     }
 
-    /// Like [`LadybugStore::open`], with an explicit kuzu `SystemConfig`.
+    /// Like [`LadybugStore::open`], with an explicit lbug `SystemConfig`.
     pub fn open_with(path: &Path, config: SystemConfig) -> Result<Self, ArchguardError> {
-        let db = Database::new(path, config).map_err(db_error)?;
+        let db = Database::new(path, config).map_err(|err| open_error(path, err))?;
         let store = Self {
             db,
             query_timeout_ms: QUERY_TIMEOUT_MS,
@@ -116,7 +134,7 @@ impl LadybugStore {
     }
 
     /// Open an **existing** database at `path` for read-only queries
-    /// (F04): kuzu runs in `read_only` mode and the Kap. 8.2 schema is
+    /// (F04): lbug runs in `read_only` mode and the Kap. 8.2 schema is
     /// *not* ensured — a query call never creates a database, tables or
     /// auxiliary files. A missing path is an error pointing at
     /// `db sync`; creation and syncing stay with [`LadybugStore::open`].
@@ -128,14 +146,15 @@ impl LadybugStore {
                 path.display()
             )));
         }
-        let db = Database::new(path, SystemConfig::default().read_only(true)).map_err(db_error)?;
+        let db = Database::new(path, SystemConfig::default().read_only(true))
+            .map_err(|err| open_error(path, err))?;
         Ok(Self {
             db,
             query_timeout_ms: QUERY_TIMEOUT_MS,
         })
     }
 
-    /// Adjust the kuzu execution timeout used by subsequent `query` calls
+    /// Adjust the lbug execution timeout used by subsequent `query` calls
     /// (F05). `0` disables it — for trusted in-process paths only; CLI and
     /// MCP keep [`QUERY_TIMEOUT_MS`].
     pub fn set_query_timeout_ms(&mut self, timeout_ms: u64) {
@@ -168,7 +187,7 @@ impl LadybugStore {
     fn execute_module(
         &self,
         conn: &Connection<'_>,
-        stmt: &mut kuzu::PreparedStatement,
+        stmt: &mut lbug::PreparedStatement,
         name: &str,
         lang: Option<&str>,
         metrics: Option<&ModuleMetrics>,
@@ -361,9 +380,9 @@ impl GraphStore for LadybugStore {
             conn.set_query_timeout(self.query_timeout_ms);
         }
         let mut result = conn.query(&cypher).map_err(|err| {
-            // kuzu stops an expired query with its interrupt exception,
+            // lbug stops an expired query with its interrupt exception,
             // whose message is the exact sentence "Interrupted."
-            // (kuzu-src interrupt.h). Match that verbatim — a looser
+            // (lbug-src interrupt.h). Match that verbatim — a looser
             // case-insensitive "interrupt" substring would also label
             // genuine IO errors ("Interrupted system call", EINTR) as
             // timeouts and send the caller chasing the wrong remediation.
@@ -510,7 +529,7 @@ fn json_cell(value: Value) -> JsonValue {
     json_value(value, &mut budget, 0)
 }
 
-/// Converts a kuzu `Value` into a `serde_json::Value`. Complex values
+/// Converts a lbug `Value` into a `serde_json::Value`. Complex values
 /// (nodes, rels, structs, maps) become JSON objects, temporal and other
 /// exotic values fall back to their `Display` rendering as strings —
 /// all string bytes come out of the shared `budget` (F05), and nesting
@@ -632,7 +651,7 @@ where
     out
 }
 
-/// JSON object from kuzu property pairs, sharing the cell `budget`;
+/// JSON object from lbug property pairs, sharing the cell `budget`;
 /// like [`budgeted_items`], a spent budget stops the walk before the
 /// next `value.clone()` (F05).
 fn object_value(properties: &[(String, Value)], budget: &mut usize, depth: usize) -> JsonValue {
@@ -922,7 +941,7 @@ mod tests {
         assert!(err.to_string().contains("query rejected"), "{err}");
         assert!(!pwn.exists(), "rejected payload must create nothing");
 
-        // (3) Literal words are data, not keywords — through real kuzu.
+        // (3) Literal words are data, not keywords — through real lbug.
         let result = store
             .query(
                 "MATCH (m:module) WHERE m.name = 'delete me' RETURN m.name",
@@ -938,7 +957,7 @@ mod tests {
             JsonValue::String("delete me".to_string())
         );
 
-        // (4) kuzu's comment grammar (`//` … LF/EOF, non-nested `/* */`)
+        // (4) lbug's comment grammar (`//` … LF/EOF, non-nested `/* */`)
         // behaves identically on both sides of the guard: the statement
         // runs and the enforced cap is live — `truncated` only fires
         // because the appended LIMIT survives behind the comment tail
@@ -948,7 +967,7 @@ mod tests {
                 "MATCH (m:module) /* all of them */ RETURN m.name ORDER BY m.name // tail",
                 2,
             )
-            .expect("kuzu comments pass guard and engine");
+            .expect("lbug comments pass guard and engine");
         assert_eq!(result.rows.len(), 2, "{:?}", result.rows);
         assert!(result.truncated, "the appended LIMIT must be the cap");
 
@@ -1025,7 +1044,7 @@ mod tests {
         assert!(cell.ends_with('…'), "truncation must be visible: {cell}");
 
         // (4) Execution timeout: a 1 ms budget kills the running query
-        // with a clear error — the ORDER BY forces kuzu to materialize
+        // with a clear error — the ORDER BY forces lbug to materialize
         // the full 8e9-row triple cross product before LIMIT, so the
         // engine cannot finish before the deadline — and the store stays
         // usable afterwards.
@@ -1103,6 +1122,36 @@ mod tests {
         let text = huge.as_str().expect("string cell");
         assert!(text.len() <= MAX_CELL_BYTES + 4, "got {}", text.len());
         assert!(text.ends_with('…'));
+    }
+
+    /// A `graph.db` that lbug cannot read — above all a mirror written by
+    /// the former `kuzu = "=0.11.3"` backend, which lbug rejects as "not a
+    /// valid Lbug database file" — must fail with a remedy instead of the
+    /// bare engine message, and must not be overwritten (its `snapshot`
+    /// rows are the T41 history).
+    #[test]
+    fn unreadable_database_file_names_the_remedy_and_stays_untouched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("graph.db");
+        let foreign = b"KUZU\x27\0\0\0 not a ladybug file".repeat(64);
+        std::fs::write(&db_path, &foreign).expect("write foreign file");
+
+        let Err(write_err) = LadybugStore::open(&db_path) else {
+            panic!("opening a foreign file for sync must fail");
+        };
+        let Err(read_err) = LadybugStore::open_for_query(&db_path) else {
+            panic!("opening a foreign file for queries must fail");
+        };
+        for err in [write_err.to_string(), read_err.to_string()] {
+            assert!(err.contains("not a valid Lbug database file"), "{err}");
+            assert!(err.contains("Kuzu"), "{err}");
+            assert!(err.contains("archguard db sync"), "{err}");
+        }
+        assert_eq!(
+            std::fs::read(&db_path).expect("file still there"),
+            foreign,
+            "a failed open must leave the file as it was"
+        );
     }
 
     #[test]
