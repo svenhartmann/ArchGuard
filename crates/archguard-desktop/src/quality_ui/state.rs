@@ -8,10 +8,11 @@ use super::cohesion::Selection;
 use super::heatmap::{self, Cohorts, Filter, METRICS, Sort, State};
 use super::heatmap_text;
 use super::inputs::Inputs;
-use super::lang::{Lang, number, percent};
+use super::lang::{number, percent};
 use super::notes::Section;
 use super::rows::{self, Scope};
 use super::{cards, cohesion, evidence};
+use crate::tab_support::Texts;
 
 /// Records per page and per "Show next 20".
 pub const PAGE: usize = 20;
@@ -49,7 +50,7 @@ impl Default for View {
 }
 
 pub struct QualityState {
-    pub lang: Lang,
+    pub lang: Texts,
     /// `None` while the analysis runs.
     pub inputs: Option<Inputs>,
     pub view: View,
@@ -95,7 +96,7 @@ pub struct Page {
 }
 
 impl QualityState {
-    pub fn loading(lang: Lang) -> Self {
+    pub fn loading(lang: Texts) -> Self {
         QualityState {
             lang,
             inputs: None,
@@ -105,7 +106,7 @@ impl QualityState {
         }
     }
 
-    pub fn new(lang: Lang, inputs: Inputs) -> Self {
+    pub fn new(lang: Texts, inputs: Inputs) -> Self {
         let names = inputs.source.nodes.iter().map(|n| n.name.clone()).collect();
         let cohorts = Cohorts::new(&inputs.code.classes);
         let section = if inputs.code.classes.is_empty() {
@@ -156,10 +157,7 @@ impl QualityState {
         if total == 0 {
             page.empty = self
                 .lang
-                .t(
-                    "No matching measurements. Missing data is not evidence of good quality.",
-                    "Keine passenden Messungen. Fehlende Daten belegen keine gute Qualität.",
-                )
+                .t("No matching measurements. Missing data is not evidence of good quality.")
                 .into();
         }
         self.targets(inputs, &mut page);
@@ -171,10 +169,9 @@ impl QualityState {
         let status = self
             .view
             .section
-            .status(self.lang, source_status(inputs, self.view.section));
+            .status(&self.lang, source_status(inputs, self.view.section));
         let counts = self.lang.f(
             "{shown} / {total} matching records",
-            "{shown} / {total} passende Einträge",
             &[
                 ("shown", total.min(self.view.limit).to_string()),
                 ("total", total.to_string()),
@@ -249,7 +246,7 @@ pub fn sort_of(i: usize) -> Sort {
 impl QualityState {
     /// The section's records: total count, cards and heatmap rows (one page).
     fn records(&mut self, inputs: &Inputs, scope: &Scope) -> (usize, Vec<Card>, Vec<HeatRow>) {
-        let (lang, names, v) = (self.lang, &self.names, &self.view);
+        let (lang, names, v) = (&self.lang, &self.names, &self.view);
         let (q, n) = (v.query.as_str(), v.limit);
         // Count all rows, build cards for the first page only.
         macro_rules! list {
@@ -325,7 +322,7 @@ impl QualityState {
         let cards = rows
             .iter()
             .take(self.view.limit)
-            .map(|p| cohesion::card(self.lang, &self.names, p, &self.view.cohesion))
+            .map(|p| cohesion::card(&self.lang, &self.names, p, &self.view.cohesion))
             .collect();
         (rows.len(), cards, Vec::new())
     }
@@ -357,8 +354,8 @@ impl QualityState {
             tip: format!(
                 "{} · {} {}",
                 row.class_id,
-                heatmap_text::help(self.lang, i),
-                heatmap_text::interpretation(self.lang, &self.cohorts, row, i)
+                heatmap_text::help(&self.lang, i),
+                heatmap_text::interpretation(&self.lang, &self.cohorts, row, i)
             ),
         }
     }
@@ -383,11 +380,11 @@ impl QualityState {
         if row.is_none() {
             self.view.selected = None;
         }
-        row.map(|r| cards::class(self.lang, &self.names, r))
+        row.map(|r| cards::class(&self.lang, &self.names, r))
     }
 
     fn targets(&self, inputs: &Inputs, page: &mut Page) {
-        let lang = self.lang;
+        let lang = &self.lang;
         let query = self.view.target_query.trim().to_lowercase();
         let matching: Vec<&str> = inputs
             .source
@@ -404,21 +401,14 @@ impl QualityState {
         if retained {
             shown.push(target);
         }
-        page.targets = std::iter::once(
-            lang.t("Entire source scope", "Gesamter Quellumfang")
-                .to_string(),
-        )
-        .chain(shown.iter().map(|s| s.to_string()))
-        .collect();
+        page.targets = std::iter::once(lang.t("Entire source scope").to_string())
+            .chain(shown.iter().map(|s| s.to_string()))
+            .collect();
         page.target_index = shown.iter().position(|&s| s == target).map_or(0, |i| i + 1);
         page.scope_summary = if target.is_empty() {
-            lang.t("All packages", "Alle Pakete").into()
+            lang.t("All packages").into()
         } else {
-            lang.f(
-                "Scope: {path}",
-                "Umfang: {path}",
-                &[("path", target.into())],
-            )
+            lang.f("Scope: {path}", &[("path", target.into())])
         };
         if matching.len() > TARGETS || !query.is_empty() || retained {
             page.target_note = target_note(lang, listed, matching.len(), retained);
@@ -426,10 +416,9 @@ impl QualityState {
     }
 }
 
-fn target_note(lang: Lang, listed: usize, matching: usize, retained: bool) -> String {
+fn target_note(lang: &Texts, listed: usize, matching: usize, retained: bool) -> String {
     let mut note = lang.f(
         "{shown} / {total} matching targets.",
-        "{shown} / {total} passende Ziele.",
         &[
             ("shown", listed.to_string()),
             ("total", matching.to_string()),
@@ -437,17 +426,12 @@ fn target_note(lang: Lang, listed: usize, matching: usize, retained: bool) -> St
     );
     if matching > TARGETS {
         note.push(' ');
-        note.push_str(lang.t(
-            "Only the first 2000 are listed. Refine the package or file search to find other targets.",
-            "Nur die ersten 2000 werden aufgelistet. Die Paket- oder Dateisuche eingrenzen, um andere Ziele zu finden.",
+        note.push_str(lang.t("Only the first 2000 are listed. Refine the package or file search to find other targets.",
         ));
     }
     if retained {
         note.push(' ');
-        note.push_str(lang.t(
-            "The current selection is also retained.",
-            "Die aktuelle Auswahl bleibt zusätzlich erhalten.",
-        ));
+        note.push_str(lang.t("The current selection is also retained."));
     }
     note
 }
@@ -455,11 +439,9 @@ fn target_note(lang: Lang, listed: usize, matching: usize, retained: bool) -> St
 impl QualityState {
     /// `#engineering-note`: shown behind the status line's "?".
     fn notes(&self, inputs: &Inputs) -> Card {
-        let (lang, section) = (self.lang, self.view.section);
+        let (lang, section) = (&self.lang, self.view.section);
         let mut b = super::card::Builder::new(lang, &self.names, "");
-        b.push(Kind::Muted, lang.t(
-            "Original analysis and imported measurements. Graph simulations do not rewrite these results.",
-            "Ursprüngliche Analyse und importierte Messungen. Graphsimulationen verändern diese Ergebnisse nicht.",
+        b.push(Kind::Muted, lang.t("Original analysis and imported measurements. Graph simulations do not rewrite these results.",
         ))
         .push(Kind::Text, section.description(lang));
         let (diagnostics, actions) = source_diagnostics(inputs, section);
@@ -470,13 +452,7 @@ impl QualityState {
                 .map(|d| Line::new(Kind::Muted, d))
                 .chain(actions.iter().map(|a| Line::new(Kind::Text, a)))
                 .collect();
-            b.details(
-                lang.t(
-                    "Measurement coverage and definitions",
-                    "Messabdeckung und Definitionen",
-                ),
-                lines,
-            );
+            b.details(lang.t("Measurement coverage and definitions"), lines);
         }
         let status = source_status(inputs, section);
         if matches!(status, None | Some("not_imported" | "not_recorded"))
@@ -489,29 +465,21 @@ impl QualityState {
     }
 
     fn section_notes(&self, b: &mut super::card::Builder, inputs: &Inputs) {
-        let lang = self.lang;
+        let lang = &self.lang;
         match self.view.section {
             Section::History => history_notes(b, inputs),
             Section::Mutations => {
                 let value = percent(inputs.mutations.summary.killed_percent);
                 b.push(
                     Kind::Text,
-                    lang.f(
-                        "Detected mutation ratio: {value}",
-                        "Erkennungsquote der Mutationen: {value}",
-                        &[("value", value)],
-                    ),
+                    lang.f("Detected mutation ratio: {value}", &[("value", value)]),
                 );
             }
             Section::Measurements => {
                 let value = percent(inputs.measurements.flaky_test_percent);
                 b.push(
                     Kind::Text,
-                    lang.f(
-                        "Mixed test groups: {percent}",
-                        "Testgruppen mit wechselnden Ergebnissen: {percent}",
-                        &[("percent", value)],
-                    ),
+                    lang.f("Mixed test groups: {percent}", &[("percent", value)]),
                 );
             }
             Section::Duplicates => {
@@ -519,10 +487,9 @@ impl QualityState {
                 let version = d
                     .producer_version
                     .clone()
-                    .unwrap_or_else(|| lang.t("version unknown", "Version unbekannt").into());
+                    .unwrap_or_else(|| lang.t("version unknown").into());
                 let errors = lang.f(
                     "{count} reported scan errors",
-                    "{count} gemeldete Scanfehler",
                     &[("count", d.producer_errors.to_string())],
                 );
                 b.push(Kind::Muted, format!("CPD · {version} · {errors}"));
@@ -535,9 +502,7 @@ impl QualityState {
 fn history_notes(b: &mut super::card::Builder, inputs: &Inputs) {
     let lang = b.lang;
     let h = &inputs.history;
-    b.push(Kind::Muted, lang.f(
-        "{count} recent snapshots shown; full measurements are stored in .archguard/quality-history.",
-        "{count} letzte Snapshots angezeigt; vollständige Messungen liegen in .archguard/quality-history.",
+    b.push(Kind::Muted, lang.f("{count} recent snapshots shown; full measurements are stored in .archguard/quality-history.",
         &[("count", h.records.len().to_string())],
     ));
     let mut lines = Vec::new();
@@ -553,7 +518,7 @@ fn history_notes(b: &mut super::card::Builder, inputs: &Inputs) {
             let version = a
                 .version
                 .clone()
-                .unwrap_or_else(|| lang.t("version unknown", "Version unbekannt").into());
+                .unwrap_or_else(|| lang.t("version unknown").into());
             let project = a.project.clone().unwrap_or_default();
             lines.push(Line::new(
                 Kind::Path,
@@ -573,10 +538,7 @@ fn history_notes(b: &mut super::card::Builder, inputs: &Inputs) {
             ),
         ));
     }
-    b.details(
-        lang.t("Snapshot provenance", "Herkunft der Snapshots"),
-        lines,
-    );
+    b.details(lang.t("Snapshot provenance"), lines);
 }
 
 #[cfg(test)]
@@ -612,7 +574,7 @@ mod tests {
 
     #[test]
     fn heatmap_pages_twenty_and_counts_all() {
-        let mut s = QualityState::new(Lang::default(), inputs(classes(25)));
+        let mut s = QualityState::new(Texts::default(), inputs(classes(25)));
         let page = s.page();
         assert!(page.heatmap);
         assert_eq!(page.status, "partial analysis · 20 / 25 matching records");
@@ -629,7 +591,7 @@ mod tests {
 
     #[test]
     fn without_classes_the_tab_opens_on_cohesion_and_explains_the_import() {
-        let mut s = QualityState::new(Lang::default(), inputs(Vec::new()));
+        let mut s = QualityState::new(Texts::default(), inputs(Vec::new()));
         assert_eq!(s.view.section, Section::Cohesion);
         s.view.section = Section::Tests;
         let page = s.page();
@@ -645,7 +607,7 @@ mod tests {
 
     #[test]
     fn a_selected_class_shows_its_card_until_it_leaves_the_list() {
-        let mut s = QualityState::new(Lang::default(), inputs(classes(3)));
+        let mut s = QualityState::new(Texts::default(), inputs(classes(3)));
         s.view.selected = Some("rust:a/f01.rs::C".into());
         let page = s.page();
         assert_eq!(

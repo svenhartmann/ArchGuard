@@ -1,7 +1,8 @@
 //! Section notes behind the status line's "?" (`#engineering-note` in
 //! `renderEngineeringQuality`): description, coverage notes, import command.
 
-use super::lang::Lang;
+use super::lang;
+use crate::tab_support::Texts;
 
 /// The web's sections, in the order of its "View" select.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,31 +78,31 @@ impl Section {
         }
     }
 
-    pub fn description(self, lang: Lang) -> &'static str {
+    pub fn description(self, lang: &Texts) -> &str {
         match self {
-            Section::Heatmap => lang.t("Classes × metrics. Colors compare measured values; gray retains unknowns.", "Klassen × Kennzahlen. Farben vergleichen gemessene Werte; Grau erhält unbekannte Werte."),
-            Section::Classes => lang.t("Class coupling, response set, inheritance and complexity. Unknown measurements remain —.", "Klassenkopplung, Aufrufumfang, Vererbung und Komplexität. Unbekannte Messungen bleiben —."),
-            Section::Methods => lang.t("Method maintainability, ordered by Cognitive source complexity.", "Wartbarkeit pro Methode, sortiert nach Cognitive-Quellcodekomplexität."),
-            Section::Knowledge => lang.t("Contribution concentration in the configured Git history window.", "Beitragsverteilung im konfigurierten Git-Zeitfenster."),
-            Section::Measurements => lang.t("Recorded build, runtime and repeated-test runs. Project-wide observations are independent of the source selection.", "Aufgezeichnete Build-, Laufzeit- und wiederholte Testläufe. Projektweite Messungen sind unabhängig von der Quellauswahl."),
-            Section::Cohesion => lang.t("Immediate files in each package. Internal share is structural, not proof of good domain boundaries; disconnected groups are review candidates.", "Direkte Dateien je Paket. Der interne Anteil ist strukturell und belegt keine guten fachlichen Grenzen; getrennte Gruppen sind Prüfkandidaten."),
-            Section::History => lang.t("Latest two recorded snapshots. Incompatible measurements have no delta; imported producer revisions remain unverified.", "Die letzten zwei aufgezeichneten Snapshots. Unvergleichbare Messungen erhalten kein Delta; importierte Producer-Revisionen bleiben unverifiziert."),
-            Section::Tests => lang.t("Matching source associations first, then measured duration. Selecting a file includes tests mapped to its transitive dependents. Unknown or incomplete mappings mean test omission is not safe.", "Passende Quellzuordnungen zuerst, danach gemessene Dauer. Eine Dateiauswahl enthält Tests ihrer transitiven Aufrufer. Unbekannte oder unvollständige Zuordnungen erlauben kein sicheres Weglassen von Tests."),
-            Section::Mutations => lang.t("Survived and uncovered mutations first, then incoming-file count. Killed ratio = killed / (killed + survived + no coverage); incomplete evidence has no score. This is not ordinary line coverage.", "Überlebende und unabgedeckte Mutationen zuerst, danach eingehende Dateien. Erkennungsquote = erkannt / (erkannt + überlebt + keine Abdeckung); unvollständige Belege erhalten keinen Wert. Dies ist keine normale Zeilenabdeckung."),
-            Section::Duplicates => lang.t("CPD token matches, largest first. Inspect all locations before extracting shared code. Source hashes detect changes after import; producer revision, scan scope and token normalization remain unverified. No project-wide duplication percentage is inferred.", "CPD-Tokenübereinstimmungen, größte zuerst. Vor einer gemeinsamen Abstraktion alle Fundstellen prüfen. Quellhashes erkennen Änderungen nach dem Import; Producer-Revision, Scanumfang und Tokennormalisierung bleiben unverifiziert. Es wird kein projektweiter Duplikatanteil abgeleitet."),
+            Section::Heatmap => lang.t("Classes × metrics. Colors compare measured values; gray retains unknowns."),
+            Section::Classes => lang.t("Class coupling, response set, inheritance and complexity. Unknown measurements remain —."),
+            Section::Methods => lang.t("Method maintainability, ordered by Cognitive source complexity."),
+            Section::Knowledge => lang.t("Contribution concentration in the configured Git history window."),
+            Section::Measurements => lang.t("Recorded build, runtime and repeated-test runs. Project-wide observations are independent of the source selection."),
+            Section::Cohesion => lang.t("Immediate files in each package. Internal share is structural, not proof of good domain boundaries; disconnected groups are review candidates."),
+            Section::History => lang.t("Latest two recorded snapshots. Incompatible measurements have no delta; imported producer revisions remain unverified."),
+            Section::Tests => lang.t("Matching source associations first, then measured duration. Selecting a file includes tests mapped to its transitive dependents. Unknown or incomplete mappings mean test omission is not safe."),
+            Section::Mutations => lang.t("Survived and uncovered mutations first, then incoming-file count. Killed ratio = killed / (killed + survived + no coverage); incomplete evidence has no score. This is not ordinary line coverage."),
+            Section::Duplicates => lang.t("CPD token matches, largest first. Inspect all locations before extracting shared code. Source hashes detect changes after import; producer revision, scan scope and token normalization remain unverified. No project-wide duplication percentage is inferred."),
         }
     }
 
     /// The status word before "· shown / total matching records".
-    pub fn status(self, lang: Lang, status: Option<&str>) -> &'static str {
+    pub fn status<'a>(self, lang: &'a Texts, status: Option<&str>) -> &'a str {
         if !self.computed() {
-            return lang.status(status.unwrap_or(""));
+            return lang::status(lang, status.unwrap_or(""));
         }
         match status {
-            Some("ready") => lang.t("measured", "gemessen"),
-            Some("partial") => lang.t("partial analysis", "teilweise analysiert"),
-            Some("not_applicable") => lang.t("not applicable", "nicht anwendbar"),
-            _ => lang.t("unavailable", "nicht verfügbar"),
+            Some("ready") => lang.t("measured"),
+            Some("partial") => lang.t("partial analysis"),
+            Some("not_applicable") => lang.t("not applicable"),
+            _ => lang.t("unavailable"),
         }
     }
 }
@@ -112,7 +113,7 @@ mod tests {
 
     #[test]
     fn computed_and_imported_sections_name_their_status_like_the_web() {
-        let en = Lang::default();
+        let en = &Texts::default();
         assert_eq!(
             Section::Heatmap.status(en, Some("partial")),
             "partial analysis"
@@ -127,7 +128,7 @@ mod tests {
             "not recorded"
         );
         assert_eq!(
-            Section::Cohesion.status(Lang { de: true }, Some("partial")),
+            Section::Cohesion.status(&Texts::german(), Some("partial")),
             "unvollständiger Bericht"
         );
         assert_eq!(Section::ALL[5].index(), 5);

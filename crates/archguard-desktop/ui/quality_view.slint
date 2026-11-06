@@ -34,8 +34,6 @@ export struct QualityModel {
 
 export global QualityData {
     in-out property <QualityModel> model: { loading: true };
-    // The window's language for texts built in Rust ("de" when German).
-    out property <string> lang: @tr("QualityData" => "en");
     callback section(int);
     callback target(int);
     callback target-query(string);

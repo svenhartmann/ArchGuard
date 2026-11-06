@@ -20,7 +20,7 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use projection::{Group, Labels, SourceModel};
 use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};
@@ -168,11 +168,11 @@ fn derived(s: &ArchitectureState, chapter: u8) -> Option<Kind> {
 }
 
 fn labels(ui: &AppWindow) -> Labels {
-    let d = ui.global::<ArchitectureData>();
+    let texts = Texts::of(ui);
     Labels {
-        direct_root: d.get_label_direct_root().into(),
-        direct: d.get_label_direct().into(),
-        outside: d.get_label_outside().into(),
+        direct_root: texts.t("Files without a package").into(),
+        direct: texts.t("direct files").into(),
+        outside: texts.t("Other project packages").into(),
     }
 }
 
@@ -249,7 +249,8 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
                 &mut m,
                 doc,
                 s.chapter,
-                &d.get_label_mermaid(),
+                Texts::of(ui)
+                    .t("Diagram source · this diagram syntax is not supported in the viewer."),
                 derived(s, s.chapter).is_some(),
             );
             if let Some((kind, map)) = current(s, ui) {
@@ -259,7 +260,7 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
                     s.maps[kind as usize].relations,
                     kind,
                     &map,
-                    &d.get_label_overview(),
+                    &Texts::of(ui).t("Project overview").into(),
                 );
             }
         }

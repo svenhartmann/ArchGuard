@@ -7,7 +7,8 @@ use std::collections::BTreeSet;
 use archguard_engine::{CohesionGroup, CohesionPackage};
 
 use super::card::{Builder, Card, Group, Kind, Line, locate};
-use super::lang::{Lang, percent};
+use super::lang::percent;
+use crate::tab_support::Texts;
 
 /// Which package and group the cohesion section inspects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,12 +29,7 @@ impl Default for Selection {
     }
 }
 
-const FILES: [&str; 4] = [
-    "{count} file",
-    "{count} files",
-    "{count} Datei",
-    "{count} Dateien",
-];
+const FILES: (&str, &str) = ("{count} file", "{count} files");
 
 /// Group indices in display order: connected groups first, then larger.
 pub fn ordered(groups: &[CohesionGroup]) -> Vec<usize> {
@@ -51,7 +47,7 @@ fn base_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-pub fn card(lang: Lang, nodes: &BTreeSet<String>, p: &CohesionPackage, sel: &Selection) -> Card {
+pub fn card(lang: &Texts, nodes: &BTreeSet<String>, p: &CohesionPackage, sel: &Selection) -> Card {
     let mut b = Builder::new(lang, nodes, base_name(&p.node));
     if b.card.title.is_empty() {
         b.card.title = p.node.clone();
@@ -61,9 +57,9 @@ pub fn card(lang: Lang, nodes: &BTreeSet<String>, p: &CohesionPackage, sel: &Sel
     let selected = sel.package.as_deref() == Some(p.node.as_str());
     b.card.pressed = selected;
     b.card.action = if selected {
-        lang.t("Selected", "Ausgewählt")
+        lang.t("Selected")
     } else {
-        lang.t("Inspect groups", "Gruppen untersuchen")
+        lang.t("Inspect groups")
     }
     .into();
     summary(&mut b, p);
@@ -86,42 +82,24 @@ fn summary(b: &mut Builder, p: &CohesionPackage) {
         .filter(|g| g.files.len() == 1 && g.internal_dependencies == 0)
         .count();
     let parts = [
-        lang.plural(p.files, FILES),
+        lang.plural(p.files, FILES.0, FILES.1),
         lang.plural(
             connected,
-            [
-                "{count} connected group",
-                "{count} connected groups",
-                "{count} zusammenhängende Gruppe",
-                "{count} zusammenhängende Gruppen",
-            ],
+            "{count} connected group",
+            "{count} connected groups",
         ),
-        lang.plural(
-            isolated,
-            [
-                "{count} isolated file",
-                "{count} isolated files",
-                "{count} isolierte Datei",
-                "{count} isolierte Dateien",
-            ],
-        ),
+        lang.plural(isolated, "{count} isolated file", "{count} isolated files"),
     ];
     b.push(Kind::Text, parts.join(" · "));
     if p.split_candidate {
         b.push(
             Kind::Verdict,
-            lang.t(
-                "Review package split: check the responsibilities of these groups.",
-                "Paketaufteilung prüfen: Verantwortlichkeiten der Gruppen vergleichen.",
-            ),
+            lang.t("Review package split: check the responsibilities of these groups."),
         );
     } else if p.internal_dependencies == 0 {
         b.push(
             Kind::Muted,
-            lang.t(
-                "Too few internal connections to assess a package split.",
-                "Zu wenige interne Verbindungen, um eine Paketaufteilung zu bewerten.",
-            ),
+            lang.t("Too few internal connections to assess a package split."),
         );
     }
 }
@@ -129,20 +107,15 @@ fn summary(b: &mut Builder, p: &CohesionPackage) {
 fn inspect(b: &mut Builder, p: &CohesionPackage, sel: &Selection) {
     let lang = b.lang;
     let co_change = if p.co_change_status == "not_checked" {
-        lang.t(
-            "Co-change not checked.",
-            "Gemeinsame Änderungen nicht geprüft.",
-        )
-        .to_string()
+        lang.t("Co-change not checked.").to_string()
     } else {
         let status = if p.co_change_status == "available" {
-            lang.t("history available", "Historie verfügbar")
+            lang.t("history available")
         } else {
-            lang.t("incomplete history", "unvollständige Historie")
+            lang.t("incomplete history")
         };
         lang.f(
             "{count} cross-group co-change pairs · {status}",
-            "{count} gemeinsam geänderte Paare zwischen Gruppen · {status}",
             &[
                 ("count", p.cross_group_co_changes.to_string()),
                 ("status", status.into()),
@@ -175,12 +148,8 @@ fn groups(b: &mut Builder, p: &CohesionPackage, order: &[usize], active: usize, 
                 index,
                 label: format!(
                     "{} · {}",
-                    lang.f(
-                        "Group {number}",
-                        "Gruppe {number}",
-                        &[("number", (index + 1).to_string())]
-                    ),
-                    lang.plural(g.files.len(), FILES)
+                    lang.f("Group {number}", &[("number", (index + 1).to_string())]),
+                    lang.plural(g.files.len(), FILES.0, FILES.1)
                 ),
                 files: names.join(", ")
                     + &if rest > 0 {
@@ -200,19 +169,12 @@ fn group_detail(b: &mut Builder, g: &CohesionGroup, active: usize) {
     let lang = b.lang;
     b.push(
         Kind::Heading,
-        lang.f(
-            "Group {number}",
-            "Gruppe {number}",
-            &[("number", (active + 1).to_string())],
-        ),
+        lang.f("Group {number}", &[("number", (active + 1).to_string())]),
     );
     if g.files.iter().any(|f| !b.nodes.contains(f)) {
         b.push(
             Kind::Muted,
-            lang.t(
-                "Some group files are absent from the loaded source graph.",
-                "Einige Gruppendateien fehlen im geladenen Quellgraphen.",
-            ),
+            lang.t("Some group files are absent from the loaded source graph."),
         );
     }
     let mut files = Vec::new();
@@ -221,11 +183,7 @@ fn group_detail(b: &mut Builder, g: &CohesionGroup, active: usize) {
         files.extend(locate(lang, b.nodes, Some(f)));
     }
     b.details(
-        format!(
-            "{} · {}",
-            lang.t("All files", "Alle Dateien"),
-            g.files.len()
-        ),
+        format!("{} · {}", lang.t("All files"), g.files.len()),
         files,
     );
     let mut lines = Vec::new();
@@ -243,15 +201,11 @@ fn group_detail(b: &mut Builder, g: &CohesionGroup, active: usize) {
     if g.boundaries_truncated {
         lines.push(Line::new(
             Kind::Muted,
-            lang.t(
-                "Boundary samples truncated by analysis.",
-                "Grenzbelege durch Analyse begrenzt.",
-            ),
+            lang.t("Boundary samples truncated by analysis."),
         ));
     }
     let summary = lang.f(
         "External dependencies · {incoming} in / {outgoing} out",
-        "Externe Abhängigkeiten · {incoming} ein / {outgoing} aus",
         &[
             ("incoming", g.incoming_dependencies.to_string()),
             ("outgoing", g.outgoing_dependencies.to_string()),
@@ -262,16 +216,13 @@ fn group_detail(b: &mut Builder, g: &CohesionGroup, active: usize) {
 
 fn context(b: &mut Builder, p: &CohesionPackage) {
     let lang = b.lang;
-    b.push(Kind::Path, &p.node).push(Kind::Muted, lang.t(
-        "Direct files only; nested packages are separate. Isolation refers to connections inside this package.",
-        "Nur direkte Dateien; Unterpakete sind separat. Isolation bezieht sich auf Verbindungen innerhalb dieses Pakets.",
+    b.push(Kind::Path, &p.node).push(Kind::Muted, lang.t("Direct files only; nested packages are separate. Isolation refers to connections inside this package.",
     ));
     let lines = vec![
         Line::new(
             Kind::Text,
             lang.f(
                 "Internal share: {share} · internal / (internal + outgoing)",
-                "Interner Anteil: {share} · intern / (intern + ausgehend)",
                 &[("share", percent(p.internal_share.map(|s| s * 100.0)))],
             ),
         ),
@@ -279,7 +230,6 @@ fn context(b: &mut Builder, p: &CohesionPackage) {
             Kind::Text,
             lang.f(
                 "{internal} internal · {outgoing} outgoing · {incoming} incoming file dependencies",
-                "{internal} interne · {outgoing} ausgehende · {incoming} eingehende Dateiabhängigkeiten",
                 &[
                     ("internal", p.internal_dependencies.to_string()),
                     ("outgoing", p.outgoing_dependencies.to_string()),
@@ -289,13 +239,7 @@ fn context(b: &mut Builder, p: &CohesionPackage) {
         ),
         Line::new(Kind::Text, &p.reason),
     ];
-    b.details(
-        lang.t(
-            "Measurements and interpretation",
-            "Messwerte und Einordnung",
-        ),
-        lines,
-    );
+    b.details(lang.t("Measurements and interpretation"), lines);
     b.locate(Some(&p.node));
 }
 
@@ -349,7 +293,7 @@ mod tests {
     #[test]
     fn unselected_card_summarises_the_package() {
         let nodes = BTreeSet::new();
-        let card = card(Lang::default(), &nodes, &package(), &Selection::default());
+        let card = card(&Texts::default(), &nodes, &package(), &Selection::default());
         assert_eq!(card.title, "src");
         assert_eq!(card.full, "crate/src");
         assert_eq!(card.action, "Inspect groups");
@@ -367,7 +311,7 @@ mod tests {
             package: Some("crate/src".into()),
             ..Selection::default()
         };
-        let card = card(Lang::default(), &nodes, &package(), &sel);
+        let card = card(&Texts::default(), &nodes, &package(), &sel);
         assert_eq!(card.action, "Selected");
         assert!(card.pressed);
         let labels: Vec<_> = card

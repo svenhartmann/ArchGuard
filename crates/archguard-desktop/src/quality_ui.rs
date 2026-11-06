@@ -20,23 +20,16 @@ use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::tab_support::{self, Actions, Calls, TabState, index, model};
+use crate::tab_support::{self, Actions, Calls, TabState, Texts, index, model};
 use crate::ui::{
     AppWindow, QualityCard, QualityCell, QualityData, QualityGroup, QualityHeatRow, QualityItem,
     QualityLine, QualityModel,
 };
 use heatmap::State;
 use inputs::Inputs;
-use lang::Lang;
 use notes::Section;
 pub use state::QualityState;
 use state::{PAGE, Page, View};
-
-fn language(ui: &AppWindow) -> Lang {
-    Lang {
-        de: ui.global::<QualityData>().get_lang() == "de",
-    }
-}
 
 impl TabState for QualityState {
     fn push(&mut self, ui: &AppWindow) {
@@ -45,8 +38,8 @@ impl TabState for QualityState {
 
     /// The loading page, or the failure in place of the records.
     fn pending(ui: &AppWindow, error: Option<&str>) {
-        let lang = language(ui);
-        let mut m = page_model(lang, QualityState::loading(lang).page());
+        let lang = Texts::of(ui);
+        let mut m = page_model(&lang, QualityState::loading(lang.clone()).page());
         if let Some(e) = error {
             m.loading = false;
             m.empty = e.into();
@@ -149,7 +142,7 @@ fn wire_targets(ui: &AppWindow) {
 /// run once per document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
-        let lang = language(ui);
+        let lang = Texts::of(ui);
         let calls = Calls::of(data);
         let (root, graph, config, sources) = (
             data.root.to_path_buf(),
@@ -196,13 +189,13 @@ fn snapshot_view(_: &mut QualityState) {}
 /// Write the state's page into `QualityData.model`.
 pub fn push(ui: &AppWindow, s: &mut QualityState) {
     let page = s.page();
-    let mut m = page_model(s.lang, page);
+    let mut m = page_model(&s.lang, page);
     m.query = s.view.query.as_str().into();
     m.target_query = s.view.target_query.as_str().into();
     ui.global::<QualityData>().set_model(m);
 }
 
-fn page_model(lang: Lang, p: Page) -> QualityModel {
+fn page_model(lang: &Texts, p: Page) -> QualityModel {
     QualityModel {
         loading: p.loading,
         section: p.section as i32,

@@ -11,6 +11,7 @@ use super::layout::Cell;
 use super::pins::{self, Rect};
 use super::scene::{self, Face, Paint, Tone, View};
 use super::state::{Lens, StartState, number};
+use crate::tab_support::Texts;
 use crate::ui::{AppWindow, StartCrumb, StartData, StartFace, StartModel, StartPin, StartPlate};
 
 /// `worldComplexityColor`: hsl(175 → 15, 48 %, 55 %) on a log scale.
@@ -190,7 +191,12 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         search: s.search.as_str().into(),
         ..Default::default()
     };
-    fill_texts(&mut m, s, &d.get_label_select_area(), &ui.get_project());
+    fill_texts(
+        &mut m,
+        s,
+        Texts::of(ui).t("Select area…"),
+        &ui.get_project(),
+    );
     if let Some(v) = s.view() {
         fill_scene(&mut m, &old, s, &v);
         fill_camera(&mut m, s, &v);

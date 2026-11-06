@@ -19,7 +19,7 @@ mod view;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::tab_support::{self, Actions, Calls, TabState, index};
+use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, CallsData, CallsModel};
 use model::{ElementKind, Labels, Resolution};
 use rankings::Sort;
@@ -44,22 +44,24 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 }
 
 fn labels(ui: &AppWindow) -> Labels {
-    let d = ui.global::<CallsData>();
+    let texts = Texts::of(ui);
     Labels {
-        unresolved_target: d.get_label_unresolved_target().into(),
-        initializer: d.get_label_initializer().into(),
-        unreported_language: d.get_label_unreported_language().into(),
+        unresolved_target: texts.t("Unresolved target").into(),
+        initializer: texts.t("initializer").into(),
+        unreported_language: texts.t("Unreported language").into(),
     }
 }
 
 fn ui_labels(ui: &AppWindow) -> view::UiLabels {
-    let d = ui.global::<CallsData>();
+    let texts = Texts::of(ui);
     view::UiLabels {
-        all_languages: d.get_label_all_languages(),
-        all_packages: d.get_label_all_packages(),
-        default_package: d.get_label_default_package(),
-        external_group: d.get_label_external_group(),
-        unresolved_group: d.get_label_unresolved_group(),
+        all_languages: texts.t("All languages").into(),
+        all_packages: texts.t("All packages").into(),
+        default_package: texts.t("(default package)").into(),
+        external_group: texts
+            .t("External targets · no project package mapping")
+            .into(),
+        unresolved_group: texts.t("Unresolved targets · no package mapping").into(),
     }
 }
 

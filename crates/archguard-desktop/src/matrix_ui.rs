@@ -7,7 +7,7 @@ use slint::SharedString;
 use crate::context::Loaded;
 use crate::documents;
 use crate::matrix::{Matrix, MatrixRow, Target};
-use crate::tab_support::{self, Actions, TabState, index, model};
+use crate::tab_support::{self, Actions, TabState, Texts, index, model};
 use crate::tree::Tree;
 use crate::ui::{AppWindow, MatrixColumn, MatrixRowItem};
 use std::rc::Rc;
@@ -192,14 +192,15 @@ fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
     ui.set_m_row_start((page * PAGE) as i32);
     ui.set_m_row_total(rows.len() as i32);
     ui.set_m_only(m.only);
-    let mut scopes = vec![ui.get_m_overview_label()];
+    let texts = Texts::of(ui);
+    let mut scopes = vec![SharedString::from(texts.t("Project overview"))];
     scopes.extend(
         m.scopes
             .iter()
             .map(|&s| SharedString::from(m.tree.nodes[s].name.as_str())),
     );
     ui.set_m_scopes(model(scopes));
-    let mut cycles = vec![ui.get_m_all_label()];
+    let mut cycles = vec![SharedString::from(texts.t("All dependencies"))];
     cycles.extend(
         mx.cycles
             .iter()

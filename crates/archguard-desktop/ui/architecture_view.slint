@@ -34,13 +34,6 @@ export struct ArchitectureModel {
 export global ArchitectureData {
     in-out property <ArchitectureModel> model;
 
-    // Translated names Rust needs for groups, scopes and exports.
-    out property <string> label-overview: @tr("Project overview");
-    out property <string> label-direct-root: @tr("Files without a package");
-    out property <string> label-direct: @tr("direct files");
-    out property <string> label-outside: @tr("Other project packages");
-    out property <string> label-mermaid: @tr("Diagram source · this diagram syntax is not supported in the viewer.");
-
     callback select-chapter(int);
     callback download(bool);
     callback navigate(int);

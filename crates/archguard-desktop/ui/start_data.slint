@@ -103,7 +103,6 @@ export struct StartModel {
 export global StartData {
     in-out property <StartModel> model;
     // First entry of the area picker, read by Rust.
-    out property <string> label-select-area: @tr("Select area…");
 
     callback set-lens(int);
     callback set-kpi(int);

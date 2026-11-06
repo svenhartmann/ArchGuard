@@ -5,18 +5,19 @@
 //! on that state into Slint callbacks, [`show_async`] builds the state once
 //! per document on a worker thread.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use archguard_engine::core::{CallAnalysis, Config, ServiceTopology};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::context::Loaded;
 use crate::documents::{self, DocId};
 use crate::tree::Tree;
-use crate::ui::AppWindow;
+use crate::ui::{AppWindow, Templates};
 
 /// One tab's state, kept per document in [`documents`].
 pub trait TabState: Sized + 'static {
@@ -302,6 +303,63 @@ impl Calls {
     }
 }
 
+/// Translated templates for text Rust composes from data, read from the
+/// `Templates` global (`ui/texts.slint`, translated with `@tr` like all
+/// UI text). Keys are the English texts; an unknown key reads as itself.
+/// Cheap to clone and `Send`, so worker threads can build text with it.
+#[derive(Clone, Debug, Default)]
+pub struct Texts(Arc<HashMap<String, String>>);
+
+impl Texts {
+    /// The window's current language (UI thread).
+    pub fn of(ui: &AppWindow) -> Self {
+        let all = ui.global::<Templates>().get_all();
+        Texts(Arc::new(
+            all.iter()
+                .map(|t| (t.key.to_string(), t.text.to_string()))
+                .collect(),
+        ))
+    }
+
+    pub fn t<'a>(&'a self, key: &'a str) -> &'a str {
+        self.0.get(key).map_or(key, String::as_str)
+    }
+
+    /// `t` with `{name}` placeholders filled.
+    pub fn f(&self, key: &str, args: &[(&str, String)]) -> String {
+        fill(self.t(key), args)
+    }
+
+    /// `one` for a count of 1, else `many`; `{count}` filled.
+    pub fn plural(&self, count: usize, one: &str, many: &str) -> String {
+        let key = if count == 1 { one } else { many };
+        self.f(key, &[("count", count.to_string())])
+    }
+
+    /// The German templates as the bundled translation has them: the
+    /// keys of `ui/texts.slint` looked up in `lang/de/*.po` (tests, which
+    /// have no window).
+    #[cfg(test)]
+    pub fn german() -> Self {
+        let po = texts_check::po_de();
+        let map = texts_check::template_keys()
+            .into_iter()
+            .filter_map(|key| {
+                let text = po.get(&texts_check::braced(&key))?;
+                Some((key, texts_check::unbraced(text)))
+            })
+            .collect();
+        Texts(Arc::new(map))
+    }
+}
+
+/// `text` with every `{name}` replaced by its value.
+pub fn fill(text: &str, args: &[(&str, String)]) -> String {
+    args.iter().fold(text.to_string(), |s, (name, value)| {
+        s.replace(&format!("{{{name}}}"), value)
+    })
+}
+
 /// A document's service topology, or why it could not be read.
 pub type Topology = Arc<Result<ServiceTopology, String>>;
 
@@ -313,6 +371,10 @@ pub fn topology(slot: &Shared<Topology>, root: &Path) -> Topology {
     })
     .clone()
 }
+
+#[cfg(test)]
+#[path = "texts_check.rs"]
+mod texts_check;
 
 #[cfg(test)]
 mod tests {
@@ -388,5 +450,16 @@ mod tests {
     fn negative_indices_are_none() {
         assert_eq!(index(-1), None);
         assert_eq!(index(3), Some(3));
+    }
+
+    #[test]
+    fn german_templates_fill_placeholders() {
+        let de = Texts::german();
+        assert_eq!(de.plural(3, "{count} file", "{count} files"), "3 Dateien");
+        assert_eq!(de.plural(1, "{count} file", "{count} files"), "1 Datei");
+        assert_eq!(de.t("Locate in graph"), "Im Graphen anzeigen");
+        let en = Texts::default();
+        assert_eq!(en.plural(1, "{count} file", "{count} files"), "1 file");
+        assert_eq!(en.t("unknown key"), "unknown key");
     }
 }
