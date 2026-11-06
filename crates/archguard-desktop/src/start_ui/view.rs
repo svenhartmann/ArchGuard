@@ -4,11 +4,11 @@
 use std::f64::consts::PI;
 use std::fmt::Write;
 
-use slint::{ComponentHandle, SharedString};
+use slint::{ComponentHandle, Model, SharedString};
 
 use super::details;
 use super::layout::Cell;
-use super::pins::{self, Rect};
+use super::pins::{self, Rect, Spot};
 use super::scene::{self, Face, Paint, Tone, View};
 use super::state::{Lens, StartState};
 use crate::format::Locale;
@@ -310,7 +310,59 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
     (pin, name)
 }
 
-/// Pins with their leader lines, and the cycle arrows of the Problems lens.
+/// Screen rectangles of every block and, per area, the one around its
+/// blocks.
+fn blocks(s: &StartState, v: &View) -> (Vec<Rect>, Vec<Rect>) {
+    let mut per_area: Vec<Vec<(f64, f64)>> = vec![Vec::new(); s.scope.areas.len()];
+    let cells = s
+        .layout
+        .cells
+        .iter()
+        .map(|c| {
+            let (x, y) = (c.x as f64, c.y as f64);
+            let pts = [
+                v.screen(x, y, 0.0),
+                v.screen(x + 1.0, y, 0.0),
+                v.screen(x, y + 1.0, 0.0),
+                v.screen(x + 1.0, y + 1.0, 0.0),
+                v.screen(x + 0.5, y + 0.5, c.z),
+            ];
+            per_area[c.area].extend(pts);
+            Rect::around(pts)
+        })
+        .collect();
+    (cells, per_area.into_iter().map(Rect::around).collect())
+}
+
+/// What the pins of `order` want: anchor, width, their blocks and the
+/// offset they had in the window's last frame.
+fn wants(
+    old: &StartModel,
+    rows: &[StartPin],
+    anchors: &[(f64, f64)],
+    areas: &[Rect],
+) -> Vec<pins::Want> {
+    let last = |area: i32| {
+        let p = old.pins.iter().find(|p| p.area == area && !p.collapsed)?;
+        let (x, y) = (
+            f64::from(p.x + p.w / 2.0),
+            f64::from(p.y) + pins::PIN_H / 2.0,
+        );
+        Some((x - f64::from(p.ax), y - f64::from(p.ay)))
+    };
+    rows.iter()
+        .zip(anchors)
+        .map(|(p, &anchor)| pins::Want {
+            anchor,
+            width: f64::from(p.w),
+            blocks: areas[p.area as usize],
+            last: last(p.area),
+        })
+        .collect()
+}
+
+/// Pins placed clear of each other and of the blocks, their leader lines
+/// and the cycle arrows of the Problems lens.
 fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, l: Locale) {
     let center = |area: usize, z: f64| {
         let p = s
@@ -323,25 +375,29 @@ fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, 
     };
     let max = area_max(s);
     let order = pinned(s, &max);
+    let (cells, areas) = blocks(s, v);
+    let cover = pins::Cover::new(&cells, (v.w, v.h));
     let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(l, s, a, max[a]).0).collect();
     let anchors: Vec<(f64, f64)> = order.iter().map(|&a| center(a, 0.0)).collect();
-    let widths: Vec<f64> = rows.iter().map(|p| f64::from(p.w)).collect();
-    let placed = pins::place(&anchors, &widths, (v.w, v.h), controls(v.w, v.h));
+    let wants = wants(old, &rows, &anchors, &areas);
+    let placed = pins::place(&wants, (v.w, v.h), controls(v.w, v.h), &cover);
     let mut leaders = String::new();
     let mut shown = Vec::new();
-    for ((mut pin, slot), anchor) in rows.into_iter().zip(placed).zip(anchors) {
-        let Some(r) = slot else { continue };
-        let _ = write!(
-            leaders,
-            "M {:.1} {:.1} L {:.1} {:.1} ",
-            r.x,
-            r.y + r.h / 2.0,
-            anchor.0,
-            anchor.1
-        );
-        (pin.x, pin.y) = ((r.x - r.w / 2.0) as f32, (r.y - r.h / 2.0) as f32);
+    for ((mut pin, spot), (ax, ay)) in rows.into_iter().zip(placed).zip(anchors) {
+        (pin.ax, pin.ay) = (ax as f32, ay as f32);
+        match spot {
+            Spot::Off => continue,
+            Spot::Collapsed => pin.collapsed = true,
+            Spot::Shown(r) => {
+                let (fx, fy) = r.nearest((ax, ay));
+                let _ = write!(leaders, "M {fx:.1} {fy:.1} L {ax:.1} {ay:.1} ");
+                (pin.x, pin.y) = ((r.x - r.w / 2.0) as f32, (r.y - r.h / 2.0) as f32);
+            }
+        }
         shown.push(pin);
     }
+    // Dots first: the shown pins stay on top of them.
+    shown.sort_by_key(|p| !p.collapsed);
     m.pins = sync_rows(&old.pins, shown);
     m.leaders = leaders.into();
     if s.lens == Lens::Problems {

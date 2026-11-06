@@ -9,6 +9,9 @@ import { StartData, StartTones, StartPin } from "start_data.slint";
 component Pin inherits Rectangle {
     in property <StartPin> pin;
     in property <int> kpi;
+    // Top-left corner; a collapsed pin's hover card sets it relative to its dot.
+    in property <length> at-x: pin.x * 1px;
+    in property <length> at-y: pin.y * 1px;
     callback open();
     pure function join(a: string, b: string) -> string {
         return a == "" ? b : b == "" ? a : a + " · " + b;
@@ -16,8 +19,8 @@ component Pin inherits Rectangle {
     property <string> marks: join(join(pin.cyclic ? @tr("Package cycle") : "",
             pin.findings > 0 ? @tr("{0} finding" | "{0} findings" % pin.findings, Fmt.int(pin.findings)) : ""),
         pin.max == "" ? "" : kpi > 0 ? @tr("{} max. {}", StartTones.kpi-label(kpi), pin.max) : @tr("max {}", pin.max));
-    x: pin.x * 1px;
-    y: pin.y * 1px - (touch.has-hover ? 2px : 0);
+    x: at-x;
+    y: at-y - (touch.has-hover ? 2px : 0);
     width: pin.w * 1px;
     height: 50px;
     border-radius: 9px;
@@ -59,6 +62,35 @@ component Pin inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
+    }
+}
+
+// A pin that found no place clear of other pins and of the blocks: a dot
+// on its area, the pin shows while the pointer rests on it.
+component PinDot inherits Rectangle {
+    in property <StartPin> pin;
+    in property <int> kpi;
+    callback open();
+    x: pin.ax * 1px - 7px;
+    y: pin.ay * 1px - 7px;
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    background: Theme.panel;
+    border-width: 2px;
+    border-color: pin.cyclic || pin.findings > 0 ? Theme.cycle : Theme.accent;
+    drop-shadow-blur: 4px;
+    drop-shadow-color: Theme.shadow;
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+    }
+    if t.has-hover: Pin {
+        pin: root.pin;
+        kpi: root.kpi;
+        at-x: root.width / 2 - root.pin.w * 1px / 2;
+        at-y: -56px;
+        open => { root.open(); }
     }
 }
 
@@ -210,10 +242,17 @@ export component StartStage inherits Rectangle {
         }
     }
 
-    for p in StartData.model.pins: Pin {
-        pin: p;
-        kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
-        open => { StartData.open-area(p.area); }
+    for p in StartData.model.pins: Rectangle {
+        if p.collapsed: PinDot {
+            pin: p;
+            kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
+            open => { StartData.open-area(p.area); }
+        }
+        if !p.collapsed: Pin {
+            pin: p;
+            kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
+            open => { StartData.open-area(p.area); }
+        }
     }
 
     // Orientation: rotate in 15° steps, restore the original direction.
