@@ -34,6 +34,7 @@ mod node_view;
 mod pane_store;
 mod panes;
 mod panes_ui;
+mod platform;
 mod quality_ui;
 mod rating;
 mod security_ui;
@@ -65,10 +66,14 @@ fn main() -> Result<(), slint::PlatformError> {
     // Snapshot runs render off-screen: no window, no Dock icon.
     #[cfg(feature = "snapshot")]
     headless::install()?;
+    if !context::headless_run() {
+        platform::select_renderer()?;
+    }
     let ui = AppWindow::new()?;
     if !context::headless_run() {
         set_dock_icon();
     }
+    platform::apply(&ui);
     format::wire(&ui);
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);

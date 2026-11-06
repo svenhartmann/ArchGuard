@@ -32,6 +32,9 @@ rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] 
 # Dock icon when run without an app bundle and the app menu's Quit;
 # already in the tree via winit.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Skia draws the system font (San Francisco, a variable font) with its
+# weights; FemtoVG falls back to Helvetica there (src/platform.rs).
+slint = { version = "1.18", features = ["renderer-skia"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData"] }
