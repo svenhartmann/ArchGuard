@@ -29,6 +29,10 @@ pub const VIEWS: [&str; 8] = [
 /// the Matrix; not in the view bar.
 pub const FILE: &str = "file";
 
+/// The `archguard.toml` editor (View → Settings), open once per
+/// document; not in the view bar.
+pub const SETTINGS: &str = "settings";
+
 /// The order in which a pane that needs a view takes one not open yet.
 const FREE_ORDER: [&str; 8] = [
     "dsm",
@@ -106,7 +110,7 @@ impl Default for Layout {
 
 /// A view kind this version knows.
 pub fn known(kind: &str) -> bool {
-    VIEWS.contains(&kind) || kind == FILE
+    VIEWS.contains(&kind) || kind == FILE || kind == SETTINGS
 }
 
 /// Kinds of which a document can show several instances, each with its
@@ -305,7 +309,10 @@ impl Layout {
         Tab {
             kind: kind.to_string(),
             id,
-            node: node.map(str::to_string),
+            // The Settings tab is titled by its file.
+            node: node
+                .or((kind == SETTINGS).then_some("archguard.toml"))
+                .map(str::to_string),
             display: 0,
         }
     }
@@ -504,6 +511,20 @@ mod tests {
         let (p, t) = l.find_id(b).expect("open");
         assert_eq!(l.panes[p].tabs[t].label(), "core");
         assert_eq!(l.open_tab(FILE, None), None, "a File view needs a node");
+    }
+
+    /// View → Settings: one tab per document, titled by its file; not in
+    /// the view bar, kept when a stored layout is restored.
+    #[test]
+    fn settings_open_once_titled_by_the_file() {
+        let mut l = Layout::single("graph");
+        let id = l.open_tab(SETTINGS, None).expect("a tab");
+        l.select_tab(0, 0);
+        assert_eq!(l.open_tab(SETTINGS, None), Some(id), "selected again");
+        assert_eq!(tabs(&l), [["graph", SETTINGS]]);
+        assert_eq!(l.view(0).map(Tab::label), Some("archguard.toml"));
+        assert!(!VIEWS.contains(&SETTINGS));
+        assert_eq!(tabs(&repaired(l)), [["graph", SETTINGS]]);
     }
 
     #[test]
