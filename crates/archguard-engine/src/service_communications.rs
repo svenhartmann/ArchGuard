@@ -259,22 +259,15 @@ struct Deployment {
     project: String,
     host: String,
     name: String,
+    /// Resource this one was created from, such as the server of a database.
+    parent: Option<String>,
     refs: Vec<String>,
     waits: Vec<String>,
     proof: ServiceEvidence,
 }
 const PROJECT_CALLS: [&str; 2] = ["AddDotnetProject", "AddProject"];
-const INFRASTRUCTURE_CALLS: [&str; 9] = [
-    "AddRedis",
-    "AddRabbitMQ",
-    "AddSqlServer",
-    "AddPostgres",
-    "AddMySql",
-    "AddMongoDB",
-    "AddKafka",
-    "AddDatabase",
-    "AddHealthChecksUI",
-];
+/// Value-only resources: configuration, not services.
+const VALUE_CALLS: [&str; 2] = ["AddParameter", "AddParameterFromConfiguration"];
 const DEPENDENCY_CALLS: [&str; 3] = ["WithReference", "WaitFor", "WaitForCompletion"];
 const CLIENT_CALLS: [&str; 2] = ["AddHttpClient", "AddGrpcClient"];
 const ADDRESS_NAMES: [&str; 2] = ["BaseAddress", "Address"];
@@ -425,6 +418,14 @@ fn published(
     }
     events
 }
+/// How one resource call is bound and linked within its statement.
+#[derive(Default)]
+struct Registration {
+    binding: Option<String>,
+    parent: Option<String>,
+    refs: Vec<String>,
+    waits: Vec<String>,
+}
 /// AppHost registrations read from literal Aspire calls.
 struct Aspire<'a> {
     root: &'a Path,
@@ -432,11 +433,66 @@ struct Aspire<'a> {
     deployments: Vec<Deployment>,
     variables: BTreeMap<Binding, String>,
     brokers: BTreeMap<Binding, String>,
+    /// String constants of the AppHost file being read.
+    names: BTreeMap<String, String>,
 }
 impl Aspire<'_> {
+    /// Locals and constants assigned a string literal exactly once, such as a resource name.
+    fn string_constants(tokens: &[Token]) -> BTreeMap<String, String> {
+        let writes = |name: &str| {
+            tokens
+                .windows(2)
+                .filter(|a| a[0].text == name && is(&a[1], "="))
+                .count()
+        };
+        tokens
+            .split(|t| is(t, ";"))
+            .filter_map(|stmt| match stmt {
+                [.., name, eq, value] if is(eq, "=") && value.string && writes(&name.text) == 1 => {
+                    Some((name.text.clone(), value.text.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    /// Top-level `Add…` calls that create Aspire resources: on the builder, on a
+    /// resource variable or chained on such a call, outside lambdas and arguments.
+    fn resource_calls(stmt: &[Token]) -> Vec<usize> {
+        let mut depth = 0usize;
+        let mut calls = Vec::new();
+        for (i, t) in stmt.iter().enumerate() {
+            if is(t, "(") {
+                depth += 1;
+            } else if is(t, ")") {
+                depth = depth.saturating_sub(1);
+            } else if depth == 0 && Self::is_resource_call(stmt, i) {
+                calls.push(i);
+            }
+        }
+        calls
+    }
+    /// `receiver.AddName(` or `receiver.AddName<` where the receiver starts a chain.
+    fn is_resource_call(stmt: &[Token], i: usize) -> bool {
+        let t = &stmt[i];
+        let named = !t.string
+            && t.text.len() > 3
+            && t.text.starts_with("Add")
+            && t.text.as_bytes()[3].is_ascii_uppercase()
+            && !is_any(t, &VALUE_CALLS);
+        let called = stmt.get(i + 1).is_some_and(|n| is(n, "(") || is(n, "<"));
+        let receiver = i >= 2
+            && is(&stmt[i - 1], ".")
+            && (is(&stmt[i - 2], ")") || i < 3 || !is(&stmt[i - 3], "."));
+        named && called && receiver
+    }
     fn read(&mut self, files: &[Source]) {
         for src in files {
-            if src.tokens.iter().any(|t| is_any(t, &PROJECT_CALLS)) {
+            let apphost = src
+                .tokens
+                .iter()
+                .any(|t| is_any(t, &PROJECT_CALLS) || is(t, "DistributedApplication"));
+            if apphost {
+                self.names = Self::string_constants(&src.tokens);
                 for stmt in src.tokens.split(|t| is(t, ";")) {
                     self.statement(src, stmt);
                 }
@@ -454,84 +510,128 @@ impl Aspire<'_> {
             self.brokers
                 .insert((src.file.clone(), var), name.text.to_lowercase());
         }
-        if let Some(at) = stmt.iter().position(|t| is_any(t, &INFRASTRUCTURE_CALLS)) {
-            self.infrastructure(src, stmt, at, binding);
-        } else if let Some(at) = stmt.iter().position(|t| is_any(t, &PROJECT_CALLS)) {
-            self.project(src, stmt, at, binding);
-        }
-    }
-    /// Explicit Aspire infrastructure registration, scoped to this AppHost.
-    fn infrastructure(&mut self, src: &Source, stmt: &[Token], at: usize, binding: Option<String>) {
-        let Some(name) = arguments(stmt, at)
-            .and_then(|a| a.first())
-            .filter(|t| t.string)
-        else {
+        let calls = Self::resource_calls(stmt);
+        let Some(&last) = calls.last() else {
+            self.configure(src, stmt);
             return;
         };
-        let id = self.bind(src, name, binding);
-        let (mut refs, waits) = dependencies(stmt);
-        if is(&stmt[at], "AddDatabase") && at >= 2 {
-            refs.insert(0, stmt[at - 2].text.clone());
+        let mut parent = calls
+            .first()
+            .and_then(|&at| self.variable(src, &stmt[at - 2]));
+        for &at in &calls {
+            let mut registration = Registration {
+                parent,
+                ..Default::default()
+            };
+            if at == last {
+                registration.binding = binding.clone();
+                (registration.refs, registration.waits) = dependencies(stmt);
+            }
+            parent = self.resource(src, stmt, at, registration);
         }
-        let proof = evidence(
-            &src.file,
-            &stmt[at],
-            "Explicit Aspire infrastructure registration; no local source project inferred.".into(),
-        );
-        self.deployments.push(Deployment {
-            id,
-            project: String::new(),
-            host: src.file.clone(),
-            name: name.text.clone(),
+    }
+    /// The deployment id an AppHost variable holds, if any.
+    fn variable(&self, src: &Source, t: &Token) -> Option<String> {
+        self.variables
+            .get(&(src.file.clone(), t.text.clone()))
+            .cloned()
+    }
+    /// `resource.WithReference(...)` as a statement of its own.
+    fn configure(&mut self, src: &Source, stmt: &[Token]) {
+        if !stmt.get(1).is_some_and(|t| is(t, ".")) {
+            return;
+        }
+        let Some(id) = stmt.first().and_then(|t| self.variable(src, t)) else {
+            return;
+        };
+        let (refs, waits) = dependencies(stmt);
+        if let Some(d) = self.deployments.iter_mut().find(|d| d.id == id) {
+            d.refs.extend(refs);
+            d.waits.extend(waits);
+        }
+    }
+    /// One literal resource registration, mapped to a local project where its
+    /// generic type or path argument names exactly one. Returns its id.
+    fn resource(
+        &mut self,
+        src: &Source,
+        stmt: &[Token],
+        at: usize,
+        registration: Registration,
+    ) -> Option<String> {
+        let Registration {
+            binding,
+            parent,
             refs,
             waits,
-            proof,
-        });
-    }
-    fn project(&mut self, src: &Source, stmt: &[Token], at: usize, binding: Option<String>) {
-        let Some(args) = arguments(stmt, at) else {
-            return;
+        } = registration;
+        let call = &stmt[at];
+        let args = arguments(stmt, at)?;
+        let constant = match args {
+            [t] if !t.string => self.names.get(&t.text).map(|text| Token {
+                text: text.clone(),
+                line: t.line,
+                string: true,
+            }),
+            _ => None,
         };
-        let literals: Vec<_> = args.iter().filter(|t| t.string).collect();
-        let Some(name) = literals.first() else {
-            return;
+        let Some(name) = args.first().filter(|t| t.string).or(constant.as_ref()) else {
+            // Unbound calls without a literal name are usually helper extensions.
+            if binding.is_some() {
+                let message = format!(
+                    "Aspire {} resource name is not a string literal; resource not registered.",
+                    call.text
+                );
+                diagnostic(self.report, &src.file, None, &message);
+            }
+            return None;
         };
-        let candidates = if is(&stmt[at], "AddDotnetProject") {
-            literals
-                .get(1)
-                .and_then(|path| self.projects_at(&src.file, &path.text))
-        } else {
+        let candidates = if is(&stmt[at + 1], "<") {
             self.projects_of_type(&stmt[at..])
-        };
-        let Some(candidates) = candidates else {
-            return;
-        };
-        if candidates.len() != 1 {
+        } else {
+            args.iter()
+                .filter(|t| t.string)
+                .nth(1)
+                .and_then(|path| self.projects_at(&src.file, &path.text))
+        }
+        .unwrap_or_default();
+        let project_call = is_any(call, &PROJECT_CALLS);
+        if candidates.len() > 1 || project_call && candidates.is_empty() {
             diagnostic(
                 self.report,
                 &src.file,
                 None,
                 "Aspire project registration is ambiguous or unsupported; no service mapping inferred.",
             );
-            return;
+            if project_call {
+                return None;
+            }
         }
+        let project = if candidates.len() == 1 {
+            candidates[0].clone()
+        } else {
+            String::new()
+        };
+        let description = if project.is_empty() {
+            format!(
+                "Explicit Aspire resource registration ({}); no local source project inferred.",
+                call.text
+            )
+        } else {
+            "Literal Aspire registration maps a deployment to its project; configuration is not executed.".into()
+        };
         let id = self.bind(src, name, binding);
-        let (refs, waits) = dependencies(stmt);
-        let proof = evidence(
-            &src.file,
-            &stmt[at],
-            "Literal Aspire registration maps a deployment to its project; configuration is not executed."
-                .into(),
-        );
         self.deployments.push(Deployment {
-            id,
-            project: candidates[0].clone(),
+            id: id.clone(),
+            project,
             host: src.file.clone(),
             name: name.text.clone(),
+            parent,
             refs,
             waits,
-            proof,
+            proof: evidence(&src.file, call, description),
         });
+        Some(id)
     }
     /// Projects whose path or manifest is the `AddDotnetProject` path relative to the AppHost.
     fn projects_at(&self, file: &str, path: &str) -> Option<Vec<String>> {
@@ -601,6 +701,15 @@ impl Aspire<'_> {
     fn configured_edges(&self) -> Edges {
         let mut edges = Edges::new();
         for d in &self.deployments {
+            if let Some(parent) = &d.parent {
+                edge(
+                    &mut edges,
+                    &d.id,
+                    parent,
+                    Kind::ConfiguredReference,
+                    [d.proof.clone()],
+                );
+            }
             for (names, kind) in [
                 (&d.refs, Kind::ConfiguredReference),
                 (&d.waits, Kind::Startup),
@@ -634,7 +743,7 @@ impl Aspire<'_> {
             report,
             "",
             None,
-            "Aspire/.NET communication coverage is partial: literal project registrations, typed HTTP/gRPC clients and conventional RabbitMQ publisher/subscription candidates only. Branches, dynamic routing, custom brokers and runtime execution are not evaluated. Event cycles may describe intended workflows, not defects.",
+            "Aspire/.NET communication coverage is partial: literal resource registrations (projects, containers, executables, integrations, external services; parameters excluded), typed HTTP/gRPC clients and conventional RabbitMQ publisher/subscription candidates only. Branches, dynamic routing, custom brokers and runtime execution are not evaluated. Event cycles may describe intended workflows, not defects.",
         );
     }
 }
@@ -840,6 +949,7 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
         deployments: Vec::new(),
         variables: BTreeMap::new(),
         brokers: BTreeMap::new(),
+        names: BTreeMap::new(),
     };
     aspire.read(&files);
     if aspire.deployments.is_empty() {

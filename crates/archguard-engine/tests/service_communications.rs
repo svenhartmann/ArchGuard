@@ -236,3 +236,121 @@ builder.Services.AddHttpClient<ApiClient>(client => client.BaseAddress = endpoin
         && e.to == id("api")
         && e.kind == archguard_core::ServiceDependencyKind::HttpCall));
 }
+#[test]
+fn aspire_external_service_is_a_referenced_resource_without_project() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    for p in ["Host", "Api"] {
+        write(
+            r,
+            &format!("{p}/{p}.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>",
+        );
+    }
+    write(
+        r,
+        "Host/AppHost.cs",
+        r#"
+var weather=builder.AddExternalService("weather","https://api.weather.example/");
+var url=builder.AddParameter("payments-url");
+var payments=builder.AddExternalService("payments",url);
+var api=builder.AddProject<Projects.Api>("api").WithReference(weather).WithReference(payments);
+"#,
+    );
+    let r = analyze_services(r).unwrap();
+    let service = |n: &str| r.services.iter().find(|s| s.name == n).unwrap();
+    for name in ["weather", "payments"] {
+        assert!(
+            service(name).project.is_none(),
+            "{name} has no local project"
+        );
+        let edge = r
+            .dependencies
+            .iter()
+            .find(|e| e.from == service("api").id && e.to == service(name).id)
+            .unwrap_or_else(|| panic!("api -> {name} missing"));
+        assert_eq!(
+            edge.kind,
+            archguard_core::ServiceDependencyKind::ConfiguredReference
+        );
+    }
+    let proof = &r
+        .dependencies
+        .iter()
+        .find(|e| e.to == service("weather").id)
+        .unwrap()
+        .evidence;
+    assert!(
+        proof
+            .iter()
+            .any(|e| e.file == "Host/AppHost.cs" && e.line == Some(5))
+    );
+}
+#[test]
+fn every_literal_aspire_resource_is_registered() {
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    for p in ["Host", "Api"] {
+        write(
+            r,
+            &format!("{p}/{p}.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"/>",
+        );
+    }
+    write(r, "frontend/package.json", r#"{"name":"frontend"}"#);
+    write(
+        r,
+        "Host/AppHost.cs",
+        r#"
+var builder = DistributedApplication.CreateBuilder(args);
+builder.Services.AddSingleton("not-a-resource");
+var secret = builder.AddParameter("secret", secret: true);
+var cache = builder.AddContainer("cache", "redis");
+var catalog = builder.AddPostgres("pg").WithDataVolume().AddDatabase("catalog");
+var tool = builder.AddExecutable("tool", "dotnet", ".");
+var ordersName = "orders";
+var orders = builder.AddPostgres("pg2").AddDatabase(ordersName);
+var unknown = builder.AddRedis(args[0]);
+builder.AddForwardedHeaders();
+var api = builder.AddProject<Projects.Api>("api")
+    .WithReference(catalog)
+    .WithEnvironment(ctx => ctx.EnvironmentVariables.AddEntry("inner", "x"));
+api.WithReference(cache).WaitFor(tool);
+builder.AddNpmApp("web", "../frontend").WithReference(api);
+"#,
+    );
+    let r = analyze_services(r).unwrap();
+    let names: Vec<_> = r.services.iter().map(|s| s.name.as_str()).collect();
+    for name in ["cache", "pg", "catalog", "orders", "tool", "api", "web"] {
+        assert!(names.contains(&name), "{name} missing in {names:?}");
+    }
+    for name in ["not-a-resource", "secret", "inner"] {
+        assert!(!names.contains(&name), "{name} is not a resource");
+    }
+    let service = |n: &str| r.services.iter().find(|s| s.name == n).unwrap();
+    assert_eq!(
+        service("web").project.as_deref(),
+        Some("project:frontend/package.json")
+    );
+    let has = |from: &str, to: &str, kind| {
+        r.dependencies
+            .iter()
+            .any(|e| e.from == service(from).id && e.to == service(to).id && e.kind == kind)
+    };
+    use archguard_core::ServiceDependencyKind::{ConfiguredReference, Startup};
+    assert!(has("catalog", "pg", ConfiguredReference));
+    assert!(has("api", "catalog", ConfiguredReference));
+    assert!(has("api", "cache", ConfiguredReference));
+    assert!(has("api", "tool", Startup));
+    assert!(has("web", "api", ConfiguredReference));
+    let unnamed: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("resource name is not a string literal"))
+        .collect();
+    assert_eq!(
+        unnamed.len(),
+        1,
+        "only the bound AddRedis(args[0]): {unnamed:?}"
+    );
+}
