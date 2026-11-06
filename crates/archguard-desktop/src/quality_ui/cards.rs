@@ -55,8 +55,27 @@ pub fn class(lang: &Texts, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card
     b.done()
 }
 
+/// A method id (`rust:a/x.rs::Store#open@12`) as a title: owner and
+/// name, without language, path and line; module-level functions by name.
+pub fn method_title(id: &str) -> String {
+    let Some((owner, rest)) = id.rsplit_once('#') else {
+        return id.to_string();
+    };
+    let name = rest.split('@').next().unwrap_or(rest);
+    let (owner, sep) = match owner.rsplit_once("::") {
+        Some((_, last)) => (last, "::"),
+        None => (owner.rsplit('.').next().unwrap_or(owner), "."),
+    };
+    let owner = owner.rsplit(':').next().unwrap_or(owner);
+    if owner.is_empty() || owner == "(module)" {
+        return name.to_string();
+    }
+    format!("{owner}{sep}{name}")
+}
+
 pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Card {
-    let mut b = Builder::new(lang, nodes, &row.method_id);
+    let mut b = Builder::new(lang, nodes, method_title(&row.method_id));
+    b.card.full = row.method_id.clone();
     b.push(Kind::Small, format!("{}:{}", row.file, row.line))
         .push(
             Kind::Text,
@@ -261,5 +280,37 @@ mod tests {
         };
         let card = method(&Texts::default(), &BTreeSet::new(), &row);
         assert_eq!(texts(&card)[..3], ["a/x.rs:7", "Cognitive: 4", "MI: 61.23"]);
+    }
+
+    #[test]
+    fn method_titles_read_as_owner_and_name() {
+        assert_eq!(
+            method_title("rust:crates/a/src/lib.rs::(module)#collect_messaging@300"),
+            "collect_messaging"
+        );
+        assert_eq!(
+            method_title("rust:crates/a/src/lib.rs::Store#open@12"),
+            "Store::open"
+        );
+        assert_eq!(
+            method_title("java:com.shop.OrderService#place@40"),
+            "OrderService.place"
+        );
+        assert_eq!(method_title("A#run"), "A.run");
+        assert_eq!(method_title("no-marker"), "no-marker");
+        let row = MethodMetrics {
+            method_id: "rust:a/x.rs::(module)#run@7".into(),
+            node: None,
+            class_id: "A".into(),
+            file: "a/x.rs".into(),
+            line: 7,
+            cognitive: None,
+            halstead: None,
+            source_lines: None,
+            maintainability_index: None,
+        };
+        let card = method(&Texts::default(), &BTreeSet::new(), &row);
+        assert_eq!(card.title, "run");
+        assert_eq!(card.full, "rust:a/x.rs::(module)#run@7");
     }
 }

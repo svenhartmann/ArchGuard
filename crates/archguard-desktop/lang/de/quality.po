@@ -150,6 +150,9 @@ msgstr "Messkontext"
 msgid "Selected"
 msgstr "Ausgewählt"
 
+msgid "(project root)"
+msgstr "(Projektwurzel)"
+
 msgid "Inspect groups"
 msgstr "Gruppen untersuchen"
 
