@@ -3,7 +3,7 @@
 import { ScrollView, ComboBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
-import { Button, SectionHeading, Badge, Disclosure } from "widgets.slint";
+import { Button, SectionHeading, Badge, Disclosure, HelpTip } from "widgets.slint";
 import { CallsData, CallsModel, CallsStep } from "calls_data.slint";
 import { CallsColumn, Muted, Card, LineButton } from "calls_parts.slint";
 
@@ -97,18 +97,9 @@ component Rankings inherits VerticalLayout {
     }
     HorizontalLayout {
         alignment: start;
-        Button {
-            compact: true;
-            text: "?";
-            pressed-state: m.rank-help;
-            clicked => { CallsData.toggle-rank-help(); }
-        }
-    }
-    if m.rank-help: VerticalLayout {
-        spacing: 6px;
-        Muted { text: @tr("Uses the filters above, including related callers and targets. Selecting an element keeps this ranking unchanged. Each involved site counts once, even for a self-call."); }
-        Muted {
-            text: @tr("Coverage: {}.", CallsData.coverage(m.status))
+        HelpTip {
+            tip: @tr("Uses the filters above, including related callers and targets. Selecting an element keeps this ranking unchanged. Each involved site counts once, even for a self-call.")
+                + "\n\n" + @tr("Coverage: {}.", CallsData.coverage(m.status))
                 + (m.status == "partial" ? " " + @tr("Counts are incomplete and may change when missing dependencies are resolved.") : "")
                 + (m.rank-unresolved > 0 ? " " + @tr("{} unresolved target sites in this scope.", Fmt.int(m.rank-unresolved)) : "")
                 + (m.rank-missing-callers > 0 ? " " + @tr("{} sites without a declared caller method (including initializers).", Fmt.int(m.rank-missing-callers)) : "")
@@ -206,17 +197,12 @@ component Cycles inherits VerticalLayout {
             text: @tr("All cycle groups");
             clicked => { CallsData.cycles-show-all(); }
         }
-        Button {
-            compact: true;
-            text: "?";
-            pressed-state: m.cycle-help;
-            clicked => { CallsData.toggle-cycle-help(); }
-        }
-    }
-    if m.cycle-help: Muted {
-        text: @tr("Each group is a strongly connected component (SCC), shown with all its internal connections and one closed example path. This does not enumerate every possible elementary cycle. Type/module cycles aggregate calls; they do not necessarily form a function/method cycle. Module owners group top-level functions, not declared classes. Function/method cycles include direct and mutual recursion within one owner. ")
+        HelpTip {
+            y: (parent.height - self.height) / 2;
+            tip: @tr("Each group is a strongly connected component (SCC), shown with all its internal connections and one closed example path. This does not enumerate every possible elementary cycle. Type/module cycles aggregate calls; they do not necessarily form a function/method cycle. Module owners group top-level functions, not declared classes. Function/method cycles include direct and mutual recursion within one owner. ")
             + @tr("Language, package and search select complete groups when a member matches. Target and internal-call controls are paused here to preserve return paths. Static compiler targets do not prove that a loop occurs at runtime. ")
             + @tr("{} unresolved target sites; {} project sites without complete method identities in the source snapshot.", Fmt.int(m.cycle-unresolved), Fmt.int(m.cycle-missing));
+        }
     }
     for g in m.cycle-rows: Card {
         selected: g.selected;

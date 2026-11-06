@@ -92,8 +92,6 @@ pub struct State {
     pub open_suggestions: HashSet<usize>,
     evidence_relation: Option<String>,
     pub analysis_open: bool,
-    pub rank_help: bool,
-    pub cycle_help: bool,
     pub view: Derived,
 }
 
@@ -132,8 +130,6 @@ impl State {
             open_suggestions: HashSet::new(),
             evidence_relation: None,
             analysis_open: false,
-            rank_help: false,
-            cycle_help: false,
             view: Derived::default(),
         };
         s.refresh();

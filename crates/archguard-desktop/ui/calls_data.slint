@@ -188,7 +188,6 @@ export struct CallsModel {
     rank-missing-callers: int,
     rank-missing-targets: int,
     rank-unmeasured: int,
-    rank-help: bool,
     // Cycles.
     cycle-method: bool,
     cycle-rows: [CallsCycleRow],
@@ -197,7 +196,6 @@ export struct CallsModel {
     cycles-more: bool,
     cycle-unresolved: int,
     cycle-missing: int,
-    cycle-help: bool,
     has-group: bool,
     group-members: int,
     group-edges: int,
@@ -267,12 +265,10 @@ export global CallsData {
     callback set-rank-sort(int);
     callback rank-select(int);
     callback rank-more();
-    callback toggle-rank-help();
     callback set-cycle-method(bool);
     callback cycle-select(int);
     callback cycles-show-all();
     callback cycles-more();
-    callback toggle-cycle-help();
     callback path-select(int);
     callback path-more();
     callback member-select(int);

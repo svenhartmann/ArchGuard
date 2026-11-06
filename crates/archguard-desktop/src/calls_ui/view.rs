@@ -240,7 +240,6 @@ fn fill_rankings(m: &mut CallsModel, s: &State) {
     m.rank_missing_callers = int(v.rankings.missing_callers);
     m.rank_missing_targets = int(v.rankings.missing_targets);
     m.rank_unmeasured = int(v.rank_missing);
-    m.rank_help = s.rank_help;
     let kind = if s.rank_method {
         ElementKind::Method
     } else {
@@ -291,7 +290,6 @@ fn fill_cycles(m: &mut CallsModel, s: &State) {
     m.cycle_total = int(groups.len());
     m.cycle_unresolved = int(s.cycles.unresolved_targets);
     m.cycle_missing = int(s.cycles.missing_methods);
-    m.cycle_help = s.cycle_help;
     m.cycles_more = s.cycle.groups < v.groups.len();
     let mut shown: Vec<usize> = (0..v.groups.len().min(s.cycle.groups)).collect();
     if let Some(pos) = v.group.and_then(|g| v.groups.iter().position(|&x| x == g))
