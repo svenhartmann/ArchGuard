@@ -1,5 +1,5 @@
 // The call tree column (renderCallTree in viewer_calls_tree.js).
-import { ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Button, SectionHeading } from "widgets.slint";
@@ -132,11 +132,11 @@ export component CallsTree inherits CallsColumn {
                 + (m.tree-element != "" ? " · " + @tr("Element: {}", m.tree-element) : "")
                 + (m.tree-missing > 0 ? " · " + @tr("{} sites without method identity", Fmt.int(m.tree-missing)) : "");
         }
-        ScrollView {
+        // A ListView creates only the rows in view.
+        if m.tree.length > 0: VerticalLayout {
             vertical-stretch: 1;
-            VerticalLayout {
-                alignment: start;
-                padding-top: 3px;
+            padding-top: 3px;
+            ListView {
                 for row in m.tree: VerticalLayout {
                     if row.skipped > 0: Muted {
                         text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));
@@ -145,23 +145,23 @@ export component CallsTree inherits CallsColumn {
                     }
                     TreeLine { item: row; }
                 }
-                if m.tree.length == 0: Text {
-                    text: @tr("No call elements match the current scope and filters.");
-                    color: Theme.text;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                    height: 60px;
-                    vertical-alignment: center;
-                }
-                if m.tree-more: HorizontalLayout {
-                    alignment: start;
-                    padding-top: 6px;
-                    Button {
-                        compact: true;
-                        text: @tr("Show next 200 tree rows");
-                        clicked => { CallsData.tree-more(); }
-                    }
-                }
+            }
+        }
+        if m.tree.length == 0: Text {
+            text: @tr("No call elements match the current scope and filters.");
+            color: Theme.text;
+            font-size: 13px;
+            wrap: word-wrap;
+            height: 60px;
+            vertical-alignment: center;
+        }
+        if m.tree.length == 0: Rectangle { vertical-stretch: 1; }
+        if m.tree-more: HorizontalLayout {
+            alignment: start;
+            Button {
+                compact: true;
+                text: @tr("Show next 200 tree rows");
+                clicked => { CallsData.tree-more(); }
             }
         }
     }

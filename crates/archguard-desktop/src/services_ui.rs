@@ -9,6 +9,7 @@ mod export;
 mod layout;
 mod paths;
 mod state;
+mod sync;
 mod view;
 
 use slint::ComponentHandle;
@@ -109,10 +110,12 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     });
 }
 
-/// Show the state in the window.
+/// Show the state in the window, in the models the view already shows.
 pub fn push(ui: &AppWindow, s: &ServicesState) {
     let d = ui.global::<ServicesData>();
-    d.set_model(view::build(s, Texts::of(ui).t("Unmapped service")));
+    let mut m = view::build(s, Texts::of(ui).t("Unmapped service"));
+    sync::keep(&d.get_model(), &mut m);
+    d.set_model(m);
 }
 
 /// The active document's Services tab as the export's snapshot and its

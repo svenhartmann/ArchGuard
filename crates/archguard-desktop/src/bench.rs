@@ -14,7 +14,7 @@ use slint::ComponentHandle;
 
 use crate::panes_ui;
 use crate::timing;
-use crate::ui::{AppWindow, QualityData, StartData};
+use crate::ui::{AppWindow, QualityData, SecurityData, ServicesData, StartData};
 
 type Act = Rc<dyn Fn(&AppWindow, usize)>;
 
@@ -48,6 +48,7 @@ fn middle_package() -> i32 {
 fn steps() -> Vec<Step> {
     let mut all = graph_steps();
     all.extend(view_steps());
+    all.extend(service_steps());
     all
 }
 
@@ -121,6 +122,41 @@ fn view_steps() -> Vec<Step> {
                     ui.global::<StartData>().invoke_rotate_by(0.02);
                 }
             }),
+        },
+    ]
+}
+
+/// Services and Security, after World.
+fn service_steps() -> Vec<Step> {
+    vec![
+        Step {
+            name: "services select",
+            setup: |ui| ui.invoke_navigate("services".into()),
+            act: Rc::new(|ui, i| {
+                ui.global::<ServicesData>()
+                    .invoke_select_service((i % 4) as i32)
+            }),
+        },
+        Step {
+            name: "services relation kind",
+            setup: |ui| ui.global::<ServicesData>().invoke_show_all(),
+            act: Rc::new(|ui, i| {
+                ui.global::<ServicesData>()
+                    .invoke_select_kind((i % 2) as i32)
+            }),
+        },
+        Step {
+            name: "security severity",
+            setup: |ui| ui.invoke_navigate("security".into()),
+            act: Rc::new(|ui, i| {
+                ui.global::<SecurityData>()
+                    .invoke_set_severity((i % 3) as i32)
+            }),
+        },
+        Step {
+            name: "security search key",
+            setup: |ui| ui.global::<SecurityData>().invoke_set_severity(0),
+            act: Rc::new(|ui, i| ui.global::<SecurityData>().invoke_set_query(typed(i))),
         },
     ]
 }

@@ -105,17 +105,17 @@ export global ServicesData {
     }
 }
 
-// A collapsible section like the web's <details>.
+// A collapsible section like the web's <details>; all sections share
+// one heading style.
 component Details inherits VerticalLayout {
     in property <string> text;
-    in property <bool> strong;
     in-out property <bool> open;
     Disclosure {
         text: root.text;
         open <=> root.open;
-        tint: root.strong ? Theme.text : Theme.muted;
-        size: root.strong ? 14px : 12px;
-        weight: root.strong ? 650 : 400;
+        tint: Theme.text;
+        size: Theme.field-label;
+        weight: 600;
     }
     @children
 }
@@ -306,8 +306,8 @@ export component ServicesView inherits Rectangle {
                             Button { compact: true; text: @tr("Show more manifest projects"); clicked => { ServicesData.show-more-projects(); } }
                         }
                     }
-                    WebOnly { text: @tr("Project workspace"); strong: true; open <=> root.workspace-open; open-web => { root.open-web(); } }
-                    WebOnly { text: @tr("Architecture pattern candidates"); strong: true; open <=> root.patterns-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("Project workspace"); open <=> root.workspace-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("Architecture pattern candidates"); open <=> root.patterns-open; open-web => { root.open-web(); } }
                     WebOnly { text: @tr("API contracts and changes"); open <=> root.contracts-open; open-web => { root.open-web(); } }
                     if m.diagnostics.length > 0: Details {
                         text: @tr("Diagnostics");
@@ -344,11 +344,11 @@ export component ServicesView inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            // Without a topology there is nothing to filter.
-            if m.state == 1: Toolbar {
+            // Without services there is nothing to filter or zoom.
+            if m.state == 1 && m.rows.length > 0: Toolbar {
                 fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
             }
-            if m.state == 1: Rectangle { height: 1px; background: Theme.border; }
+            if m.state == 1 && m.rows.length > 0: Rectangle { height: 1px; background: Theme.border; }
             if m.state != 1 || m.rows.length == 0: HorizontalLayout {
                 padding-left: Theme.page-pad;
                 padding-right: Theme.page-pad;
