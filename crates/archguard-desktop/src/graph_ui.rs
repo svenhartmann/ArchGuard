@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
+use crate::deferred::{Coalesce, TYPING};
 use crate::documents::{self, with_store};
 use crate::export::{Diagram, GraphInput};
 use crate::follow::{self, Nav};
@@ -172,15 +173,24 @@ fn link(ui: &AppWindow, f: impl Fn(i32, i32) + 'static) -> impl Fn(i32, i32) + '
 }
 
 fn wire_search(ui: &AppWindow) {
-    ui.on_search(with_ui(ui, |ui, q: SharedString| {
+    let search = with_ui(ui, |ui, q: SharedString| {
         SEARCH.set(q);
         // Every Graph shows the hits in its explorer's first tab.
         instances::each(|s: &mut Graph| s.g.explorer_tab = 0);
         panes_ui::sync(ui);
         push_hits(ui);
-    }));
-    ui.on_reveal_hit(with_ui(ui, |ui, n: i32| {
-        if let Some(n) = index(n) {
+    });
+    let search = Coalesce::debounce(TYPING, search);
+    ui.on_search(search.callback());
+    ui.on_reveal_hit(with_ui(ui, move |ui, n: i32| {
+        // Enter right after typing: the first hit of the text as typed,
+        // not of the search before the pause.
+        let n = if search.flush() {
+            ui.get_hits().row_data(0).map(|h| h.node)
+        } else {
+            Some(n)
+        };
+        if let Some(n) = n.and_then(index) {
             panes_ui::reveal(ui, n);
         }
     }));

@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
+use crate::deferred::{Coalesce, TYPING};
 use crate::documents::with_store;
 use crate::export::GraphInput;
 use crate::follow::{self, Nav};
@@ -281,10 +282,12 @@ pub fn wire(ui: &AppWindow) {
         m.expanded.clear();
         m.page = 0;
     }));
-    ui.on_m_search(on(ui, |m, q: SharedString| {
+    let search = on(ui, |m, q: SharedString| {
         m.query = q.to_string();
         m.page = 0;
-    }));
+    });
+    let search = Coalesce::debounce(TYPING, move |(id, q)| search(id, q));
+    ui.on_m_search(move |id, q| search.call((id, q)));
     ui.on_m_scope(on(ui, |m, i: i32| {
         // Entry 0 is the project overview.
         let scope = index(i - 1).and_then(|i| m.scopes.get(i).copied());

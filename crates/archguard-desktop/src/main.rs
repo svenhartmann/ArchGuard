@@ -11,6 +11,7 @@ mod bench;
 mod calls_ui;
 mod config_editor;
 mod context;
+mod deferred;
 mod documents;
 mod documents_ui;
 mod export;

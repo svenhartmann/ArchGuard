@@ -20,6 +20,7 @@ use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
+use crate::deferred::{Coalesce, FRAME, TYPING};
 use crate::follow::Place;
 use crate::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
@@ -99,10 +100,13 @@ pub fn wire(ui: &AppWindow) {
     d.on_resized(
         a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
     );
-    d.on_pan(a.on2(|s, _, dx: f32, dy: f32| {
+    // A drag moves the camera at most once per frame, by the summed steps.
+    let pan = a.on(|s, _, (dx, dy): (f32, f32)| {
         s.cam.x += f64::from(dx);
         s.cam.y += f64::from(dy);
-    }));
+    });
+    let pan = Coalesce::throttle(FRAME, |a, b| (a.0 + b.0, a.1 + b.1), pan);
+    d.on_pan(move |dx, dy| pan.call((dx, dy)));
     let wheel = a.on(|s, _, (x, y, delta): (f32, f32, f32)| {
         let delta = f64::from(delta).clamp(-180.0, 180.0);
         s.wheel(f64::from(x), f64::from(y), (delta * 0.005).exp())
@@ -110,7 +114,8 @@ pub fn wire(ui: &AppWindow) {
     let wheel = navigation(ui, wheel);
     d.on_wheel(move |x, y, delta| wheel((x, y, delta)));
     d.on_zoom_by(a.on(|s, _, f: f32| s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))));
-    d.on_rotate_by(a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r))));
+    let rotate = a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r)));
+    d.on_rotate_by(Coalesce::throttle(FRAME, |a, b| a + b, rotate).callback());
     d.on_orient(a.on0(|s, _| s.cam.rotation = 0.0));
     d.on_fit(a.on0(|s, _| {
         s.cam = Camera {
@@ -125,9 +130,15 @@ pub fn wire(ui: &AppWindow) {
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     let a = Actions::<StartState>::new(ui);
-    d.on_search(a.on(|s, _, q: slint::SharedString| s.set_search(q.into())));
+    let search = a.on(|s, _, q: slint::SharedString| s.set_search(q.into()));
+    let search = Coalesce::debounce(TYPING, search);
+    d.on_search(search.callback());
     let accept = navigation(ui, a.on(|s, _, ()| s.accept_search()));
-    d.on_accept_search(move || accept(()));
+    // Enter selects the first match of what is typed, not of the last pause.
+    d.on_accept_search(move || {
+        search.flush();
+        accept(());
+    });
     let click = navigation(
         ui,
         a.on(|s, _, (x, y): (f32, f32)| {

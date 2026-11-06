@@ -15,6 +15,7 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
+use crate::deferred::{Coalesce, TYPING};
 use crate::documents;
 use crate::format::UNKNOWN;
 use crate::kpi;
@@ -52,10 +53,11 @@ fn build_from(root: &Path, config: &Config) -> SecurityState {
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<SecurityData>();
     let a = Actions::<SecurityState>::new(ui);
-    d.on_set_query(a.on(|s, _, q: SharedString| {
+    let query = a.on(|s, _, q: SharedString| {
         s.query = q.into();
         s.limit = PAGE;
-    }));
+    });
+    d.on_set_query(Coalesce::debounce(TYPING, query).callback());
     d.on_set_severity(a.on(|s, _, i: i32| {
         s.severity = index(i).unwrap_or(0).min(SEVERITIES.len());
         s.limit = PAGE;

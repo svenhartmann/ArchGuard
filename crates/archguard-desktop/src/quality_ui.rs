@@ -19,6 +19,7 @@ mod state;
 use slint::{ComponentHandle, Model, SharedString};
 
 use crate::context::Loaded;
+use crate::deferred::{Coalesce, TYPING};
 use crate::documents;
 use crate::model_sync::{sync_rows, sync_rows_with};
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index, model};
@@ -70,13 +71,13 @@ pub fn wire(ui: &AppWindow) {
         v.section = Section::ALL[first_or(i).min(Section::ALL.len() - 1)];
         v.limit = PAGE;
     }));
-    q.on_query(on_view(&a, |v, t: SharedString| {
+    let query = on_view(&a, |v, t: SharedString| {
         v.query = t.to_string();
         v.limit = PAGE;
-    }));
-    q.on_target_query(on_view(&a, |v, t: SharedString| {
-        v.target_query = t.to_string()
-    }));
+    });
+    q.on_query(Coalesce::debounce(TYPING, query).callback());
+    let target_query = on_view(&a, |v, t: SharedString| v.target_query = t.to_string());
+    q.on_target_query(Coalesce::debounce(TYPING, target_query).callback());
     q.on_filter(on_view(&a, |v, i: i32| {
         v.filter = state::filter_of(first_or(i));
         v.limit = PAGE;
