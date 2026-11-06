@@ -440,6 +440,8 @@ fn edges(sc: &Scope, s: &ServicesState, lay: &layout::Layout, deps: &[usize]) ->
             edge: d as i32,
             tip_x: p[5].x,
             tip_y: p[5].y,
+            top: p[0].y.min(p[5].y),
+            bottom: p[0].y.max(p[5].y),
         });
     }
     out
@@ -685,6 +687,12 @@ mod tests {
         let red = m.edges.iter().filter(|e| e.color == 3).count();
         assert_eq!(m.edges.row_count(), 15);
         assert_eq!(red, 2, "risk → orders and promotions → catalog go up");
+        // Each arc spans its two rows; the view draws only arcs near the
+        // visible band.
+        for e in m.edges.iter() {
+            assert!(e.top < e.bottom, "{} .. {}", e.top, e.bottom);
+            assert!(e.tip_y == e.top || e.tip_y == e.bottom);
+        }
     }
 
     #[test]

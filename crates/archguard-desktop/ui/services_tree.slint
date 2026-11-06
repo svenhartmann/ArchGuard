@@ -33,6 +33,9 @@ export struct SvcEdge {
     edge: int,
     tip-x: float,
     tip-y: float,
+    // Vertical extent of the arc on the canvas (its two rows).
+    top: float,
+    bottom: float,
 }
 
 global SvcIcons {
@@ -142,6 +145,13 @@ export component ServicesTree inherits Rectangle {
     public function visible-width() -> float { return flick.width / 1px; }
     public function visible-height() -> float { return flick.height / 1px; }
 
+    // The visible band in canvas units, one screen height wider each way.
+    property <float> band-top: (-flick.content-y - flick.height) / 1px / root.zoom;
+    property <float> band-bottom: (-flick.content-y + 2 * flick.height) / 1px / root.zoom;
+    pure function shown(top: float, bottom: float) -> bool {
+        return bottom >= root.band-top && top <= root.band-bottom;
+    }
+
     flick := Flickable {
         content-width: max(self.width, root.canvas-w * root.zoom * 1px);
         content-height: max(self.height, root.canvas-h * root.zoom * 1px);
@@ -168,47 +178,53 @@ export component ServicesTree inherits Rectangle {
             stroke: Theme.border;
             stroke-width: 1.5px * root.zoom;
         }
+        // Only arcs and rows in or near the visible band exist; the
+        // others are empty placeholders.
         for e in root.edges: Rectangle {
-            property <color> tint: e.color == 1 ? Theme.incoming : e.color == 2 ? Theme.outgoing : e.color == 3 ? Theme.cycle : Theme.edge;
-            Path {
-                x: 0;
-                y: 0;
-                width: root.canvas-w * root.zoom * 1px;
-                height: root.canvas-h * root.zoom * 1px;
-                viewbox-width: root.canvas-w;
-                viewbox-height: root.canvas-h;
-                commands: e.line;
-                fill: transparent;
-                stroke: tint;
-                stroke-width: (e.selected || hit.has-hover ? 3.5px : 2px) * root.zoom;
-            }
-            Path {
-                x: 0;
-                y: 0;
-                width: root.canvas-w * root.zoom * 1px;
-                height: root.canvas-h * root.zoom * 1px;
-                viewbox-width: root.canvas-w;
-                viewbox-height: root.canvas-h;
-                commands: e.head;
-                fill: tint;
-                stroke: transparent;
-            }
-            // The arrow head selects the relation (the web's arc hit area).
-            hit := TouchArea {
-                x: (e.tip-x - 14) * root.zoom * 1px;
-                y: (e.tip-y - 8) * root.zoom * 1px;
-                width: 18px * root.zoom;
-                height: 16px * root.zoom;
-                mouse-cursor: pointer;
-                clicked => { root.select-edge(e.edge); }
+            if root.shown(e.top, e.bottom): Rectangle {
+                property <color> tint: e.color == 1 ? Theme.incoming : e.color == 2 ? Theme.outgoing : e.color == 3 ? Theme.cycle : Theme.edge;
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.line;
+                    fill: transparent;
+                    stroke: tint;
+                    stroke-width: (e.selected || hit.has-hover ? 3.5px : 2px) * root.zoom;
+                }
+                Path {
+                    x: 0;
+                    y: 0;
+                    width: root.canvas-w * root.zoom * 1px;
+                    height: root.canvas-h * root.zoom * 1px;
+                    viewbox-width: root.canvas-w;
+                    viewbox-height: root.canvas-h;
+                    commands: e.head;
+                    fill: tint;
+                    stroke: transparent;
+                }
+                // The arrow head selects the relation (the web's arc hit area).
+                hit := TouchArea {
+                    x: (e.tip-x - 14) * root.zoom * 1px;
+                    y: (e.tip-y - 8) * root.zoom * 1px;
+                    width: 18px * root.zoom;
+                    height: 16px * root.zoom;
+                    mouse-cursor: pointer;
+                    clicked => { root.select-edge(e.edge); }
+                }
             }
         }
-        for r in root.rows: SvcRowView {
-            data: r;
-            scale: root.zoom;
-            clicked => {
-                if (r.service >= 0) {
-                    root.select-service(r.service);
+        for r in root.rows: Rectangle {
+            if root.shown(r.y - r.h / 2, r.y + r.h / 2): SvcRowView {
+                data: r;
+                scale: root.zoom;
+                clicked => {
+                    if (r.service >= 0) {
+                        root.select-service(r.service);
+                    }
                 }
             }
         }
