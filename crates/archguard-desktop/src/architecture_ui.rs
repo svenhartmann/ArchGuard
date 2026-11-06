@@ -334,14 +334,15 @@ fn save(root: &Path, name: &str, content: &str) -> String {
 mod tests {
     use super::*;
 
-    /// The tab state for this repository: twelve chapters, the package map
-    /// on chapter 5 and the cycle map on chapter 11, as the web viewer.
+    /// The tab state for a small layered fixture: twelve chapters, the
+    /// package map on chapter 5 and the cycle map on chapter 11, as the web
+    /// viewer.
     #[test]
     fn build_writes_the_document_and_derives_maps() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../fixtures/py-layers")
             .canonicalize()
-            .expect("repository root");
+            .expect("fixture");
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)

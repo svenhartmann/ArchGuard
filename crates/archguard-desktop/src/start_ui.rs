@@ -236,39 +236,48 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn repo_state() -> StartState {
+    /// The Start state of a fixture project, and its top-level packages
+    /// as the analysis reports them.
+    fn fixture_state(name: &str) -> (StartState, Vec<String>) {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../fixtures")
+            .join(name)
             .canonicalize()
-            .expect("repository root");
+            .expect("fixture");
         let loaded = archguard_engine::load_config(None, &root).expect("config");
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
+        let packages = run
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| n.parent.is_none() && n.kind == archguard_engine::core::NodeKind::Module)
+            .map(|n| n.name.clone())
+            .collect();
         let sources = Default::default();
-        Inputs::of(&Loaded {
+        let state = Inputs::of(&Loaded {
             root: &root,
             run: &run,
             sources: &sources,
         })
-        .build()
+        .build();
+        (state, packages)
     }
 
-    /// This repository (source root `crates`): every crate is a
-    /// package plate, every world entity lands on one surface, and opening
-    /// a crate and going back restores the overview.
+    /// A project with several top-level packages: each is a package plate
+    /// of the overview, every world entity lands on one surface, and
+    /// opening a package and going back restores the overview.
     #[test]
-    fn build_shows_the_crates_and_navigates() {
-        let mut s = repo_state();
-        let names: Vec<_> = s.scope.areas.iter().map(|a| a.name.as_str()).collect();
+    fn build_shows_the_packages_and_navigates() {
+        let (mut s, mut packages) = fixture_state("py-layers");
+        let mut names: Vec<_> = s.scope.areas.iter().map(|a| a.name.clone()).collect();
         assert_eq!(s.home, None, "{names:?}");
-        assert_eq!(names.len(), 9);
-        assert!(
-            s.scope
-                .areas
-                .iter()
-                .any(|a| a.name == "archguard-engine" && a.module)
-        );
+        names.sort();
+        packages.sort();
+        assert!(packages.len() > 1, "{packages:?}");
+        assert_eq!(names, packages);
+        assert!(s.scope.areas.iter().all(|a| a.module));
         let entities: usize = s.layout.cells.iter().map(|c| c.entities.len()).sum();
         let in_scope: usize = s.scope.areas.iter().map(|a| a.entities.len()).sum();
         assert_eq!(entities, in_scope);
@@ -284,30 +293,23 @@ mod tests {
         assert_eq!(s.layout.cells.len(), expected, "batch {batch}");
         assert_eq!(s.crumbs("repo"), vec![("repo".to_string(), None)]);
 
-        let engine = s
+        let domain = s
             .scope
             .areas
             .iter()
-            .position(|a| a.name == "archguard-engine")
-            .unwrap();
-        s.open_area(engine);
-        assert_eq!(s.within.as_deref(), Some("archguard-engine"));
+            .position(|a| a.name == "domain")
+            .expect("package domain");
+        s.open_area(domain);
+        assert_eq!(s.within.as_deref(), Some("domain"));
         assert_eq!(
             s.crumbs("repo"),
             vec![
                 ("repo".to_string(), None),
-                (
-                    "archguard-engine".to_string(),
-                    Some("archguard-engine".to_string())
-                )
+                ("domain".to_string(), Some("domain".to_string()))
             ]
         );
-        assert!(
-            s.scope
-                .areas
-                .iter()
-                .all(|a| a.name.starts_with("archguard-engine/"))
-        );
+        assert!(!s.scope.areas.is_empty());
+        assert!(s.scope.areas.iter().all(|a| a.name.starts_with("domain/")));
         s.back();
         assert_eq!(s.within, None);
         assert!(s.history.is_empty());
@@ -317,17 +319,17 @@ mod tests {
     /// the Explore lens; Reset restores the defaults.
     #[test]
     fn lenses_and_search() {
-        let mut s = repo_state();
+        let (mut s, _) = fixture_state("py-layers");
         let count = s.layout.cells.len();
         s.set_kpi(1);
         assert_eq!(s.lens, Lens::Explore);
         assert!(s.kpi_active());
         assert_eq!(s.layout.cells.len(), count);
-        s.set_search(" Start_UI".into());
-        assert_eq!(s.query, "start_ui");
+        s.set_search(" Ledger".into());
+        assert_eq!(s.query, "ledger");
         s.accept_search();
         let sel = s.selection.clone().expect("a match");
-        assert!(s.scope.areas[sel.area].name.ends_with("archguard-desktop"));
+        assert_eq!(s.scope.areas[sel.area].name, "domain", "domain/ledger.py");
         // As the web: details open for a single entity or a file area, not
         // for a batched surface inside a package.
         let module = s.scope.areas[sel.area].module;
