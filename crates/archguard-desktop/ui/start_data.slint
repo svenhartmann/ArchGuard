@@ -169,6 +169,11 @@ export struct StartModel {
     can-explore: bool,
     detail-title: string,
     detail-lines: [StartLine],
+    // The selection is a class (Calls, Class metrics); the texts of
+    // Copy path and AI context (src/start_ui/actions.rs).
+    detail-class: bool,
+    detail-copy: string,
+    detail-ai: string,
     services: StartServices,
 }
 
@@ -223,6 +228,8 @@ export global StartData {
     // A connection entry of the details (StartLine.id); its neighbour area.
     callback toggle-entry(int);
     callback pick-neighbor(int);
+    // 0 Cycles, 1 Matrix, 2 Calls, 3 Class metrics, 4 Quality scope.
+    callback detail-action(int);
     // 0 architecture, 1 services.
     callback set-mode(int);
     // which: 0 deployment, 1 source, 2 kind, 3 direction (StartServices).

@@ -97,8 +97,26 @@ export component StartDetails inherits Rectangle {
     drop-shadow-blur: 28px;
     drop-shadow-offset-x: -8px;
     drop-shadow-color: Theme.shadow;
+    // What the last copy put on the clipboard; another selection clears it.
+    property <string> copied;
+    property <string> title: StartData.model.detail-title;
+    changed title => { self.copied = ""; }
+    function copy(text: string, done: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+        self.copied = done;
+    }
     // Clicks and wheel stay in the panel.
     TouchArea { }
+    // Holds what Copy path and AI context put on the clipboard.
+    clipboard := TextInput {
+        width: 0;
+        height: 0;
+        opacity: 0;
+        read-only: true;
+    }
     VerticalLayout {
         HorizontalLayout {
             padding-left: 16px;
@@ -150,6 +168,16 @@ export component StartDetails inherits Rectangle {
                         compact: true;
                         clicked => { StartData.source-graph(); }
                     }
+                    if !services: Button {
+                        text: @tr("Cycles");
+                        compact: true;
+                        clicked => { StartData.detail-action(0); }
+                    }
+                    if !services: Button {
+                        text: @tr("Matrix");
+                        compact: true;
+                        clicked => { StartData.detail-action(1); }
+                    }
                     // In this document's analysis, or as a document of its own.
                     if services && !StartData.model.services.external: Button {
                         text: @tr("Zoom into service");
@@ -162,6 +190,42 @@ export component StartDetails inherits Rectangle {
                         compact: true;
                         clicked => { StartData.open-project(); }
                     }
+                }
+                // Into the other views, and the selection to the clipboard.
+                if !services: HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    padding-bottom: 6px;
+                    if StartData.model.detail-class: Button {
+                        text: @tr("Calls");
+                        compact: true;
+                        clicked => { StartData.detail-action(2); }
+                    }
+                    if StartData.model.detail-class: Button {
+                        text: @tr("Class metrics");
+                        compact: true;
+                        clicked => { StartData.detail-action(3); }
+                    }
+                    if StartData.model.can-explore: Button {
+                        text: @tr("Quality scope");
+                        compact: true;
+                        clicked => { StartData.detail-action(4); }
+                    }
+                    Button {
+                        text: @tr("Copy path");
+                        compact: true;
+                        clicked => { root.copy(StartData.model.detail-copy, @tr("Path copied.")); }
+                    }
+                    Button {
+                        text: @tr("AI context");
+                        compact: true;
+                        clicked => { root.copy(StartData.model.detail-ai, @tr("Read-only MCP requests for this selection copied.")); }
+                    }
+                }
+                if root.copied != "": Text {
+                    text: root.copied;
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
                 }
                 for l in StartData.model.detail-lines: DetailLine {
                     line: l;

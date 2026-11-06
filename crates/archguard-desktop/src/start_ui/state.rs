@@ -44,6 +44,8 @@ pub(super) struct Visit {
 /// Everything the tab knows: the evidence and the viewer's position.
 pub struct StartState {
     pub(super) ev: Evidence,
+    /// The project root as the MCP requests of "AI context" name it.
+    pub(super) root: String,
     /// The services World, when the topology has one.
     pub(super) services: Option<ServicesWorld>,
     pub(super) mode: Mode,
@@ -77,6 +79,7 @@ pub struct StartState {
 pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> StartState {
     let mut s = StartState {
         ev,
+        root: String::new(),
         // As the web, a repository opens on its services.
         mode: if services.is_some() {
             Mode::Services

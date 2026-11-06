@@ -211,7 +211,6 @@ pub fn describe(ui: &AppWindow, id: u32, node: Option<String>, display: i32) {
 }
 
 /// The id of a tab of `kind` (as the view bar would show it).
-#[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
 pub fn shown_id(kind: &str) -> Option<u32> {
     let l = layout();
     l.find(kind).map(|(p, t)| l.panes[p].tabs[t].id)
@@ -256,9 +255,15 @@ pub fn link_from(ui: &AppWindow, from: u32, node: usize) {
 /// Show `node` (an index into the analysed graph's nodes) in a Graph:
 /// the one the view bar would show, else a new one in the focused pane.
 pub fn reveal(ui: &AppWindow, node: usize) {
-    change(ui, |l| l.navigate("graph"));
+    reveal_in_view(ui, "graph", node);
+}
+
+/// Show `node` in a view of `kind` that registered [`on_reveal`] (the
+/// Graph, the Matrix), as [`reveal`] does.
+pub fn reveal_in_view(ui: &AppWindow, kind: &str, node: usize) {
+    change(ui, |l| l.navigate(kind));
     let l = layout();
-    if let Some((p, t)) = l.find("graph") {
+    if let Some((p, t)) = l.find(kind) {
         reveal_in(ui, l.panes[p].tabs[t].key(), node);
     }
 }

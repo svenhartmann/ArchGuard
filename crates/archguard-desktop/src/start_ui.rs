@@ -6,6 +6,7 @@
 //! All tab state is one [`StartState`], built by [`Inputs::build`] and shown by
 //! [`push`] as one `StartModel` value.
 
+mod actions;
 mod arrows;
 mod connections;
 mod details;
@@ -81,6 +82,7 @@ impl Inputs {
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
         let services = ServicesWorld::new(tab_support::topology(&topology, &root));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
+        state.root = root.display().to_string();
         snapshot_overrides(&mut state);
         state
     }
@@ -205,6 +207,21 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
         }),
     ));
     wire_hover(ui, d);
+    d.on_detail_action(tab_support::with_ui(ui, detail_action));
+}
+
+/// Cycles, Matrix, Calls, Class metrics or Quality scope for the
+/// selection; the Start state is released before the other view runs.
+fn detail_action(ui: &AppWindow, which: i32) {
+    let target = crate::documents::with_active_state(|s: &mut StartState| {
+        let t = s.action_target()?;
+        let node = s.ev.graph.nodes.iter().position(|n| n.name == t.node);
+        Some((t, node))
+    })
+    .flatten();
+    if let Some((t, node)) = target {
+        actions::run(ui, t, node, which);
+    }
 }
 
 /// The surface tooltip follows the pointer at most once per frame; it
@@ -493,6 +510,55 @@ mod tests {
         assert!(s.connection_open(0), "open entries stay open");
         s.toggle_connection(0);
         assert!(!s.connection_open(0));
+    }
+
+    /// Copy path gives `file:line` of an entity, else the area; AI context
+    /// the web's three read-only MCP requests for the selection.
+    #[test]
+    fn copy_path_and_ai_context() {
+        let (mut s, _) = fixture_state("py-layers");
+        assert_eq!(
+            (s.copy_value(), s.ai_context()),
+            (String::new(), String::new())
+        );
+        let domain = s
+            .scope
+            .areas
+            .iter()
+            .position(|a| a.name == "domain")
+            .expect("domain");
+        s.pick(domain as i32 + 1);
+        assert_eq!(s.copy_value(), "domain");
+        let t = s.action_target().expect("a target");
+        assert_eq!((t.node.as_str(), t.module), ("domain", true));
+        let e = s.scope.areas[domain].entities[0];
+        s.pick_entity(e);
+        let entity = s.ev.entity(e).clone();
+        let expected = match (&entity.file, entity.line) {
+            (Some(f), Some(l)) => format!("{f}:{l}"),
+            (Some(f), None) => f.clone(),
+            _ => entity.node.clone(),
+        };
+        assert_eq!(s.copy_value(), expected);
+        let v: serde_json::Value = serde_json::from_str(&s.ai_context()).expect("JSON");
+        let tools: Vec<&str> = v["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                "architecture_world",
+                "architecture_atlas",
+                "architecture_findings"
+            ]
+        );
+        assert_eq!(v["tools"][0]["arguments"]["within"], entity.node.as_str());
+        assert_eq!(v["tools"][1]["arguments"]["within"], "domain");
+        assert_eq!(v["project"], s.root.as_str());
+        assert!(!s.root.is_empty());
     }
 
     /// Two npm projects side by side.

@@ -107,6 +107,11 @@ pub fn fill(m: &mut StartModel, s: &StartState, l: Locale) {
     }
     evidence(&mut lines, s, sel);
     m.detail_lines = ModelRc::new(VecModel::from(lines));
+    m.detail_class = sel
+        .entity
+        .is_some_and(|e| s.ev.entity(e).class_id.is_some());
+    m.detail_copy = s.copy_value().into();
+    m.detail_ai = s.ai_context().into();
 }
 
 fn members_of<'a>(s: &'a StartState, sel: &'a Selection) -> Vec<usize> {

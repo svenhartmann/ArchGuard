@@ -314,3 +314,18 @@ msgstr "Die Zahl der Quellverweise hinter dieser Verbindung ist unbekannt."
 
 msgid "{} source references behind this connection."
 msgstr "{} Quellverweise hinter dieser Verbindung."
+
+msgid "Quality scope"
+msgstr "Qualitätsumfang"
+
+msgid "Copy path"
+msgstr "Pfad kopieren"
+
+msgid "AI context"
+msgstr "KI-Kontext"
+
+msgid "Path copied."
+msgstr "Pfad kopiert."
+
+msgid "Read-only MCP requests for this selection copied."
+msgstr "Lesende MCP-Abfragen für diese Auswahl kopiert."
