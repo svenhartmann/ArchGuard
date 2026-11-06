@@ -10,14 +10,14 @@ import { CallsColumn, Muted } from "calls_parts.slint";
 
 component Para inherits Text {
     color: Theme.text;
-    font-size: 13px;
+    font-size: Theme.font-body;
     wrap: word-wrap;
 }
 
 component Mono inherits Text {
     color: Theme.text;
-    font-size: 12px;
-    font-family: "Menlo";
+    font-size: Theme.font-mono;
+    font-family: Theme.mono-family;
     wrap: word-wrap;
 }
 
@@ -41,7 +41,7 @@ component MethodGroup inherits Rectangle {
                         text: group.title;
                         open: group.open;
                         tint: Theme.text;
-                        weight: 700;
+                        weight: Theme.weight-strong;
                         clicked => { CallsData.toggle-group(root.index); }
                     }
                     Badge {
@@ -60,7 +60,7 @@ component MethodGroup inherits Rectangle {
                 padding-right: 10px;
                 Muted {
                     text: metric.label + " · " + CallsData.metric-text(metric);
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                 }
             }
             for site in group.sites: VerticalLayout {
@@ -109,37 +109,37 @@ component Proposal inherits Rectangle {
             text: root.title;
             open: s.open;
             tint: Theme.text;
-            weight: 650;
+            weight: Theme.weight-strong;
             clicked => { CallsData.toggle-suggestion(root.index); }
         }
         if s.open: VerticalLayout {
             spacing: 8px;
-            Para { text: root.summary; font-size: 12px; }
+            Para { text: root.summary; font-size: Theme.font-small; }
             if s.kind == 0: VerticalLayout {
                 spacing: 6px;
-                Para { font-size: 12px; text: "1. " + @tr("Check whether an existing interface already covers {}. Reuse it if appropriate; otherwise consider a narrow contract owned by the consuming responsibility.", s.methods); }
-                Para { font-size: 12px; text: "2. " + @tr("Let {} implement that contract and inject it into {} from the composition root. Keep concrete construction outside the consumer.", s.target, s.source); }
-                Para { font-size: 12px; text: "3. " + @tr("Review signatures, access modifiers and return/parameter types for dependencies that would preserve the cycle. An interface alone does not remove runtime call cycles; rescan after changing code."); }
+                Para { font-size: Theme.font-small; text: "1. " + @tr("Check whether an existing interface already covers {}. Reuse it if appropriate; otherwise consider a narrow contract owned by the consuming responsibility.", s.methods); }
+                Para { font-size: Theme.font-small; text: "2. " + @tr("Let {} implement that contract and inject it into {} from the composition root. Keep concrete construction outside the consumer.", s.target, s.source); }
+                Para { font-size: Theme.font-small; text: "3. " + @tr("Review signatures, access modifiers and return/parameter types for dependencies that would preserve the cycle. An interface alone does not remove runtime call cycles; rescan after changing code."); }
             }
             if s.kind == 1: VerticalLayout {
                 spacing: 6px;
-                Para { font-size: 12px; text: "1. " + @tr("Review moving concrete construction or static utility access behind an injected adapter or factory owned by the consumer."); }
-                Para { font-size: 12px; text: "2. " + @tr("Choose the contract from the recorded operations; verify lifetime, state and error behavior before changing code. Static methods cannot directly implement an instance interface."); }
-                Para { font-size: 12px; text: "3. " + @tr("Rescan after the source change. This proposal does not modify source code or prove that every cycle is removed."); }
+                Para { font-size: Theme.font-small; text: "1. " + @tr("Review moving concrete construction or static utility access behind an injected adapter or factory owned by the consumer."); }
+                Para { font-size: Theme.font-small; text: "2. " + @tr("Choose the contract from the recorded operations; verify lifetime, state and error behavior before changing code. Static methods cannot directly implement an instance interface."); }
+                Para { font-size: Theme.font-small; text: "3. " + @tr("Rescan after the source change. This proposal does not modify source code or prove that every cycle is removed."); }
             }
             if s.kind == 2: VerticalLayout {
                 spacing: 6px;
-                Para { font-size: 12px; text: "1. " + @tr("Review whether this type or module belongs to the target package’s responsibility. Call affinity is evidence to inspect, not an architectural decision."); }
+                Para { font-size: Theme.font-small; text: "1. " + @tr("Review whether this type or module belongs to the target package’s responsibility. Call affinity is evidence to inspect, not an architectural decision."); }
                 Para {
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                     text: "2. " + @tr("Check incoming callers, restricted access, imports and public API compatibility")
                         + (s.same-file > 1 ? @tr("; this file contains {} type/module elements, so moving the file also affects them.", Fmt.int(s.same-file)) : ".");
                 }
-                Para { font-size: 12px; text: "3. " + @tr("A package move changes grouping, not method calls. Class call cycles remain unless responsibilities or calls also change. Rerun the import and call analyses after a source edit."); }
+                Para { font-size: Theme.font-small; text: "3. " + @tr("A package move changes grouping, not method calls. Class call cycles remain unless responsibilities or calls also change. Rerun the import and call analyses after a source edit."); }
             }
-            if root.tail != "": Para { font-size: 12px; text: "4. " + root.tail; }
+            if root.tail != "": Para { font-size: Theme.font-small; text: "4. " + root.tail; }
             Mono {
-                font-size: 11px;
+                font-size: Theme.font-caption;
                 text: @tr("Evidence: ") + s.evidence + (s.evidence-more > 0 ? " · " + @tr("{} more call sites", Fmt.int(s.evidence-more)) : "");
             }
         }
@@ -152,18 +152,18 @@ component Declaration inherits VerticalLayout {
     Text {
         text: d.title;
         color: Theme.text;
-        font-size: d.kind == 1 ? 18px : 15px;
-        font-weight: 700;
+        font-size: d.kind == 1 ? Theme.font-page : Theme.font-section;
+        font-weight: Theme.weight-strong;
         wrap: word-wrap;
     }
     Mono { text: d.location; color: Theme.muted; }
     if d.kind == 2: VerticalLayout {
         spacing: 8px;
-        Muted { font-size: 12px; text: d.metric.label + " · " + CallsData.metric-text(d.metric); }
-        Muted { font-size: 12px; text: @tr("No recorded call sites match this method and the current call filters. This declaration is still measurable; missing calls do not prove it is unused."); }
+        Muted { font-size: Theme.font-small; text: d.metric.label + " · " + CallsData.metric-text(d.metric); }
+        Muted { font-size: Theme.font-small; text: @tr("No recorded call sites match this method and the current call filters. This declaration is still measurable; missing calls do not prove it is unused."); }
     }
     if d.kind == 1 && d.cohesion == 0: Muted {
-        font-size: 12px;
+        font-size: Theme.font-small;
         text: @tr("Class cohesion unknown: compiler state-access evidence is unavailable.");
     }
     if d.kind == 1 && d.cohesion > 0: VerticalLayout {
@@ -171,18 +171,18 @@ component Declaration inherits VerticalLayout {
         Text {
             text: d.cohesion == 1 ? @tr("Class cohesion unknown") : @tr("{} method groups", Fmt.int(d.lcom4));
             color: Theme.text;
-            font-size: 15px;
-            font-weight: 700;
+            font-size: Theme.font-section;
+            font-weight: Theme.weight-title;
         }
-        Muted { font-size: 12px; text: @tr("{} instance methods · {} state members · complexity Σ {}", Fmt.int(d.methods), Fmt.int(d.fields), d.complexity); }
-        Muted { font-size: 12px; text: @tr("LCOM4 groups instance methods that share a non-static field/property or call each other. Constructors, static members and local functions are excluded. Multiple groups suggest a review, not an automatic design error. Incomplete compiler evidence leaves LCOM4 unknown."); }
+        Muted { font-size: Theme.font-small; text: @tr("{} instance methods · {} state members · complexity Σ {}", Fmt.int(d.methods), Fmt.int(d.fields), d.complexity); }
+        Muted { font-size: Theme.font-small; text: @tr("LCOM4 groups instance methods that share a non-static field/property or call each other. Constructors, static members and local functions are excluded. Multiple groups suggest a review, not an automatic design error. Incomplete compiler evidence leaves LCOM4 unknown."); }
         for g[i] in d.groups: VerticalLayout {
             spacing: 4px;
             Text {
                 text: @tr("Group {} · {} methods", Fmt.int(i + 1), Fmt.int(g.methods.length));
                 color: Theme.text;
-                font-size: 12px;
-                font-weight: 650;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-strong;
             }
             for name[j] in g.methods: HorizontalLayout {
                 alignment: start;
@@ -206,7 +206,7 @@ export component CallsDetail inherits CallsColumn {
             if !m.has-relation && m.declaration.kind == 0: Text {
                 text: @tr("Select a type/module connection to inspect its functions and methods and source call sites.");
                 color: Theme.text;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 wrap: word-wrap;
                 height: 60px;
                 vertical-alignment: center;
@@ -218,11 +218,11 @@ export component CallsDetail inherits CallsColumn {
                     text: m.evidence-title;
                     color: Theme.text;
                     font-size: Theme.font-section;
-                    font-weight: 700;
+                    font-weight: Theme.weight-title;
                     wrap: word-wrap;
                 }
                 Muted {
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                     text: @tr("{} call sites · ", Fmt.int(m.evidence-sites))
                         + (m.evidence-resolution == 0 ? @tr("project declaration targets")
                             : m.evidence-resolution == 1 ? @tr("external declaration targets")
@@ -241,11 +241,11 @@ export component CallsDetail inherits CallsColumn {
                     text: @tr("Refactoring candidates");
                     color: Theme.text;
                     font-size: Theme.font-section;
-                    font-weight: 700;
+                    font-weight: Theme.weight-title;
                 }
-                Muted { font-size: 12px; text: @tr("Review plans based on the original source calls. They do not change code or the simulated dependency graph."); }
+                Muted { font-size: Theme.font-small; text: @tr("Review plans based on the original source calls. They do not change code or the simulated dependency graph."); }
                 if m.suggestions.length == 0: Muted {
-                    font-size: 12px;
+                    font-size: Theme.font-small;
                     text: @tr("No supported suggestion for this connection. A dependency alone does not establish a misplaced responsibility or justify an interface.");
                 }
                 for s[i] in m.suggestions: Proposal { s: s; index: i; }
