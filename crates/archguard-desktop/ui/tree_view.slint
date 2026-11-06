@@ -1,6 +1,7 @@
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading } from "widgets.slint";
+import { NodeMenu } from "node_menu.slint";
 
 export struct TreeRow {
     row: int,
@@ -48,6 +49,8 @@ component RowCard inherits Rectangle {
     callback select();
     callback toggle();
     callback open();
+    // Open the row's node in a new tab or beside (`NodeMenu`).
+    callback node-tab(string, bool);
 
     property <length> indent: data.depth * 18px * zoom;
     x: (TreeGeo.lane-w * 1px) * zoom + indent;
@@ -59,10 +62,19 @@ component RowCard inherits Rectangle {
     border-width: selected ? 1.5px : 1px;
     border-color: selected ? Theme.accent : Theme.border.with-alpha(0.6);
 
+    menu := NodeMenu {
+        package: !root.data.file;
+        chosen(kind, side) => { root.node-tab(kind, side); }
+    }
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.select(); }
         double-clicked => { root.open(); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                menu.open-at(self.mouse-x, self.mouse-y);
+            }
+        }
     }
     HorizontalLayout {
         padding-left: 6px * zoom;
@@ -157,6 +169,8 @@ export component TreeView inherits Rectangle {
     callback select(int);
     callback toggle(int);
     callback open(int);
+    // kind, row, side: open a row's node in a new tab or beside.
+    callback node-tab(string, int, bool);
 
     // The tree fills the view between the lanes, as in the web viewer.
     property <float> tree-w: max(TreeGeo.min-tree-w, flick.width / 1px / zoom - 2 * TreeGeo.lane-w);
@@ -262,6 +276,7 @@ export component TreeView inherits Rectangle {
             select => { root.select(r.row); }
             toggle => { root.toggle(r.row); }
             open => { root.open(r.row); }
+            node-tab(kind, side) => { root.node-tab(kind, r.row, side); }
         }
       }
     }

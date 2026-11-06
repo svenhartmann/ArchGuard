@@ -20,6 +20,7 @@ use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::follow::Place;
 use crate::format::Locale;
 use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
@@ -87,24 +88,31 @@ pub fn wire(ui: &AppWindow) {
     d.on_select_chapter(a.on(|s, _, n: i32| {
         s.chapter = u8::try_from(n).unwrap_or(5);
     }));
-    d.on_navigate(a.on(|s, _, scope: i32| {
-        open_scope(s, Kind::Dependencies, index(scope));
-    }));
-    d.on_scope_selected(a.on(|s, ui, i: i32| {
-        let Some((kind, map)) = current(s, ui) else {
-            return;
-        };
-        let scope = index(i).and_then(|i| map.scopes.get(i).copied().flatten());
-        open_scope(s, kind, scope);
-    }));
-    d.on_select_card(a.on(select_card));
+    d.on_navigate(navigation(
+        ui,
+        a.on(|s, _, scope: i32| {
+            open_scope(s, Kind::Dependencies, index(scope));
+        }),
+    ));
+    d.on_scope_selected(navigation(
+        ui,
+        a.on(|s, ui, i: i32| {
+            let Some((kind, map)) = current(s, ui) else {
+                return;
+            };
+            let scope = index(i).and_then(|i| map.scopes.get(i).copied().flatten());
+            open_scope(s, kind, scope);
+        }),
+    ));
+    d.on_select_card(navigation(ui, a.on(select_card)));
     d.on_more_relations(a.on0(|s, _| {
         if let Some(kind) = derived(s, s.chapter) {
             let state = &mut s.maps[kind as usize];
             state.relations = state.relations.max(RELATIONS_PAGE) + RELATIONS_PAGE;
         }
     }));
-    d.on_card_action(a.on0(card_action));
+    let action = navigation(ui, a.on(|s, ui, ()| card_action(s, ui)));
+    d.on_card_action(move || action(()));
     d.on_download(a.on(|s, _, all: bool| download(s, all)));
     d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
 }
@@ -195,6 +203,30 @@ fn current(s: &ArchitectureState, ui: &AppWindow) -> Option<(Kind, Map)> {
         &labels(ui),
     );
     Some((kind, map))
+}
+
+/// A building-block callback that reports the map's scope and selected
+/// package for "Follow left".
+fn navigation<A: 'static>(ui: &AppWindow, f: impl Fn(A) + 'static) -> impl Fn(A) + 'static {
+    crate::follow_ui::reporting(ui, "architecture", place, f)
+}
+
+/// The open chapter's map: its package scope and selected package, by
+/// node name.
+fn place(s: &ArchitectureState) -> Place {
+    let Some(kind) = derived(s, s.chapter) else {
+        return Place::default();
+    };
+    let map = &s.maps[kind as usize];
+    let name = |n: usize| s.graph.nodes.get(n).map(|n| n.name.clone());
+    let selected = match map.selected {
+        Some(Group::Package(n)) => name(n),
+        _ => None,
+    };
+    Place {
+        scope: map.scope.and_then(name),
+        selected,
+    }
 }
 
 fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {

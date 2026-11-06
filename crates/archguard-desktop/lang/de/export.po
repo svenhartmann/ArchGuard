@@ -1,0 +1,38 @@
+msgid "Export"
+msgstr "Exportieren"
+
+msgid "Markdown + Mermaid"
+msgstr "Markdown + Mermaid"
+
+msgid "JSON data + evidence"
+msgstr "JSON-Daten + Belege"
+
+msgid "arc42 documentation"
+msgstr "arc42-Dokumentation"
+
+msgid "SVG diagram"
+msgstr "SVG-Diagramm"
+
+msgid "PNG image"
+msgstr "PNG-Bild"
+
+msgid "SVG is available in Graph → Tree and Services."
+msgstr "SVG ist unter Graph → Baum und Dienste verfügbar."
+
+msgid "Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."
+msgstr "Markdown und JSON sind unter Graph, Matrix, Dienste, Sicherheit, Qualität und Architektur verfügbar."
+
+msgid "Exported {} with the current scope and filter settings."
+msgstr "{} mit dem aktuellen Ausschnitt und den Filtereinstellungen exportiert."
+
+msgid "Exported {} with the current view."
+msgstr "{} mit der aktuellen Ansicht exportiert."
+
+msgid "Exported {} from the original project evidence."
+msgstr "{} aus den ursprünglichen Projektbelegen exportiert."
+
+msgid "Could not export: {}"
+msgstr "Export nicht möglich: {}"
+
+msgid "The view is still loading; export again when it is shown."
+msgstr "Die Ansicht wird noch geladen; nach dem Anzeigen erneut exportieren."

@@ -1,0 +1,127 @@
+// The view of one tree node, a file or a package (src/file_ui.rs): its
+// path, counts and its incoming and outgoing dependencies with their
+// source evidence. Opened from the Graph and the Matrix ("Open in new
+// tab"); one `FileData` per instance, as the Graph's.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// The node on the other end of dependencies, with their evidence.
+export struct NodeDep {
+    node: int,
+    label: string,
+    name: string,
+    // Dependency evidence records.
+    weight: int,
+    // "file:line  code", one per line; empty: none recorded.
+    evidence: string,
+}
+
+export struct FileData {
+    id: int,
+    node: int,
+    label: string,
+    name: string,
+    file: bool,
+    // Below a package: files and direct child packages.
+    files: int,
+    packages: int,
+    outgoing: [NodeDep],
+    incoming: [NodeDep],
+}
+
+component DepEntry inherits Rectangle {
+    in property <NodeDep> dep;
+    in property <color> tone;
+    callback clicked();
+    border-radius: Theme.radius-sm;
+    background: touch.has-hover ? Theme.panel-2 : Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    height: body.preferred-height;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    body := VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: root.dep.label; color: root.tone; font-size: 13px; font-weight: 650; overflow: elide; horizontal-stretch: 1; }
+            Text { text: Fmt.int(root.dep.weight); color: root.tone; font-size: 12px; font-weight: 600; }
+        }
+        Text { text: root.dep.name; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+        Text {
+            text: root.dep.evidence == "" ? @tr("No source references recorded.") : root.dep.evidence;
+            color: Theme.text;
+            font-family: "Menlo";
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component FileView inherits Rectangle {
+    in property <FileData> data;
+    // A dependency was clicked: its node (linked selection).
+    callback select(int);
+    // "Open in graph": reveal the node in a Graph.
+    callback show-in-graph(int);
+    callback node-tab(string, int, bool);
+    background: Theme.bg;
+    // As the other views: the content must not set the window's size.
+    min-width: 0;
+    preferred-width: 1480px;
+    preferred-height: 860px;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 10px;
+            Icon {
+                icon: root.data.file ? Icons.file : Icons.folder;
+                tint: root.data.file ? Theme.muted : Theme.priority;
+                width: 20px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+            }
+            Text { text: root.data.label; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+        }
+        Text { text: root.data.name; color: Theme.muted; font-size: 12px; font-family: "Menlo"; overflow: elide; }
+        if !root.data.file: HorizontalLayout {
+            spacing: 14px;
+            alignment: start;
+            Text { text: @tr("{} files", Fmt.int(root.data.files)); color: Theme.muted; font-size: 12px; }
+            Text { text: @tr("{} packages", Fmt.int(root.data.packages)); color: Theme.muted; font-size: 12px; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Button { text: @tr("Open in graph"); compact: true; clicked => { root.show-in-graph(root.data.node); } }
+            if !root.data.file: Button { text: @tr("Open graph to the side"); compact: true; clicked => { root.node-tab("graph", root.data.node, true); } }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                spacing: 6px;
+                Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                for d in root.data.outgoing: DepEntry {
+                    dep: d;
+                    tone: Theme.outgoing;
+                    clicked => { root.select(d.node); }
+                }
+                Rectangle { height: 12px; }
+                Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                for d in root.data.incoming: DepEntry {
+                    dep: d;
+                    tone: Theme.incoming;
+                    clicked => { root.select(d.node); }
+                }
+            }
+        }
+    }
+}

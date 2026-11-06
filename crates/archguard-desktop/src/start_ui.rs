@@ -20,6 +20,7 @@ use archguard_engine::core::{Config, Finding, Graph};
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
+use crate::follow::Place;
 use crate::tab_support::{self, Actions, Calls, TabState, index};
 use crate::ui::{AppWindow, StartData, StartModel};
 use evidence::Evidence;
@@ -80,14 +81,21 @@ pub fn wire(ui: &AppWindow) {
         })
     }));
     d.on_set_kpi(a.on(|s, _, k: i32| s.set_kpi(index(k).unwrap_or(0))));
-    d.on_go_back(a.on0(|s, _| s.back()));
-    d.on_crumb(a.on(|s, ui, i: i32| {
-        let crumbs = s.crumbs(&ui.get_project());
-        if let Some((_, scope)) = index(i).and_then(|i| crumbs.get(i)) {
-            s.navigate(scope.clone());
-        }
-    }));
-    d.on_open_area(a.on(|s, _, i: i32| s.open_area(index(i).unwrap_or(0))));
+    let back = navigation(ui, a.on(|s, _, ()| s.back()));
+    d.on_go_back(move || back(()));
+    d.on_crumb(navigation(
+        ui,
+        a.on(|s, ui, i: i32| {
+            let crumbs = s.crumbs(&ui.get_project());
+            if let Some((_, scope)) = index(i).and_then(|i| crumbs.get(i)) {
+                s.navigate(scope.clone());
+            }
+        }),
+    ));
+    d.on_open_area(navigation(
+        ui,
+        a.on(|s, _, i: i32| s.open_area(index(i).unwrap_or(0))),
+    ));
     d.on_resized(
         a.on2(|s, _, w: f32, h: f32| s.canvas = (f64::from(w).max(1.0), f64::from(h).max(1.0))),
     );
@@ -99,6 +107,7 @@ pub fn wire(ui: &AppWindow) {
         let delta = f64::from(delta).clamp(-180.0, 180.0);
         s.wheel(f64::from(x), f64::from(y), (delta * 0.005).exp())
     });
+    let wheel = navigation(ui, wheel);
     d.on_wheel(move |x, y, delta| wheel((x, y, delta)));
     d.on_zoom_by(a.on(|s, _, f: f32| s.cam = scene::zoom(s.cam, f64::from(f), (s.cam.x, s.cam.y))));
     d.on_rotate_by(a.on(|s, _, r: f32| s.cam = scene::rotate(s.cam, f64::from(r))));
@@ -109,43 +118,78 @@ pub fn wire(ui: &AppWindow) {
             ..Camera::default()
         }
     }));
-    d.on_reset(a.on0(|s, _| s.reset()));
+    let reset = navigation(ui, a.on(|s, _, ()| s.reset()));
+    d.on_reset(move || reset(()));
     wire_selection(ui, &d);
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     let a = Actions::<StartState>::new(ui);
     d.on_search(a.on(|s, _, q: slint::SharedString| s.set_search(q.into())));
-    d.on_accept_search(a.on0(|s, _| s.accept_search()));
-    d.on_click(a.on2(|s, _, x: f32, y: f32| {
-        if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
-            s.select_cell(c);
-        }
-    }));
-    d.on_double_click(a.on2(|s, _, x: f32, y: f32| {
-        if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
-            s.open_area(s.layout.cells[c].area);
-        }
-    }));
-    d.on_pick_area(a.on(|s, _, i: i32| {
-        // Entry 0 is "Select area…".
-        s.selection = index(i - 1)
-            .filter(|&a| a < s.scope.areas.len())
-            .map(|area| Selection {
-                area,
-                entity: None,
-                members: None,
-            });
-    }));
+    let accept = navigation(ui, a.on(|s, _, ()| s.accept_search()));
+    d.on_accept_search(move || accept(()));
+    let click = navigation(
+        ui,
+        a.on(|s, _, (x, y): (f32, f32)| {
+            if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
+                s.select_cell(c);
+            }
+        }),
+    );
+    d.on_click(move |x, y| click((x, y)));
+    let double = navigation(
+        ui,
+        a.on(|s, _, (x, y): (f32, f32)| {
+            if let Some(c) = s.cell_at(f64::from(x), f64::from(y)) {
+                s.open_area(s.layout.cells[c].area);
+            }
+        }),
+    );
+    d.on_double_click(move |x, y| double((x, y)));
+    d.on_pick_area(navigation(
+        ui,
+        a.on(|s, _, i: i32| {
+            // Entry 0 is "Select area…".
+            s.selection = index(i - 1)
+                .filter(|&a| a < s.scope.areas.len())
+                .map(|area| Selection {
+                    area,
+                    entity: None,
+                    members: None,
+                });
+        }),
+    ));
     d.on_toggle_details(a.on0(|s, _| s.details_open = !s.details_open && s.selection.is_some()));
-    d.on_pick_entity(a.on(|s, _, e: i32| {
-        if let (Some(sel), Some(e)) = (&mut s.selection, index(e)) {
-            sel.entity = Some(e);
-            s.limit = 20;
-        }
-    }));
+    d.on_pick_entity(navigation(
+        ui,
+        a.on(|s, _, e: i32| {
+            if let (Some(sel), Some(e)) = (&mut s.selection, index(e)) {
+                sel.entity = Some(e);
+                s.limit = 20;
+            }
+        }),
+    ));
     d.on_more(a.on0(|s, _| s.limit += 20));
     d.on_source_graph(a.on0(source_graph));
+}
+
+/// A World callback that reports entering, leaving and selecting
+/// packages for "Follow left".
+fn navigation<A: 'static>(ui: &AppWindow, f: impl Fn(A) + 'static) -> impl Fn(A) + 'static {
+    crate::follow_ui::reporting(ui, "start", place, f)
+}
+
+/// The World's package and selection by node name: the selected entity,
+/// else the selected area.
+fn place(s: &StartState) -> Place {
+    let selected = s.selection.as_ref().and_then(|sel| match sel.entity {
+        Some(e) => Some(s.ev.entity(e).node.clone()),
+        None => Some(s.scope.areas.get(sel.area)?.name.clone()),
+    });
+    Place {
+        scope: s.within.clone(),
+        selected,
+    }
 }
 
 /// "Source graph": reveal the selection in the Graph tab.
@@ -230,6 +274,14 @@ fn snapshot_overrides(s: &mut StartState) {
 
 #[cfg(not(feature = "snapshot"))]
 fn snapshot_overrides(_: &mut StartState) {}
+
+#[cfg(feature = "snapshot")]
+impl StartState {
+    /// The index of the shown area named `name` (snapshot hooks).
+    pub fn area_named(&self, name: &str) -> Option<usize> {
+        self.scope.areas.iter().position(|a| a.name == name)
+    }
+}
 
 #[cfg(test)]
 mod tests {

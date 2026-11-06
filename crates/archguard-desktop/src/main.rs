@@ -7,17 +7,25 @@
 
 mod architecture_ui;
 mod calls_ui;
+mod config_editor;
 mod context;
 mod documents;
 mod documents_ui;
+mod export;
+mod export_ui;
+mod file_ui;
+mod follow;
+mod follow_ui;
 mod format;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
+mod instances;
 mod kpi;
 mod matrix;
 mod matrix_ui;
 mod network;
+mod node_view;
 mod pane_store;
 mod panes;
 mod panes_ui;
@@ -38,6 +46,7 @@ mod tab_support;
 mod tree;
 mod tree_order;
 mod ui;
+mod view_export;
 mod web;
 
 use std::path::PathBuf;

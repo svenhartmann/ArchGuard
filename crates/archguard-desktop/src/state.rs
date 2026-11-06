@@ -43,6 +43,13 @@ pub struct GraphState {
     pub sort: Sort,
     /// Review priority per visible row; `None` for low priority.
     pub priorities: Vec<Option<ReviewPriority>>,
+    /// The package the Graph was last opened on (double-click, crumb);
+    /// names its tab.
+    pub scope: Option<usize>,
+    /// 0 tree, 1 network, 2 dependencies.
+    pub display: i32,
+    /// The explorer's tab: 0 modules, 1 cycles, 2 review.
+    pub explorer_tab: i32,
     review_sources: ReviewSources,
     entry_points: Vec<String>,
 }
@@ -66,6 +73,9 @@ impl GraphState {
             mode: EdgeMode::All,
             sort: Sort::Connections,
             priorities: Vec::new(),
+            scope: None,
+            display: 0,
+            explorer_tab: 0,
             review_sources,
             entry_points,
         };
@@ -147,6 +157,16 @@ impl GraphState {
         self.refresh();
     }
 
+    /// Open the packages `open`, close `close` (the left pane's
+    /// expansion, for "Follow left").
+    pub fn set_open(&mut self, open: &[usize], close: &[usize]) {
+        self.expanded.extend(open.iter().copied());
+        for n in close {
+            self.expanded.remove(n);
+        }
+        self.refresh();
+    }
+
     pub fn collapse_all(&mut self) {
         self.expanded.clear();
         self.refresh();
@@ -174,6 +194,7 @@ impl GraphState {
             .is_some_and(|n| !n.children.is_empty())
         {
             self.expanded.insert(node);
+            self.scope = Some(node);
         }
         self.reveal(node);
     }
@@ -183,9 +204,11 @@ impl GraphState {
         self.refresh();
     }
 
-    /// The project crumb: collapse everything and clear the selection.
+    /// The project crumb: collapse everything and clear the selection and
+    /// the scope.
     pub fn reset(&mut self) {
         self.selected = None;
+        self.scope = None;
         self.mode = EdgeMode::All;
         self.collapse_all();
     }
@@ -203,26 +226,9 @@ impl GraphState {
     }
 
     /// Nodes whose name contains `query`, ignoring case; at most `limit`.
+    #[cfg(test)]
     pub fn search(&self, query: &str, limit: usize) -> Vec<Hit> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
-            return Vec::new();
-        }
-        self.tree
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| n.name.to_lowercase().contains(&q))
-            .take(limit)
-            .map(|(i, n)| Hit {
-                node: i,
-                label: n.label.clone(),
-                scope: n
-                    .parent
-                    .map(|p| self.tree.nodes[p].name.clone())
-                    .unwrap_or_default(),
-            })
-            .collect()
+        search(&self.tree, query, limit)
     }
 
     /// `(incoming, outgoing)` neighbours of the selection, heaviest first.
@@ -292,6 +298,29 @@ impl GraphState {
             })
             .collect()
     }
+}
+
+/// Nodes of `tree` whose name contains `query`, ignoring case; at most
+/// `limit`. The header search runs it once for every Graph of a document.
+pub fn search(tree: &Tree, query: &str, limit: usize) -> Vec<Hit> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    tree.nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.name.to_lowercase().contains(&q))
+        .take(limit)
+        .map(|(i, n)| Hit {
+            node: i,
+            label: n.label.clone(),
+            scope: n
+                .parent
+                .map(|p| tree.nodes[p].name.clone())
+                .unwrap_or_default(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -407,6 +436,20 @@ mod tests {
         assert!(s.expanded.is_empty());
         assert_eq!(s.selected, None);
         assert_eq!(s.mode, EdgeMode::All);
+    }
+
+    /// The package a Graph was opened on is its scope (the tab title);
+    /// selecting keeps it, the project crumb clears it.
+    #[test]
+    fn opening_a_package_sets_the_scope_until_reset() {
+        let mut s = GraphState::new(tree());
+        assert_eq!(s.scope, None);
+        s.open(3);
+        assert_eq!(s.scope, Some(3));
+        s.select_row(Some(0));
+        assert_eq!(s.scope, Some(3));
+        s.reset();
+        assert_eq!(s.scope, None);
     }
 
     #[test]

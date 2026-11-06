@@ -6,7 +6,7 @@
 //! All tab state is one [`SecurityState`], built by [`build_from`] and shown by
 //! [`push`] as one `SecurityModel` value.
 
-mod snapshot;
+pub(crate) mod snapshot;
 
 use std::path::Path;
 
@@ -15,6 +15,7 @@ use archguard_engine::{SecurityFinding, SecurityReport};
 use slint::{ComponentHandle, ModelRc, SharedString};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::format::UNKNOWN;
 use crate::kpi;
 use crate::status::Status;
@@ -66,6 +67,19 @@ pub fn wire(ui: &AppWindow) {
             std::thread::spawn(move || crate::web::open_in_browser(&url));
         }
     });
+}
+
+/// The active document's saved scan and the list filters (search, the
+/// web's severity value), for the export.
+pub fn export_state() -> Option<(SecurityReport, String, &'static str)> {
+    documents::with_active_state(|s: &mut SecurityState| {
+        let severity = s
+            .severity
+            .checked_sub(1)
+            .and_then(|i| SEVERITIES.get(i).copied())
+            .unwrap_or("all");
+        (s.report.clone(), s.query.clone(), severity)
+    })
 }
 
 impl TabState for SecurityState {

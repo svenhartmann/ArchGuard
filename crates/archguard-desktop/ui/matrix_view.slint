@@ -2,6 +2,7 @@ import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, SearchField, KpiItem, StatInline, PageTitle } from "widgets.slint";
 import { Fmt } from "format.slint";
+import { NodeMenu } from "node_menu.slint";
 
 // kind: 0 package, 1 direct files of the scope root, 2 outside the scope.
 export struct MatrixColumn {
@@ -22,6 +23,28 @@ export struct MatrixRowItem {
     badges: string,
     // One entry per column (all columns, not only the visible page).
     cells: [string],
+}
+
+// One Matrix instance as Rust shows it (src/matrix_ui.rs); app.slint
+// passes its fields to a MatrixView.
+export struct MatrixData {
+    id: int,
+    columns: [MatrixColumn],
+    rows: [MatrixRowItem],
+    // Files, dependency evidence records, file cycle groups (`kpi.rs`).
+    kpis: [KpiItem],
+    row-start: int,
+    row-total: int,
+    scopes: [string],
+    cycle-options: [string],
+    scope-index: int,
+    cycle-index: int,
+    query: string,
+    only: bool,
+    evidence: [string],
+    evidence-title: string,
+    cycle-path: string,
+    marked-row: int,
 }
 
 export component MatrixView inherits Rectangle {
@@ -65,6 +88,8 @@ export component MatrixView inherits Rectangle {
     callback page(int);
     callback cell(int, int);
     callback close-evidence();
+    // kind ("file" or "graph"), tree node, side: a row's node in a new tab.
+    callback node-tab(string, int, bool);
     // Tabs must not change the window's preferred size (Slint would resize
     // the window when switching to this tab).
     // Explicit horizontal constraints: the content depends on the width
@@ -245,6 +270,17 @@ export component MatrixView inherits Rectangle {
                             x: 0;
                             width: root.label-w;
                             background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
+                            row-menu := NodeMenu {
+                                package: r.package;
+                                chosen(kind, side) => { root.node-tab(kind, r.node, side); }
+                            }
+                            TouchArea {
+                                pointer-event(e) => {
+                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                                        row-menu.open-at(self.mouse-x, self.mouse-y);
+                                    }
+                                }
+                            }
                             HorizontalLayout {
                                 padding-left: 6px + r.depth * 16px;
                                 spacing: 6px;

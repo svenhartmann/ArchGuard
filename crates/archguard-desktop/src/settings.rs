@@ -344,8 +344,8 @@ mod tests {
 
     fn split_layout() -> Layout {
         let mut l = Layout::single("graph");
-        l.open_tab("quality");
-        l.split_right(Some("dsm"));
+        l.open_tab("quality", None);
+        l.split_right(Some("dsm"), None);
         l.set_ratio(0.62);
         l.focus(1);
         l
@@ -373,10 +373,68 @@ mod tests {
         assert_eq!(back.projects["/w/shop"].layout, Some(split_layout()));
     }
 
+    /// Two Graphs on different packages, one at another display, and a
+    /// File view are stored with their nodes and read back as they were.
+    #[test]
+    fn view_instances_are_stored_with_their_nodes() {
+        let mut l = Layout::single("graph");
+        let left = l.open_tab("graph", Some("crates/a")).expect("tab");
+        l.tab_mut(left).expect("tab").display = 1;
+        l.split_right(Some("file"), Some("crates/b/src/lib.rs"));
+        let mut s = Settings::default();
+        s.set_project(
+            Path::new("/w/shop"),
+            ProjectView {
+                tab: "file".into(),
+                layout: Some(l.clone()),
+                ..ProjectView::default()
+            },
+        );
+        let text = render(&mut DocumentMut::new(), &s);
+        assert!(
+            text.contains(
+                "panes = [[\"graph\", { view = \"graph\", node = \"crates/a\", display = 1 }], \
+                 [{ view = \"file\", node = \"crates/b/src/lib.rs\" }]]"
+            ),
+            "{text}"
+        );
+        let (_, back) = parse(&text).expect("own output parses");
+        assert_eq!(back.projects["/w/shop"].layout, Some(l));
+    }
+
     #[test]
     fn a_project_without_panes_has_no_layout() {
         let (_, s) = parse("[projects.\"/w/shop\"]\ntab = \"dsm\"\n").expect("valid");
         assert_eq!(s.projects["/w/shop"].layout, None);
+    }
+
+    /// "Follow left" is stored with the split layout and read back; a
+    /// layout without the key does not follow.
+    #[test]
+    fn follow_is_stored_with_the_pane_layout() {
+        let mut l = split_layout();
+        l.follow_left = true;
+        let mut s = Settings::default();
+        s.set_project(
+            Path::new("/w/shop"),
+            ProjectView {
+                layout: Some(l.clone()),
+                ..ProjectView::default()
+            },
+        );
+        let text = render(&mut DocumentMut::new(), &s);
+        assert!(text.contains("pane_follow = true"), "{text}");
+        let (_, back) = parse(&text).expect("own output parses");
+        assert_eq!(back.projects["/w/shop"].layout, Some(l));
+        let (_, old) =
+            parse("[projects.\"/w/shop\"]\npanes = [[\"graph\"], [\"dsm\"]]\n").expect("valid");
+        assert!(
+            !old.projects["/w/shop"]
+                .layout
+                .as_ref()
+                .expect("layout")
+                .follow_left
+        );
     }
 
     #[test]
