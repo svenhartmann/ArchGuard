@@ -6,6 +6,8 @@
 //! `settings.rs`), on the first start the current directory.
 
 mod architecture_ui;
+#[cfg(feature = "snapshot")]
+mod bench;
 mod calls_ui;
 mod config_editor;
 mod context;
@@ -43,6 +45,7 @@ mod start_ui;
 mod state;
 mod status;
 mod tab_support;
+mod timing;
 mod tree;
 mod tree_order;
 mod ui;

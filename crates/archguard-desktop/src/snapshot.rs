@@ -45,6 +45,9 @@ pub fn schedule(ui: &AppWindow) {
     if SCHEDULED.replace(true) {
         return;
     }
+    if let Some(n) = env::<usize>("ARCHGUARD_DESKTOP_BENCH") {
+        return crate::bench::run(ui, n);
+    }
     if let Some(doc) = env::<i32>("ARCHGUARD_DESKTOP_DOC") {
         ui.invoke_select_doc(doc);
     }
