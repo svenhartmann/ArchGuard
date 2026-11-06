@@ -338,8 +338,11 @@ dependencies = [
  "petgraph",
  "png",
  "rfd",
+ "serde",
  "slint",
  "slint-build",
+ "tempfile",
+ "toml",
  "toml_edit",
 ]
 

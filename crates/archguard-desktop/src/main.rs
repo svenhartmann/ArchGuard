@@ -7,6 +7,7 @@
 
 mod architecture_ui;
 mod calls_ui;
+mod config_editor;
 mod context;
 mod documents;
 mod documents_ui;
