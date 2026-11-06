@@ -648,8 +648,14 @@ gemessen“, nie „sauber“ oder null.
   KPI-Block `None`. Der Viewer füllt es aus den Knoten-Abstraktionsmetriken
   der Performance-Analyse (Java und C#); SCC-Metriken zählen nicht doppelt.
   Ohne eine einzige messbare Grenze bleibt es `None` — das Panel zeigt
-  „not measured“, statt zu raten. Textbericht und MCP-Tool `review_kpis`
-  lesen den gecachten Block und melden Zonen daher als nicht gemessen.
+  „not measured“, statt zu raten. Textbericht (`archguard scan`,
+  `archguard check`) und MCP-Tool `review_kpis` lesen den gecachten Block
+  und melden Zonen als nicht gemessen, solange niemand mehr verlangt:
+  `--measure-zones` bei `scan`/`check` und `measure_zones=true` bei
+  `review_kpis` starten dieselbe Aufruf- und Performance-Analyse
+  (`archguard_engine::measure_review_zones`) und füllen `zones` vor der
+  Ausgabe. Das Opt-in gibt es, weil die Compiler-Helfer langsam sind; ohne
+  messbare Java- oder C#-Grenze bleibt `zones` trotzdem `None`.
 - **Verstricktheit** (`tangles.rs`): Anteil der Knoten in einer zyklischen SCC
   mit mehr als einem Mitglied, bezogen auf die Sichtknoten.
 - **Hub-Gini** (`tangles.rs`): Gini-Koeffizient der Fan-in-Verteilung plus der
