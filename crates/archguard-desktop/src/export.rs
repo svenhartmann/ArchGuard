@@ -19,7 +19,7 @@
 //!   `TreeNode::file`), one [`GraphEdge`] per shown link (`view.shown(..)`:
 //!   `weight` → `count`, `cyclic`, `refs` → `evidence`). The scope figures
 //!   are those of the KPI row: `scope_rows().len()`, `links.len()`,
-//!   `cycle_groups`, `acd(..)`.
+//!   `cycle_groups`, `acd(..)`. For the SVG see [`svg`].
 //! - Matrix tab: the same input with `matrix: true` and every scope row
 //!   and link (the web exports the complete matrix scope).
 //! - Services tab: the document's `ServiceTopology` and [`ServiceFilters`].
@@ -33,19 +33,25 @@
 
 mod architecture;
 mod cells;
+mod file;
 mod graph;
+mod image;
 mod markdown;
 mod quality;
 mod security;
 mod services;
 mod snapshot;
+mod svg;
 
 pub use architecture::architecture_snapshot;
+pub use file::{WriteError, write};
 pub use graph::{GraphEdge, GraphFilters, GraphInput, GraphNode, graph_snapshot};
+pub use image::{ImageError, Rect, png};
 pub use quality::{QualityFilters, QualityInput, quality_snapshot};
 pub use security::{SecurityFilters, security_snapshot};
 pub use services::{ServiceFilters, services_snapshot};
 pub use snapshot::Snapshot;
+pub use svg::{Diagram, DiagramBox, DiagramEdge, EdgeKind, Theme, svg};
 
 use std::path::Path;
 
