@@ -12,10 +12,10 @@ const puml=app.run('arc42PlantUml(arc42PackageProjection())');assert.match(puml,
 const deployment=app.run("arc42PlantUml(arc42DeploymentProjection('dev.yml'))");assert.match(deployment,/Deployment_Node/);assert.match(deployment,/Container/);assert.match(deployment,/startup/);assert.doesNotMatch(deployment,/prod.yml/);
 app.run('let evil={nodes:[{id:"x",name:\'quote"\\n!include https://evil.test\\n@enduml\',kind:"package"}],edges:[]};');
 assert.equal(app.run('arc42PlantUml(evil).split("\\n").filter(l=>l.startsWith("@enduml")).length'),1);assert.ok(!app.run('arc42PlantUml(evil).split("\\n").some(l=>l.startsWith("!include"))'));
-// Rust crates and Maven modules all end in src/main: labels need the shortest unique path suffix.
+// Rust crates and Maven modules all end in src/main: labels drop source roots unless that makes them ambiguous.
 const twins=JSON.parse(app.run("JSON.stringify(arc42StandardGraph({nodes:[{id:'a',name:'crates/engine/src',kind:'package'},{id:'b',name:'crates/cli/src',kind:'package'},{id:'c',name:'crates/cli',kind:'package'}],edges:[]},null))"));
-assert.deepEqual(twins.nodes.map(n=>n.attributes.label.split('\n')[0]),['engine/src','cli/src','cli'],'packages sharing a last segment stay distinguishable');
-assert.equal(app.run("arc42ShortNames(['x/a/src','y/a/src','src']).get('x/a/src')"),'x/a/src');
+assert.deepEqual(twins.nodes.map(n=>n.attributes.label.split('\n')[0]),['engine','cli/src','cli'],'packages sharing a last segment stay distinguishable');
+assert.equal(app.run("arc42ShortNames(['x/a/src','y/a/src','src']).get('x/a/src')"),'x/a');
 // viz-js copies a subgraph label onto the root unless the root declares its own: the title appeared twice.
 const deploymentGraph=JSON.parse(app.run("JSON.stringify(arc42StandardGraph(arc42DeploymentProjection('dev.yml'),null))"));
 assert.equal(deploymentGraph.graphAttributes.label,'','the deployment title is drawn once, by its cluster');

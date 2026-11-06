@@ -3,8 +3,10 @@
 
 use archguard_engine::core::Graph;
 
-use super::diagram;
+use std::collections::HashMap;
+
 use super::projection::{self, Group, Labels, Levels, Projection, SourceModel};
+use super::{diagram, names};
 
 /// Relationships listed per page, as the web (30).
 pub const RELATIONS_PAGE: usize = 30;
@@ -123,13 +125,40 @@ pub fn relations(map: &Map) -> Vec<&projection::PEdge> {
         .collect()
 }
 
+/// Labels of the scope choices after the overview, named among each other.
+pub fn scope_labels(map: &Map, graph: &Graph) -> Vec<String> {
+    let paths: Vec<&str> = map
+        .scopes
+        .iter()
+        .flatten()
+        .map(|&n| graph.nodes[n].name.as_str())
+        .collect();
+    names::short_names(&paths)
+}
+
+/// Level-entry labels: level 2 among each other, level 3 among its
+/// siblings, as the list indents it below its parent.
+pub fn level_labels(levels: &Levels, graph: &Graph) -> HashMap<usize, String> {
+    let mut groups: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
+    for e in &levels.entries {
+        groups.entry(e.parent).or_default().push(e.node);
+    }
+    let mut out = HashMap::new();
+    for nodes in groups.values() {
+        let paths: Vec<&str> = nodes
+            .iter()
+            .map(|&n| graph.nodes[n].name.as_str())
+            .collect();
+        out.extend(nodes.iter().copied().zip(names::short_names(&paths)));
+    }
+    out
+}
+
 /// Level list: the overview, level-2 entries, and the children of the
 /// opened level-2 entry right after it. (scope, level, label, current)
 pub fn level_items(levels: &Levels, graph: &Graph) -> Vec<(Option<usize>, u8, String)> {
-    let short = |n: usize| {
-        let name = &graph.nodes[n].name;
-        name.rsplit('/').next().unwrap_or(name).to_string()
-    };
+    let labels = level_labels(levels, graph);
+    let short = |n: usize| labels[&n].clone();
     let mut out = vec![(None, 1, String::new())];
     let expanded = levels.path.first().map(|e| e.node);
     for e in levels.entries.iter().filter(|e| e.level == 2) {
@@ -228,6 +257,89 @@ mod tests {
         assert_eq!(map.shown.nodes.len(), 2);
         assert_eq!(map.action, Action::OpenPackage(3));
         assert_eq!(map.scopes, vec![None, Some(0), Some(1), Some(5), Some(3)]);
+    }
+
+    /// This repository's shape: crates/{x/src/{x.rs}, y/src/{y.rs,
+    /// sub/{s.rs, deep/{d.rs}}}}, every crate a root; s→y, x→y.
+    fn crates() -> Graph {
+        use NodeKind::{File, Module};
+        let n = |id: u32, name: &str, kind, parent: Option<u32>| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind,
+            parent: parent.map(NodeId),
+            lang: None,
+        };
+        let e = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: Some(1),
+        };
+        Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: vec![
+                n(0, "crates/x", Module, None),
+                n(1, "crates/x/src", Module, Some(0)),
+                n(2, "crates/x/src/x.rs", File, Some(1)),
+                n(3, "crates/y", Module, None),
+                n(4, "crates/y/src", Module, Some(3)),
+                n(5, "crates/y/src/y.rs", File, Some(4)),
+                n(6, "crates/y/src/sub", Module, Some(4)),
+                n(7, "crates/y/src/sub/s.rs", File, Some(6)),
+                n(8, "crates/y/src/sub/deep", Module, Some(6)),
+                n(9, "crates/y/src/sub/deep/d.rs", File, Some(8)),
+            ],
+            edges: vec![e(7, 5), e(2, 5)],
+            semantic: None,
+            review_kpis: None,
+        }
+    }
+
+    #[test]
+    fn crate_source_roots_are_named_after_their_crate() {
+        let g = crates();
+        let m = SourceModel::new(&g);
+        let edges = projection::dependency_edges(&m, &g);
+        let mut state = MapState::default();
+        let map = build(Kind::Dependencies, &state, &m, &g, &edges, &labels());
+        let cards: Vec<&str> = map.shown.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(cards, vec!["y/sub", "x", "y"]);
+        assert_eq!(map.shown.nodes[1].name, "crates/x/src", "the path stays");
+        assert_eq!(
+            scope_labels(&map, &g),
+            vec!["x", "y", "y/sub", "y/sub/deep"]
+        );
+        state.scope = Some(8);
+        let map = build(Kind::Dependencies, &state, &m, &g, &edges, &labels());
+        let items: Vec<String> = level_items(map.levels.as_ref().expect("levels"), &g)
+            .into_iter()
+            .map(|(_, _, l)| l)
+            .collect();
+        assert_eq!(items, vec!["", "x", "y/sub", "deep", "y"]);
+        state.scope = Some(4);
+        let map = build(Kind::Dependencies, &state, &m, &g, &edges, &labels());
+        let cards: Vec<&str> = map.shown.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(cards, vec!["sub", "y / direct", "outside"]);
+    }
+
+    #[test]
+    fn single_segment_packages_keep_their_names() {
+        // examples/service-shop: one directory per service.
+        let g = graph();
+        let m = SourceModel::new(&g);
+        let edges = projection::dependency_edges(&m, &g);
+        let map = build(
+            Kind::Dependencies,
+            &MapState::default(),
+            &m,
+            &g,
+            &edges,
+            &labels(),
+        );
+        let cards: Vec<&str> = map.shown.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(cards, vec!["a", "b"]);
     }
 
     #[test]

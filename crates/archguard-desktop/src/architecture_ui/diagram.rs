@@ -88,21 +88,29 @@ fn route(a: &Card, b: &Card, i: usize) -> Route {
     }
 }
 
-/// The card's name: the last path segment in lines of 24 characters, at
-/// most two, the second ending in "…" when the name is longer.
-pub fn name_lines(name: &str) -> (String, String) {
-    let base = name
-        .rsplit('/')
-        .next()
-        .filter(|b| !b.is_empty())
-        .unwrap_or(name);
-    let chars: Vec<char> = base.chars().collect();
-    let line = |k: usize| -> String { chars.iter().skip(k * 24).take(24).collect() };
-    let mut second = line(1);
-    if chars.len() > 48 {
+/// The card's label in at most two lines of 24 characters, as
+/// `arc42NameLines`: the first ends after its last "/" when it has one,
+/// the second ends in "…" when the label is longer.
+pub fn name_lines(label: &str) -> (String, String) {
+    let chars: Vec<char> = label.chars().collect();
+    if chars.len() <= 24 {
+        return (label.to_string(), String::new());
+    }
+    let cut = chars[..24]
+        .iter()
+        .rposition(|&c| c == '/')
+        .filter(|&i| i > 0)
+        .map_or(24, |i| i + 1);
+    let skip = chars[cut..]
+        .iter()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    let rest = &chars[cut + skip..];
+    let mut second: String = rest.iter().take(24).collect();
+    if rest.len() > 24 {
         second.push('…');
     }
-    (line(0), second)
+    (chars[..cut].iter().collect(), second)
 }
 
 /// What a PlantUML node is drawn as.
@@ -207,10 +215,18 @@ mod tests {
     }
 
     #[test]
-    fn names_show_the_last_segment_in_two_lines() {
+    fn labels_break_after_a_slash_in_two_lines() {
         assert_eq!(
-            name_lines("crates/archguard-engine/src"),
-            ("src".into(), String::new())
+            name_lines("archguard-engine"),
+            ("archguard-engine".into(), String::new())
+        );
+        assert_eq!(
+            name_lines("archguard-engine/semantic_calls"),
+            ("archguard-engine/".into(), "semantic_calls".into())
+        );
+        assert_eq!(
+            name_lines("archguard-desktop / direct files"),
+            ("archguard-desktop /".into(), "direct files".into())
         );
         let long = "a".repeat(50);
         let (one, two) = name_lines(&long);

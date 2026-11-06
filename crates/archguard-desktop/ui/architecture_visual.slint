@@ -201,6 +201,8 @@ export struct ArcMap {
     dw: float,
     dh: float,
     selected-name: string,
+    // The selected block's full path when its name is shorter.
+    selected-path: string,
     // 0 none, 1 open next level, 2 open in graph, 3 open package.
     selected-action: int,
     relations: [ArcRelation],
@@ -383,6 +385,7 @@ export component ArcVisual inherits Rectangle {
                 spacing: 12px;
                 alignment: start;
                 Text { text: root.map.selected-name; color: Theme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                if root.map.selected-path != "": Text { text: root.map.selected-path; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
                 if root.map.selected-action != 0: Button {
                     compact: true;
                     text: root.map.selected-action == 1 ? @tr("Open level {}", Fmt.int(root.map.level + 1)) : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
