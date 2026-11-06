@@ -7,6 +7,7 @@
 mod card;
 mod cards;
 mod cohesion;
+mod empty;
 mod evidence;
 mod heatmap;
 mod heatmap_text;
@@ -44,7 +45,7 @@ impl TabState for QualityState {
         let mut m = page_model(&lang, QualityState::loading(lang.clone()).page(), &old);
         if let Some(e) = error {
             m.loading = false;
-            m.empty = e.into();
+            m.empty_title = e.into();
         }
         ui.global::<QualityData>().set_model(m);
     }
@@ -256,7 +257,9 @@ fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
         ),
         cards: sync_rows_with(&old.cards, p.cards.into_iter().map(card_model), adopt_card),
         more: p.more,
-        empty: p.empty.into(),
+        empty_title: p.empty.title.into(),
+        empty_reason: p.empty.reason.into(),
+        empty_command: p.empty.command.into(),
         ..Default::default()
     }
 }
