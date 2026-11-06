@@ -51,7 +51,7 @@ component PackageCard inherits Rectangle {
         tab-label := Text {
             text: (card.file ? @tr("File") : @tr("Package")).to-uppercase();
             color: Theme.text;
-            font-size: 12px * zoom;
+            font-size: max(9px, 11px * zoom);
             font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -74,7 +74,7 @@ component PackageCard inherits Rectangle {
                 Text {
                     text: card.label;
                     color: Theme.text;
-                    font-size: 20px * zoom;
+                    font-size: max(11px, 17px * zoom);
                     font-weight: 650;
                     overflow: elide;
                     horizontal-stretch: 1;
@@ -88,9 +88,11 @@ component PackageCard inherits Rectangle {
             }
             Rectangle { height: 1px; background: Theme.package-border.with-alpha(0.6); }
             Text {
-                text: card.file ? @tr("source file") : @tr("{} files · {} package", Fmt.int(card.files), Fmt.int(card.packages));
+                text: card.file ? @tr("source file") : @tr("{0} file" | "{0} files" % card.files, Fmt.int(card.files))
+                    + " · " + @tr("{0} package" | "{0} packages" % card.packages, Fmt.int(card.packages));
                 color: Theme.muted;
-                font-size: 15px * zoom;
+                font-size: max(10px, 13px * zoom);
+                overflow: elide;
             }
         }
     }
@@ -139,14 +141,8 @@ export component NetworkView inherits Rectangle {
                 return reject;
             }
         }
-        for c in root.cards: PackageCard {
-            card: c;
-            zoom: root.zoom;
-            selected: c.row == root.selected;
-            clicked => { root.select(c.row); }
-            open => { root.open(c.row); }
-        }
-        // Arrows above the cards so that heads stay visible, as in the web.
+        // Arrows below the cards: they end at the card edges, so their
+        // heads stay visible, and lines crossing a card no longer cover it.
         for a in root.arrows: Path {
             x: 0;
             y: 0;
@@ -158,6 +154,13 @@ export component NetworkView inherits Rectangle {
             fill: transparent;
             stroke: a.kind == 1 ? Theme.incoming : a.kind == 2 ? Theme.outgoing : a.kind == 3 ? Theme.cycle : Theme.edge.with-alpha(0.85);
             stroke-width: a.width * 1px * root.zoom;
+        }
+        for c in root.cards: PackageCard {
+            card: c;
+            zoom: root.zoom;
+            selected: c.row == root.selected;
+            clicked => { root.select(c.row); }
+            open => { root.open(c.row); }
         }
       }
     }

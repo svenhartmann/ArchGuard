@@ -166,7 +166,9 @@ component WebOnly inherits Details {
     }
 }
 
-component Toolbar inherits HorizontalLayout {
+// Three groups that flow into further rows when the view is too narrow
+// (placed from the view's width, never the content's).
+component Toolbar inherits Rectangle {
     property <ServicesModel> m: ServicesData.model;
     // ComboBoxes keep their own index once used; follow the model's.
     changed m => {
@@ -174,45 +176,72 @@ component Toolbar inherits HorizontalLayout {
         mode-box.current-index = m.mode;
         routing-box.current-index = m.routing;
     }
-    padding-left: 16px;
-    padding-right: 16px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    spacing: 8px;
-    alignment: start;
-    Label { text: @tr("Relation"); }
-    kind-box := ComboBox {
-        width: 190px;
-        model: [@tr("API configuration"), @tr("Startup (depends_on)"), @tr("HTTP client"), @tr("gRPC client"), @tr("Event flow (inferred)"), @tr("Configuration reference")];
-        current-index: m.kind;
-        selected => { ServicesData.select-kind(self.current-index); }
-    }
-    Label { text: @tr("Direction"); }
-    mode-box := ComboBox {
-        width: 110px;
-        enabled: m.has-selection;
-        model: [@tr("direction" => "All"), @tr("Incoming"), @tr("Outgoing"), @tr("Both")];
-        current-index: m.mode;
-        selected => { ServicesData.select-mode(self.current-index); }
-    }
-    Button { text: @tr("Cycles only"); pressed-state: m.cycles-only; clicked => { ServicesData.toggle-cycles-only(); } }
-    Button { text: @tr("All services"); clicked => { ServicesData.show-all(); } }
-    ZoomControls {
-        compact: false;
-        zoom: m.zoom;
-        zoom-out => { ServicesData.zoom-by(1 / 1.25); }
-        zoom-in => { ServicesData.zoom-by(1.25); }
-        reset => { ServicesData.zoom-by(0); }
-        fit => { root.fit(); }
-    }
-    Label { text: @tr("Relations"); }
-    routing-box := ComboBox {
-        width: 120px;
-        model: [@tr("Up / down"), @tr("In/Out")];
-        current-index: m.routing;
-        selected => { ServicesData.select-routing(self.current-index); }
-    }
+    property <length> pad: Theme.page-pad;
+    property <length> gap: 16px;
+    property <length> row-h: Theme.control-h;
+    property <length> avail: self.width - self.pad;
+    property <bool> f1: self.pad + filters.preferred-width + self.gap + toggles.preferred-width <= self.avail;
+    property <int> r1: self.f1 ? 0 : 1;
+    property <length> x1: self.f1 ? self.pad + filters.preferred-width + self.gap : self.pad;
+    property <bool> f2: self.x1 + toggles.preferred-width + self.gap + view.preferred-width <= self.avail;
+    property <int> r2: self.f2 ? self.r1 : self.r1 + 1;
+    property <length> x2: self.f2 ? self.x1 + toggles.preferred-width + self.gap : self.pad;
+    pure function row-y(r: int) -> length { return 8px + r * (self.row-h + 8px); }
+    height: 16px + (self.r2 + 1) * self.row-h + self.r2 * 8px;
     callback fit();
+    filters := HorizontalLayout {
+        x: root.pad;
+        y: root.row-y(0);
+        width: self.preferred-width;
+        height: root.row-h;
+        spacing: 8px;
+        Label { text: @tr("Relation"); }
+        kind-box := ComboBox {
+            width: 190px;
+            model: [@tr("API configuration"), @tr("Startup (depends_on)"), @tr("HTTP client"), @tr("gRPC client"), @tr("Event flow (inferred)"), @tr("Configuration reference")];
+            current-index: m.kind;
+            selected => { ServicesData.select-kind(self.current-index); }
+        }
+        Label { text: @tr("Direction"); }
+        mode-box := ComboBox {
+            width: 110px;
+            enabled: m.has-selection;
+            model: [@tr("direction" => "All"), @tr("Incoming"), @tr("Outgoing"), @tr("Both")];
+            current-index: m.mode;
+            selected => { ServicesData.select-mode(self.current-index); }
+        }
+    }
+    toggles := HorizontalLayout {
+        x: root.x1;
+        y: root.row-y(root.r1);
+        width: self.preferred-width;
+        height: root.row-h;
+        spacing: 8px;
+        Button { text: @tr("Cycles only"); pressed-state: m.cycles-only; clicked => { ServicesData.toggle-cycles-only(); } }
+        Button { text: @tr("All services"); clicked => { ServicesData.show-all(); } }
+    }
+    view := HorizontalLayout {
+        x: root.x2;
+        y: root.row-y(root.r2);
+        width: self.preferred-width;
+        height: root.row-h;
+        spacing: 8px;
+        ZoomControls {
+            compact: false;
+            zoom: m.zoom;
+            zoom-out => { ServicesData.zoom-by(1 / 1.25); }
+            zoom-in => { ServicesData.zoom-by(1.25); }
+            reset => { ServicesData.zoom-by(0); }
+            fit => { root.fit(); }
+        }
+        Label { text: @tr("Relations"); }
+        routing-box := ComboBox {
+            width: 120px;
+            model: [@tr("Up / down"), @tr("In/Out")];
+            current-index: m.routing;
+            selected => { ServicesData.select-routing(self.current-index); }
+        }
+    }
 }
 
 export component ServicesView inherits Rectangle {
@@ -226,8 +255,9 @@ export component ServicesView inherits Rectangle {
     property <bool> diagnostics-open;
     property <bool> legend-open;
     background: Theme.bg;
-    // Tabs must not change the window's preferred size.
-    min-width: 640px;
+    // Tabs must not change the window's preferred size; a split pane can
+    // be narrow.
+    min-width: 360px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
@@ -242,11 +272,14 @@ export component ServicesView inherits Rectangle {
     if m.state > 0: HorizontalLayout {
         VerticalLayout {
             horizontal-stretch: 1;
-            ScrollView {
+            summary := ScrollView {
                 height: min(desc.preferred-height, root.height * 0.35);
+                // As wide as the visible area, so the summary wraps before
+                // the edge and the scroll bar.
                 desc := VerticalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
+                    width: summary.visible-width;
+                    padding-left: Theme.page-pad;
+                    padding-right: Theme.page-pad;
                     padding-top: 12px;
                     padding-bottom: 6px;
                     spacing: 4px;
@@ -310,18 +343,14 @@ export component ServicesView inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            // Scrolls instead of widening the window when the labels are long.
-            Flickable {
-                height: toolbar.preferred-height;
-                content-width: max(self.width, toolbar.preferred-width);
-                toolbar := Toolbar {
-                    width: max(parent.width, self.preferred-width);
-                    fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
-                }
+            // Without a topology there is nothing to filter.
+            if m.state == 1: Toolbar {
+                fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
             }
-            Rectangle { height: 1px; background: Theme.border; }
+            if m.state == 1: Rectangle { height: 1px; background: Theme.border; }
             if m.state != 1 || m.rows.length == 0: HorizontalLayout {
-                padding-left: 4px;
+                padding-left: Theme.page-pad;
+                padding-right: Theme.page-pad;
                 height: 40px;
                 Text {
                     text: m.state == 2 ? m.error

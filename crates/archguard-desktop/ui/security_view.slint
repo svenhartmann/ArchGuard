@@ -152,13 +152,14 @@ component Controls inherits HorizontalLayout {
     property <int> severity: model.severity;
     changed severity => { combo.current-index = root.severity; }
     spacing: 10px;
+    // Labels on one line above controls of one height.
     VerticalLayout {
         horizontal-stretch: 1;
         spacing: 4px;
-        alignment: end;
-        Text { text: @tr("Security" => "Search package or CVE"); color: Theme.text; font-size: 12px; }
+        alignment: start;
+        Text { text: @tr("Security" => "Search package or CVE"); color: Theme.text; font-size: Theme.field-label; }
         Rectangle {
-            height: 34px;
+            height: Theme.control-h;
             border-radius: 6px;
             border-width: 1px;
             border-color: input.has-focus ? Theme.accent : Theme.border;
@@ -182,15 +183,17 @@ component Controls inherits HorizontalLayout {
                 color: Theme.muted;
                 font-size: 13px;
                 vertical-alignment: center;
+                overflow: elide;
             }
         }
     }
     VerticalLayout {
         horizontal-stretch: 0;
         spacing: 4px;
-        alignment: end;
-        Text { text: @tr("Security" => "Severity"); color: Theme.text; font-size: 12px; }
+        alignment: start;
+        Text { text: @tr("Security" => "Severity"); color: Theme.text; font-size: Theme.field-label; }
         combo := ComboBox {
+            height: Theme.control-h;
             min-width: 90px;
             model: [
                 @tr("Security" => "All"), @tr("Security" => "Critical"), @tr("Security" => "High"),
@@ -206,8 +209,9 @@ export component SecurityView inherits Rectangle {
     callback open-web();
     property <SecurityModel> model: SecurityData.model;
     background: Theme.bg;
-    // Tabs must not change the window's preferred size.
-    min-width: 640px;
+    // Tabs must not change the window's preferred size; a split pane can
+    // be narrow.
+    min-width: 360px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
@@ -222,7 +226,9 @@ export component SecurityView inherits Rectangle {
     if root.model.loaded: ScrollView {
         VerticalLayout {
             alignment: start;
-            padding: 16px;
+            padding: Theme.page-pad;
+            // Room for the vertical scroll bar.
+            padding-right: Theme.page-pad + Theme.scrollbar-w;
             spacing: 0;
             Rectangle { height: 14px; }
             StatusText { code: root.model.status; status: root.model.status-slot; label: root.model.status-label; }

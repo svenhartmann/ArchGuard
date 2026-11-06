@@ -141,8 +141,15 @@ msgstr "Netzwerk"
 msgid "source file"
 msgstr "Quelldatei"
 
-msgid "{} files · {} package"
-msgstr "{} Dateien · {} Paket"
+msgid "{0} file"
+msgid_plural "{0} files"
+msgstr[0] "{0} Datei"
+msgstr[1] "{0} Dateien"
+
+msgid "{0} package"
+msgid_plural "{0} packages"
+msgstr[0] "{0} Paket"
+msgstr[1] "{0} Pakete"
 
 msgid "Fit"
 msgstr "Einpassen"

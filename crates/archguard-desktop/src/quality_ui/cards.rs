@@ -55,8 +55,27 @@ pub fn class(lang: &Texts, nodes: &BTreeSet<String>, row: &ClassMetrics) -> Card
     b.done()
 }
 
+/// A method id (`rust:a/x.rs::Store#open@12`) as a title: owner and
+/// name, without language, path and line; module-level functions by name.
+pub fn method_title(id: &str) -> String {
+    let Some((owner, rest)) = id.rsplit_once('#') else {
+        return id.to_string();
+    };
+    let name = rest.split('@').next().unwrap_or(rest);
+    let (owner, sep) = match owner.rsplit_once("::") {
+        Some((_, last)) => (last, "::"),
+        None => (owner.rsplit('.').next().unwrap_or(owner), "."),
+    };
+    let owner = owner.rsplit(':').next().unwrap_or(owner);
+    if owner.is_empty() || owner == "(module)" {
+        return name.to_string();
+    }
+    format!("{owner}{sep}{name}")
+}
+
 pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Card {
-    let mut b = Builder::new(lang, nodes, &row.method_id);
+    let mut b = Builder::new(lang, nodes, method_title(&row.method_id));
+    b.card.full = row.method_id.clone();
     b.push(Kind::Small, format!("{}:{}", row.file, row.line))
         .push(
             Kind::Text,
@@ -85,6 +104,24 @@ pub fn method(lang: &Texts, nodes: &BTreeSet<String>, row: &MethodMetrics) -> Ca
     b.done()
 }
 
+/// "2 contributors · 4 file changes", singular for a count of one.
+fn people_and_touches(lang: &Texts, row: &KnowledgeMetric) -> String {
+    let people = match row.contributors {
+        1 => "{n} contributor",
+        _ => "{n} contributors",
+    };
+    let touches = match row.touches {
+        1 => "{n} file change",
+        _ => "{n} file changes",
+    };
+    let count = |key, n: String| lang.f(key, &[("n", n)]);
+    format!(
+        "{} · {}",
+        count(people, row.contributors.to_string()),
+        count(touches, row.touches.to_string())
+    )
+}
+
 pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) -> Card {
     let mut b = Builder::new(lang, nodes, &row.node);
     let share = row.top_share.map(|s| s * 100.0);
@@ -100,16 +137,7 @@ pub fn knowledge(lang: &Texts, nodes: &BTreeSet<String>, row: &KnowledgeMetric) 
             ),
         )
         .bar(row.top_share.filter(|s| s.is_finite()).unwrap_or(0.0))
-        .push(
-            Kind::Text,
-            lang.f(
-                "{people} contributors · {touches} file changes",
-                &[
-                    ("people", row.contributors.to_string()),
-                    ("touches", row.touches.to_string()),
-                ],
-            ),
-        );
+        .push(Kind::Text, people_and_touches(lang, row));
     let mut lines = vec![Line::new(Kind::Text, lang.t("Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown.",
     ))];
     lines.extend(
@@ -247,6 +275,24 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_counts_use_the_singular_for_one() {
+        let row = KnowledgeMetric {
+            node: "a/x.rs".into(),
+            touches: 1,
+            contributors: 1,
+            top_share: Some(1.0),
+            bus_factor_50: Some(1),
+            authors: Vec::new(),
+            status: "ready".into(),
+        };
+        let nodes = BTreeSet::new();
+        let card = knowledge(&Texts::default(), &nodes, &row);
+        assert_eq!(texts(&card)[3], "1 contributor · 1 file change");
+        let de = knowledge(&Texts::german(), &nodes, &row);
+        assert_eq!(texts(&de)[3], "1 beitragende Person · 1 Dateiänderung");
+    }
+
+    #[test]
     fn method_card_lists_cognitive_and_mi() {
         let row = MethodMetrics {
             method_id: "A#run".into(),
@@ -261,5 +307,37 @@ mod tests {
         };
         let card = method(&Texts::default(), &BTreeSet::new(), &row);
         assert_eq!(texts(&card)[..3], ["a/x.rs:7", "Cognitive: 4", "MI: 61.23"]);
+    }
+
+    #[test]
+    fn method_titles_read_as_owner_and_name() {
+        assert_eq!(
+            method_title("rust:crates/a/src/lib.rs::(module)#collect_messaging@300"),
+            "collect_messaging"
+        );
+        assert_eq!(
+            method_title("rust:crates/a/src/lib.rs::Store#open@12"),
+            "Store::open"
+        );
+        assert_eq!(
+            method_title("java:com.shop.OrderService#place@40"),
+            "OrderService.place"
+        );
+        assert_eq!(method_title("A#run"), "A.run");
+        assert_eq!(method_title("no-marker"), "no-marker");
+        let row = MethodMetrics {
+            method_id: "rust:a/x.rs::(module)#run@7".into(),
+            node: None,
+            class_id: "A".into(),
+            file: "a/x.rs".into(),
+            line: 7,
+            cognitive: None,
+            halstead: None,
+            source_lines: None,
+            maintainability_index: None,
+        };
+        let card = method(&Texts::default(), &BTreeSet::new(), &row);
+        assert_eq!(card.title, "run");
+        assert_eq!(card.full, "rust:a/x.rs::(module)#run@7");
     }
 }

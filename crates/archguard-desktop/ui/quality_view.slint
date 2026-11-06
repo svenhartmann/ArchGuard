@@ -52,9 +52,10 @@ export global QualityData {
     callback locate(string);
 }
 
+// A field label above its control.
 component Caption inherits Text {
     color: Theme.text;
-    font-size: 14px;
+    font-size: Theme.field-label;
 }
 
 // The web's .context-help-trigger: a round "?".
@@ -72,13 +73,16 @@ component HelpButton inherits Rectangle {
 
 export component QualityView inherits Rectangle {
     callback open-web();
-    // Tabs must not change the window's preferred size.
-    min-width: 640px;
+    // Tabs must not change the window's preferred size; a split pane can
+    // be narrow.
+    min-width: 360px;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
 
     property <QualityModel> m: QualityData.model;
+    // A split pane: the search moves below view and scope.
+    property <bool> narrow: root.width < 620px;
     property <bool> picker;
     property <bool> help;
     property <bool> legend-help;
@@ -88,18 +92,22 @@ export component QualityView inherits Rectangle {
     property <length> tip-y;
 
     VerticalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
-        padding-top: 18px;
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: Theme.page-pad;
         spacing: 12px;
 
+        // View, scope and search: labels on one line above controls of one
+        // height (the scope picker has no label of its own).
         HorizontalLayout {
             alignment: start;
             spacing: 12px;
             VerticalLayout {
                 spacing: 4px;
+                alignment: start;
                 Caption { text: @tr("View"); }
                 ComboBox {
+                    height: Theme.control-h;
                     width: 212px;
                     model: [
                         @tr("Class heatmap"), @tr("Class metrics"), @tr("Method maintainability"),
@@ -112,32 +120,56 @@ export component QualityView inherits Rectangle {
                 }
             }
             VerticalLayout {
-                alignment: end;
+                spacing: 4px;
+                alignment: start;
+                Caption { text: " "; }
                 Rectangle {
                     width: 180px;
-                    height: 32px;
-                    border-radius: 6px;
+                    height: Theme.control-h;
+                    border-radius: Theme.radius-sm;
                     border-width: 1px;
-                    border-color: Theme.border;
+                    border-color: root.picker ? Theme.accent : Theme.border;
                     background: scope-touch.has-hover ? Theme.panel-2 : Theme.panel;
-                    Text {
+                    Icon {
                         x: 10px;
-                        width: parent.width - 20px;
-                        text: (root.picker ? "▼ " : "▶ ") + root.m.scope-summary;
+                        y: (parent.height - self.height) / 2;
+                        width: 14px;
+                        height: 14px;
+                        icon: root.picker ? Icons.chevron-down : Icons.chevron-right;
+                        tint: Theme.muted;
+                    }
+                    Text {
+                        x: 30px;
+                        width: parent.width - 40px;
+                        text: root.m.scope-summary;
                         color: Theme.text;
-                        font-size: 14px;
+                        font-size: 13px;
                         overflow: elide;
                         vertical-alignment: center;
                     }
                     scope-touch := TouchArea { mouse-cursor: pointer; clicked => { root.picker = !root.picker; } }
                 }
             }
-            VerticalLayout {
+            if !root.narrow: VerticalLayout {
                 spacing: 4px;
+                alignment: start;
                 Caption { text: @tr("Search"); }
                 SearchField {
                     width: 160px;
-                    height: 32px;
+                    text: root.m.query;
+                    edited(t) => { QualityData.query(t); }
+                }
+            }
+        }
+
+        if root.narrow: HorizontalLayout {
+            alignment: start;
+            VerticalLayout {
+                spacing: 4px;
+                alignment: start;
+                Caption { text: @tr("Search"); }
+                SearchField {
+                    width: 160px;
                     text: root.m.query;
                     edited(t) => { QualityData.query(t); }
                 }
@@ -212,14 +244,17 @@ export component QualityView inherits Rectangle {
                 width: scroll.visible-width;
                 spacing: 12px;
                 padding-bottom: 16px;
+                // The scroll bar overlays the content: keep clear of it.
+                padding-right: Theme.scrollbar-w;
 
                 if root.m.heatmap && !root.m.loading: HorizontalLayout {
                     spacing: 8px;
                     VerticalLayout {
                         spacing: 4px;
-                        alignment: end;
-                        Text { text: @tr("Show"); color: Theme.text; font-size: 12px; }
+                        alignment: start;
+                        Caption { text: @tr("Show"); }
                         ComboBox {
+                            height: Theme.control-h;
                             width: 170px;
                             model: [@tr("All classes"), @tr("High values"), @tr("Low values throughout"), @tr("Missing measurements")];
                             current-index: root.m.filter;
@@ -228,9 +263,10 @@ export component QualityView inherits Rectangle {
                     }
                     VerticalLayout {
                         spacing: 4px;
-                        alignment: end;
-                        Text { text: @tr("Sort"); color: Theme.text; font-size: 12px; }
+                        alignment: start;
+                        Caption { text: @tr("Sort"); }
                         ComboBox {
+                            height: Theme.control-h;
                             width: 130px;
                             model: [@tr("Review first"), @tr("Class name"), "CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
                             current-index: root.m.sort;

@@ -47,8 +47,16 @@ fn base_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// The package's title; the project root (".") by name.
+fn title(lang: &Texts, path: &str) -> String {
+    match path {
+        "." | "" => lang.t("(project root)").to_string(),
+        _ => base_name(path).to_string(),
+    }
+}
+
 pub fn card(lang: &Texts, nodes: &BTreeSet<String>, p: &CohesionPackage, sel: &Selection) -> Card {
-    let mut b = Builder::new(lang, nodes, base_name(&p.node));
+    let mut b = Builder::new(lang, nodes, title(lang, &p.node));
     if b.card.title.is_empty() {
         b.card.title = p.node.clone();
     }
@@ -283,6 +291,24 @@ mod tests {
             cross_group_co_changes: 0,
             reason: "One connected group.".into(),
         }
+    }
+
+    #[test]
+    fn the_root_package_is_named_not_a_dot() {
+        let nodes = BTreeSet::new();
+        let root = CohesionPackage {
+            node: ".".into(),
+            ..package()
+        };
+        let card = card(&Texts::default(), &nodes, &root, &Selection::default());
+        assert_eq!(card.title, "(project root)");
+        assert_eq!(card.full, ".");
+        let de = card_de(&root);
+        assert_eq!(de.title, "(Projektwurzel)");
+    }
+
+    fn card_de(p: &CohesionPackage) -> Card {
+        card(&Texts::german(), &BTreeSet::new(), p, &Selection::default())
     }
 
     #[test]
