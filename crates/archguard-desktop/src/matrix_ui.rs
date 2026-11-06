@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, SharedString, VecModel};
+use slint::{ComponentHandle, Model, SharedString, VecModel};
 
 use crate::documents::with_store;
 use crate::export::GraphInput;
@@ -14,6 +14,7 @@ use crate::format::Locale;
 use crate::instances::{self, Instance};
 use crate::kpi::{self, Value};
 use crate::matrix::{Matrix, MatrixRow, Target};
+use crate::model_sync::{sync_rows, sync_rows_with};
 use crate::panes::Layout;
 use crate::panes_ui;
 use crate::tab_support::{self, Texts, index, model};
@@ -194,7 +195,8 @@ thread_local! {
 impl Instance for MatrixState {
     fn show(&mut self, ui: &AppWindow, pane: usize, id: u32) {
         let rows = self.visible_rows();
-        let row = data(ui, self, &rows, id);
+        let old = PANES.with(|m| m.row_data(pane)).unwrap_or_default();
+        let row = data(ui, self, &rows, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
@@ -377,8 +379,15 @@ fn row_items(m: &MatrixState, rows: &[MatrixRow], locale: Locale) -> Vec<MatrixR
         .collect()
 }
 
-/// Everything the Matrix view of tab `id` shows of `m`.
-fn data(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow], id: u32) -> MatrixData {
+/// Everything the Matrix view of tab `id` shows of `m`, in the models of
+/// `old` (what its pane showed before), changed in place.
+fn data(
+    ui: &AppWindow,
+    m: &MatrixState,
+    rows: &[MatrixRow],
+    id: u32,
+    old: &MatrixData,
+) -> MatrixData {
     let texts = Texts::of(ui);
     let mx = &m.matrix;
     let records = if mx.total_exact {
@@ -406,22 +415,30 @@ fn data(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow], id: u32) -> MatrixD
     let (title, lines) = evidence(m).unwrap_or_default();
     MatrixData {
         id: id as i32,
-        columns: model(mx.columns.iter().map(|c| column(&c.target, &c.name))),
-        rows: model(row_items(m, rows, texts.locale())),
-        kpis: model([
-            kpi::MATRIX_FILES.item(&texts, mx.files),
-            kpi::DEPENDENCY_EVIDENCE.item(&texts, records),
-            kpi::FILE_CYCLE_GROUPS.item(&texts, mx.cycles.len()),
-        ]),
+        columns: sync_rows(
+            &old.columns,
+            mx.columns.iter().map(|c| column(&c.target, &c.name)),
+        ),
+        rows: sync_rows_with(&old.rows, row_items(m, rows, texts.locale()), |o, n| {
+            n.cells = sync_rows(&o.cells, n.cells.iter());
+        }),
+        kpis: sync_rows(
+            &old.kpis,
+            [
+                kpi::MATRIX_FILES.item(&texts, mx.files),
+                kpi::DEPENDENCY_EVIDENCE.item(&texts, records),
+                kpi::FILE_CYCLE_GROUPS.item(&texts, mx.cycles.len()),
+            ],
+        ),
         row_start: (m.page * PAGE) as i32,
         row_total: rows.len() as i32,
-        scopes: model(scopes),
-        cycle_options: model(cycles),
+        scopes: sync_rows(&old.scopes, scopes),
+        cycle_options: sync_rows(&old.cycle_options, cycles),
         scope_index: scope as i32,
         cycle_index: m.cycle.map_or(0, |c| c + 1) as i32,
         query: m.query.as_str().into(),
         only: m.only,
-        evidence: model(lines),
+        evidence: sync_rows(&old.evidence, lines),
         evidence_title: title.into(),
         cycle_path: cycle_path(m).into(),
         marked_row: marked_row(m, rows),
