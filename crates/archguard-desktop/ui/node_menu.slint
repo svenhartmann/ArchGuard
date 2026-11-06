@@ -1,0 +1,30 @@
+// The context menu of a tree node (Graph explorer and tree rows, Matrix
+// rows): open the node's view in a new tab or beside, or a Graph opened
+// on a package beside. The row's TouchArea calls `open-at` on a right
+// press: it takes the press, so the menu area itself never sees it.
+export component NodeMenu inherits Rectangle {
+    in property <bool> package;
+    // kind "file" (the node's view) or "graph"; side: open to the side.
+    callback chosen(string, bool);
+    public function open-at(x: length, y: length) {
+        menu.show({ x: x, y: y });
+    }
+    menu := ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: @tr("Open in new tab");
+                activated => { root.chosen("file", false); }
+            }
+            MenuItem {
+                title: @tr("Open to the side");
+                activated => { root.chosen("file", true); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Open graph to the side");
+                enabled: root.package;
+                activated => { root.chosen("graph", true); }
+            }
+        }
+    }
+}

@@ -1,24 +1,42 @@
-//! Graph tab: tree, network and dependency displays of one
-//! [`GraphState`] per document (in [`documents`]).
+//! Graph view: tree, network and dependency displays. A document can show
+//! several Graphs; each tab has its own [`Graph`] (`instances`), all
+//! share the document's package tree.
+
+mod data;
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::rc::Rc;
 
-use archguard_engine::core::ReviewPriority;
-use slint::{ModelRc, SharedString};
+use slint::{ComponentHandle, SharedString, VecModel};
 
-use crate::context::Loaded;
-use crate::documents;
-use crate::kpi;
-use crate::network;
+use crate::documents::{self, with_store};
+use crate::instances::{self, Instance};
+use crate::panes::Layout;
+use crate::panes_ui;
 use crate::state::{self, GraphState};
-use crate::tab_support::{self, Actions, TabState, Texts, index, with_ui};
-use crate::tree::{EdgeMode, Sort};
+use crate::tab_support::{self, index, with_ui};
+use crate::tree::{EdgeMode, Sort, Tree};
 use crate::ui::*;
 
-impl TabState for GraphState {
-    fn push(&mut self, ui: &AppWindow) {
-        push_graph(ui, self);
+/// One Graph instance: its state and the document's cycle findings on
+/// its tree.
+pub struct Graph {
+    pub g: GraphState,
+    cycles: Vec<CycleItem>,
+}
+
+thread_local! {
+    /// Per pane: the data of the Graph it shows.
+    static PANES: Rc<VecModel<GraphData>> = Rc::new(VecModel::default());
+    /// The header search field's text. The field belongs to the window, not
+    /// to a document; a switch searches the new document for it.
+    static SEARCH: RefCell<SharedString> = RefCell::default();
+}
+
+impl Instance for Graph {
+    fn show(&mut self, ui: &AppWindow, pane: usize, id: u32) {
+        let row = data::graph_data(ui, &self.g, &self.cycles, id);
+        PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
 
@@ -26,69 +44,109 @@ fn node_of_row(g: &GraphState, r: i32) -> Option<usize> {
     index(r).and_then(|r| g.view.rows.get(r)).map(|r| r.node)
 }
 
-/// Register the Graph tab's callbacks once at start-up.
+/// Change Graph `id` with `f` and show it; its tab follows a new scope or
+/// display.
+fn act(ui: &AppWindow, id: i32, f: impl FnOnce(&mut GraphState)) {
+    let Some(id) = index(id).and_then(|i| u32::try_from(i).ok()) else {
+        return;
+    };
+    let layout = panes_ui::layout();
+    let changed = instances::update(ui, &layout, id, |s: &mut Graph| {
+        let before = (s.g.scope, s.g.display);
+        f(&mut s.g);
+        let name = |n: usize| s.g.tree.nodes[n].name.clone();
+        ((s.g.scope, s.g.display) != before).then(|| (s.g.scope.map(name), s.g.display))
+    })
+    .flatten();
+    if let Some((node, display)) = changed {
+        panes_ui::describe(ui, id, node, display);
+    }
+}
+
+/// A Graph callback with the instance id and one argument.
+fn on<A: 'static>(
+    ui: &AppWindow,
+    f: impl Fn(&mut GraphState, A) + 'static,
+) -> impl Fn(i32, A) + 'static {
+    let w = ui.as_weak();
+    move |id, a| {
+        if let Some(ui) = w.upgrade() {
+            act(&ui, id, |g| f(g, a));
+        }
+    }
+}
+
+/// Register the Graph view's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
-    let a = Actions::<GraphState>::new(ui);
-    crate::panes_ui::on_reveal("graph", |ui, node| ui.invoke_reveal(node as i32));
-    let select = a.on(|g, _, r: i32| g.select_row(index(r)));
-    ui.on_select_row(with_ui(ui, move |ui, r: i32| {
-        select(r);
-        link_selection(ui);
-    }));
-    ui.on_toggle_row(a.on(|g, _, r: i32| g.toggle_row(index(r).unwrap_or(0))));
-    ui.on_expand_all(a.on0(|g, _| g.expand_all()));
-    ui.on_collapse_all(a.on0(|g, _| g.collapse_all()));
-    ui.on_reset_tree(a.on0(|g, _| g.reset()));
-    let reveal = a.on(|g, _, n: i32| g.reveal(index(n).unwrap_or(0)));
-    ui.on_reveal(with_ui(ui, move |ui, n: i32| {
-        reveal(n);
-        link_selection(ui);
-    }));
-    ui.on_open_node(a.on(|g, _, n: i32| g.open(index(n).unwrap_or(0))));
-    ui.on_open_row(a.on(|g, _, r: i32| {
+    ui.set_graph_panes(PANES.with(|m| m.clone()).into());
+    panes_ui::on_reveal("graph", |ui, id, node| {
+        act(ui, id as i32, |g| g.reveal(node));
+    });
+    panes_ui::on_sync("graph", sync);
+    let select = on(ui, |g, r: i32| g.select_row(index(r)));
+    ui.on_select_row(link(ui, select));
+    let reveal = on(ui, |g, n: i32| g.reveal(index(n).unwrap_or(0)));
+    ui.on_reveal(link(ui, reveal));
+    ui.on_toggle_row(on(ui, |g, r: i32| g.toggle_row(index(r).unwrap_or(0))));
+    let f = on(ui, |g, ()| g.expand_all());
+    ui.on_expand_all(move |id| f(id, ()));
+    let f = on(ui, |g, ()| g.collapse_all());
+    ui.on_collapse_all(move |id| f(id, ()));
+    let f = on(ui, |g, ()| g.reset());
+    ui.on_reset_tree(move |id| f(id, ()));
+    ui.on_open_node(on(ui, |g, n: i32| g.open(index(n).unwrap_or(0))));
+    ui.on_open_row(on(ui, |g, r: i32| {
         if let Some(node) = node_of_row(g, r) {
             g.open(node);
         }
     }));
-    ui.on_set_edge_mode(a.on(|g, _, m: i32| g.mode = edge_mode(m)));
-    ui.on_set_sort(a.on(|g, _, by_deps: bool| {
+    ui.on_set_edge_mode(on(ui, |g, m: i32| g.mode = edge_mode(m)));
+    ui.on_set_sort(on(ui, |g, by_deps: bool| {
         g.set_sort(if by_deps {
             Sort::Connections
         } else {
             Sort::Alphabetical
         });
     }));
+    ui.on_set_display(on(ui, |g, d: i32| g.display = d));
+    ui.on_set_explorer_tab(on(ui, |g, t: i32| g.explorer_tab = t));
     wire_search(ui);
 }
 
-/// The Graph's selected node is revealed in the pane beside it.
-fn link_selection(ui: &AppWindow) {
-    let node = documents::with_active_state(|g: &mut GraphState| g.selected).flatten();
-    if let Some(node) = node {
-        crate::panes_ui::link_from(ui, "graph", node);
+/// A selection callback: after `f`, the Graph's selected node is revealed
+/// in the pane beside it.
+fn link(ui: &AppWindow, f: impl Fn(i32, i32) + 'static) -> impl Fn(i32, i32) + 'static {
+    let w = ui.as_weak();
+    move |id, arg| {
+        f(id, arg);
+        let Some(ui) = w.upgrade() else { return };
+        let Ok(tab) = u32::try_from(id) else { return };
+        if let Some(node) = instances::with(tab, |s: &mut Graph| s.g.selected).flatten() {
+            panes_ui::link_from(&ui, tab, node);
+        }
     }
 }
 
-thread_local! {
-    /// The header search field's text. The field belongs to the window, not
-    /// to a document; a switch searches the new document for it.
-    static SEARCH: RefCell<SharedString> = RefCell::default();
-}
-
 fn wire_search(ui: &AppWindow) {
-    let w = ui.as_weak();
-    ui.on_search(move |q| {
-        let Some(ui) = w.upgrade() else { return };
+    ui.on_search(with_ui(ui, |ui, q: SharedString| {
         SEARCH.set(q);
-        push_hits(&ui);
-    });
+        // Every Graph shows the hits in its explorer's first tab.
+        instances::each(|s: &mut Graph| s.g.explorer_tab = 0);
+        panes_ui::sync(ui);
+        push_hits(ui);
+    }));
+    ui.on_reveal_hit(with_ui(ui, |ui, n: i32| {
+        if let Some(n) = index(n) {
+            panes_ui::reveal(ui, n);
+        }
+    }));
 }
 
 /// Hits of the header search in the active document.
 fn push_hits(ui: &AppWindow) {
     let q = SEARCH.with_borrow(Clone::clone);
-    let hits = documents::with_active_state(|g: &mut GraphState| {
-        g.search(&q, 300)
+    let hits = documents::with_active_state(|t: &mut Rc<Tree>| {
+        state::search(t, &q, 300)
             .into_iter()
             .map(|h| Hit {
                 node: h.node as i32,
@@ -98,7 +156,7 @@ fn push_hits(ui: &AppWindow) {
             .collect::<Vec<_>>()
     });
     ui.set_searching(!q.trim().is_empty());
-    ui.set_hits(vec_model(hits.unwrap_or_default()));
+    ui.set_hits(tab_support::model(hits.unwrap_or_default()));
 }
 
 fn edge_mode(m: i32) -> EdgeMode {
@@ -111,208 +169,45 @@ fn edge_mode(m: i32) -> EdgeMode {
     }
 }
 
-fn mode_index(m: EdgeMode) -> i32 {
-    match m {
-        EdgeMode::Incoming => 0,
-        EdgeMode::Outgoing => 1,
-        EdgeMode::Both => 2,
-        EdgeMode::All => 3,
-        EdgeMode::Cycles => 4,
-    }
-}
-
-/// For `documents_ui`, which imports the list model from here.
-use crate::tab_support::model as vec_model;
-
-/// Show the active document's Graph tab, building its state on first use.
-pub fn show(ui: &AppWindow, data: &Loaded) {
+/// Build, drop and show the active document's Graphs for `layout`.
+fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
+    let Some(analysis) = with_store(|s| s.active()?.analysis.clone()) else {
+        return Vec::new();
+    };
+    let data = analysis.loaded();
+    let tree = tab_support::tree(&data);
     let run = data.run;
-    let build = || {
-        GraphState::with_review(
-            tab_support::tree(data),
+    instances::sync(ui, layout, "graph", &tree, |tab, node| {
+        let mut g = GraphState::with_review(
+            tree.clone(),
             data.sources.clone(),
             run.config.review.entry_points.clone(),
-        )
-    };
-    documents::with_active_state_or(build, |g: &mut GraphState| {
-        ui.set_node_total(g.tree.nodes.len() as i32);
-        ui.set_cycles(vec_model(g.cycles(&run.report.findings).into_iter().map(
-            |c| CycleItem {
-                first_node: c.first_node as i32,
-                label: c.label.into(),
-                size: c.size as i32,
-            },
-        )));
-        push_graph(ui, g);
-    });
+        );
+        g.display = tab.display;
+        if let Some(n) = node {
+            g.open(n);
+        }
+        let cycles = g.cycles(&run.report.findings);
+        let cycles = cycles.into_iter().map(|c| CycleItem {
+            first_node: c.first_node as i32,
+            label: c.label.into(),
+            size: c.size as i32,
+        });
+        Some(Graph {
+            cycles: cycles.collect(),
+            g,
+        })
+    })
+}
+
+/// After the active document's analysis is there or it is shown again:
+/// the header search's hits (the Graphs follow `panes_ui::sync`).
+pub fn show(ui: &AppWindow) {
     push_hits(ui);
 }
 
 /// The tree node named `name` in the active document (snapshot hooks).
 #[cfg(feature = "snapshot")]
 pub fn node_named(name: &str) -> Option<usize> {
-    documents::with_active_state(|g: &mut GraphState| {
-        g.tree.nodes.iter().position(|n| n.name == name)
-    })
-    .flatten()
-}
-
-fn push_graph(ui: &AppWindow, g: &GraphState) {
-    let v = &g.view;
-    let selected = g.selected_row();
-    let covered = selected.map(|s| v.selection(s)).unwrap_or_default();
-    ui.set_rows(tree_rows(g, &covered));
-    ui.set_links(vec_model(v.draw(selected, g.mode).into_iter().map(|d| {
-        TreeLink {
-            path: d.path.into(),
-            kind: d.kind as i32,
-            from: d.from as i32,
-            to: d.to as i32,
-            right: d.right,
-        }
-    })));
-    ui.set_deps(vec_model(v.shown(selected, g.mode).into_iter().map(
-        |(i, lane)| {
-            let l = &v.links[i];
-            let kind = v.link_kind(i, lane, selected, g.mode) as i32;
-            let name = |row: usize| g.tree.nodes[v.rows[row].node].name.clone();
-            DepCard {
-                from: name(l.from).into(),
-                to: name(l.to).into(),
-                weight: l.weight.min(i32::MAX as u64) as i32,
-                kind,
-                refs: l
-                    .refs
-                    .iter()
-                    .map(|r| format!("{}:{}  {}", r.file, r.line, r.raw.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into(),
-                ref_count: l.refs.len() as i32,
-            }
-        },
-    )));
-    push_network(ui, g, selected);
-    ui.set_selected_row(selected.map_or(-1, |s| s as i32));
-    ui.set_edge_mode(mode_index(g.mode));
-    ui.set_sort_by_deps(g.sort == Sort::Connections);
-    ui.set_dep_count(v.links.len() as i32);
-    let texts = Texts::of(ui);
-    ui.set_graph_kpis(tab_support::model([
-        kpi::SHOWN_MODULES.item(&texts, v.scope_rows().len()),
-        kpi::SHOWN_DEPENDENCIES.item(&texts, v.links.len()),
-        kpi::SHOWN_CYCLE_GROUPS.item(&texts, v.cycle_groups),
-        kpi::SHOWN_ACD.item(&texts, kpi::Value::Real(v.acd(&g.tree))),
-    ]));
-    let (cin, cout, cboth, call) = g.counts();
-    ui.set_count_in(cin as i32);
-    ui.set_count_out(cout as i32);
-    ui.set_count_both(cboth as i32);
-    ui.set_count_all(call as i32);
-    push_selection(ui, g);
-}
-
-/// The tree rows for the window; a compressed chain reads as its path.
-fn tree_rows(g: &GraphState, covered: &BTreeSet<usize>) -> ModelRc<TreeRow> {
-    let v = &g.view;
-    vec_model(v.rows.iter().enumerate().map(|(i, r)| {
-        let n = &g.tree.nodes[r.node];
-        TreeRow {
-            row: i as i32,
-            node: r.node as i32,
-            label: r
-                .chain
-                .iter()
-                .map(|&c| g.tree.nodes[c].label.as_str())
-                .collect::<Vec<_>>()
-                .join("/")
-                .into(),
-            depth: r.depth as i32,
-            expandable: r.expandable,
-            expanded: r.expanded,
-            file: n.file,
-            in_count: v.incoming[i] as i32,
-            out_count: v.outgoing[i] as i32,
-            in_cycle: v.in_cycle[i],
-            covered: covered.contains(&i),
-            priority: priority_index(g.priorities[i]),
-        }
-    }))
-}
-
-/// The network display shows the rows that are not expanded: exactly the
-/// rows that carry links.
-fn push_network(ui: &AppWindow, g: &GraphState, selected: Option<usize>) {
-    let v = &g.view;
-    let leaves: Vec<usize> = (0..v.rows.len()).filter(|&r| !v.rows[r].expanded).collect();
-    let mut slot = vec![usize::MAX; v.rows.len()];
-    for (i, &r) in leaves.iter().enumerate() {
-        slot[r] = i;
-    }
-    let net = network::place(leaves.len());
-    ui.set_net_cards(vec_model(leaves.iter().zip(&net.cards).map(|(&r, c)| {
-        let node = v.rows[r].node;
-        let (files, packages) = g.tree.counts(node);
-        NetCard {
-            row: r as i32,
-            label: g.tree.nodes[node].label.clone().into(),
-            file: g.tree.nodes[node].file,
-            files: files as i32,
-            packages: packages as i32,
-            priority: priority_index(g.priorities[r]),
-            in_cycle: v.in_cycle[r],
-            x: c.x,
-            y: c.y,
-        }
-    })));
-    ui.set_net_arrows(vec_model(v.shown(selected, g.mode).into_iter().filter_map(
-        |(i, lane)| {
-            let l = &v.links[i];
-            let (a, b) = (slot[l.from], slot[l.to]);
-            (a != usize::MAX && b != usize::MAX).then(|| {
-                let arrow = network::arrow(&net.cards[a], &net.cards[b], l.weight);
-                NetArrow {
-                    path: arrow.path.into(),
-                    width: arrow.width,
-                    kind: v.link_kind(i, lane, selected, g.mode) as i32,
-                }
-            })
-        },
-    )));
-    ui.set_net_w(net.width);
-    ui.set_net_h(net.height);
-}
-
-fn priority_index(p: Option<ReviewPriority>) -> i32 {
-    match p {
-        Some(ReviewPriority::High) => 1,
-        Some(ReviewPriority::Medium) => 2,
-        _ => 0,
-    }
-}
-
-fn push_selection(ui: &AppWindow, g: &GraphState) {
-    let mut crumbs = vec![Crumb {
-        node: -1,
-        label: ui.get_project(),
-    }];
-    crumbs.extend(g.crumbs().into_iter().map(|n| Crumb {
-        node: n as i32,
-        label: g.tree.nodes[n].label.clone().into(),
-    }));
-    ui.set_crumbs(vec_model(crumbs));
-
-    let node = g.selected.map(|n| &g.tree.nodes[n]);
-    ui.set_reference(node.map(|n| n.name.clone()).unwrap_or_default().into());
-    ui.set_selected_label(node.map(|n| n.label.clone()).unwrap_or_default().into());
-    let (inc, out) = g.neighbors();
-    let neighbors = |list: Vec<state::Neighbor>| {
-        vec_model(list.into_iter().map(|n| Neighbor {
-            row: n.row as i32,
-            label: g.tree.nodes[g.view.rows[n.row].node].label.clone().into(),
-            weight: n.weight.min(i32::MAX as u64) as i32,
-        }))
-    };
-    ui.set_incoming(neighbors(inc));
-    ui.set_outgoing(neighbors(out));
+    documents::with_active_state(|t: &mut Rc<Tree>| instances::node_named(t, name)).flatten()
 }

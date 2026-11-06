@@ -1,0 +1,456 @@
+// Graph view: explorer, tree / network / dependency displays and the
+// details panel of one Graph instance (src/graph_ui.rs). Every instance
+// gets its own `GraphData` and reports to Rust with its instance id
+// (app.slint), so two Graphs side by side keep their own state.
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button, Tab, StatInline, KpiItem, Badge, EmptyState } from "widgets.slint";
+import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
+import { NetworkView, NetCard, NetArrow } from "network_view.slint";
+import { DepsView, DepCard } from "deps_view.slint";
+import { NodeMenu } from "node_menu.slint";
+import { Fmt } from "format.slint";
+
+export struct Crumb {
+    node: int,
+    label: string,
+}
+
+export struct Hit {
+    node: int,
+    label: string,
+    scope: string,
+}
+
+export struct CycleItem {
+    first-node: int,
+    label: string,
+    size: int,
+}
+
+export struct Neighbor {
+    row: int,
+    label: string,
+    weight: int,
+}
+
+// One Graph instance as Rust shows it.
+export struct GraphData {
+    id: int,
+    rows: [TreeRow],
+    links: [TreeLink],
+    selected-row: int,
+    // The selected tree node; -1: none.
+    selected-node: int,
+    crumbs: [Crumb],
+    dep-count: int,
+    // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
+    kpis: [KpiItem],
+    count-in: int,
+    count-out: int,
+    count-both: int,
+    count-all: int,
+    reference: string,
+    incoming: [Neighbor],
+    outgoing: [Neighbor],
+    selected-label: string,
+    deps: [DepCard],
+    net-cards: [NetCard],
+    net-arrows: [NetArrow],
+    net-w: float,
+    net-h: float,
+    edge-mode: int,
+    sort-by-deps: bool,
+    // 0 tree, 1 network, 2 dependencies.
+    display: int,
+    // 0 modules, 1 cycles, 2 review.
+    explorer-tab: int,
+    cycles: [CycleItem],
+    node-total: int,
+}
+
+component ExplorerRow inherits Rectangle {
+    in property <TreeRow> data;
+    in property <bool> selected;
+    callback select();
+    callback toggle();
+    callback node-tab(string, bool);
+    height: 32px;
+    border-radius: 6px;
+    background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    menu := NodeMenu {
+        package: !root.data.file;
+        chosen(kind, side) => { root.node-tab(kind, side); }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                menu.open-at(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 4px + data.depth * 16px;
+        padding-right: 6px;
+        spacing: 6px;
+        Rectangle {
+            width: 16px;
+            if data.expandable: Icon {
+                icon: data.expanded ? Icons.chevron-down : Icons.chevron-right;
+                tint: Theme.muted;
+                width: 12px;
+                height: 12px;
+            }
+            TouchArea {
+                enabled: data.expandable;
+                mouse-cursor: pointer;
+                clicked => { root.toggle(); }
+            }
+        }
+        Icon {
+            icon: data.file ? Icons.file : Icons.folder;
+            tint: data.file ? Theme.muted : Theme.priority;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: data.label;
+            color: selected ? Theme.accent : Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if data.in-cycle: Rectangle {
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: Theme.cycle;
+        }
+        if data.priority > 0: Badge {
+            text: data.priority == 1 ? "P1" : "P2";
+            variant: data.priority == 1 ? "p1" : "p2";
+            y: (parent.height - self.height) / 2;
+        }
+    }
+}
+
+component PlainRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <color> tone: Theme.text;
+    callback clicked;
+    height: 40px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: center;
+        Text { text: root.label; color: root.tone; font-size: 13px; overflow: elide; }
+        if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: 11px; overflow: elide; }
+    }
+}
+
+component NeighborRow inherits Rectangle {
+    in property <Neighbor> item;
+    in property <color> tone;
+    in property <int> max-weight;
+    callback clicked;
+    height: 34px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    Rectangle {
+        x: 0;
+        y: parent.height - 3px;
+        height: 2px;
+        width: parent.width * (root.max-weight > 0 ? root.item.weight / root.max-weight : 0);
+        background: root.tone.with-alpha(0.7);
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        Text { text: root.item.label; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component GraphView inherits HorizontalLayout {
+    in property <GraphData> data;
+    // The header search's hits, shared by every Graph of the window.
+    in property <[Hit]> hits;
+    in property <bool> searching;
+    in property <bool> show-explorer: true;
+    in property <bool> show-details: true;
+    in property <int> fit-tick;
+    // Snapshot runs hover a tree row through this.
+    in property <int> hover-hint: -1;
+    property <int> hovered: root.hover-hint;
+    changed hover-hint => { self.hovered = self.hover-hint; }
+    property <int> fit-local;
+
+    callback select-row(int);
+    callback toggle-row(int);
+    callback expand-all();
+    callback collapse-all();
+    callback set-edge-mode(int);
+    callback set-sort(bool);
+    callback reveal(int);
+    // Open a package by row (double-click) or by node (breadcrumb).
+    callback open-row(int);
+    callback open-node(int);
+    callback reset-tree();
+    callback open-web();
+    callback set-display(int);
+    callback set-explorer-tab(int);
+    // kind ("file" or "graph"), tree node, side: a node in a new tab.
+    callback node-tab(string, int, bool);
+
+    // ------------------------------------------------- explorer
+    if root.show-explorer: Rectangle {
+        width: 250px;
+        background: Theme.panel;
+        Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+            Text { text: @tr("Explorer"); color: Theme.text; font-size: 16px; font-weight: 700; }
+            HorizontalLayout {
+                spacing: 2px;
+                alignment: start;
+                Tab { text: @tr("Modules"); active: root.data.explorer-tab == 0; clicked => { root.set-explorer-tab(0); } }
+                Tab { text: @tr("Cycles"); active: root.data.explorer-tab == 1; clicked => { root.set-explorer-tab(1); } }
+                Tab { text: @tr("Review"); active: root.data.explorer-tab == 2; clicked => { root.set-explorer-tab(2); } }
+            }
+            if root.data.explorer-tab == 0: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Button { text: @tr("Expand all"); compact: true; clicked => { root.expand-all(); } }
+                Button { text: @tr("Collapse all"); compact: true; clicked => { root.collapse-all(); } }
+            }
+            if root.data.explorer-tab == 0: Text {
+                text: root.searching ? @tr("{} matches", Fmt.int(root.hits.length)) : @tr("{} of {} modules shown", Fmt.int(root.data.rows.length), Fmt.int(root.data.node-total));
+                color: Theme.muted;
+                font-size: 12px;
+            }
+            if root.data.explorer-tab == 0 && !root.searching: ListView {
+                vertical-stretch: 1;
+                for r in root.data.rows: ExplorerRow {
+                    data: r;
+                    selected: r.row == root.data.selected-row;
+                    select => { root.select-row(r.row); }
+                    toggle => { root.toggle-row(r.row); }
+                    node-tab(kind, side) => { root.node-tab(kind, r.node, side); }
+                }
+            }
+            if root.data.explorer-tab == 0 && root.searching: ListView {
+                vertical-stretch: 1;
+                for h in root.hits: PlainRow {
+                    label: h.label;
+                    detail: h.scope;
+                    clicked => { root.reveal(h.node); }
+                }
+            }
+            if root.data.explorer-tab == 1 && root.data.cycles.length == 0: EmptyState {
+                vertical-stretch: 1;
+                title: @tr("No cycles found.");
+            }
+            if root.data.explorer-tab == 1 && root.data.cycles.length > 0: ListView {
+                vertical-stretch: 1;
+                for c in root.data.cycles: PlainRow {
+                    label: c.label;
+                    detail: @tr("{} modules", Fmt.int(c.size));
+                    tone: Theme.cycle;
+                    clicked => { root.reveal(c.first-node); }
+                }
+            }
+            if root.data.explorer-tab == 2: VerticalLayout {
+                vertical-stretch: 1;
+                alignment: start;
+                spacing: 10px;
+                Text {
+                    text: @tr("Review priorities are not native yet.");
+                    color: Theme.muted;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                Button { text: @tr("Open in web viewer"); icon: Icons.external; compact: true; clicked => { root.open-web(); } }
+            }
+        }
+    }
+
+    // ---------------------------------------------------- graph
+    VerticalLayout {
+        horizontal-stretch: 1;
+        // Scope bar: breadcrumbs and metrics.
+        Rectangle {
+            height: 44px;
+            background: Theme.bg;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 14px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 4px;
+                    for c[i] in root.data.crumbs: HorizontalLayout {
+                        spacing: 4px;
+                        if i > 0: Text { text: "›"; color: Theme.muted; vertical-alignment: center; }
+                        Rectangle {
+                            width: crumb.preferred-width + 12px;
+                            height: 26px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 6px;
+                            background: ct.has-hover ? Theme.panel : Theme.panel-2;
+                            crumb := Text {
+                                text: c.label;
+                                color: i == root.data.crumbs.length - 1 ? Theme.text : Theme.accent;
+                                font-family: "Menlo";
+                                font-size: 13px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            ct := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { if (c.node >= 0) { root.open-node(c.node); } else { root.reset-tree(); } }
+                            }
+                        }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                for k in root.data.kpis: StatInline { kpi: k; }
+            }
+        }
+        // Toolbar: display and dependency filter.
+        Rectangle {
+            height: 48px;
+            background: Theme.bg;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 6px;
+                alignment: start;
+                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.data.display == 0; clicked => { root.set-display(0); } }
+                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.data.display == 2; clicked => { root.set-display(2); } }
+                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Network"); pressed-state: root.data.display == 1; clicked => { root.set-display(1); root.fit-local += 1; } }
+                Rectangle { width: 10px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Used by ({})", Fmt.int(root.data.count-in)); pressed-state: root.data.edge-mode == 0; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Depends on ({})", Fmt.int(root.data.count-out)); pressed-state: root.data.edge-mode == 1; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", Fmt.int(root.data.count-both)); pressed-state: root.data.edge-mode == 2; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
+                }
+                if root.data.display == 0: HorizontalLayout {
+                    spacing: 6px;
+                    padding-left: 10px;
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Alphabetical"); pressed-state: !root.data.sort-by-deps; clicked => { root.set-sort(false); } }
+                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("By dependencies"); pressed-state: root.data.sort-by-deps; clicked => { root.set-sort(true); } }
+                }
+                Rectangle { width: 10px; }
+                Text {
+                    text: root.data.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.data.reference);
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0;
+                }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.bg;
+            clip: true;
+            TreeView {
+                hovered <=> root.hovered;
+                visible: root.data.display == 0;
+                rows: root.data.rows;
+                links: root.data.links;
+                selected: root.data.selected-row;
+                select(r) => { root.select-row(r); }
+                toggle(r) => { root.toggle-row(r); }
+                open(r) => { root.open-row(r); }
+                node-tab(kind, r, side) => { root.node-tab(kind, root.data.rows[r].node, side); }
+            }
+            NetworkView {
+                fit-tick: root.fit-tick + root.fit-local;
+                visible: root.data.display == 1;
+                cards: root.data.net-cards;
+                arrows: root.data.net-arrows;
+                canvas-w: root.data.net-w;
+                canvas-h: root.data.net-h;
+                selected: root.data.selected-row;
+                select(r) => { root.select-row(r); }
+                open(r) => { root.open-row(r); }
+            }
+            if root.data.display == 2: DepsView {
+                deps: root.data.deps;
+                reference: root.data.reference;
+                total: root.data.dep-count;
+            }
+        }
+    }
+
+    // ------------------------------------------------- details
+    if root.show-details && root.data.selected-row >= 0: Rectangle {
+        width: 320px;
+        background: Theme.panel;
+        Rectangle { x: 0; width: 1px; background: Theme.border; }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            HorizontalLayout {
+                Text { text: root.data.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.select-row(-1); } }
+            }
+            Text { text: root.data.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+            // The selected node as a view of its own (`FileView`).
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Button { text: @tr("Open in new tab"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, false); } }
+                Button { text: @tr("Open to the side"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, true); } }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 2px;
+                    Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                    for n in root.data.outgoing: NeighborRow {
+                        item: n;
+                        tone: Theme.outgoing;
+                        max-weight: root.data.outgoing.length > 0 ? root.data.outgoing[0].weight : 0;
+                        clicked => { root.select-row(n.row); }
+                    }
+                    Rectangle { height: 12px; }
+                    Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                    for n in root.data.incoming: NeighborRow {
+                        item: n;
+                        tone: Theme.incoming;
+                        max-weight: root.data.incoming.length > 0 ? root.data.incoming[0].weight : 0;
+                        clicked => { root.select-row(n.row); }
+                    }
+                }
+            }
+        }
+    }
+}

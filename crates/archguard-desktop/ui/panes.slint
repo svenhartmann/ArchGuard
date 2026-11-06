@@ -4,15 +4,31 @@
 import { Theme } from "theme.slint";
 import { Icon, Icons, Button, Tab } from "widgets.slint";
 
-// One pane: its view tabs (view ids) and the view shown.
+// One view tab: an instance of a view kind and the label of the node it
+// is about ("" for none).
+export struct TabItem {
+    kind: string,
+    id: int,
+    label: string,
+}
+
+// One pane: its view tabs and the view shown, with its instance id.
 export struct PaneItem {
     view: string,
-    tabs: [string],
+    id: int,
+    tabs: [TabItem],
     active: int,
     focused: bool,
 }
 
 export global Views {
+    // A view tab's title: "Graph · core", "Matrix", a File view's node.
+    public pure function title(tab: TabItem) -> string {
+        if tab.kind == "file" { return tab.label; }
+        if tab.label == "" { return Views.label(tab.kind); }
+        return Views.label(tab.kind) + " · " + tab.label;
+    }
+
     // The view bar's label of a view id.
     public pure function label(view: string) -> string {
         if view == "start" { return @tr("Start"); }
@@ -57,7 +73,7 @@ export component ViewBarTab inherits Rectangle {
 }
 
 component ViewTabChip inherits Rectangle {
-    in property <string> view;
+    in property <TabItem> tab;
     in property <bool> active;
     in property <bool> closable;
     callback select();
@@ -77,7 +93,9 @@ component ViewTabChip inherits Rectangle {
         padding-right: root.closable ? 3px : 10px;
         spacing: 4px;
         Text {
-            text: Views.label(root.view);
+            text: Views.title(root.tab);
+            max-width: 220px;
+            overflow: elide;
             color: root.active ? Theme.text : Theme.muted;
             font-size: 12px;
             font-weight: root.active ? 650 : 450;
@@ -122,7 +140,7 @@ export component PaneStrip inherits Rectangle {
         spacing: 2px;
         for t[j] in root.pane.tabs: ViewTabChip {
             y: (parent.height - self.height) / 2;
-            view: t;
+            tab: t;
             active: j == root.pane.active;
             closable: root.pane.tabs.length > 1;
             select => { root.select(j); }

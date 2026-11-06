@@ -10,14 +10,17 @@ mod calls_ui;
 mod context;
 mod documents;
 mod documents_ui;
+mod file_ui;
 mod format;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
+mod instances;
 mod kpi;
 mod matrix;
 mod matrix_ui;
 mod network;
+mod node_view;
 mod pane_store;
 mod panes;
 mod panes_ui;

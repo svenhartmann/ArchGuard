@@ -1,10 +1,12 @@
 import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab, Divider, SearchField, StatInline, KpiItem, Badge, Disclosure, EmptyState } from "widgets.slint";
-import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
-import { NetworkView, NetCard, NetArrow } from "network_view.slint";
-import { DepsView, DepCard } from "deps_view.slint";
-import { MatrixView, MatrixColumn, MatrixRowItem } from "matrix_view.slint";
+import { Icon, Icons, Button, Tab, Divider, SearchField, KpiItem } from "widgets.slint";
+import { TreeRow, TreeLink } from "tree_view.slint";
+import { NetCard, NetArrow } from "network_view.slint";
+import { DepCard } from "deps_view.slint";
+import { MatrixView, MatrixColumn, MatrixRowItem, MatrixData } from "matrix_view.slint";
+import { GraphView, GraphData, Crumb, Hit, CycleItem, Neighbor } from "graph_view.slint";
+import { FileView, FileData, NodeDep } from "file_view.slint";
 import { StartView, StartData } from "start_view.slint";
 import { ArchitectureView, ArchitectureData } from "architecture_view.slint";
 import { CallsView, CallsData } from "calls_view.slint";
@@ -13,147 +15,17 @@ import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
-import { PaneItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
+import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
 import { Fmt } from "format.slint";
 
-export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem, PaneItem }
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem, PaneItem, TabItem }
+// Data of the views that can be open several times: one per instance.
+export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
-
-export struct Crumb {
-    node: int,
-    label: string,
-}
-
-export struct Hit {
-    node: int,
-    label: string,
-    scope: string,
-}
-
-export struct CycleItem {
-    first-node: int,
-    label: string,
-    size: int,
-}
-
-export struct Neighbor {
-    row: int,
-    label: string,
-    weight: int,
-}
-
-component ExplorerRow inherits Rectangle {
-    in property <TreeRow> data;
-    in property <bool> selected;
-    callback select();
-    callback toggle();
-    height: 32px;
-    border-radius: 6px;
-    background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.select(); }
-    }
-    HorizontalLayout {
-        padding-left: 4px + data.depth * 16px;
-        padding-right: 6px;
-        spacing: 6px;
-        Rectangle {
-            width: 16px;
-            if data.expandable: Icon {
-                icon: data.expanded ? Icons.chevron-down : Icons.chevron-right;
-                tint: Theme.muted;
-                width: 12px;
-                height: 12px;
-            }
-            TouchArea {
-                enabled: data.expandable;
-                mouse-cursor: pointer;
-                clicked => { root.toggle(); }
-            }
-        }
-        Icon {
-            icon: data.file ? Icons.file : Icons.folder;
-            tint: data.file ? Theme.muted : Theme.priority;
-            width: 15px;
-            height: 15px;
-            y: (parent.height - self.height) / 2;
-        }
-        Text {
-            text: data.label;
-            color: selected ? Theme.accent : Theme.text;
-            font-size: 13px;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
-        }
-        if data.in-cycle: Rectangle {
-            width: 7px;
-            height: 7px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 3.5px;
-            background: Theme.cycle;
-        }
-        if data.priority > 0: Badge {
-            text: data.priority == 1 ? "P1" : "P2";
-            variant: data.priority == 1 ? "p1" : "p2";
-            y: (parent.height - self.height) / 2;
-        }
-    }
-}
-
-component PlainRow inherits Rectangle {
-    in property <string> label;
-    in property <string> detail;
-    in property <color> tone: Theme.text;
-    callback clicked;
-    height: 40px;
-    border-radius: 6px;
-    background: touch.has-hover ? Theme.panel-2 : transparent;
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-    VerticalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        alignment: center;
-        Text { text: root.label; color: root.tone; font-size: 13px; overflow: elide; }
-        if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: 11px; overflow: elide; }
-    }
-}
-
-component NeighborRow inherits Rectangle {
-    in property <Neighbor> item;
-    in property <color> tone;
-    in property <int> max-weight;
-    callback clicked;
-    height: 34px;
-    border-radius: 6px;
-    background: touch.has-hover ? Theme.panel-2 : transparent;
-    Rectangle {
-        x: 0;
-        y: parent.height - 3px;
-        height: 2px;
-        width: parent.width * (root.max-weight > 0 ? root.item.weight / root.max-weight : 0);
-        background: root.tone.with-alpha(0.7);
-    }
-    HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 8px;
-        spacing: 8px;
-        Text { text: root.item.label; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
 
 export component AppWindow inherits Window {
     title: "ArchGuard";
@@ -205,40 +77,24 @@ export component AppWindow inherits Window {
     in property <string> error;
     in property <string> web-status;
 
-    // Graph tab, tree display.
-    in property <[TreeRow]> rows;
-    in property <[TreeLink]> links;
-    in property <int> selected-row: -1;
-    in property <[Crumb]> crumbs;
-    in property <int> dep-count;
-    // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
-    in property <[KpiItem]> graph-kpis;
-    in property <int> count-in;
-    in property <int> count-out;
-    in property <int> count-both;
-    in property <int> count-all;
-    in property <string> reference;
-    in property <[Neighbor]> incoming;
-    in property <[Neighbor]> outgoing;
-    in property <string> selected-label;
-    in property <[DepCard]> deps;
+    // Graph, Matrix and File views can be open several times: one entry
+    // per pane with the data of the instance it shows (src/graph_ui.rs,
+    // src/matrix_ui.rs, src/file_ui.rs). Their callbacks start with the
+    // instance id.
+    in property <[GraphData]> graph-panes;
+    in property <[MatrixData]> matrix-panes;
+    in property <[FileData]> file-panes;
 
-    // Explorer.
+    // Header search: hits for every Graph.
     in property <[Hit]> hits;
     in property <bool> searching;
-    in property <[CycleItem]> cycles;
-    in property <int> node-total;
-
-    // Graph tab, network display.
-    in property <[NetCard]> net-cards;
-    in property <[NetArrow]> net-arrows;
-    in property <float> net-w;
-    in property <float> net-h;
+    // A hovered tree row (snapshot runs).
+    in property <int> tree-hovered: -1;
 
     // The focused pane's view (the view bar); panes and their view tabs
     // (src/panes_ui.rs).
     in property <string> tab: "graph";
-    in property <[PaneItem]> panes: [{ view: "graph", tabs: ["graph"], active: 0, focused: true }];
+    in property <[PaneItem]> panes: [{ view: "graph", id: 1, tabs: [{ kind: "graph", id: 1, label: "" }], active: 0, focused: true }];
     in property <int> focused-pane;
     // The left pane's share of the width; the divider changes it while
     // dragging and reports it with set-pane-ratio on release.
@@ -252,54 +108,45 @@ export component AppWindow inherits Window {
     callback close-view-tab(int, int);
     callback focus-pane(int);
     callback set-pane-ratio(float);
-    in-out property <int> display: 0;
-    in-out property <int> edge-mode: 3;
-    in-out property <int> explorer-tab: 0;
-    in-out property <int> tree-hovered: -1;
     in-out property <bool> show-explorer: true;
     in-out property <bool> show-details: true;
 
-    // Matrix tab.
-    in property <[MatrixColumn]> m-columns;
-    in property <[MatrixRowItem]> m-rows;
-    // Files, dependency evidence records, file cycle groups (`kpi.rs`).
-    in property <[KpiItem]> m-kpis;
-    in property <int> m-row-start;
-    in property <int> m-row-total;
-    in property <[string]> m-scopes;
-    in property <[string]> m-cycle-options;
-    in property <int> m-scope-index;
-    in property <int> m-cycle-index;
-    in property <string> m-query;
-    in property <bool> m-only;
-    in property <[string]> m-evidence;
-    in property <string> m-evidence-title;
-    in property <string> m-cycle-path;
-    in property <int> m-marked-row: -1;
-    callback m-toggle(int);
-    callback m-expand-all();
-    callback m-collapse-all();
-    callback m-search(string);
-    callback m-scope(int);
-    callback m-cycle(int);
-    callback m-toggle-only();
-    callback m-page(int);
-    callback m-cell(int, int);
-    callback m-close-evidence();
+    // Matrix instances.
+    callback m-toggle(int, int);
+    callback m-expand-all(int);
+    callback m-collapse-all(int);
+    callback m-search(int, string);
+    callback m-scope(int, int);
+    callback m-cycle(int, int);
+    callback m-toggle-only(int);
+    callback m-page(int, int);
+    callback m-cell(int, int, int);
+    callback m-close-evidence(int);
 
-    callback select-row(int);
-    callback toggle-row(int);
-    callback expand-all();
-    callback collapse-all();
-    callback set-edge-mode(int);
-    callback set-sort(bool);
-    in property <bool> sort-by-deps: true;
-    callback search(string);
-    callback reveal(int);
+    // Graph instances.
+    callback select-row(int, int);
+    callback toggle-row(int, int);
+    callback expand-all(int);
+    callback collapse-all(int);
+    callback set-edge-mode(int, int);
+    callback set-sort(int, bool);
+    callback set-display(int, int);
+    callback set-explorer-tab(int, int);
+    callback reveal(int, int);
     // Open a package by row (double-click) or by node (breadcrumb).
-    callback open-row(int);
-    callback open-node(int);
-    callback reset-tree();
+    callback open-row(int, int);
+    callback open-node(int, int);
+    callback reset-tree(int);
+    callback search(string);
+    // The header's search: reveal a hit in a Graph.
+    callback reveal-hit(int);
+
+    // A tree node's view ("file") or a Graph opened on it ("graph"), in a
+    // new tab or to the side (from Graph, Matrix and File views).
+    callback node-tab(string, int, bool);
+    // File instances: a dependency clicked (id, node); "Open in graph".
+    callback file-select(int, int);
+    callback show-in-graph(int);
     callback open-web(string);
 
     init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
@@ -490,8 +337,8 @@ export component AppWindow inherits Window {
                     preferred-width: 200px;
                     y: (parent.height - self.height) / 2;
                     placeholder: @tr("Search modules");
-                    edited(t) => { root.search(t); root.explorer-tab = 0; root.show-explorer = true; }
-                    accepted(t) => { if (root.hits.length > 0) { root.reveal(root.hits[0].node); } }
+                    edited(t) => { root.search(t); root.show-explorer = true; }
+                    accepted(t) => { if (root.hits.length > 0) { root.reveal-hit(root.hits[0].node); } }
                 }
                 Button {
                     y: (parent.height - self.height) / 2;
@@ -602,32 +449,41 @@ export component AppWindow inherits Window {
                         split-right => { root.split-right(); }
                     }
                     if p.view == "dsm": MatrixView {
+                        property <MatrixData> m: root.matrix-panes[i];
                         vertical-stretch: 1;
-                        columns: root.m-columns;
-                        rows: root.m-rows;
-                        kpis: root.m-kpis;
-                        row-start: root.m-row-start;
-                        row-total: root.m-row-total;
-                        scopes: root.m-scopes;
-                        cycle-options: root.m-cycle-options;
-                        scope-index: root.m-scope-index;
-                        cycle-index: root.m-cycle-index;
-                        query: root.m-query;
-                        only: root.m-only;
-                        evidence: root.m-evidence;
-                        evidence-title: root.m-evidence-title;
-                        cycle-path: root.m-cycle-path;
-                        marked-row: root.m-marked-row;
-                        toggle(n) => { root.m-toggle(n); }
-                        expand-all => { root.m-expand-all(); }
-                        collapse-all => { root.m-collapse-all(); }
-                        search(t) => { root.m-search(t); }
-                        scope-changed(i) => { root.m-scope(i); }
-                        cycle-changed(i) => { root.m-cycle(i); }
-                        toggle-only => { root.m-toggle-only(); }
-                        page(d) => { root.m-page(d); }
-                        cell(r, c) => { root.m-cell(r, c); }
-                        close-evidence => { root.m-close-evidence(); }
+                        columns: self.m.columns;
+                        rows: self.m.rows;
+                        kpis: self.m.kpis;
+                        row-start: self.m.row-start;
+                        row-total: self.m.row-total;
+                        scopes: self.m.scopes;
+                        cycle-options: self.m.cycle-options;
+                        scope-index: self.m.scope-index;
+                        cycle-index: self.m.cycle-index;
+                        query: self.m.query;
+                        only: self.m.only;
+                        evidence: self.m.evidence;
+                        evidence-title: self.m.evidence-title;
+                        cycle-path: self.m.cycle-path;
+                        marked-row: self.m.marked-row;
+                        toggle(n) => { root.m-toggle(p.id, n); }
+                        expand-all => { root.m-expand-all(p.id); }
+                        collapse-all => { root.m-collapse-all(p.id); }
+                        search(t) => { root.m-search(p.id, t); }
+                        scope-changed(s) => { root.m-scope(p.id, s); }
+                        cycle-changed(c) => { root.m-cycle(p.id, c); }
+                        toggle-only => { root.m-toggle-only(p.id); }
+                        page(d) => { root.m-page(p.id, d); }
+                        cell(r, c) => { root.m-cell(p.id, r, c); }
+                        close-evidence => { root.m-close-evidence(p.id); }
+                        node-tab(kind, n, side) => { root.node-tab(kind, n, side); }
+                    }
+                    if p.view == "file": FileView {
+                        vertical-stretch: 1;
+                        data: root.file-panes[i];
+                        select(n) => { root.file-select(p.id, n); }
+                        show-in-graph(n) => { root.show-in-graph(n); }
+                        node-tab(kind, n, side) => { root.node-tab(kind, n, side); }
                     }
 
                     if p.view == "start": StartView {
@@ -655,234 +511,29 @@ export component AppWindow inherits Window {
                         open-web => { root.open-web("security"); }
                     }
 
-                    if p.view == "graph": HorizontalLayout {
+                    if p.view == "graph": GraphView {
                         vertical-stretch: 1;
-
-                        // ------------------------------------------------- explorer
-                        if root.show-explorer: Rectangle {
-                            width: 250px;
-                            background: Theme.panel;
-                            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
-                            VerticalLayout {
-                                padding: 14px;
-                                spacing: 10px;
-                                Text { text: @tr("Explorer"); color: Theme.text; font-size: 16px; font-weight: 700; }
-                                HorizontalLayout {
-                                    spacing: 2px;
-                                    alignment: start;
-                                    Tab { text: @tr("Modules"); active: root.explorer-tab == 0; clicked => { root.explorer-tab = 0; } }
-                                    Tab { text: @tr("Cycles"); active: root.explorer-tab == 1; clicked => { root.explorer-tab = 1; } }
-                                    Tab { text: @tr("Review"); active: root.explorer-tab == 2; clicked => { root.explorer-tab = 2; } }
-                                }
-                                if root.explorer-tab == 0: HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-                                    Button { text: @tr("Expand all"); compact: true; clicked => { root.expand-all(); } }
-                                    Button { text: @tr("Collapse all"); compact: true; clicked => { root.collapse-all(); } }
-                                }
-                                if root.explorer-tab == 0: Text {
-                                    text: root.searching ? @tr("{} matches", Fmt.int(root.hits.length)) : @tr("{} of {} modules shown", Fmt.int(root.rows.length), Fmt.int(root.node-total));
-                                    color: Theme.muted;
-                                    font-size: 12px;
-                                }
-                                if root.explorer-tab == 0 && !root.searching: ListView {
-                                    vertical-stretch: 1;
-                                    for r in root.rows: ExplorerRow {
-                                        data: r;
-                                        selected: r.row == root.selected-row;
-                                        select => { root.select-row(r.row); }
-                                        toggle => { root.toggle-row(r.row); }
-                                    }
-                                }
-                                if root.explorer-tab == 0 && root.searching: ListView {
-                                    vertical-stretch: 1;
-                                    for h in root.hits: PlainRow {
-                                        label: h.label;
-                                        detail: h.scope;
-                                        clicked => { root.reveal(h.node); }
-                                    }
-                                }
-                                if root.explorer-tab == 1 && root.cycles.length == 0: EmptyState {
-                                    vertical-stretch: 1;
-                                    title: @tr("No cycles found.");
-                                }
-                                if root.explorer-tab == 1 && root.cycles.length > 0: ListView {
-                                    vertical-stretch: 1;
-                                    for c in root.cycles: PlainRow {
-                                        label: c.label;
-                                        detail: @tr("{} modules", Fmt.int(c.size));
-                                        tone: Theme.cycle;
-                                        clicked => { root.reveal(c.first-node); }
-                                    }
-                                }
-                                if root.explorer-tab == 2: VerticalLayout {
-                                    vertical-stretch: 1;
-                                    alignment: start;
-                                    spacing: 10px;
-                                    Text {
-                                        text: @tr("Review priorities are not native yet.");
-                                        color: Theme.muted;
-                                        font-size: 13px;
-                                        wrap: word-wrap;
-                                    }
-                                    Button { text: @tr("Open in web viewer"); icon: Icons.external; compact: true; clicked => { root.open-web("graph"); } }
-                                }
-                            }
-                        }
-
-                        // ---------------------------------------------------- graph
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            // Scope bar: breadcrumbs and metrics.
-                            Rectangle {
-                                height: 44px;
-                                background: Theme.bg;
-                                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 14px;
-                                    spacing: 16px;
-                                    HorizontalLayout {
-                                        spacing: 4px;
-                                        for c[i] in root.crumbs: HorizontalLayout {
-                                            spacing: 4px;
-                                            if i > 0: Text { text: "›"; color: Theme.muted; vertical-alignment: center; }
-                                            Rectangle {
-                                                width: crumb.preferred-width + 12px;
-                                                height: 26px;
-                                                y: (parent.height - self.height) / 2;
-                                                border-radius: 6px;
-                                                background: ct.has-hover ? Theme.panel : Theme.panel-2;
-                                                crumb := Text {
-                                                    text: c.label;
-                                                    color: i == root.crumbs.length - 1 ? Theme.text : Theme.accent;
-                                                    font-family: "Menlo";
-                                                    font-size: 13px;
-                                                    font-weight: 700;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-                                                ct := TouchArea {
-                                                    mouse-cursor: pointer;
-                                                    clicked => { if (c.node >= 0) { root.open-node(c.node); } else { root.reset-tree(); } }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Rectangle { horizontal-stretch: 1; }
-                                    for k in root.graph-kpis: StatInline { kpi: k; }
-                                }
-                            }
-                            // Toolbar: display and dependency filter.
-                            Rectangle {
-                                height: 48px;
-                                background: Theme.bg;
-                                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    spacing: 6px;
-                                    alignment: start;
-                                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.display == 0; clicked => { root.display = 0; } }
-                                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.display == 2; clicked => { root.display = 2; } }
-                                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Network"); pressed-state: root.display == 1; clicked => { root.display = 1; root.fit-views(); } }
-                                    Rectangle { width: 10px; }
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Used by ({})", Fmt.int(root.count-in)); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Depends on ({})", Fmt.int(root.count-out)); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", Fmt.int(root.count-both)); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", Fmt.int(root.count-all)); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
-                                    }
-                                    if root.display == 0: HorizontalLayout {
-                                        spacing: 6px;
-                                        padding-left: 10px;
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Alphabetical"); pressed-state: !root.sort-by-deps; clicked => { root.set-sort(false); } }
-                                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("By dependencies"); pressed-state: root.sort-by-deps; clicked => { root.set-sort(true); } }
-                                    }
-                                    Rectangle { width: 10px; }
-                                    Text {
-                                        text: root.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.reference);
-                                        color: Theme.muted;
-                                        font-size: 12px;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                        min-width: 0;
-                                    }
-                                }
-                            }
-                            Rectangle {
-                                vertical-stretch: 1;
-                                background: Theme.bg;
-                                clip: true;
-                                TreeView {
-                                    hovered <=> root.tree-hovered;
-                                    visible: root.display == 0;
-                                    rows: root.rows;
-                                    links: root.links;
-                                    selected: root.selected-row;
-                                    select(r) => { root.select-row(r); }
-                                    toggle(r) => { root.toggle-row(r); }
-                                    open(r) => { root.open-row(r); }
-                                }
-                                NetworkView {
-                                    fit-tick: root.fit-tick;
-                                    visible: root.display == 1;
-                                    cards: root.net-cards;
-                                    arrows: root.net-arrows;
-                                    canvas-w: root.net-w;
-                                    canvas-h: root.net-h;
-                                    selected: root.selected-row;
-                                    select(r) => { root.select-row(r); }
-                                    open(r) => { root.open-row(r); }
-                                }
-                                if root.display == 2: DepsView {
-                                    deps: root.deps;
-                                    reference: root.reference;
-                                    total: root.dep-count;
-                                }
-                            }
-                        }
-
-                        // ------------------------------------------------- details
-                        if root.show-details && root.selected-row >= 0: Rectangle {
-                            width: 320px;
-                            background: Theme.panel;
-                            Rectangle { x: 0; width: 1px; background: Theme.border; }
-                            VerticalLayout {
-                                padding: 16px;
-                                spacing: 12px;
-                                HorizontalLayout {
-                                    Text { text: root.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
-                                    Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.select-row(-1); } }
-                                }
-                                Text { text: root.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
-                                ScrollView {
-                                    vertical-stretch: 1;
-                                    VerticalLayout {
-                                        alignment: start;
-                                        spacing: 2px;
-                                        Text { text: @tr("Depends on ({})", Fmt.int(root.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
-                                        for n in root.outgoing: NeighborRow {
-                                            item: n;
-                                            tone: Theme.outgoing;
-                                            max-weight: root.outgoing.length > 0 ? root.outgoing[0].weight : 0;
-                                            clicked => { root.select-row(n.row); }
-                                        }
-                                        Rectangle { height: 12px; }
-                                        Text { text: @tr("Used by ({})", Fmt.int(root.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
-                                        for n in root.incoming: NeighborRow {
-                                            item: n;
-                                            tone: Theme.incoming;
-                                            max-weight: root.incoming.length > 0 ? root.incoming[0].weight : 0;
-                                            clicked => { root.select-row(n.row); }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        data: root.graph-panes[i];
+                        hits: root.hits;
+                        searching: root.searching;
+                        show-explorer: root.show-explorer;
+                        show-details: root.show-details;
+                        fit-tick: root.fit-tick;
+                        hover-hint: root.tree-hovered;
+                        select-row(r) => { root.select-row(p.id, r); }
+                        toggle-row(r) => { root.toggle-row(p.id, r); }
+                        expand-all => { root.expand-all(p.id); }
+                        collapse-all => { root.collapse-all(p.id); }
+                        set-edge-mode(m) => { root.set-edge-mode(p.id, m); }
+                        set-sort(s) => { root.set-sort(p.id, s); }
+                        reveal(n) => { root.reveal(p.id, n); }
+                        open-row(r) => { root.open-row(p.id, r); }
+                        open-node(n) => { root.open-node(p.id, n); }
+                        reset-tree => { root.reset-tree(p.id); }
+                        open-web => { root.open-web("graph"); }
+                        set-display(d) => { root.set-display(p.id, d); }
+                        set-explorer-tab(t) => { root.set-explorer-tab(p.id, t); }
+                        node-tab(kind, n, side) => { root.node-tab(kind, n, side); }
                     }
                 }
             }

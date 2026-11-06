@@ -199,3 +199,35 @@ comparison of the native view against the web view on the same project
   view is shown. Known limits: views with a fixed minimum width (Matrix
   640 px, the Graph's explorer and details panels) are clipped in a
   narrow pane; checked with headless snapshot builds on macOS only.
+- **2026-11-06:** View instances (`feat/desktop-view-instances`), asked
+  for by the user to compare views side by side. The rule "a view is
+  open at most once per document" is replaced for Graph, Matrix and a
+  new File view: a view tab is an instance with an id (`panes::Tab`),
+  and "Open in new tab" / "Open to the side" always add an instance.
+  Each instance keeps its own state (scope, expanded nodes, filters,
+  display, selection) keyed by its tab id (`src/instances.rs`); the
+  Slint views take their data as one struct per pane (`GraphData`,
+  `MatrixData`, `FileData` in per-pane models) and report with the
+  instance id, instead of window-wide properties. The package tree and
+  the one background analysis per document stay shared. The **File
+  view** shows one tree node (file or package): path, counts, incoming
+  and outgoing dependencies grouped by the file on the other end with
+  their evidence (`file:line  code`, `src/node_view.rs`), and "Open in
+  graph"; it opens from the context menu of Graph explorer and tree rows
+  and of Matrix rows (`ui/node_menu.slint`, which also offers a Graph
+  opened on a package beside) and from the Graph's details panel. Tab
+  titles name the instance: "Graph · graph_ui" (the package it was
+  opened on), "Matrix · " and its scope, the File view's node. Linked
+  selection works between instances (also two Graphs); a File view is
+  no reveal target, clicking one of its dependencies reveals it beside.
+  `desktop.toml` stores a tab as its view id or as
+  `{ view = "graph", node = "…", display = 1 }`; restoring drops tabs
+  of unknown views, File tabs whose node the analysis no longer has,
+  and forgets a missing Graph or Matrix scope. **Not migrated:** Start,
+  Architecture, Calls, Services, Quality and Security still read
+  window-wide globals and stay open once per document (opening one
+  selects its tab, opening it to the side moves it); moving them to
+  per-pane structs is a follow-up. Scroll positions are kept per Slint
+  view, not per instance: switching between two instances in one pane
+  keeps the view's scroll offset. Checked with unit tests and headless
+  snapshots on macOS only.
