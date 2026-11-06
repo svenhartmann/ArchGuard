@@ -201,6 +201,15 @@ export component GraphView inherits HorizontalLayout {
     property <int> hovered: root.hover-hint;
     changed hover-hint => { self.hovered = self.hover-hint; }
     property <int> fit-local;
+    // A narrow pane (a split) hides the explorer and narrows the details,
+    // decided from the view's own width only (no layout loop).
+    // Below 600px the graph itself needs the whole pane.
+    property <bool> details-on: root.show-details && root.data.selected-row >= 0 && root.width >= 600px;
+    property <length> details-w: root.width >= 900px ? 320px : 240px;
+    // The explorer only when the graph keeps at least 480px beside it.
+    property <bool> explorer-on: root.show-explorer
+        && root.width - 250px - (root.details-on ? root.details-w : 0) >= 480px;
+    property <length> main-w: root.width - (root.explorer-on ? 250px : 0) - (root.details-on ? root.details-w : 0);
 
     callback select-row(int);
     callback toggle-row(int);
@@ -220,7 +229,7 @@ export component GraphView inherits HorizontalLayout {
     callback node-tab(string, int, bool);
 
     // ------------------------------------------------- explorer
-    if root.show-explorer: Rectangle {
+    if root.explorer-on: Rectangle {
         width: 250px;
         background: Theme.panel;
         Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
@@ -304,7 +313,7 @@ export component GraphView inherits HorizontalLayout {
                 padding-left: 12px;
                 padding-right: 14px;
                 spacing: 16px;
-                HorizontalLayout {
+                crumbs := HorizontalLayout {
                     spacing: 4px;
                     for c[i] in root.data.crumbs: HorizontalLayout {
                         spacing: 4px;
@@ -332,47 +341,94 @@ export component GraphView inherits HorizontalLayout {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                for k in root.data.kpis: StatInline { kpi: k; }
+                // The key figures only when they fit beside the crumbs.
+                Rectangle {
+                    width: root.main-w - 26px >= crumbs.preferred-width + kpis.preferred-width + 32px ? kpis.preferred-width : 0;
+                    clip: true;
+                    kpis := HorizontalLayout {
+                        x: 0;
+                        width: self.preferred-width;
+                        height: parent.height;
+                        spacing: 16px;
+                        for k in root.data.kpis: StatInline { kpi: k; }
+                    }
+                }
             }
         }
-        // Toolbar: display and dependency filter.
-        Rectangle {
-            height: 48px;
+        // Toolbar: display, sort and dependency filter. The groups are
+        // placed by hand and flow into further rows when the pane is too
+        // narrow (positions follow the pane's width, never the content).
+        bar := Rectangle {
+            property <length> pad: 12px;
+            property <length> gap: 14px;
+            property <length> row-h: 40px;
+            property <length> avail: self.width - self.pad;
+            property <length> w1: root.data.display == 0 ? sort.preferred-width : 0;
+            property <bool> f1: display.preferred-width + self.pad + self.gap + self.w1 <= self.avail;
+            property <length> x1: self.f1 ? self.pad + display.preferred-width + self.gap : self.pad;
+            property <int> r1: self.f1 ? 0 : 1;
+            property <length> e1: self.x1 + self.w1 + (self.w1 > 0 ? self.gap : 0);
+            property <bool> f2: self.e1 + edges-a.preferred-width <= self.avail || self.e1 == self.pad;
+            property <length> x2: self.f2 ? self.e1 : self.pad;
+            property <int> r2: self.f2 ? self.r1 : self.r1 + 1;
+            property <bool> f3: self.x2 + edges-a.preferred-width + 6px + edges-b.preferred-width <= self.avail;
+            property <length> x3: self.f3 ? self.x2 + edges-a.preferred-width + 6px : self.pad;
+            property <int> r3: self.f3 ? self.r2 : self.r2 + 1;
+            pure function row-y(r: int) -> length { return r * self.row-h + (self.row-h - Theme.control-h-sm) / 2 + 4px; }
+            height: (self.r3 + 1) * self.row-h + 8px;
             background: Theme.bg;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
+            display := HorizontalLayout {
+                x: bar.pad;
+                y: bar.row-y(0);
+                width: self.preferred-width;
+                height: Theme.control-h-sm;
                 spacing: 6px;
-                alignment: start;
-                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.data.display == 0; clicked => { root.set-display(0); } }
-                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.data.display == 2; clicked => { root.set-display(2); } }
-                Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Network"); pressed-state: root.data.display == 1; clicked => { root.set-display(1); root.fit-local += 1; } }
-                Rectangle { width: 10px; }
-                HorizontalLayout {
-                    spacing: 6px;
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Used by ({})", Fmt.int(root.data.count-in)); pressed-state: root.data.edge-mode == 0; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Depends on ({})", Fmt.int(root.data.count-out)); pressed-state: root.data.edge-mode == 1; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", Fmt.int(root.data.count-both)); pressed-state: root.data.edge-mode == 2; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
-                }
-                if root.data.display == 0: HorizontalLayout {
-                    spacing: 6px;
-                    padding-left: 10px;
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Alphabetical"); pressed-state: !root.data.sort-by-deps; clicked => { root.set-sort(false); } }
-                    Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("By dependencies"); pressed-state: root.data.sort-by-deps; clicked => { root.set-sort(true); } }
-                }
-                Rectangle { width: 10px; }
-                Text {
-                    text: root.data.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.data.reference);
-                    color: Theme.muted;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                    min-width: 0;
-                }
+                Button { compact: true; text: @tr("Tree"); pressed-state: root.data.display == 0; clicked => { root.set-display(0); } }
+                Button { compact: true; text: @tr("Dependencies"); pressed-state: root.data.display == 2; clicked => { root.set-display(2); } }
+                Button { compact: true; text: @tr("Network"); pressed-state: root.data.display == 1; clicked => { root.set-display(1); root.fit-local += 1; } }
+            }
+            sort := HorizontalLayout {
+                x: bar.x1;
+                y: bar.row-y(bar.r1);
+                width: bar.w1;
+                height: Theme.control-h-sm;
+                visible: root.data.display == 0;
+                spacing: 6px;
+                Button { compact: true; text: @tr("Alphabetical"); pressed-state: !root.data.sort-by-deps; clicked => { root.set-sort(false); } }
+                Button { compact: true; text: @tr("By dependencies"); pressed-state: root.data.sort-by-deps; clicked => { root.set-sort(true); } }
+            }
+            edges-a := HorizontalLayout {
+                x: bar.x2;
+                y: bar.row-y(bar.r2);
+                width: self.preferred-width;
+                height: Theme.control-h-sm;
+                spacing: 6px;
+                Button { compact: true; text: @tr("Used by ({})", Fmt.int(root.data.count-in)); pressed-state: root.data.edge-mode == 0; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
+                Button { compact: true; text: @tr("Depends on ({})", Fmt.int(root.data.count-out)); pressed-state: root.data.edge-mode == 1; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
+                Button { compact: true; text: @tr("Both ({})", Fmt.int(root.data.count-both)); pressed-state: root.data.edge-mode == 2; enabled: root.data.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
+            }
+            edges-b := HorizontalLayout {
+                x: bar.x3;
+                y: bar.row-y(bar.r3);
+                width: self.preferred-width;
+                height: Theme.control-h-sm;
+                spacing: 6px;
+                Button { compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
+                Button { compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
+            }
+            // The reference takes the rest of the last row.
+            Text {
+                property <length> left: bar.x3 + edges-b.preferred-width + bar.gap;
+                x: self.left;
+                y: bar.row-y(bar.r3);
+                width: max(0, bar.avail - self.left);
+                height: Theme.control-h-sm;
+                text: root.data.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.data.reference);
+                color: Theme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
             }
         }
         Rectangle {
@@ -410,8 +466,8 @@ export component GraphView inherits HorizontalLayout {
     }
 
     // ------------------------------------------------- details
-    if root.show-details && root.data.selected-row >= 0: Rectangle {
-        width: 320px;
+    if root.details-on: Rectangle {
+        width: root.details-w;
         background: Theme.panel;
         Rectangle { x: 0; width: 1px; background: Theme.border; }
         VerticalLayout {
@@ -423,9 +479,15 @@ export component GraphView inherits HorizontalLayout {
             }
             Text { text: root.data.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
             // The selected node as a view of its own (`FileView`).
-            HorizontalLayout {
+            // Side by side in the wide panel, stacked in the narrow one.
+            if root.details-w >= 320px: HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
+                Button { text: @tr("Open in new tab"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, false); } }
+                Button { text: @tr("Open to the side"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, true); } }
+            }
+            if root.details-w < 320px: VerticalLayout {
+                spacing: 6px;
                 Button { text: @tr("Open in new tab"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, false); } }
                 Button { text: @tr("Open to the side"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, true); } }
             }

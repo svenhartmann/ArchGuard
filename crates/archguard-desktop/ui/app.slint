@@ -562,7 +562,9 @@ export component AppWindow inherits Window {
                 // A click on a pane's background focuses it.
                 TouchArea { clicked => { root.focus-pane(i); } }
                 VerticalLayout {
-                    if root.panes.length > 1 || p.tabs.length > 1: PaneStrip {
+                    // Always shown, so the view does not jump down when a
+                    // second tab or pane opens.
+                    PaneStrip {
                         pane: p;
                         split: root.panes.length > 1;
                         show-follow: root.panes.length > 1 && i == 1;
