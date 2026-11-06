@@ -2,6 +2,8 @@
 // :root and the dark override). Keep both in sync.
 export global Theme {
     in-out property <bool> dark: true;
+    // The platform's UI font, set at start (src/platform.rs); empty: Slint's default.
+    in-out property <string> font-family;
 
     out property <color> bg: dark ? #101722 : #F5F7FB;
     out property <color> panel: dark ? #182231 : #FFFFFF;

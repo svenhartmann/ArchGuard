@@ -61,11 +61,25 @@ fn check_unique(text: &str, part: &Path, seen: &mut std::collections::BTreeMap<S
     }
 }
 
+/// The widget style of the target platform: Cupertino on macOS, Fluent
+/// elsewhere (Windows' own; on Linux the neutral choice, as Cosmic only
+/// matches Pop!_OS). `SLINT_STYLE` overrides it.
+fn style() -> String {
+    println!("cargo:rerun-if-env-changed=SLINT_STYLE");
+    if let Ok(style) = std::env::var("SLINT_STYLE") {
+        return style;
+    }
+    match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => "cupertino".into(),
+        _ => "fluent".into(),
+    }
+}
+
 fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("lang");
     merge_translations(Path::new("lang"), &out);
     let config = slint_build::CompilerConfiguration::new()
-        .with_style("fluent".into())
+        .with_style(style())
         .with_bundled_translations(out)
         .with_default_translation_context(slint_build::DefaultTranslationContext::None);
     slint_build::compile_with_config("ui/app.slint", config).expect("ui/app.slint compiles");
