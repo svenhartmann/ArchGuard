@@ -49,15 +49,15 @@ component DepEntry inherits Rectangle {
         spacing: 6px;
         HorizontalLayout {
             spacing: 8px;
-            Text { text: root.dep.label; color: root.tone; font-size: 13px; font-weight: 650; overflow: elide; horizontal-stretch: 1; }
-            Text { text: Fmt.int(root.dep.weight); color: root.tone; font-size: 12px; font-weight: 600; }
+            Text { text: root.dep.label; color: root.tone; font-size: Theme.font-body; font-weight: Theme.weight-strong; overflow: elide; horizontal-stretch: 1; }
+            Text { text: Fmt.int(root.dep.weight); color: root.tone; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
         }
-        Text { text: root.dep.name; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+        Text { text: root.dep.name; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; overflow: elide; }
         Text {
             text: root.dep.evidence == "" ? @tr("No source references recorded.") : root.dep.evidence;
             color: Theme.text;
-            font-family: "Menlo";
-            font-size: 11px;
+            font-family: Theme.mono-family;
+            font-size: Theme.font-caption;
             wrap: word-wrap;
         }
     }
@@ -88,14 +88,14 @@ export component FileView inherits Rectangle {
                 height: 20px;
                 y: (parent.height - self.height) / 2;
             }
-            Text { text: root.data.label; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+            Text { text: root.data.label; color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; overflow: elide; horizontal-stretch: 1; }
         }
-        Text { text: root.data.name; color: Theme.muted; font-size: 12px; font-family: "Menlo"; overflow: elide; }
+        Text { text: root.data.name; color: Theme.muted; font-size: Theme.font-small; font-family: Theme.mono-family; overflow: elide; }
         if !root.data.file: HorizontalLayout {
             spacing: 14px;
             alignment: start;
-            Text { text: @tr("{} files", Fmt.int(root.data.files)); color: Theme.muted; font-size: 12px; }
-            Text { text: @tr("{} packages", Fmt.int(root.data.packages)); color: Theme.muted; font-size: 12px; }
+            Text { text: @tr("{} files", Fmt.int(root.data.files)); color: Theme.muted; font-size: Theme.font-small; }
+            Text { text: @tr("{} packages", Fmt.int(root.data.packages)); color: Theme.muted; font-size: Theme.font-small; }
         }
         HorizontalLayout {
             spacing: 6px;
@@ -108,14 +108,14 @@ export component FileView inherits Rectangle {
             VerticalLayout {
                 alignment: start;
                 spacing: 6px;
-                Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                 for d in root.data.outgoing: DepEntry {
                     dep: d;
                     tone: Theme.outgoing;
                     clicked => { root.select(d.node); }
                 }
                 Rectangle { height: 12px; }
-                Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                 for d in root.data.incoming: DepEntry {
                     dep: d;
                     tone: Theme.incoming;
