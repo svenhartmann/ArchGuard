@@ -1,0 +1,325 @@
+//! The islands of the services World: the port of
+//! `repositorySelectableProjects`, `repositoryWorldInventory`,
+//! `repositoryDeploymentScope(s)` and `repositoryWorldProjects` in
+//! `viewer_repository.js`. An island is a manifest project, one deployment
+//! of a project with several, or a service without local sources.
+
+use std::collections::HashSet;
+
+use archguard_engine::core::{Service, ServiceProject, ServiceTopology};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Island {
+    /// The project id, or the service id of a deployment or external service.
+    pub id: String,
+    /// The web's island key: the project path or `@service/<service id>`.
+    pub path: String,
+    pub name: String,
+    /// The deployment's service name (`displayName`).
+    pub display: Option<String>,
+    /// `application`, `library`, `tooling`, … (`unknown` for external ones).
+    pub kind: String,
+    /// The local source project's path; `None` without local sources.
+    pub source: Option<String>,
+    pub external: bool,
+}
+
+impl Island {
+    /// The pin label: the service name, else the last path segment.
+    pub fn label(&self) -> &str {
+        if let Some(d) = &self.display {
+            return d;
+        }
+        if self.external || self.path == "." {
+            return &self.name;
+        }
+        self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+
+    /// The name in connection lists (`displayName || name`).
+    pub fn title(&self) -> &str {
+        self.display.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// `repositorySelectableProjects`: no workspaces, relative and unique paths.
+fn selectable(t: &ServiceTopology) -> Vec<&ServiceProject> {
+    let mut seen = HashSet::new();
+    t.projects
+        .iter()
+        .filter(|p| {
+            let path = p.path.as_str();
+            let bad = path.is_empty()
+                || path.starts_with('/')
+                || path.chars().any(|c| c == '\\' || c < ' ')
+                || path.split('/').any(|part| part == ".." || part.is_empty());
+            p.kind != "workspace" && !bad && seen.insert(path)
+        })
+        .collect()
+}
+
+/// Whether the services World applies: as the web's repository overview,
+/// at least two selectable projects, or a monorepo with build units.
+pub fn available(t: &ServiceTopology, inventory: &[Island]) -> bool {
+    inventory.len() > 1 && (selectable(t).len() > 1 || !crate::documents::build_units(t).is_empty())
+}
+
+/// `repositoryWorldInventory`: projects (one island per deployment when a
+/// project has several), then services without a local project.
+pub fn inventory(t: &ServiceTopology) -> Vec<Island> {
+    let projects = selectable(t);
+    let mut out = Vec::new();
+    for p in &projects {
+        let deployments: Vec<&Service> = t
+            .services
+            .iter()
+            .filter(|s| s.project.as_deref() == Some(p.id.as_str()))
+            .collect();
+        if deployments.len() > 1 {
+            out.extend(deployments.iter().map(|s| Island {
+                id: s.id.clone(),
+                path: service_path(&s.id),
+                name: s.name.clone(),
+                display: Some(s.name.clone()),
+                kind: p.kind.clone(),
+                source: Some(p.path.clone()),
+                external: false,
+            }));
+        } else {
+            out.push(Island {
+                id: p.id.clone(),
+                path: p.path.clone(),
+                name: p.name.clone(),
+                display: deployments.first().map(|s| s.name.clone()),
+                kind: p.kind.clone(),
+                source: Some(p.path.clone()),
+                external: false,
+            });
+        }
+    }
+    let known: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+    let external = t.services.iter().filter(|s| {
+        let local = s.project.as_deref().is_some_and(|p| known.contains(p));
+        !local
+            && (!s.compose_file.is_empty()
+                || s.id.starts_with("trace:")
+                || s.id.starts_with("aspire:"))
+    });
+    out.extend(external.map(|s| Island {
+        id: s.id.clone(),
+        path: service_path(&s.id),
+        name: s.name.clone(),
+        display: None,
+        kind: "unknown".into(),
+        source: None,
+        external: true,
+    }));
+    out
+}
+
+fn service_path(id: &str) -> String {
+    format!("@service/{}", encode_uri_component(id))
+}
+
+/// JavaScript's `encodeURIComponent`.
+fn encode_uri_component(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// `repositoryDeploymentScope`: a Kubernetes network, the Compose file or
+/// the Aspire app host; empty when none.
+pub fn deployment_scope(s: &Service) -> String {
+    if let Some(n) = s.networks.iter().find(|n| n.starts_with("kubernetes:")) {
+        return n.clone();
+    }
+    if !s.compose_file.is_empty() {
+        return s.compose_file.clone();
+    }
+    if s.id.starts_with("aspire:") {
+        return s.id.split("::").next().unwrap_or_default().to_string();
+    }
+    String::new()
+}
+
+/// The deployment variants, sorted.
+pub fn deployment_scopes(t: &ServiceTopology) -> Vec<String> {
+    let mut out: Vec<String> = t
+        .services
+        .iter()
+        .map(deployment_scope)
+        .filter(|s| !s.is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The variant the web starts with when there are several: the root
+/// Compose file, else the shallowest, then by name.
+pub fn default_deployment(scopes: &[String]) -> Option<String> {
+    if scopes.len() < 2 {
+        return None;
+    }
+    const ROOT: [&str; 4] = [
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yaml",
+        "docker-compose.yml",
+    ];
+    if let Some(root) = scopes.iter().find(|s| ROOT.contains(&s.as_str())) {
+        return Some(root.clone());
+    }
+    scopes
+        .iter()
+        .min_by(|a, b| {
+            let depth = |s: &str| s.split('/').count();
+            depth(a).cmp(&depth(b)).then_with(|| a.cmp(b))
+        })
+        .cloned()
+}
+
+/// `repositoryWorldProjects`: the islands of one deployment variant
+/// (`None`: all); unless `all_projects`, only deployed services when there
+/// are any.
+pub fn shown(
+    t: &ServiceTopology,
+    inventory: &[Island],
+    deployment: Option<&str>,
+    all_projects: bool,
+) -> Vec<usize> {
+    let mut islands: Vec<usize> = (0..inventory.len()).collect();
+    if let Some(d) = deployment {
+        let scoped = ids(t.services.iter().filter(|s| deployment_scope(s) == d));
+        islands.retain(|&i| scoped.contains(inventory[i].id.as_str()));
+    }
+    let deployed = ids(t.services.iter().filter(|s| {
+        s.id.starts_with("aspire:") || s.id.starts_with("spring:") || !s.compose_file.is_empty()
+    }));
+    let any = islands
+        .iter()
+        .any(|&i| deployed.contains(inventory[i].id.as_str()));
+    if !all_projects && any {
+        islands.retain(|&i| inventory[i].external || deployed.contains(inventory[i].id.as_str()));
+    }
+    islands
+}
+
+/// Service ids and their project ids.
+fn ids<'a>(services: impl Iterator<Item = &'a Service>) -> HashSet<&'a str> {
+    services
+        .flat_map(|s| std::iter::once(s.id.as_str()).chain(s.project.as_deref()))
+        .collect()
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use archguard_engine::core::{ServiceProject, ServiceTopology};
+
+    pub fn project(path: &str, kind: &str) -> ServiceProject {
+        ServiceProject {
+            id: format!("project:{path}/pom.xml"),
+            name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            path: path.into(),
+            manifest: format!("{path}/pom.xml"),
+            ecosystem: "maven".into(),
+            kind: kind.into(),
+            runtime: None,
+            evidence: Vec::new(),
+        }
+    }
+
+    pub fn service(id: &str, project: Option<&str>, compose: &str) -> Service {
+        Service {
+            id: id.into(),
+            name: id.rsplit("::").next().unwrap_or(id).to_string(),
+            compose_file: compose.into(),
+            build_context: None,
+            networks: Vec::new(),
+            profiles: Vec::new(),
+            project: project.map(str::to_string),
+        }
+    }
+
+    pub fn topology(projects: Vec<ServiceProject>, services: Vec<Service>) -> ServiceTopology {
+        ServiceTopology {
+            schema_version: 1,
+            root: "/repo".into(),
+            monorepo: true,
+            monorepo_reason: String::new(),
+            compose_files: Vec::new(),
+            services,
+            projects,
+            dependencies: Vec::new(),
+            cycles: Vec::new(),
+            diagnostics: Vec::new(),
+            complete: true,
+        }
+    }
+
+    /// Workspaces and unsafe paths are no islands; a project with two
+    /// deployments has one island per deployment; a Compose service
+    /// without a project is external.
+    #[test]
+    fn inventory_follows_the_web() {
+        let shop = project("services/shop", "application");
+        let t = topology(
+            vec![
+                shop.clone(),
+                project("parent", "workspace"),
+                project("../escape", "library"),
+                project("shared/core", "library"),
+                project("shared/core", "library"),
+            ],
+            vec![
+                service("dev::shop", Some(&shop.id), "dev/compose.yaml"),
+                service("prod::shop", Some(&shop.id), "prod/compose.yaml"),
+                service("dev::db", None, "dev/compose.yaml"),
+                service("orphan", None, ""),
+            ],
+        );
+        let inv = inventory(&t);
+        let paths: Vec<&str> = inv.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "@service/dev%3A%3Ashop",
+                "@service/prod%3A%3Ashop",
+                "shared/core",
+                "@service/dev%3A%3Adb"
+            ]
+        );
+        assert_eq!(inv[0].source.as_deref(), Some("services/shop"));
+        assert_eq!(
+            (inv[0].label(), inv[2].label(), inv[3].label()),
+            ("shop", "core", "db")
+        );
+        assert!(inv[3].external && inv[3].source.is_none());
+        let scopes = deployment_scopes(&t);
+        assert_eq!(scopes, ["dev/compose.yaml", "prod/compose.yaml"]);
+        assert_eq!(
+            default_deployment(&scopes).as_deref(),
+            Some("dev/compose.yaml")
+        );
+        // Deployed services only, unless all projects are asked for.
+        assert_eq!(shown(&t, &inv, None, false), [0, 1, 3]);
+        assert_eq!(shown(&t, &inv, None, true), [0, 1, 2, 3]);
+        assert_eq!(shown(&t, &inv, Some("prod/compose.yaml"), false), [1]);
+        assert!(available(&t, &inv));
+    }
+
+    #[test]
+    fn a_root_compose_file_is_the_default_variant() {
+        let scopes = ["compose.yaml".to_string(), "a/compose.yaml".to_string()];
+        assert_eq!(default_deployment(&scopes).as_deref(), Some("compose.yaml"));
+        assert_eq!(default_deployment(&scopes[..1]), None);
+    }
+}

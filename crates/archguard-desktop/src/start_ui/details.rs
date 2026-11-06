@@ -37,15 +37,30 @@ pub mod kind {
     pub const EVIDENCE: i32 = 40;
     pub const CONNECTION: i32 = 41;
     pub const NO_EVIDENCE: i32 = 42;
+    // The services World (`services/view.rs`).
+    pub const SVC_NOTE: i32 = 50;
+    pub const SVC_EXTERNAL: i32 = 51;
+    /// `a` → `b`, `entity` the kind (`services::KINDS`), `flag` cyclic.
+    pub const SVC_LINK: i32 = 52;
+    pub const SVC_AT: i32 = 53;
+    /// "Select neighbor": `entity` the island.
+    pub const SVC_NEIGHBOR: i32 = 54;
+    pub const SVC_NONE: i32 = 55;
 }
 
-fn line(kind: i32, a: impl Into<String>, b: impl Into<String>, c: impl Into<String>) -> StartLine {
+pub(super) fn line(
+    kind: i32,
+    a: impl Into<String>,
+    b: impl Into<String>,
+    c: impl Into<String>,
+) -> StartLine {
     StartLine {
         kind,
         a: a.into().into(),
         b: b.into().into(),
         c: c.into().into(),
         entity: -1,
+        flag: false,
     }
 }
 

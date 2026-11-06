@@ -405,31 +405,6 @@ pub fn lattice(frame: &Frame, rotation: f64) -> String {
     path
 }
 
-/// A dependency arrow between two screen points: the quadratic curve and
-/// its head at 72 % of the way, as `worldDraw`.
-pub fn arrow(p: (f64, f64), q: (f64, f64), curves: &mut String, heads: &mut String) {
-    let (dx, dy) = (q.0 - p.0, q.1 - p.1);
-    let length = dx.hypot(dy).max(1.0);
-    let bend = 55f64.min(length * 0.2);
-    let c = (
-        (p.0 + q.0) / 2.0 - dy / length * bend,
-        (p.1 + q.1) / 2.0 + dx / length * bend,
-    );
-    let _ = write!(
-        curves,
-        "M {:.1} {:.1} Q {:.1} {:.1} {:.1} {:.1} ",
-        p.0, p.1, c.0, c.1, q.0, q.1
-    );
-    let (t, s) = (0.72, 0.28);
-    let tip = (
-        s * s * p.0 + 2.0 * s * t * c.0 + t * t * q.0,
-        s * s * p.1 + 2.0 * s * t * c.1 + t * t * q.1,
-    );
-    let angle = (s * (c.1 - p.1) + t * (q.1 - c.1)).atan2(s * (c.0 - p.0) + t * (q.0 - c.0));
-    let wing = |a: f64| (tip.0 - 8.0 * a.cos(), tip.1 - 8.0 * a.sin());
-    poly(heads, &[tip, wing(angle - 0.45), wing(angle + 0.45)]);
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::layout::{Plate, complexity_height};
@@ -564,13 +539,5 @@ mod tests {
         let inside = ((a.0 + b.0 + peak.0) / 3.0, (a.1 + b.1 + peak.1) / 3.0);
         assert_eq!(hit(&l, &f, 0.0, inside), Some(0));
         assert_eq!(hit(&l, &f, 0.0, (40.0, 40.0)), None);
-    }
-
-    #[test]
-    fn arrows_bend_left_of_their_direction() {
-        let (mut c, mut h) = (String::new(), String::new());
-        arrow((0.0, 0.0), (100.0, 0.0), &mut c, &mut h);
-        assert_eq!(c.trim(), "M 0.0 0.0 Q 50.0 20.0 100.0 0.0");
-        assert_eq!(h.matches('L').count(), 2);
     }
 }

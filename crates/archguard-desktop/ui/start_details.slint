@@ -31,9 +31,14 @@ component DetailLine inherits Rectangle {
         : line.kind == 40 ? @tr("Evidence")
         : line.kind == 41 ? line.a + " → " + line.b + (line.c == "" ? "" : " · " + @tr("package cycle"))
         : line.kind == 42 ? @tr("No connections or findings recorded at this level.")
+        : line.kind == 50 ? @tr("Evidence is filtered by source. Traces represent only the imported observation window, not complete traffic. Events can form intended workflows; a combined cycle may mix configured, inferred and observed edges.")
+        : line.kind == 51 ? @tr("No local source project is associated with this service. Connections and trace evidence remain available.")
+        : line.kind == 52 ? line.a + " → " + line.b + " · " + StartTones.kind-label(line.entity) + (line.flag ? " · " + @tr("Cycle") : "")
+        : line.kind == 54 ? @tr("Select neighbor")
+        : line.kind == 55 ? @tr("No connections found for these filters. Missing evidence does not prove isolation.")
         : line.a;
-    property <bool> button: line.kind == 30 || line.kind == 31;
-    property <bool> heading: line.kind == 23 || line.kind == 40;
+    property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 54;
+    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52;
     height: label.preferred-height + (button ? 14px : heading ? 12px : 4px);
     border-radius: button ? Theme.radius-sm : 0;
     background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : transparent;
@@ -45,16 +50,17 @@ component DetailLine inherits Rectangle {
         width: parent.width - (button ? 20px : 0);
         text: root.text;
         wrap: word-wrap;
-        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 ? Theme.muted : Theme.text;
+        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 ? Theme.muted
+            : line.kind == 52 && line.flag ? Theme.cycle : Theme.text;
         font-size: heading ? 14px : line.kind == 12 ? 16px : 13px;
-        font-weight: heading || line.kind == 12 ? 650 : 400;
-        font-family: line.kind == 2 || line.kind == 10 ? "Menlo" : "";
+        font-weight: heading || line.kind == 12 || line.kind == 53 ? 650 : 400;
+        font-family: line.kind == 2 || line.kind == 10 || line.kind == 53 ? "Menlo" : "";
     }
     t := TouchArea {
         enabled: root.button;
         mouse-cursor: root.button ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
-            if (line.kind == 30) {
+            if (line.kind == 30 || line.kind == 54) {
                 StartData.pick-entity(line.entity);
             } else {
                 StartData.more();
@@ -64,6 +70,7 @@ component DetailLine inherits Rectangle {
 }
 
 export component StartDetails inherits Rectangle {
+    property <bool> services: StartData.model.services.shown;
     property <int> lens: StartData.model.lens;
     property <string> metric: StartTones.kpi-label(lens == 1 ? StartData.model.kpi : 0);
     background: Theme.panel;
@@ -105,7 +112,7 @@ export component StartDetails inherits Rectangle {
                 padding: 16px;
                 spacing: 6px;
                 Text {
-                    text: lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
+                    text: services ? @tr("Connections") : lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
                     color: Theme.text;
                     font-size: Theme.font-section;
                     font-weight: 650;
@@ -114,16 +121,28 @@ export component StartDetails inherits Rectangle {
                     alignment: start;
                     spacing: 8px;
                     padding-bottom: 6px;
-                    if StartData.model.can-explore: Button {
+                    if !services && StartData.model.can-explore: Button {
                         text: @tr("Explore");
                         primary: true;
                         compact: true;
                         clicked => { StartData.open-area(StartData.model.area-index - 1); }
                     }
-                    Button {
+                    if !services: Button {
                         text: @tr("Source graph");
                         compact: true;
                         clicked => { StartData.source-graph(); }
+                    }
+                    // In this document's analysis, or as a document of its own.
+                    if services && !StartData.model.services.external: Button {
+                        text: @tr("Zoom into service");
+                        primary: true;
+                        compact: true;
+                        clicked => { StartData.zoom-into(); }
+                    }
+                    if services && StartData.model.services.openable: Button {
+                        text: @tr("Open project");
+                        compact: true;
+                        clicked => { StartData.open-project(); }
                     }
                 }
                 for l in StartData.model.detail-lines: DetailLine {
