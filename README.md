@@ -88,6 +88,8 @@ PHP and Kotlin are measured by ArchGuard's own token scanner without a PHP insta
 
 **KPI help** in the viewer lists setup, supported measurements, and import examples for each language. Coverage and runtime measurements require actual reports; missing data is not treated as zero.
 
+Martin A/I zones need compiler-backed abstractness (Java and C#), so `archguard scan` and `archguard check` report them as not measured by default. Add `--measure-zones` (MCP: `review_kpis` with `measure_zones=true`) to run the slower call analysis and fill the zones row; see [Review metrics and their limits](ARCHITECTURE.md#review-metrics-and-their-limits).
+
 ## Common workflows
 
 | Task | Command |
