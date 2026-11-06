@@ -16,3 +16,11 @@ members = [
 version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+
+# Keep target/debug small: line tables are enough for backtraces with file:line,
+# dependencies carry no debug info at all.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
