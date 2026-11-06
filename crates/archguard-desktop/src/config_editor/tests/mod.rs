@@ -3,7 +3,9 @@
 
 mod catalogue;
 mod edit;
+mod preview;
 mod provenance;
+mod save;
 mod validate;
 
 use std::fs;
