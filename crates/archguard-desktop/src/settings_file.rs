@@ -41,7 +41,9 @@ pub fn config_dir(os: &str, env: impl Fn(&str) -> Option<String>) -> Option<Path
 pub fn default_path() -> Option<PathBuf> {
     let env = |k: &str| std::env::var(k).ok();
     let overridden = env("ARCHGUARD_DESKTOP_CONFIG_DIR").is_some_and(|d| !d.is_empty());
-    if env("ARCHGUARD_DESKTOP_SNAPSHOT").is_some() && !overridden {
+    // Only snapshot builds render PNGs; others ignore the variable.
+    let snapshot = cfg!(feature = "snapshot") && env("ARCHGUARD_DESKTOP_SNAPSHOT").is_some();
+    if snapshot && !overridden {
         return None;
     }
     Some(config_dir(std::env::consts::OS, env)?.join(FILE))
