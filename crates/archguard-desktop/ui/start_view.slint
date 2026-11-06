@@ -1,7 +1,7 @@
 // Start tab: the web viewer's "Your architecture" world (#start-world in
 // viewer.html, viewer_world.js). Data and callbacks live in StartData, set
 // from src/start_ui.rs.
-import { ComboBox } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, SearchField, Legend, StatInline, HelpTip } from "widgets.slint";
 import { Fmt } from "format.slint";
@@ -23,7 +23,7 @@ component LensButton inherits Rectangle {
     label := Text {
         text: root.text;
         color: active ? Theme.panel : Theme.text;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -44,7 +44,7 @@ component FilterPick inherits HorizontalLayout {
     Text {
         text: root.label;
         color: Theme.muted;
-        font-size: 12px;
+        font-size: Theme.font-caption;
         vertical-alignment: center;
     }
     ComboBox {
@@ -99,7 +99,7 @@ export component StartView inherits Rectangle {
                     text: root.services ? @tr("Your services") : @tr("Your architecture");
                     color: Theme.text;
                     font-size: Theme.font-page;
-                    font-weight: 700;
+                    font-weight: Theme.weight-title;
                     vertical-alignment: center;
                 }
                 // The web's repository overview and a project's World.
@@ -138,7 +138,7 @@ export component StartView inherits Rectangle {
                     picked(i) => { StartData.services-filter(1, i); }
                 }
                 FilterPick {
-                    label: @tr("Connections");
+                    label: @tr("Connection kind");
                     model: [@tr("Communication"), StartTones.kind-label(0), StartTones.kind-label(1), StartTones.kind-label(2),
                         StartTones.kind-label(3), StartTones.kind-label(4), StartTones.kind-label(5)];
                     index: m.services.kind;
@@ -220,8 +220,8 @@ export component StartView inherits Rectangle {
                         crumb := Text {
                             text: c.services ? @tr("Your services") : c.label;
                             color: c.last ? Theme.text : Theme.accent;
-                            font-size: 14px;
-                            font-weight: c.last ? 600 : 400;
+                            font-size: Theme.font-body;
+                            font-weight: c.last ? Theme.weight-strong : Theme.weight-regular;
                             vertical-alignment: center;
                         }
                         ct := TouchArea {
@@ -235,7 +235,7 @@ export component StartView inherits Rectangle {
                 if root.services: Text {
                     text: root.services-status;
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-caption;
                     horizontal-stretch: 100;
                     horizontal-alignment: right;
                     vertical-alignment: center;
@@ -247,7 +247,7 @@ export component StartView inherits Rectangle {
                         : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
                         : @tr("Observed {} measurements", root.metric);
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-caption;
                     vertical-alignment: center;
                 }
             }
@@ -256,7 +256,7 @@ export component StartView inherits Rectangle {
                 if !m.ready: Text {
                     text: m.error != "" ? m.error : @tr("Analyzing calls and classes …");
                     color: Theme.muted;
-                    font-size: 14px;
+                    font-size: Theme.font-body;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -287,7 +287,7 @@ export component StartView inherits Rectangle {
                     text: (root.services ? @tr("{} services / projects · {} local source projects", Fmt.int(m.services.islands), Fmt.int(m.services.local))
                         : @tr("{} elements · {} surfaces", Fmt.int(m.count), Fmt.int(m.tiles))) + (m.query != "" ? @tr(" · {} surfaces match", Fmt.int(m.matching)) : "");
                     color: Theme.muted;
-                    font-size: 12px;
+                    font-size: Theme.font-caption;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }

@@ -243,3 +243,9 @@ msgstr "Nachbarn auswählen"
 
 msgid "No connections found for these filters. Missing evidence does not prove isolation."
 msgstr "Für diese Filter wurden keine Verbindungen erkannt. Fehlende Belege beweisen keine Isolation."
+
+msgid "Connection kind"
+msgstr "Verbindungsart"
+
+msgid "Service connections"
+msgstr "Verbindungen"

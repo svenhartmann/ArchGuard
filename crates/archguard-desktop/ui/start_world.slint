@@ -40,8 +40,8 @@ component Pin inherits Rectangle {
         Text {
             text: pin.name;
             color: Theme.text;
-            font-size: 14px;
-            font-weight: 600;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-strong;
             overflow: elide;
         }
         Text {
@@ -50,7 +50,7 @@ component Pin inherits Rectangle {
                 : pin.svc > 0 ? StartTones.project-kind(pin.svc) + " · " + pin.path
                 : marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
             color: Theme.muted;
-            font-size: 11px;
+            font-size: Theme.font-caption;
             overflow: elide;
         }
     }
@@ -200,7 +200,7 @@ export component StartStage inherits Rectangle {
     if root.empty: Text {
         text: @tr("No source areas");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -353,7 +353,7 @@ export component StartStage inherits Rectangle {
                     Text {
                         text: StartData.model.angle + "°";
                         color: Theme.text;
-                        font-size: 11px;
+                        font-size: Theme.font-caption;
                         vertical-alignment: center;
                     }
                 }

@@ -39,6 +39,8 @@ component DetailLine inherits Rectangle {
         : line.a;
     property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 54;
     property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52;
+    // Paths, class ids and evidence locations.
+    property <bool> mono: line.kind == 2 || line.kind == 10 || line.kind == 53;
     height: label.preferred-height + (button ? 14px : heading ? 12px : 4px);
     border-radius: button ? Theme.radius-sm : 0;
     background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : transparent;
@@ -52,9 +54,9 @@ component DetailLine inherits Rectangle {
         wrap: word-wrap;
         color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 ? Theme.muted
             : line.kind == 52 && line.flag ? Theme.cycle : Theme.text;
-        font-size: heading ? 14px : line.kind == 12 ? 16px : 13px;
-        font-weight: heading || line.kind == 12 || line.kind == 53 ? 650 : 400;
-        font-family: line.kind == 2 || line.kind == 10 || line.kind == 53 ? "Menlo" : "";
+        font-size: heading ? Theme.font-body : line.kind == 12 ? Theme.font-section : mono ? Theme.font-mono : Theme.font-body;
+        font-weight: heading || line.kind == 12 || line.kind == 53 ? Theme.weight-strong : Theme.weight-regular;
+        font-family: mono ? Theme.mono-family : "";
     }
     t := TouchArea {
         enabled: root.button;
@@ -91,8 +93,8 @@ export component StartDetails inherits Rectangle {
             Text {
                 text: StartData.model.detail-title;
                 color: Theme.text;
-                font-size: 15px;
-                font-weight: 650;
+                font-size: Theme.font-section;
+                font-weight: Theme.weight-strong;
                 wrap: word-wrap;
                 horizontal-stretch: 1;
                 vertical-alignment: center;
@@ -112,10 +114,10 @@ export component StartDetails inherits Rectangle {
                 padding: 16px;
                 spacing: 6px;
                 Text {
-                    text: services ? @tr("Connections") : lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
+                    text: services ? @tr("Service connections") : lens == 1 ? metric : lens == 2 ? @tr("Test gaps") : @tr("Problems and cycles");
                     color: Theme.text;
                     font-size: Theme.font-section;
-                    font-weight: 650;
+                    font-weight: Theme.weight-strong;
                 }
                 HorizontalLayout {
                     alignment: start;

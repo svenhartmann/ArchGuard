@@ -35,7 +35,7 @@ use evidence::Evidence;
 use follow_place::navigation;
 use scene::Camera;
 use services::ServicesWorld;
-pub use state::{Lens, Selection, StartState};
+pub use state::{Lens, StartState};
 use state::{Mode, from_evidence};
 
 pub use view::push;
@@ -274,7 +274,7 @@ fn snapshot_overrides(s: &mut StartState) {
     if let Some(name) = var("ARCHGUARD_DESKTOP_PICK")
         && let Some(area) = s.scope.areas.iter().position(|a| a.name == name)
     {
-        s.select(Selection {
+        s.select(state::Selection {
             area,
             entity: None,
             members: None,
