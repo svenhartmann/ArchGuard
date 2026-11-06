@@ -61,6 +61,9 @@ pub struct Tab {
     pub node: Option<String>,
     /// The Graph's display: 0 tree, 1 network, 2 dependencies.
     pub display: i32,
+    /// The Start tab's kept World view (`start_ui::memo`), as key/value
+    /// pairs; empty for other views.
+    pub world: Vec<(String, String)>,
 }
 
 impl Tab {
@@ -314,6 +317,7 @@ impl Layout {
                 .or((kind == SETTINGS).then_some("archguard.toml"))
                 .map(str::to_string),
             display: 0,
+            world: Vec::new(),
         }
     }
 
@@ -445,6 +449,7 @@ mod tests {
             id: 0,
             node: node.map(str::to_string),
             display: 0,
+            world: Vec::new(),
         }
     }
 

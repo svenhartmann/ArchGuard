@@ -16,6 +16,7 @@ mod follow_place;
 mod hover;
 mod keys;
 mod layout;
+mod memo;
 mod modes;
 mod motion;
 mod overlay;
@@ -54,6 +55,8 @@ struct Inputs {
     findings: Vec<Finding>,
     /// The document's topology, read once (the Services tab shares it).
     topology: Shared<Topology>,
+    /// The World view kept with the pane layout.
+    memo: memo::Memo,
 }
 
 impl Inputs {
@@ -65,6 +68,7 @@ impl Inputs {
             graph: data.run.graph.clone(),
             findings: data.run.report.findings.clone(),
             topology: Shared::<Topology>::active(),
+            memo: memo::kept(),
         }
     }
 
@@ -78,6 +82,7 @@ impl Inputs {
             graph,
             findings,
             topology,
+            memo,
         } = self;
         let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
@@ -85,6 +90,7 @@ impl Inputs {
         let services = ServicesWorld::new(tab_support::topology(&topology, &root));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
         state.root = root.display().to_string();
+        state.restore(&memo);
         snapshot_overrides(&mut state);
         state
     }
@@ -254,6 +260,7 @@ fn source_graph(s: &mut StartState, ui: &AppWindow) {
 impl TabState for StartState {
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
+        memo::keep(ui, self);
     }
 
     /// Keeps the canvas size the view reported.
@@ -560,6 +567,67 @@ mod tests {
         assert_eq!(v["tools"][1]["arguments"]["within"], "domain");
         assert_eq!(v["project"], s.root.as_str());
         assert!(!s.root.is_empty());
+    }
+
+    /// The kept view comes back in a new state of the same project; a
+    /// package or area that no longer exists is left out.
+    #[test]
+    fn the_world_view_is_kept_and_restored() {
+        let (mut s, _) = fixture_state("py-layers");
+        assert_eq!(s.memo(), Vec::new(), "defaults are not kept");
+        s.set_kpi(3);
+        let domain = s.scope.areas.iter().position(|a| a.name == "domain");
+        s.pick(domain.expect("domain") as i32 + 1);
+        let memo = s.memo();
+        let (mut back, _) = fixture_state("py-layers");
+        back.restore(&memo);
+        assert_eq!((back.lens, back.kpi), (Lens::Explore, 3));
+        let sel = back.selection.clone().expect("the area");
+        assert_eq!(back.scope.areas[sel.area].name, "domain");
+        assert_eq!(back.memo(), memo);
+        let gone: memo::Memo = vec![
+            ("within".into(), "no/such/package".into()),
+            ("area".into(), "gone".into()),
+            ("lens".into(), "2".into()),
+        ];
+        let (mut other, _) = fixture_state("py-layers");
+        other.restore(&gone);
+        assert_eq!(
+            (other.within.clone(), other.selection.clone()),
+            (None, None)
+        );
+        assert_eq!(other.lens, Lens::Coverage);
+    }
+
+    /// The services World keeps its filters, the architecture mode and
+    /// the selected island.
+    #[test]
+    fn the_services_view_is_kept_and_restored() {
+        let dir = two_projects();
+        let mut s = fixture_state_at(dir.path());
+        let api = {
+            let w = s.services.as_mut().expect("services");
+            w.filter.cycles_only = true;
+            w.filter.direction = services::Direction::Outgoing;
+            let api = w
+                .inventory
+                .iter()
+                .position(|i| i.path == "api")
+                .expect("api");
+            w.selected = Some(api);
+            api
+        };
+        let memo = s.memo();
+        let mut back = fixture_state_at(dir.path());
+        back.restore(&memo);
+        let w = back.services.as_ref().expect("services");
+        assert!(w.filter.cycles_only && !w.filter.flow);
+        assert_eq!(w.filter.direction, services::Direction::Outgoing);
+        assert_eq!((w.selected, back.mode), (Some(api), Mode::Services));
+        s.set_mode(Mode::Architecture);
+        let mut arch = fixture_state_at(dir.path());
+        arch.restore(&s.memo());
+        assert_eq!(arch.mode, Mode::Architecture);
     }
 
     /// Two npm projects side by side.

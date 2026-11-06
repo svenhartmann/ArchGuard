@@ -4,7 +4,9 @@
 //! [projects."/work/shop"]
 //! # view tabs per pane: a view id, or a view instance with its node
 //! panes = [["graph", { view = "graph", node = "crates/core", display = 1 }],
-//!          [{ view = "file", node = "crates/core/src/lib.rs" }, "dsm"]]
+//!          [{ view = "file", node = "crates/core/src/lib.rs" }, "dsm"],
+//!          # the Start tab's World view (`start_ui::memo`)
+//!          [{ view = "start", world = { mode = "architecture", lens = "1", area = "crates/core" } }]]
 //! pane_active = [1, 0]                          # selected tab per pane
 //! pane_focus = 1
 //! pane_ratio = 0.5                              # left pane's share
@@ -65,6 +67,7 @@ fn read_tab(v: &Value) -> Option<Tab> {
         id: 0,
         node: None,
         display: 0,
+        world: Vec::new(),
     };
     if let Some(kind) = v.as_str() {
         return Some(tab(kind));
@@ -77,13 +80,19 @@ fn read_tab(v: &Value) -> Option<Tab> {
         .and_then(Value::as_integer)
         .and_then(|d| i32::try_from(d).ok())
         .unwrap_or(0);
+    if let Some(w) = t.get("world").and_then(Value::as_inline_table) {
+        out.world = w
+            .iter()
+            .filter_map(|(k, v)| Some((k.to_string(), v.as_str()?.to_string())))
+            .collect();
+    }
     Some(out)
 }
 
 /// A tab as [`read_tab`] reads it: a plain view id when it has nothing of
 /// its own.
 fn tab_value(tab: &Tab) -> Value {
-    if tab.node.is_none() && tab.display == 0 {
+    if tab.node.is_none() && tab.display == 0 && tab.world.is_empty() {
         return tab.kind.as_str().into();
     }
     let mut t = InlineTable::new();
@@ -93,6 +102,14 @@ fn tab_value(tab: &Tab) -> Value {
     }
     if tab.display != 0 {
         t.insert("display", i64::from(tab.display).into());
+    }
+    if !tab.world.is_empty() {
+        let world: InlineTable = tab
+            .world
+            .iter()
+            .map(|(k, v)| (k.as_str(), Value::from(v.as_str())))
+            .collect();
+        t.insert("world", Value::InlineTable(world));
     }
     Value::InlineTable(t)
 }
@@ -114,4 +131,30 @@ pub fn items(layout: &Layout) -> [(&'static str, Item); 5] {
         ("pane_ratio", value(ratio)),
         ("pane_follow", value(layout.follow_left)),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Start tab's kept World view is written as its `world` table and
+    /// read back; a tab without one stays a plain view id.
+    #[test]
+    fn the_world_view_round_trips_with_the_layout() {
+        let mut l = Layout::single("start");
+        l.open_tab("graph", None);
+        let (p, t) = l.find("start").expect("start tab");
+        l.panes[p].tabs[t].world = vec![
+            ("mode".into(), "architecture".into()),
+            ("area".into(), "crates/core".into()),
+        ];
+        let mut table = toml_edit::Table::new();
+        for (k, item) in items(&l) {
+            table.insert(k, item);
+        }
+        let text = table.to_string();
+        let start = r#"{ view = "start", world = { mode = "architecture", area = "crates/core" } }, "graph""#;
+        assert!(text.contains(start), "{text}");
+        assert_eq!(read(&table), Some(l));
+    }
 }
