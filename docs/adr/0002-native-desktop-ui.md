@@ -311,3 +311,28 @@ comparison of the native view against the web view on the same project
   fixtures/py-layers, examples/service-shop; light and dark, en and de);
   the view needs its import, route and menu entry in `ui/app.slint` and
   its label in `ui/panes.slint`, which the integration adds.
+- **2026-11-06:** arc42 chapter editor (`feat/arc42-editor`), asked for by
+  the user: the Architecture tab reads and edits the project's own arc42
+  text instead of only showing the generated document. The text is found
+  in the project (`src/arc42_file.rs`): the shallowest `arc42.md`, or an
+  `arc42/` folder with one file per chapter named by its number
+  (`05_bausteine.md`, `arc42-05.md`; a folder holding `arc42.md` is that
+  file); four folder levels deep, hidden and build folders skipped. The
+  reader shows the file's chapter with its generated blocks refreshed,
+  and the generated chapter where the file has none. "Edit chapter" opens
+  the chapter's Markdown beside a preview drawn as the reader draws it,
+  updated on every edit. Saving writes the chapter atomically: text
+  outside the `archguard:arc42` blocks stays as typed, the blocks are
+  refreshed with `Arc42Document::merge` as `archguard doc --arc42` does
+  (edits inside them are dropped), a broken marker refuses the save
+  without touching the file, CRLF files stay CRLF; in a folder a missing
+  chapter becomes `arc42-NN.md`. A project with neither asks on save:
+  `arc42.md` in the project folder (the CLI's default), another place in
+  the project (save dialog), or cancel. The choice is not stored in the
+  settings; the search finds the file next time, which is why a place
+  outside the project is refused. Snapshot hook `ARCHGUARD_DESKTOP_ARC_EDIT`
+  (`1` opens the editor, `save` also saves). Checked with unit tests and
+  headless snapshots on macOS (temp copy of fixtures/py-layers, with and
+  without an `arc42.md` written by the CLI); not checked yet: typing in
+  the editor, the save dialog, narrow panes, the German window and the
+  folder layout in the window.
