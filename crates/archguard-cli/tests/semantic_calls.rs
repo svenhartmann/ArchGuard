@@ -19,13 +19,15 @@ fn calls_command_reports_kotlin_token_measurements_as_partial() {
         String::from_utf8_lossy(&output.stderr)
     );
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    // Calls stay unresolved: partial coverage and no call edges, never a
-    // clean, complete call graph.
+    // Types stay unresolved: partial coverage, never a clean, complete call
+    // graph.
     assert_eq!(result["status"], "partial");
     assert_eq!(result["analyzers"][0]["language"], "kotlin");
     assert_eq!(result["analyzers"][0]["backend"], "archguard tokens");
     assert_eq!(result["analyzers"][0]["files"], 1);
-    assert_eq!(result["calls"].as_array().unwrap().len(), 0);
+    // `println` is declared nowhere in the project: external.
+    assert_eq!(result["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(result["calls"][0]["resolution"], "external");
     assert_eq!(result["methods"][0]["name"], "main");
     assert_eq!(result["methods"][0]["complexity"]["cyclomatic"], 2);
 }
@@ -106,6 +108,64 @@ fn calls_command_resolves_php_calls_statically() {
         .unwrap();
     // Combined reports prefix ids with their language.
     assert_eq!(of["to_class"], "php:Shop/Price.php::Price");
+    assert_eq!(of["dispatch"], "static");
+    assert!(
+        result["analyzers"][0]["diagnostics"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("Calls: 5 sites, 3 project, 1 external, 1 unresolved")
+    );
+}
+
+#[test]
+fn calls_command_resolves_kotlin_calls_statically() {
+    let root = tempfile::tempdir().unwrap();
+    for (path, source) in [
+        (
+            "src/shop/Cart.kt",
+            "package shop\n\nimport shop.Price as P\n\nclass Cart {\n    fun total(items: List<Int>): Int {\n        check()\n        items.sum()\n        return P.of(maxOf(1, 2)).cents\n    }\n    private fun check() {}\n}\n",
+        ),
+        (
+            "src/shop/Price.kt",
+            "package shop\n\nclass Price(val cents: Int) {\n    companion object {\n        fun of(n: Int) = Price(n)\n    }\n}\n",
+        ),
+    ] {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("archguard"))
+        .args(["calls", root.path().to_str().unwrap(), "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Types stay unresolved, so coverage stays partial.
+    assert_eq!(result["status"], "partial");
+    assert_eq!(result["analyzers"][0]["language"], "kotlin");
+    let calls = result["calls"].as_array().unwrap();
+    let count = |kind: &str| calls.iter().filter(|c| c["resolution"] == kind).count();
+    // check(), P.of(…), Price(n); maxOf(…); items.sum() on a parameter.
+    assert_eq!(
+        (
+            calls.len(),
+            count("project"),
+            count("external"),
+            count("unresolved")
+        ),
+        (5, 3, 1, 1),
+        "{calls:#?}"
+    );
+    let of = calls
+        .iter()
+        .find(|c| c["code"] == "P.of(maxOf(1, 2))")
+        .unwrap();
+    // Combined reports prefix ids with their language.
+    assert_eq!(of["to_class"], "kotlin:shop/Price.kt::Price.Companion");
     assert_eq!(of["dispatch"], "static");
     assert!(
         result["analyzers"][0]["diagnostics"][0]

@@ -1,6 +1,7 @@
 //! Token-based Kotlin structure and measurements: classes, objects and
 //! functions with per-function complexity, cognitive and Halstead counts.
-//! No Kotlin compiler is needed; calls and types stay unresolved.
+//! No Kotlin compiler is needed; types stay unresolved. Call sites and the
+//! declarations a resolver needs come from [`super::calls`].
 //!
 //! Rules mirror the Rust, Python and PHP analyzers (`ast-decisions-v1`,
 //! `source-maintainability/v1`):
@@ -28,324 +29,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_core::{CallClass, CallMethod, MethodComplexity, SourceMethodMetrics};
 
-use crate::lex::{Flavor, tokens};
-
-/// Multi-character operators, longest first; the lexer emits single characters.
-const OPERATORS: [&str; 25] = [
-    "!==", "===", "..<", "as?", "!is", "!in", "?.", "?:", "!!", "::", "->", "==", "!=", "<=", ">=",
-    "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "..",
-];
-const KEYWORDS: [&str; 30] = [
-    "as",
-    "as?",
-    "break",
-    "by",
-    "catch",
-    "class",
-    "continue",
-    "do",
-    "else",
-    "finally",
-    "for",
-    "fun",
-    "if",
-    "in",
-    "!in",
-    "interface",
-    "is",
-    "!is",
-    "object",
-    "return",
-    "super",
-    "this",
-    "throw",
-    "try",
-    "typealias",
-    "val",
-    "var",
-    "when",
-    "where",
-    "while",
-];
-/// Keywords that start a declaration wherever they stand.
-const DECLARES: [&str; 11] = [
-    "fun",
-    "val",
-    "var",
-    "class",
-    "interface",
-    "object",
-    "typealias",
-    "init",
-    "constructor",
-    "import",
-    "package",
-];
-const MODIFIERS: [&str; 25] = [
-    "public",
-    "protected",
-    "private",
-    "internal",
-    "abstract",
-    "open",
-    "final",
-    "sealed",
-    "data",
-    "enum",
-    "annotation",
-    "inner",
-    "value",
-    "inline",
-    "companion",
-    "override",
-    "suspend",
-    "operator",
-    "infix",
-    "tailrec",
-    "external",
-    "const",
-    "lateinit",
-    "expect",
-    "actual",
-];
-
-struct Tok {
-    text: String,
-    literal: bool,
-    line: u32,
-    end_line: u32,
-    start: usize,
-    end: usize,
-}
-
-impl Tok {
-    /// A name; backtick-quoted names count although the lexer marks them literal.
-    fn is_name(&self) -> bool {
-        (!self.literal
-            && self
-                .text
-                .starts_with(|c: char| c.is_alphabetic() || c == '_'))
-            || self.text.starts_with('`')
-    }
-}
-
-/// Lexer tokens without line breaks, with adjacent operator characters merged.
-fn merged(source: &str) -> Vec<Tok> {
-    let raw: Vec<_> = tokens(source, Flavor::Kotlin)
-        .into_iter()
-        .filter(|token| token.text != "\n")
-        .collect();
-    let mut out: Vec<Tok> = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        let width = OPERATORS
-            .iter()
-            .map(|op| op.chars().count())
-            .find(|&n| {
-                let part = &raw[i..(i + n).min(raw.len())];
-                part.len() == n
-                    && part.windows(2).all(|w| w[0].end == w[1].start)
-                    && part.iter().all(|t| !t.literal)
-                    && OPERATORS.contains(
-                        &part
-                            .iter()
-                            .map(|t| t.text.as_str())
-                            .collect::<String>()
-                            .as_str(),
-                    )
-            })
-            .unwrap_or(1);
-        let (first, last) = (&raw[i], &raw[i + width - 1]);
-        out.push(Tok {
-            text: raw[i..i + width].iter().map(|t| t.text.as_str()).collect(),
-            literal: first.literal,
-            line: first.line,
-            end_line: last.end_line,
-            start: first.start,
-            end: last.end,
-        });
-        i += width;
-    }
-    out
-}
-
-/// The index of the closing bracket for every opening one; `None` when unbalanced.
-fn pairs(toks: &[Tok]) -> Option<BTreeMap<usize, usize>> {
-    let mut open = Vec::new();
-    let mut out = BTreeMap::new();
-    for (index, token) in toks.iter().enumerate().filter(|(_, t)| !t.literal) {
-        match token.text.as_str() {
-            "(" | "[" | "{" => open.push(index),
-            ")" | "]" | "}" => {
-                out.insert(open.pop()?, index);
-            }
-            _ => {}
-        }
-    }
-    open.is_empty().then_some(out)
-}
-
-/// Where a declaration header ends.
-enum Start {
-    /// A `{` body at this index.
-    Block(usize),
-    /// An `=` expression body at this index.
-    Expr(usize),
-    /// No body; the next declaration starts at this index.
-    None(usize),
-}
-
-/// Tokens with their bracket pairs, and the lookups both passes share.
-struct Code<'a> {
-    toks: &'a [Tok],
-    pairs: BTreeMap<usize, usize>,
-}
-
-impl<'a> Code<'a> {
-    /// The code text at `i`; empty for literals and past the end.
-    fn text(&self, i: usize) -> &'a str {
-        self.toks
-            .get(i)
-            .filter(|t| !t.literal)
-            .map_or("", |t| t.text.as_str())
-    }
-    fn is_name(&self, i: usize) -> bool {
-        self.toks.get(i).is_some_and(Tok::is_name)
-    }
-    /// `i` is a member name such as `Foo::class` or `x.object`.
-    fn after_member(&self, i: usize) -> bool {
-        i > 0 && matches!(self.text(i - 1), "." | "?." | "::")
-    }
-    /// The token at `i` opens a new source line.
-    fn new_line(&self, i: usize) -> bool {
-        i > 0 && i < self.toks.len() && self.toks[i].line > self.toks[i - 1].end_line
-    }
-    /// A declaration starts at `i`: a declaring keyword, an annotation, or
-    /// a modifier that a declaring keyword or another modifier follows.
-    fn declares(&self, i: usize) -> bool {
-        let word = self.text(i);
-        DECLARES.contains(&word)
-            || word == "@"
-            || (MODIFIERS.contains(&word)
-                && (DECLARES.contains(&self.text(i + 1)) || MODIFIERS.contains(&self.text(i + 1))))
-    }
-    /// The enclosing scope or statement ends, or a new declaration starts, at `i`.
-    fn ends(&self, i: usize) -> bool {
-        i >= self.toks.len()
-            || matches!(self.text(i), "}" | ")" | "]" | ";")
-            || (self.new_line(i) && self.declares(i))
-    }
-    /// The body after a declaration header that continues at `from`.
-    fn body_start(&self, from: usize) -> Start {
-        let mut angle = 0usize;
-        let mut j = from;
-        while !self.ends(j) {
-            match self.text(j) {
-                "(" | "[" => j = self.pairs[&j],
-                "<" => angle += 1,
-                ">" => angle = angle.saturating_sub(1),
-                "{" => return Start::Block(j),
-                "=" if angle == 0 => return Start::Expr(j),
-                _ => {}
-            }
-            j += 1;
-        }
-        Start::None(j)
-    }
-    /// The index after an expression that starts at `from`.
-    fn expression_end(&self, from: usize) -> usize {
-        let mut j = from;
-        while j < self.toks.len() && (j == from || !self.ends(j)) {
-            if matches!(self.text(j), "(" | "[" | "{") {
-                j = self.pairs[&j];
-            }
-            j += 1;
-        }
-        j
-    }
-    /// The `(` of the parameter list of the named function at `keyword`.
-    fn params(&self, keyword: usize) -> Option<usize> {
-        let mut angle = 0usize;
-        let mut j = keyword + 1;
-        while !self.ends(j) && !matches!(self.text(j), "{" | "=") {
-            match self.text(j) {
-                "(" if angle == 0 => return (j > keyword + 1 && self.is_name(j - 1)).then_some(j),
-                "(" | "[" => j = self.pairs[&j],
-                "<" => angle += 1,
-                ">" => angle = angle.saturating_sub(1),
-                _ => {}
-            }
-            j += 1;
-        }
-        None
-    }
-    /// The dotted name `a.b.C` that starts at `i`.
-    fn dotted(&self, i: usize) -> String {
-        let mut name = self.toks[i].text.clone();
-        let mut j = i + 1;
-        while self.text(j) == "." && self.is_name(j + 1) {
-            name.push('.');
-            name.push_str(&self.toks[j + 1].text);
-            j += 2;
-        }
-        name
-    }
-    /// Modifiers directly before the declaration keyword at `at`.
-    fn modifiers(&self, at: usize) -> BTreeSet<&'a str> {
-        (0..at)
-            .rev()
-            .map(|k| self.text(k))
-            .take_while(|word| MODIFIERS.contains(word))
-            .collect()
-    }
-    /// The kind and name of a class-like declaration at `i`.
-    fn class_at(&self, i: usize) -> Option<(&'static str, String)> {
-        let named = self
-            .is_name(i + 1)
-            .then(|| self.toks[i + 1].text.trim_matches('`').to_string());
-        match self.text(i) {
-            "class" => {
-                let modifiers = self.modifiers(i);
-                let kind = ["enum", "annotation"]
-                    .into_iter()
-                    .find(|m| modifiers.contains(m))
-                    .unwrap_or("class");
-                Some((kind, named?))
-            }
-            "interface" => Some(("interface", named?)),
-            "object" if named.is_some() => Some(("object", named?)),
-            "object" if self.text(i.wrapping_sub(1)) == "companion" => {
-                Some(("object", "Companion".into()))
-            }
-            _ => None,
-        }
-    }
-    /// Names after the header's `:`, sorted; constructor arguments,
-    /// type arguments and `by` delegates are not names of supertypes.
-    fn supertypes(&self, from: usize, to: usize) -> Vec<String> {
-        let mut out = Vec::new();
-        let (mut angle, mut want) = (0usize, false);
-        let mut j = from;
-        while j < to && self.text(j) != "where" {
-            match self.text(j) {
-                "(" | "[" => j = self.pairs[&j],
-                "<" => angle += 1,
-                ">" => angle = angle.saturating_sub(1),
-                // Outside type parameters and parentheses, `:` opens the
-                // supertype list and `,` separates its entries.
-                ":" | "," if angle == 0 => want = true,
-                _ if want && angle == 0 && self.is_name(j) => {
-                    out.push(self.dotted(j));
-                    want = false;
-                }
-                _ => {}
-            }
-            j += 1;
-        }
-        out.sort();
-        out
-    }
-}
+use super::calls::{Calls, ClassDecl};
+use super::sites;
+use super::symbols::KotlinSymbols;
+use super::tokens::{Code, KEYWORDS, Start, Tok, merged, pairs};
 
 /// Classes, functions and raw measurements of one Kotlin file.
 #[derive(Debug, Default)]
@@ -354,6 +41,8 @@ pub struct KotlinStructure {
     pub methods: Vec<CallMethod>,
     pub metrics: Vec<SourceMethodMetrics>,
     pub diagnostics: Vec<String>,
+    /// Declarations and call sites for the engine's call resolver.
+    pub symbols: KotlinSymbols,
 }
 
 /// Scan one Kotlin source. `file` is the source path, `graph_node` the name
@@ -374,9 +63,14 @@ pub fn scan_kotlin_structure(file: &str, graph_node: &str, source: &str) -> Kotl
         package: file.rsplit_once('/').map_or("", |(dir, _)| dir).to_string(),
         out,
         seen: BTreeSet::new(),
+        calls: Calls::new(),
     };
     scan.walk();
-    scan.out
+    let Scan { out, calls, .. } = scan;
+    KotlinStructure {
+        symbols: calls.finish(),
+        ..out
+    }
 }
 
 /// An open class body: its id and whether it is an `object`.
@@ -404,6 +98,8 @@ struct Scan<'a> {
     package: String,
     out: KotlinStructure,
     seen: BTreeSet<String>,
+    /// Declarations and call sites for the resolver.
+    calls: Calls,
 }
 
 impl Scan<'_> {
@@ -424,6 +120,19 @@ impl Scan<'_> {
         match self.code.text(i) {
             "package" if self.code.is_name(i + 1) => {
                 self.package = self.code.dotted(i + 1);
+                self.calls.package(&self.package);
+                i + 1
+            }
+            "import" => self.calls.import(&self.code, i),
+            "val" | "var" => {
+                let owner = owners.last().map(|o| o.id.as_str());
+                self.calls.property(&self.code, i, owner);
+                i + 1
+            }
+            "typealias" if self.code.is_name(i + 1) => {
+                let owner = owners.last().map(|o| o.id.as_str());
+                let name = self.code.toks[i + 1].text.trim_matches('`').to_string();
+                self.calls.value(owner, name);
                 i + 1
             }
             "fun" if self.code.text(i + 1) != "interface" => self.function(i, owners.last()),
@@ -454,6 +163,17 @@ impl Scan<'_> {
             Some(owner) => format!("{}.{name}", owner.id),
             None => format!("{}::{name}", self.file),
         };
+        let supertypes = self.code.supertypes(header, open.unwrap_or(end));
+        let decl = ClassDecl {
+            id: &id,
+            name,
+            kind,
+            outer: owners.last().map(|o| o.id.as_str()),
+            supertypes: supertypes.clone(),
+            modifiers: modifiers.iter().map(|m| m.to_string()).collect(),
+            header: (header, open.unwrap_or(end)),
+        };
+        self.calls.declare_class(&self.code, decl);
         let class = CallClass {
             language: Some("kotlin".into()),
             id: id.clone(),
@@ -465,7 +185,7 @@ impl Scan<'_> {
             kind: kind.into(),
             is_abstract: Some(is_abstract),
             visibility: None,
-            supertypes: self.code.supertypes(header, open.unwrap_or(end)),
+            supertypes,
             supertype_sites: None,
             declaration_files: None,
         };
@@ -526,14 +246,37 @@ impl Scan<'_> {
                 let line = self.code.toks[end - 1].end_line;
                 (span(keyword, open, eq, eq + 1, end, line), end)
             }
-            Start::None(end) => return end,
+            Start::None(end) => {
+                if let Some(owner) = owner {
+                    let name = self.code.toks[open - 1].text.trim_matches('`');
+                    self.calls.declare_bodiless(&owner.id, name);
+                }
+                return end;
+            }
         };
-        let owner = owner.map(|o| (o.id.clone(), o.object));
-        self.record(&span, owner);
+        let member = owner.map(|o| (o.id.clone(), o.object));
+        let (class_id, method_id) = self.record(&span, member);
+        let name = self.code.toks[open - 1].text.trim_matches('`').to_string();
+        let extension = self.code.is_extension(keyword, open);
+        match owner {
+            None => self.calls.declare_function(&name, &method_id, extension),
+            Some(owner) if extension => self.calls.value(Some(&owner.id), name),
+            Some(_) => {}
+        }
+        let owner = sites::Owner {
+            class_id: &class_id,
+            method_id: &method_id,
+            extension,
+        };
+        let params = (open, self.code.pairs[&open]);
+        let body = (span.from, span.to);
+        self.calls
+            .body_calls(&self.code, self.source, body, params, owner);
         next
     }
 
-    fn record(&mut self, span: &Span, owner: Option<(String, bool)>) {
+    /// Record and measure a function; returns its class and method ids.
+    fn record(&mut self, span: &Span, owner: Option<(String, bool)>) -> (String, String) {
         let toks = self.code.toks;
         let is_static = owner.as_ref().is_none_or(|(_, object)| *object);
         let class_id = owner.map_or_else(|| self.module(), |(id, _)| id);
@@ -547,7 +290,7 @@ impl Scan<'_> {
         let measure = Measure::of(&self.code, span.from, span.to);
         self.out.methods.push(CallMethod {
             id: id.clone(),
-            class_id,
+            class_id: class_id.clone(),
             name,
             signature,
             file: self.file.into(),
@@ -561,7 +304,7 @@ impl Scan<'_> {
             }),
         });
         self.out.metrics.push(SourceMethodMetrics {
-            method_id: id,
+            method_id: id.clone(),
             definition: "source-maintainability/v1".into(),
             cognitive: measure.cognitive,
             distinct_operators: measure.operators.len() as u32,
@@ -570,6 +313,7 @@ impl Scan<'_> {
             operands: measure.operand_count,
             source_lines: measure.lines.len() as u32,
         });
+        (class_id, id)
     }
 }
 
