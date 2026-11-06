@@ -38,11 +38,16 @@ component DetailLine inherits Rectangle {
         : line.kind == 52 ? line.a + " → " + line.b + " · " + StartTones.kind-label(line.entity) + (line.flag ? " · " + @tr("Cycle") : "")
         : line.kind == 54 ? @tr("Select neighbor")
         : line.kind == 55 ? @tr("No connections found for these filters. Missing evidence does not prove isolation.")
+        : line.kind == 60 ? (line.flag ? @tr("Source file dependencies: {}. Classes in the same file share this graph evidence.", line.a)
+            : @tr("Original source graph · dependencies crossing this selection.")) + " " + @tr("{} incoming · {} outgoing", line.b, line.c)
+        : line.kind == 61 ? (line.entity == 0 ? @tr("Used by") : @tr("Depends on")) + " · " + line.a
+        : line.kind == 62 ? @tr("{} · {} references · Open in source graph", line.a, line.b)
+        : line.kind == 63 ? @tr("No recorded dependencies in this direction.")
         : line.a;
-    property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 44 || line.kind == 54;
+    property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 44 || line.kind == 54 || line.kind == 62;
     // A connection entry: opens and closes its evidence.
     property <bool> entry: line.kind == 41 || line.kind == 52;
-    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52;
+    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52 || line.kind == 61;
     // Paths, class ids and evidence locations.
     property <bool> mono: line.kind == 2 || line.kind == 10 || line.kind == 53;
     property <length> inset: button ? 10px : entry ? 18px : 0;
@@ -64,7 +69,7 @@ component DetailLine inherits Rectangle {
         width: parent.width - root.inset - (button ? 10px : 0);
         text: root.text;
         wrap: word-wrap;
-        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 ? Theme.muted
+        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 || line.kind == 60 || line.kind == 63 ? Theme.muted
             : line.kind == 52 && line.flag ? Theme.cycle : Theme.text;
         font-size: heading ? Theme.font-body : line.kind == 12 ? Theme.font-section : mono ? Theme.font-mono : Theme.font-body;
         font-weight: heading || line.kind == 12 || line.kind == 53 ? Theme.weight-strong : Theme.weight-regular;
@@ -76,6 +81,8 @@ component DetailLine inherits Rectangle {
         clicked => {
             if (root.entry) {
                 StartData.toggle-entry(line.id);
+            } else if (line.kind == 62) {
+                StartData.open-source(line.a);
             } else if (line.kind == 44) {
                 StartData.pick-neighbor(line.entity);
             } else if (line.kind == 30 || line.kind == 54) {

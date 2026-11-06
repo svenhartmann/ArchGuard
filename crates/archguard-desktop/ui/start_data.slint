@@ -236,6 +236,8 @@ export global StartData {
     callback pick-neighbor(int);
     // 0 Cycles, 1 Matrix, 2 Calls, 3 Class metrics, 4 Quality scope.
     callback detail-action(int);
+    // "Open in source graph" for a node of the source dependencies.
+    callback open-source(string);
     // 0 architecture, 1 services.
     callback set-mode(int);
     // which: 0 deployment, 1 source, 2 kind, 3 direction (StartServices).

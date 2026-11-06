@@ -329,3 +329,24 @@ msgstr "Pfad kopiert."
 
 msgid "Read-only MCP requests for this selection copied."
 msgstr "Lesende MCP-Abfragen für diese Auswahl kopiert."
+
+msgid "Source file dependencies: {}. Classes in the same file share this graph evidence."
+msgstr "Abhängigkeiten der Quelldatei: {}. Klassen derselben Datei teilen diese Graphbelege."
+
+msgid "Original source graph · dependencies crossing this selection."
+msgstr "Ursprünglicher Quellgraph · Abhängigkeiten über die Grenze dieser Auswahl."
+
+msgid "{} incoming · {} outgoing"
+msgstr "{} eingehend · {} ausgehend"
+
+msgid "Used by"
+msgstr "Verwendet von"
+
+msgid "Depends on"
+msgstr "Abhängig von"
+
+msgid "{} · {} references · Open in source graph"
+msgstr "{} · {} Verweise · Im Quellgraph öffnen"
+
+msgid "No recorded dependencies in this direction."
+msgstr "Keine erfassten Abhängigkeiten in dieser Richtung."

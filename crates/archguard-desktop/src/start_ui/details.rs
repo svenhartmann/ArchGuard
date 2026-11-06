@@ -50,6 +50,14 @@ pub mod kind {
     /// "Select neighbor": `entity` the island.
     pub const SVC_NEIGHBOR: i32 = 54;
     pub const SVC_NONE: i32 = 55;
+    // Source dependencies (`source_deps.rs`).
+    /// `a` the node, `b`/`c` incoming/outgoing; `flag`: a class's file.
+    pub const SRC_HEAD: i32 = 60;
+    /// "Used by" (`entity` 0) or "Depends on" (1) · `a`.
+    pub const SRC_DIR: i32 = 61;
+    /// A neighbour `a` with `b` references: opens it in the Graph.
+    pub const SRC_NODE: i32 = 62;
+    pub const SRC_NONE: i32 = 63;
 }
 
 pub(super) fn line(
@@ -106,6 +114,7 @@ pub fn fill(m: &mut StartModel, s: &StartState, l: Locale) {
         members(l, &mut lines, s, sel);
     }
     evidence(&mut lines, s, sel);
+    source_dependencies(&mut lines, s);
     m.detail_lines = ModelRc::new(VecModel::from(lines));
     m.detail_class = sel
         .entity
@@ -279,6 +288,41 @@ fn members(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection)
     }
     if rows.len() > s.limit {
         out.push(line(kind::MORE, n(l, rows.len() - s.limit), "", ""));
+    }
+}
+
+/// The source dependencies of the selection ([`super::source_deps`]).
+fn source_dependencies(out: &mut Vec<StartLine>, s: &StartState) {
+    let Some(t) = s.action_target() else { return };
+    let Some(deps) = super::source_deps::of(&s.ev.graph, &t.node) else {
+        return;
+    };
+    let (ins, outs) = (deps.incoming.len(), deps.outgoing.len());
+    out.push(StartLine {
+        flag: t.class_id.is_some(),
+        ..line(
+            kind::SRC_HEAD,
+            deps.name.as_str(),
+            ins.to_string(),
+            outs.to_string(),
+        )
+    });
+    for (dir, rows) in [(0, &deps.incoming), (1, &deps.outgoing)] {
+        out.push(StartLine {
+            entity: dir,
+            ..line(kind::SRC_DIR, rows.len().to_string(), "", "")
+        });
+        for n in rows.iter().take(s.limit) {
+            let weight = n.weight.to_string();
+            out.push(line(kind::SRC_NODE, n.node.as_str(), weight, ""));
+            out.extend(n.refs.iter().map(|r| line(kind::PATH, r.as_str(), "", "")));
+        }
+        if rows.is_empty() {
+            out.push(line(kind::SRC_NONE, "", "", ""));
+        }
+        if rows.len() > s.limit {
+            out.push(line(kind::MORE, (rows.len() - s.limit).to_string(), "", ""));
+        }
     }
 }
 

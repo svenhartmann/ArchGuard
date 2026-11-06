@@ -25,6 +25,7 @@ mod scene;
 mod services;
 mod services_view;
 mod services_wire;
+mod source_deps;
 mod stage;
 mod state;
 mod view;
@@ -219,6 +220,17 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
     ));
     wire_hover(ui, d);
     d.on_detail_action(tab_support::with_ui(ui, detail_action));
+    d.on_open_source(tab_support::with_ui(ui, |ui, name: slint::SharedString| {
+        let node = crate::documents::with_active_state(|s: &mut StartState| {
+            s.ev.graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name.as_str())
+        });
+        if let Some(Some(n)) = node {
+            crate::panes_ui::reveal(ui, n);
+        }
+    }));
 }
 
 /// Cycles, Matrix, Calls, Class metrics or Quality scope for the
