@@ -44,7 +44,7 @@ export component SecurityList inherits VerticalLayout {
             height: i < root.shown ? self.preferred-height : 0;
             text: e.text + (e.packages >= 0 ? " · " + @tr("Security" => "{} packages", Fmt.int(e.packages)) : "");
             color: Theme.text;
-            font-size: 12px;
+            font-size: Theme.font-small;
             wrap: word-wrap;
         }
         if root.shown < root.entries.length: HorizontalLayout {
@@ -74,22 +74,22 @@ export component SecurityCard inherits Rectangle {
             spacing: 16px;
             alignment: start;
             SeverityChip { key: root.item.severity; }
-            Text { text: root.item.package; color: Theme.text; font-size: 15px; font-weight: 700; vertical-alignment: center; }
-            Text { text: root.item.id; color: Theme.text; font-size: 14px; vertical-alignment: center; }
+            Text { text: root.item.package; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; vertical-alignment: center; }
+            Text { text: root.item.id; color: Theme.text; font-size: Theme.font-body; vertical-alignment: center; }
         }
-        Text { text: root.item.title; color: Theme.text; font-size: 12px; wrap: word-wrap; }
+        Text { text: root.item.title; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 16px;
             alignment: start;
             Text {
                 text: root.item.ecosystem + " · " + @tr("Security" => "Installed: {}", root.item.installed);
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
             }
             Text {
                 text: root.item.fixed != "" ? @tr("Security" => "Fixed version(s): {}", root.item.fixed) : @tr("Security" => "No fixed version reported");
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 wrap: word-wrap;
                 horizontal-stretch: 1;
             }
@@ -99,7 +99,7 @@ export component SecurityCard inherits Rectangle {
             link := Text {
                 text: @tr("Security" => "Open advisory");
                 color: Theme.accent;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.open-url(root.item.url); }

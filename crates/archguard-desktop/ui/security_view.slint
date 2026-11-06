@@ -1,7 +1,8 @@
 // Security tab: the web viewer's dependency scan (renderSecurity in
 // viewer_security.js). Data and callbacks live in SecurityData, set from
 // src/security_ui.rs.
-import { ComboBox, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Button, KpiItem, StatCard, SeverityChip, StatusLine, Disclosure, EmptyState } from "widgets.slint";
@@ -73,7 +74,7 @@ component Fact inherits Text {
     in property <string> value;
     text: label + ": " + (value != "" ? value : @tr("Security" => "Not reported"));
     color: Theme.text;
-    font-size: 14px;
+    font-size: Theme.font-body;
     wrap: word-wrap;
 }
 
@@ -92,13 +93,13 @@ component Coverage inherits Rectangle {
         padding-top: 10px;
         padding-bottom: 10px;
         spacing: 8px;
-        Disclosure { text: @tr("Security" => "Scan"); size: 14px; tint: Theme.text; open <=> root.open; }
+        Disclosure { text: @tr("Security" => "Scan"); size: Theme.font-body; tint: Theme.text; open <=> root.open; }
         if root.open: VerticalLayout {
             spacing: 8px;
             Text {
                 text: @tr("Security" => "Original scan snapshot; graph simulations do not update these findings. Top workspace KPIs describe source dependencies.");
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 wrap: word-wrap;
             }
             Fact { label: @tr("Security" => "Scanner"); value: root.model.scanner; }
@@ -107,7 +108,7 @@ component Coverage inherits Rectangle {
             Text {
                 text: @tr("Security" => "Run a fresh scan in your terminal; this viewer only reads the saved result.");
                 color: Theme.text;
-                font-size: 14px;
+                font-size: Theme.font-body;
                 wrap: word-wrap;
             }
             command := TextInput {
@@ -116,8 +117,8 @@ component Coverage inherits Rectangle {
                 single-line: false;
                 wrap: word-wrap;
                 color: Theme.text;
-                font-family: "Menlo";
-                font-size: 13px;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-body;
             }
             HorizontalLayout {
                 alignment: start;
@@ -131,7 +132,7 @@ component Coverage inherits Rectangle {
                         root.copied = @tr("Security" => "Copied.");
                     }
                 }
-                Text { text: root.copied; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                Text { text: root.copied; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
             }
             SecurityList {
                 label: @tr("Security" => "Manifest / lockfile coverage");
@@ -170,7 +171,7 @@ component Controls inherits HorizontalLayout {
                 height: 100%;
                 text: root.model.query;
                 color: Theme.text;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 vertical-alignment: center;
                 single-line: true;
                 edited => { SecurityData.set-query(self.text); }
@@ -181,7 +182,7 @@ component Controls inherits HorizontalLayout {
                 height: 100%;
                 text: @tr("Security" => "Package name or advisory ID");
                 color: Theme.muted;
-                font-size: 13px;
+                font-size: Theme.font-body;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -219,7 +220,7 @@ export component SecurityView inherits Rectangle {
     if !root.model.loaded: Text {
         text: @tr("Security" => "Reading the saved dependency scan …");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -258,7 +259,7 @@ export component SecurityView inherits Rectangle {
             Text {
                 text: @tr("Security" => "{} / {} matching findings shown · {} in snapshot", Fmt.int(root.model.shown), Fmt.int(root.model.matching), Fmt.int(root.model.total));
                 color: Theme.muted;
-                font-size: 12px;
+                font-size: Theme.font-small;
                 wrap: word-wrap;
             }
             Rectangle { height: 12px; }
