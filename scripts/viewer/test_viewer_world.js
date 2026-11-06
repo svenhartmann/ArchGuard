@@ -39,7 +39,7 @@ const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance
 const fixture={developmentPaths:JSON.parse(fs.readFileSync('crates/archguard-core/src/development_paths.json','utf8')),root:'/project',nodes:[{id:0,name:'p',kind:'module',parent:null},{id:1,name:'p/A.java',kind:'file',parent:0},{id:2,name:'q',kind:'module',parent:null},{id:3,name:'q/B.java',kind:'file',parent:2}],edges:[{from:1,to:3,count:1,refs:[]},{from:3,to:1,count:1,refs:[]}],findings:[],cyclicEdges:[],view:{depth:0,visible:null},insights:{world:{definition:'architecture-world/v1',revision:'a'.repeat(64),status:'partial',entities:[{id:'class:p.A',node:'p/A.java',class_id:'p.A',max_complexity:7,coverage:null},{id:'file:q/B.java',node:'q/B.java',class_id:null,max_complexity:null,coverage:null}]}}};
 const app=launch(fixture,{library:false});app.run("showTab('start')");
 assert.equal(app.ids.get('start-world').hidden,false);
-assert.equal(app.ids.get('world-lens-change').hidden,true,'Change is not offered in World View');
+assert.equal(app.ids.get('world-lens-change'),undefined,'Change is not offered in World View');
 assert.doesNotMatch(app.run('worldHelp()'),/change lens|Änderungslinse/i);
 assert.equal(app.ids.get('start-atlas').hidden,true);
 assert.equal(app.run('worldUi.model.areas.length'),2);
@@ -64,8 +64,7 @@ const legendLabels=()=>Array.from(legend.querySelectorAll('button[data-world-leg
 for(const [lens,labels] of [
  ['problems',['Zyklus / Befund','Klassen / Dateien']],
  ['complexity',['Gering → hoch','Unbekannt']],
- ['coverage',['Testlücken','Abgedeckt','Unbekannt']],
- ['change',['Auswahl & Verwender','Abhängigkeiten','Andere Bereiche']]
+ ['coverage',['Testlücken','Abgedeckt','Unbekannt']]
 ]){
  app.ids.get('world-lens-'+lens).click();assert.deepEqual(legendLabels(),labels,lens);
  const entry=legend.querySelectorAll('button[data-world-legend]')[0];const before=app.run('JSON.stringify([worldUi.camera,worldUi.selection,ops])');entry.click();

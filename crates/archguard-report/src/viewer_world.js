@@ -30,14 +30,10 @@ function renderWorldLegend(){
   ]:[
     ['complexity',t('Low → high','Gering → hoch'),t('Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange. Grouped surfaces use the largest recorded value. The scale is continuous, not a good/bad threshold.','Erfasste maximale zyklomatische Methodenkomplexität, logarithmisch von Türkis nach Orange eingefärbt. Gebündelte Flächen verwenden den größten erfassten Wert. Die Skala ist kontinuierlich, keine Gut-/Schlecht-Grenze.')],
     ['unknown',t('Unknown','Unbekannt'),t('No method complexity has been recorded for this surface. Gray does not mean low complexity.','Für diese Fläche ist keine Methodenkomplexität erfasst. Grau bedeutet nicht geringe Komplexität.')]
-  ]):worldUi.lens==='coverage'?[
+  ]):[
     ['flagged',t('Test gaps','Testlücken'),t('The imported file coverage contains uncovered executable lines. Grouped surfaces are red if all members have usable coverage and at least one has a gap. This does not identify missing test cases.','Die importierte Dateiabdeckung enthält nicht abgedeckte ausführbare Zeilen. Gebündelte Flächen sind rot, wenn alle Mitglieder nutzbare Abdeckung haben und mindestens eines eine Lücke hat. Daraus lassen sich keine konkreten fehlenden Testfälle ablesen.')],
     ['covered',t('Covered','Abgedeckt'),t('All executable lines recorded in the imported file coverage are covered. This does not prove current, complete or passing tests; the report revision at import is unverified.','Alle in der importierten Dateiabdeckung erfassten ausführbaren Zeilen sind abgedeckt. Das beweist keine aktuellen, vollständigen oder bestandenen Tests; die Berichtsrevision beim Import ist ungeprüft.')],
     ['unknown',t('Unknown','Unbekannt'),t('Coverage is missing, stale or cannot be mapped unambiguously. A grouped surface stays gray when any member lacks usable file coverage.','Die Abdeckung ist fehlend, veraltet oder nicht eindeutig zuordenbar. Eine gebündelte Fläche bleibt grau, sobald einem Mitglied eine nutzbare Dateiabdeckung fehlt.')]
-  ]:[
-    ['neutral',t('Selection & dependents','Auswahl & Verwender'),t('The selected area and areas that reach it through recorded dependencies, including indirect paths. These are the ones a change here can affect. This is static reachability, not a runtime impact prediction.','Der gewählte Bereich und Bereiche, die ihn über erfasste Abhängigkeiten erreichen, auch über indirekte Pfade. Sie können von einer Änderung hier betroffen sein. Das zeigt statische Erreichbarkeit, keine vorhergesagte Laufzeitauswirkung.')],
-    ['dependency',t('Dependencies','Abhängigkeiten'),t('Areas reached from the selection through recorded dependencies, including indirect paths. They are context for the selection, not targets of its change impact.','Bereiche, die von der Auswahl über erfasste Abhängigkeiten erreicht werden, auch über indirekte Pfade. Sie sind Kontext der Auswahl, nicht Ziele ihrer Änderungswirkung.')],
-    ['unknown',t('Other areas','Andere Bereiche'),t('No recorded dependency path in either direction to the selection. This does not prove an area is unaffected. Before selecting an area, all surfaces stay neutral.','Kein erfasster Abhängigkeitspfad in eine der beiden Richtungen zur Auswahl. Das beweist nicht, dass ein Bereich unberührt bleibt. Vor der Auswahl sind alle Flächen neutral.')]
   ];
   for(const [key,label,help] of rows){
     const item=button('',()=>{showMetricTooltip(item);metricTooltipPinned=true;},'world-legend-item');item.setAttribute('data-world-legend',key);
@@ -83,16 +79,6 @@ function renderWorldPath(){
     if(i===parts.length-1){crumb.setAttribute('aria-current','page');crumb.disabled=true;path.appendChild(crumb);}
     else path.appendChild(explainAction(crumb,()=>part.scope||t('Project overview','Projektübersicht')));
   }
-}
-function worldAffected(){
-  const seed=worldUi.selection?.area,affected=new Set(seed?[seed]:[]);
-  if(seed){const incoming=new Map();for(const e of worldUi.model.connections){if(!incoming.has(e.to))incoming.set(e.to,[]);incoming.get(e.to).push(e.from);}const queue=[seed];for(let i=0;i<queue.length;i++)for(const next of incoming.get(queue[i])||[])if(!affected.has(next)){affected.add(next);queue.push(next);}}
-  return affected;
-}
-function worldDepends(){
-  const seed=worldUi.selection?.area,down=new Set(seed?[seed]:[]);
-  if(seed){const outgoing=new Map();for(const e of worldUi.model.connections){if(!outgoing.has(e.from))outgoing.set(e.from,[]);outgoing.get(e.from).push(e.to);}const queue=[seed];for(let i=0;i<queue.length;i++)for(const next of outgoing.get(queue[i])||[])if(!down.has(next)){down.add(next);queue.push(next);}}
-  return down;
 }
 function worldMatches(cell){return !worldUi.query||cell.entities.some(e=>((e.class_id||e.node)||'').toLowerCase().includes(worldUi.query));}
 function worldCopyValue(selection,area){const entity=selection?.entity;return entity?.line!=null&&entity.file?entity.file+':'+entity.line:entity?.file||entity?.node||area.name;}
@@ -159,7 +145,7 @@ function renderWorld(){
   worldUi.layout=worldLayout(worldUi.model.areas,e=>worldEntityValue(e),worldKpiActive()?(value=>value===null?.08:.08+Math.log2(1+value)/Math.log2(1+Math.max(1,kpiViewMax))*2):undefined);
   if(worldUi.within===null)worldUi.homeScope=worldUi.model.scope;
   renderWorldPath();
-  for(const lens of ['problems','complexity','coverage','change'])document.getElementById('world-lens-'+lens).setAttribute('aria-pressed',String(worldUi.lens===lens));
+  for(const lens of ['problems','complexity','coverage'])document.getElementById('world-lens-'+lens).setAttribute('aria-pressed',String(worldUi.lens===lens));
   const kpiSelect=document.getElementById('world-kpi'),kpiHelp=document.getElementById('world-kpi-help');kpiSelect.value=worldUi.kpi;kpiSelect.disabled=kpiHelp.disabled=worldUi.lens!=='complexity';
   renderWorldLegend();
   const back=document.getElementById('world-back');back.disabled=worldUi.history.length===0&&!(repositoryModel()?.mode==='project'&&repositoryLive());
@@ -198,7 +184,7 @@ function worldStatus(){
   const cells=worldUi.layout.cells,knownRows=cells.flatMap(c=>c.entities).filter(e=>e.coverage?.lines);
   const covered=knownRows.reduce((n,e)=>n+e.coverage.lines.covered,0),totalLines=knownRows.reduce((n,e)=>n+e.coverage.lines.total,0),gaps=knownRows.filter(e=>e.coverage.lines.covered<e.coverage.lines.total).length;
   const topCell=cells.filter(c=>c.value!==null).sort((a,b)=>b.value-a.value||compareNames(a.area,b.area))[0];
-  const status=document.getElementById('world-status');status.textContent=worldUi.lens==='problems'?t('{count} package cycle groups','{count} Paketzyklus-Gruppen',{count:worldUi.model.cycle_groups}):worldUi.lens==='coverage'?(knownRows.length?t('{gaps} surfaces with gaps · {covered}/{total} lines','{gaps} Flächen mit Lücken · {covered}/{total} Zeilen',{gaps,covered,total:totalLines}):t('Unknown · no usable coverage','Unbekannt · keine nutzbare Abdeckung')):worldUi.lens==='change'?(worldUi.selection?t('{dependents} dependents · {dependencies} dependencies','{dependents} Abhängige · {dependencies} Abhängigkeiten',{dependents:Math.max(0,worldAffected().size-1),dependencies:Math.max(0,worldDepends().size-1)}):t('Select an area · dependents and dependencies','Bereich wählen · Abhängige und Abhängigkeiten')):topCell?t('Highest recorded {kpi}: {value} · {area}','Höchster erfasster {kpi}: {value} · {area}',{kpi:worldKpiLabel(),value:topCell.value,area:topCell.area}):t('Observed {kpi} measurements','Erfasste {kpi}-Messwerte',{kpi:worldKpiLabel()});
+  const status=document.getElementById('world-status');status.textContent=worldUi.lens==='problems'?t('{count} package cycle groups','{count} Paketzyklus-Gruppen',{count:worldUi.model.cycle_groups}):worldUi.lens==='coverage'?(knownRows.length?t('{gaps} surfaces with gaps · {covered}/{total} lines','{gaps} Flächen mit Lücken · {covered}/{total} Zeilen',{gaps,covered,total:totalLines}):t('Unknown · no usable coverage','Unbekannt · keine nutzbare Abdeckung')):topCell?t('Highest recorded {kpi}: {value} · {area}','Höchster erfasster {kpi}: {value} · {area}',{kpi:worldKpiLabel(),value:topCell.value,area:topCell.area}):t('Observed {kpi} measurements','Erfasste {kpi}-Messwerte',{kpi:worldKpiLabel()});
 }
 function setWorldDetailsOpen(open,focus=false){
   worldUi.detailsOpen=open;worldDetails();
@@ -310,7 +296,6 @@ function worldDetails(){
   const context=worldUi.lens+':'+worldUi.kpi;worldUi.detailsContext=context;
   renderWorldContext(panel,selection,area);
   const entity=selection.entity;
-  if(worldUi.lens==='change')panel.appendChild(element('p',t('{dependents} dependents reach this selection; {dependencies} areas are its recorded dependencies.','{dependents} Abhängige erreichen diese Auswahl; {dependencies} Bereiche sind seine erfassten Abhängigkeiten.',{dependents:Math.max(0,worldAffected().size-1),dependencies:Math.max(0,worldDepends().size-1)})));
   const actions=element('div',undefined,'world-actions');panel.appendChild(actions);
   if(!entity&&area.kind==='module')actions.appendChild(button(t('Explore','Erkunden'),()=>worldOpenArea(area.name),'btn btn-primary'));
   actions.appendChild(button(t('Source graph','Quellgraph'),()=>{showTab('graph');revealNode(entity?.node||area.name);},'btn btn-secondary'));
@@ -360,7 +345,7 @@ function worldCameraTo(target,duration=320){
 let worldFlowFrame=null;
 function worldFlowActive(){
   if(ui.workspace!=='start')return false;
-  return isRepositoryOverview()?repositoryWorldState.dataFlow:worldUi.lens==='change'&&!!worldUi.selection;
+  return isRepositoryOverview()&&repositoryWorldState.dataFlow;
 }
 function worldFlowStart(){
   if(worldFlowFrame!=null&&typeof cancelAnimationFrame!=='undefined')cancelAnimationFrame(worldFlowFrame);
@@ -385,7 +370,7 @@ function worldDraw(){
   worldUi.groundLift=base*maxZ/2;
   const project=(x,y,z=0)=>{const p=worldProject(x-cx,y-cy,z,rotation);return {x:w/2+cam.x+p.x*base*cam.zoom,y:h/2+cam.y+(p.y+maxZ/2)*base*cam.zoom};};
   const poly=(ps,fill,stroke)=>{ctx.beginPath();ps.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=.65;ctx.stroke();}};
-  const affected=worldAffected(),downstream=worldUi.lens==='change'?worldDepends():new Set(),byName=new Map(worldUi.model.areas.map(a=>[a.name,a]));
+  const byName=new Map(worldUi.model.areas.map(a=>[a.name,a]));
   // Ground plane: a faint lattice on the shared floor and a soft edge vignette
   // anchor the floating plates. Purely spatial decoration, no measurement.
   try{
@@ -412,12 +397,11 @@ function worldDraw(){
     // stay the neutral surface colour instead of pretending to be zero.
     if(worldUi.lens==='complexity'&&cell.value!==null)tone=worldKpiActive()?color(WORLD_TONES[worldKpiCellState(cell)||'unknown']):worldComplexityColor(cell.value);
     if(worldUi.lens==='coverage'){const known=cell.entities.filter(e=>e.coverage?.lines);if(known.length===cell.entities.length&&known.length){const gap=Math.max(...known.map(e=>1-e.coverage.lines.covered/e.coverage.lines.total));tone=gap?red:green;}}
-    if(worldUi.lens==='change')tone=affected.has(cell.area)?accent:downstream.has(cell.area)?green:muted;
     const selected=worldUi.selection?.entity?cell.entities.some(e=>e.id===worldUi.selection.entity.id):cell.area===worldUi.selection?.area;
     // A search keeps matches readable by taking the others almost entirely out
     // of the picture instead of recolouring them into another legend entry.
     const fog=.72+.28*((worldProject(x+.5,y+.5,0,rotation).y-minD)/((maxD-minD)||1));
-    ctx.globalAlpha=(worldUi.query&&!worldMatches(cell)?.12:(worldUi.lens==='change'&&!affected.has(cell.area)&&!downstream.has(cell.area))?.25:cell.value===null&&worldUi.lens==='complexity'?.35:.85)*fog;
+    ctx.globalAlpha=(worldUi.query&&!worldMatches(cell)?.12:cell.value===null&&worldUi.lens==='complexity'?.35:.85)*fog;
     for(const [i,j,dx,dy]of [[0,1,0,-1],[1,2,1,0],[2,3,0,1],[3,0,-1,0]])if(worldProject(dx,dy,0,rotation).y>1e-8&&heights.get((x+dx)+','+(y+dy))?.area!==cell.area){const corners=[[x,y],[x+1,y],[x+1,y+1],[x,y+1]],side=[ps[i],ps[j],project(...corners[j],-.12),project(...corners[i],-.12)];poly(side,tone,line);poly(side,'rgba(0,0,0,.16)',null);}
     ctx.globalAlpha=1;poly(ps,bg,null);ctx.globalAlpha=selected?.95:.64;poly(ps,tone,null);ctx.globalAlpha=1;
     const peak=project(x+.5,y+.5,z);
@@ -431,17 +415,15 @@ function worldDraw(){
     if(selected||cell===worldUi.hover){ctx.lineWidth=2;ctx.strokeStyle=color('--text');ctx.beginPath();ps.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.stroke();}
     worldUi.hits.push({cell,ps,triangles:ps.map((p,i)=>[p,ps[(i+1)%4],peak])});
   }
-  if(worldUi.lens==='problems'||worldUi.lens==='change'){
-    const visible=new Map(areas.map(a=>[a.name,a]));const edges=isRepositoryOverview()?repositoryVisibleConnections():worldUi.model.connections.filter(e=>worldUi.lens==='problems'?e.cyclic:(e.to===worldUi.selection?.area||e.from===worldUi.selection?.area));
+  if(worldUi.lens==='problems'){
+    const visible=new Map(areas.map(a=>[a.name,a]));const edges=isRepositoryOverview()?repositoryVisibleConnections():worldUi.model.connections.filter(e=>e.cyclic);
     for(const [index,e] of edges.slice(0,60).entries()){
       const a=visible.get(e.from),b=visible.get(e.to);if(!a||!b)continue;
       const p=project(a.x+a.w/2,a.y+a.h/2,.2),q=project(b.x+b.w/2,b.y+b.h/2,.2),dx=q.x-p.x,dy=q.y-p.y,length=Math.max(1,Math.hypot(dx,dy)),bend=Math.min(55,length*.2);
-      // Arrows into the selection are its dependents, arrows away its context.
-      const control={x:(p.x+q.x)/2-dy/length*bend,y:(p.y+q.y)/2+dx/length*bend},tone=isRepositoryOverview()?(e.cyclic?red:e.to===worldUi.selection?.area?accent:green):worldUi.lens==='problems'?red:(e.to===worldUi.selection?.area?accent:green);
+      const control={x:(p.x+q.x)/2-dy/length*bend,y:(p.y+q.y)/2+dx/length*bend},tone=isRepositoryOverview()?(e.cyclic?red:e.to===worldUi.selection?.area?accent:green):red;
       ctx.strokeStyle=tone;ctx.globalAlpha=.85;ctx.lineWidth=1.7;
-      // Marching dashes make the direction readable at a glance while the
-      // change lens is active; they stay still without motion permission.
-      if((worldUi.lens==='change'||isRepositoryOverview()&&e.kind==='event')&&ctx.setLineDash){ctx.setLineDash([7,5]);ctx.lineDashOffset=worldUi.lens==='change'?-worldUi.flow*140:0;}
+      // Event connections of the repository overview are dashed.
+      if(isRepositoryOverview()&&e.kind==='event'&&ctx.setLineDash){ctx.setLineDash([7,5]);ctx.lineDashOffset=0;}
       ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.quadraticCurveTo(control.x,control.y,q.x,q.y);ctx.stroke();if(ctx.setLineDash)ctx.setLineDash([]);
       const t=.72,s=1-t,tip={x:s*s*p.x+2*s*t*control.x+t*t*q.x,y:s*s*p.y+2*s*t*control.y+t*t*q.y};
       const angle=Math.atan2(s*(control.y-p.y)+t*(q.y-control.y),s*(control.x-p.x)+t*(q.x-control.x));
@@ -474,7 +456,6 @@ function initWorld(){
   action.setAttribute('data-world-details','true');action.setAttribute('aria-controls','world-detail');action.setAttribute('aria-keyshortcuts','Enter');worldUi.detailButton=action;
   (document.getElementById('world-export').parentElement||host).appendChild(action);
   host.appendChild(element('style','#start-world{position:relative}#start-world #world-detail{position:absolute;right:0;bottom:0;width:min(420px,calc(100% - 16px));box-sizing:border-box;z-index:8;overflow:auto;overscroll-behavior:contain;background:var(--panel);border:1px solid var(--border);box-shadow:-8px 0 28px #0003;padding:0 16px 16px}#world-detail .world-detail-title{position:sticky;top:0;z-index:2;background:var(--panel);padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:14px}#world-detail .world-detail-title strong{overflow-wrap:anywhere}#world-detail .world-detail-title button{flex-shrink:0}#world-detail pre{white-space:pre-wrap;overflow-wrap:anywhere}'));
-  document.getElementById('world-lens-change').hidden=true;
   worldUi.bound=true;const canvas=document.getElementById('world-canvas'),tip=document.getElementById('world-tip');
   let linkedScope='';try{linkedScope=decodeURIComponent(window.location?.hash?.match(/^#world=(.*)$/)?.[1]||'');}catch{}
   if(linkedScope&&data.nodes.some(n=>n.name===linkedScope&&n.kind==='module')){
@@ -517,7 +498,7 @@ function initWorld(){
   document.getElementById('world-fullscreen').addEventListener('click',event=>workspaceFullscreenToggle(event.currentTarget||event.target));
   document.getElementById('world-back').addEventListener('click',back);
   document.getElementById('world-area').addEventListener('change',e=>{if(isRepositoryOverview()){repositoryOpenWorld(e.target.value);return;}worldUi.selection=e.target.value?{area:e.target.value}:null;worldDetails();worldDraw();worldFlowStart();});
-  for(const lens of ['problems','complexity','coverage','change'])document.getElementById('world-lens-'+lens).addEventListener('click',()=>{worldUi.lens=lens;renderWorld();worldFlowStart();});
+  for(const lens of ['problems','complexity','coverage'])document.getElementById('world-lens-'+lens).addEventListener('click',()=>{worldUi.lens=lens;renderWorld();worldFlowStart();});
   // Choosing a KPI is also choosing the lens it belongs to; the selector then
   // stays disabled in the other lenses instead of looking inert-but-live.
   document.getElementById('world-kpi').addEventListener('change',e=>{worldUi.kpi=['complexity',...WORLD_CLASS_KPIS].includes(e.target.value)?e.target.value:'complexity';worldUi.lens='complexity';renderWorld();worldFlowStart();});

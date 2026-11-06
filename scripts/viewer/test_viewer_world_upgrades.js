@@ -43,13 +43,9 @@ app.ids.get('world-lens-coverage').click();
 assert.match(app.ids.get('world-status').textContent,/140\/200/,'covered and total lines are summed');
 assert.match(app.ids.get('world-status').textContent,/1 surfaces with gaps/,'gapped surfaces are counted');
 
-// The change lens distinguishes dependents from dependencies.
-app.ids.get('world-lens-change').click();
+// The removed change lens leaves no dependency-direction helpers behind.
+assert.equal(app.run("typeof worldAffected+','+typeof worldDepends"),'undefined,undefined');
 const select=app.ids.get('world-area');select.value='q';select.dispatch('change',{target:select});
-assert.equal(app.run('JSON.stringify([...worldAffected()].sort())'),'["p","q"]','dependents reach the selection');
-assert.equal(app.run('JSON.stringify([...worldDepends()].sort())'),'["p","q","r"]','dependencies are reached from the selection');
-assert.match(app.ids.get('world-status').textContent,/1 dependents · 2 dependencies/,'both directions are counted');
-assert.match(app.ids.get('world-detail').textContent,/1 dependents/,'the detail panel reports the direction split');
 
 // Copy path prefers file:line, falling back to node and area names.
 assert.equal(app.run("worldCopyValue({area:'p',entity:{class_id:'p/A.cs',node:'p/A.cs',file:'src/p/A.cs',line:12}},{name:'p'})"),'src/p/A.cs:12');
@@ -103,10 +99,6 @@ motion.run('worldUi.camera={x:80,y:-40,zoom:3,rotation:1}');
 motion.ids.get('world-fit').click();drain(40);
 assert.equal(motion.run('JSON.stringify([worldUi.camera.x,worldUi.camera.y,worldUi.camera.zoom])'),'[0,0,1]','fit glides back without touching the orientation');
 near(motion.run('worldUi.camera.rotation'),1,'fit preserves the current bearing');
-motion.ids.get('world-lens-change').click();
 const motionSelect=motion.ids.get('world-area');motionSelect.value='q';motionSelect.dispatch('change',{target:motionSelect});
-assert.ok(frames.length,'the selected change lens requests flow frames');
-drain(25);assert.ok(motion.run('worldUi.flow')>0,'the arrows advanced');
-motion.run("worldUi.selection=null;worldUi.lens='complexity';");drain(25);
-const advanced=motion.run('worldUi.flow');drain(25);assert.equal(motion.run('worldUi.flow'),advanced,'flow stops when no arrows are shown');
-console.log('World upgrades: search, complexity ranking, coverage rollup, change directions, path copy, PNG export, cross-view jumps and motion passed');
+drain(25);assert.equal(motion.run('worldUi.flow'),0,'a selection in a project World starts no flow animation');
+console.log('World upgrades: search, complexity ranking, coverage rollup, path copy, PNG export, cross-view jumps and motion passed');

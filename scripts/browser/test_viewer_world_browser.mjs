@@ -38,7 +38,7 @@ for(const [width,height]of [[1500,1000],[760,800],[390,700]]){
   await page.focus('#world-legend button');assert.equal(await page.$eval('#metric-tooltip',n=>n.hidden),false);assert.ok((await page.$eval('#metric-tooltip',n=>n.textContent)).length>30);await page.keyboard.press('Escape');
   await page.click('#world-legend button');assert.equal(await page.$eval('#metric-tooltip',n=>n.hidden),false);await page.keyboard.press('Escape');
  }
- assert.equal(await page.$eval('#world-lens-change',n=>getComputedStyle(n).display),'none');
+ assert.equal(await page.$('#world-lens-change'),null);
  await page.click('#world-lens-problems');
  const shape=await page.evaluate(()=>JSON.stringify(worldUi.layout.cells.map(c=>[c.x,c.y,c.z])));
  for(const lens of ['coverage','complexity','problems']){await page.click('#world-lens-'+lens);assert.equal(await page.evaluate(()=>JSON.stringify(worldUi.layout.cells.map(c=>[c.x,c.y,c.z]))),shape,'lens preserves positions');}
