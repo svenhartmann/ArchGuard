@@ -36,7 +36,6 @@ impl Section {
 
     /// The web's section key (`#tab=quality&section=<key>`); snapshot mode
     /// opens a section by it.
-    #[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
     pub fn key(self) -> &'static str {
         match self {
             Section::Heatmap => "heatmap",

@@ -28,9 +28,6 @@
 //! - Architecture tab: `archguard_engine::analyze_target_architecture`
 //!   ([`architecture_snapshot`]) and the arc42 document ([`arc42`]).
 
-// Nothing calls the API until the views' export menu is wired.
-#![allow(dead_code, unused_imports)]
-
 mod architecture;
 mod cells;
 mod file;
@@ -44,9 +41,9 @@ mod snapshot;
 mod svg;
 
 pub use architecture::architecture_snapshot;
-pub use file::{WriteError, write};
+pub use file::write;
 pub use graph::{GraphEdge, GraphFilters, GraphInput, GraphNode, graph_snapshot};
-pub use image::{ImageError, Rect, png};
+pub use image::{Rect, png};
 pub use quality::{QualityFilters, QualityInput, quality_snapshot};
 pub use security::{SecurityFilters, security_snapshot};
 pub use services::{ServiceFilters, services_snapshot};

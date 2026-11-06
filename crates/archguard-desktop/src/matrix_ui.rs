@@ -7,6 +7,7 @@ use std::rc::Rc;
 use slint::{ComponentHandle, SharedString, VecModel};
 
 use crate::documents::with_store;
+use crate::export::GraphInput;
 use crate::format::Locale;
 use crate::instances::{self, Instance};
 use crate::kpi::{self, Value};
@@ -14,8 +15,9 @@ use crate::matrix::{Matrix, MatrixRow, Target};
 use crate::panes::Layout;
 use crate::panes_ui;
 use crate::tab_support::{self, Texts, index, model};
-use crate::tree::Tree;
+use crate::tree::{Sort, Tree};
 use crate::ui::{AppWindow, MatrixColumn, MatrixData, MatrixRowItem};
+use crate::view_export;
 
 /// Rows per page, as the web viewer's matrix.
 const PAGE: usize = 120;
@@ -111,6 +113,35 @@ impl MatrixState {
         self.page = 0;
         self.evidence = None;
         self.marked = None;
+    }
+
+    /// The export's input: every row of the scope at the open packages
+    /// (all pages, no search) and every link between them, as the web
+    /// exports the complete matrix scope.
+    pub fn export_input(&self) -> GraphInput {
+        let rows: BTreeSet<usize> = self
+            .matrix
+            .rows(&self.tree, &self.expanded, "", None, false)
+            .iter()
+            .map(|r| r.node)
+            .collect();
+        // The tree view shows a matrix row once its ancestors are open.
+        let mut open = self.expanded.clone();
+        for &row in &rows {
+            let mut cur = self.tree.nodes[row].parent;
+            while let Some(n) = cur {
+                open.insert(n);
+                cur = self.tree.nodes[n].parent;
+            }
+        }
+        let view = self.tree.view_sorted(&open, Sort::Alphabetical);
+        let links: Vec<usize> = (0..view.links.len()).collect();
+        let keep = |r: usize| rows.contains(&view.rows[r].node);
+        let mut input = view_export::tree_input(&self.tree, &view, &links, keep);
+        input.project = self.project.clone();
+        input.matrix = true;
+        input.filters.reference = self.marked.map(|n| self.tree.nodes[n].name.clone());
+        input
     }
 }
 
@@ -497,5 +528,41 @@ mod tests {
         assert!(evidence(&m).is_some());
         m.evidence = Some((row, m.matrix.columns.len() + 1));
         assert_eq!(evidence(&m), None);
+    }
+
+    /// The export holds every row of the scope (not one page) and the
+    /// links between them, without the rows outside the scope.
+    #[test]
+    fn the_export_is_the_complete_scope() {
+        let mut m = state();
+        let all = m.export_input();
+        assert!(all.matrix);
+        assert!(
+            all.nodes.iter().any(|n| n.name == "top.rs"),
+            "{:?}",
+            all.nodes
+        );
+        assert!(all.nodes.len() > 1, "{:?}", all.nodes);
+        let lib = named(&m, "lib");
+        m.set_scope(Some(lib));
+        m.expanded.insert(named(&m, "lib/src"));
+        let scoped = m.export_input();
+        let names: Vec<&str> = scoped.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"lib/src/a.rs"), "{names:?}");
+        assert!(!names.iter().any(|n| n.starts_with("app")), "{names:?}");
+        let pairs: Vec<_> = scoped
+            .edges
+            .iter()
+            .map(|e| (e.from.as_str(), e.to.as_str()))
+            .collect();
+        assert!(
+            pairs.contains(&("lib/src/a.rs", "lib/src/b.rs")),
+            "{pairs:?}"
+        );
+        assert!(
+            pairs
+                .iter()
+                .all(|(f, t)| f.starts_with("lib") && t.starts_with("lib"))
+        );
     }
 }

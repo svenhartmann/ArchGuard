@@ -1,17 +1,13 @@
 //! Security snapshot and `exportSecurityMarkdown` (English texts of
 //! `viewer_export.js`). The severity order, filter and totals follow
-//! `viewer_security.js` as `security_ui/snapshot.rs` does; that module is
-//! private to the tab, so the few lines are repeated here.
-
-use std::collections::BTreeSet;
+//! `viewer_security.js`, shared with the tab (`security_ui/snapshot.rs`).
 
 use archguard_engine::{SecurityFinding, SecurityReport};
 use serde_json::{Map, Value, json};
 
 use super::cells::{Lines, cell, ordered, row, text, vcell};
 use super::snapshot::{Snapshot, add_filters, base, extend};
-
-const SEVERITIES: [&str; 5] = ["critical", "high", "medium", "low", "unknown"];
+use crate::security_ui::snapshot::{self as shared, SEVERITIES, severity_rank};
 
 /// The Security tab's list filters (`securityUi`).
 #[derive(Debug, Clone, PartialEq)]
@@ -30,47 +26,25 @@ impl Default for SecurityFilters {
     }
 }
 
-fn rank(severity: &str) -> usize {
-    SEVERITIES.iter().position(|s| *s == severity).unwrap_or(4)
-}
-
-/// `filteredSecurityFindings`.
+/// `filteredSecurityFindings` with the web's severity value.
 fn filtered<'a>(r: &'a SecurityReport, f: &SecurityFilters) -> Vec<&'a SecurityFinding> {
-    let query = f.query.trim().to_lowercase();
-    let mut rows: Vec<_> = r
-        .findings
+    let severity = SEVERITIES
         .iter()
-        .filter(|x| f.severity == "all" || SEVERITIES[rank(&x.severity)] == f.severity)
-        .filter(|x| {
-            x.package.to_lowercase().contains(&query) || x.id.to_lowercase().contains(&query)
-        })
-        .collect();
-    rows.sort_by_key(|x| (rank(&x.severity), &x.package, &x.id, &x.installed_version));
-    rows
+        .position(|s| *s == f.severity)
+        .map_or(0, |i| i + 1);
+    shared::filtered(r, &f.query, severity)
 }
 
 /// `securityCounts` plus `matching_findings`.
 fn metrics(r: &SecurityReport, matching: usize) -> Value {
-    let affected: BTreeSet<_> = r
-        .findings
-        .iter()
-        .map(|x| (&x.ecosystem, &x.package, &x.installed_version))
-        .collect();
+    let c = shared::counts(r);
     let mut m = Map::new();
-    m.insert("packages_scanned".into(), json!(r.packages_scanned));
-    m.insert("affected_packages".into(), json!(affected.len()));
-    m.insert("findings".into(), json!(r.findings.len()));
-    m.insert("targets".into(), json!(r.targets.len()));
-    for s in SEVERITIES {
-        m.insert(
-            s.into(),
-            json!(
-                r.findings
-                    .iter()
-                    .filter(|x| SEVERITIES[rank(&x.severity)] == s)
-                    .count()
-            ),
-        );
+    m.insert("packages_scanned".into(), json!(c.packages_scanned));
+    m.insert("affected_packages".into(), json!(c.affected_packages));
+    m.insert("findings".into(), json!(c.findings));
+    m.insert("targets".into(), json!(c.targets));
+    for (s, n) in SEVERITIES.iter().zip(c.by_severity) {
+        m.insert((*s).into(), json!(n));
     }
     m.insert("matching_findings".into(), json!(matching));
     Value::Object(m)
@@ -222,7 +196,7 @@ fn findings(lines: &mut Lines, s: &Value) {
             .filter(|v| !v.is_empty())
             .unwrap_or("No fixed version reported");
         let severity = ["Critical", "High", "Medium", "Low", "Unknown"]
-            [rank(f["severity"].as_str().unwrap_or_default())];
+            [severity_rank(f["severity"].as_str().unwrap_or_default())];
         let targets: Vec<_> = f["targets"]
             .as_array()
             .into_iter()

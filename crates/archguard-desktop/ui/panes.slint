@@ -78,15 +78,55 @@ component ViewTabChip inherits Rectangle {
     in property <bool> closable;
     callback select();
     callback close();
+    // A format of the tab's export menu: the File → Export entries the
+    // view kind offers (Graph checks its display when exporting).
+    callback export(string);
+    property <bool> data: root.tab.kind == "graph" || root.tab.kind == "dsm" || root.tab.kind == "services"
+        || root.tab.kind == "security" || root.tab.kind == "quality" || root.tab.kind == "architecture";
     height: 26px;
     width: row.preferred-width;
     border-radius: 6px;
     background: active ? Theme.bg : touch.has-hover ? Theme.panel : transparent;
     border-width: active ? 1px : 0px;
     border-color: Theme.border;
+    menu := ContextMenuArea {
+        Menu {
+            Menu {
+                title: @tr("Export");
+                MenuItem {
+                    title: @tr("Markdown + Mermaid");
+                    enabled: root.data;
+                    activated => { root.export("markdown"); }
+                }
+                MenuItem {
+                    title: @tr("JSON data + evidence");
+                    enabled: root.data;
+                    activated => { root.export("json"); }
+                }
+                MenuItem {
+                    title: @tr("arc42 documentation");
+                    activated => { root.export("arc42"); }
+                }
+                MenuItem {
+                    title: @tr("SVG diagram");
+                    enabled: root.tab.kind == "graph" || root.tab.kind == "services";
+                    activated => { root.export("svg"); }
+                }
+                MenuItem {
+                    title: @tr("PNG image");
+                    activated => { root.export("png"); }
+                }
+            }
+        }
+    }
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.select(); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                menu.show({ x: self.mouse-x, y: self.mouse-y });
+            }
+        }
     }
     row := HorizontalLayout {
         padding-left: 10px;
@@ -130,6 +170,8 @@ export component PaneStrip inherits Rectangle {
     callback close(int);
     callback close-pane();
     callback split-right();
+    // Tab index and format of a tab's export menu.
+    callback export(int, string);
     height: 34px;
     background: root.pane.focused && root.split ? Theme.panel : Theme.panel-2;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
@@ -145,6 +187,7 @@ export component PaneStrip inherits Rectangle {
             closable: root.pane.tabs.length > 1;
             select => { root.select(j); }
             close => { root.close(j); }
+            export(format) => { root.export(j, format); }
         }
         Rectangle { horizontal-stretch: 1; }
         if !root.split: Button {

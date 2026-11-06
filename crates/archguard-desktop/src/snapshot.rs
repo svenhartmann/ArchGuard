@@ -20,6 +20,7 @@
 //! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
 //! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
+//! Export without the save dialog: [`export_hook`].
 
 use std::cell::Cell;
 
@@ -55,6 +56,7 @@ pub fn schedule(ui: &AppWindow) {
     }
     apply_view_hooks(ui);
     apply_shell_hooks(ui);
+    export_hook(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
@@ -66,6 +68,32 @@ pub fn schedule(ui: &AppWindow) {
             write_png(&ui, &path);
         }
         let _ = slint::quit_event_loop();
+    });
+}
+
+/// `ARCHGUARD_DESKTOP_EXPORT=<format>:<path>[,…]`: export the focused
+/// pane's view as File → Export does, but to `path` without the save
+/// dialog (`format`: markdown, json, arc42, svg, png). Runs once the views
+/// are drawn, before the snapshot, so the PNG shows the notice; logs each
+/// result.
+fn export_hook(ui: &AppWindow) {
+    let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_EXPORT") else {
+        return;
+    };
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        for item in spec.split(',') {
+            let Some((format, path)) = item.split_once(':') else {
+                continue;
+            };
+            let written = crate::export_ui::run(&ui, format, Some(path.trim().into()));
+            eprintln!(
+                "export {format}: {written:?}; notice {}: {}",
+                ui.get_notice_kind(),
+                ui.get_notice()
+            );
+        }
     });
 }
 
