@@ -15,19 +15,19 @@ const chapters=[5].map(number=>({number,title:'Building block view',markdown:'##
 const app=launch({root:'/repo',nodes,edges:[{from:2,to:5,count:1,refs:[]},{from:7,to:5,count:1,refs:[]}],view:{depth:0,visible:null},findings:[],cyclicEdges:[],insights:{arc42:{chapters}}},{library:false});
 for(const c of cases){const short=JSON.parse(app.run('JSON.stringify([...arc42ShortNames('+JSON.stringify(c.names)+').values()])'));assert.deepEqual(short,c.labels,c.case);}
 app.run("showTab('architecture')");const content=app.ids.get('architecture-content');
-const cards=()=>Array.from(content.querySelectorAll('g[data-arc42-node]'),g=>({title:g.querySelectorAll('title')[0].textContent,name:g.querySelectorAll('text').filter(t=>t.getAttribute('class')==='arc42-map-name').map(t=>t.textContent).join('')}));
+const cards=()=>Array.from(content.querySelectorAll('g[data-arc42-node]'),g=>({title:g.querySelectorAll('title')[0].textContent,name:g.querySelectorAll('text').filter(t=>t.getAttribute('class')==='arc42-map-name').map(t=>t.textContent).join('|')}));
 const levels=()=>Array.from(content.querySelectorAll('button[data-arc42-level-scope]'),b=>b.querySelectorAll('span')[0].textContent);
 assert.deepEqual(levels(),['Project overview','archguard-cli','archguard-engine/semantic_calls','archguard-engine'],'the level list names crates, not their source roots');
-assert.deepEqual(cards().map(c=>c.name),['archguard-engine/semantic_calls','archguard-cli','archguard-engine'],'map boxes show the same names');
+assert.deepEqual(cards().map(c=>c.name),['archguard-engine/|semantic_calls','archguard-cli','archguard-engine'],'map boxes (one line each) show the same names');
 assert.deepEqual(cards().map(c=>c.title),['crates/archguard-engine/src/semantic_calls','crates/archguard-cli/src','crates/archguard-engine/src'],'the full path stays the title');
 assert.deepEqual(Array.from(content.querySelectorAll('select[data-arc42-scope]')[0].children,o=>o.textContent),['Project overview','archguard-cli','archguard-engine','archguard-engine/semantic_calls','archguard-engine/semantic_calls/rust'],'the scope picker uses the names');
 assert.ok(content.querySelectorAll('p').some(p=>p.textContent.startsWith('archguard-cli → archguard-engine · 1')),'relationships use the names');
 const standard=JSON.parse(app.run('JSON.stringify(arc42StandardGraph(arc42PackageProjection(),null))'));
 assert.deepEqual(standard.nodes.map(n=>n.attributes.label.split('\n')[0]),['archguard-engine/semantic_calls','archguard-cli','archguard-engine'],'the laid-out diagram uses the names');
 assert.ok(app.run('arc42PlantUml(arc42PackageProjection())').includes('"crates/archguard-cli/src"'),'the PlantUML export keeps the full path');
-assert.deepEqual(JSON.parse(app.run("JSON.stringify([arc42NameLines('archguard-engine'),arc42NameLines('archguard-engine/semantic_calls'),arc42NameLines('a'.repeat(50))])")),[['archguard-engine'],['archguard-engine/','semantic_calls'],['a'.repeat(24),'a'.repeat(24)+'…']],'box names break after a slash, as diagram::name_lines');
+assert.deepEqual(JSON.parse(app.run("JSON.stringify([arc42NameLines('archguard-engine'),arc42NameLines('archguard-engine/semantic_calls'),arc42NameLines('a'.repeat(50)),arc42NameLines('archguard-desktop / direct files')])")),[['archguard-engine'],['archguard-engine/','semantic_calls'],['a'.repeat(24),'a'.repeat(24)+'…'],['archguard-desktop /','direct files']],'box names break after a slash, as diagram::name_lines');
 content.querySelectorAll('button[data-arc42-level-scope]').find(b=>b.getAttribute('data-arc42-level-scope')==='4').click();
-assert.deepEqual(cards().map(c=>c.name),['semantic_calls','archguard-engine / direct files','Other project packages'],'inside a block the names are relative to it');
+assert.deepEqual(cards().map(c=>c.name),['semantic_calls','archguard-engine /|direct files','Other project packages'],'inside a block the names are relative to it');
 content.querySelectorAll('g[data-arc42-node]').find(g=>g.getAttribute('data-arc42-node')==='6').click();
 assert.equal(content.querySelectorAll('strong').map(s=>s.textContent).find(s=>s.includes('semantic')),'semantic_calls','the selection shows the name');
 content.querySelectorAll('button[data-arc42-level-scope]').find(b=>b.getAttribute('data-arc42-level-scope')==='6').click();

@@ -487,7 +487,7 @@ function arc42ShortNames(names){
 function arc42Label(node){return node.label??node.name;}
 // At most two lines of 24 characters, the first ending after its last '/'; as diagram::name_lines (desktop).
 function arc42NameLines(text){
-  if(text.length<=24)return [text];const cut=text.lastIndexOf('/',23),head=cut>0?text.slice(0,cut+1):text.slice(0,24),rest=text.slice(head.length);
+  if(text.length<=24)return [text];const cut=text.lastIndexOf('/',23),head=cut>0?text.slice(0,cut+1):text.slice(0,24),rest=text.slice(head.length).trimStart();
   return [head,rest.length>24?rest.slice(0,24)+'…':rest];
 }
 // Ever longer candidates for one name: without source roots, with them, the full path.

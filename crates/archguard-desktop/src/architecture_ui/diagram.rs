@@ -101,7 +101,11 @@ pub fn name_lines(label: &str) -> (String, String) {
         .rposition(|&c| c == '/')
         .filter(|&i| i > 0)
         .map_or(24, |i| i + 1);
-    let rest = &chars[cut..];
+    let skip = chars[cut..]
+        .iter()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    let rest = &chars[cut + skip..];
     let mut second: String = rest.iter().take(24).collect();
     if rest.len() > 24 {
         second.push('…');
@@ -219,6 +223,10 @@ mod tests {
         assert_eq!(
             name_lines("archguard-engine/semantic_calls"),
             ("archguard-engine/".into(), "semantic_calls".into())
+        );
+        assert_eq!(
+            name_lines("archguard-desktop / direct files"),
+            ("archguard-desktop /".into(), "direct files".into())
         );
         let long = "a".repeat(50);
         let (one, two) = name_lines(&long);
