@@ -4,24 +4,36 @@ Run `cargo audit --file Cargo.lock` (CI installs cargo-audit 0.22.2 with
 `--locked`). CI also runs weekly, even without source changes. Dependabot
 checks Cargo and action pins weekly. No advisory IDs are ignored.
 
-Review on 2026-10-27: 169 locked packages, RustSec database commit
-`3279c99911354c400e1d41e47c7d60e39258b147`, zero vulnerability-class findings,
-one informational **unsound** advisory:
+Review on 2026-11-06 (branch `chore/ladybugdb`): 659 locked packages,
+RustSec database commit `26fd2d43f7280a1fb925a3743ec463017afe7119`,
+cargo-audit 0.22.2, zero vulnerability-class findings, seven informational
+**unmaintained** warnings: RUSTSEC-2025-0141 (`bincode`), RUSTSEC-2026-0441
+(`pin-utils`), RUSTSEC-2026-0192 (`ttf-parser`), RUSTSEC-2024-0449
+(`unsafe-libyaml`), RUSTSEC-2026-0370/-0371/-0372 (`zvariant`,
+`zbus_names`, `zvariant_derive`). All seven are also in the lock of the
+previous commit; none is a dependency of `archguard-store` (checked with
+`cargo tree -p archguard-store --features db --target all`). They are not
+assessed here.
+
+Optional `db` backend (`lbug =0.22.1`, the official Rust crate of
+[LadybugDB](https://github.com/LadybugDB/ladybug), MIT):
 
 - [RUSTSEC-2026-0202](https://rustsec.org/advisories/RUSTSEC-2026-0202.html)
-  affects `cxx::let_cxx_string!` before 1.0.195: a panic during initializer
-  evaluation can drop uninitialized storage.
-- The optional `kuzu =0.11.3` backend pins `cxx =1.0.138`; its matching
-  `cxx-build` pin is needed for compatible generated bridge symbols.
-- Decision: retain these pins for this release. Neither workspace code nor
-  the locked kuzu Rust sources/build script calls `let_cxx_string` or
-  `StackString` (checked with `rg`); this advisory's affected API has no call
-  site in our DB integration. The slim build does not enable kuzu/cxx.
-  This is a scoped reachability assessment, not a claim that cxx is fixed.
-- Keep the warning visible in audit output. Reassess when upgrading kuzu/cxx
-  or adding bridge code; prefer a backend release using cxx >=1.0.195 with
-  matching generated bindings. Real Kuzu integration tests pass, but tests
-  alone do not prove absence of memory-safety defects.
+  (`cxx::let_cxx_string!` before 1.0.195 is unsound) no longer applies. The
+  former `kuzu =0.11.3` backend pinned `cxx =1.0.138`; lbug requests `cxx` and
+  `cxx-build` as `^1.0.138`, and the lock now holds both at 1.0.205.
+- lbug's build script, unless told otherwise, downloads the newest
+  prebuilt `liblbug` release from GitHub, without a checksum and independent
+  of the pinned crate version. `.cargo/config.toml` sets
+  `LBUG_BUILD_FROM_SOURCE=1`, so the native library is built from the C++
+  sources inside the pinned, checksummed crate, as with kuzu before.
+- The source build needs CMake and OpenSSL 3.x headers and libraries
+  (`find_package(OpenSSL 3)`; OpenSSL 4 is rejected). The macOS DB build of
+  the CLI ends up linking neither `libssl` nor `libcrypto` (checked with
+  `otool -L` and `nm`); Linux and Windows are not checked. The slim build
+  does not enable lbug, cxx or OpenSSL.
+- Real LadybugDB integration tests pass, but tests alone do not prove the
+  absence of memory-safety defects in the C++ engine.
 
 Action SHAs were resolved from their upstream Git repositories on 2026-10-27.
 See [checkout releases](https://github.com/actions/checkout/releases) and
