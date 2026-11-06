@@ -221,7 +221,13 @@ export component ArcVisual inherits Rectangle {
     // 0: fit to the box; otherwise the user's zoom factor.
     property <float> user-zoom: 0;
     // Width of the diagram box: the visual minus padding and level list.
-    property <length> box-width: root.width - 32px - (map.kind == 0 ? 216px : 0);
+    // The level list beside the diagram; a narrow pane keeps the crumbs
+    // and the scope list for navigation.
+    // Set by the view from its own width (never from the content, which
+    // sits in a scroll view).
+    in property <bool> compact;
+    property <bool> levels-on: map.kind == 0 && !root.compact;
+    property <length> box-width: root.width - 32px - (root.levels-on ? 216px : 0);
     property <float> fit-zoom: map.dw > 0 ? min(1, (box-width / 1px - 2) / map.dw) : 1;
     property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
     property <string> unit: map.kind == 1 ? @tr("recorded call sites") : @tr("source connections");
@@ -244,7 +250,7 @@ export component ArcVisual inherits Rectangle {
     HorizontalLayout {
         padding: 16px;
         spacing: 16px;
-        if root.map.kind == 0: HorizontalLayout {
+        if root.levels-on: HorizontalLayout {
             width: 200px;
             spacing: 10px;
             VerticalLayout {
