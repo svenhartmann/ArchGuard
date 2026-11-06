@@ -1,5 +1,5 @@
 'use strict';
-// Review Dashboard health panel (R39). Ampel, score, trend delta and the
+// Start health panel (R39). Ampel, score, trend delta and the
 // KPI parts from review_kpis.health (archguard-core's review_kpi.rs),
 // plus a hand-rolled SVG sparkline through the embedded health series
 // data.reviewHistory — one {timestamp, tag, score} row per snapshot,

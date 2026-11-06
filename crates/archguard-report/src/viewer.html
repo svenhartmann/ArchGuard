@@ -282,17 +282,7 @@
   #tab-graph, #tab-dsm, #tab-calls, #tab-services, #tab-architecture, #tab-security { position: absolute; inset: 0; padding: 0; }
   #tab-security { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
   #tab-security h2 { margin: 0 0 8px; }
-  /* Review Dashboard (R36): panel containers are filled by viewer_dash_*.js (R37–R42). */
-  #tab-review-dashboard { overflow: auto; min-height: 0; background: var(--bg); padding: 16px; }
-  #tab-review-dashboard h2 { margin: 0 0 8px; }
-  #dashboard-status { font-weight: 650; }
-  #dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
-  .dash-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
-  .dash-panel h3 { margin: 0; font-size: 14px; }
-  .dash-panel.dash-wide { grid-column: 1 / -1; }
-  .dash-panel .empty { color: var(--muted); }
-  /* R37 KPI cards (viewer_dash_kpis.js). */
-  #dashboard-kpis .dash-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  /* R37 KPI cards (viewer_dash_kpis.js), shown on Start. */
   .dash-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); }
   .dash-card strong { font-size: 22px; font-variant-numeric: tabular-nums; }
   .dash-card > span { color: var(--muted); font-size: 12px; }
@@ -304,12 +294,9 @@
   .dash-card[data-node]:hover { border-color: var(--accent); }
   .dash-card[data-node]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* R38 A/I zone scatter (viewer_dash_zones.js). */
-  #dashboard-zones svg { width: 100%; height: auto; max-width: 360px; }
-  #dashboard-zones .dash-zone-counts { font-variant-numeric: tabular-nums; }
   .dash-zone-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
   .dash-zone-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
-  .dash-zone-point, #dashboard-zones circle[tabindex] { cursor: pointer; }
-  #dashboard-zones circle[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dash-zone-point { cursor: pointer; }
   #security-status { font-weight: 650; }
   #security-status[data-status=error], #security-status[data-status=stale] { color: var(--c-priority); }
   #security-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 16px 0 8px; }
@@ -914,7 +901,6 @@
   <div id="tabs" role="tablist" aria-label="Workspace" data-i18n-aria-label-de="Arbeitsbereich">
     <button type="button" data-tab="start" role="tab" aria-selected="false" data-i18n-de="Start">Start</button>
     <button type="button" data-tab="architecture" role="tab" aria-selected="false" data-i18n-de="Architektur">Architecture</button>
-    <button type="button" data-tab="review-dashboard" role="tab" aria-selected="false" data-i18n-de="Dashboard">Dashboard</button>
     <span class="tab-divider" aria-hidden="true"></span>
     <button type="button" data-tab="graph" role="tab" aria-selected="true" class="active" data-i18n-de="Graph">Graph</button>
     <button type="button" data-tab="dsm" role="tab" aria-selected="false" data-i18n-de="Matrix">Matrix</button>
@@ -1192,18 +1178,6 @@
         <p id="security-count" class="muted" role="status" aria-live="polite"></p>
         <div id="security-findings"></div>
         <button id="security-more" type="button" class="btn btn-secondary" hidden data-i18n-de="Weitere Befunde laden">Load more findings</button>
-      </section>
-      <section id="tab-review-dashboard" class="panel-hidden" aria-label="Review dashboard" data-i18n-aria-label-de="Review-Dashboard">
-        <h2 class="visually-hidden" data-i18n-de="Review-Dashboard">Review dashboard</h2>
-        <p id="dashboard-status" role="status" aria-live="polite"></p>
-        <button id="dashboard-refresh" type="button" class="btn btn-secondary" data-i18n-de="Payload neu laden">Reload payload</button>
-        <div id="dashboard-grid">
-          <div id="dashboard-kpis" class="dash-panel dash-wide"><h3 data-i18n-de="Kennzahlen">KPIs</h3></div>
-          <div id="dashboard-health" class="dash-panel"><h3 data-i18n-de="Gesundheit">Health</h3></div>
-          <div id="dashboard-zones" class="dash-panel"><h3 data-i18n-de="A-I-Zonen">A/I zones</h3></div>
-          <div id="dashboard-decisions" class="dash-panel dash-wide"><h3 data-i18n-de="Entscheidungen">Decisions</h3></div>
-          <div id="dashboard-pr" class="dash-panel dash-wide"><h3 data-i18n-de="PR-Kommentar">PR comment</h3></div>
-        </div>
       </section>
       <div id="tab-dsm" class="panel-hidden">
         <div class="matrix-controls"><span data-i18n-de="Zeilen → Spalten · Zahlen = Abhängigkeitsbelege · ↻ = Zyklus">Rows → columns · numbers = dependency evidence · ↻ = cycle</span>

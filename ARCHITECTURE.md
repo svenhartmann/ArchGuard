@@ -670,13 +670,13 @@ entry with High or Medium priority, keyed by node name. The report has no
 per-finding line numbers, so none are invented. All lists are sorted; repeated
 runs produce identical Markdown.
 
-The **dashboard payload** embeds `reviewKpis`, `reviewRegister`, `reviewHistory`
-and `prComment` in the HTML report (`archguard-report/src/html.rs`). Each is
-`null` when absent: no KPI block (for example, an older graph predating the KPI
-pipeline), register, history or saved `pr-comment.md`. Panels then display "not
-measured" rather than 0. The compatibility endpoint `GET /api/review-dashboard` exposes
-`review_kpis` and `register` from a fresh run. KPI cards appear on Start;
-Dashboard and Review are no longer separate viewer tabs. `POST /api/decisions` uses
-the same atomic register writer as CLI and MCP.
+The HTML report (`archguard-report/src/html.rs`) embeds `reviewKpis` and
+`reviewHistory` for the KPI cards, the A/I zone scatter and the health history
+on Start. Each is `null` when absent: no KPI block (for example, an older graph
+predating the KPI pipeline) or no snapshot history. Panels then display "not
+measured" rather than 0. The viewer has no Dashboard tab and no Review tab
+button; `archguard review --format html` opens the review view directly.
+Decisions are written only through the CLI and MCP; `serve` has no write
+endpoint.
 
 ---

@@ -694,15 +694,13 @@ Reporteintrag mit Priorität Hoch oder Mittel, keyed by node name; der Report
 führt keine Zeilennummern je Befund, also werden keine erfunden. Alle Listen
 sortiert gerendert, zwei Läufe ergeben dasselbe Markdown.
 
-Der **Dashboard-Payload** bettet in den HTML-Bericht
-(`archguard-report/src/html.rs`) die Felder `reviewKpis`, `reviewRegister`,
-`reviewHistory` und `prComment` ein. Jedes ist `null`, wenn das Stück fehlt —
-kein KPI-Block (etwa bei einem Graphen aus dem Bestand vor der KPI-Pipeline),
-kein Register, keine Historie, keine gespeicherte `pr-comment.md` — und die
-Panels zeigen dann „not measured“ statt 0. Der Kompatibilitätsendpunkt
-`GET /api/review-dashboard` liefert `review_kpis` und `register` aus einem
-frischen Lauf. KPI-Karten stehen auf Start; Dashboard und Review sind keine
-eigenen Viewer-Tabs mehr; `POST /api/decisions` schreibt über denselben atomaren
-Register-Schreiber wie CLI und MCP.
+Der HTML-Bericht (`archguard-report/src/html.rs`) bettet `reviewKpis` und
+`reviewHistory` für die KPI-Karten, das A/I-Zonendiagramm und den
+Gesundheitsverlauf auf Start ein. Jedes ist `null`, wenn das Stück fehlt — kein
+KPI-Block (etwa bei einem Graphen aus dem Bestand vor der KPI-Pipeline) oder
+keine Snapshot-Historie — und die Panels zeigen dann „not measured“ statt 0.
+Der Viewer hat keinen Dashboard-Tab und keinen Review-Tab-Knopf;
+`archguard review --format html` öffnet die Review-Ansicht direkt.
+Entscheidungen schreiben nur CLI und MCP; `serve` hat keinen Schreibendpunkt.
 
 ---

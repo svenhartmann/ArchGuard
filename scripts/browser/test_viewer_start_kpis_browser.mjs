@@ -14,7 +14,7 @@ try{
   await page.evaluate(()=>{setViewerLanguage('de');showTab('start')});
   assert.equal(await page.$$eval('.start-kpis .dash-card',n=>n.length),8);
   assert.ok(await page.evaluate(()=>document.querySelector('.start-kpis').getBoundingClientRect().top>=document.getElementById('start-world').getBoundingClientRect().bottom),'World comes before the KPI cards');
-  assert.ok(await page.$$eval('#tabs button',ns=>ns.filter(n=>['assessment','review-dashboard'].includes(n.dataset.tab)).every(n=>getComputedStyle(n).display==='none')));
+  assert.ok(await page.$$eval('#tabs button',ns=>ns.filter(n=>n.dataset.tab==='assessment').every(n=>getComputedStyle(n).display==='none')));
   assert.ok(await page.$eval('#tab-start',n=>n.scrollWidth<=n.clientWidth+1),'no horizontal overflow');
   await page.screenshot({path:path.join(output,`start-${width}.png`)});
   await page.click('.start-kpis-profile summary');await page.waitForSelector('.start-kpis-profile-grid');assert.match(await page.$eval('.start-kpis-profile-grid',n=>n.textContent),/Verlauf braucht mindestens zwei/);assert.match(await page.$eval('.start-kpis-profile-grid',n=>n.textContent),/Keine messbaren A.I-Punkte/);
