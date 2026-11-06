@@ -30,9 +30,15 @@ export component MatrixView inherits Rectangle {
     in property <int> row-start;
     in property <int> row-total;
     in property <[string]> scopes;
-    in-out property <int> scope-index;
+    // Shown state comes from Rust (the document's MatrixState); a view
+    // rebuilt after a tab or document switch must show what filters.
+    in property <int> scope-index;
     in property <[string]> cycle-options;
-    in-out property <int> cycle-index;
+    in property <int> cycle-index;
+    in property <string> query;
+    changed scope-index => { scope-box.current-index = root.scope-index; }
+    changed cycle-index => { cycle-box.current-index = root.cycle-index; }
+    changed query => { search-box.text = root.query; }
     in property <bool> only;
     in property <[string]> evidence;
     in property <string> evidence-title;
@@ -109,10 +115,10 @@ export component MatrixView inherits Rectangle {
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            ComboBox {
+            scope-box := ComboBox {
                 width: 260px;
                 model: root.scopes;
-                current-index <=> root.scope-index;
+                current-index: root.scope-index;
                 selected => { root.scope-changed(self.current-index); }
             }
             Button { text: @tr("Expand all"); compact: true; y: (parent.height - self.height) / 2; clicked => { root.expand-all(); } }
@@ -122,15 +128,16 @@ export component MatrixView inherits Rectangle {
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            SearchField {
+            search-box := SearchField {
                 width: 340px;
+                text: root.query;
                 placeholder: @tr("Find package or file…");
                 edited(t) => { root.search(t); }
             }
-            ComboBox {
+            cycle-box := ComboBox {
                 width: 220px;
                 model: root.cycle-options;
-                current-index <=> root.cycle-index;
+                current-index: root.cycle-index;
                 selected => { root.cycle-changed(self.current-index); }
             }
             Button {

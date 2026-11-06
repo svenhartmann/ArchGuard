@@ -248,6 +248,9 @@ export component AppWindow inherits Window {
     in property <int> m-row-total;
     in property <[string]> m-scopes;
     in property <[string]> m-cycle-options;
+    in property <int> m-scope-index;
+    in property <int> m-cycle-index;
+    in property <string> m-query;
     in property <bool> m-only;
     in property <[string]> m-evidence;
     in property <string> m-evidence-title;
@@ -515,6 +518,9 @@ export component AppWindow inherits Window {
             row-total: root.m-row-total;
             scopes: root.m-scopes;
             cycle-options: root.m-cycle-options;
+            scope-index: root.m-scope-index;
+            cycle-index: root.m-cycle-index;
+            query: root.m-query;
             only: root.m-only;
             evidence: root.m-evidence;
             evidence-title: root.m-evidence-title;

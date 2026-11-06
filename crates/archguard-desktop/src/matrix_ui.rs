@@ -207,6 +207,14 @@ fn push(ui: &AppWindow, m: &MatrixState, rows: &[MatrixRow]) {
     );
     ui.set_m_cycle_options(model(cycles));
     ui.set_m_cycle_path(cycle_path(m).into());
+    // Position 0 of both lists is "Project overview" / "All dependencies".
+    let scope = m
+        .scope
+        .and_then(|s| m.scopes.iter().position(|&n| n == s))
+        .map_or(0, |i| i + 1);
+    ui.set_m_scope_index(scope as i32);
+    ui.set_m_cycle_index(m.cycle.map_or(0, |c| c + 1) as i32);
+    ui.set_m_query(m.query.as_str().into());
     push_evidence(ui, m);
 }
 

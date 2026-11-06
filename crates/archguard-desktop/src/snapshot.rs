@@ -67,7 +67,25 @@ pub fn schedule(ui: &AppWindow) {
     });
 }
 
+/// `ARCHGUARD_DESKTOP_MQUERY=<text>`: search the Matrix, then leave the
+/// tab and come back, so the snapshot shows the rebuilt view's state.
+fn matrix_query_round_trip(ui: &AppWindow) {
+    let Ok(q) = std::env::var("ARCHGUARD_DESKTOP_MQUERY") else {
+        return;
+    };
+    ui.set_tab("dsm".into());
+    ui.invoke_m_search(q.into());
+    ui.set_tab("graph".into());
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(300), move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_tab("dsm".into());
+        }
+    });
+}
+
 fn apply_view_hooks(ui: &AppWindow) {
+    matrix_query_round_trip(ui);
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_REVEAL").and_then(|n| node_named(&n)) {
         ui.invoke_reveal(n as i32);
     }
