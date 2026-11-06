@@ -339,9 +339,12 @@ dependencies = [
  "png",
  "rfd",
  "roxmltree",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",
+ "tempfile",
+ "toml",
  "toml_edit",
 ]
 
