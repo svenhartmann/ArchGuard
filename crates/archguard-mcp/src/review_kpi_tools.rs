@@ -3,9 +3,11 @@
 //! The `review_kpis` tool exposes the [`archguard_engine::core::ReviewKpis`]
 //! payload the pipeline computes (R23) as flat, stably identified records,
 //! paginated under the same 4 KiB guard as the existing tools. The KPIs are
-//! read from the analysis payload — the tool never computes, caches or
-//! records anything, and `None` in the payload stays "not measured", never
-//! an invented zero.
+//! read from the analysis payload — by default the tool never computes,
+//! caches or records anything, and `None` in the payload stays "not
+//! measured", never an invented zero. The explicit `measure_zones` opt-in
+//! adds the one KPI the pipeline cannot measure (Martin A/I zones) via
+//! [`archguard_engine::measure_review_zones`].
 
 use archguard_engine::core::ReviewKpis;
 use rmcp::handler::server::wrapper::Parameters;
@@ -16,7 +18,8 @@ use std::collections::BTreeMap;
 
 use crate::server::ArchguardTools;
 
-/// Input of the `review_kpis` tool (R33: `{ path?, query?, offset?, limit? }`).
+/// Input of the `review_kpis` tool (R33: `{ path?, query?, offset?, limit? }`,
+/// plus the `measure_zones` opt-in).
 #[derive(Debug, Clone, Default, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct ReviewKpiParams {
@@ -28,6 +31,10 @@ pub struct ReviewKpiParams {
     pub offset: Option<usize>,
     /// 1..=200 processed records, further bounded by 4 KiB.
     pub limit: Option<usize>,
+    /// Also measure Martin A/I zones: runs the call analysis with compiler
+    /// helpers (javac, .NET), so it is slow. Zones stay unmeasured when no
+    /// boundary has compiler-backed abstractness (Java/C# only).
+    pub measure_zones: bool,
 }
 
 /// Reject out-of-range pages and oversized queries before any analysis runs.
@@ -214,6 +221,19 @@ fn counts(records: &[Record]) -> BTreeMap<&'static str, usize> {
     counts
 }
 
+/// Why zones are missing and what would measure them; `None` once they are
+/// measured or when no KPI block exists at all.
+fn zones_hint(kpis: Option<&ReviewKpis>, params: &ReviewKpiParams) -> Option<&'static str> {
+    match kpis {
+        Some(kpis) if kpis.zones.is_none() => Some(if params.measure_zones {
+            "Zones not measured: the call analysis ran but found no measurable boundary (abstractness needs complete Java or C# compiler coverage of a module)."
+        } else {
+            "Zones not measured: the pipeline runs no compiler. Call again with measure_zones=true to run the call analysis (javac/.NET helpers, slow)."
+        }),
+        _ => None,
+    }
+}
+
 /// Build the paginated `review_kpis` answer for one payload; `None` is an
 /// explicit not-measured state, never a zeroed report.
 pub fn kpi_value(kpis: Option<&ReviewKpis>, params: &ReviewKpiParams) -> Result<Value, ErrorData> {
@@ -251,8 +271,9 @@ pub fn kpi_value(kpis: Option<&ReviewKpis>, params: &ReviewKpiParams) -> Result<
     let offset = params.offset.unwrap_or(0).min(total);
     let mut reply = json!({
         "status": status,
-        "coverage_scope": "Records come from the review_kpis block the pipeline attached to the current analysis payload; the tool never computes KPIs itself. An unmeasured optional KPI contributes no record — the measured map marks it false and no value is invented as zero. Empty vec groups are measured findings of none. Propagation cost, tangledness, hub Gini, risk gaps and the health index are review heuristics, not defect proofs.",
+        "coverage_scope": "Records come from the review_kpis block the pipeline attached to the current analysis payload; by default the tool never computes KPIs itself. The pipeline never measures Martin A/I zones: they need compiler-backed abstractness, which only measure_zones=true computes (call analysis with javac/.NET helpers, slow; Java/C# boundaries only). An unmeasured optional KPI contributes no record — the measured map marks it false and no value is invented as zero. Empty vec groups are measured findings of none. Propagation cost, tangledness, hub Gini, risk gaps and the health index are review heuristics, not defect proofs.",
         "not_measured_note": (status == "not_measured").then_some("The analysis payload carries no review_kpis block (graph written before the KPI pass or a pipeline without it). Absence means not measured, never clean — no KPI is reported as zero here."),
+        "zones_hint": zones_hint(kpis, params),
         "measured": measured,
         "counts": counts,
         "total": total, "offset": offset, "returned": 0, "processed": 0,
@@ -302,7 +323,7 @@ pub fn kpi_value(kpis: Option<&ReviewKpis>, params: &ReviewKpiParams) -> Result<
 impl ArchguardTools {
     /// Review-dashboard KPIs as flat, paginated records (R33).
     #[tool(
-        description = "Read the review-dashboard KPIs the pipeline attaches to the analysis payload: propagation cost per SCC, SDP violations, Martin A/I zones, tangledness, hub Gini, layer drift, debt density, API surface, leaky encapsulation, risk coverage gaps, external dependency inventory and the composite health index, flattened into stably identified records (group + id) and paginated within 4 KiB. Query filters identities and descriptions case-insensitively; whole-payload counts and the measured map survive filtering. None means not measured, never zero: an unmeasured optional KPI yields no record and no invented value. Read-only: reads the cached module analysis, never computes, scans or records anything — refresh with archguard analyze."
+        description = "Read the review-dashboard KPIs the pipeline attaches to the analysis payload: propagation cost per SCC, SDP violations, Martin A/I zones, tangledness, hub Gini, layer drift, debt density, API surface, leaky encapsulation, risk coverage gaps, external dependency inventory and the composite health index, flattened into stably identified records (group + id) and paginated within 4 KiB. Query filters identities and descriptions case-insensitively; whole-payload counts and the measured map survive filtering. None means not measured, never zero: an unmeasured optional KPI yields no record and no invented value. By default read-only: reads the cached module analysis and never computes, scans or records anything — refresh with archguard analyze. Zones are never in the cached payload: pass measure_zones=true to measure them with the compiler-backed call analysis (slow; Java/C# abstractness only, otherwise zones stay not measured)."
     )]
     async fn review_kpis(
         &self,
@@ -313,12 +334,23 @@ impl ArchguardTools {
         // The effective report inherits the KPIs from the graph the
         // pipeline computed them on (R23/R26); fall back to the graph for
         // payloads that carry them only there.
-        let kpis = run
+        let mut kpis = run
             .report
             .review_kpis
-            .as_ref()
-            .or(run.file_graph.review_kpis.as_ref());
-        kpi_value(kpis, &params).map(|value| value.to_string())
+            .clone()
+            .or_else(|| run.file_graph.review_kpis.clone());
+        if params.measure_zones
+            && let Some(kpis) = kpis.as_mut()
+        {
+            kpis.zones = archguard_engine::measure_review_zones(
+                &run.root,
+                &run.loaded.config,
+                &run.file_graph,
+                &run.view,
+            )
+            .map_err(crate::server::insight_error)?;
+        }
+        kpi_value(kpis.as_ref(), &params).map(|value| value.to_string())
     }
 }
 
@@ -433,6 +465,7 @@ mod tests {
             query: query.map(str::to_string),
             offset,
             limit,
+            measure_zones: false,
         }
     }
 
@@ -444,12 +477,87 @@ mod tests {
             .find(|tool| tool.name == "review_kpis")
             .expect("review dashboard KPIs must be discoverable over MCP");
         let schema = serde_json::to_value(&tool.input_schema).unwrap();
-        for field in ["path", "query", "offset", "limit"] {
+        for field in ["path", "query", "offset", "limit", "measure_zones"] {
             assert!(schema["properties"].get(field).is_some(), "missing {field}");
         }
         let description = tool.description.as_deref().unwrap();
         assert!(description.contains("never computes"));
         assert!(description.contains("not measured, never zero"));
+        assert!(description.contains("measure_zones=true"));
+    }
+
+    #[test]
+    fn unmeasured_zones_point_to_the_opt_in() {
+        let default = kpi_value(Some(&kpis()), &params(None, None, None)).unwrap();
+        assert!(
+            default["zones_hint"]
+                .as_str()
+                .unwrap()
+                .contains("measure_zones=true")
+        );
+        let mut opted = params(None, None, None);
+        opted.measure_zones = true;
+        let tried = kpi_value(Some(&kpis()), &opted).unwrap();
+        assert!(
+            tried["zones_hint"]
+                .as_str()
+                .unwrap()
+                .contains("no measurable boundary")
+        );
+        let mut measured = kpis();
+        measured.zones = Some(archguard_engine::core::ZoneStats::default());
+        let done = kpi_value(Some(&measured), &opted).unwrap();
+        assert!(done["zones_hint"].is_null());
+        assert!(kpi_value(None, &params(None, None, None)).unwrap()["zones_hint"].is_null());
+    }
+
+    #[tokio::test]
+    async fn measure_zones_runs_the_compiler_chain_only_on_request() {
+        // Needs a JDK on PATH, like the other javac-backed tests.
+        let root = tempfile::tempdir().unwrap();
+        for (rel, source) in [
+            (
+                "src/a/Port.java",
+                "package a; public interface Port { void run(); }\n",
+            ),
+            (
+                "src/b/Adapter.java",
+                "package b; public class Adapter implements a.Port { public void run() {} }\n",
+            ),
+        ] {
+            let path = root.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, source).unwrap();
+        }
+        let handler = ArchguardTools::new(root.path().into());
+        let default: Value = serde_json::from_str(
+            &handler
+                .review_kpis(Parameters(ReviewKpiParams::default()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(default["status"], "measured");
+        assert_eq!(
+            default["measured"]["zones"], false,
+            "without the opt-in no call analysis runs, so zones stay unmeasured"
+        );
+        let opted: Value = serde_json::from_str(
+            &handler
+                .review_kpis(Parameters(ReviewKpiParams {
+                    measure_zones: true,
+                    query: Some("zones".into()),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(opted["measured"]["zones"], true);
+        let zones = &opted["records"][0];
+        assert_eq!(zones["group"], "zones");
+        assert_eq!(zones["main_sequence"], 2);
+        assert!(opted.to_string().len() <= crate::tools::MAX_RESPONSE_BYTES);
     }
 
     #[test]
