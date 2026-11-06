@@ -54,9 +54,14 @@ component MethodGroup inherits Rectangle {
         if group.open: VerticalLayout {
             padding-top: 6px;
             spacing: 6px;
-            for metric in group.metrics: Muted {
-                text: metric.label + " · " + CallsData.metric-text(metric);
-                font-size: 12px;
+            // The metric lines align with the sites' 10px inset.
+            for metric in group.metrics: HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Muted {
+                    text: metric.label + " · " + CallsData.metric-text(metric);
+                    font-size: 12px;
+                }
             }
             for site in group.sites: VerticalLayout {
                 padding: 10px;

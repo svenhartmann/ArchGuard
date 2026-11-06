@@ -98,11 +98,13 @@ pub struct State {
 impl State {
     pub fn new(a: impl Into<std::sync::Arc<CallAnalysis>>) -> Self {
         let idx = Index::new(a);
-        let filter = Filter {
-            package: idx.packages(None).into_iter().next(),
+        // The busiest package, not the first: an empty first package
+        // looks like a broken view.
+        let mut filter = Filter {
             resolution: idx.default_resolution(),
             ..Default::default()
         };
+        filter.package = model::busiest_package(&idx, &filter, &Labels::default());
         let mut s = Self {
             cycles: cycles::compute(&idx),
             idx,
@@ -344,8 +346,28 @@ mod tests {
     use super::super::model::fixture;
     use super::*;
 
+    /// A first package without connections does not open as an empty view.
     #[test]
-    fn opens_the_first_package_and_its_first_connection() {
+    fn opens_the_package_with_the_most_connections() {
+        let mut a = fixture::analysis();
+        a.classes.insert(0, fixture::class("aaa.Lonely", "aaa"));
+        let s = State::new(a);
+        assert_eq!(s.filter.package.as_deref(), Some("blue"));
+        assert_eq!(s.view.relations.len(), 3);
+    }
+
+    /// Without any connection the view opens with all packages.
+    #[test]
+    fn opens_all_packages_without_connections() {
+        let mut a = fixture::analysis();
+        a.calls.clear();
+        let s = State::new(a);
+        assert_eq!(s.filter.package, None);
+        assert!(s.view.relations.is_empty());
+    }
+
+    #[test]
+    fn opens_the_busiest_package_and_its_first_connection() {
         let s = State::new(fixture::analysis());
         assert_eq!(s.filter.package.as_deref(), Some("blue"));
         assert_eq!(s.view.relations.len(), 3);

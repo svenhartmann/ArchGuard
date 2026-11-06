@@ -31,7 +31,30 @@ component Connections inherits VerticalLayout {
         }
         Muted { text: r.full; }
     }
-    if m.relations.length == 0: Text {
+    // No call site at all: say why and what to install or run.
+    if m.no-calls: VerticalLayout {
+        spacing: 8px;
+        Text {
+            text: @tr("This project has no recorded call sites.");
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            wrap: word-wrap;
+        }
+        for a in m.analyzers: Text {
+            visible: a.note != 0;
+            max-height: a.note != 0 ? 100000px : 0px;
+            text: CallsData.note-text(a.note, a.language);
+            color: Theme.text;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+        Muted {
+            font-size: 12px;
+            text: @tr("Run archguard doctor in a terminal to see which analyzers this machine has. Import connections are analyzed without them.");
+        }
+    }
+    if m.relations.length == 0 && !m.no-calls: Text {
         text: m.status == "unavailable" || m.status == "not_applicable"
             ? @tr("No call relations available.")
             : @tr("No matching call relations. Change the package, search, target filter or internal-call setting.");

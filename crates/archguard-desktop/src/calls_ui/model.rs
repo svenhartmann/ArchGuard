@@ -92,7 +92,7 @@ impl Index {
     /// `callClassLabel`.
     pub fn class_label(&self, id: Option<&str>, l: &Labels) -> String {
         if let Some(c) = self.class(id).filter(|c| !c.name.is_empty()) {
-            return c.name.clone();
+            return class_name(c);
         }
         match id {
             Some(id) if id.starts_with("csharp:") => {
@@ -178,6 +178,20 @@ impl Index {
             Resolution::Project
         }
     }
+}
+
+/// The shown name of a type/module: module-level code ("(module)", one per
+/// file of a script language) goes by its file name.
+pub fn class_name(c: &CallClass) -> String {
+    match c.file.rsplit('/').next() {
+        Some(file) if file_module(c) && !file.is_empty() => file.to_string(),
+        _ => c.name.clone(),
+    }
+}
+
+/// Module-level code that [`class_name`] names by its file.
+pub fn file_module(c: &CallClass) -> bool {
+    c.kind == "module" && c.name == "(module)"
 }
 
 /// The web's language names (`callLanguageLabel`).
@@ -410,6 +424,28 @@ pub fn relations(idx: &Index, f: &Filter, l: &Labels) -> Vec<Relation> {
     order.into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
+/// The package with the most connections under `f` in all packages (ties:
+/// the first by name); `None` when no package has one. A connection counts
+/// for the caller's and the target's package, as the package filter does.
+pub fn busiest_package(idx: &Index, f: &Filter, l: &Labels) -> Option<String> {
+    let all = Filter {
+        package: None,
+        ..f.clone()
+    };
+    let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+    for r in relations(idx, &all, l) {
+        let from = idx.class(Some(&r.from)).map(|c| c.package.as_str());
+        let to = idx.class(r.to.as_deref()).map(|c| c.package.as_str());
+        for p in from.into_iter().chain(to.filter(|&t| Some(t) != from)) {
+            *counts.entry(p).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(p, _)| p.to_string())
+}
+
 /// The relations restricted to the sites of an element.
 pub fn focus(rels: &[Relation], a: &CallAnalysis, el: Option<&Element>) -> Vec<Relation> {
     let Some(el) = el else {
@@ -559,6 +595,23 @@ mod tests {
         assert_eq!(idx.languages(), vec!["java"]);
         assert_eq!(idx.packages(None), vec!["blue", "green", "red"]);
         assert_eq!(language_label("csharp", &l), "C#");
+    }
+
+    /// Module-level code of a script language is one "(module)" per file;
+    /// the file name tells them apart.
+    #[test]
+    fn module_pseudo_classes_are_named_by_their_file() {
+        let mut a = fixture::analysis();
+        let mut module = fixture::class("api/http.py::(module)", "api");
+        module.name = "(module)".into();
+        module.kind = "module".into();
+        module.file = "api/http.py".into();
+        a.classes.push(module.clone());
+        let idx = Index::new(a);
+        let l = Labels::default();
+        assert_eq!(idx.class_label(Some(&module.id), &l), "http.py");
+        assert_eq!(class_name(&module), "http.py");
+        assert_eq!(class_name(&idx.a.classes[0]), "blue.Blue");
     }
 
     #[test]

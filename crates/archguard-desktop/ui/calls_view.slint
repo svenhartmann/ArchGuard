@@ -4,7 +4,7 @@
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
-import { Button, SearchField, StatusLine, Disclosure } from "widgets.slint";
+import { Button, SearchField, StatusLine, Disclosure, HelpTip } from "widgets.slint";
 import { CallsData, CallsModel } from "calls_data.slint";
 import { Muted } from "calls_parts.slint";
 import { CallsTree } from "calls_tree.slint";
@@ -156,9 +156,13 @@ component Description inherits VerticalLayout {
         if unavailable: Muted {
             horizontal-stretch: 1;
             font-size: 12px;
-            text: @tr("Call analysis unavailable. ") + m.diagnostic-line
+            vertical-alignment: center;
+            // The reasons are translated in the call overview and the
+            // Analysis panel; the engine's text is the tooltip.
+            text: @tr("Call analysis unavailable. ")
                 + (m.unreported ? " " + @tr("Analyzer version unreported.") : "") + @tr(" Original source snapshot.");
         }
+        if unavailable && m.diagnostic-line != "": HelpTip { tip: m.diagnostic-line; size: 18px; }
         if !none && !unavailable: StatusLine { status: m.status-slot; label: m.status-label; }
         Disclosure {
             text: @tr("Analysis");
@@ -189,7 +193,9 @@ component Description inherits VerticalLayout {
                 border-width: 1px;
                 border-color: Theme.border;
                 background: Theme.panel;
-                VerticalLayout {
+                card := VerticalLayout {
+                    // The engine messages are open (view state only).
+                    property <bool> raw;
                     padding: 10px;
                     spacing: 4px;
                     Text {
@@ -200,7 +206,21 @@ component Description inherits VerticalLayout {
                     }
                     Muted { text: @tr("{} files", Fmt.int(a.files)) + (a.version != "" ? " · " + @tr("Version {}", a.version) : ""); }
                     if a.project != "": Muted { text: a.project; font-family: "Menlo"; }
-                    for d in a.diagnostics: Muted { text: d; }
+                    if a.note != 0: Text {
+                        text: CallsData.note-text(a.note, a.language);
+                        color: Theme.text;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    // The engine's own (English) text, folded.
+                    if a.diagnostics.length > 0: Disclosure {
+                        text: @tr("Engine messages ({})", a.diagnostics.length);
+                        open <=> card.raw;
+                    }
+                    if card.raw: VerticalLayout {
+                        spacing: 4px;
+                        for d in a.diagnostics: Muted { text: d; }
+                    }
                 }
             }
             for d in m.diagnostics: Muted { text: d; font-size: 12px; }
