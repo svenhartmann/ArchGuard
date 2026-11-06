@@ -1,4 +1,5 @@
 //! Bounded static deployment declarations. Never contacts a cluster or executes interpolation.
+use super::service_datastore_settings::{self as datastores, Settings};
 use super::support::{diagnostic, relative};
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
@@ -21,6 +22,10 @@ pub(super) struct Deployment {
     /// Evidence for endpoint values declared outside the deployment, e.g. in a ConfigMap.
     pub origins: BTreeMap<String, Vec<ServiceEvidence>>,
     pub aliases: BTreeSet<String>,
+    /// Container images with their pointers, for datastore detection.
+    pub images: Vec<(String, String)>,
+    /// Datastore settings; values stay in memory and are parsed by `service_datastores`.
+    pub datastore_env: Settings,
 }
 pub(super) fn read(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
@@ -207,11 +212,18 @@ fn config_map_origin(workload: &str, via: &str, file: &str, key: &str) -> Vec<Se
 struct Env {
     values: BTreeMap<String, String>,
     origins: BTreeMap<String, Vec<ServiceEvidence>>,
+    datastore: Settings,
 }
 impl Env {
     /// Keeps only public endpoint values; a later entry replaces an earlier one.
+    /// Datastore settings are kept separately for `service_datastores`.
     fn insert(&mut self, key: String, value: &str, origin: Vec<ServiceEvidence>) {
         self.origins.remove(&key);
+        self.datastore.remove(&key);
+        if datastores::relevant(&key, value) {
+            self.datastore
+                .insert(key.clone(), (value.into(), origin.clone()));
+        }
         if !(endpoint_key(&key) && public_value(value) && !value.contains('$')) {
             self.values.remove(&key);
             return;
@@ -260,6 +272,43 @@ fn compose_env(raw: &Value, vars: &BTreeMap<String, String>) -> BTreeMap<String,
     }
     env
 }
+/// Datastore settings of a Compose `environment`, in mapping or `KEY=value` list form.
+/// Interpolation is expanded only from local public defaults; otherwise the raw value
+/// is kept so that literal parts (e.g. the host next to an interpolated password) remain.
+fn compose_datastore_env(raw: &Value, vars: &BTreeMap<String, String>) -> Settings {
+    let mut entries: Vec<(String, Option<String>)> = Vec::new();
+    for (k, v) in raw.as_mapping().into_iter().flatten() {
+        if let Some(k) = k.as_str() {
+            let v = match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            };
+            entries.push((k.into(), v));
+        }
+    }
+    for entry in raw.as_sequence().into_iter().flatten().filter_map(string) {
+        let (k, v) = entry
+            .split_once('=')
+            .map_or((entry, None), |(k, v)| (k, Some(v.to_owned())));
+        entries.push((k.into(), v));
+    }
+    let mut env = Settings::new();
+    for (key, value) in entries {
+        let Some(value) = value.or_else(|| vars.get(&key).cloned()) else {
+            continue;
+        };
+        let value = if value.contains('$') {
+            expand(&value, vars).unwrap_or(value)
+        } else {
+            value
+        };
+        if datastores::relevant(&key, &value) {
+            env.insert(key, (value, Vec::new()));
+        }
+    }
+    env
+}
 /// The deepest non-root source project containing `path`, unless another is equally deep.
 fn enclosing_project(projects: &[ServiceProject], root: &Path, path: &Path) -> Option<String> {
     let mut candidates: Vec<_> = projects
@@ -297,7 +346,7 @@ fn push_document(documents: &mut Vec<(String, Value)>, file: &str, doc: Value) {
 }
 impl Deployment {
     /// Pointer to the environment entry that declares `key`.
-    fn pointer(&self, key: &str) -> String {
+    pub(super) fn pointer(&self, key: &str) -> String {
         if self.scope.starts_with(KUBERNETES) {
             return format!("/spec/template/spec/containers/env/{key}");
         }
@@ -448,6 +497,14 @@ impl Deployments<'_> {
         if service.project.is_none() && service.build_context.is_none() {
             self.infer_project_by_name(index, file, name);
         }
+        let images = value["image"]
+            .as_str()
+            .map(|image| {
+                let service = name.replace('~', "~0").replace('/', "~1");
+                (format!("/services/{service}/image"), image.to_owned())
+            })
+            .into_iter()
+            .collect();
         self.out.push(Deployment {
             id,
             scope: file.to_owned(),
@@ -455,6 +512,8 @@ impl Deployments<'_> {
             env: compose_env(&value["environment"], vars),
             origins: BTreeMap::new(),
             aliases: BTreeSet::from([name.to_ascii_lowercase()]),
+            images,
+            datastore_env: compose_datastore_env(&value["environment"], vars),
         });
     }
     /// The source project holding the service's readable, in-root Dockerfile.
@@ -554,14 +613,26 @@ impl Deployments<'_> {
             .cloned()
             .unwrap_or_default();
         self.register(workload, &containers);
-        let (env, origins) = self.workload_env(workload, &containers, documents);
+        let env = self.workload_env(workload, &containers, documents);
+        let images = containers
+            .iter()
+            .filter_map(|c| c["image"].as_str())
+            .map(|image| {
+                (
+                    "/spec/template/spec/containers/image".to_owned(),
+                    image.to_owned(),
+                )
+            })
+            .collect();
         self.out.push(Deployment {
             id: workload.id.clone(),
             scope: workload.scope.clone(),
             file: workload.file.to_owned(),
-            env,
-            origins,
+            env: env.values,
+            origins: env.origins,
             aliases: workload.aliases(documents),
+            images,
+            datastore_env: env.datastore,
         });
     }
     /// Adds the workload as a service unless it is already known.
@@ -594,10 +665,7 @@ impl Deployments<'_> {
         workload: &Workload,
         containers: &[Value],
         documents: &[(String, Value)],
-    ) -> (
-        BTreeMap<String, String>,
-        BTreeMap<String, Vec<ServiceEvidence>>,
-    ) {
+    ) -> Env {
         let mut env = Env::default();
         for container in containers {
             for source in container["envFrom"].as_sequence().into_iter().flatten() {
@@ -607,7 +675,7 @@ impl Deployments<'_> {
                 self.env_entry(workload, entry, documents, &mut env);
             }
         }
-        (env.values, env.origins)
+        env
     }
     /// All keys of an `envFrom` ConfigMap, each with an optional `prefix`.
     fn env_from(
@@ -662,6 +730,13 @@ impl Deployments<'_> {
                 Some((file, key, data[key].as_str()?))
             });
         let Some((file, key, value)) = found else {
+            env.datastore.remove(name);
+            if !entry["valueFrom"]["secretKeyRef"].is_null() && datastores::setting_name(name) {
+                self.unresolved(
+                    workload,
+                    &format!("Datastore setting {name} comes from a Secret, which is never read; this datastore reference is unknown."),
+                );
+            }
             self.unresolved(workload, "Kubernetes valueFrom is unresolved; only ConfigMap keys declared in the same manifest directory and namespace are loaded, Secrets are never read.");
             return;
         };

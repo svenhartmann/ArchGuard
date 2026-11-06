@@ -747,6 +747,7 @@ mod tests {
             dependencies: vec![],
             cycles: vec![],
             diagnostics: vec![],
+            datastores: Default::default(),
             complete: true,
         }
     }

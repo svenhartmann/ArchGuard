@@ -1,5 +1,6 @@
 //! Literal Spring configuration and client evidence. No application/profile is executed.
 use super::service_communications::{Token, arguments, is, lex, scopes};
+use super::service_datastores::{SPRING as DATASOURCE, SpringDatasource};
 use super::support::{diagnostic, relative};
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceEvidence, ServiceProject,
@@ -475,7 +476,18 @@ const REFERENCE: &str = "Spring configuration/discovery-server reference; not an
 const CLIENT_CALL: &str = "Spring HTTP client destination resolved from a literal, unique local string or literal DiscoveryClient helper or pure String parameter helper. Static source candidate; execution is not proven. URL values omitted.";
 const FEIGN: &str = "Literal Feign client declaration; runtime execution is not proven.";
 
-pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
+/// Spring properties holding a datastore connection URL.
+const DATASOURCE_KEYS: [&str; 6] = [
+    "spring.datasource.url",
+    "spring.datasource.jdbc-url",
+    "spring.r2dbc.url",
+    "spring.data.mongodb.uri",
+    "spring.data.redis.url",
+    "spring.redis.url",
+];
+
+/// Adds Spring edges and returns the datastore URLs found in Spring configuration.
+pub(super) fn augment(root: &Path, report: &mut ServiceTopology) -> Vec<SpringDatasource> {
     let projects: Vec<_> = report
         .projects
         .iter()
@@ -483,7 +495,7 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
         .cloned()
         .collect();
     if projects.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut spring = Spring {
         root,
@@ -494,6 +506,7 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
         edges: BTreeMap::new(),
         publications: Vec::new(),
         subscriptions: Vec::new(),
+        datasources: Vec::new(),
         budget: 0,
     };
     spring.read_sources(&projects);
@@ -502,7 +515,9 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
     spring.share_configuration(&projects);
     spring.collect_dependencies(&projects);
     spring.match_messages();
+    let datasources = std::mem::take(&mut spring.datasources);
     spring.finish();
+    datasources
 }
 
 /// State of one Spring scan: sources and identities per project id, then the found edges.
@@ -515,6 +530,7 @@ struct Spring<'a> {
     edges: Edges,
     publications: Vec<MessageEndpoint>,
     subscriptions: Vec<MessageEndpoint>,
+    datasources: Vec<SpringDatasource>,
     budget: usize,
 }
 
@@ -747,6 +763,14 @@ impl Spring<'_> {
                     Some(from),
                     "External Spring Config repository is not fetched; remote properties are not covered.",
                 );
+            }
+            if DATASOURCE_KEYS.contains(&key.as_str()) {
+                self.datasources.push(SpringDatasource {
+                    service: from.into(),
+                    evidence: proof(input, &key, None, DATASOURCE),
+                    value,
+                });
+                continue;
             }
             if !route && !reference {
                 continue;

@@ -15,6 +15,10 @@ use serde_yaml_ng::Value;
 mod service_clients;
 #[path = "service_communications.rs"]
 mod service_communications;
+#[path = "service_datastore_settings.rs"]
+mod service_datastore_settings;
+#[path = "service_datastores.rs"]
+mod service_datastores;
 #[path = "service_deployments.rs"]
 mod service_deployments;
 #[path = "service_spring.rs"]
@@ -58,13 +62,8 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
         root: root.display().to_string(),
         monorepo: false,
         monorepo_reason: "No Compose files discovered; no Compose-backed monorepo evidence.".into(),
-        compose_files: Vec::new(),
-        services: Vec::new(),
-        projects: Vec::new(),
-        dependencies: Vec::new(),
-        cycles: Vec::new(),
-        diagnostics: Vec::new(),
         complete: true,
+        ..Default::default()
     };
     let discovery = Discovery::new(&root, &mut report)?;
     let mut files = Vec::new();
@@ -118,8 +117,9 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
     crate::service_projects::augment(&root, &discovery, &mut report)?;
     let deployments = service_deployments::augment(&root, &discovery, &mut report);
     service_communications::augment(&root, &mut report);
-    service_spring::augment(&root, &mut report);
+    let spring_datasources = service_spring::augment(&root, &mut report);
     service_clients::augment(&root, &mut report, &deployments);
+    service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_traces::augment(&root, &mut report);
     if report
         .projects
