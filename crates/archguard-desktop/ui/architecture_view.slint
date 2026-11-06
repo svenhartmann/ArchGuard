@@ -1,7 +1,8 @@
 // Architecture tab: the web viewer's arc42 reader (renderArc42Documentation
 // in viewer_architecture.js). Data and callbacks live in ArchitectureData,
 // set from src/architecture_ui.rs.
-import { ScrollView, TextEdit } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { TextEdit } from "fields.slint";
 import { Theme } from "theme.slint";
 import { Button, Disclosure, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
@@ -76,7 +77,7 @@ component ChapterEditor inherits VerticalLayout {
     Text {
         text: ArchitectureData.model.file != "" ? @tr("Editing {}. Generated archguard blocks are refreshed from the analysis when you save; your text outside them is kept.", ArchitectureData.model.file) : @tr("Editing the generated chapter. The project has no arc42 text yet; saving asks where to create it.");
         color: Theme.muted;
-        font-size: 12px;
+        font-size: Theme.font-small;
         wrap: word-wrap;
     }
     if ArchitectureData.model.ask-location: Rectangle {
@@ -90,8 +91,8 @@ component ChapterEditor inherits VerticalLayout {
             Text {
                 text: @tr("This project has no arc42.md and no arc42 folder. Where should the architecture documentation be created?");
                 color: Theme.text;
-                font-size: 13px;
-                font-weight: 650;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-strong;
                 wrap: word-wrap;
             }
             HorizontalLayout {
@@ -106,7 +107,7 @@ component ChapterEditor inherits VerticalLayout {
     if ArchitectureData.model.edit-error != "": Text {
         text: ArchitectureData.model.edit-error;
         color: Theme.danger;
-        font-size: 12px;
+        font-size: Theme.font-small;
         wrap: word-wrap;
     }
     if !root.narrow: HorizontalLayout {
@@ -115,7 +116,7 @@ component ChapterEditor inherits VerticalLayout {
             preferred-width: 100px;
             horizontal-stretch: 1;
             height: 620px;
-            font-size: 12px;
+            font-size: Theme.font-small;
             text <=> ArchitectureData.draft;
             edited(t) => { ArchitectureData.draft-changed(t); }
         }
@@ -128,7 +129,7 @@ component ChapterEditor inherits VerticalLayout {
             VerticalLayout {
                 padding: 14px;
                 alignment: start;
-                Text { text: @tr("Preview"); color: Theme.muted; font-size: 11px; }
+                Text { text: @tr("Preview"); color: Theme.muted; font-size: Theme.font-caption; }
                 for b in ArchitectureData.preview: ArcBlockView { block: b; }
             }
         }
@@ -137,11 +138,11 @@ component ChapterEditor inherits VerticalLayout {
         spacing: 12px;
         TextEdit {
             height: 360px;
-            font-size: 12px;
+            font-size: Theme.font-small;
             text <=> ArchitectureData.draft;
             edited(t) => { ArchitectureData.draft-changed(t); }
         }
-        Text { text: @tr("Preview"); color: Theme.muted; font-size: 11px; }
+        Text { text: @tr("Preview"); color: Theme.muted; font-size: Theme.font-caption; }
         for b in ArchitectureData.preview: ArcBlockView { block: b; }
     }
     HorizontalLayout {
@@ -170,16 +171,16 @@ component ChapterButton inherits Rectangle {
             width: 18px;
             text: chapter.label;
             color: current ? Theme.accent : Theme.muted;
-            font-size: 11px;
-            font-weight: current ? 650 : 400;
+            font-size: Theme.font-caption;
+            font-weight: current ? Theme.weight-strong : Theme.weight-regular;
             vertical-alignment: center;
         }
         title := Text {
             visible: !root.compact;
             text: chapter.title;
             color: current ? Theme.accent : Theme.text;
-            font-size: 14px;
-            font-weight: current ? 650 : 400;
+            font-size: Theme.font-body;
+            font-weight: current ? Theme.weight-strong : Theme.weight-regular;
             wrap: word-wrap;
             vertical-alignment: center;
             horizontal-stretch: 1;
@@ -209,7 +210,7 @@ export component ArchitectureView inherits Rectangle {
     if ArchitectureData.model.state == 0: Text {
         text: @tr("Writing the architecture documentation …");
         color: Theme.muted;
-        font-size: 14px;
+        font-size: Theme.font-body;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -220,13 +221,13 @@ export component ArchitectureView inherits Rectangle {
             text: @tr("No arc42 documentation in this report");
             color: Theme.text;
             font-size: Theme.font-page;
-            font-weight: 700;
+            font-weight: Theme.weight-title;
             horizontal-alignment: center;
         }
         Text {
             text: ArchitectureData.model.error != "" ? ArchitectureData.model.error : @tr("Generate a new report to see the architecture documentation.");
             color: Theme.muted;
-            font-size: 13px;
+            font-size: Theme.font-body;
             horizontal-alignment: center;
         }
     }
@@ -241,7 +242,7 @@ export component ArchitectureView inherits Rectangle {
                 spacing: 8px;
                 horizontal-stretch: 1;
                 PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
-                if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: 12px; wrap: word-wrap; }
+                if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: Theme.font-small; wrap: word-wrap; }
             }
             if !root.narrow && !ArchitectureData.model.editing: Button { y: (parent.height - self.height) / 2; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
@@ -257,13 +258,13 @@ export component ArchitectureView inherits Rectangle {
         if ArchitectureData.model.file-error != "": Text {
             text: @tr("The project's arc42 text could not be read: {}", ArchitectureData.model.file-error);
             color: Theme.danger;
-            font-size: 12px;
+            font-size: Theme.font-small;
             wrap: word-wrap;
         }
         if ArchitectureData.model.saved != "": Text {
             text: @tr("Saved {}", ArchitectureData.model.saved);
             color: Theme.muted;
-            font-size: 12px;
+            font-size: Theme.font-small;
         }
         HorizontalLayout {
             spacing: root.narrow ? 10px : 22px;
@@ -308,7 +309,7 @@ export component ArchitectureView inherits Rectangle {
                             PageTitle { text: ArchitectureData.model.chapter-title; }
                             if ArchitectureData.model.chapter-note != "": VerticalLayout {
                                 padding-top: 8px;
-                                Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                                Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
                             if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
@@ -341,8 +342,8 @@ export component ArchitectureView inherits Rectangle {
                                     Text {
                                         text: ArchitectureData.model.source;
                                         color: Theme.text;
-                                        font-family: "Menlo";
-                                        font-size: 12px;
+                                        font-family: Theme.mono-family;
+                                        font-size: Theme.font-small;
                                         wrap: word-wrap;
                                     }
                                 }
@@ -355,7 +356,7 @@ export component ArchitectureView inherits Rectangle {
                                 Text {
                                     text: @tr("Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks.");
                                     color: Theme.muted;
-                                    font-size: 12px;
+                                    font-size: Theme.font-small;
                                     wrap: word-wrap;
                                 }
                                 Rectangle { height: 8px; }
@@ -368,7 +369,7 @@ export component ArchitectureView inherits Rectangle {
                         if root.setup-open: Text {
                             text: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
                             color: Theme.text;
-                            font-size: 13px;
+                            font-size: Theme.font-body;
                             wrap: word-wrap;
                         }
                     }
@@ -378,7 +379,7 @@ export component ArchitectureView inherits Rectangle {
                         Text {
                             text: @tr("Target architecture: the comparison with the declared model is not native yet.");
                             color: Theme.muted;
-                            font-size: 12px;
+                            font-size: Theme.font-small;
                             vertical-alignment: center;
                         }
                         Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
