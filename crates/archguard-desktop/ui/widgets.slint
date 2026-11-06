@@ -1,0 +1,579 @@
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+
+export global Icons {
+    out property <string> info: "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 11 L 12 16.5 M 12 7.6 L 12 7.8";
+    out property <string> search: "M 10.5 4 A 6.5 6.5 0 1 0 10.5 17 A 6.5 6.5 0 1 0 10.5 4 Z M 15.5 15.5 L 20 20";
+    out property <string> fit: "M 4 9 L 4 4 L 9 4 M 15 4 L 20 4 L 20 9 M 20 15 L 20 20 L 15 20 M 9 20 L 4 20 L 4 15";
+    out property <string> minus: "M 6 12 L 18 12";
+    out property <string> plus: "M 6 12 L 18 12 M 12 6 L 12 18";
+    out property <string> close: "M 7 7 L 17 17 M 17 7 L 7 17";
+    out property <string> chevron-right: "M 9 6 L 15 12 L 9 18";
+    out property <string> chevron-down: "M 6 9 L 12 15 L 18 9";
+    out property <string> chevron-left: "M 15 6 L 9 12 L 15 18";
+    out property <string> package: "M 12 3 L 20 7.5 L 20 16.5 L 12 21 L 4 16.5 L 4 7.5 Z M 4 7.5 L 12 12 L 20 7.5 M 12 12 L 12 21";
+    out property <string> file: "M 6 3 L 14 3 L 19 8 L 19 21 L 6 21 Z M 14 3 L 14 8 L 19 8";
+    out property <string> folder: "M 3 6 L 9 6 L 11 8 L 21 8 L 21 19 L 3 19 Z";
+    out property <string> sun: "M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z M 12 2 L 12 4 M 12 20 L 12 22 M 2 12 L 4 12 M 20 12 L 22 12 M 4.9 4.9 L 6.3 6.3 M 17.7 17.7 L 19.1 19.1 M 4.9 19.1 L 6.3 17.7 M 17.7 6.3 L 19.1 4.9";
+    out property <string> moon: "M 20 14.5 A 8 8 0 1 1 9.5 4 A 6.5 6.5 0 0 0 20 14.5 Z";
+    out property <string> external: "M 14 4 L 20 4 L 20 10 M 20 4 L 11 13 M 18 14 L 18 20 L 4 20 L 4 6 L 10 6";
+    out property <string> cycle: "M 19 12 A 7 7 0 1 1 16.5 6.6 M 17 3 L 17 7 L 13 7";
+}
+
+export component Icon inherits Path {
+    in property <string> icon;
+    in property <color> tint: Theme.text;
+    in property <length> stroke-w: 1.8px;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: icon;
+    stroke: tint;
+    stroke-width: stroke-w;
+    fill: transparent;
+}
+
+// The web viewer's .btn / .btn-secondary / .btn-primary.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> pressed-state;
+    in property <bool> compact;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: compact ? 28px : 34px;
+    // Never narrower than the label: toolbars shrink their texts instead.
+    min-width: max(self.height, content.min-width);
+    horizontal-stretch: 0;
+    border-radius: Theme.radius-sm;
+    background: primary ? Theme.accent
+        : pressed-state ? Theme.accent.with-alpha(0.16)
+        : touch.has-hover ? Theme.panel-2 : Theme.panel;
+    border-width: 1px;
+    border-color: pressed-state ? Theme.accent : Theme.border;
+    opacity: enabled ? 1 : 0.45;
+    animate background { duration: 100ms; }
+    content := HorizontalLayout {
+        padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
+        padding-right: self.padding-left;
+        spacing: 6px;
+        alignment: center;
+        if root.icon != "": Icon {
+            icon: root.icon;
+            tint: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            width: compact ? 14px : 16px;
+            height: self.width;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            font-size: compact ? 12px : 13px;
+            font-weight: pressed-state || primary ? 600 : 500;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One tab of the top tab bar (#tabs in the web viewer).
+export component Tab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked;
+    height: 30px;
+    width: label.preferred-width + 24px;
+    border-radius: 7px;
+    background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    animate background { duration: 100ms; }
+    label := Text {
+        text: root.text;
+        color: active ? Theme.accent : Theme.text;
+        font-size: 14px;
+        font-weight: active ? 650 : 450;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Divider inherits Rectangle {
+    width: 1px;
+    height: 18px;
+    background: Theme.border;
+}
+
+export component Metric inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> label;
+    spacing: 5px;
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: 15px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+}
+
+export component SearchField inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> input.text;
+    callback edited(string);
+    callback accepted(string);
+    height: 34px;
+    border-radius: Theme.radius-sm;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Icon {
+            icon: Icons.search;
+            tint: Theme.muted;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Rectangle {
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(self.text); }
+            }
+            if input.text == "": Text {
+                x: 0;
+                width: 100%;
+                height: 100%;
+                text: root.placeholder;
+                color: Theme.muted;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Shown by a tab that is not native yet: the web viewer has it.
+export component TabPlaceholder inherits Rectangle {
+    in property <string> title;
+    callback open-web();
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font-page;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: @tr("This view is not native yet. The web viewer shows it for the same project.");
+            color: Theme.muted;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Open in web viewer");
+                icon: Icons.external;
+                primary: true;
+                clicked => { root.open-web(); }
+            }
+        }
+    }
+}
+
+// ---- Shared presentation: every tab uses these, none keeps its own copy.
+
+// One key figure from `src/kpi.rs`: label (naming its level), the value
+// Rust formatted and the scope note shown as help on hover.
+export struct KpiItem { label: string, value: string, note: string }
+
+// The scope note of a key figure, under its value while hovered.
+component KpiNote inherits Rectangle {
+    in property <string> note;
+    width: 300px;
+    height: tip.preferred-height + 16px;
+    border-radius: Theme.radius-sm;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: Theme.shadow;
+    tip := Text {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        text: root.note;
+        color: Theme.text;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+// A key figure as a card with a large value. Hovering shows its note.
+export component StatCard inherits Rectangle {
+    in property <KpiItem> kpi;
+    horizontal-stretch: 1;
+    // Equal columns, whatever the label widths.
+    preferred-width: 0px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.panel;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        Text { text: root.kpi.value; color: Theme.text; font-size: 24px; font-weight: 700; }
+        Text { text: root.kpi.label; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+    }
+    touch := TouchArea { }
+    if touch.has-hover && root.kpi.note != "": KpiNote { x: 0; y: root.height + 4px; note: root.kpi.note; }
+}
+
+// The compact form of `StatCard` for toolbars and headers: "13 Dependencies".
+export component StatInline inherits HorizontalLayout {
+    in property <KpiItem> kpi;
+    spacing: 5px;
+    horizontal-stretch: 0;
+    value := Text { text: root.kpi.value; color: Theme.text; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+    label := Text {
+        text: root.kpi.label;
+        color: Theme.muted;
+        font-size: 12px;
+        vertical-alignment: center;
+        touch := TouchArea { }
+        if touch.has-hover && root.kpi.note != "": KpiNote { x: 0; y: parent.height + 4px; note: root.kpi.note; }
+    }
+}
+
+// A small label badge. `variant`: "neutral", "accent", "p1" (filled
+// priority), "p2" (outlined priority), "warning", "danger", "success".
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <string> variant: "neutral";
+    in property <float> zoom: 1.0;
+    property <color> tint: variant == "accent" ? Theme.accent
+        : variant == "p1" ? Theme.priority-text
+        : variant == "p2" ? Theme.priority
+        : variant == "warning" ? Theme.warning
+        : variant == "danger" ? Theme.danger
+        : variant == "success" ? Theme.success : Theme.muted;
+    horizontal-stretch: 0;
+    height: label.preferred-height + 4px * zoom;
+    width: label.preferred-width + 12px * zoom;
+    border-radius: 4px * zoom;
+    border-width: 1px;
+    border-color: variant == "p1" || variant == "p2" ? Theme.priority
+        : variant == "neutral" ? Theme.border : root.tint;
+    background: variant == "p1" ? Theme.priority-fill : transparent;
+    label := Text {
+        text: root.text;
+        color: root.tint;
+        font-size: 10.5px * root.zoom;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Severity of a security finding: name and colour from the `sev-*` scale.
+export global Severity {
+    public pure function color(key: string) -> color {
+        return key == "critical" ? Theme.sev-critical : key == "high" ? Theme.sev-high
+            : key == "medium" ? Theme.sev-medium : key == "low" ? Theme.sev-low : Theme.sev-unknown;
+    }
+    public pure function label(key: string) -> string {
+        return key == "critical" ? @tr("Security" => "Critical")
+            : key == "high" ? @tr("Security" => "High")
+            : key == "medium" ? @tr("Security" => "Medium")
+            : key == "low" ? @tr("Security" => "Low")
+            : @tr("Security" => "Unknown");
+    }
+}
+
+// The severity chip: an optional count and the severity name.
+export component SeverityChip inherits Rectangle {
+    in property <string> key;
+    in property <string> value;
+    property <color> tint: Severity.color(root.key);
+    horizontal-stretch: 0;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.key == "critical" || root.key == "high" ? root.tint : Theme.border;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 6px;
+        if root.value != "": Text { text: root.value; color: root.tint; font-size: 12px; font-weight: 700; vertical-alignment: center; }
+        Text { text: Severity.label(root.key); color: root.tint; font-size: 12px; vertical-alignment: center; }
+    }
+}
+
+// Colours of the rating scale (`Rating::slot` in `src/rating.rs`):
+// 0 unknown, 1 low, 2 elevated, 3 high, 4 informational, 5 unrated.
+export global Ratings {
+    public pure function color(slot: int) -> color {
+        return slot == 1 ? Theme.rate-low : slot == 2 ? Theme.rate-medium
+            : slot == 3 ? Theme.rate-high : slot == 4 ? Theme.rate-info : Theme.rate-unknown;
+    }
+}
+
+// A dashed outline: what an unknown value keeps.
+component Dashes inherits Rectangle {
+    in property <color> tint;
+    property <length> step: 6px;
+    for i in max(0, floor((root.width - 8px) / step)): Rectangle {
+        x: 4px + i * step;
+        y: 0;
+        width: 3px;
+        height: 1px;
+        background: tint;
+    }
+    for i in max(0, floor((root.width - 8px) / step)): Rectangle {
+        x: 4px + i * step;
+        y: root.height - 1px;
+        width: 3px;
+        height: 1px;
+        background: tint;
+    }
+    for i in max(0, floor((root.height - 8px) / step)): Rectangle {
+        x: 0;
+        y: 4px + i * step;
+        width: 1px;
+        height: 3px;
+        background: tint;
+    }
+    for i in max(0, floor((root.height - 8px) / step)): Rectangle {
+        x: root.width - 1px;
+        y: 4px + i * step;
+        width: 1px;
+        height: 3px;
+        background: tint;
+    }
+}
+
+// A rated value: heatmap cell or legend entry (`Rating::slot`).
+export component RatingChip inherits Rectangle {
+    in property <int> rating;
+    in property <string> text;
+    in property <length> font: 12px;
+    in property <bool> bold-high: true;
+    // Width of the label, for legend entries sized to their text.
+    out property <length> label-w: label.preferred-width;
+    property <color> tone: Ratings.color(rating);
+    border-radius: 5px;
+    border-width: rating == 0 ? 0 : 1px;
+    border-color: rating >= 1 && rating <= 3 ? tone.mix(Theme.border, 0.55) : Theme.border;
+    background: rating >= 1 && rating <= 3 ? tone.mix(Theme.panel, 0.2)
+        : rating == 4 ? Theme.accent.mix(Theme.panel, 0.12) : Theme.panel-2;
+    if root.rating == 0: Dashes {
+        width: parent.width;
+        height: parent.height;
+        tint: Theme.border;
+    }
+    label := Text {
+        text: root.text;
+        color: root.rating == 0 ? Theme.muted : Theme.text;
+        font-size: root.font;
+        font-weight: root.rating == 3 && root.bold-high ? 700 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// One legend entry: a swatch (or an outline) and its meaning.
+export component Legend inherits HorizontalLayout {
+    in property <string> text;
+    in property <brush> swatch: Theme.accent;
+    in property <bool> outline;
+    in property <color> outline-color: Theme.cycle;
+    in property <length> swatch-w: 10px;
+    horizontal-stretch: 0;
+    spacing: 6px;
+    Rectangle {
+        width: root.outline ? 16px : root.swatch-w;
+        height: 10px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 3px;
+        background: root.outline ? transparent : root.swatch;
+        border-width: root.outline ? 2px : 0;
+        border-color: root.outline-color;
+    }
+    Text { text: root.text; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+}
+
+// Colours of an analysis or import status (`Status::slot` in
+// `src/status.rs`): 0 ready, 1 partial, 2 stale, 3 unavailable,
+// 4 not imported, 5 error.
+export global Statuses {
+    public pure function color(s: int) -> color {
+        return s == 0 ? Theme.success : s == 1 || s == 2 ? Theme.warning
+            : s == 5 ? Theme.danger : Theme.muted;
+    }
+}
+
+// "● Analysis: partial · detail", the dot and label in the status colour.
+export component StatusLine inherits HorizontalLayout {
+    in property <int> status;
+    in property <string> label;
+    in property <string> detail;
+    spacing: 6px;
+    alignment: start;
+    Rectangle {
+        width: 8px;
+        height: 8px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 4px;
+        background: Statuses.color(root.status);
+    }
+    Text {
+        text: root.label;
+        color: root.status == 0 ? Theme.text : Statuses.color(root.status);
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+    if root.detail != "": Text {
+        text: "· " + root.detail;
+        color: Theme.muted;
+        font-size: 12px;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+    }
+}
+
+// Nothing to show, and why.
+export component EmptyState inherits VerticalLayout {
+    in property <string> title;
+    in property <string> reason;
+    padding: 24px;
+    spacing: 6px;
+    alignment: center;
+    if root.title != "": Text { text: root.title; color: Theme.text; font-size: 14px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
+    if root.reason != "": Text { text: root.reason; color: Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+}
+
+// A column or group heading, uppercased here; texts stay in sentence case.
+export component SectionHeading inherits Text {
+    in property <string> label;
+    text: label.to-uppercase();
+    color: Theme.muted;
+    font-size: Theme.font-heading;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    vertical-alignment: center;
+}
+
+// A tab's title with an optional subtitle, in the one title scale.
+export component PageTitle inherits VerticalLayout {
+    in property <string> text;
+    in property <string> sub;
+    in property <bool> section;
+    spacing: 2px;
+    Text { text: root.text; color: Theme.text; font-size: root.section ? Theme.font-section : Theme.font-page; font-weight: 700; wrap: word-wrap; }
+    if root.sub != "": Text { text: root.sub; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+}
+
+// A collapsible section's summary: chevron and text.
+export component Disclosure inherits TouchArea {
+    in property <string> text;
+    in-out property <bool> open;
+    in property <color> tint: Theme.muted;
+    in property <length> size: 12px;
+    in property <int> weight: 400;
+    height: max(22px, label.preferred-height + 8px);
+    mouse-cursor: pointer;
+    clicked => { root.open = !root.open; }
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        Icon {
+            icon: root.open ? Icons.chevron-down : Icons.chevron-right;
+            tint: root.tint;
+            width: root.size;
+            height: root.size;
+            y: (parent.height - self.height) / 2;
+        }
+        label := Text {
+            text: root.text;
+            color: root.tint;
+            font-size: root.size;
+            font-weight: root.weight;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// Zoom, always in this order: − 100% + Fit; the percentage resets to 100%.
+export component ZoomControls inherits HorizontalLayout {
+    in property <float> zoom: 1.0;
+    in property <bool> compact: true;
+    callback zoom-out();
+    callback zoom-in();
+    callback reset();
+    callback fit();
+    spacing: 4px;
+    alignment: start;
+    Button { icon: Icons.minus; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.zoom-out(); } }
+    // The percentage resets to 100%. Its size is fixed, so a fit-to-width
+    // zoom never resizes its own controls (no binding loop).
+    Rectangle {
+        width: 58px;
+        height: root.compact ? 28px : 34px;
+        y: (parent.height - self.height) / 2;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: pct.has-hover ? Theme.panel-2 : Theme.panel;
+        Text {
+            // Fixed bounds keep the text out of the layout's size.
+            min-width: 58px;
+            max-width: 58px;
+            preferred-width: 58px;
+            horizontal-stretch: 0;
+            height: parent.height;
+            overflow: elide;
+            text: Fmt.int(round(root.zoom * 100)) + "%";
+            color: Theme.text;
+            font-size: root.compact ? 12px : 13px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        pct := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.reset(); }
+        }
+    }
+    Button { icon: Icons.plus; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.zoom-in(); } }
+    Button { text: @tr("Fit"); compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.fit(); } }
+}

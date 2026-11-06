@@ -1,0 +1,216 @@
+// The Services tab's topology tree: group and service rows on the left,
+// relation arcs on one axis to their right (packageTreeLayout in
+// viewer_tree_layout.js). Geometry comes from src/services_ui/layout.rs.
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+
+export struct SvcRow {
+    name: string,
+    // Group rows (project path or Compose file) are context rows.
+    context: bool,
+    // Index into the topology's services, -1 for group rows.
+    service: int,
+    left: float,
+    y: float,
+    w: float,
+    h: float,
+    indent: float,
+    label-width: float,
+    relation-x: float,
+    selected: bool,
+    in-cycle: bool,
+    incoming: int,
+    outgoing: int,
+}
+
+// color: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic.
+export struct SvcEdge {
+    line: string,
+    head: string,
+    color: int,
+    selected: bool,
+    // Index into the topology's dependencies.
+    edge: int,
+    tip-x: float,
+    tip-y: float,
+}
+
+global SvcIcons {
+    out property <string> group: "M -7 -5 L -2 -5 L 0 -3 L 7 -3 L 7 6 L -7 6 Z";
+    out property <string> service: "M -6 -4 L 0 -7 L 6 -4 L 6 4 L 0 7 L -6 4 Z M -6 -4 L 0 -1 L 6 -4 M 0 -1 L 0 7";
+}
+
+component RowIcon inherits Path {
+    in property <bool> context;
+    in property <float> scale;
+    in property <color> outline: Theme.package-border;
+    width: 16px * scale;
+    height: 16px * scale;
+    viewbox-x: -8;
+    viewbox-y: -8;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: context ? SvcIcons.group : SvcIcons.service;
+    fill: Theme.package;
+    stroke: outline;
+    stroke-width: 1.2px * scale;
+}
+
+component SvcRowView inherits Rectangle {
+    in property <SvcRow> data;
+    in property <float> scale;
+    callback clicked();
+    x: data.left * scale * 1px;
+    y: (data.y - data.h / 2) * scale * 1px;
+    width: data.w * scale * 1px;
+    height: data.h * scale * 1px;
+    border-radius: 2px * scale;
+    property <bool> lit: data.selected || touch.has-hover;
+    background: lit ? Theme.accent.with-alpha(0.16) : data.in-cycle ? Theme.cycle.with-alpha(0.12) : transparent;
+    border-width: lit ? 1px : 0;
+    border-color: Theme.accent;
+    touch := TouchArea {
+        mouse-cursor: data.service >= 0 ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    RowIcon {
+        x: (data.indent + 12 - 8) * scale * 1px;
+        y: (data.h / 2 - 8) * scale * 1px;
+        context: data.context;
+        scale: root.scale;
+    }
+    Text {
+        x: (data.indent + 26) * scale * 1px;
+        width: data.label-width * scale * 1px;
+        height: parent.height;
+        text: data.name;
+        color: data.context ? Theme.muted : Theme.text;
+        font-size: 12px * scale;
+        font-weight: 500;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    if data.service >= 0: Text {
+        x: (data.w - 108) * scale * 1px;
+        height: parent.height;
+        text: @tr("In {}", Fmt.int(data.incoming));
+        color: Theme.incoming;
+        font-size: 11px * scale;
+        vertical-alignment: center;
+    }
+    if data.service >= 0: Text {
+        x: (data.w - 12) * scale * 1px - self.width;
+        height: parent.height;
+        text: @tr("Out {}", Fmt.int(data.outgoing));
+        color: Theme.outgoing;
+        font-size: 11px * scale;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+    // The relation node on the arc axis.
+    Rectangle {
+        x: (data.relation-x - data.left - 8) * scale * 1px;
+        y: (data.h / 2 - 10) * scale * 1px;
+        width: 16px * scale;
+        height: 20px * scale;
+        border-radius: 3px * scale;
+        background: Theme.bg;
+        border-width: data.selected ? 2px : 1px;
+        border-color: data.selected ? Theme.accent : Theme.border;
+        RowIcon {
+            x: 0;
+            y: 2px * scale;
+            context: data.context;
+            scale: root.scale;
+            outline: data.in-cycle ? Theme.cycle : Theme.package-border;
+        }
+    }
+}
+
+export component ServicesTree inherits Rectangle {
+    in property <[SvcRow]> rows;
+    in property <[SvcEdge]> edges;
+    in property <string> hierarchy;
+    in property <float> canvas-w;
+    in property <float> canvas-h;
+    in property <float> zoom: 1;
+    callback select-service(int);
+    callback select-edge(int);
+    callback resized(float);
+    callback zoom-by(float);
+
+    public function visible-width() -> float { return flick.width / 1px; }
+    public function visible-height() -> float { return flick.height / 1px; }
+
+    flick := Flickable {
+        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+        changed width => { root.resized(self.width / 1px); }
+        init => { root.resized(self.width / 1px); }
+        TouchArea {
+            scroll-event(event) => {
+                if (event.modifiers.control || event.modifiers.meta) {
+                    root.zoom-by(event.delta-y > 0 ? 1.1 : 1 / 1.1);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        if root.hierarchy != "": Path {
+            x: 0;
+            y: 0;
+            width: root.canvas-w * root.zoom * 1px;
+            height: root.canvas-h * root.zoom * 1px;
+            viewbox-width: root.canvas-w;
+            viewbox-height: root.canvas-h;
+            commands: root.hierarchy;
+            fill: transparent;
+            stroke: Theme.border;
+            stroke-width: 1.5px * root.zoom;
+        }
+        for e in root.edges: Rectangle {
+            property <color> tint: e.color == 1 ? Theme.incoming : e.color == 2 ? Theme.outgoing : e.color == 3 ? Theme.cycle : Theme.edge;
+            Path {
+                x: 0;
+                y: 0;
+                width: root.canvas-w * root.zoom * 1px;
+                height: root.canvas-h * root.zoom * 1px;
+                viewbox-width: root.canvas-w;
+                viewbox-height: root.canvas-h;
+                commands: e.line;
+                fill: transparent;
+                stroke: tint;
+                stroke-width: (e.selected || hit.has-hover ? 3.5px : 2px) * root.zoom;
+            }
+            Path {
+                x: 0;
+                y: 0;
+                width: root.canvas-w * root.zoom * 1px;
+                height: root.canvas-h * root.zoom * 1px;
+                viewbox-width: root.canvas-w;
+                viewbox-height: root.canvas-h;
+                commands: e.head;
+                fill: tint;
+                stroke: transparent;
+            }
+            // The arrow head selects the relation (the web's arc hit area).
+            hit := TouchArea {
+                x: (e.tip-x - 14) * root.zoom * 1px;
+                y: (e.tip-y - 8) * root.zoom * 1px;
+                width: 18px * root.zoom;
+                height: 16px * root.zoom;
+                mouse-cursor: pointer;
+                clicked => { root.select-edge(e.edge); }
+            }
+        }
+        for r in root.rows: SvcRowView {
+            data: r;
+            scale: root.zoom;
+            clicked => {
+                if (r.service >= 0) {
+                    root.select-service(r.service);
+                }
+            }
+        }
+    }
+}

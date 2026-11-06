@@ -1,0 +1,56 @@
+// Color tokens of the web viewer (crates/archguard-report/src/viewer.html,
+// :root and the dark override). Keep both in sync.
+export global Theme {
+    in-out property <bool> dark: true;
+
+    out property <color> bg: dark ? #101722 : #F5F7FB;
+    out property <color> panel: dark ? #182231 : #FFFFFF;
+    out property <color> panel-2: dark ? #131C29 : #EEF2F8;
+    out property <color> text: dark ? #E6EDF7 : #172033;
+    out property <color> muted: dark ? #93A1B5 : #5B6472;
+    out property <color> accent: dark ? #5B9CF6 : #2563EB;
+    out property <color> accent-contrast: dark ? #0B1220 : #FFFFFF;
+    out property <color> border: dark ? #2B3A4E : #DDE3ED;
+    out property <color> node: dark ? #7FB0F7 : #2563EB;
+    // Cycles only: edges, nodes and groups that form a cycle.
+    out property <color> cycle: dark ? #FF6B61 : #D92D20;
+    out property <color> dim: dark ? #33415A : #D7DEE9;
+    out property <color> edge: dark ? #8FA0B5 : #64748B;
+    out property <color> incoming: dark ? #38BDF8 : #0369A1;
+    out property <color> outgoing: dark ? #C4B5FD : #7C3AED;
+    out property <color> package: dark ? #302B20 : #FFFAED;
+    out property <color> package-tab: dark ? #55452A : #F1D998;
+    out property <color> package-border: dark ? #BFA16A : #A77D32;
+    out property <color> package-selected: dark ? #20374F : #EDF4FF;
+    out property <color> priority: dark ? #FFC267 : #9A4D00;
+    out property <color> priority-fill: dark ? #805017 : #FFE0A3;
+    // Text on priority-fill (the web's --c-priority-text).
+    out property <color> priority-text: dark ? #FFF2D5 : #502500;
+    // Status and messages: warnings (stale, loading, partial) and errors.
+    out property <color> warning: dark ? #FFC267 : #9A4D00;
+    out property <color> danger: dark ? #FF6B61 : #D92D20;
+    out property <color> success: dark ? #3FC48D : #16845B;
+    // Rating scale of measured values against their cohort (`rating.rs`).
+    out property <color> rate-low: dark ? #3FC48D : #16845B;
+    out property <color> rate-medium: dark ? #E3A53B : #B7791F;
+    out property <color> rate-high: dark ? #F07272 : #D04545;
+    out property <color> rate-info: accent;
+    out property <color> rate-unknown: muted;
+    // Continuous complexity scale, low to high (Start's complexity lens).
+    out property <brush> rate-scale: @linear-gradient(90deg, #55c3ba 0%, #55c38e 14%, #55c362 29%, #74c355 43%, #a0c355 57%, #c3ba55 71%, #c38e55 86%, #c37155 100%);
+    // Severity scale of security findings.
+    out property <color> sev-critical: dark ? #FF8A80 : #B42318;
+    out property <color> sev-high: dark ? #FF6B61 : #D92D20;
+    out property <color> sev-medium: dark ? #FFC267 : #9A4D00;
+    out property <color> sev-low: text;
+    out property <color> sev-unknown: muted;
+    out property <color> shadow: dark ? #00000073 : #17203314;
+
+    // One size scale for titles and headings.
+    out property <length> font-page: 22px;
+    out property <length> font-section: 16px;
+    out property <length> font-heading: 12px;
+
+    out property <length> radius: 10px;
+    out property <length> radius-sm: 8px;
+}

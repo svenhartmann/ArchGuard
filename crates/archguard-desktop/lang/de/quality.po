@@ -1,0 +1,454 @@
+msgid "View"
+msgstr "Ansicht"
+
+msgid "Class heatmap"
+msgstr "Klassen-Heatmap"
+
+msgid "Class metrics"
+msgstr "Klassenmetriken"
+
+msgid "Method maintainability"
+msgstr "Methodenwartbarkeit"
+
+msgid "Knowledge concentration"
+msgstr "Wissensverteilung"
+
+msgid "Build, runtime and test stability"
+msgstr "Build, Laufzeit und Teststabilität"
+
+msgid "Package cohesion"
+msgstr "Paketkohäsion"
+
+msgid "Quality history"
+msgstr "Qualitätsverlauf"
+
+msgid "Tests and change impact"
+msgstr "Tests und Änderungsreichweite"
+
+msgid "Test effectiveness"
+msgstr "Wirksamkeit der Tests"
+
+msgid "Code duplication"
+msgstr "Code-Duplikate"
+
+msgid "Package or file"
+msgstr "Paket oder Datei"
+
+msgid "Find package or file"
+msgstr "Paket oder Datei finden"
+
+msgid "Measuring classes, methods and Git history…"
+msgstr "Klassen, Methoden und Git-Verlauf werden gemessen …"
+
+msgid "Show"
+msgstr "Zeigen"
+
+msgid "All classes"
+msgstr "Alle Klassen"
+
+msgid "High values"
+msgstr "Hohe Werte"
+
+msgid "Low values throughout"
+msgstr "Durchgehend niedrige Werte"
+
+msgid "Missing measurements"
+msgstr "Fehlende Messwerte"
+
+msgid "Sort"
+msgstr "Sortierung"
+
+msgid "Review first"
+msgstr "Zuerst prüfen"
+
+msgid "Class name"
+msgstr "Klassenname"
+
+msgid "Relative comparison within the original project and source language: low below the 50% rank, elevated from 50%, high from 80%. Equal values share a rank; fewer than five measurements or a constant nonzero population are neutral. Zero and one connected LCOM4 group are low. NOC is informational. Colors guide review; they do not prove class quality."
+msgstr "Relativer Vergleich im ursprünglichen Projekt und derselben Quellsprache: niedrig unter Rang 50%, erhöht ab 50%, hoch ab 80%. Gleiche Werte erhalten denselben Rang; weniger als fünf Messwerte oder identische Nichtnullwerte bleiben neutral. Null und eine zusammenhängende LCOM4-Gruppe gelten als niedrig. NOC dient zur Information. Farben unterstützen die Prüfung; sie beweisen keine Klassenqualität."
+
+msgid "Back to heatmap"
+msgstr "Zur Heatmap"
+
+msgid "Class"
+msgstr "Klasse"
+
+msgid "Show next 20 groups"
+msgstr "Nächste 20 Gruppen"
+
+# Templates of ui/texts.slint.
+
+msgid "Text shortened; full evidence is included in the export."
+msgstr "Text gekürzt; vollständige Belege stehen im Export."
+
+msgid "Locate in graph"
+msgstr "Im Graphen anzeigen"
+
+msgid "n/a"
+msgstr "n. a."
+
+msgid "First 100; export contains all evidence."
+msgstr "Erste 100; der Export enthält alle Belege."
+
+msgid "Volume"
+msgstr "Volumen"
+
+msgid "Difficulty"
+msgstr "Schwierigkeit"
+
+msgid "Effort"
+msgstr "Aufwand"
+
+msgid "Source lines: {{lines}} · source-maintainability/v1. Compare the same language and measurement definition."
+msgstr "Quellzeilen: {{lines}} · source-maintainability/v1. Nur gleiche Sprache und Messdefinition vergleichen."
+
+msgid "Halstead and measurement rules"
+msgstr "Halstead und Messregeln"
+
+msgid "Contribution concentration"
+msgstr "Beitragsverteilung"
+
+msgid "Bus factor 50: {{factor}} · largest share {{share}}"
+msgstr "Bus-Faktor 50: {{factor}} · größter Anteil {{share}}"
+
+msgid "{{people}} contributors · {{touches}} file changes"
+msgstr "{{people}} Beitragende · {{touches}} Dateiänderungen"
+
+msgid "Smallest number of authors responsible for at least 50% of file/commit touches in the selected Git window. A concentration heuristic; no claim about actual expertise or availability. Shallow history leaves the factor unknown."
+msgstr "Kleinste Anzahl von Personen mit mindestens 50% der Datei-/Commit-Berührungen im Git-Zeitfenster. Ein Hinweis auf Konzentration, keine Aussage über tatsächliches Wissen oder Verfügbarkeit. Bei unvollständiger Historie bleibt der Faktor unbekannt."
+
+msgid "Contributors and interpretation"
+msgstr "Beitragende und Einordnung"
+
+msgid "Repeated test"
+msgstr "Wiederholter Test"
+
+msgid "Build duration"
+msgstr "Build-Dauer"
+
+msgid "Runtime measurement"
+msgstr "Laufzeitmessung"
+
+msgid "Mixed results in the same context"
+msgstr "Wechselnde Ergebnisse im selben Kontext"
+
+msgid "Consistent observed results"
+msgstr "Gleichbleibende beobachtete Ergebnisse"
+
+msgid "Too few runs to assess stability"
+msgstr "Zu wenige Läufe für eine Stabilitätsbewertung"
+
+msgid "{{passed}} passed · {{failed}} failed · {{skipped}} skipped"
+msgstr "{{passed}} erfolgreich · {{failed}} fehlgeschlagen · {{skipped}} übersprungen"
+
+msgid "Producer-declared context, unverified. Durations use successful runs. Different revisions and environments remain separate; mixed results indicate instability, not its cause."
+msgstr "Vom Messwerkzeug angegebener, unverifizierter Kontext. Zeitwerte verwenden erfolgreiche Läufe. Revisionen und Umgebungen bleiben getrennt; wechselnde Ergebnisse zeigen Instabilität, nicht deren Ursache."
+
+msgid "Measurement context"
+msgstr "Messkontext"
+
+msgid "Selected"
+msgstr "Ausgewählt"
+
+msgid "Inspect groups"
+msgstr "Gruppen untersuchen"
+
+msgid "Review package split: check the responsibilities of these groups."
+msgstr "Paketaufteilung prüfen: Verantwortlichkeiten der Gruppen vergleichen."
+
+msgid "Too few internal connections to assess a package split."
+msgstr "Zu wenige interne Abhängigkeiten, um eine Paketaufteilung zu bewerten."
+
+msgid "Co-change not checked."
+msgstr "Gemeinsame Änderungen nicht geprüft."
+
+msgid "history available"
+msgstr "Historie verfügbar"
+
+msgid "incomplete history"
+msgstr "unvollständige Historie"
+
+msgid "{{count}} cross-group co-change pairs · {{status}}"
+msgstr "{{count}} gemeinsam geänderte Paare zwischen Gruppen · {{status}}"
+
+msgid "Group {{number}}"
+msgstr "Gruppe {{number}}"
+
+msgid "Some group files are absent from the loaded source graph."
+msgstr "Einige Gruppendateien fehlen im geladenen Quellgraphen."
+
+msgid "All files"
+msgstr "Alle Dateien"
+
+msgid "Boundary samples truncated by analysis."
+msgstr "Grenzbelege durch Analyse begrenzt."
+
+msgid "External dependencies · {{incoming}} in / {{outgoing}} out"
+msgstr "Externe Abhängigkeiten · {{incoming}} ein / {{outgoing}} aus"
+
+msgid "Direct files only; nested packages are separate. Isolation refers to connections inside this package."
+msgstr "Nur direkte Dateien; Unterpakete sind separat. Isolation bezieht sich auf Abhängigkeiten innerhalb dieses Pakets."
+
+msgid "Internal share: {{share}} · internal / (internal + outgoing)"
+msgstr "Interner Anteil: {{share}} · intern / (intern + ausgehend)"
+
+msgid "{{internal}} internal · {{outgoing}} outgoing · {{incoming}} incoming file dependencies"
+msgstr "{{internal}} interne · {{outgoing}} ausgehende · {{incoming}} eingehende Dateiabhängigkeiten"
+
+msgid "Measurements and interpretation"
+msgstr "Messwerte und Einordnung"
+
+msgid "absent from latest snapshot"
+msgstr "im letzten Snapshot nicht vorhanden"
+
+msgid "Latest snapshot · {{files}} files · producer revision: {{revision}}"
+msgstr "Letzter Snapshot · {{files}} Dateien · Producer-Revision: {{revision}}"
+
+msgid "Coverage: {{status}} · {{known}} / {{total}} files"
+msgstr "Abdeckung: {{status}} · {{known}} / {{total}} Dateien"
+
+msgid "Compiler analysis: {{status}} · {{measured}} / {{declared}} methods measured"
+msgstr "Compileranalyse: {{status}} · {{measured}} / {{declared}} Methoden gemessen"
+
+msgid "Findings: {{status}}"
+msgstr "Befunde: {{status}}"
+
+msgid "Line coverage"
+msgstr "Zeilenabdeckung"
+
+msgid "Mean complexity"
+msgstr "Mittlere Komplexität"
+
+msgid "Max. complexity"
+msgstr "Max. Komplexität"
+
+msgid "Active findings"
+msgstr "Aktive Befunde"
+
+msgid "No comparable previous module measurement."
+msgstr "Keine vergleichbare vorherige Modulmessung."
+
+msgid "Class, method and package history"
+msgstr "Klassen-, Methoden- und Paketverlauf"
+
+msgid "Duration: {{duration}} s"
+msgstr "Dauer: {{duration}} s"
+
+msgid "Conservative candidate: mapped code is affected by the selected dependency change."
+msgstr "Konservativer Kandidat: zugeordneter Code ist von der gewählten Abhängigkeitsänderung betroffen."
+
+msgid "Code mapping unknown or stale; no safe exclusion is possible."
+msgstr "Codezuordnung unbekannt oder veraltet; kein sicherer Ausschluss möglich."
+
+msgid "Explicit test-to-code mapping."
+msgstr "Explizite Test-zu-Code-Zuordnung."
+
+msgid "Additional mappings remain in the export."
+msgstr "Weitere Zuordnungen stehen im Export."
+
+msgid "{{count}} distinct incoming files"
+msgstr "{{count}} unterschiedliche eingehende Dateien"
+
+msgid "Original source excerpt shortened."
+msgstr "Ursprünglicher Quellausschnitt gekürzt."
+
+msgid "Duplicate block · {{tokens}} tokens"
+msgstr "Duplikatblock · {{tokens}} Tokens"
+
+msgid "{{lines}} reported lines · {{count}} locations"
+msgstr "{{lines}} gemeldete Zeilen · {{count}} Fundstellen"
+
+msgid "Producer excerpt shortened to 4096 characters during import; use the original CPD report for the full fragment."
+msgstr "Producer-Ausschnitt beim Import auf 4096 Zeichen gekürzt; der vollständige Ausschnitt steht im ursprünglichen CPD-Bericht."
+
+msgid "Not applicable"
+msgstr "Nicht anwendbar"
+
+msgid "Few comparisons"
+msgstr "Wenig Vergleichsdaten"
+
+msgid "Equal values"
+msgstr "Gleiche Werte"
+
+msgid "Not applicable · Go embedding is composition, not inheritance."
+msgstr "Nicht anwendbar · Go-Embedding ist Komposition, keine Vererbung."
+
+msgid "Incomplete measurement. Observed lower bounds are not rated."
+msgstr "Unvollständige Messung. Beobachtete Untergrenzen werden nicht bewertet."
+
+msgid "More subclasses can reflect intended reuse; no good/bad rating."
+msgstr "Mehr Unterklassen können gewollte Wiederverwendung bedeuten; keine Gut-/Schlecht-Bewertung."
+
+msgid "Comparison: {{count}} measured classes of the same source language. Search and package filters do not change the colors."
+msgstr "Vergleich: {{count}} gemessene Klassen derselben Quellsprache. Suche und Paketfilter ändern die Farben nicht."
+
+msgid "Classes × metrics. Colors compare measured values; gray retains unknowns."
+msgstr "Klassen × Kennzahlen. Farben vergleichen gemessene Werte; Grau erhält unbekannte Werte."
+
+msgid "Class coupling, response set, inheritance and complexity. Unknown measurements remain —."
+msgstr "Klassenkopplung, Aufrufumfang, Vererbung und Komplexität. Unbekannte Messungen bleiben —."
+
+msgid "Method maintainability, ordered by Cognitive source complexity."
+msgstr "Wartbarkeit pro Methode, sortiert nach Cognitive-Quellcodekomplexität."
+
+msgid "Contribution concentration in the configured Git history window."
+msgstr "Beitragsverteilung im konfigurierten Git-Zeitfenster."
+
+msgid "Recorded build, runtime and repeated-test runs. Project-wide observations are independent of the source selection."
+msgstr "Aufgezeichnete Build-, Laufzeit- und wiederholte Testläufe. Projektweite Messungen sind unabhängig von der Quellauswahl."
+
+msgid "Immediate files in each package. Internal share is structural, not proof of good domain boundaries; disconnected groups are review candidates."
+msgstr "Direkte Dateien je Paket. Der interne Anteil ist strukturell und belegt keine guten fachlichen Grenzen; getrennte Gruppen sind Prüfkandidaten."
+
+msgid "Latest two recorded snapshots. Incompatible measurements have no delta; imported producer revisions remain unverified."
+msgstr "Die letzten zwei aufgezeichneten Snapshots. Unvergleichbare Messungen erhalten kein Delta; importierte Producer-Revisionen bleiben unverifiziert."
+
+msgid "Matching source associations first, then measured duration. Selecting a file includes tests mapped to its transitive dependents. Unknown or incomplete mappings mean test omission is not safe."
+msgstr "Passende Quellzuordnungen zuerst, danach gemessene Dauer. Eine Dateiauswahl enthält Tests ihrer transitiven Aufrufer. Unbekannte oder unvollständige Zuordnungen erlauben kein sicheres Weglassen von Tests."
+
+msgid "Survived and uncovered mutations first, then incoming-file count. Killed ratio = killed / (killed + survived + no coverage); incomplete evidence has no score. This is not ordinary line coverage."
+msgstr "Überlebende und unabgedeckte Mutationen zuerst, danach eingehende Dateien. Erkennungsquote = erkannt / (erkannt + überlebt + keine Abdeckung); unvollständige Belege erhalten keinen Wert. Dies ist keine normale Zeilenabdeckung."
+
+msgid "CPD token matches, largest first. Inspect all locations before extracting shared code. Source hashes detect changes after import; producer revision, scan scope and token normalization remain unverified. No project-wide duplication percentage is inferred."
+msgstr "CPD-Tokenübereinstimmungen, größte zuerst. Vor einer gemeinsamen Abstraktion alle Fundstellen prüfen. Quellhashes erkennen Änderungen nach dem Import; Producer-Revision, Scanumfang und Tokennormalisierung bleiben unverifiziert. Es wird kein projektweiter Duplikatanteil abgeleitet."
+
+msgid "measured"
+msgstr "gemessen"
+
+msgid "partial analysis"
+msgstr "teilweise analysiert"
+
+msgid "No matching measurements. Missing data is not evidence of good quality."
+msgstr "Keine passenden Messungen. Fehlende Daten belegen keine gute Qualität."
+
+msgid "Entire source scope"
+msgstr "Gesamter Quellumfang"
+
+msgid "Scope: {{path}}"
+msgstr "Umfang: {{path}}"
+
+msgid "{{shown}} / {{total}} matching targets."
+msgstr "{{shown}} / {{total}} passende Ziele."
+
+msgid "Only the first 2000 are listed. Refine the package or file search to find other targets."
+msgstr "Nur die ersten 2000 werden aufgelistet. Die Paket- oder Dateisuche eingrenzen, um andere Ziele zu finden."
+
+msgid "The current selection is also retained."
+msgstr "Die aktuelle Auswahl bleibt zusätzlich erhalten."
+
+msgid "Original analysis and imported measurements. Graph simulations do not rewrite these results."
+msgstr "Ursprüngliche Analyse und importierte Messungen. Graphsimulationen verändern diese Ergebnisse nicht."
+
+msgid "Measurement coverage and definitions"
+msgstr "Messabdeckung und Definitionen"
+
+msgid "Detected mutation ratio: {{value}}"
+msgstr "Erkennungsquote der Mutationen: {{value}}"
+
+msgid "Mixed test groups: {{percent}}"
+msgstr "Testgruppen mit wechselnden Ergebnissen: {{percent}}"
+
+msgid "version unknown"
+msgstr "Version unbekannt"
+
+msgid "{{count}} reported scan errors"
+msgstr "{{count}} gemeldete Scanfehler"
+
+msgid "{{count}} recent snapshots shown; full measurements are stored in .archguard/quality-history."
+msgstr "{{count}} letzte Snapshots angezeigt; vollständige Messungen liegen in .archguard/quality-history."
+
+msgid "Snapshot provenance"
+msgstr "Herkunft der Snapshots"
+
+msgid "{{count}} file"
+msgstr "{{count}} Datei"
+
+msgid "{{count}} files"
+msgstr "{{count}} Dateien"
+
+msgid "{{count}} connected group"
+msgstr "{{count}} zusammenhängende Gruppe"
+
+msgid "{{count}} connected groups"
+msgstr "{{count}} zusammenhängende Gruppen"
+
+msgid "{{count}} isolated file"
+msgstr "{{count}} isolierte Datei"
+
+msgid "{{count}} isolated files"
+msgstr "{{count}} isolierte Dateien"
+
+msgid "unchanged since import"
+msgstr "seit Import unverändert"
+
+msgid "changed since import"
+msgstr "seit Import geändert"
+
+msgid "unmapped"
+msgstr "nicht zugeordnet"
+
+msgid "not recorded"
+msgstr "nicht aufgezeichnet"
+
+msgid "compared"
+msgstr "verglichen"
+
+msgid "no previous import"
+msgstr "kein vorheriger Import"
+
+msgid "unverified"
+msgstr "nicht verifiziert"
+
+msgid "comparable"
+msgstr "vergleichbar"
+
+msgid "not comparable"
+msgstr "nicht vergleichbar"
+
+msgid "present"
+msgstr "vorhanden"
+
+msgid "added"
+msgstr "hinzugefügt"
+
+msgid "removed"
+msgstr "entfernt"
+
+msgid "not imported"
+msgstr "nicht importiert"
+
+msgid "imported"
+msgstr "importiert"
+
+msgid "incomplete report"
+msgstr "unvollständiger Bericht"
+
+msgid "stale: sources changed"
+msgstr "veraltet: Quellen geändert"
+
+msgid "unavailable: import error"
+msgstr "nicht verfügbar: Importfehler"
+
+msgid "not available"
+msgstr "nicht verfügbar"
+
+msgid "CBO — Coupling Between Objects. Distinct resolved target types used by declaration types and calls, excluding self and inheritance. Higher values mean broader coupling to inspect. Missing compiler evidence leaves the value unknown (—); observed counts are lower bounds."
+msgstr "CBO — Coupling Between Objects (Klassenkopplung). Verschiedene aufgelöste Zieltypen aus Deklarationstypen und Aufrufen; eigener Typ und Vererbung sind ausgenommen. Höhere Werte bedeuten breitere Kopplung und geben Anlass zur Prüfung. Fehlende Compiler-Belege lassen den Wert unbekannt (—); beobachtete Zahlen sind Untergrenzen."
+
+msgid "RFC — Response For a Class. Distinct own non-constructor methods and their direct call targets, counting each member once. A larger response set increases the behavior to understand and test. This uses static resolution, not all possible runtime dispatch targets. Incomplete evidence remains —."
+msgstr "RFC — Response For a Class (Antwortumfang). Menge eigener Methoden ohne Konstruktoren und ihrer direkten Aufrufziele; jedes Mitglied zählt einmal. Ein größerer Umfang bedeutet mehr Verhalten zum Verstehen und Testen. Statische Auflösung, nicht alle möglichen Laufzeitziele. Unvollständige Belege bleiben —."
+
+msgid "DIT — Depth of Inheritance Tree. Superclass edges up to the compiler-known root, including known external bases; interfaces are excluded. Deeper inheritance means more inherited behavior to trace, not an automatic design error. Unknown hierarchy remains —."
+msgstr "DIT — Depth of Inheritance Tree (Vererbungstiefe). Basisklassenkanten bis zur compilerbekannten Wurzel, einschließlich bekannter externer Basen; Interfaces zählen nicht. Tiefere Vererbung bedeutet mehr nachzuverfolgendes Verhalten, aber keinen automatischen Entwurfsfehler. Unbekannte Hierarchie bleibt —."
+
+msgid "NOC — Number of Children. Direct subclasses inside the analyzed source scope. External subclasses are not counted. High values can mean intended reuse or a broad change impact; this is informational, not a good/bad score. Incomplete hierarchy remains —."
+msgstr "NOC — Number of Children (direkte Unterklassen). Zählt Unterklassen im analysierten Quellumfang; externe Unterklassen fehlen. Hohe Werte können gewollte Wiederverwendung oder eine breite Änderungswirkung zeigen. Eine Information, keine Gut-/Schlecht-Note. Unvollständige Hierarchie bleibt —."
+
+msgid "WMC — Weighted Methods per Class. Sum of source cyclomatic complexity of declared non-constructor methods. Static methods count; local functions and constructors are excluded. High values suggest a large or complex responsibility. Missing method measurements leave the sum unknown (—)."
+msgstr "WMC — Weighted Methods per Class (gewichtete Methoden). Summe der zyklomatischen Quellcodekomplexität deklarierter Methoden. Statische Methoden zählen; Konstruktoren und lokale Funktionen sind ausgenommen. Hohe Werte geben Anlass, Umfang und Verantwortung zu prüfen. Fehlende Methodenmessungen lassen die Summe unbekannt (—)."
+
+msgid "LCOM4 — Lack of Cohesion in Methods, variant 4. Connected groups of instance methods sharing a non-static field/property or calling each other. One group is connected; multiple groups invite a responsibility review. Constructors, static members and local functions are excluded. Incomplete compiler evidence remains —."
+msgstr "LCOM4 — Lack of Cohesion in Methods, Variante 4 (Zusammenhalt). Gruppen von Instanzmethoden, die dasselbe nichtstatische Feld bzw. dieselbe Property nutzen oder einander aufrufen. Eine Gruppe ist zusammenhängend; mehrere Gruppen geben Anlass zur Verantwortungsprüfung. Konstruktoren, statische Mitglieder und lokale Funktionen zählen nicht. Unvollständige Compiler-Belege bleiben —."
+
+msgid "{{ratio}} matching records"
+msgstr "{{ratio}} passende Datensätze"

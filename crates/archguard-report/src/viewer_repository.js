@@ -126,7 +126,7 @@ function renderRepositoryWorld(){
     for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]])worldUi.layout.cells.push({x:area.x+dx,y:area.y+dy,z:.08,value:null,area:area.name,entities:area.region.entities});
   }
   const heading=host.querySelector('.world-heading h2');if(heading)heading.textContent=t('Your services','Deine Services');
-  for(const id of ['world-lens-problems','world-lens-complexity','world-lens-coverage','world-lens-change','world-kpi','world-kpi-help','world-back'])document.getElementById(id).hidden=true;
+  for(const id of ['world-lens-problems','world-lens-complexity','world-lens-coverage','world-kpi','world-kpi-help','world-back'])document.getElementById(id).hidden=true;
   worldUi.detailButton.hidden=true;document.getElementById('world-detail').hidden=true;
   const legend=document.getElementById('world-legend');legend.textContent='';
   legend.appendChild(element('span',t('Service → packages → classes','Service → Pakete → Klassen'),'muted'));

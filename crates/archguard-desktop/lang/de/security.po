@@ -1,0 +1,159 @@
+msgctxt "Security"
+msgid "All"
+msgstr "Alle"
+
+msgctxt "Security"
+msgid "Copied."
+msgstr "Kopiert."
+
+msgctxt "Security"
+msgid "Copy scan command"
+msgstr "Scanbefehl kopieren"
+
+msgctxt "Security"
+msgid "Critical"
+msgstr "Kritisch"
+
+msgctxt "Security"
+msgid "Database updated at"
+msgstr "Datenbank aktualisiert"
+
+msgctxt "Security"
+msgid "Fixed version(s): {}"
+msgstr "Behobene Version(en): {}"
+
+msgctxt "Security"
+msgid "High"
+msgstr "Hoch"
+
+msgctxt "Security"
+msgid "Installed: {}"
+msgstr "Installiert: {}"
+
+msgctxt "Security"
+msgid "Load more findings"
+msgstr "Weitere Befunde laden"
+
+msgctxt "Security"
+msgid "Low"
+msgstr "Niedrig"
+
+msgctxt "Security"
+msgid "Manifest / lockfile coverage"
+msgstr "Manifest- / Lockfile-Abdeckung"
+
+msgctxt "Security"
+msgid "Manifest / lockfile evidence"
+msgstr "Manifest- / Lockfile-Belege"
+
+msgctxt "Security"
+msgid "Medium"
+msgstr "Mittel"
+
+msgctxt "Security"
+msgid "No findings match these filters."
+msgstr "Keine Befunde entsprechen diesen Filtern."
+
+msgctxt "Security"
+msgid "No findings were recorded; this incomplete or outdated snapshot does not establish dependency safety."
+msgstr "Es wurden keine Befunde erfasst; dieser unvollständige oder veraltete Snapshot belegt keine sicheren Abhängigkeiten."
+
+msgctxt "Security"
+msgid "No fixed version reported"
+msgstr "Keine behobene Version gemeldet"
+
+msgctxt "Security"
+msgid "No packages were scanned. The absence of findings does not establish dependency safety."
+msgstr "Es wurden keine Pakete gescannt. Fehlende Befunde belegen keine sicheren Abhängigkeiten."
+
+msgctxt "Security"
+msgid "No vulnerabilities reported for the scanned package versions in this snapshot."
+msgstr "In diesem Snapshot wurden keine Schwachstellen für die gescannten Paketversionen gemeldet."
+
+msgctxt "Security"
+msgid "Not reported"
+msgstr "Nicht gemeldet"
+
+msgctxt "Security"
+msgid "Not scanned. No security conclusion is available."
+msgstr "Nicht gescannt. Es liegt keine Sicherheitsbewertung vor."
+
+msgctxt "Security"
+msgid "Open advisory"
+msgstr "Advisory öffnen"
+
+msgctxt "Security"
+msgid "Original scan snapshot; graph simulations do not update these findings. Top workspace KPIs describe source dependencies."
+msgstr "Ursprünglicher Scan-Snapshot; Graphsimulationen verändern diese Befunde nicht. Die oberen Arbeitsbereich-Kennzahlen beschreiben Quellabhängigkeiten."
+
+msgctxt "Security"
+msgid "Package name or advisory ID"
+msgstr "Paketname oder Advisory-ID"
+
+msgctxt "Security"
+msgid "Reading the saved dependency scan …"
+msgstr "Gespeicherter Abhängigkeitsscan wird gelesen …"
+
+msgctxt "Security"
+msgid "Run a fresh scan in your terminal; this viewer only reads the saved result."
+msgstr "Einen neuen Scan im Terminal ausführen; dieser Viewer liest nur das gespeicherte Ergebnis."
+
+msgctxt "Security"
+msgid "Scan failed. The absence of findings does not establish dependency safety."
+msgstr "Scan fehlgeschlagen. Fehlende Befunde belegen keine sicheren Abhängigkeiten."
+
+msgctxt "Security"
+msgid "Scan"
+msgstr "Scan"
+
+msgctxt "Security"
+msgid "Scanned at"
+msgstr "Scanzeitpunkt"
+
+msgctxt "Security"
+msgid "Scanner diagnostics (original text)"
+msgstr "Scannerdiagnosen (Originaltext)"
+
+msgctxt "Security"
+msgid "Scanner"
+msgstr "Scanner"
+
+msgctxt "Security"
+msgid "Search package or CVE"
+msgstr "Paket oder CVE suchen"
+
+msgctxt "Security"
+msgid "Severity"
+msgstr "Schweregrad"
+
+msgctxt "Security"
+msgid "Show more evidence"
+msgstr "Weitere Belege anzeigen"
+
+msgctxt "Security"
+msgid "Unknown"
+msgstr "Unbekannt"
+
+msgctxt "Security"
+msgid "{} / {} matching findings shown · {} in snapshot"
+msgstr "{} / {} passende Befunde angezeigt · {} im Snapshot"
+
+msgctxt "Security"
+msgid "{} packages"
+msgstr "{} Pakete"
+
+msgctxt "Security"
+msgid "Run the CLI command to create a dependency scan."
+msgstr "Den CLI-Befehl ausführen, um einen Abhängigkeitsscan zu erstellen."
+
+msgctxt "Security"
+msgid "Findings do not cover all dependencies."
+msgstr "Die Befunde decken nicht alle Abhängigkeiten ab."
+
+msgctxt "Security"
+msgid "Dependency inputs have changed; run a fresh scan."
+msgstr "Die Abhängigkeitsdateien haben sich geändert; einen neuen Scan ausführen."
+
+msgctxt "Security"
+msgid "Dependency coverage is unknown."
+msgstr "Die Abdeckung der Abhängigkeiten ist unbekannt."

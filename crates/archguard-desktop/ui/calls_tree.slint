@@ -1,0 +1,168 @@
+// The call tree column (renderCallTree in viewer_calls_tree.js).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Button, SectionHeading } from "widgets.slint";
+import { CallsData, CallsTreeRow, CallsModel } from "calls_data.slint";
+import { CallsColumn, Muted } from "calls_parts.slint";
+
+component TreeLine inherits Rectangle {
+    in property <CallsTreeRow> item;
+    property <string> prefix: item.kind == 1 ? "▣ " : item.kind == 2 ? "◇ " : item.kind == 3 ? "ƒ " : "";
+    property <color> role-color: item.role == 1 ? Theme.outgoing : item.role == 2 ? Theme.incoming : item.role == 3 ? Theme.accent : Theme.muted;
+    height: 30px;
+    // Guide line on the left (.call-tree-row border-left and ::before tick).
+    Rectangle {
+        x: item.depth * 14px;
+        width: 1px;
+        background: item.cycle ? Theme.cycle : Theme.border;
+    }
+    Rectangle {
+        x: item.depth * 14px;
+        y: parent.height / 2;
+        width: 5px;
+        height: 1px;
+        background: Theme.border;
+    }
+    HorizontalLayout {
+        padding-left: item.depth * 14px + 6px;
+        spacing: 3px;
+        toggle := Rectangle {
+            width: 22px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: toggle-touch.has-hover && item.expandable ? Theme.border : transparent;
+            background: toggle-touch.has-hover && item.expandable ? Theme.panel-2 : transparent;
+            Text {
+                text: item.expandable ? (item.expanded ? "−" : "+") : "";
+                color: Theme.text;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            toggle-touch := TouchArea {
+                enabled: item.expandable;
+                mouse-cursor: pointer;
+                clicked => { CallsData.tree-toggle(item.node); }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 40px;
+            border-radius: 5px;
+            border-width: 1px;
+            border-color: item.pressed ? Theme.accent : transparent;
+            background: item.pressed ? Theme.package-selected : label-touch.has-hover ? Theme.panel-2 : transparent;
+            if item.pressed: Rectangle { x: 0; width: 2px; background: Theme.accent; }
+            Text {
+                x: 6px;
+                width: parent.width - 12px;
+                text: root.prefix + item.label;
+                color: Theme.text;
+                font-size: item.kind == 3 ? 11px : 12px;
+                font-family: item.kind == 3 ? "Menlo" : "";
+                font-weight: item.kind == 1 ? 650 : 400;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            label-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { CallsData.tree-select(item.node); }
+            }
+        }
+        if item.module: Text {
+            text: @tr("module");
+            color: Theme.muted;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        if item.cycle: Text {
+            text: "↻";
+            color: Theme.cycle;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        if item.role > 0: Text {
+            text: item.role == 3 ? @tr("Caller / target") : item.role == 1 ? @tr("Caller") : @tr("Target");
+            color: root.role-color;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        if item.count > 0: Text {
+            text: Fmt.int(item.count);
+            color: root.role-color;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component CallsTree inherits CallsColumn {
+    property <CallsModel> m: CallsData.model;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        SectionHeading { label: @tr("Call tree"); }
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+            Button {
+                compact: true;
+                text: @tr("Expand all");
+                enabled: m.tree-nodes > 0;
+                clicked => { CallsData.tree-expand(true); }
+            }
+            Button {
+                compact: true;
+                text: @tr("Collapse all");
+                enabled: m.tree-nodes > 0;
+                clicked => { CallsData.tree-expand(false); }
+            }
+            Button {
+                compact: true;
+                text: @tr("All elements");
+                enabled: m.tree-element != "";
+                clicked => { CallsData.tree-clear(); }
+            }
+        }
+        Muted {
+            text: @tr("{} / {} rows", Fmt.int(m.tree-shown), Fmt.int(m.tree-total))
+                + (m.tree-element != "" ? " · " + @tr("Element: {}", m.tree-element) : "")
+                + (m.tree-missing > 0 ? " · " + @tr("{} sites without method identity", Fmt.int(m.tree-missing)) : "");
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding-top: 3px;
+                for row in m.tree: VerticalLayout {
+                    if row.skipped > 0: Muted {
+                        text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));
+                        height: 24px;
+                        vertical-alignment: center;
+                    }
+                    TreeLine { item: row; }
+                }
+                if m.tree.length == 0: Text {
+                    text: @tr("No call elements match the current scope and filters.");
+                    color: Theme.text;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    height: 60px;
+                    vertical-alignment: center;
+                }
+                if m.tree-more: HorizontalLayout {
+                    alignment: start;
+                    padding-top: 6px;
+                    Button {
+                        compact: true;
+                        text: @tr("Show next 200 tree rows");
+                        clicked => { CallsData.tree-more(); }
+                    }
+                }
+            }
+        }
+    }
+}

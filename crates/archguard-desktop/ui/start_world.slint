@@ -1,0 +1,292 @@
+// The world stage of the Start tab: polygons computed in
+// src/start_ui/scene.rs, pins and the floating camera controls
+// (#world-canvas, .world-orbit, .world-controls in the web viewer).
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button, ZoomControls } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { StartData, StartTones, StartPin } from "start_data.slint";
+
+component Pin inherits Rectangle {
+    in property <StartPin> pin;
+    in property <int> kpi;
+    callback open();
+    pure function join(a: string, b: string) -> string {
+        return a == "" ? b : b == "" ? a : a + " · " + b;
+    }
+    property <string> marks: join(join(pin.cyclic ? @tr("Package cycle") : "",
+            pin.findings > 0 ? @tr("{0} finding" | "{0} findings" % pin.findings, Fmt.int(pin.findings)) : ""),
+        pin.max == "" ? "" : kpi > 0 ? @tr("{} max. {}", StartTones.kpi-label(kpi), pin.max) : @tr("max {}", pin.max));
+    x: pin.x * 1px;
+    y: pin.y * 1px - (touch.has-hover ? 2px : 0);
+    width: pin.w * 1px;
+    height: 50px;
+    border-radius: 9px;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent : Theme.border;
+    drop-shadow-blur: touch.has-hover ? 14px : 8px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.shadow;
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: pin.module ? 28px : 12px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        spacing: 3px;
+        Text {
+            text: pin.name;
+            color: Theme.text;
+            font-size: 14px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: marks != "" ? marks : @tr("{0} element" | "{0} elements" % pin.entries, Fmt.int(pin.entries));
+            color: Theme.muted;
+            font-size: 11px;
+            overflow: elide;
+        }
+    }
+    if pin.module: Icon {
+        x: parent.width - 24px;
+        y: 9px;
+        width: 14px;
+        height: 14px;
+        icon: Icons.chevron-right;
+        tint: Theme.accent;
+        stroke-w: 2.4px;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+    }
+}
+
+// A Path in unit coordinates, mapped to the canvas through the camera's
+// viewbox.
+component UnitPath inherits Path {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    viewbox-x: StartData.model.vb-x;
+    viewbox-y: StartData.model.vb-y;
+    viewbox-width: StartData.model.vb-w;
+    viewbox-height: StartData.model.vb-h;
+}
+
+// A Path in canvas pixels.
+component PixelPath inherits Path {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    fill: transparent;
+}
+
+component OrbitButton inherits Rectangle {
+    // Mirrored for the clockwise turn.
+    in property <bool> right;
+    callback clicked;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: t.has-hover ? Theme.panel-2 : transparent;
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        icon: root.right ? "M 7 20 L 7 11 A 5 5 0 0 1 17 11 L 17 14 M 13.5 10.5 L 17 14 L 20.5 10.5"
+            : "M 17 20 L 17 11 A 5 5 0 0 0 7 11 L 7 14 M 3.5 10.5 L 7 14 L 10.5 10.5";
+    }
+    t := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component StartStage inherits Rectangle {
+    property <bool> empty: StartData.model.empty;
+    background: @radial-gradient(circle, Theme.panel-2 0%, Theme.panel 72%);
+    clip: true;
+
+    function report() {
+        StartData.model.canvas-w = self.width / 1px;
+        StartData.model.canvas-h = self.height / 1px;
+        StartData.resized(self.width / 1px, self.height / 1px);
+    }
+    init => { self.report(); }
+    changed width => { self.report(); }
+    changed height => { self.report(); }
+
+    if root.empty: Text {
+        text: @tr("No source areas");
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    UnitPath {
+        commands: StartData.model.lattice;
+        fill: transparent;
+        stroke: Theme.border;
+        stroke-width: 0.5px;
+        opacity: 0.45;
+    }
+    for p in StartData.model.plates: UnitPath {
+        commands: p.path;
+        fill: Theme.panel;
+        stroke: p.flagged ? Theme.cycle : Theme.border;
+        stroke-width: p.flagged ? 1.5px : 1px;
+    }
+    for f in StartData.model.faces: UnitPath {
+        commands: f.path;
+        fill: StartTones.fill(f);
+        stroke: f.stroke ? Theme.border : transparent;
+        stroke-width: 0.65px;
+    }
+    if StartData.model.selection != "": UnitPath {
+        commands: StartData.model.selection;
+        fill: transparent;
+        stroke: Theme.text;
+        stroke-width: 2px;
+    }
+    if StartData.model.arrows != "": PixelPath {
+        commands: StartData.model.arrows;
+        stroke: Theme.cycle;
+        stroke-width: 1.7px;
+        opacity: 0.85;
+    }
+    if StartData.model.heads != "": PixelPath {
+        commands: StartData.model.heads;
+        fill: Theme.cycle;
+        opacity: 0.85;
+    }
+    if StartData.model.leaders != "": PixelPath {
+        commands: StartData.model.leaders;
+        stroke: Theme.muted;
+        stroke-width: 0.7px;
+    }
+
+    // Left-drag pans; right- or Shift-drag rotates; wheel zooms at the cursor.
+    TouchArea {
+        property <length> last-x;
+        property <length> last-y;
+        property <bool> dragged;
+        property <bool> turning;
+        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                self.last-x = self.mouse-x;
+                self.last-y = self.mouse-y;
+                self.dragged = false;
+                self.turning = e.button == PointerEventButton.right || e.modifiers.shift;
+            }
+        }
+        moved => {
+            if (self.dragged || abs(self.mouse-x - self.last-x) > 4px || abs(self.mouse-y - self.last-y) > 4px) {
+                self.dragged = true;
+                if (self.turning) {
+                    StartData.rotate-by((self.mouse-x - self.last-x) / 1px * 0.008);
+                } else {
+                    StartData.pan((self.mouse-x - self.last-x) / 1px, (self.mouse-y - self.last-y) / 1px);
+                }
+                self.last-x = self.mouse-x;
+                self.last-y = self.mouse-y;
+            }
+        }
+        clicked => {
+            if (!self.dragged) {
+                StartData.click(self.mouse-x / 1px, self.mouse-y / 1px);
+            }
+        }
+        double-clicked => { StartData.double-click(self.mouse-x / 1px, self.mouse-y / 1px); }
+        scroll-event(e) => {
+            StartData.wheel(self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px);
+            return accept;
+        }
+    }
+
+    for p in StartData.model.pins: Pin {
+        pin: p;
+        kpi: StartData.model.lens == 1 ? StartData.model.kpi : 0;
+        open => { StartData.open-area(p.area); }
+    }
+
+    // Orientation: rotate in 15° steps, restore the original direction.
+    Rectangle {
+        x: parent.width - self.width - 12px;
+        y: 12px;
+        width: orbit.preferred-width;
+        height: 44px;
+        border-radius: 12px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: Theme.shadow;
+        orbit := HorizontalLayout {
+            padding: 4px;
+            spacing: 2px;
+            OrbitButton { clicked => { StartData.rotate-by(-0.2617994); } }
+            Rectangle {
+                width: 66px;
+                border-radius: 8px;
+                background: ot.has-hover ? Theme.panel-2 : transparent;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Path {
+                        width: 20px;
+                        height: 20px;
+                        y: (parent.height - self.height) / 2;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        commands: StartData.model.bearing;
+                        fill: Theme.accent;
+                    }
+                    Text {
+                        text: StartData.model.angle + "°";
+                        color: Theme.text;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+                ot := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { StartData.orient(); }
+                }
+            }
+            OrbitButton { right: true; clicked => { StartData.rotate-by(0.2617994); } }
+        }
+    }
+
+    // Zoom, fit and reset.
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 12px;
+        width: controls.preferred-width;
+        height: 46px;
+        border-radius: 12px;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: Theme.shadow;
+        controls := HorizontalLayout {
+            padding: 5px;
+            spacing: 5px;
+            ZoomControls {
+                zoom: StartData.model.zoom / 100;
+                zoom-out => { StartData.zoom-by(0.8); }
+                zoom-in => { StartData.zoom-by(1.25); }
+                reset => { StartData.zoom-by(100 / max(1, StartData.model.zoom)); }
+                fit => { StartData.fit(); }
+            }
+            Button { text: @tr("Reset"); compact: true; y: (parent.height - self.height) / 2; clicked => { StartData.reset(); } }
+        }
+    }
+}

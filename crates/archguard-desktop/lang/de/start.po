@@ -1,0 +1,147 @@
+msgid " · {} surfaces match"
+msgstr " · {} Flächen entsprechen"
+
+msgid "Analyzing calls and classes …"
+msgstr "Aufrufe und Klassen werden analysiert …"
+
+msgid "Back"
+msgstr "Zurück"
+
+msgid "Class: {}"
+msgstr "Klasse: {}"
+
+msgid "Classes / files"
+msgstr "Klassen / Dateien"
+
+msgid "Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag: pan. Right-drag or Shift-drag: rotate; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match."
+msgstr "Paketnamen anklicken oder eine Fläche doppelklicken, um ein Paket zu öffnen. Über Pfad und Zurück navigieren. Mausrad: Zoom am Zeiger; am Maximum öffnet weiteres Zoomen über einem Paket dieses, am Minimum kehrt es zur vorherigen Ansicht zurück. Linksziehen: verschieben. Rechtsziehen oder Umschalt + Ziehen: drehen; die Pfeile drehen in 15°-Schritten, die Richtungsanzeige stellt die Ausgangsrichtung wieder her. Jede Fläche steht für eine Klasse oder eine Datei ohne Klassendaten. Große Ausschnitte bündeln Flächen; Auswählen zeigt alle Mitglieder. Höhe im Flächenmittelpunkt: logarithmisch skalierte, erfasste maximale Methodenkomplexität. Farben zeigen Beobachtungen, kein Qualitätsurteil. Abdeckung bezieht sich auf Dateien. Paketzyklen können ohne Dateizyklen bestehen. Die Suche blendet Flächen aus, deren Klassen- oder Dateiname den Begriff nicht enthält; Enter wählt den ersten Treffer."
+
+msgid "Complexity"
+msgstr "Komplexität"
+
+msgid "Covered"
+msgstr "Abgedeckt"
+
+msgid "Cycle / finding"
+msgstr "Zyklus / Befund"
+
+msgid "Explore"
+msgstr "Erkunden"
+
+msgid "File coverage: unknown"
+msgstr "Dateiabdeckung: unbekannt"
+
+msgid "File coverage: {}/{} lines · {} uncovered"
+msgstr "Dateiabdeckung: {}/{} Zeilen · {} nicht abgedeckt"
+
+msgid "File · no class assignment"
+msgstr "Datei · keine Klassenzuordnung"
+
+msgid "Highest recorded {}: {} · {}"
+msgstr "Höchster erfasster {}: {} · {}"
+
+msgid "Low → high"
+msgstr "Gering → hoch"
+
+msgid "Maximum cyclomatic complexity: {}"
+msgstr "Maximale zyklomatische Komplexität: {}"
+
+msgid "Methods · highest complexity first"
+msgstr "Methoden · höchste Komplexität zuerst"
+
+msgid "More ({})"
+msgstr "Weitere ({})"
+
+msgid "More evidence"
+msgstr "Weitere Belege"
+
+msgid "No connections or findings recorded at this level."
+msgstr "Keine Abhängigkeiten oder Befunde auf dieser Ebene erfasst."
+
+msgid "No imported measurement for this class."
+msgstr "Kein importierter Messwert für diese Klasse."
+
+msgid "No package cycle recorded for this area."
+msgstr "Kein Paketzyklus für diesen Bereich erfasst."
+
+msgid "No source areas"
+msgstr "Keine Quellbereiche"
+
+msgid "Observed {} measurements"
+msgstr "Erfasste {}-Messwerte"
+
+msgid "Package cycle"
+msgstr "Paketzyklus"
+
+msgid "Problems and cycles"
+msgstr "Probleme und Zyklen"
+
+msgid "Problems"
+msgstr "Probleme"
+
+msgid "Reset"
+msgstr "Zurücksetzen"
+
+msgid "Search classes / files…"
+msgstr "Klassen / Dateien suchen…"
+
+msgid "Select a class below for its methods and measurements."
+msgstr "Unten eine Klasse auswählen, um ihre Methoden und Messwerte zu sehen."
+
+msgid "Select area…"
+msgstr "Bereich wählen…"
+
+msgid "Source graph"
+msgstr "Quellgraph"
+
+msgid "Test gaps"
+msgstr "Testlücken"
+
+msgid "The containing package belongs to a package cycle. This does not establish a class-level cycle."
+msgstr "Das zugehörige Paket liegt in einem Paketzyklus. Das belegt keinen Zyklus dieser Klasse."
+
+msgid "Unknown · no usable coverage"
+msgstr "Unbekannt · keine nutzbare Abdeckung"
+
+msgid "Your architecture"
+msgstr "Architektur im Überblick"
+
+msgid "max {}"
+msgstr "max. {}"
+
+msgid "package cycle"
+msgstr "Paketzyklus"
+
+msgid "{} findings in the containing area"
+msgstr "{} Befunde im zugehörigen Bereich"
+
+msgid "{} max. {}"
+msgstr "{} max. {}"
+
+msgid "{}/{} method records · missing measurements stay unknown."
+msgstr "{}/{} Methodeneinträge · fehlende Messwerte bleiben unbekannt."
+
+msgid "{}/{} methods measured. Height and color show the highest recorded method value, not a class average."
+msgstr "{}/{} Methoden gemessen. Höhe und Farbe zeigen den höchsten erfassten Methodenwert, keinen Klassenmittelwert."
+
+msgid "{}/{} source files measured. Coverage is file-level, not class- or method-level; import revision is unverified."
+msgstr "{}/{} Quelldateien gemessen. Abdeckung gilt für Dateien, nicht einzelne Klassen oder Methoden; Importrevision ungeprüft."
+
+msgid "{0} element"
+msgid_plural "{0} elements"
+msgstr[0] "{0} Element"
+msgstr[1] "{0} Elemente"
+
+msgid "{0} finding"
+msgid_plural "{0} findings"
+msgstr[0] "{0} Befund"
+msgstr[1] "{0} Befunde"
+
+msgid "{} / {} elements measured · maximum {}: {}"
+msgstr "{} / {} Elemente gemessen · Maximum {}: {}"
+
+msgid "{} elements · {} surfaces"
+msgstr "{} Elemente · {} Flächen"
+
+msgid "{} surfaces with gaps · {} / {} lines"
+msgstr "{} Flächen mit Lücken · {} / {} Zeilen"

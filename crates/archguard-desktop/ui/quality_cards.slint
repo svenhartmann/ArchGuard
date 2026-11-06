@@ -1,0 +1,208 @@
+// Cards and heatmap cells of the Quality tab (the web viewer's
+// .engineering-card and .class-heatmap). Texts come from Rust
+// (src/quality_ui/), already in the window's language.
+import { Theme } from "theme.slint";
+import { Button, Disclosure } from "widgets.slint";
+
+// kind: see `Kind` in src/quality_ui/card.rs.
+export struct QualityLine {
+    kind: int,
+    text: string,
+    node: string,
+}
+
+export struct QualityItem {
+    kind: int,
+    text: string,
+    node: string,
+    value: float,
+    lines: [QualityLine],
+}
+
+export struct QualityGroup {
+    index: int,
+    label: string,
+    files: string,
+    active: bool,
+}
+
+export struct QualityCard {
+    key: string,
+    title: string,
+    full: string,
+    action: string,
+    pressed: bool,
+    items: [QualityItem],
+    metrics: [string],
+    groups: [QualityGroup],
+    more-groups: bool,
+}
+
+// state: 0 unknown, 1 low, 2 elevated, 3 high, 4 informational, 5 neutral.
+export struct QualityCell {
+    text: string,
+    state: int,
+    tip: string,
+}
+
+export struct QualityHeatRow {
+    class-id: string,
+    label: string,
+    file: string,
+    selected: bool,
+    cells: [QualityCell],
+}
+
+// One paragraph of a card or of a <details> body.
+component LineView inherits VerticalLayout {
+    in property <int> kind;
+    in property <string> text;
+    in property <string> node;
+    callback locate(string);
+    if kind == 7: HorizontalLayout {
+        alignment: start;
+        Button { text: root.text; compact: true; clicked => { root.locate(root.node); } }
+    }
+    if kind == 4: Rectangle {
+        background: Theme.panel-2;
+        border-radius: 6px;
+        VerticalLayout {
+            padding: 8px;
+            Text {
+                text: root.text;
+                color: Theme.text;
+                font-size: 11px;
+                font-family: "Menlo";
+                wrap: word-wrap;
+            }
+        }
+    }
+    if kind != 4 && kind != 7: Text {
+        text: root.text;
+        color: kind == 1 || kind == 2 ? Theme.muted : kind == 5 ? Theme.priority : Theme.text;
+        font-size: kind == 6 ? 12px : kind == 2 || kind == 3 ? 11px : 12px;
+        font-weight: kind == 6 || kind == 5 ? 700 : 400;
+        font-family: kind == 3 ? "Menlo" : "";
+        wrap: word-wrap;
+    }
+}
+
+// <details>: closed until clicked; re-rendering closes it, as in the web.
+component DetailsView inherits VerticalLayout {
+    in property <string> summary;
+    in property <[QualityLine]> lines;
+    callback locate(string);
+    property <bool> open;
+    spacing: 4px;
+    Disclosure { text: root.summary; open <=> root.open; tint: Theme.text; weight: 600; }
+    if root.open: VerticalLayout {
+        padding-left: 14px;
+        spacing: 4px;
+        for line in root.lines: LineView {
+            kind: line.kind;
+            text: line.text;
+            node: line.node;
+            locate(n) => { root.locate(n); }
+        }
+    }
+}
+
+export component QualityCardView inherits Rectangle {
+    in property <QualityCard> card;
+    // Cohesion cards sit in a list with dividers instead of a frame.
+    in property <bool> flat;
+    callback locate(string);
+    callback action(string);
+    callback group(int);
+    callback more-groups();
+    background: flat ? transparent : Theme.panel;
+    border-radius: flat ? 0 : 9px;
+    border-width: flat ? 0 : 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: root.flat ? 0 : 12px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 12px;
+            title := Text {
+                text: root.card.title;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 700;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+            if root.card.action != "": Button {
+                text: root.card.action;
+                compact: true;
+                pressed-state: root.card.pressed;
+                clicked => { root.action(root.card.key); }
+            }
+        }
+        for item in root.card.items: VerticalLayout {
+            if item.kind == 8: DetailsView {
+                summary: item.text;
+                lines: item.lines;
+                locate(n) => { root.locate(n); }
+            }
+            if item.kind == 9: Rectangle {
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.panel-2;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * item.value;
+                    border-radius: 4px;
+                    background: Theme.accent;
+                }
+            }
+            if item.kind == 10: HorizontalLayout {
+                spacing: 12px;
+                for m in root.card.metrics: Text {
+                    text: m;
+                    color: Theme.text;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+            }
+            if item.kind == 11: VerticalLayout {
+                spacing: 6px;
+                for g in root.card.groups: Rectangle {
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: g.active ? Theme.accent : Theme.border;
+                    background: g.active ? Theme.panel-2 : Theme.panel;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+                        Text { text: g.label; color: Theme.text; font-size: 12px; }
+                        Text { text: g.files; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.group(g.index); }
+                    }
+                }
+                if root.card.more-groups: HorizontalLayout {
+                    alignment: start;
+                    Button { text: @tr("Show next 20 groups"); compact: true; clicked => { root.more-groups(); } }
+                }
+            }
+            if item.kind < 8: LineView {
+                kind: item.kind;
+                text: item.text;
+                node: item.node;
+                locate(n) => { root.locate(n); }
+            }
+        }
+    }
+    if root.flat: Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// Unknown cells have a dashed border (CSS `border-style: dashed`).

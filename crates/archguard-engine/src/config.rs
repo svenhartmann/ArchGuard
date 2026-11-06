@@ -47,7 +47,7 @@ const DEFAULT_CONFIG: &str = r#"# archguard.toml — Stock defaults (ARCHITECTUR
 # at its default or is derived from the project. The file records only
 # the intent delta.
 
-derive_layers = true        # layer derivation on/off (also: --no-derive)
+derive_layers = true        # layer derivation on/off
 
 [project]                   # derived (manifest sniffing + extension statistics)
 source_roots = ["src"]

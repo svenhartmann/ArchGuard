@@ -21,8 +21,8 @@ fn document(r: &archguard_engine::ReviewReport) -> Vec<u8> {
         .iter()
         .find(|f| f.evidence["kind"] == "cycle")
         .unwrap();
-    serde_json::to_vec(&json!({"schema_version":1,"review_revision":r.revision,"decision_revision":r.decision_fingerprint,"decisions":[{
-        "finding_id":f.id,"finding_fingerprint":f.fingerprint,"status":"accepted_risk","owner":"@core","reason":"Migrate in stages","expires_on":"2099-12-31","links":[]
+    serde_json::to_vec(&json!({"schema_version":2,"review_revision":r.revision,"decision_revision":r.decision_fingerprint,"decisions":[{
+        "id":f.id,"finding_ref":f.id,"finding_fingerprint":f.fingerprint,"decision":"accept-risk","author":"@core","note":"Migrate in stages","expires_on":"2099-12-31","links":[]
     }]})).unwrap()
 }
 #[test]
@@ -74,10 +74,12 @@ fn decision_validation_is_atomic_and_rejects_invalid_dates_duplicates_and_foreig
         json!({"expires_on":"2027-02-29"}),
         json!({"expires_on":"2000-01-01"}),
         json!({"expires_on":null}),
-        json!({"owner":""}),
-        json!({"reason":""}),
+        json!({"author":""}),
+        json!({"note":""}),
         json!({"finding_fingerprint":"f".repeat(64)}),
-        json!({"finding_id":"f".repeat(64)}),
+        json!({"finding_fingerprint":null}),
+        json!({"id":"f".repeat(64),"finding_ref":"f".repeat(64)}),
+        json!({"id":"other"}),
     ] {
         let mut doc = good.clone();
         for (key, value) in patch.as_object().unwrap() {
@@ -88,12 +90,7 @@ fn decision_validation_is_atomic_and_rejects_invalid_dates_duplicates_and_foreig
                 .is_err(),
             "{patch}"
         );
-        assert!(
-            !root
-                .path()
-                .join(".archguard/review-decisions.json")
-                .exists()
-        );
+        assert!(!root.path().join(".archguard/reviews.json").exists());
     }
     let mut duplicate = good.clone();
     duplicate["decisions"]
@@ -116,14 +113,14 @@ fn stale_export_cannot_overwrite_a_newer_decision() {
     let (mut r, _) = generate_review(root.path(), None, None, NOW).unwrap();
     let initial = document(&r);
     apply_review_decisions(root.path(), &mut r, &initial, NOW).unwrap();
-    let before = fs::read(root.path().join(".archguard/review-decisions.json")).unwrap();
+    let before = fs::read(root.path().join(".archguard/reviews.json")).unwrap();
     let (mut fresh, _) = generate_review(root.path(), None, None, NOW).unwrap();
     assert!(
         apply_review_decisions(root.path(), &mut fresh, &initial, NOW).is_err(),
         "an older export must not overwrite newer decision state"
     );
     assert_eq!(
-        fs::read(root.path().join(".archguard/review-decisions.json")).unwrap(),
+        fs::read(root.path().join(".archguard/reviews.json")).unwrap(),
         before
     );
 }
@@ -139,12 +136,7 @@ fn source_changes_between_generation_and_recording_are_rejected() {
     .unwrap();
     assert!(apply_review_decisions(root.path(), &mut r, &decisions, NOW).is_err());
     assert!(save_review(root.path(), &r).is_err());
-    assert!(
-        !root
-            .path()
-            .join(".archguard/review-decisions.json")
-            .exists()
-    );
+    assert!(!root.path().join(".archguard/reviews.json").exists());
     assert!(!root.path().join(".archguard/review.json").exists());
 }
 #[test]
@@ -281,7 +273,7 @@ fn failed_tests_and_undetected_mutations_become_actionable_with_original_evidenc
     let f = mutations[0];
     let id = f.id.clone();
     let fingerprint = f.fingerprint.clone();
-    let document=serde_json::to_vec(&json!({"schema_version":1,"review_revision":report.revision,"decision_revision":report.decision_fingerprint,"decisions":[{"finding_id":f.id,"finding_fingerprint":f.fingerprint,"status":"accepted_risk","owner":"@tests","reason":"Review equivalent mutation","expires_on":"2099-12-31","links":[]}]})).unwrap();
+    let document=serde_json::to_vec(&json!({"schema_version":2,"review_revision":report.revision,"decision_revision":report.decision_fingerprint,"decisions":[{"id":f.id,"finding_ref":f.id,"finding_fingerprint":f.fingerprint,"decision":"accept-risk","author":"@tests","note":"Review equivalent mutation","expires_on":"2099-12-31","links":[]}]})).unwrap();
     apply_review_decisions(root.path(), &mut report, &document, NOW).unwrap();
     fs::write(root.path().join("src/a.ts"), source + "// changed\n").unwrap();
     let (changed, _) = generate_review(root.path(), None, None, NOW).unwrap();
@@ -324,7 +316,7 @@ fn accepting_stale_duplicates_cannot_hide_further_source_changes() {
     assert_eq!(finding.source_status, "stale");
     let id = finding.id.clone();
     let fingerprint = finding.fingerprint.clone();
-    let document=serde_json::to_vec(&json!({"schema_version":1,"review_revision":report.revision,"decision_revision":report.decision_fingerprint,"decisions":[{"finding_id":id,"finding_fingerprint":fingerprint,"status":"accepted_risk","owner":"@quality","reason":"Reviewed both current copies","expires_on":"2099-12-31","links":[]}]})).unwrap();
+    let document=serde_json::to_vec(&json!({"schema_version":2,"review_revision":report.revision,"decision_revision":report.decision_fingerprint,"decisions":[{"id":id,"finding_ref":id,"finding_fingerprint":fingerprint,"decision":"accept-risk","author":"@quality","note":"Reviewed both current copies","expires_on":"2099-12-31","links":[]}]})).unwrap();
     apply_review_decisions(root.path(), &mut report, &document, NOW).unwrap();
     let (accepted, _) = generate_review(root.path(), None, None, NOW).unwrap();
     assert_eq!(
@@ -349,4 +341,29 @@ fn accepting_stale_duplicates_cannot_hide_further_source_changes() {
         "stale status alone must not bind a decision to every future source version"
     );
     assert_eq!(finding.disposition, "changed");
+}
+
+#[test]
+fn review_imports_share_the_register_with_recorded_decisions() {
+    let root = project();
+    let recorded = archguard_engine::core::ReviewDecision {
+        id: "scc-1".into(),
+        finding_ref: "scc-1".into(),
+        note: "later".into(),
+        author: "cli".into(),
+        ..Default::default()
+    };
+    archguard_engine::upsert_decision(root.path(), recorded).unwrap();
+    let (mut r, _) = generate_review(root.path(), None, None, NOW).unwrap();
+    assert!(r.decisions.is_empty() && r.unmatched_decisions.is_empty());
+    let decisions = document(&r);
+    apply_review_decisions(root.path(), &mut r, &decisions, NOW).unwrap();
+    let register = archguard_engine::load_register(root.path()).unwrap();
+    assert_eq!(register.decisions.len(), 2, "the import keeps CLI entries");
+    assert_eq!(
+        r.decisions[0].ts, "2026-10-29T00:00:00Z",
+        "import stamps ts"
+    );
+    let cycle = r.findings.iter().find(|f| f.evidence["kind"] == "cycle");
+    assert_eq!(cycle.unwrap().disposition, "accepted_risk");
 }

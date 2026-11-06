@@ -112,15 +112,9 @@ pub struct HtmlContext<'a> {
     pub insights: Option<&'a serde_json::Value>,
     /// Independent deployment configuration evidence; not source import edges.
     pub services: Option<&'a archguard_core::ServiceTopology>,
-    /// The persisted review decision register (R19/R40); `None` when no
-    /// register was read — an absent register stays absent, never empty.
-    pub review_register: Option<&'a archguard_core::ReviewRegister>,
     /// Snapshot history rows for the health sparkline (R09/R39) as plain
     /// JSON; `None` when the caller did not read them.
     pub review_history: Option<&'a serde_json::Value>,
-    /// The last generated PR comment Markdown (R25/R42); `None` when no
-    /// `pr-comment.md` exists — the panel then states the absence.
-    pub pr_comment_markdown: Option<&'a str>,
     /// KPI block completed with evidence the cached graph lacks (zones
     /// from compiler abstractness); `None` embeds the graph's own block.
     pub review_kpis: Option<&'a archguard_core::ReviewKpis>,
@@ -349,14 +343,11 @@ fn payload_value(
             "count": e.count,
         })).collect::<Vec<_>>(),
         "findings": findings,
-        // Review Dashboard (R36): the KPI block the pipeline attached to
-        // this graph; null means NOT MEASURED — the dashboard shows that
-        // honestly and never renders invented zeros.
+        // The KPI block the pipeline attached to this graph (Start panels);
+        // null means NOT MEASURED and never renders invented zeros.
         "reviewKpis": context.review_kpis.or(g.review_kpis.as_ref()),
-        // R40/R39/R42 inputs; each null stays "not provided", never empty.
-        "reviewRegister": context.review_register,
+        // Health sparkline rows (R39); null stays "not provided", never empty.
         "reviewHistory": context.review_history,
-        "prComment": context.pr_comment_markdown,
         "cyclicEdges": cyclic,
         "initialTab": initial_tab,
         "developmentPaths": serde_json::from_str::<serde_json::Value>(archguard_core::DEVELOPMENT_PATHS).expect("development routes"),
@@ -1144,9 +1135,9 @@ mod tests {
     }
 
     #[test]
-    fn review_dashboard_tab_assets_and_kpi_payload_are_embedded() {
-        // R36: the Review Dashboard tab is registered and the graph's
-        // review_kpis block reaches the client; the panels fill in R37–R42.
+    fn review_kpi_payload_is_embedded_without_a_dashboard_tab() {
+        // The graph's review_kpis block reaches the client for the Start
+        // panels; the former Review Dashboard tab and its payload are gone.
         let mut graph = sample_graph();
         graph.review_kpis = Some(archguard_core::ReviewKpis {
             tangledness: Some(archguard_core::Tangledness {
@@ -1157,23 +1148,20 @@ mod tests {
             ..Default::default()
         });
         let page = to_html(&graph, None, 0, &cyclic_edges(), &findings(), None);
-        assert!(
-            page.contains("id=\"tab-review-dashboard\""),
-            "tab panel missing"
-        );
-        assert!(
-            page.contains("data-tab=\"review-dashboard\""),
-            "tab button missing"
-        );
-        // The dashboard JS module (viewer_review_dashboard.js) is embedded.
-        assert!(
-            page.contains("renderReviewDashboard"),
-            "dashboard JS not embedded"
-        );
+        for removed in [
+            "tab-review-dashboard",
+            "data-tab=\"review-dashboard\"",
+            "renderReviewDashboard",
+            "renderDashDecisions",
+            "renderDashPr",
+            "/api/review-dashboard",
+            "/api/decisions",
+        ] {
+            assert!(!page.contains(removed), "{removed} must not ship");
+        }
         // The measured tangledness quote reaches the client verbatim.
         assert_eq!(payload(&page)["reviewKpis"]["tangledness"]["quote"], 0.4);
-        // R40/R39/R42 inputs: what the caller provides reaches the client.
-        let register = archguard_core::ReviewRegister::default();
+        // R39 input: what the caller provides reaches the client.
         let history = serde_json::json!([{"tag": "snap-1"}]);
         let page = super::to_html_with_context(
             &graph,
@@ -1183,28 +1171,25 @@ mod tests {
             &findings(),
             None,
             &super::HtmlContext {
-                review_register: Some(&register),
                 review_history: Some(&history),
-                pr_comment_markdown: Some("## Architektur-Review"),
                 ..Default::default()
             },
         );
-        assert!(payload(&page)["reviewRegister"].is_object());
         assert_eq!(payload(&page)["reviewHistory"][0]["tag"], "snap-1");
-        assert_eq!(payload(&page)["prComment"], "## Architektur-Review");
-        // A graph without the KPI pass — and a context without dashboard
-        // inputs — embeds all of them as null, not as zeros or empty lists.
+        for key in ["reviewRegister", "prComment"] {
+            assert!(payload(&page).get(key).is_none(), "{key} must be gone");
+        }
+        // A graph without the KPI pass — and a context without history —
+        // embeds both as null, not as zeros or empty lists.
         let bare = to_html(&sample_graph(), None, 0, &cyclic_edges(), &findings(), None);
         assert!(
             payload(&bare)["reviewKpis"].is_null(),
             "not measured stays null"
         );
-        for key in ["reviewRegister", "reviewHistory", "prComment"] {
-            assert!(
-                payload(&bare)[key].is_null(),
-                "{key} must stay null when not provided"
-            );
-        }
+        assert!(
+            payload(&bare)["reviewHistory"].is_null(),
+            "reviewHistory must stay null when not provided"
+        );
         // Zones need compiler evidence the cached graph KPIs lack; the
         // caller's completed KPI block replaces the graph's.
         let completed = archguard_core::ReviewKpis {
@@ -1320,12 +1305,11 @@ mod tests {
     }
 
     #[test]
-    fn dash_health_and_pr_panels_embed_history_and_markdown() {
-        // R39/R42: the health panel (viewer_dash_health.js) and the PR
-        // comment panel (viewer_dash_pr.js) ship in the page; the health
-        // index, the snapshot health series and the saved PR Markdown reach
-        // the client verbatim — and stay null when absent, so the panels
-        // render their honest "not measured" states, never zeros.
+    fn dash_health_panel_embeds_history() {
+        // R39: the health panel (viewer_dash_health.js) ships in the page;
+        // the health index and the snapshot health series reach the client
+        // verbatim — and stay null when absent, so the panel renders its
+        // honest "not measured" state, never zeros.
         let mut parts = std::collections::BTreeMap::new();
         parts.insert("coverage".to_string(), 0.8);
         parts.insert("tangledness".to_string(), 0.4);
@@ -1353,17 +1337,12 @@ mod tests {
             None,
             &super::HtmlContext {
                 review_history: Some(&history),
-                pr_comment_markdown: Some("## Architektur-Review\n\n- `a.ts` — test\n"),
                 ..Default::default()
             },
         );
         assert!(
             page.contains("function renderDashHealth"),
             "health panel not embedded"
-        );
-        assert!(
-            page.contains("function renderDashPr"),
-            "PR comment panel not embedded"
         );
         let value = payload(&page);
         assert_eq!(value["reviewKpis"]["health"]["score"], 71.5);
@@ -1375,102 +1354,16 @@ mod tests {
         assert!(value["reviewHistory"][0]["score"].is_null());
         assert_eq!(value["reviewHistory"][1]["tag"], "snap");
         assert_eq!(value["reviewHistory"][2]["score"], 71.5);
-        assert_eq!(
-            value["prComment"],
-            "## Architektur-Review\n\n- `a.ts` — test\n"
-        );
-        // Honest-null path without any context: both panels still ship and
-        // both keys stay null, never an empty list or an empty document.
+        // Honest-null path without any context: the panel still ships and
+        // the key stays null, never an empty list.
         let bare = to_html(&sample_graph(), None, 0, &cyclic_edges(), &findings(), None);
         assert!(
-            bare.contains("function renderDashHealth") && bare.contains("function renderDashPr"),
-            "panels must ship even without measured data"
+            bare.contains("function renderDashHealth"),
+            "panel must ship even without measured data"
         );
         assert!(
             payload(&bare)["reviewHistory"].is_null(),
             "absent history stays null"
-        );
-        assert!(
-            payload(&bare)["prComment"].is_null(),
-            "absent PR comment stays null, never an empty comment"
-        );
-    }
-
-    #[test]
-    fn dash_decisions_panel_embeds_the_register_and_stays_honest_when_absent() {
-        // R40: the decisions panel (viewer_dash_decisions.js) ships in the
-        // page and the caller-provided register reaches the client verbatim
-        // — including the ADR-less accept-risk the panel must badge, and the
-        // honest null when no register was provided (never an empty one).
-        use archguard_core::{DecisionKind, ReviewDecision};
-        let register = archguard_core::ReviewRegister {
-            version: 1,
-            decisions: vec![
-                ReviewDecision {
-                    id: "d-risk".to_string(),
-                    finding_ref: "scc-3".to_string(),
-                    decision: DecisionKind::AcceptRisk,
-                    adr_link: None,
-                    note: "accepted with the team".to_string(),
-                    author: "sven".to_string(),
-                    ts: "2026-10-30T09:00:00Z".to_string(),
-                },
-                ReviewDecision {
-                    id: "d-fix".to_string(),
-                    finding_ref: "scc-1".to_string(),
-                    decision: DecisionKind::Fix,
-                    adr_link: None,
-                    note: "planned".to_string(),
-                    author: "reviewer".to_string(),
-                    ts: "2026-10-30T09:05:00Z".to_string(),
-                },
-            ],
-        };
-        let page = super::to_html_with_context(
-            &sample_graph(),
-            None,
-            0,
-            &cyclic_edges(),
-            &findings(),
-            None,
-            &super::HtmlContext {
-                review_register: Some(&register),
-                ..Default::default()
-            },
-        );
-        assert!(
-            page.contains("function renderDashDecisions"),
-            "decisions panel not embedded"
-        );
-        let value = payload(&page);
-        assert_eq!(
-            value["reviewRegister"]["decisions"]
-                .as_array()
-                .map(Vec::len),
-            Some(2)
-        );
-        // The ADR-less accept-risk is visible in the embedded JSON exactly
-        // as recorded — the panel badges it, the payload never hides it.
-        let accepted = &value["reviewRegister"]["decisions"][0];
-        assert_eq!(accepted["decision"], "accept-risk");
-        assert_eq!(accepted["finding_ref"], "scc-3");
-        // skip_serializing_if drops the key entirely — indexing yields Null.
-        assert!(accepted["adr_link"].is_null());
-        assert_eq!(value["reviewRegister"]["decisions"][1]["decision"], "fix");
-        assert_eq!(
-            value["reviewRegister"]["decisions"][1]["author"],
-            "reviewer"
-        );
-        // Honest-null path: without a context the key stays null — the
-        // panel still ships and states the absence itself.
-        let bare = to_html(&sample_graph(), None, 0, &cyclic_edges(), &findings(), None);
-        assert!(
-            bare.contains("function renderDashDecisions"),
-            "decisions panel must ship even without a register"
-        );
-        assert!(
-            payload(&bare)["reviewRegister"].is_null(),
-            "absent register stays null, never an empty list"
         );
     }
 }

@@ -1,0 +1,209 @@
+// Calls tab: the web viewer's compiler call-site explorer (#tab-calls in
+// viewer.html). Data and callbacks live in CallsData, set from
+// src/calls_ui.rs.
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Button, SearchField, StatusLine, Disclosure } from "widgets.slint";
+import { CallsData, CallsModel } from "calls_data.slint";
+import { Muted } from "calls_parts.slint";
+import { CallsTree } from "calls_tree.slint";
+import { CallsOverview } from "calls_overview.slint";
+import { CallsDetail } from "calls_detail.slint";
+
+export { CallsData }
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 4px;
+    alignment: end;
+    Text { text: root.label; color: Theme.muted; font-size: 11px; }
+    @children
+}
+
+component Toolbar inherits Rectangle {
+    property <CallsModel> m: CallsData.model;
+    // ComboBoxes keep their own index once used; follow the model's.
+    property <int> language-index: m.language-index;
+    property <int> package-index: m.package-index;
+    property <int> resolution-index: m.resolution;
+    property <string> query: m.query;
+    changed language-index => { language.current-index = self.language-index; }
+    changed package-index => { package.current-index = self.package-index; }
+    changed resolution-index => { resolution.current-index = self.resolution-index; }
+    changed query => { if search.text != self.query { search.text = self.query; } }
+    background: Theme.panel;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 10px;
+        alignment: start;
+        Field {
+            label: @tr("Language");
+            language := ComboBox {
+                model: m.languages;
+                current-index: root.language-index;
+                enabled: m.languages.length > 1;
+                selected => { CallsData.set-language(self.current-index); }
+            }
+        }
+        Field {
+            label: @tr("Package");
+            width: 260px;
+            package := ComboBox {
+                model: m.packages;
+                current-index: root.package-index;
+                enabled: m.packages.length > 1;
+                selected => { CallsData.set-package(self.current-index); }
+            }
+        }
+        Field {
+            label: @tr("Search");
+            width: 200px;
+            search := SearchField {
+                // Initial value: a recreated view shows the kept query.
+                text: root.query;
+                placeholder: @tr("Filter type, module or function…");
+                edited(t) => { CallsData.set-query(t); }
+            }
+        }
+        Field {
+            label: @tr("Targets");
+            resolution := ComboBox {
+                model: [@tr("Project"), @tr("External"), @tr("Unresolved"), @tr("All")];
+                current-index: root.resolution-index;
+                enabled: m.mode != 2;
+                selected => { CallsData.set-resolution(self.current-index); }
+            }
+        }
+        Field {
+            Button {
+                text: @tr("Within-class calls");
+                pressed-state: m.internal;
+                enabled: m.mode != 2;
+                clicked => { CallsData.toggle-internal(); }
+            }
+        }
+    }
+}
+
+// The long coverage sentence of renderCalls.
+component Coverage inherits Muted {
+    property <CallsModel> m: CallsData.model;
+    property <string> lead: m.status == "partial"
+        ? (m.java-release > 0 && m.analyzers.length == 0
+            ? @tr("Partial Java call analysis; coverage is incomplete. ")
+            : @tr("Partial call analysis; coverage is incomplete. "))
+        : @tr("Static call analysis. ");
+    property <string> counts: @tr("{} files · {} types/modules · {} project call sites · {} external · {} unresolved.", Fmt.int(m.files), Fmt.int(m.classes), Fmt.int(m.project), Fmt.int(m.external), Fmt.int(m.unresolved));
+    property <string> baseline: m.java-release > 0 && m.analyzers.length == 0
+        ? " " + @tr("Java {} API/source baseline.", m.java-release)
+        : m.unreported ? " " + @tr("Analyzer version unreported.") : "";
+    text: root.lead + root.counts + root.baseline + @tr(" Original source snapshot.");
+    font-size: 12px;
+}
+
+component Description inherits VerticalLayout {
+    property <CallsModel> m: CallsData.model;
+    property <bool> unavailable: m.status == "unavailable";
+    property <bool> none: m.status == "not_applicable";
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    spacing: 6px;
+    HorizontalLayout {
+        spacing: 18px;
+        alignment: start;
+        if none: Muted {
+            font-size: 12px;
+            text: @tr("No applicable source files for call analysis.") + @tr(" Original source snapshot.");
+        }
+        if unavailable: Muted {
+            font-size: 12px;
+            text: @tr("Call analysis unavailable. ") + m.diagnostic-line
+                + (m.unreported ? " " + @tr("Analyzer version unreported.") : "") + @tr(" Original source snapshot.");
+        }
+        if !none && !unavailable: StatusLine { status: m.status-slot; label: m.status-label; }
+        Disclosure {
+            text: @tr("Analysis");
+            tint: Theme.text;
+            // The state lives in Rust; the click only reports it.
+            open: m.analysis-open;
+            clicked => { CallsData.toggle-analysis(); }
+        }
+        Muted {
+            font-size: 12px;
+            // Without an analysis the counts are unknown, not zero.
+            text: none || unavailable ? @tr("{} connections · {} call sites", Fmt.unknown, Fmt.unknown)
+                : @tr("{} connections · {} call sites", Fmt.int(m.connections), Fmt.int(m.sites));
+            vertical-alignment: center;
+        }
+    }
+    // Like the web's .calls-description (max-height 30%, scrolls).
+    if m.analysis-open: ScrollView {
+        height: 190px;
+        VerticalLayout {
+            spacing: 6px;
+            Muted { font-size: 12px; text: @tr("Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."); }
+            Muted { font-size: 12px; text: @tr("Packages → types/modules → functions/methods in the matching call connections."); }
+            if !none && !unavailable: Coverage { }
+            for a in m.analyzers: Rectangle {
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.panel;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 4px;
+                    Text {
+                        text: a.language + " · " + a.backend + " · " + CallsData.coverage(a.status);
+                        color: Theme.text;
+                        font-size: 12px;
+                        font-weight: 700;
+                    }
+                    Muted { text: @tr("{} files", Fmt.int(a.files)) + (a.version != "" ? " · " + @tr("Version {}", a.version) : ""); }
+                    if a.project != "": Muted { text: a.project; font-family: "Menlo"; }
+                    for d in a.diagnostics: Muted { text: d; }
+                }
+            }
+            for d in m.diagnostics: Muted { text: d; font-size: 12px; }
+        }
+    }
+}
+
+export component CallsView inherits Rectangle {
+    callback open-web();
+    // Column widths .65 : .75 : 1 of the width minus padding and gaps,
+    // as the web's grid (.calls-columns).
+    property <length> share: (root.width - 48px) / 2.4;
+    background: Theme.bg;
+    // Tabs must not change the window's preferred size.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if CallsData.model.state == 0: Text {
+        text: CallsData.model.error != "" ? CallsData.model.error : @tr("Analyzing calls …");
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if CallsData.model.state == 1: VerticalLayout {
+        Toolbar { vertical-stretch: 0; }
+        Description { vertical-stretch: 0; }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 16px;
+            spacing: 12px;
+            CallsTree { width: max(190px, root.share * 0.65); }
+            CallsOverview { width: max(210px, root.share * 0.75); }
+            CallsDetail { horizontal-stretch: 1; }
+        }
+    }
+}

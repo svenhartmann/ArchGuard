@@ -1,0 +1,234 @@
+msgid "Reading the service topology …"
+msgstr "Diensttopologie wird gelesen …"
+
+msgid " · Analysis incomplete – missing connections do not establish isolation"
+msgstr " · Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation"
+
+msgid " Analysis incomplete – missing connections do not establish isolation; see diagnostics."
+msgstr " Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation; siehe Diagnosehinweise."
+
+msgid "No supported project manifests or Docker Compose files found."
+msgstr "Keine unterstützten Projektmanifeste oder Docker-Compose-Dateien gefunden."
+
+msgid "No service declarations were found."
+msgstr "Keine Dienstdeklarationen gefunden."
+
+msgid "Startup dependencies describe depends_on order, not API calls. Cycles are computed only among startup edges."
+msgstr "Startabhängigkeiten beschreiben die Reihenfolge aus depends_on, keine API-Aufrufe. Zyklen werden nur unter Startabhängigkeiten berechnet."
+
+msgid "HTTP(S) endpoints found in Compose configuration are potential service dependencies, not observed runtime calls. Cycles use only these configured HTTP edges."
+msgstr "HTTP(S)-Endpunkte aus der Compose-Konfiguration sind potenzielle Dienstabhängigkeiten, keine beobachteten Laufzeitaufrufe. Zyklen verwenden nur diese konfigurierten HTTP-Kanten."
+
+msgid "Static source candidates; execution is not proven. Event cycles can represent intended workflows. Aspire references are configuration, not calls."
+msgstr "Statische Quellkandidaten; Ausführung ist nicht belegt. Event-Zyklen können gewollte Abläufe darstellen. Aspire-Verweise sind Konfiguration, keine Aufrufe."
+
+msgid "Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections."
+msgstr "Manifestinventar. Nur erkannte Anwendungen werden zu Dienstknoten; gemeinsame Namen und Technologien belegen keine Dienstbeziehungen."
+
+msgid "Project workspace"
+msgstr "Projektverbund"
+
+msgid "Architecture pattern candidates"
+msgstr "Architekturmuster-Kandidaten"
+
+msgid "API contracts and changes"
+msgstr "API-Verträge und Änderungen"
+
+msgid "This section is not native yet. The web viewer shows it for the same project."
+msgstr "Dieser Abschnitt ist noch nicht nativ. Der Web-Viewer zeigt ihn für dasselbe Projekt."
+
+msgid "Diagnostics"
+msgstr "Diagnosehinweise"
+
+msgid "Diagnostic messages (original wording)"
+msgstr "Diagnosehinweise (Originaltext)"
+
+msgid "Cyclic group: {}"
+msgstr "Zyklusgruppe: {}"
+
+msgid "Legend"
+msgstr "Legende"
+
+msgid "Reference: {} · "
+msgstr "Bezug: {} · "
+
+msgid "Left arcs go down, right arcs go up. Incoming blue, outgoing violet."
+msgstr "Linke Bögen führen abwärts, rechte aufwärts. Eingehend blau, ausgehend violett."
+
+msgid "In/Out: Incoming left (blue), outgoing right (violet)."
+msgstr "Ein/Aus: Eingehend links (blau), ausgehend rechts (violett)."
+
+msgid "In/Out: select a service for incoming / outgoing sides. Context connections stay left."
+msgstr "Ein/Aus: Einen Dienst für eingehende / ausgehende Seiten auswählen. Kontextbeziehungen bleiben links."
+
+msgid "Red marks only right-hand cyclic edges; left-hand edges keep their direction color."
+msgstr "Nur rechte zyklische Kanten sind rot; linke Kanten behalten ihre Richtungsfarbe."
+
+msgid "Relation"
+msgstr "Dienstbeziehung"
+
+msgid "API configuration"
+msgstr "API-Konfiguration"
+
+msgid "Startup (depends_on)"
+msgstr "Startreihenfolge (depends_on)"
+
+msgid "HTTP client"
+msgstr "HTTP-Client"
+
+msgid "gRPC client"
+msgstr "gRPC-Client"
+
+msgid "Event flow (inferred)"
+msgstr "Event-Fluss (abgeleitet)"
+
+msgid "Configuration reference"
+msgstr "Konfigurationsverweis"
+
+msgid "Configured HTTP route / endpoint"
+msgstr "Konfigurierte HTTP-Route / Endpunkt"
+
+msgid "Startup dependency (depends_on)"
+msgstr "Startabhängigkeit (depends_on)"
+
+msgid "Direction"
+msgstr "Richtung"
+
+msgctxt "direction"
+msgid "All"
+msgstr "Alle"
+
+msgid "Both"
+msgstr "Beide"
+
+msgid "All services"
+msgstr "Alle Dienste"
+
+msgid "Relations"
+msgstr "Dienstbeziehungen"
+
+msgid "Up / down"
+msgstr "Auf / ab"
+
+msgid "In/Out"
+msgstr "Ein/Aus"
+
+msgid "Unmapped service"
+msgstr "Nicht zugeordneter Dienst"
+
+msgid "Application"
+msgstr "Anwendung"
+
+msgid "Library"
+msgstr "Bibliothek"
+
+msgid "Test / tooling"
+msgstr "Tests / Werkzeuge"
+
+msgid "Workspace"
+msgstr "Workspace"
+
+msgid "Unclassified project"
+msgstr "Nicht klassifiziertes Projekt"
+
+msgid "Declared startup order. This does not establish an API call."
+msgstr "Deklarierte Startreihenfolge. Dies belegt keinen API-Aufruf."
+
+msgid "A literal HTTP(S) destination in Compose configuration. This is not evidence of an executed runtime call."
+msgstr "Ein wörtliches HTTP(S)-Ziel in der Compose-Konfiguration. Dies ist kein Beleg für einen ausgeführten Aufruf zur Laufzeit."
+
+msgid "Static source candidate, not an observed runtime call."
+msgstr "Statischer Quellkandidat, kein beobachteter Laufzeitaufruf."
+
+msgid "Source evidence (original wording)"
+msgstr "Quellenbelege (Originaltext)"
+
+msgid "No source evidence was included for this connection."
+msgstr "Für diese Dienstbeziehung wurden keine Quellenbelege mitgeliefert."
+
+msgid "Project path: {}"
+msgstr "Projektpfad: {}"
+
+msgid "Manifest: {}"
+msgstr "Manifest: {}"
+
+msgid "Runtime: {}"
+msgstr "Laufzeit: {}"
+
+msgid "Project evidence (original wording)"
+msgstr "Projektbelege (Originaltext)"
+
+msgid "Select a deployment to inspect its connections."
+msgstr "Eine Bereitstellung auswählen, um ihre Dienstbeziehungen zu prüfen."
+
+msgid "No service declaration is associated with this project. Libraries and test tools remain project inventory."
+msgstr "Diesem Projekt ist keine Dienstdeklaration zugeordnet. Bibliotheken und Testwerkzeuge bleiben im Projektinventar."
+
+msgid "Compose service · {}"
+msgstr "Compose-Dienst · {}"
+
+msgid "Local build context: {}"
+msgstr "Lokaler Build-Kontext: {}"
+
+msgid "No local build context identified."
+msgstr "Kein lokaler Build-Kontext erkannt."
+
+msgid "Networks: {}"
+msgstr "Netzwerke: {}"
+
+msgid "none reported"
+msgstr "keine angegeben"
+
+msgid "Profiles: {}"
+msgstr "Profile: {}"
+
+msgid "{} connections"
+msgstr "Dienstbeziehungen: {}"
+
+msgid "No connections of this kind were found for this service."
+msgstr "Für diesen Dienst wurden keine Dienstbeziehungen dieser Art gefunden."
+
+msgid "Monorepo detected"
+msgstr "Monorepo erkannt"
+
+msgid "Monorepo not established"
+msgstr "Kein Monorepo nachgewiesen"
+
+msgid "Show more manifest projects"
+msgstr "Weitere Manifest-Projekte anzeigen"
+
+msgid "{0} Compose file"
+msgid_plural "{0} Compose files"
+msgstr[0] "{0} Compose-Datei"
+msgstr[1] "{0} Compose-Dateien"
+
+msgid "{0} application"
+msgid_plural "{0} applications"
+msgstr[0] "{0} Anwendung"
+msgstr[1] "{0} Anwendungen"
+
+msgid "{0} container"
+msgid_plural "{0} containers"
+msgstr[0] "{0} Container"
+msgstr[1] "{0} Container"
+
+msgid "{0} manifest project · applications, libraries and tools"
+msgid_plural "{0} manifest projects · applications, libraries and tools"
+msgstr[0] "{0} Manifest-Projekt · Anwendungen, Bibliotheken und Werkzeuge"
+msgstr[1] "{0} Manifest-Projekte · Anwendungen, Bibliotheken und Werkzeuge"
+
+msgid "{0} manifest project"
+msgid_plural "{0} manifest projects"
+msgstr[0] "{0} Manifest-Projekt"
+msgstr[1] "{0} Manifest-Projekte"
+
+msgid "{0} service"
+msgid_plural "{0} services"
+msgstr[0] "{0} Dienst"
+msgstr[1] "{0} Dienste"
+
+msgid "{} / {} service relations shown"
+msgstr "{} / {} Dienstbeziehungen angezeigt"
+
+msgid "{} manifest project roots without workspace aggregators, {} local Compose build contexts; at least two establish a monorepo."
+msgstr "{} Manifest-Projektwurzeln ohne Workspace-Aggregatoren, {} lokale Compose-Build-Kontexte; ab zwei liegt ein Monorepo vor."

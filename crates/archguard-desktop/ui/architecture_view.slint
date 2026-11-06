@@ -1,0 +1,261 @@
+// Architecture tab: the web viewer's arc42 reader (renderArc42Documentation
+// in viewer_architecture.js). Data and callbacks live in ArchitectureData,
+// set from src/architecture_ui.rs.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Disclosure, PageTitle } from "widgets.slint";
+import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
+import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
+
+export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation }
+
+export struct ArcChapter {
+    number: int,
+    label: string,
+    title: string,
+}
+
+// Everything the tab shows, set from Rust as one value.
+export struct ArchitectureModel {
+    // 0 loading, 1 ready, 2 no documentation.
+    state: int,
+    error: string,
+    chapters: [ArcChapter],
+    chapter: int,
+    chapter-title: string,
+    // "Document language: German" in an English window; the level of
+    // chapter 10's figures.
+    language-note: string,
+    chapter-note: string,
+    blocks: [ArcBlock],
+    source: string,
+    about: [ArcBlock],
+    has-model: bool,
+    saved: string,
+    map: ArcMap,
+}
+
+export global ArchitectureData {
+    in-out property <ArchitectureModel> model;
+
+    callback select-chapter(int);
+    callback download(bool);
+    callback navigate(int);
+    callback scope-selected(int);
+    callback select-card(int);
+    callback card-action();
+    callback more-relations();
+    callback plantuml(string);
+}
+
+component ChapterButton inherits Rectangle {
+    in property <ArcChapter> chapter;
+    in property <bool> current;
+    callback clicked();
+    height: title.preferred-height + 20px;
+    border-radius: 7px;
+    background: current || touch.has-hover ? Theme.panel-2 : transparent;
+    if current: Rectangle { x: 0; width: 3px; background: Theme.accent; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Text {
+            width: 18px;
+            text: chapter.label;
+            color: current ? Theme.accent : Theme.muted;
+            font-size: 11px;
+            font-weight: current ? 650 : 400;
+            vertical-alignment: center;
+        }
+        title := Text {
+            text: chapter.title;
+            color: current ? Theme.accent : Theme.text;
+            font-size: 14px;
+            font-weight: current ? 650 : 400;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ArchitectureView inherits Rectangle {
+    callback open-web();
+    property <bool> source-open;
+    property <bool> about-open;
+    property <bool> setup-open;
+    background: Theme.bg;
+    // Tabs must not change the window's preferred size.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if ArchitectureData.model.state == 0: Text {
+        text: @tr("Writing the architecture documentation …");
+        color: Theme.muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if ArchitectureData.model.state == 2: VerticalLayout {
+        alignment: center;
+        spacing: 10px;
+        Text {
+            text: @tr("No arc42 documentation in this report");
+            color: Theme.text;
+            font-size: Theme.font-page;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: ArchitectureData.model.error != "" ? ArchitectureData.model.error : @tr("Generate a new report to see the architecture documentation.");
+            color: Theme.muted;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+    }
+    if ArchitectureData.model.state == 1: VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 18px;
+        spacing: 18px;
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                spacing: 8px;
+                horizontal-stretch: 1;
+                PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
+                if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: 12px; wrap: word-wrap; }
+            }
+            Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
+            Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
+        }
+        if ArchitectureData.model.saved != "": Text {
+            text: @tr("Saved {}", ArchitectureData.model.saved);
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        HorizontalLayout {
+            spacing: 22px;
+            vertical-stretch: 1;
+            VerticalLayout {
+                width: 236px;
+                alignment: start;
+                Rectangle {
+                    background: Theme.panel;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 3px;
+                        for c in ArchitectureData.model.chapters: ChapterButton {
+                            chapter: c;
+                            current: c.number == ArchitectureData.model.chapter;
+                            clicked => { ArchitectureData.select-chapter(c.number); }
+                        }
+                    }
+                }
+            }
+            ScrollView {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    padding-bottom: 28px;
+                    spacing: 18px;
+                    Rectangle {
+                        background: Theme.panel;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding-left: 30px;
+                            padding-right: 30px;
+                            padding-top: 26px;
+                            padding-bottom: 20px;
+                            spacing: 0;
+                            PageTitle { text: ArchitectureData.model.chapter-title; }
+                            if ArchitectureData.model.chapter-note != "": VerticalLayout {
+                                padding-top: 8px;
+                                Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                            }
+                            Rectangle { height: 14px; }
+                            if ArchitectureData.model.map.kind >= 0: VerticalLayout {
+                                padding-top: 8px;
+                                padding-bottom: 22px;
+                                ArcVisual {
+                                    map: ArchitectureData.model.map;
+                                    navigate(s) => { ArchitectureData.navigate(s); }
+                                    scope-selected(i) => { ArchitectureData.scope-selected(i); }
+                                    select(i) => { ArchitectureData.select-card(i); }
+                                    action => { ArchitectureData.card-action(); }
+                                    more-relations => { ArchitectureData.more-relations(); }
+                                    plantuml(u) => { ArchitectureData.plantuml(u); }
+                                }
+                            }
+                            for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
+                            Rectangle { height: 24px; }
+                            Rectangle { height: 1px; background: Theme.border; }
+                            Rectangle { height: 10px; }
+                            Disclosure { text: @tr("Markdown source"); open <=> root.source-open; }
+                            if root.source-open: Rectangle {
+                                background: Theme.panel-2;
+                                border-radius: 8px;
+                                VerticalLayout {
+                                    padding: 14px;
+                                    Text {
+                                        text: ArchitectureData.model.source;
+                                        color: Theme.text;
+                                        font-family: "Menlo";
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            Rectangle { height: 14px; }
+                            Rectangle { height: 1px; background: Theme.border; }
+                            Rectangle { height: 10px; }
+                            Disclosure { text: @tr("Source and update"); open <=> root.about-open; }
+                            if root.about-open: VerticalLayout {
+                                Text {
+                                    text: @tr("Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks.");
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                Rectangle { height: 8px; }
+                                for b in ArchitectureData.model.about: ArcBlockView { block: b; }
+                            }
+                        }
+                    }
+                    if !ArchitectureData.model.has-model: VerticalLayout {
+                        Disclosure { text: @tr("Optional: compare with a target model"); open <=> root.setup-open; }
+                        if root.setup-open: Text {
+                            text: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
+                            color: Theme.text;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if ArchitectureData.model.has-model: HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        Text {
+                            text: @tr("Target architecture: the comparison with the declared model is not native yet.");
+                            color: Theme.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
+                    }
+                }
+            }
+        }
+    }
+}

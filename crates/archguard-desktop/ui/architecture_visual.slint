@@ -1,0 +1,411 @@
+// Derived chapter visual: package map with building-block levels (the
+// web's .arc42-visual, renderArc42PackageMap and the basic arc42Graph).
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export struct ArcLevelItem {
+    // Node position; -1 is the project overview.
+    scope: int,
+    level: int,
+    label: string,
+    current: bool,
+}
+
+// kind: 0 source package, 1 direct source nodes, 2 project context.
+export struct ArcCard {
+    index: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    kind: int,
+    name1: string,
+    name2: string,
+    files: int,
+    cycle: bool,
+    selected: bool,
+}
+
+export struct ArcLine {
+    path: string,
+    head: string,
+    count: int,
+    lx: float,
+    ly: float,
+    cycle: bool,
+    dim: bool,
+    strong: bool,
+}
+
+export struct ArcRelation {
+    from: string,
+    to: string,
+    count: int,
+}
+
+component LevelButton inherits Rectangle {
+    in property <ArcLevelItem> item;
+    callback clicked();
+    height: label.preferred-height + 18px;
+    border-radius: 5px;
+    background: item.current ? Theme.panel : touch.has-hover ? Theme.panel : transparent;
+    if item.current: Rectangle { x: 0; width: 3px; background: Theme.accent; border-radius: 1px; }
+    HorizontalLayout {
+        padding-left: item.level == 3 ? 24px : 10px;
+        padding-right: 8px;
+        spacing: 8px;
+        alignment: start;
+        Text { text: item.level; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+        label := Text {
+            text: item.label;
+            color: item.current ? Theme.accent : Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The diagram, scaled by `zoom` (cards, lines and texts alike).
+component Diagram inherits Rectangle {
+    in property <[ArcCard]> cards;
+    in property <[ArcLine]> lines;
+    in property <float> dw;
+    in property <float> dh;
+    in property <float> zoom;
+    callback select(int);
+    width: dw * zoom * 1px;
+    height: dh * zoom * 1px;
+    for l in root.lines: Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: root.dw;
+        viewbox-height: root.dh;
+        commands: l.path;
+        fill: transparent;
+        stroke: l.cycle ? Theme.cycle : Theme.accent;
+        stroke-width: (l.strong ? 2.5px : 1.5px) * root.zoom;
+        opacity: l.dim ? 0.25 : 1;
+    }
+    for l in root.lines: Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: root.dw;
+        viewbox-height: root.dh;
+        commands: l.head;
+        fill: l.cycle ? Theme.cycle : Theme.accent;
+        stroke: transparent;
+        opacity: l.dim ? 0.25 : 1;
+    }
+    for l in root.lines: Text {
+        x: l.lx * root.zoom * 1px - self.width / 2;
+        y: l.ly * root.zoom * 1px - self.height;
+        text: Fmt.int(l.count);
+        color: l.cycle ? Theme.cycle : Theme.muted;
+        font-size: 9px * root.zoom;
+        opacity: l.dim ? 0.25 : 1;
+    }
+    for c in root.cards: Rectangle {
+        x: c.x * root.zoom * 1px;
+        y: (c.y - 10) * root.zoom * 1px;
+        width: c.w * root.zoom * 1px;
+        height: (c.h + 10) * root.zoom * 1px;
+        if c.kind == 0: Rectangle {
+            x: 0;
+            y: 0;
+            width: 55px * root.zoom;
+            height: 16px * root.zoom;
+            border-radius: 3px * root.zoom;
+            background: Theme.panel-2;
+            border-width: 1px;
+            border-color: Theme.border;
+        }
+        Rectangle {
+            x: 0;
+            y: 10px * root.zoom;
+            width: parent.width;
+            height: c.h * root.zoom * 1px;
+            border-radius: 2px * root.zoom;
+            background: c.kind == 0 ? Theme.panel : Theme.panel-2;
+            border-width: (c.selected ? 2.5px : 1.5px) * root.zoom;
+            border-color: c.selected ? Theme.accent : c.cycle ? Theme.cycle : Theme.border;
+            Text {
+                x: 12px * root.zoom;
+                y: 8px * root.zoom;
+                text: c.kind == 0 ? @tr("Source package") : c.kind == 1 ? @tr("Direct source nodes") : @tr("Project context");
+                color: Theme.muted;
+                font-size: 10px * root.zoom;
+            }
+            Text {
+                x: 12px * root.zoom;
+                y: 28px * root.zoom;
+                text: c.name1;
+                color: Theme.text;
+                font-size: 13px * root.zoom;
+                font-weight: 650;
+            }
+            Text {
+                x: 12px * root.zoom;
+                y: 45px * root.zoom;
+                text: c.name2;
+                color: Theme.text;
+                font-size: 13px * root.zoom;
+                font-weight: 650;
+            }
+            Text {
+                x: 12px * root.zoom;
+                y: 71px * root.zoom;
+                text: @tr("{} source nodes", Fmt.int(c.files));
+                color: Theme.muted;
+                font-size: 10px * root.zoom;
+            }
+            if c.cycle: Rectangle {
+                x: parent.width - 16px * root.zoom;
+                y: 13px * root.zoom;
+                width: 8px * root.zoom;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: Theme.cycle;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.select(c.index); }
+            }
+        }
+    }
+}
+
+// The derived visual of a chapter, set as one value.
+export struct ArcMap {
+    // -1 none, 0 dependencies (with levels), 1 calls, 2 cycles.
+    kind: int,
+    level: int,
+    levels: [ArcLevelItem],
+    crumbs: [ArcLevelItem],
+    scopes: [string],
+    scope-index: int,
+    total: int,
+    internal: int,
+    // Package cycles of the projection (`kpi::PACKAGE_CYCLES`).
+    cycles: KpiItem,
+    calls-status: string,
+    cards: [ArcCard],
+    lines: [ArcLine],
+    dw: float,
+    dh: float,
+    selected-name: string,
+    // 0 none, 1 open next level, 2 open in graph, 3 open package.
+    selected-action: int,
+    relations: [ArcRelation],
+    relation-total: int,
+    relations-more: bool,
+}
+
+export component ArcVisual inherits Rectangle {
+    in property <ArcMap> map;
+    callback navigate(int);
+    callback scope-selected(int);
+    callback select(int);
+    callback action();
+    callback more-relations();
+    callback plantuml(string);
+
+    property <bool> relations-open;
+    // 0: fit to the box; otherwise the user's zoom factor.
+    property <float> user-zoom: 0;
+    // Width of the diagram box: the visual minus padding and level list.
+    property <length> box-width: root.width - 32px - (map.kind == 0 ? 216px : 0);
+    property <float> fit-zoom: map.dw > 0 ? min(1, (box-width / 1px - 2) / map.dw) : 1;
+    property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
+    property <string> unit: map.kind == 1 ? @tr("recorded call sites") : @tr("source connections");
+    changed dw => { root.user-zoom = 0; }
+    property <float> dw: map.dw;
+    // ComboBox keeps its own index once used; follow the model's.
+    property <int> scope-index: map.scope-index;
+    changed scope-index => { combo.current-index = root.scope-index; }
+
+    background: Theme.panel-2;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 16px;
+        if root.map.kind == 0: HorizontalLayout {
+            width: 200px;
+            spacing: 10px;
+            VerticalLayout {
+                spacing: 2px;
+                alignment: start;
+                Text {
+                    text: @tr("Building blocks · Level {} of 3", root.map.level);
+                    color: Theme.text;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Rectangle { height: 8px; }
+                ScrollView {
+                    max-height: 560px;
+                    preferred-height: 560px;
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 1px;
+                        for item in root.map.levels: LevelButton {
+                            item: item;
+                            clicked => { root.navigate(item.scope); }
+                        }
+                    }
+                }
+            }
+            Rectangle { width: 1px; background: Theme.border; }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+            alignment: start;
+            if root.map.kind == 0: HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for c[i] in root.map.crumbs: HorizontalLayout {
+                    spacing: 6px;
+                    if i > 0: Text { text: "›"; color: Theme.muted; vertical-alignment: center; }
+                    Button {
+                        compact: true;
+                        text: c.level + " · " + c.label;
+                        pressed-state: c.current;
+                        clicked => { root.navigate(c.scope); }
+                    }
+                }
+            }
+            Text {
+                text: root.map.kind == 1 ? @tr("Static calls between packages") : root.map.kind == 2 ? @tr("Cyclic package relationships") : @tr("UML · Packages and dependencies");
+                color: Theme.text;
+                font-size: Theme.font-section;
+                font-weight: 700;
+            }
+            combo := ComboBox {
+                model: root.map.scopes;
+                current-index: root.map.scope-index;
+                selected => { root.scope-selected(self.current-index); }
+            }
+            HorizontalLayout {
+                spacing: 14px;
+                alignment: start;
+                Text {
+                    text: @tr("{} {} · {} inside the shown groups", Fmt.int(root.map.total), root.unit, Fmt.int(root.map.internal));
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                StatInline { kpi: root.map.cycles; }
+            }
+            if root.map.kind == 1: Text {
+                text: @tr("Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order.", root.map.calls-status);
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.map.cards.length == 0: Text {
+                text: @tr("No relationships of this kind are recorded in this scope.");
+                color: Theme.text;
+                font-size: 14px;
+            }
+            if root.map.cards.length > 0: Text {
+                text: @tr("{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.", Fmt.int(root.map.lines.length), Fmt.int(root.map.lines.length));
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.map.cards.length > 0: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Text {
+                    text: @tr("Arrows show the dependency direction; edge labels show recorded counts.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                Button { compact: true; text: "PlantUML ↓"; clicked => { root.plantuml(root.unit); } }
+                ZoomControls {
+                    zoom: root.zoom;
+                    zoom-out => { root.user-zoom = max(0.2, root.zoom * 0.8); }
+                    zoom-in => { root.user-zoom = min(5, root.zoom * 1.25); }
+                    reset => { root.user-zoom = 1; }
+                    fit => { root.user-zoom = 0; }
+                }
+            }
+            if root.map.cards.length > 0: Rectangle {
+                min-width: 0;
+                height: min(640px, root.map.dh * root.zoom * 1px + 2px);
+                background: Theme.bg;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+                Flickable {
+                    x: 1px;
+                    y: 1px;
+                    width: parent.width - 2px;
+                    height: parent.height - 2px;
+                    content-width: max(self.width, root.map.dw * root.zoom * 1px);
+                    content-height: root.map.dh * root.zoom * 1px;
+                    Diagram {
+                        x: max(0, (parent.width - self.width) / 2);
+                        cards: root.map.cards;
+                        lines: root.map.lines;
+                        dw: root.map.dw;
+                        dh: root.map.dh;
+                        zoom: root.zoom;
+                        select(i) => { root.select(i); }
+                    }
+                }
+            }
+            if root.map.selected-name != "": HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                Text { text: root.map.selected-name; color: Theme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                if root.map.selected-action != 0: Button {
+                    compact: true;
+                    text: root.map.selected-action == 1 ? @tr("Open level {}", Fmt.int(root.map.level + 1)) : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
+                    clicked => { root.action(); }
+                }
+            }
+            if root.map.cards.length > 0: VerticalLayout {
+                spacing: 0;
+                Disclosure {
+                    text: @tr("Relationships and counts") + " · " + Fmt.int(root.map.relation-total);
+                    tint: Theme.text;
+                    open <=> root.relations-open;
+                }
+                if root.relations-open: VerticalLayout {
+                    spacing: 0;
+                    for r in root.map.relations: VerticalLayout {
+                        padding-top: 7px;
+                        padding-bottom: 7px;
+                        spacing: 7px;
+                        Text {
+                            text: r.from + " → " + r.to + " · " + Fmt.int(r.count) + " " + root.unit;
+                            color: Theme.text;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { height: 1px; background: Theme.border; }
+                    }
+                    if root.map.relations-more: HorizontalLayout {
+                        alignment: start;
+                        padding-top: 8px;
+                        Button { compact: true; text: @tr("More relationships"); clicked => { root.more-relations(); } }
+                    }
+                }
+            }
+        }
+    }
+}

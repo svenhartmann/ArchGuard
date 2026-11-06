@@ -155,6 +155,8 @@ cargo test --workspace --locked
 node scripts/viewer/test_viewer_world.js
 ```
 
+Der Workspace enthält den nativen Desktop-Viewer `archguard-desktop` ([ADR 0002](docs/adr/0002-native-desktop-ui.md)). Unter Linux baut er gegen das System-fontconfig; vorher dessen Header installieren (Debian/Ubuntu: `libfontconfig1-dev`).
+
 Das Verzeichnis [`scripts/`](scripts/README_DE.md) enthält Integrations- und Browsertests, Benchmarks sowie Release-Prüfungen. Das sind Entwicklungswerkzeuge; für die normale CLI- und Viewer-Nutzung müssen sie nicht manuell gestartet werden. Go-Integrationstests nutzen `ARCHGUARD_GO`; sprachspezifische Tests und Browsertests benötigen gegebenenfalls zusätzliche installierte Werkzeuge.
 
 Die CI-Workflows prüfen außerdem optionale Features, Dependency-Advisories, Secrets, native Releases und Malware. Release-Bundles enthalten Prüfberichte und verfügbare Scan-Protokolle; ein unauffälliger Scan garantiert keine Unbedenklichkeit. Siehe [SECURITY.md](SECURITY.md) und [RELEASES.md](RELEASES.md).

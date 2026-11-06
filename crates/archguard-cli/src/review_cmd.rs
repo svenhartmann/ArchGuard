@@ -266,15 +266,6 @@ pub(crate) fn html_page_with_services(
         .map_err(|e| ArchguardError::Analysis(e.to_string()))?
         .as_secs();
     let review_session = archguard_engine::read_saved_review(root, loaded, now);
-    // Review Dashboard inputs (R40/R39/R42). An absent register or PR
-    // comment stays None — the panels state the absence, never an empty
-    // list. The PR Markdown is the last file the CLI or MCP wrote, so the
-    // panel labels its provenance; the history rows come from the same
-    // `.archguard/history/` files `archguard trend` reads (R09).
-    let review_register = archguard_engine::register_path(root)
-        .exists()
-        .then(|| archguard_engine::load_register(root).ok())
-        .flatten();
     // Health series for the R39 sparkline (viewer_dash_health.js): one row
     // per snapshot in `read_snapshots` order (oldest first), carrying the
     // composite health score. Pre-R28 history files have no review_kpis at
@@ -294,12 +285,6 @@ pub(crate) fn html_page_with_services(
         })
         .collect::<Vec<_>>();
     let review_history = serde_json::to_value(health_rows).unwrap_or(serde_json::Value::Null);
-    let pr_comment_markdown = std::fs::read_to_string(
-        root.join(".archguard")
-            .join("reports")
-            .join("pr-comment.md"),
-    )
-    .ok();
     let workspace_root = repository
         .and_then(|r| r["root"].as_str())
         .map(Path::new)
@@ -332,9 +317,7 @@ pub(crate) fn html_page_with_services(
             insights: Some(&insights),
             services: Some(services),
             initial_cut,
-            review_register: review_register.as_ref(),
             review_history: Some(&review_history),
-            pr_comment_markdown: pr_comment_markdown.as_deref(),
             review_kpis: review_kpis.as_ref(),
         },
         defer_above,

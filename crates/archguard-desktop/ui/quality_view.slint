@@ -1,0 +1,429 @@
+// Quality tab: the web viewer's "Software quality" workspace
+// (#tab-quality). Data and callbacks live in QualityData, set from
+// src/quality_ui.rs; the view only lays them out.
+import { ComboBox, ScrollView, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState } from "widgets.slint";
+import { QualityCard, QualityCardView, QualityHeatRow } from "quality_cards.slint";
+
+export { QualityCard, QualityHeatRow }
+
+export struct QualityModel {
+    loading: bool,
+    section: int,
+    scope-summary: string,
+    targets: [string],
+    target-index: int,
+    target-note: string,
+    // "Analysis: partial", its `Status::slot` and the record counts.
+    status: string,
+    status-slot: int,
+    status-detail: string,
+    notes: QualityCard,
+    heatmap: bool,
+    filter: int,
+    sort: int,
+    heat: [QualityHeatRow],
+    // Metric definitions for the heatmap's column headers.
+    heat-help: [string],
+    detail: [QualityCard],
+    cards: [QualityCard],
+    more: bool,
+    empty: string,
+    // The search fields' texts, kept across a recreated view.
+    query: string,
+    target-query: string,
+}
+
+export global QualityData {
+    in-out property <QualityModel> model: { loading: true };
+    callback section(int);
+    callback target(int);
+    callback target-query(string);
+    callback query(string);
+    callback filter(int);
+    callback sort(int);
+    callback more();
+    callback select-class(string);
+    callback back();
+    callback package(string);
+    callback group(int);
+    callback more-groups();
+    callback locate(string);
+}
+
+component Caption inherits Text {
+    color: Theme.text;
+    font-size: 14px;
+}
+
+// The web's .context-help-trigger: a round "?".
+component HelpButton inherits Rectangle {
+    callback clicked;
+    width: 26px;
+    height: 26px;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    Text { text: "?"; color: Theme.text; font-size: 12px; font-weight: 700; }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component QualityView inherits Rectangle {
+    callback open-web();
+    // Tabs must not change the window's preferred size.
+    min-width: 640px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    property <QualityModel> m: QualityData.model;
+    property <bool> picker;
+    property <bool> help;
+    property <bool> legend-help;
+    // Hover text and where to show it (relative to this view).
+    property <string> tip;
+    property <length> tip-x;
+    property <length> tip-y;
+
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 18px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 12px;
+            VerticalLayout {
+                spacing: 4px;
+                Caption { text: @tr("View"); }
+                ComboBox {
+                    width: 212px;
+                    model: [
+                        @tr("Class heatmap"), @tr("Class metrics"), @tr("Method maintainability"),
+                        @tr("Knowledge concentration"), @tr("Build, runtime and test stability"),
+                        @tr("Package cohesion"), @tr("Quality history"), @tr("Tests and change impact"),
+                        @tr("Test effectiveness"), @tr("Code duplication")
+                    ];
+                    current-index: root.m.section;
+                    selected => { QualityData.section(self.current-index); }
+                }
+            }
+            VerticalLayout {
+                alignment: end;
+                Rectangle {
+                    width: 180px;
+                    height: 32px;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: scope-touch.has-hover ? Theme.panel-2 : Theme.panel;
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: (root.picker ? "▼ " : "▶ ") + root.m.scope-summary;
+                        color: Theme.text;
+                        font-size: 14px;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                    scope-touch := TouchArea { mouse-cursor: pointer; clicked => { root.picker = !root.picker; } }
+                }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Caption { text: @tr("Search"); }
+                SearchField {
+                    width: 160px;
+                    height: 32px;
+                    text: root.m.query;
+                    edited(t) => { QualityData.query(t); }
+                }
+            }
+        }
+
+        if root.picker: Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.panel;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                Text { text: @tr("Package or file"); color: Theme.text; font-size: 12px; }
+                SearchField {
+                    width: 320px;
+                    text: root.m.target-query;
+                    placeholder: @tr("Find package or file");
+                    edited(t) => { QualityData.target-query(t); }
+                }
+                ListView {
+                    height: 220px;
+                    for t[i] in root.m.targets: Rectangle {
+                        height: 26px;
+                        background: i == root.m.target-index ? Theme.accent.with-alpha(0.14) : row-touch.has-hover ? Theme.panel-2 : transparent;
+                        Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: t;
+                            color: i == root.m.target-index ? Theme.accent : Theme.text;
+                            font-size: 12px;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        row-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                QualityData.target(i);
+                                root.picker = false;
+                            }
+                        }
+                    }
+                }
+                if root.m.target-note != "": Text { text: root.m.target-note; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+            }
+        }
+
+        if root.m.loading: Text {
+            text: @tr("Measuring classes, methods and Git history…");
+            color: Theme.muted;
+            font-size: 14px;
+        }
+
+        if !root.m.loading: HorizontalLayout {
+            alignment: start;
+            spacing: 10px;
+            StatusLine { status: root.m.status-slot; label: root.m.status; detail: root.m.status-detail; }
+            HelpButton { clicked => { root.help = !root.help; } }
+        }
+
+        if root.help: QualityCardView {
+            card: root.m.notes;
+            locate(n) => { QualityData.locate(n); }
+        }
+
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                width: scroll.visible-width;
+                spacing: 12px;
+                padding-bottom: 16px;
+
+                if root.m.heatmap && !root.m.loading: HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        spacing: 4px;
+                        alignment: end;
+                        Text { text: @tr("Show"); color: Theme.text; font-size: 12px; }
+                        ComboBox {
+                            width: 170px;
+                            model: [@tr("All classes"), @tr("High values"), @tr("Low values throughout"), @tr("Missing measurements")];
+                            current-index: root.m.filter;
+                            selected => { QualityData.filter(self.current-index); }
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        alignment: end;
+                        Text { text: @tr("Sort"); color: Theme.text; font-size: 12px; }
+                        ComboBox {
+                            width: 130px;
+                            model: [@tr("Review first"), @tr("Class name"), "CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
+                            current-index: root.m.sort;
+                            selected => { QualityData.sort(self.current-index); }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        padding-top: 18px;
+                        RatingChip { rating: 1; text: @tr("Low"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 2; text: @tr("Elevated"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 3; text: @tr("High"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 0; text: @tr("Unknown"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        RatingChip { rating: 4; text: @tr("Informational"); font: 11px; width: self.label-w + 16px; height: 24px; }
+                        HelpButton { y: (parent.height - self.height) / 2 + 9px; clicked => { root.legend-help = !root.legend-help; } }
+                    }
+                }
+
+                if root.legend-help && root.m.heatmap: Text {
+                    text: @tr("Relative comparison within the original project and source language: low below the 50% rank, elevated from 50%, high from 80%. Equal values share a rank; fewer than five measurements or a constant nonzero population are neutral. Zero and one connected LCOM4 group are low. NOC is informational. Colors guide review; they do not prove class quality.");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                for d in root.m.detail: VerticalLayout {
+                    spacing: 8px;
+                    QualityCardView {
+                        card: d;
+                        locate(n) => { QualityData.locate(n); }
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button { text: @tr("Back to heatmap"); clicked => { QualityData.back(); } }
+                    }
+                }
+
+                if root.m.heatmap && root.m.heat.length > 0: table := Rectangle {
+                    property <length> gap: 4px;
+                    property <length> name-w: (self.width - 2 * gap) * 0.4;
+                    property <length> cell-w: (self.width - name-w - 8 * gap) / 6;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    height: 36px + root.m.heat.length * 47px + 8px;
+                    // Header.
+                    Text {
+                        x: 14px;
+                        y: 8px;
+                        height: 20px;
+                        text: @tr("Class");
+                        color: Theme.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    for key[j] in ["CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"]: Rectangle {
+                        x: gap + table.name-w + gap + j * (table.cell-w + gap);
+                        y: 8px;
+                        width: table.cell-w;
+                        height: 20px;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 3px;
+                            Text {
+                                text: key;
+                                color: Theme.text;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                            // The web's " ⓘ" (the font has no such glyph).
+                            Icon {
+                                icon: Icons.info;
+                                tint: Theme.muted;
+                                stroke-w: 1.6px;
+                                width: 10px;
+                                height: 10px;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        head-touch := TouchArea {
+                            changed has-hover => {
+                                if self.has-hover {
+                                    root.tip = root.m.heat-help[j];
+                                    root.tip-x = self.absolute-position.x - root.absolute-position.x;
+                                    root.tip-y = self.absolute-position.y - root.absolute-position.y + 24px;
+                                } else {
+                                    root.tip = "";
+                                }
+                            }
+                        }
+                    }
+                    for row[r] in root.m.heat: Rectangle {
+                        y: 36px + r * 47px;
+                        height: 43px;
+                        if row.selected: Rectangle {
+                            x: gap;
+                            width: 3px;
+                            background: Theme.accent;
+                        }
+                        Rectangle {
+                            x: gap;
+                            width: table.name-w;
+                            Text {
+                                x: 10px;
+                                width: parent.width - 14px;
+                                text: row.label;
+                                color: Theme.text;
+                                font-size: 12px;
+                                font-weight: 600;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            name-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { QualityData.select-class(row.class-id); }
+                                changed has-hover => {
+                                    if self.has-hover {
+                                        root.tip = row.class-id + " · " + row.file;
+                                        root.tip-x = self.absolute-position.x - root.absolute-position.x;
+                                        root.tip-y = self.absolute-position.y - root.absolute-position.y + 36px;
+                                    } else {
+                                        root.tip = "";
+                                    }
+                                }
+                            }
+                        }
+                        for cell[j] in row.cells: RatingChip {
+                            x: gap + table.name-w + gap + j * (table.cell-w + gap);
+                            y: 5px;
+                            width: table.cell-w;
+                            height: 33px;
+                            rating: cell.state;
+                            text: cell.text;
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { QualityData.select-class(row.class-id); }
+                                changed has-hover => {
+                                    if self.has-hover {
+                                        root.tip = cell.tip;
+                                        root.tip-x = self.absolute-position.x - root.absolute-position.x;
+                                        root.tip-y = self.absolute-position.y - root.absolute-position.y + 38px;
+                                    } else {
+                                        root.tip = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for c in root.m.cards: QualityCardView {
+                    card: c;
+                    flat: root.m.section == 5;
+                    locate(n) => { QualityData.locate(n); }
+                    action(key) => { QualityData.package(key); }
+                    group(i) => { QualityData.group(i); }
+                    more-groups => { QualityData.more-groups(); }
+                }
+
+                if root.m.empty != "" && !root.m.loading: EmptyState { reason: root.m.empty; }
+
+                if root.m.more: HorizontalLayout {
+                    alignment: start;
+                    Button { text: @tr("Show next 20"); clicked => { QualityData.more(); } }
+                }
+            }
+        }
+    }
+
+    // Hover help (the web's metric tooltip), drawn above everything.
+    if root.tip != "": Rectangle {
+        x: min(max(0, root.tip-x), root.width - self.width - 8px);
+        y: min(root.tip-y, root.height - self.height - 8px);
+        width: 360px;
+        height: tip-text.preferred-height + 16px;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: Theme.shadow;
+        tip-text := Text {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            text: root.tip;
+            color: Theme.text;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}

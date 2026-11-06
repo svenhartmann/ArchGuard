@@ -1,0 +1,425 @@
+msgid "All languages"
+msgstr "Alle Sprachen"
+
+msgid "All packages"
+msgstr "Alle Pakete"
+
+msgid "(default package)"
+msgstr "(Standardpaket)"
+
+msgid "Unreported language"
+msgstr "Sprache nicht angegeben"
+
+msgid "Unresolved target"
+msgstr "Unaufgelöstes Ziel"
+
+msgid "initializer"
+msgstr "Initialisierer"
+
+msgid "External targets · no project package mapping"
+msgstr "Externe Ziele · keine Projekt-Paketzuordnung"
+
+msgid "Unresolved targets · no package mapping"
+msgstr "Unaufgelöste Ziele · keine Paketzuordnung"
+
+msgid "not applicable"
+msgstr "nicht anwendbar"
+
+msgid "project"
+msgstr "Projekt"
+
+msgid "external"
+msgstr "extern"
+
+msgid "unresolved"
+msgstr "unaufgelöst"
+
+msgid "instance"
+msgstr "Instanz"
+
+msgid "static"
+msgstr "statisch"
+
+msgid "constructor"
+msgstr "Konstruktor"
+
+msgid "unknown"
+msgstr "unbekannt"
+
+msgid "AST complexity {} · max. nesting {}"
+msgstr "AST-Komplexität {} · max. Verschachtelung {}"
+
+msgid "{} call sites"
+msgstr "{} Aufrufstellen"
+
+msgid "Declared target: "
+msgstr "Deklariertes Ziel: "
+
+msgid "Interface candidate: {}"
+msgstr "Interface-Kandidat: {}"
+
+msgid "Adapter / factory candidate"
+msgstr "Adapter-/Factory-Kandidat"
+
+msgid "Move candidate: {} → {}"
+msgstr "Verschiebekandidat: {} → {}"
+
+msgid "{} calls {}. Both classes belong to a {}-class call cycle."
+msgstr "{} ruft {} auf. Beide Klassen gehören zu einem Aufrufzyklus mit {} Klassen."
+
+msgid "{} uses static calls or construction of {} inside a class call cycle."
+msgstr "{} verwendet statische Aufrufe oder erzeugt {} innerhalb eines Klassen-Aufrufzyklus."
+
+msgid "{} of {} recorded outgoing project call sites target this package; {} target the current package."
+msgstr "{} von {} erfassten ausgehenden Projekt-Aufrufstellen zielen auf dieses Paket; {} auf das aktuelle Paket."
+
+msgid "{} unresolved outgoing call sites are excluded from this evidence; resolving them may change the candidate ranking."
+msgstr "{} unaufgelöste ausgehende Aufrufstellen sind nicht in diesen Belegen enthalten; ihre Auflösung kann die Rangfolge der Kandidaten ändern."
+
+msgid "Analysis coverage is incomplete. Review compiler diagnostics before acting on this plan."
+msgstr "Die Analyseabdeckung ist unvollständig. Vor der Umsetzung dieses Plans die Compilerdiagnosen prüfen."
+
+msgid "Check whether an existing interface already covers {}. Reuse it if appropriate; otherwise consider a narrow contract owned by the consuming responsibility."
+msgstr "Prüfen, ob ein vorhandenes Interface bereits {} abdeckt, und es gegebenenfalls wiederverwenden; andernfalls einen schmalen Vertrag im Verantwortungsbereich des Aufrufers erwägen."
+
+msgid "Let {} implement that contract and inject it into {} from the composition root. Keep concrete construction outside the consumer."
+msgstr "{} diesen Vertrag implementieren lassen und die Implementierung von der zentralen Verdrahtung aus an {} übergeben. Konkrete Instanzen außerhalb des Aufrufers erzeugen."
+
+msgid "Review signatures, access modifiers and return/parameter types for dependencies that would preserve the cycle. An interface alone does not remove runtime call cycles; rescan after changing code."
+msgstr "Signaturen, Zugriffsmodifikatoren sowie Rückgabe- und Parametertypen auf Abhängigkeiten prüfen, die den Zyklus erhalten würden. Ein Interface allein entfernt keine Aufrufzyklen zur Laufzeit; nach der Codeänderung erneut analysieren."
+
+msgid "Review moving concrete construction or static utility access behind an injected adapter or factory owned by the consumer."
+msgstr "Prüfen, ob die konkrete Objekterzeugung oder statische Hilfsaufrufe hinter einen übergebenen Adapter oder eine Factory im Verantwortungsbereich des Aufrufers verschoben werden können."
+
+msgid "Choose the contract from the recorded operations; verify lifetime, state and error behavior before changing code. Static methods cannot directly implement an instance interface."
+msgstr "Leite den Vertrag aus den erfassten Operationen ab; prüfe vor der Codeänderung Lebensdauer, Zustand und Fehlerverhalten. Statische Methoden können kein Instanz-Interface direkt implementieren."
+
+msgid "Rescan after the source change. This proposal does not modify source code or prove that every cycle is removed."
+msgstr "Nach der Quellcodeänderung erneut analysieren. Dieser Vorschlag verändert keinen Quellcode und belegt nicht, dass sämtliche Zyklen entfernt werden."
+
+msgid "Review whether this type or module belongs to the target package’s responsibility. Call affinity is evidence to inspect, not an architectural decision."
+msgstr "Prüfen, ob dieser Typ oder dieses Modul zum Verantwortungsbereich des Zielpakets gehört. Die Häufung von Aufrufen ist ein Prüfhinweis und keine Architekturentscheidung."
+
+msgid "Check incoming callers, restricted access, imports and public API compatibility"
+msgstr "Eingehende Aufrufer, eingeschränkte Zugriffsrechte, Imports und die Kompatibilität öffentlicher APIs prüfen"
+
+msgid "; this file contains {} type/module elements, so moving the file also affects them."
+msgstr "; diese Datei enthält {} Typ-/Modulelemente, die beim Verschieben ebenfalls betroffen sind."
+
+msgid "A package move changes grouping, not method calls. Class call cycles remain unless responsibilities or calls also change. Rerun the import and call analyses after a source edit."
+msgstr "Eine Paketverschiebung ändert die Gruppierung, nicht die Methodenaufrufe. Klassen-Aufrufzyklen bleiben erhalten, sofern sich Verantwortlichkeiten oder Aufrufe nicht ebenfalls ändern. Nach einer Quellcodeänderung Import- und Aufrufanalysen erneut ausführen."
+
+msgid "Evidence: "
+msgstr "Belege: "
+
+msgid "{} more call sites"
+msgstr "{} weitere Aufrufstellen"
+
+msgid "No recorded call sites match this method and the current call filters. This declaration is still measurable; missing calls do not prove it is unused."
+msgstr "Keine erfassten Aufrufstellen passen zu dieser Methode und den aktuellen Aufruffiltern. Ihre Deklaration ist weiterhin messbar; fehlende Aufrufe belegen keine ungenutzte Methode."
+
+msgid "Class cohesion unknown: compiler state-access evidence is unavailable."
+msgstr "Klassenkohäsion unbekannt: Compiler-Belege für Feldzugriffe fehlen."
+
+msgid "Class cohesion unknown"
+msgstr "Klassenkohäsion unbekannt"
+
+msgid "{} method groups"
+msgstr "{} Methodengruppen"
+
+msgid "{} instance methods · {} state members · complexity Σ {}"
+msgstr "{} Instanzmethoden · {} Zustandsfelder · Komplexität Σ {}"
+
+msgid "LCOM4 groups instance methods that share a non-static field/property or call each other. Constructors, static members and local functions are excluded. Multiple groups suggest a review, not an automatic design error. Incomplete compiler evidence leaves LCOM4 unknown."
+msgstr "LCOM4 gruppiert Instanzmethoden, die dasselbe Feld bzw. dieselbe Property nutzen oder einander aufrufen. Konstruktoren, statische Mitglieder und lokale Funktionen zählen nicht mit. Mehrere Gruppen sind ein Prüfhinweis, kein automatischer Architekturfehler. Bei unvollständigen Compiler-Belegen bleibt LCOM4 unbekannt."
+
+msgid "Group {} · {} methods"
+msgstr "Gruppe {} · {} Methoden"
+
+msgid "Select a type/module connection to inspect its functions and methods and source call sites."
+msgstr "Eine Typ-/Modul-Aufrufverbindung auswählen, um ihre Funktionen, Methoden und Aufrufstellen im Quellcode zu untersuchen."
+
+msgid "{} call sites · "
+msgstr "{} Aufrufstellen · "
+
+msgid "project declaration targets"
+msgstr "Ziele mit Deklaration im Projekt"
+
+msgid "external declaration targets"
+msgstr "Ziele mit externer Deklaration"
+
+msgid "unresolved targets; no class or method is assumed"
+msgstr "unaufgelöste Ziele; es wird keine Klasse oder Methode angenommen"
+
+msgid "Show next 100 call sites"
+msgstr "Nächste 100 Aufrufstellen anzeigen"
+
+msgid "Refactoring candidates"
+msgstr "Refactoring-Kandidaten"
+
+msgid "Review plans based on the original source calls. They do not change code or the simulated dependency graph."
+msgstr "Prüfpläne auf Basis der ursprünglichen Quellcode-Aufrufe. Sie verändern weder Code noch den simulierten Abhängigkeitsgraphen."
+
+msgid "No supported suggestion for this connection. A dependency alone does not establish a misplaced responsibility or justify an interface."
+msgstr "Kein belegter Vorschlag für diese Aufrufverbindung. Eine Abhängigkeit allein belegt weder eine falsch zugeordnete Verantwortung noch rechtfertigt sie ein Interface."
+
+msgid "{} call sites · {} target methods · {}"
+msgstr "{} Aufrufstellen · {} Zielmethoden · {}"
+
+msgid "No call relations available."
+msgstr "Keine Aufrufbeziehungen verfügbar."
+
+msgid "No matching call relations. Change the package, search, target filter or internal-call setting."
+msgstr "Keine passenden Aufrufverbindungen. Paket, Suche, Zielfilter oder die Einstellung für interne Aufrufe ändern."
+
+msgid "Show next 100 type/module connections"
+msgstr "Nächste 100 Typ-/Modulverbindungen anzeigen"
+
+msgid "Elements"
+msgstr "Elemente"
+
+msgid "Types / modules"
+msgstr "Typen / Module"
+
+msgid "Methods"
+msgstr "Methoden"
+
+msgid "Sort by"
+msgstr "Sortierung"
+
+msgid "Involved call sites"
+msgstr "Beteiligte Aufrufstellen"
+
+msgid "AST complexity"
+msgstr "AST-Komplexität"
+
+msgid "Max. nesting"
+msgstr "Max. Verschachtelung"
+
+msgid "{} / {} · "
+msgstr "{} / {} · "
+
+msgid "AST complexity and nesting of declared methods, including methods without recorded calls."
+msgstr "AST-Komplexität und Verschachtelung deklarierter Methoden, auch ohne erfasste Aufrufe."
+
+msgid "Static call sites, not runtime frequency."
+msgstr "Statische Aufrufstellen, keine Laufzeithäufigkeit."
+
+msgid "Coverage: {}."
+msgstr "Abdeckung: {}."
+
+msgid "Uses the filters above, including related callers and targets. Selecting an element keeps this ranking unchanged. Each involved site counts once, even for a self-call."
+msgstr "Es gelten die obigen Filter einschließlich verbundener Aufrufer und Ziele. Die Elementauswahl verändert diese Rangliste nicht. Jede beteiligte Aufrufstelle zählt einmal, auch bei Selbstaufrufen."
+
+msgid "Counts are incomplete and may change when missing dependencies are resolved."
+msgstr "Die Zählung ist unvollständig und kann sich nach Auflösung fehlender Abhängigkeiten ändern."
+
+msgid "{} unresolved target sites in this scope."
+msgstr "{} unaufgelöste Ziel-Aufrufstellen in diesem Umfang."
+
+msgid "{} sites without a declared caller method (including initializers)."
+msgstr "{} Aufrufstellen ohne deklarierte Aufrufermethode (einschließlich Initialisierern)."
+
+msgid "{} project target sites without a declared method."
+msgstr "{} Projekt-Ziel-Aufrufstellen ohne deklarierte Methode."
+
+msgid "Project types, module owners and declared functions/methods are ranked. Module owners group top-level functions and initializers; they are not declared classes. Calls to external or unknown targets can count as outgoing; no target is invented."
+msgstr "Projekttypen, Module und deklarierte Funktionen/Methoden werden gelistet. Module gruppieren freie Funktionen und Initialisierer; sie sind keine deklarierten Klassen. Aufrufe externer oder unbekannter Ziele können ausgehend zählen; es werden keine Ziele erfunden."
+
+msgid "Language, package and search select declarations. Target and internal-call filters only affect the accompanying In/Out counts. {} declarations in scope have no measurement."
+msgstr "Sprache, Paket und Suche wählen Deklarationen. Ziel- und interne Aufruffilter beeinflussen nur die ergänzenden Ein-/Aus-Zahlen. {} Deklarationen im Umfang haben keinen Messwert."
+
+msgid "Incoming {} · Outgoing {} · Involved sites {}"
+msgstr "Eingehend {} · Ausgehend {} · Beteiligte Stellen {}"
+
+msgid "Module · top-level functions"
+msgstr "Modul · freie Funktionen"
+
+msgid "No measured method bodies in this declaration scope. Missing metrics are unknown, not zero."
+msgstr "Keine gemessenen Methodenkörper in diesem Deklarationsumfang. Fehlende Kennzahlen sind unbekannt, nicht null."
+
+msgid "No recorded call sites for this direction and these filters."
+msgstr "Keine erfassten Aufrufstellen für diese Richtung und diese Filter."
+
+msgid " · {} call sites"
+msgstr " · {} Aufrufstellen"
+
+msgid "Cycle level"
+msgstr "Zyklusebene"
+
+msgid "Methods / recursion"
+msgstr "Methoden / Rekursion"
+
+msgid "{} / {} recorded cyclic groups"
+msgstr "{} / {} erfasste Zyklusgruppen"
+
+msgid "functions / methods / recursion"
+msgstr "Funktionen / Methoden / Rekursion"
+
+msgid "types / modules"
+msgstr "Typen / Module"
+
+msgid "No recorded cyclic group matches this scope."
+msgstr "Keine erfasste Zyklusgruppe passt zu diesem Umfang."
+
+msgid "Incomplete analysis cannot rule out further cycles."
+msgstr "Eine unvollständige Analyse schließt weitere Zyklen nicht aus."
+
+msgid "All cycle groups"
+msgstr "Alle Zyklusgruppen"
+
+msgid "Each group is a strongly connected component (SCC), shown with all its internal connections and one closed example path. This does not enumerate every possible elementary cycle. Type/module cycles aggregate calls; they do not necessarily form a function/method cycle. Module owners group top-level functions, not declared classes. Function/method cycles include direct and mutual recursion within one owner. "
+msgstr "Jede Gruppe ist eine stark zusammenhängende Komponente (SCC), mit allen internen Aufrufverbindungen und einem geschlossenen Beispielpfad. Es werden nicht alle möglichen elementaren Zyklen aufgezählt. Typ-/Modulzyklen fassen Aufrufe zusammen; sie ergeben nicht zwingend einen Funktions-/Methodenzyklus. Module gruppieren freie Funktionen und sind keine deklarierten Klassen. Funktions-/Methodenzyklen enthalten direkte und gegenseitige Rekursion innerhalb eines Elements. "
+
+msgid "Language, package and search select complete groups when a member matches. Target and internal-call controls are paused here to preserve return paths. Static compiler targets do not prove that a loop occurs at runtime. "
+msgstr "Sprache, Paket und Suche wählen vollständige Gruppen, sobald ein Element passt. Ziel- und interne Aufruffilter sind hier ausgesetzt, damit Rückwege erhalten bleiben. Statische Compilerziele belegen keinen tatsächlich durchlaufenen Zyklus zur Laufzeit. "
+
+msgid "{} unresolved target sites; {} project sites without complete method identities in the source snapshot."
+msgstr "{} unaufgelöste Ziel-Aufrufstellen; {} Projekt-Aufrufstellen ohne vollständige Methodenidentitäten im Quellcode-Snapshot."
+
+msgid "{} elements · {} connections · {} call sites"
+msgstr "{} Elemente · {} Aufrufverbindungen · {} Aufrufstellen"
+
+msgid "Next 20 groups"
+msgstr "Nächste 20 Gruppen"
+
+msgid "Selected group · {} elements · {} connections"
+msgstr "Gewählte Gruppe · {} Elemente · {} Aufrufverbindungen"
+
+msgid "Closed example path: "
+msgstr "Geschlossener Beispielpfad: "
+
+msgid "{} directed steps. Follow the numbered connections below; the full closed path is included in the export."
+msgstr "{} gerichtete Schritte. Den nummerierten Aufrufverbindungen unten folgen; der vollständige geschlossene Pfad ist im Export enthalten."
+
+msgid "Next 20 path steps"
+msgstr "Nächste 20 Pfadschritte"
+
+msgid "All {} members"
+msgstr "Alle {} Elemente"
+
+msgid "Next 50 members"
+msgstr "Nächste 50 Elemente"
+
+msgid "All {} internal connections"
+msgstr "Alle {} internen Aufrufverbindungen"
+
+msgid "Next 50 connections"
+msgstr "Nächste 50 Aufrufverbindungen"
+
+msgid "Connections"
+msgstr "Aufrufverbindungen"
+
+msgid "Most calls"
+msgstr "Meiste Aufrufe"
+
+msgid "module"
+msgstr "Modul"
+
+msgid "Caller / target"
+msgstr "Aufrufer / Ziel"
+
+msgid "Caller"
+msgstr "Aufrufer"
+
+msgid "Target"
+msgstr "Ziel"
+
+msgid "All elements"
+msgstr "Alle Elemente"
+
+msgid "{} / {} rows"
+msgstr "{} / {} Zeilen"
+
+msgid "Element: {}"
+msgstr "Element: {}"
+
+msgid "{} sites without method identity"
+msgstr "{} Stellen ohne Methodenidentität"
+
+msgid "{} additional rows · load more below"
+msgstr "{} weitere Zeilen · unten nachladen"
+
+msgid "No call elements match the current scope and filters."
+msgstr "Keine Aufrufelemente passen zum aktuellen Umfang und den Filtern."
+
+msgid "Show next 200 tree rows"
+msgstr "Nächste 200 Baumzeilen anzeigen"
+
+msgid "Language"
+msgstr "Sprache"
+
+msgid "Package"
+msgstr "Paket"
+
+msgid "Filter type, module or function…"
+msgstr "Typ, Modul oder Funktion filtern…"
+
+msgid "Targets"
+msgstr "Ziele"
+
+msgid "Project"
+msgstr "Projekt"
+
+msgid "External"
+msgstr "Extern"
+
+msgid "Unresolved"
+msgstr "Unaufgelöst"
+
+msgid "All"
+msgstr "Alle"
+
+msgid "Within-class calls"
+msgstr "Klasseninterne Aufrufe"
+
+msgid "Partial Java call analysis; coverage is incomplete. "
+msgstr "Teilweise Java-Aufrufanalyse; die Abdeckung ist unvollständig. "
+
+msgid "Partial call analysis; coverage is incomplete. "
+msgstr "Teilweise Aufrufanalyse; die Abdeckung ist unvollständig. "
+
+msgid "Static call analysis. "
+msgstr "Statische Aufrufanalyse. "
+
+msgid "{} files · {} types/modules · {} project call sites · {} external · {} unresolved."
+msgstr "{} Dateien · {} Typen/Module · {} Projekt-Aufrufstellen · {} extern · {} unaufgelöst."
+
+msgid "Java {} API/source baseline."
+msgstr "Java {} API-/Quellcode-Basis."
+
+msgid "Analyzer version unreported."
+msgstr "Analyseversion nicht angegeben."
+
+msgid " Original source snapshot."
+msgstr " Ursprünglicher Quellcode-Snapshot."
+
+msgid "No applicable source files for call analysis."
+msgstr "Keine geeigneten Quelldateien für die Aufrufanalyse."
+
+msgid "Call analysis unavailable. "
+msgstr "Aufrufanalyse nicht verfügbar. "
+
+msgid "{} connections · {} call sites"
+msgstr "{} Aufrufverbindungen · {} Aufrufstellen"
+
+msgid "Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."
+msgstr "Aufrufstellen im Quellcode → vom Compiler deklarierte Methoden. Zur Laufzeit können weitere Implementierungen aufgerufen werden. Konstruktoren sind enthalten; Importbeziehungen werden separat analysiert."
+
+msgid "Packages → types/modules → functions/methods in the matching call connections."
+msgstr "Pakete → Typen/Module → Funktionen/Methoden der passenden Aufrufbeziehungen."
+
+msgid "{} files"
+msgstr "{} Dateien"
+
+msgid "Version {}"
+msgstr "Version {}"
+
+msgid "Analyzing calls …"
+msgstr "Aufrufe werden analysiert …"
+
+msgid "Call overview"
+msgstr "Aufrufübersicht"
+
+msgid "Call tree"
+msgstr "Aufrufbaum"

@@ -69,6 +69,13 @@ jobs:
           go test crates/archguard-engine/src/ArchguardCallScanner.go crates/archguard-engine/src/ArchguardCallScanner_test.go
           go vet crates/archguard-engine/src/ArchguardCallScanner.go
 
+      # archguard-desktop links Slint, whose font lookup builds against the
+      # system fontconfig via pkg-config (yeslogic-fontconfig-sys).
+      - name: Install fontconfig headers for the desktop crate
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfontconfig1-dev
+
       - name: Format check
         run: cargo fmt --all -- --check
 

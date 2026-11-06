@@ -7,7 +7,7 @@ function assessmentStatus(value){
   const labels={
     current:['Current at analysis','Aktuell bei der Analyse'],stale:['Outdated review','Veraltetes Review'],not_recorded:['No recorded review','Kein gespeichertes Review'],
     needs_review:['Review needed','Prüfung nötig'],no_open_findings:['No open findings','Keine offenen Befunde'],
-    open:['Open','Offen'],planned:['Planned','Geplant'],accepted_risk:['Accepted risk','Akzeptiertes Risiko'],expired:['Expired','Abgelaufen'],changed:['Evidence changed','Belege geändert'],
+    open:['Open','Offen'],planned:['Planned','Geplant'],deferred:['Deferred','Zurückgestellt'],accepted_risk:['Accepted risk','Akzeptiertes Risiko'],fix:['Fix','Beheben'],defer:['Defer','Zurückstellen'],'accept-risk':['Accept risk','Risiko akzeptieren'],expired:['Expired','Abgelaufen'],changed:['Evidence changed','Belege geändert'],
     not_observed:['Not observed now','Aktuell nicht beobachtet'],not_observed_in_current:['Not observed now','Aktuell nicht beobachtet'],
     new:['New','Neu'],existing:['Existing','Bestehend'],not_compared:['Not compared','Nicht verglichen'],
     not_imported:['Not imported','Nicht importiert'],unavailable:['Unavailable','Nicht verfügbar'],partial:['Partial','Unvollständig'],unverified:['Unverified','Nicht verifiziert']
@@ -22,9 +22,10 @@ function assessmentCommand(importDecisions=false){
 }
 function assessmentDecisionDocument(){
   const report=assessmentModel().report;
-  const decisions=new Map((report?.decisions?.decisions||[]).map(d=>[d.finding_id,d]));
+  // Register entries bound to this review; the import replaces exactly these.
+  const decisions=new Map((report?.decisions||[]).map(d=>[d.finding_ref,d]));
   for(const [id,decision] of assessmentUi.drafts)decisions.set(id,decision);
-  return {schema_version:1,review_revision:report?.revision||'',decision_revision:report?.decision_fingerprint||null,decisions:[...decisions.values()].sort((a,b)=>a.finding_id.localeCompare(b.finding_id))};
+  return {schema_version:2,review_revision:report?.revision||'',decision_revision:report?.decision_fingerprint||null,decisions:[...decisions.values()].sort((a,b)=>a.finding_ref.localeCompare(b.finding_ref))};
 }
 function assessmentExportDecisions(){
   if(assessmentModel().status!=='current')return;
@@ -53,18 +54,18 @@ function assessmentDetail(root,finding){
   }
   const evidence=element('details');evidence.appendChild(element('summary',t('Source evidence','Quellbelege')));
   evidence.appendChild(element('pre',JSON.stringify(finding.evidence,null,2)));details.appendChild(evidence);
-  if(finding.decision)details.appendChild(element('p',t('Recorded decision: ','Gespeicherte Entscheidung: ')+finding.decision.owner+' · '+finding.decision.reason+(finding.decision.expires_on?' · '+finding.decision.expires_on+' UTC':'')));
+  if(finding.decision)details.appendChild(element('p',t('Recorded decision: ','Gespeicherte Entscheidung: ')+assessmentStatus(finding.decision.decision)+' · '+finding.decision.author+' · '+finding.decision.note+(finding.decision.expires_on?' · '+finding.decision.expires_on+' UTC':'')));
   if(assessmentModel().status!=='current'||finding.disposition==='not_observed'){
     details.appendChild(element('p',t('Generate a current review before recording a new decision for this finding.','Vor einer neuen Entscheidung für diesen Befund ein aktuelles Review erzeugen.')));return;
   }
   if(!assessmentUi.forms.has(finding.id)){
     const d=assessmentUi.drafts.get(finding.id)||finding.decision;
-    assessmentUi.forms.set(finding.id,{status:d?.status||'planned',owner:d?.owner||(finding.suggested_owners||[]).join(', '),reason:d?.reason||'',expires_on:d?.expires_on||'',links:(d?.links||[]).join('\n')});
+    assessmentUi.forms.set(finding.id,{status:d?.decision||'fix',owner:d?.author||(finding.suggested_owners||[]).join(', '),reason:d?.note||'',expires_on:d?.expires_on||'',links:(d?.links||[]).join('\n')});
   }
   const form=assessmentUi.forms.get(finding.id),controls={};
   const label=element('label',undefined,'assessment-field');label.appendChild(element('span',t('Decision','Entscheidung')));
   const select=element('select');select.setAttribute('data-review-field','status');select.setAttribute('aria-label',t('Decision','Entscheidung'));
-  for(const status of ['open','planned','accepted_risk']){const option=element('option',assessmentStatus(status));option.value=status;select.appendChild(option);}
+  for(const status of ['fix','defer','accept-risk']){const option=element('option',assessmentStatus(status));option.value=status;select.appendChild(option);}
   select.value=form.status;select.addEventListener('change',()=>{form.status=select.value;assessmentUi.dirty=true;});label.appendChild(select);details.appendChild(label);controls.status=select;
   controls.owner=assessmentField(details,'owner',t('Responsible person or team','Verantwortliche Person oder Team'),form.owner);
   controls.reason=assessmentField(details,'reason',t('Reason and next action','Begründung und nächste Maßnahme'),form.reason,true);
@@ -73,10 +74,10 @@ function assessmentDetail(root,finding){
   controls.links=assessmentField(details,'links',t('ADR or issue references (one per line)','ADR- oder Ticketreferenzen (eine je Zeile)'),form.links,true);
   const stage=button(t('Add to decision export','Für Entscheidungsexport übernehmen'),()=>{
     for(const [name,input] of Object.entries(controls))form[name]=input.value;
-    if(!form.owner.trim()||!form.reason.trim()||(form.status==='accepted_risk'&&!form.expires_on)){
+    if(!form.owner.trim()||!form.reason.trim()||(form.status==='accept-risk'&&!form.expires_on)){
       assessmentUi.message=t('Enter an owner, a reason and an expiry date for accepted risks.','Verantwortliche Person, Begründung und für akzeptierte Risiken ein Ablaufdatum angeben.');renderAssessment();return;
     }
-    const decision={finding_id:finding.id,finding_fingerprint:finding.fingerprint,status:form.status,owner:form.owner.trim(),reason:form.reason.trim(),expires_on:form.expires_on||null,links:form.links.split('\n').map(s=>s.trim()).filter(Boolean)};
+    const decision={id:finding.id,finding_ref:finding.id,finding_fingerprint:finding.fingerprint,decision:form.status,author:form.owner.trim(),note:form.reason.trim(),ts:'',expires_on:form.expires_on||null,links:form.links.split('\n').map(s=>s.trim()).filter(Boolean)};
     assessmentUi.drafts.set(finding.id,decision);assessmentUi.dirty=true;
     assessmentUi.message=t('Decision added to the export draft. The recorded review is unchanged.','Entscheidung im Exportentwurf übernommen. Das gespeicherte Review bleibt unverändert.');renderAssessment();
   },'btn btn-primary');stage.setAttribute('data-review-action','stage');details.appendChild(stage);
@@ -114,7 +115,7 @@ function renderAssessment(){
   save.appendChild(element('p',t('Place the downloaded decision file at .archguard/review-decisions-draft.json in the analyzed project, then run:','Heruntergeladene Entscheidungsdatei im analysierten Projekt unter .archguard/review-decisions-draft.json ablegen, dann ausführen:')));
   save.appendChild(element('code',assessmentCommand(true),'repository-command'));save.appendChild(element('p',t('Refresh without importing decisions:','Ohne Entscheidungsimport aktualisieren:')));save.appendChild(element('code',assessmentCommand(),'repository-command'));root.appendChild(save);
   const layout=element('div',undefined,'assessment-layout'),list=assessmentSection(layout,t('Prioritized findings','Priorisierte Befunde'));root.appendChild(layout);
-  const q=assessmentUi.query.toLowerCase(),rows=report.findings.filter(f=>(!q||[f.title,...f.nodes,f.decision?.owner||'',...f.suggested_owners].join(' ').toLowerCase().includes(q))&&
+  const q=assessmentUi.query.toLowerCase(),rows=report.findings.filter(f=>(!q||[f.title,...f.nodes,f.decision?.author||'',...f.suggested_owners].join(' ').toLowerCase().includes(q))&&
     (assessmentUi.filter==='all'||assessmentUi.filter==='new'&&f.change==='new'||assessmentUi.filter==='accepted_risk'&&f.disposition==='accepted_risk'||assessmentUi.filter==='open'&&!['accepted_risk','not_observed'].includes(f.disposition)));
   list.appendChild(explainContext(element('p',Math.min(rows.length,assessmentUi.limit)+' / '+rows.length,'muted'),t('Filtering does not change totals or exports.','Filter ändern weder Gesamtzahlen noch Exporte.')));
   for(const finding of rows.slice(0,assessmentUi.limit)){
@@ -153,7 +154,7 @@ function assessmentMarkdown(snapshot){
   for(const message of snapshot.review.diagnostics||[])lines.push(cell(message),'');
   if(!r)return lines.join('\n');
   lines.push('Revision: '+cell(r.revision),'','## Findings','','| Category | Severity | Change | Disposition | Finding | Owner | Reason | Expiry (UTC) |','| --- | --- | --- | --- | --- | --- | --- | --- |');
-  for(const f of r.findings)lines.push('| '+[f.category,f.severity,f.change,f.disposition,f.title,f.decision?.owner||'',f.decision?.reason||'',f.decision?.expires_on||''].map(cell).join(' | ')+' |');
+  for(const f of r.findings)lines.push('| '+[f.category,f.severity,f.change,f.disposition,f.title,f.decision?.author||'',f.decision?.note||'',f.decision?.expires_on||''].map(cell).join(' | ')+' |');
   lines.push('','## Evidence gaps','');
   for(const g of r.gaps)lines.push('- '+[g.source,g.status,g.reason].map(cell).join(' · '));
   lines.push('','## Impact','',...(r.impact.affected_components||[]).map(cell),...(r.impact.affected_files||[]).map(cell));

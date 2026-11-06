@@ -1,0 +1,859 @@
+import { ListView, ScrollView, AboutSlint, Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button, Tab, Divider, SearchField, StatInline, KpiItem, Badge, Disclosure, EmptyState } from "widgets.slint";
+import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
+import { NetworkView, NetCard, NetArrow } from "network_view.slint";
+import { DepsView, DepCard } from "deps_view.slint";
+import { MatrixView, MatrixColumn, MatrixRowItem } from "matrix_view.slint";
+import { StartView, StartData } from "start_view.slint";
+import { ArchitectureView, ArchitectureData } from "architecture_view.slint";
+import { CallsView, CallsData } from "calls_view.slint";
+import { ServicesView, ServicesData } from "services_view.slint";
+import { QualityView, QualityData } from "quality_view.slint";
+import { SecurityView, SecurityData } from "security_view.slint";
+import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
+import { SaveDialog, NoticeBar } from "shell_dialog.slint";
+import { Templates, Template } from "texts.slint";
+import { Fmt } from "format.slint";
+
+export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowItem, DocItem, SubProjectItem, RecentItem }
+// Per-tab data globals, set from src/<tab>_ui.rs.
+export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
+// Templates for text the Rust side composes (`tab_support::Texts`).
+export { Templates, Template, Fmt, KpiItem }
+
+export struct Crumb {
+    node: int,
+    label: string,
+}
+
+export struct Hit {
+    node: int,
+    label: string,
+    scope: string,
+}
+
+export struct CycleItem {
+    first-node: int,
+    label: string,
+    size: int,
+}
+
+export struct Neighbor {
+    row: int,
+    label: string,
+    weight: int,
+}
+
+component ExplorerRow inherits Rectangle {
+    in property <TreeRow> data;
+    in property <bool> selected;
+    callback select();
+    callback toggle();
+    height: 32px;
+    border-radius: 6px;
+    background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+    }
+    HorizontalLayout {
+        padding-left: 4px + data.depth * 16px;
+        padding-right: 6px;
+        spacing: 6px;
+        Rectangle {
+            width: 16px;
+            if data.expandable: Icon {
+                icon: data.expanded ? Icons.chevron-down : Icons.chevron-right;
+                tint: Theme.muted;
+                width: 12px;
+                height: 12px;
+            }
+            TouchArea {
+                enabled: data.expandable;
+                mouse-cursor: pointer;
+                clicked => { root.toggle(); }
+            }
+        }
+        Icon {
+            icon: data.file ? Icons.file : Icons.folder;
+            tint: data.file ? Theme.muted : Theme.priority;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: data.label;
+            color: selected ? Theme.accent : Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if data.in-cycle: Rectangle {
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: Theme.cycle;
+        }
+        if data.priority > 0: Badge {
+            text: data.priority == 1 ? "P1" : "P2";
+            variant: data.priority == 1 ? "p1" : "p2";
+            y: (parent.height - self.height) / 2;
+        }
+    }
+}
+
+component PlainRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <color> tone: Theme.text;
+    callback clicked;
+    height: 40px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: center;
+        Text { text: root.label; color: root.tone; font-size: 13px; overflow: elide; }
+        if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: 11px; overflow: elide; }
+    }
+}
+
+component NeighborRow inherits Rectangle {
+    in property <Neighbor> item;
+    in property <color> tone;
+    in property <int> max-weight;
+    callback clicked;
+    height: 34px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    Rectangle {
+        x: 0;
+        y: parent.height - 3px;
+        height: 2px;
+        width: parent.width * (root.max-weight > 0 ? root.item.weight / root.max-weight : 0);
+        background: root.tone.with-alpha(0.7);
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        Text { text: root.item.label; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "ArchGuard";
+    icon: @image-url("../assets/icon.png");
+    preferred-width: 1480px;
+    preferred-height: 920px;
+    min-width: 1000px;
+    min-height: 620px;
+    background: Theme.bg;
+    default-font-size: 13px;
+
+    // Documents: one tab per open project (src/documents_ui.rs).
+    in property <[DocItem]> docs;
+    in property <int> active-doc: -1;
+    in property <bool> has-doc: true;
+    in property <[SubProjectItem]> sub-projects;
+    in-out property <bool> projects-open;
+    out property <string> open-title: @tr("Open project folder");
+    callback select-doc(int);
+    callback close-doc(int);
+    callback add-doc();
+    callback open-sub-project(int);
+
+    // App shell: menu, recent projects, settings, the save prompt
+    // (src/shell_ui.rs).
+    in property <[RecentItem]> recent;
+    // Shown until dismissed; notice-kind 1: settings unreadable, 2: save failed.
+    in-out property <string> notice;
+    in property <int> notice-kind;
+    in property <bool> prompt-open;
+    in property <string> prompt-project;
+    in property <string> prompt-what;
+    callback open-recent(int);
+    callback clear-recent();
+    callback close-active();
+    callback close-all();
+    callback quit-app();
+    callback choose-theme(bool);
+    callback choose-language(string);
+    // 0 Save, 1 Don't save, 2 Cancel.
+    callback prompt-answered(int);
+    // The active document has a finished analysis to show.
+    property <bool> ready: root.has-doc && !root.loading && root.error == "";
+
+    in property <string> project;
+    in property <string> root-path;
+    in property <bool> loading: true;
+    in property <string> status;
+    in property <string> error;
+    in property <string> web-status;
+
+    // Graph tab, tree display.
+    in property <[TreeRow]> rows;
+    in property <[TreeLink]> links;
+    in property <int> selected-row: -1;
+    in property <[Crumb]> crumbs;
+    in property <int> dep-count;
+    // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
+    in property <[KpiItem]> graph-kpis;
+    in property <int> count-in;
+    in property <int> count-out;
+    in property <int> count-both;
+    in property <int> count-all;
+    in property <string> reference;
+    in property <[Neighbor]> incoming;
+    in property <[Neighbor]> outgoing;
+    in property <string> selected-label;
+    in property <[DepCard]> deps;
+
+    // Explorer.
+    in property <[Hit]> hits;
+    in property <bool> searching;
+    in property <[CycleItem]> cycles;
+    in property <int> node-total;
+
+    // Graph tab, network display.
+    in property <[NetCard]> net-cards;
+    in property <[NetArrow]> net-arrows;
+    in property <float> net-w;
+    in property <float> net-h;
+
+    in-out property <string> tab: "graph";
+    in-out property <int> display: 0;
+    in-out property <int> edge-mode: 3;
+    in-out property <int> explorer-tab: 0;
+    in-out property <int> tree-hovered: -1;
+    in-out property <bool> show-explorer: true;
+    in-out property <bool> show-details: true;
+
+    // Matrix tab.
+    in property <[MatrixColumn]> m-columns;
+    in property <[MatrixRowItem]> m-rows;
+    // Files, dependency evidence records, file cycle groups (`kpi.rs`).
+    in property <[KpiItem]> m-kpis;
+    in property <int> m-row-start;
+    in property <int> m-row-total;
+    in property <[string]> m-scopes;
+    in property <[string]> m-cycle-options;
+    in property <int> m-scope-index;
+    in property <int> m-cycle-index;
+    in property <string> m-query;
+    in property <bool> m-only;
+    in property <[string]> m-evidence;
+    in property <string> m-evidence-title;
+    in property <string> m-cycle-path;
+    callback m-toggle(int);
+    callback m-expand-all();
+    callback m-collapse-all();
+    callback m-search(string);
+    callback m-scope(int);
+    callback m-cycle(int);
+    callback m-toggle-only();
+    callback m-page(int);
+    callback m-cell(int, int);
+    callback m-close-evidence();
+
+    callback select-row(int);
+    callback toggle-row(int);
+    callback expand-all();
+    callback collapse-all();
+    callback set-edge-mode(int);
+    callback set-sort(bool);
+    in property <bool> sort-by-deps: true;
+    callback search(string);
+    callback reveal(int);
+    // Open a package by row (double-click) or by node (breadcrumb).
+    callback open-row(int);
+    callback open-node(int);
+    callback reset-tree();
+    callback open-web(string);
+
+    init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
+
+    property <int> fit-tick;
+    public function fit-views() {
+        fit-tick += 1;
+    }
+
+    // Theme and the std widgets' palette switch together, so ComboBoxes
+    // and scroll bars follow the app theme instead of the system.
+    public function set-dark(dark: bool) {
+        Theme.dark = dark;
+        Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
+    }
+
+    // Native on macOS and Windows, drawn by Slint elsewhere. Control is
+    // the command key on macOS.
+    MenuBar {
+        Menu {
+            title: @tr("File");
+            MenuItem {
+                title: @tr("Open project…");
+                shortcut: @keys(Control + O);
+                activated => { root.add-doc(); }
+            }
+            Menu {
+                title: @tr("Open recent");
+                for r[i] in root.recent: MenuItem {
+                    title: r.name + "  —  " + r.path;
+                    activated => { root.open-recent(i); }
+                }
+                MenuSeparator { }
+                MenuItem {
+                    title: @tr("Clear recent");
+                    enabled: root.recent.length > 0;
+                    activated => { root.clear-recent(); }
+                }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Close project");
+                shortcut: @keys(Control + W);
+                enabled: root.has-doc;
+                activated => { root.close-active(); }
+            }
+            MenuItem {
+                title: @tr("Close all");
+                shortcut: @keys(Control + Shift + W);
+                enabled: root.has-doc;
+                activated => { root.close-all(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Quit");
+                shortcut: @keys(Control + Q);
+                activated => { root.quit-app(); }
+            }
+        }
+        Menu {
+            title: @tr("View");
+            MenuItem {
+                title: @tr("Dark theme");
+                activated => { root.set-dark(true); root.choose-theme(true); }
+            }
+            MenuItem {
+                title: @tr("Light theme");
+                activated => { root.set-dark(false); root.choose-theme(false); }
+            }
+            MenuSeparator { }
+            Menu {
+                title: @tr("Language");
+                MenuItem {
+                    title: @tr("System language");
+                    activated => { root.choose-language(""); }
+                }
+                MenuItem {
+                    title: "English";
+                    activated => { root.choose-language("en"); }
+                }
+                MenuItem {
+                    title: "Deutsch";
+                    activated => { root.choose-language("de"); }
+                }
+            }
+        }
+        Menu {
+            title: @tr("Help");
+            MenuItem {
+                title: @tr("About ArchGuard");
+                activated => { about.show(); }
+            }
+        }
+    }
+
+    VerticalLayout {
+        // ---------------------------------------------------- documents
+        DocumentStrip {
+            docs: root.docs;
+            active: root.active-doc;
+            select(i) => { root.select-doc(i); }
+            close(i) => { root.close-doc(i); }
+            add => { root.add-doc(); }
+        }
+
+        // ------------------------------------------------------- header
+        Rectangle {
+            height: 56px;
+            background: Theme.panel;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 12px;
+                spacing: 14px;
+                Text {
+                    text: "AG";
+                    color: Theme.accent;
+                    font-size: 22px;
+                    font-weight: 900;
+                    font-italic: true;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.project;
+                    color: Theme.text;
+                    font-size: 18px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    min-width: min(self.preferred-width, 180px);
+                    max-width: 180px;
+                }
+                if root.sub-projects.length > 0: Button {
+                    y: (parent.height - self.height) / 2;
+                    compact: true;
+                    icon: Icons.package;
+                    text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length));
+                    pressed-state: root.projects-open;
+                    clicked => { root.projects-open = !root.projects-open; }
+                }
+                Rectangle {
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    width: tabs.preferred-width;
+                    border-radius: Theme.radius;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.bg;
+                    tabs := HorizontalLayout {
+                        padding: 4px;
+                        spacing: 2px;
+                        alignment: start;
+                        Tab { text: @tr("Start"); active: root.tab == "start"; clicked => { root.tab = "start"; } }
+                        Tab { text: @tr("Architecture"); active: root.tab == "architecture"; clicked => { root.tab = "architecture"; } }
+                        Rectangle { width: 9px; Divider { } }
+                        Tab { text: @tr("Graph"); active: root.tab == "graph"; clicked => { root.tab = "graph"; } }
+                        Tab { text: @tr("Matrix"); active: root.tab == "dsm"; clicked => { root.tab = "dsm"; } }
+                        Tab { text: @tr("Calls"); active: root.tab == "calls"; clicked => { root.tab = "calls"; } }
+                        Tab { text: @tr("Services"); active: root.tab == "services"; clicked => { root.tab = "services"; } }
+                        Rectangle { width: 9px; Divider { } }
+                        Tab { text: @tr("Quality"); active: root.tab == "quality"; clicked => { root.tab = "quality"; } }
+                        Tab { text: @tr("Security"); active: root.tab == "security"; clicked => { root.tab = "security"; } }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                SearchField {
+                    min-width: 120px;
+                    preferred-width: 200px;
+                    y: (parent.height - self.height) / 2;
+                    placeholder: @tr("Search modules");
+                    edited(t) => { root.search(t); root.explorer-tab = 0; root.show-explorer = true; }
+                    accepted(t) => { if (root.hits.length > 0) { root.reveal(root.hits[0].node); } }
+                }
+                Button {
+                    y: (parent.height - self.height) / 2;
+                    text: @tr("Web viewer");
+                    icon: Icons.external;
+                    clicked => { root.open-web(root.tab); }
+                }
+                Button {
+                    y: (parent.height - self.height) / 2;
+                    text: @tr("Explorer");
+                    pressed-state: root.show-explorer;
+                    clicked => { root.show-explorer = !root.show-explorer; }
+                }
+                Button {
+                    y: (parent.height - self.height) / 2;
+                    text: @tr("Details");
+                    pressed-state: root.show-details;
+                    clicked => { root.show-details = !root.show-details; }
+                }
+                Button {
+                    y: (parent.height - self.height) / 2;
+                    icon: Theme.dark ? Icons.sun : Icons.moon;
+                    clicked => {
+                        root.set-dark(!Theme.dark);
+                        root.choose-theme(Theme.dark);
+                    }
+                }
+                Button {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.info;
+                    clicked => { about.show(); }
+                }
+            }
+        }
+
+        if root.notice != "": NoticeBar {
+            text: root.notice-kind == 1 ? @tr("Settings could not be read, a copy was kept: {}", root.notice)
+                : @tr("Could not save the changes: {}", root.notice);
+            dismiss => { root.notice = ""; }
+        }
+
+        if root.web-status != "": Rectangle {
+            height: 30px;
+            background: Theme.accent.with-alpha(0.12);
+            Text {
+                text: root.web-status;
+                color: Theme.text;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // --------------------------------------------------------- body
+        if root.ready && root.tab == "dsm": MatrixView {
+            vertical-stretch: 1;
+            columns: root.m-columns;
+            rows: root.m-rows;
+            kpis: root.m-kpis;
+            row-start: root.m-row-start;
+            row-total: root.m-row-total;
+            scopes: root.m-scopes;
+            cycle-options: root.m-cycle-options;
+            scope-index: root.m-scope-index;
+            cycle-index: root.m-cycle-index;
+            query: root.m-query;
+            only: root.m-only;
+            evidence: root.m-evidence;
+            evidence-title: root.m-evidence-title;
+            cycle-path: root.m-cycle-path;
+            toggle(n) => { root.m-toggle(n); }
+            expand-all => { root.m-expand-all(); }
+            collapse-all => { root.m-collapse-all(); }
+            search(t) => { root.m-search(t); }
+            scope-changed(i) => { root.m-scope(i); }
+            cycle-changed(i) => { root.m-cycle(i); }
+            toggle-only => { root.m-toggle-only(); }
+            page(d) => { root.m-page(d); }
+            cell(r, c) => { root.m-cell(r, c); }
+            close-evidence => { root.m-close-evidence(); }
+        }
+
+        if root.ready && root.tab == "start": StartView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("start"); }
+        }
+        if root.ready && root.tab == "architecture": ArchitectureView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("architecture"); }
+        }
+        if root.ready && root.tab == "calls": CallsView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("calls"); }
+        }
+        if root.ready && root.tab == "services": ServicesView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("services"); }
+        }
+        if root.ready && root.tab == "quality": QualityView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("quality"); }
+        }
+        if root.ready && root.tab == "security": SecurityView {
+            vertical-stretch: 1;
+            open-web => { root.open-web("security"); }
+        }
+
+        if !root.has-doc: EmptyStart {
+            vertical-stretch: 1;
+            recent: root.recent;
+            open-project => { root.add-doc(); }
+            open-recent(i) => { root.open-recent(i); }
+        }
+        if root.has-doc && !root.ready: Rectangle {
+            vertical-stretch: 1;
+            background: Theme.bg;
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                Text {
+                    text: root.error != "" ? @tr("Analysis failed") : @tr("Analyzing architecture …");
+                    color: root.error != "" ? Theme.danger : Theme.text;
+                    font-size: Theme.font-section;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.error != "" ? root.error : root.status;
+                    color: Theme.muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if root.ready && root.tab == "graph": HorizontalLayout {
+            vertical-stretch: 1;
+
+            // ------------------------------------------------- explorer
+            if root.show-explorer: Rectangle {
+                width: 250px;
+                background: Theme.panel;
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+                    Text { text: @tr("Explorer"); color: Theme.text; font-size: 16px; font-weight: 700; }
+                    HorizontalLayout {
+                        spacing: 2px;
+                        alignment: start;
+                        Tab { text: @tr("Modules"); active: root.explorer-tab == 0; clicked => { root.explorer-tab = 0; } }
+                        Tab { text: @tr("Cycles"); active: root.explorer-tab == 1; clicked => { root.explorer-tab = 1; } }
+                        Tab { text: @tr("Review"); active: root.explorer-tab == 2; clicked => { root.explorer-tab = 2; } }
+                    }
+                    if root.explorer-tab == 0: HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Button { text: @tr("Expand all"); compact: true; clicked => { root.expand-all(); } }
+                        Button { text: @tr("Collapse all"); compact: true; clicked => { root.collapse-all(); } }
+                    }
+                    if root.explorer-tab == 0: Text {
+                        text: root.searching ? @tr("{} matches", Fmt.int(root.hits.length)) : @tr("{} of {} modules shown", Fmt.int(root.rows.length), Fmt.int(root.node-total));
+                        color: Theme.muted;
+                        font-size: 12px;
+                    }
+                    if root.explorer-tab == 0 && !root.searching: ListView {
+                        vertical-stretch: 1;
+                        for r in root.rows: ExplorerRow {
+                            data: r;
+                            selected: r.row == root.selected-row;
+                            select => { root.select-row(r.row); }
+                            toggle => { root.toggle-row(r.row); }
+                        }
+                    }
+                    if root.explorer-tab == 0 && root.searching: ListView {
+                        vertical-stretch: 1;
+                        for h in root.hits: PlainRow {
+                            label: h.label;
+                            detail: h.scope;
+                            clicked => { root.reveal(h.node); }
+                        }
+                    }
+                    if root.explorer-tab == 1 && root.cycles.length == 0: EmptyState {
+                        vertical-stretch: 1;
+                        title: @tr("No cycles found.");
+                    }
+                    if root.explorer-tab == 1 && root.cycles.length > 0: ListView {
+                        vertical-stretch: 1;
+                        for c in root.cycles: PlainRow {
+                            label: c.label;
+                            detail: @tr("{} modules", Fmt.int(c.size));
+                            tone: Theme.cycle;
+                            clicked => { root.reveal(c.first-node); }
+                        }
+                    }
+                    if root.explorer-tab == 2: VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: start;
+                        spacing: 10px;
+                        Text {
+                            text: @tr("Review priorities are not native yet.");
+                            color: Theme.muted;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                        Button { text: @tr("Open in web viewer"); icon: Icons.external; compact: true; clicked => { root.open-web("graph"); } }
+                    }
+                }
+            }
+
+            // ---------------------------------------------------- graph
+            VerticalLayout {
+                horizontal-stretch: 1;
+                // Scope bar: breadcrumbs and metrics.
+                Rectangle {
+                    height: 44px;
+                    background: Theme.bg;
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 14px;
+                        spacing: 16px;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            for c[i] in root.crumbs: HorizontalLayout {
+                                spacing: 4px;
+                                if i > 0: Text { text: "›"; color: Theme.muted; vertical-alignment: center; }
+                                Rectangle {
+                                    width: crumb.preferred-width + 12px;
+                                    height: 26px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 6px;
+                                    background: ct.has-hover ? Theme.panel : Theme.panel-2;
+                                    crumb := Text {
+                                        text: c.label;
+                                        color: i == root.crumbs.length - 1 ? Theme.text : Theme.accent;
+                                        font-family: "Menlo";
+                                        font-size: 13px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                    ct := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { if (c.node >= 0) { root.open-node(c.node); } else { root.reset-tree(); } }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        for k in root.graph-kpis: StatInline { kpi: k; }
+                    }
+                }
+                // Toolbar: display and dependency filter.
+                Rectangle {
+                    height: 48px;
+                    background: Theme.bg;
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 6px;
+                        alignment: start;
+                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Tree"); pressed-state: root.display == 0; clicked => { root.display = 0; } }
+                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Dependencies"); pressed-state: root.display == 2; clicked => { root.display = 2; } }
+                        Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Network"); pressed-state: root.display == 1; clicked => { root.display = 1; root.fit-views(); } }
+                        Rectangle { width: 10px; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Used by ({})", Fmt.int(root.count-in)); pressed-state: root.edge-mode == 0; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(0); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Depends on ({})", Fmt.int(root.count-out)); pressed-state: root.edge-mode == 1; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(1); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Both ({})", Fmt.int(root.count-both)); pressed-state: root.edge-mode == 2; enabled: root.selected-row >= 0; clicked => { root.set-edge-mode(2); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("All ({})", Fmt.int(root.count-all)); pressed-state: root.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Cycles only"); pressed-state: root.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
+                        }
+                        if root.display == 0: HorizontalLayout {
+                            spacing: 6px;
+                            padding-left: 10px;
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Alphabetical"); pressed-state: !root.sort-by-deps; clicked => { root.set-sort(false); } }
+                            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("By dependencies"); pressed-state: root.sort-by-deps; clicked => { root.set-sort(true); } }
+                        }
+                        Rectangle { width: 10px; }
+                        Text {
+                            text: root.reference == "" ? @tr("Select a package or file for its incoming and outgoing dependencies.") : @tr("Reference: {}", root.reference);
+                            color: Theme.muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            min-width: 0;
+                        }
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.bg;
+                    clip: true;
+                    TreeView {
+                        hovered <=> root.tree-hovered;
+                        visible: root.display == 0;
+                        rows: root.rows;
+                        links: root.links;
+                        selected: root.selected-row;
+                        select(r) => { root.select-row(r); }
+                        toggle(r) => { root.toggle-row(r); }
+                        open(r) => { root.open-row(r); }
+                    }
+                    NetworkView {
+                        fit-tick: root.fit-tick;
+                        visible: root.display == 1;
+                        cards: root.net-cards;
+                        arrows: root.net-arrows;
+                        canvas-w: root.net-w;
+                        canvas-h: root.net-h;
+                        selected: root.selected-row;
+                        select(r) => { root.select-row(r); }
+                        open(r) => { root.open-row(r); }
+                    }
+                    if root.display == 2: DepsView {
+                        deps: root.deps;
+                        reference: root.reference;
+                        total: root.dep-count;
+                    }
+                }
+            }
+
+            // ------------------------------------------------- details
+            if root.show-details && root.selected-row >= 0: Rectangle {
+                width: 320px;
+                background: Theme.panel;
+                Rectangle { x: 0; width: 1px; background: Theme.border; }
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        Text { text: root.selected-label; color: Theme.text; font-size: Theme.font-section; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                        Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.select-row(-1); } }
+                    }
+                    Text { text: root.reference; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            alignment: start;
+                            spacing: 2px;
+                            Text { text: @tr("Depends on ({})", Fmt.int(root.outgoing.length)); color: Theme.outgoing; font-size: 12px; font-weight: 700; }
+                            for n in root.outgoing: NeighborRow {
+                                item: n;
+                                tone: Theme.outgoing;
+                                max-weight: root.outgoing.length > 0 ? root.outgoing[0].weight : 0;
+                                clicked => { root.select-row(n.row); }
+                            }
+                            Rectangle { height: 12px; }
+                            Text { text: @tr("Used by ({})", Fmt.int(root.incoming.length)); color: Theme.incoming; font-size: 12px; font-weight: 700; }
+                            for n in root.incoming: NeighborRow {
+                                item: n;
+                                tone: Theme.incoming;
+                                max-weight: root.incoming.length > 0 ? root.incoming[0].weight : 0;
+                                clicked => { root.select-row(n.row); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.projects-open: ProjectsMenu {
+        items: root.sub-projects;
+        menu-x: 60px;
+        menu-y: 38px + 50px;
+        chosen(i) => { root.open-sub-project(i); }
+        dismiss => { root.projects-open = false; }
+    }
+
+    if root.prompt-open: SaveDialog {
+        project: root.prompt-project;
+        what: root.prompt-what;
+        answered(a) => { root.prompt-answered(a); }
+    }
+
+    about := PopupWindow {
+        x: (root.width - 420px) / 2;
+        y: (root.height - 380px) / 2;
+        width: 420px;
+        height: 380px;
+        Rectangle {
+            background: Theme.panel;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 30px;
+            drop-shadow-color: Theme.shadow;
+            VerticalLayout {
+                padding: 22px;
+                spacing: 10px;
+                Text { text: "ArchGuard Desktop"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                Text { text: @tr("Native viewer. License: MIT OR Apache-2.0."); color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                AboutSlint { }
+            }
+        }
+    }
+}

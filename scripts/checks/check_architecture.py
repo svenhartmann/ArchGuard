@@ -20,6 +20,7 @@ ALLOWED = {
     "engine": {"core", "extract", "analysis", "report", "store"},
     "mcp": {"engine"},
     "cli": {"engine", "mcp"},
+    "desktop": {"engine"},
 }
 
 

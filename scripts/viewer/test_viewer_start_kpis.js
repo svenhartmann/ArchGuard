@@ -8,7 +8,7 @@ const home=app.run('startUi.kpis');assert.ok(home,'Start contains the KPI overvi
 const cards=home.querySelectorAll('strong');assert.ok(cards.some(n=>n.textContent==='53.4'));assert.ok(cards.some(n=>n.textContent==='35%'));assert.ok(cards.some(n=>n.textContent==='91'));
 assert.equal(app.run('startUi.kpis.querySelectorAll("div").filter(n=>n.classList.contains("dash-card")).length'),8);
 const before=app.run('JSON.stringify(data.reviewKpis)');app.run('renderStart();renderStart()');assert.equal(app.run('JSON.stringify(data.reviewKpis)'),before);assert.equal(app.run('startUi.kpis'),home);
-assert.ok(app.run('Array.from(document.querySelectorAll("#tabs button")).filter(b=>["assessment","review-dashboard"].includes(b.dataset.tab)).every(b=>b.hidden)'));
+assert.ok(app.run('Array.from(document.querySelectorAll("#tabs button")).filter(b=>b.dataset.tab==="assessment").every(b=>b.hidden)'));
 app.run('data.reviewKpis.health.score=null;renderStart()');assert.match(home.textContent,/not measured/);assert.doesNotMatch(home.textContent,/53.4/);
 app.run('data.reviewKpis=null;renderStart()');assert.match(home.textContent,/Not measured/);assert.equal(home.querySelectorAll('strong').length,0);
 console.log('Start KPIs: eight measurements, unknowns, immutable payload, repeat rendering and hidden legacy tabs passed');

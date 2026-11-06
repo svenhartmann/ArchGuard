@@ -1810,7 +1810,6 @@ function renderSidebar() {
   if(ui.workspace==='services'){renderServiceEvidence();return;}
   if(ui.workspace==='calls'){renderCallInspector();return;}
   if(ui.workspace==='security'){renderSecurityInspector();return;}
-  if(ui.workspace==='review-dashboard'&&typeof renderReviewDashboardSidebar==='function'){renderReviewDashboardSidebar();return;}
   const sb=document.getElementById('sidebar');sb.textContent='';
   if(['quality','architecture','assessment'].includes(ui.workspace))return;
   const sel=ui.selection;
@@ -2854,7 +2853,6 @@ function renderAll(fitGraph=true) {
   if(ui.workspace==='services')renderServices();
   if(ui.workspace==='architecture'&&typeof renderArchitecture==='function')renderArchitecture();
   if(ui.workspace==='security')renderSecurity();
-  if(ui.workspace==='review-dashboard'&&typeof renderReviewDashboard==='function')renderReviewDashboard();
   if(ui.workspace==='quality')renderEngineeringQuality();
   if(ui.workspace==='assessment')renderAssessment();
   renderOpsStrip();
@@ -2878,7 +2876,6 @@ function renderWorkspaceDescription() {
     return;
   }
   const text=ui.workspace==='start'?t('Explore the architecture, inspect quality and verify changes using the same evidence as MCP.','Architektur erkunden, Qualität prüfen und Änderungen anhand derselben Belege wie im MCP bewerten.'):ui.workspace==='assessment'?t('Recorded architecture review · findings, decisions, change impact and evidence gaps','Gespeichertes Architekturreview · Befunde, Entscheidungen, Änderungsreichweite und Beleglücken'):ui.workspace==='quality'?t('Original source measurements · package cohesion, history, test impact and mutation evidence','Ursprüngliche Quellmessungen · Paketkohäsion, Verlauf, Testreichweite und Mutationsbelege'):ui.workspace==='security'?t('Original dependency scan snapshot · graph simulations do not change security findings','Ursprünglicher Abhängigkeitsscan · Graphsimulationen verändern Sicherheitsbefunde nicht'):
-    ui.workspace==='review-dashboard'?t('Review KPIs from the analysis pipeline · read-only; decisions persist only through the serve API','Review-Kennzahlen aus der Analyse-Pipeline · schreibgeschützt; Entscheidungen werden nur über die serve-API gespeichert'):
     ui.workspace==='architecture'?t('Declared target architecture · observed full-source dependency boundaries','Deklarierte Sollarchitektur · beobachtete Abhängigkeitsgrenzen des vollständigen Quellgraphen'):
     ui.workspace==='services'?t('Service configuration · top metrics and simulation describe the dependency graph','Dienstkonfiguration · obere Kennzahlen und Simulation beschreiben den Abhängigkeitsgraphen'):
     ui.workspace==='calls'?t('Source call sites · types, modules and functions/methods','Aufrufstellen · Typen, Module und Funktionen/Methoden'):
@@ -2903,17 +2900,17 @@ function showTab(name) {
   // Navigation already renders its final scope. Re-selecting the active Graph
   // tab must not rebuild the tree once more with the preceding scope.
   if(name==='graph'&&ui.workspace==='graph')return;
-  ui.workspace=name==='start'?'start':name==='assessment'?'assessment':name==='quality'?'quality':name==='security'?'security':name==='review-dashboard'?'review-dashboard':name==='architecture'?'architecture':name==='services'?'services':name==='calls'?'calls':name==='dsm'?'dsm':'graph';
-  document.documentElement.classList.toggle('report-workspace',['start','quality','architecture','assessment','security','review-dashboard'].includes(ui.workspace));
+  ui.workspace=name==='start'?'start':name==='assessment'?'assessment':name==='quality'?'quality':name==='security'?'security':name==='architecture'?'architecture':name==='services'?'services':name==='calls'?'calls':name==='dsm'?'dsm':'graph';
+  document.documentElement.classList.toggle('report-workspace',['start','quality','architecture','assessment','security'].includes(ui.workspace));
   document.documentElement.classList.toggle('context-workspace',['calls','services','dsm'].includes(ui.workspace));
   if(ui.workspace!=='graph')closeWorkspaceMenu('graph-display-menu');
   renderWorkspaceDescription();
   document.getElementById('graph-options').hidden=ui.workspace!=='graph';
-  for(const id of ['simulation-mode','repair-cycle'])document.getElementById(id).disabled=ui.workspace==='assessment'||ui.workspace==='quality'||ui.workspace==='services'||ui.workspace==='architecture'||ui.workspace==='security'||ui.workspace==='review-dashboard';
-  for(const id of ['tab-start','tab-graph','tab-dsm','tab-calls','tab-services','tab-architecture','tab-security','tab-quality','tab-assessment','tab-review-dashboard'])document.getElementById(id).classList.toggle('panel-hidden',id!=='tab-'+ui.workspace);
+  for(const id of ['simulation-mode','repair-cycle'])document.getElementById(id).disabled=ui.workspace==='assessment'||ui.workspace==='quality'||ui.workspace==='services'||ui.workspace==='architecture'||ui.workspace==='security';
+  for(const id of ['tab-start','tab-graph','tab-dsm','tab-calls','tab-services','tab-architecture','tab-security','tab-quality','tab-assessment'])document.getElementById(id).classList.toggle('panel-hidden',id!=='tab-'+ui.workspace);
   for(const b of document.querySelectorAll('#tabs button')){b.classList.toggle('active',b.dataset.tab===ui.workspace);b.setAttribute('aria-selected',String(b.dataset.tab===ui.workspace));}
   renderRepositoryNavigation();
-  if(ui.workspace==='start')renderStart();else if(ui.workspace==='assessment')renderAssessment();else if(ui.workspace==='quality')renderEngineeringQuality();else if(ui.workspace==='security')renderSecurity();else if(ui.workspace==='review-dashboard'){if(typeof renderReviewDashboard==='function')renderReviewDashboard();}else if(ui.workspace==='architecture'){if(typeof renderArchitecture==='function')renderArchitecture();}else if(ui.workspace==='services')renderServices();else if(ui.workspace==='dsm')renderDsm();else if(ui.workspace==='calls')renderCalls();else {renderGraph(false);setWidth();}
+  if(ui.workspace==='start')renderStart();else if(ui.workspace==='assessment')renderAssessment();else if(ui.workspace==='quality')renderEngineeringQuality();else if(ui.workspace==='security')renderSecurity();else if(ui.workspace==='architecture'){if(typeof renderArchitecture==='function')renderArchitecture();}else if(ui.workspace==='services')renderServices();else if(ui.workspace==='dsm')renderDsm();else if(ui.workspace==='calls')renderCalls();else {renderGraph(false);setWidth();}
   renderSidebar();
   syncViewerNavigation();
 }
@@ -3153,7 +3150,7 @@ initKpiHelp();
 refreshActionHelp();
 applyTheme(storedTheme());recompute();renderAll();setWidth();
 if(isRepositoryOverview())showTab(data.initialTab==='security'?'security':'start');
-else if(data.initialTab === 'assessment' || data.initialTab === 'cycles' || data.initialTab === 'dsm' || data.initialTab === 'calls' || data.initialTab === 'services' || data.initialTab === 'architecture' || data.initialTab === 'security' || data.initialTab === 'review-dashboard')showTab(data.initialTab);
+else if(data.initialTab === 'assessment' || data.initialTab === 'cycles' || data.initialTab === 'dsm' || data.initialTab === 'calls' || data.initialTab === 'services' || data.initialTab === 'architecture' || data.initialTab === 'security')showTab(data.initialTab);
 else if(!data.nodes.length&&serviceModel()?.services.length)showTab('services');
 else if(developmentPaths().length&&!isRepositoryOverview())showTab('start');
 // The live server can refresh a report once no simulated work would be lost.

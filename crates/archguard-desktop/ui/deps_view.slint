@@ -1,0 +1,103 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Button } from "widgets.slint";
+
+// One directed dependency of the "Dependencies" display.
+// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic (as TreeLink).
+export struct DepCard {
+    from: string,
+    to: string,
+    weight: int,
+    kind: int,
+    // Source references, one per line ("file:line  code").
+    refs: string,
+    ref-count: int,
+}
+
+component Card inherits Rectangle {
+    in property <DepCard> dep;
+    in-out property <bool> open;
+    border-radius: Theme.radius;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: dep.kind == 3 ? Theme.cycle : Theme.border;
+    height: body.preferred-height;
+    body := VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            Text { text: dep.from; color: dep.kind == 1 ? Theme.incoming : Theme.text; font-size: 13px; }
+            Text { text: "→"; color: dep.kind == 3 ? Theme.cycle : Theme.muted; font-size: 13px; }
+            Text { text: dep.to; color: dep.kind == 2 ? Theme.outgoing : Theme.text; font-size: 13px; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: @tr("{} dependency evidence records", Fmt.int(dep.weight));
+                color: Theme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Text { text: "·"; color: Theme.muted; vertical-alignment: center; }
+            Button {
+                compact: true;
+                text: @tr("Evidence");
+                pressed-state: root.open;
+                clicked => { root.open = !root.open; }
+            }
+        }
+        if root.open: Rectangle {
+            border-radius: Theme.radius-sm;
+            background: Theme.panel-2;
+            height: refs.preferred-height + 16px;
+            refs := Text {
+                x: 10px;
+                width: parent.width - 20px;
+                text: dep.ref-count == 0 ? @tr("No source references recorded.") : dep.refs;
+                color: Theme.text;
+                font-family: "Menlo";
+                font-size: 11.5px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+export component DepsView inherits Rectangle {
+    in property <[DepCard]> deps;
+    in property <string> reference;
+    in property <int> total;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 8px;
+        Text {
+            text: root.reference == "" ? @tr("All dependencies") : @tr("Dependencies of {}", root.reference);
+            color: Theme.text;
+            font-size: Theme.font-section;
+            font-weight: 700;
+        }
+        Text {
+            text: @tr("{} directed dependencies match this view. Each arrow reads source → target.", Fmt.int(root.deps.length));
+            color: Theme.muted;
+            font-size: 12px;
+        }
+        Text {
+            text: root.reference == "" ? @tr("All dependencies in this scope · {}", Fmt.int(root.total)) : @tr("Shown · {} of {}", Fmt.int(root.deps.length), Fmt.int(root.total));
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        ListView {
+            vertical-stretch: 1;
+            for d in root.deps: VerticalLayout {
+                padding-bottom: 8px;
+                Card { dep: d; }
+            }
+        }
+    }
+}

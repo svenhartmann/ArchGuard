@@ -90,8 +90,8 @@ pub(crate) fn run(
                     if let Some(d) = &finding.decision {
                         text.push_str(&format!(
                             "  Owner: {} · {} · expires: {}\n",
-                            d.owner,
-                            d.reason,
+                            d.author,
+                            d.note,
                             d.expires_on.as_deref().unwrap_or("—")
                         ));
                     }

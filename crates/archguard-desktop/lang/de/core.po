@@ -1,0 +1,258 @@
+msgid "All ({})"
+msgstr "Alle ({})"
+
+msgid "Analysis failed"
+msgstr "Analyse fehlgeschlagen"
+
+msgid "Analyzing architecture …"
+msgstr "Architektur wird analysiert …"
+
+msgid "Architecture"
+msgstr "Architektur"
+
+msgid "Both ({})"
+msgstr "Beide ({})"
+
+msgid "Calls"
+msgstr "Aufrufe"
+
+msgid "Collapse all"
+msgstr "Alle schließen"
+
+msgid "Cycles only"
+msgstr "Nur Zyklen"
+
+msgid "Cycles"
+msgstr "Zyklen"
+
+msgid "Dependencies"
+msgstr "Abhängigkeiten"
+
+msgid "Depends on ({})"
+msgstr "Hängt ab von ({})"
+
+msgid "Details"
+msgstr "Details"
+
+msgid "Expand all"
+msgstr "Alle öffnen"
+
+msgid "Explorer"
+msgstr "Explorer"
+
+msgid "Graph"
+msgstr "Graph"
+
+msgid "In {}"
+msgstr "Ein {}"
+
+msgid "Matrix"
+msgstr "Matrix"
+
+msgid "Modules"
+msgstr "Module"
+
+msgid "Native viewer. License: MIT OR Apache-2.0."
+msgstr "Native Oberfläche. Lizenz: MIT OR Apache-2.0."
+
+msgid "No cycles found."
+msgstr "Keine Zyklen gefunden."
+
+msgid "Open in web viewer"
+msgstr "Im Web-Viewer öffnen"
+
+msgid "Out {}"
+msgstr "Aus {}"
+
+msgid "Quality"
+msgstr "Qualität"
+
+msgid "Reference: {}"
+msgstr "Referenz: {}"
+
+msgid "Review priorities are not native yet."
+msgstr "Prüfprioritäten gibt es noch nicht nativ."
+
+msgid "Review"
+msgstr "Prüfung"
+
+msgid "Search modules"
+msgstr "Module suchen"
+
+msgid "Security"
+msgstr "Sicherheit"
+
+msgid "Select a package or file for its incoming and outgoing dependencies."
+msgstr "Paket oder Datei auswählen, um eingehende und ausgehende Abhängigkeiten zu sehen."
+
+msgid "Services"
+msgstr "Dienste"
+
+msgid "Start"
+msgstr "Start"
+
+msgid "This view is not native yet. The web viewer shows it for the same project."
+msgstr "Diese Ansicht gibt es noch nicht nativ. Der Web-Viewer zeigt sie für dasselbe Projekt."
+
+msgid "Tree"
+msgstr "Baum"
+
+msgid "Used by ({})"
+msgstr "Wird genutzt von ({})"
+
+msgid "Web viewer"
+msgstr "Web-Viewer"
+
+msgid "{} matches"
+msgstr "{} Treffer"
+
+msgid "{} modules"
+msgstr "{} Module"
+
+msgid "{} of {} modules shown"
+msgstr "{} von {} Modulen sichtbar"
+msgid "{} dependency evidence records"
+msgstr "{} Abhängigkeitsbelege"
+
+msgid "Evidence"
+msgstr "Belege"
+
+msgid "No source references recorded."
+msgstr "Keine Quellverweise erfasst."
+
+msgid "All dependencies"
+msgstr "Alle Abhängigkeiten"
+
+msgid "Dependencies of {}"
+msgstr "Abhängigkeiten von {}"
+
+msgid "{} directed dependencies match this view. Each arrow reads source → target."
+msgstr "{} gerichtete Abhängigkeiten passen zu dieser Ansicht. Jeder Pfeil liest sich Quelle → Ziel."
+
+msgid "All dependencies in this scope · {}"
+msgstr "Alle Abhängigkeiten in diesem Bereich · {}"
+
+msgid "Shown · {} of {}"
+msgstr "Angezeigt · {} von {}"
+
+msgid "Network"
+msgstr "Netzwerk"
+
+msgid "source file"
+msgstr "Quelldatei"
+
+msgid "{} files · {} package"
+msgstr "{} Dateien · {} Paket"
+
+msgid "Fit"
+msgstr "Einpassen"
+
+msgid "Alphabetical"
+msgstr "Alphabetisch"
+
+msgid "By dependencies"
+msgstr "Nach Abhängigkeiten"
+
+msgid "Compact cells"
+msgstr "Kompakte Zellen"
+
+msgid "Previous"
+msgstr "Zurück"
+
+msgid "Next"
+msgstr "Weiter"
+
+msgid "Target packages {}–{} / {}"
+msgstr "Zielpakete {}–{} / {}"
+
+msgid "Dependencies in the tree"
+msgstr "Abhängigkeiten im Baum"
+
+msgid "Find package or file…"
+msgstr "Paket oder Datei suchen…"
+
+msgid "Cycle only"
+msgstr "Nur dieser Zyklus"
+
+msgid "Rows {}–{} / {}"
+msgstr "Zeilen {}–{} / {}"
+
+msgid "Tree / source"
+msgstr "Baum / Quelle"
+
+msgid "direct files"
+msgstr "direkte Dateien"
+
+msgid "Outside this scope"
+msgstr "Außerhalb des Bereichs"
+
+msgid "No matching files or packages. Adjust the search or cycle filter."
+msgstr "Keine passenden Dateien oder Pakete. Suche oder Zyklusfilter anpassen."
+
+msgid "Dependency evidence"
+msgstr "Abhängigkeitsbelege"
+
+msgid "Project overview"
+msgstr "Projektübersicht"
+
+msgid "Low"
+msgstr "Niedrig"
+
+msgid "Elevated"
+msgstr "Erhöht"
+
+msgid "High"
+msgstr "Hoch"
+
+msgid "Unknown"
+msgstr "Unbekannt"
+
+msgid "Informational"
+msgstr "Information"
+
+msgid "Incoming"
+msgstr "Eingehend"
+
+msgid "Outgoing"
+msgstr "Ausgehend"
+
+msgid "Show next 20"
+msgstr "Nächste 20 anzeigen"
+
+msgid "Search"
+msgstr "Suche"
+
+msgid "Save"
+msgstr "Speichern"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "en"
+msgstr "de"
+
+msgid "ready"
+msgstr "vollständig"
+
+msgid "partial"
+msgstr "teilweise"
+
+msgid "unavailable"
+msgstr "nicht verfügbar"
+
+msgid "Analysis"
+msgstr "Analyse"
+
+msgid "stale"
+msgstr "veraltet"
+
+msgid "{0} cycle group"
+msgid_plural "{0} cycle groups"
+msgstr[0] "{0} Zyklusgruppe"
+msgstr[1] "{0} Zyklusgruppen"
+
+msgid "Outgoing · cycles"
+msgstr "Ausgehend · Zyklen"
+
+msgid "Packages"
+msgstr "Pakete"

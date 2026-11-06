@@ -1,0 +1,294 @@
+import { Theme } from "theme.slint";
+import { Fmt } from "format.slint";
+import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading } from "widgets.slint";
+
+export struct TreeRow {
+    row: int,
+    node: int,
+    label: string,
+    depth: int,
+    expandable: bool,
+    expanded: bool,
+    file: bool,
+    in-count: int,
+    out-count: int,
+    in-cycle: bool,
+    // Part of the current selection (the row or a descendant of it).
+    covered: bool,
+    // Review priority badge: 0 none, 1 P1 (high), 2 P2 (medium).
+    priority: int,
+}
+
+// kind: 0 neutral, 1 incoming, 2 outgoing, 3 cyclic. Paths of the right
+// lane are relative to that lane's left edge.
+export struct TreeLink {
+    path: string,
+    kind: int,
+    from: int,
+    to: int,
+    right: bool,
+}
+
+// Geometry shared with src/tree.rs (ROW_H, LANE_W, TOP). The tree between
+// the lanes takes the remaining width, at least min-tree-w.
+export global TreeGeo {
+    out property <float> row-h: 30;
+    out property <float> lane-w: 280;
+    out property <float> min-tree-w: 560;
+    out property <float> top: 34;
+}
+
+// The web viewer's tree-priority badge (P1 high, P2 medium).
+component RowCard inherits Rectangle {
+    in property <TreeRow> data;
+    in property <bool> selected;
+    in property <float> zoom;
+    in property <float> tree-w;
+    out property <bool> hovered: touch.has-hover;
+    callback select();
+    callback toggle();
+    callback open();
+
+    property <length> indent: data.depth * 18px * zoom;
+    x: (TreeGeo.lane-w * 1px) * zoom + indent;
+    y: (TreeGeo.top + data.row * TreeGeo.row-h) * 1px * zoom;
+    width: tree-w * 1px * zoom - indent;
+    height: (TreeGeo.row-h - 4) * 1px * zoom;
+    border-radius: 6px * zoom;
+    background: selected ? Theme.accent.with-alpha(0.10) : data.covered ? Theme.accent.with-alpha(0.05) : touch.has-hover ? Theme.panel : Theme.panel-2;
+    border-width: selected ? 1.5px : 1px;
+    border-color: selected ? Theme.accent : Theme.border.with-alpha(0.6);
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+        double-clicked => { root.open(); }
+    }
+    HorizontalLayout {
+        padding-left: 6px * zoom;
+        padding-right: 10px * zoom;
+        spacing: 6px * zoom;
+        Rectangle {
+            width: 18px * zoom;
+            if data.expandable: Icon {
+                icon: data.expanded ? Icons.chevron-down : Icons.chevron-right;
+                tint: Theme.muted;
+                width: 14px * zoom;
+                height: 14px * zoom;
+            }
+            TouchArea {
+                enabled: data.expandable;
+                mouse-cursor: pointer;
+                clicked => { root.toggle(); }
+            }
+        }
+        Icon {
+            icon: data.file ? Icons.file : Icons.package;
+            tint: Theme.muted;
+            width: 15px * zoom;
+            height: 15px * zoom;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: data.label;
+            color: Theme.text;
+            font-size: 13px * zoom;
+            font-weight: data.file ? 500 : 650;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if data.priority > 0: Badge {
+            text: data.priority == 1 ? "P1" : "P2";
+            variant: data.priority == 1 ? "p1" : "p2";
+            zoom: root.zoom;
+            y: (parent.height - self.height) / 2;
+        }
+        if data.in-cycle: Rectangle {
+            width: 7px * zoom;
+            height: 7px * zoom;
+            y: (parent.height - self.height) / 2;
+            border-radius: self.width / 2;
+            background: Theme.cycle;
+        }
+        Text {
+            width: 64px * zoom;
+            text: @tr("In {}", Fmt.int(data.in-count));
+            color: Theme.incoming;
+            font-size: 11.5px * zoom;
+            vertical-alignment: center;
+        }
+        Text {
+            width: 52px * zoom;
+            text: @tr("Out {}", Fmt.int(data.out-count));
+            color: Theme.outgoing;
+            font-size: 11.5px * zoom;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Port inherits Rectangle {
+    in property <float> cx;
+    in property <float> cy;
+    in property <float> zoom;
+    width: 12px * zoom;
+    height: self.width;
+    x: cx * 1px * zoom - self.width / 2;
+    y: cy * 1px * zoom - self.height / 2;
+    border-radius: self.width / 2;
+    border-width: 1.5px;
+    border-color: Theme.muted;
+    background: Theme.bg;
+    Rectangle {
+        width: 4px * zoom;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: Theme.muted;
+    }
+}
+
+export component TreeView inherits Rectangle {
+    in property <[TreeRow]> rows;
+    in property <[TreeLink]> links;
+    in property <int> selected: -1;
+    in-out property <float> zoom: 1.0;
+    callback select(int);
+    callback toggle(int);
+    callback open(int);
+
+    // The tree fills the view between the lanes, as in the web viewer.
+    property <float> tree-w: max(TreeGeo.min-tree-w, flick.width / 1px / zoom - 2 * TreeGeo.lane-w);
+    property <float> canvas-w: TreeGeo.lane-w * 2 + tree-w;
+    property <float> canvas-h: TreeGeo.top + rows.length * TreeGeo.row-h + 20;
+    // Row under the mouse; its links stay bright, the others fade.
+    in-out property <int> hovered: -1;
+
+    public function fit() {
+        let w = TreeGeo.lane-w * 2 + TreeGeo.min-tree-w;
+        zoom = max(0.3, min(1.0, min(flick.width / 1px / w, flick.height / 1px / canvas-h)));
+    }
+
+    function zoom-by(f: float) {
+        zoom = max(0.3, min(2.0, zoom * f));
+    }
+
+    flick := Flickable {
+        content-width: max(self.width, canvas-w * zoom * 1px);
+        content-height: max(self.height, canvas-h * zoom * 1px);
+      Rectangle {
+        // Centred when the tree is narrower than the view.
+        x: max(0px, (flick.width - canvas-w * zoom * 1px) / 2);
+        width: canvas-w * zoom * 1px;
+        height: max(flick.height, canvas-h * zoom * 1px);
+
+        TouchArea {
+            clicked => { root.select(-1); }
+            scroll-event(event) => {
+                if (event.modifiers.control || event.modifiers.meta) {
+                    root.zoom-by(event.delta-y > 0 ? 1.1 : 1 / 1.1);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        // Column labels as in the web tree.
+        SectionHeading {
+            x: 0;
+            y: 8px * zoom;
+            width: TreeGeo.lane-w * 1px * zoom;
+            label: @tr("Incoming");
+            font-size: 11px * zoom;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        SectionHeading {
+            x: (TreeGeo.lane-w * 1px + 10px) * zoom;
+            y: 8px * zoom;
+            label: @tr("Packages");
+            font-size: 11px * zoom;
+            font-weight: 700;
+        }
+        SectionHeading {
+            x: (TreeGeo.lane-w + tree-w) * 1px * zoom;
+            y: 8px * zoom;
+            width: TreeGeo.lane-w * 1px * zoom;
+            label: @tr("Outgoing · cycles");
+            font-size: 11px * zoom;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        for l in root.links: Path {
+            property <bool> traced: root.hovered >= 0 && (l.from == root.hovered || l.to == root.hovered);
+            x: l.right ? (TreeGeo.lane-w + tree-w) * 1px * zoom : 0;
+            y: 0;
+            width: TreeGeo.lane-w * zoom * 1px;
+            height: canvas-h * zoom * 1px;
+            viewbox-width: TreeGeo.lane-w;
+            viewbox-height: canvas-h;
+            commands: l.path;
+            fill: transparent;
+            stroke: l.kind == 1 ? Theme.incoming : l.kind == 2 ? Theme.outgoing : l.kind == 3 ? Theme.cycle : traced ? Theme.accent : Theme.edge.with-alpha(0.75);
+            stroke-width: traced ? 2.6px : l.kind == 0 ? 1.3px : 1.8px;
+            opacity: root.hovered >= 0 && !traced ? 0.15 : 1.0;
+            animate opacity { duration: 120ms; }
+        }
+
+        for r in root.rows: Port {
+            cx: TreeGeo.lane-w - 22;
+            cy: TreeGeo.top + r.row * TreeGeo.row-h + (TreeGeo.row-h - 4) / 2;
+            zoom: root.zoom;
+        }
+        for r in root.rows: Port {
+            cx: TreeGeo.lane-w + tree-w + 22;
+            cy: TreeGeo.top + r.row * TreeGeo.row-h + (TreeGeo.row-h - 4) / 2;
+            zoom: root.zoom;
+        }
+        for r in root.rows: RowCard {
+            data: r;
+            zoom: root.zoom;
+            tree-w: root.tree-w;
+            changed hovered => {
+                if (self.hovered) {
+                    root.hovered = r.row;
+                } else if (root.hovered == r.row) {
+                    root.hovered = -1;
+                }
+            }
+            selected: r.row == root.selected;
+            select => { root.select(r.row); }
+            toggle => { root.toggle(r.row); }
+            open => { root.open(r.row); }
+        }
+      }
+    }
+
+    // Zoom controls, top left below the column labels as in the web tree.
+    Rectangle {
+        x: 12px;
+        y: 36px;
+        width: bar.preferred-width;
+        height: 40px;
+        border-radius: Theme.radius;
+        background: Theme.panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: Theme.shadow;
+        bar := HorizontalLayout {
+            padding: 5px;
+            spacing: 4px;
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.zoom-by(1 / 1.25); }
+                zoom-in => { root.zoom-by(1.25); }
+                reset => { root.zoom = 1; }
+                fit => { root.fit(); }
+            }
+
+        }
+    }
+}

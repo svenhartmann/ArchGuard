@@ -29,7 +29,7 @@ Den Funktionsumfang beschreibt Kap. 15.
 - Kein allgemeines sprachübergreifendes semantisches Modell und keine universelle DIP-/LSP-Prüfung. Java, C#, TypeScript/JavaScript und Go ergänzen Compilerbelege mit expliziten Abdeckungsgrenzen.
 - Importierte Laufzeit-/Build-Beobachtungen bleiben von statischen Quellbelegen getrennt. Statische Abhängigkeiten ergeben dadurch keinen vollständigen Laufzeitgraphen.
 - Zeilenbasierte Importscanner bleiben von Compiler-Helpern getrennt. Ein zukünftiges tree-sitter-Backend kann den `Extractor`-Trait implementieren.
-- Keine native GUI: Ein eingebetteter HTML-Viewer und lokaler Live-Server ergänzen die Exporte.
+- Der eingebettete HTML-Viewer und der lokale Live-Server ergänzen die Exporte; ein nativer Desktop-Viewer (`archguard-desktop`, Slint) ist ein Prototyp, siehe [ADR 0002](docs/adr/0002-native-desktop-ui.md).
 
 ---
 
@@ -73,6 +73,7 @@ graph TD
     subgraph L3["Schicht 3 — Interfaces"]
         CLI["archguard-cli (bin)"]
         MCP["archguard-mcp (lib)"]
+        DESK["archguard-desktop (bin)"]
     end
     subgraph L2["Schicht 2 — Orchestrierung"]
         ENG["archguard-engine"]
@@ -90,6 +91,7 @@ graph TD
     CLI --> MCP
     CLI --> ENG
     MCP --> ENG
+    DESK --> ENG
     ENG --> EXT
     ENG --> ANA
     ENG --> REP
@@ -102,7 +104,7 @@ graph TD
 ```
 
 Jede Kante führt von einer höheren zu einer niedrigeren Schicht. Innerhalb von Schicht 1 gibt es
-keine Kanten. Die zwölf Kanten sind die vollständige Allowlist von
+keine Kanten. Die dreizehn Kanten sind die vollständige Allowlist von
 `scripts/checks/check_architecture.py` (Kap. 12). `archguard-mcp` ist eine Library; das Binary
 `archguard` startet den MCP-Server über das Subkommando `archguard mcp`.
 
@@ -189,7 +191,8 @@ archguard/
 │   ├── archguard-store/          # L1: GraphStore-Trait, Graph-DB-Spiegel (openCypher), Query-Guard
 │   ├── archguard-engine/         # L2: Config laden, Pipeline orchestrieren, Graph-Cache
 │   ├── archguard-mcp/            # L3: MCP-Server (stdio), Tool-Registrierung
-│   └── archguard-cli/            # L3: Binary `archguard`, clap-Kommandos
+│   ├── archguard-cli/            # L3: Binary `archguard`, clap-Kommandos
+│   └── archguard-desktop/        # L3: nativer Desktop-Viewer (Slint-Prototyp)
 ├── fixtures/                  # Testprojekte (ts-cyclic, py-layers, rs-clean, java-packages, …)
 └── .github/workflows/ci.yml   # fmt, clippy, test, Architektur-Check
 ```
@@ -200,10 +203,11 @@ archguard/
 | `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset`, `serde_json` |
 | `archguard-analysis` | Tarjan-SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
-| `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `kuzu = "=0.11.3"` (Ladybug-/Kuzu-Lineage, nur hinter Cargo-Feature `db`) |
+| `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
 | `archguard-engine` | `analyze(path, config) -> Report`, Config-Parsing **+ Auflösung deklariert/abgeleitet/Default** (Kap. 11), Caching, DB-Sync | `toml` |
 | `archguard-mcp` | MCP-Tools, JSON-Schemas, Pagination-Guard | `rmcp` (offizielles MCP-Rust-SDK), `tokio` (nur hier), `schemars` |
 | `archguard-cli` | Argument-Parsing, Exit-Codes, Formatauswahl | `clap`, `anyhow` |
+| `archguard-desktop` | Nativer Desktop-Viewer auf der Engine-API ([ADR 0002](docs/adr/0002-native-desktop-ui.md)) | `slint`, `rfd` |
 
 `tokio` ist nur direkte Abhängigkeit von `archguard-mcp`. `archguard-engine` und die Schichten 0–1
 sind synchron.
@@ -304,7 +308,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 ## 6. Analyse-Pipeline (in `archguard-engine`)
 
 1. **Deklaration laden:** die Projektconfig nach der [Dateipriorität](README_DE.md#konfiguration-und-projektdaten) lesen — nicht geschriebene Abschnitte und Werte erhalten ihren dokumentierten Default (Kap. 11); ein Abschnittskopf ohne Werte deklariert nichts. Auflösung: `deklariert ⇐ abgeleitet ⇐ Default`.
-2. **Vorarbeit ableiten:** `[project]` nicht deklariert → Source-Roots + Sprachen aus Manifesten (PSR-4, `Cargo.toml`, tsconfig, pyproject) und Endungs-Statistik (Kap. 7, „Projekt-Ableitung"). `--no-derive` überspringt Schritte 2 und 7.
+2. **Vorarbeit ableiten:** `[project]` nicht deklariert → Source-Roots + Sprachen aus Manifesten (PSR-4, `Cargo.toml`, tsconfig, pyproject) und Endungs-Statistik (Kap. 7, „Projekt-Ableitung").
 3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs.
 4. **Extrahieren:** je Datei der passende Scanner → Importe (`RawImport` mit `TargetSpec::Path` für relative Pfade oder `TargetSpec::Symbol` für Paket-/Namespace-Importe) **und** Deklarationen (`package`/`namespace` der Datei).
 5. **Auflösen (zweistufig):** Pfad-Specs gegen den Dateibaum; Symbol-Specs gegen die **Deklarations-Map** (Modulpfad → deklarierende Dateien, bei PHP ergänzt um das PSR-4-Mapping aus `composer.json`). Eindeutige Datei → Datei-Kante; nur Paket bekannt → Pseudoknoten `paket/*`; nichts gefunden → extern, Warnung, keine Kante.
@@ -368,15 +372,15 @@ Workspace-Crates.
 
 Die Analyse-Algorithmen (Kap. 7) laufen in-memory auf `petgraph` und lesen nicht aus der Datenbank. `archguard-store` spiegelt Graph und Analyseergebnisse in eine embedded Graph-Datenbank für Persistenz, Ad-hoc-Queries und Visualisierung.
 
-### 8.1 Backend: Ladybug/Kuzu-Lineage hinter einem Trait
+### 8.1 Backend: LadybugDB hinter einem Trait
 
-Backend ist die **Kuzu-Lineage** (embedded, spaltenorientiert, openCypher, MIT-Lizenz, kein Server-Prozess). Das Kuzu-Projekt wurde im Oktober 2025 archiviert. **[LadybugDB](https://ladybugdb.com/)** ist ein Fork mit kompatiblem Dateiformat und Cypher-Dialekt.
+Backend ist **[LadybugDB](https://ladybugdb.com/)** (embedded, spaltenorientiert, openCypher, MIT-Lizenz, kein Server-Prozess), der gepflegte Nachfolger des im Oktober 2025 archivierten Kuzu mit demselben Cypher-Dialekt. Das Speicherformat (Version 49 in 0.22.1) kann Dateien von Kuzu 0.11.3 (Version 39) nicht lesen.
 
 Umsetzung:
 
 1. **Trait statt Direktabhängigkeit:** `archguard-store` definiert `GraphStore { sync(graph, report), query(cypher, limit) }`. Das DB-Backend ist dahinter austauschbar (Ladybug-Rust-SDK, CozoDB, …), ohne dass Engine, CLI oder MCP sich ändern.
-2. **v1-Binding:** gepinntes `kuzu = "=0.11.3"`-Crate (letztes Release der Lineage, dateikompatibel mit Ladybug und den Explorer-UIs). Migration auf das Ladybug-Rust-SDK, sobald verfügbar, ist ein isolierter Task im Store-Crate.
-3. **Optionales Cargo-Feature `db`:** Das C++-Backend vergrößert Build-Zeit und Binary. Ohne `db` fehlen nur die `db`-Kommandos und `graph_query`; alle Analysen sind enthalten. Releases: `archguard` (slim) und `archguard-full`.
+2. **Binding:** gepinntes `lbug = "=0.22.1"`, das offizielle Rust-Crate von LadybugDB, gebaut aus den C++-Quellen im Crate (`LBUG_BUILD_FROM_SOURCE` in `.cargo/config.toml`; braucht CMake und OpenSSL 3). Eine vom früheren Backend `kuzu = "=0.11.3"` geschriebene `graph.db` lässt sich nicht öffnen: `.archguard/graph.db*` löschen und `archguard db sync` neu ausführen. Darin gespeicherte Trend-Snapshots gehen verloren.
+3. **Optionales Cargo-Feature `db`:** Das C++-Backend vergrößert Build-Zeit und Binary. Ohne `db` fehlen nur die `db`-Kommandos und `graph_query`; alle Analysen sind enthalten. Release-Archive enthalten den Build ohne `db` ([RELEASES.md](RELEASES.md)); `cargo build -p archguard-cli --features db` fügt es hinzu.
 4. **Read-only nach außen:** Query-Zugang (CLI/MCP) läuft durch einen Sanitizer — nur `MATCH`/`RETURN`, erzwungenes `LIMIT`. Schreiben kann ausschließlich `sync`.
 
 ### 8.2 DB-Schema
@@ -412,7 +416,7 @@ RETURN DISTINCT a.name LIMIT 25;
 | `archguard graph --format html` | **Architektur-Dashboard** als eine HTML-Datei: Explorer, Graph/Matrix und kontextbezogener Inspektor; explizite Simulation mit bestätigten Aktionen und JSON-Export. Browse-Klicks inspizieren nur. Farben kennzeichnen Zyklus-/Simulationsstatus, Breiten die vollständigen Importzahlen. Bedienung und Prüfgrenzen: [README_DE.md](README_DE.md#mit-einem-projekt-starten) | keiner (Datei öffnen) |
 | `archguard serve [PATH]` | Derselbe Viewer über lokalen HTTP-Server; gecachte Analyse wird auf Browser-Polls aktualisiert, geänderte Berichte laden automatisch neu. Keine statische Freigabe von Projektdateien; Details in README | URL öffnen |
 | `archguard cycles --format html` | Gleicher Viewer, startet mit Fokus auf Zyklen | keiner (Datei öffnen) |
-| Explorer-Web-UI (Kuzu/Ladybug Explorer) direkt auf `.archguard/graph.db` | Interaktive Cypher-Exploration mit Graph-Rendering | Docker-Container starten |
+| Explorer-Web-UI (Ladybug Explorer) direkt auf `.archguard/graph.db` | Interaktive Cypher-Exploration mit Graph-Rendering | Docker-Container starten |
 | [G.V()](https://gdotv.com/) auf `.archguard/graph.db` | Graph-IDE: Query-Editor, Layouts, Debugging | Desktop-App |
 | `archguard graph --format graphml\|gexf` → Gephi Lite / yEd | Große Graphen, Layout-Algorithmen, Cluster-Analysen | Import-Klick |
 
@@ -420,10 +424,11 @@ RETURN DISTINCT a.name LIMIT 25;
 
 ## 9. CLI-Spezifikation
 
-Ein Binary: `archguard`. Globale Flags: `--config <pfad>`, `--format text|json` (Default `text`), `--quiet`, `-v`, `--no-derive` (nur deklarierter Zustand + Defaults, keine Ableitung — für reproduktive Vergleiche).
+Ein Binary: `archguard`. Globale Flags: `--config <pfad>`, `--format` (Default `text`), `--quiet`, `-v`. Für reproduzierbare Vergleiche ohne Layer-Ableitung `derive_layers = false` in der Config setzen.
 
-Die aktuelle Befehlsübersicht mit ausführbaren Beispielen steht in
-[README_DE.md](README_DE.md).
+Der Befehlskatalog steht in [site/docs/cli.html](site/docs/cli.html) (englisch);
+die häufigen Befehle stehen in [README_DE.md](README_DE.md#häufige-arbeitsabläufe).
+`archguard --help` und `archguard <befehl> --help` zeigen die genauen Argumente.
 
 **Exit-Codes:** `0` ok · `1` Verletzungen gefunden (`check`, `cycles --fail-on-found`) · `2` Bedienfehler · `3` Analysefehler (z. B. Pfad nicht lesbar).
 
@@ -446,8 +451,9 @@ SDK: `rmcp` (offizielles Rust-SDK des Model Context Protocol). Jedes Tool hat ei
 
 ### 10.2 Tool-Schnittstelle
 
-Die vollständige aktuelle Tool-Liste, Anzahl und Antwortgrenzen stehen in der
-[README](README_DE.md#häufige-arbeitsabläufe). Die Befundabfragen verwenden
+Der Server meldet seine aktuellen Tools mit Schemas über MCP `tools/list`;
+die Definitionen liegen in `crates/archguard-mcp/src/`. Antwortgrenzen stehen
+in Kap. 10.1. Die Befundabfragen verwenden
 `generate_review` als gemeinsame Engine mit der CLI; sie erzeugen keine zweite
 Fehlerklassifikation und speichern weder Reviews noch Entscheidungen.
 
@@ -498,7 +504,7 @@ Schichtung") statt Layer-Verletzungen.
 
 **Korrektur pro Name:** ein deklarierter `[[layers]]`-Eintrag überschreibt den abgeleiteten
 gleichen Namens (`contains`, `may_depend_on`); weitere deklarierte kommen hinzu.
-`derive_layers = false` (Top-Level-Key, oder Flag `--no-derive`) schaltet die Layer-Ableitung
+`derive_layers = false` (Top-Level-Key) schaltet die Layer-Ableitung
 komplett ab — dann gilt ausschließlich das Geschriebene.
 
 **Beispiel — nur Abweichungen deklariert:**
@@ -563,7 +569,7 @@ Vorschläge.
 
 ## 12. Sicherungen der eigenen Architektur
 
-1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die acht Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind zwölf Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
+1. **Cargo-Metadaten-Allowlist:** `scripts/checks/check_architecture.py` prüft die neun Workspace-Crates und sämtliche Manifest-Abhängigkeiten gegen Kap. 3.2 — auch Build-, Dev-, optionale und Target-Einträge. Aktuell sind dreizehn Kanten erlaubt und vorhanden. Cargo allein verhindert keine unerlaubte azyklische Schichtkante.
 2. **Dependency Sink:** Gemeinsame Typen liegen in `archguard-core`. Die L1-Crates (`extract`, `analysis`, `report`, `store`) haben keine Abhängigkeiten untereinander; ein Typ, den mehrere L1-Crates brauchen, gehört nach `archguard-core`.
 3. **Quellscan in CI:** `archguard check .` läuft zusätzlich mit eigener `archguard.toml`. Er löst Importe zwischen den Workspace-Crates auf, aber nur die im gescannten Quellcode ohne Tests genutzten; die Manifest-Allowlist prüft zusätzlich deklarierte Build-, Dev-, optionale und zielspezifische Abhängigkeiten, deshalb ersetzt der Scan sie nicht.
 
@@ -589,7 +595,7 @@ Vorschläge.
 | Sync-Core, async nur im MCP-Crate | durchgängig async | Fachlogik ohne async; `tokio` nur im MCP-Crate |
 | Ein Binary mit `mcp`-Subkommando | zwei Binaries | Ein Release-Artefakt je Variante |
 | Zyklen-**Sampling** statt Vollaufzählung | Johnson vollständig | Begrenzte Antwortgröße und Laufzeit |
-| Embedded Graph-DB (Ladybug/Kuzu-Lineage) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher, Explorer-/G.V()-Visualisierung. Trait, Feature-Flag und gepinnte Version entkoppeln vom archivierten Kuzu-Projekt |
+| Embedded Graph-DB (LadybugDB) als Spiegel, nicht als Hot-Path | Serverbasierte Graphdatenbank, CozoDB | Kein Daemon, eine Datei, openCypher, Explorer-/G.V()-Visualisierung. Trait, Feature-Flag und gepinnte Version entkoppeln vom archivierten Kuzu-Projekt |
 | Analyse in-memory (petgraph), DB nur zur Exploration | Alles in der DB rechnen | SCC und Metriken sind O(V+E) in-memory ohne I/O; die DB dient Ad-hoc-Queries und Visualisierung |
 | Zustandsloser Zoom: Client sendet `expanded`-Liste mit | Server-Session je Client | MCP-Server ohne Session-Zustand; der HTML-Viewer hält seinen Zoom-Zustand selbst |
 | Hierarchie als Containment-Baum, Sichten = aggregierte Graphen | Separater Graph je Ebene | Ein Datenmodell; jede Zoomstufe ist ein `Graph`, Analysen und Formatter haben keinen ebenenspezifischen Code |
@@ -621,7 +627,8 @@ CLI, MCP und den HTML-Viewer. Analysegrenzen stehen in [README_DE.md](README_DE.
 | Review-Kennzahlen | KPI-Block `review_kpis` im Analyse-Payload (R23): Propagationskosten, SDP, Zonen, Verstricktheit, Hub-Gini, Schichtdrift, Schuldendichte, API-Oberfläche, Leaks, Risikolücken, Health; Definitionen und Grenzen unten | implementiert; Messgrenzen unten |
 | Entscheidungsregister | `archguard review-decision` / MCP `review_decisions`; Register `.archguard/reviews.json`, atomarer Upsert per Id (Format unten) | implementiert |
 | PR-Kommentar | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; Format unten | implementiert |
-| GUI-Anwendung / IDE-Plugins | nicht vorgesehen; stattdessen HTML-Viewer, Explorer-UI auf der DB, G.V() | — |
+| Nativer Desktop-Viewer | `archguard-desktop` (Slint) auf der Engine-API; Entscheidung und Umfang in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototyp |
+| IDE-Plugins | nicht vorgesehen; stattdessen HTML-Viewer, Explorer-UI auf der DB, G.V() | — |
 
 ### Review-Kennzahlen und ihre Grenzen
 
@@ -678,9 +685,21 @@ Erneutes Aufzeichnen derselben Id ersetzt den Eintrag (Upsert per Id).
 Geschrieben wird ausschließlich über die Engine
 (`archguard-engine/src/review_register.rs`): Serialisieren in eine temporäre
 Datei im selben Verzeichnis, dann Umbenennen — ein Crash hinterlässt kein
-halbgeschriebenes Register, und ein abgelehnter Body erreicht den Writer nie.
+halbgeschriebenes Register, und eine abgelehnte Eingabe erreicht den Writer nie.
 `accept-risk` ohne ADR-Link läuft in das `[review]`-Gate
 `adr_required_on_accept_risk` (CLI: Exit 2, MCP: Invalid Params).
+
+`archguard review --decisions DATEI` nutzt dasselbe Register. Dessen Einträge
+sind an einen Review-Befund gebunden: `id` und `finding_ref` sind die
+SHA-256-Id des Befunds, dazu `finding_fingerprint`, optional `expires_on`
+(einschließlicher UTC-Tag, Pflicht bei `accept-risk`) und `links`. Ein
+geänderter Fingerprint öffnet den Befund wieder; `fix` erscheint als geplant,
+`defer` als zurückgestellt. Die Importdatei ist der Review-Export des Viewers
+(`schema_version` 2, `review_revision`, `decision_revision`, `decisions[]`); sie
+ersetzt die review-gebundenen Einträge und lässt mit `review-decision` oder MCP
+erfasste Einträge stehen. Ältere Versionen hielten Review-Entscheidungen in
+`.archguard/review-decisions.json`: Lesen führt diese Datei mit, der nächste
+Schreibvorgang übernimmt ihre Einträge in `reviews.json` und löscht sie.
 
 Der **PR-Kommentar** (`archguard-report/src/pr_comment.rs`) rendert fest
 definierte Abschnitte: `## Architektur-Review`, `### Zusammenfassung`
@@ -692,15 +711,13 @@ Reporteintrag mit Priorität Hoch oder Mittel, keyed by node name; der Report
 führt keine Zeilennummern je Befund, also werden keine erfunden. Alle Listen
 sortiert gerendert, zwei Läufe ergeben dasselbe Markdown.
 
-Der **Dashboard-Payload** bettet in den HTML-Bericht
-(`archguard-report/src/html.rs`) die Felder `reviewKpis`, `reviewRegister`,
-`reviewHistory` und `prComment` ein. Jedes ist `null`, wenn das Stück fehlt —
-kein KPI-Block (etwa bei einem Graphen aus dem Bestand vor der KPI-Pipeline),
-kein Register, keine Historie, keine gespeicherte `pr-comment.md` — und die
-Panels zeigen dann „not measured“ statt 0. Der Kompatibilitätsendpunkt
-`GET /api/review-dashboard` liefert `review_kpis` und `register` aus einem
-frischen Lauf. KPI-Karten stehen auf Start; Dashboard und Review sind keine
-eigenen Viewer-Tabs mehr; `POST /api/decisions` schreibt über denselben atomaren
-Register-Schreiber wie CLI und MCP.
+Der HTML-Bericht (`archguard-report/src/html.rs`) bettet `reviewKpis` und
+`reviewHistory` für die KPI-Karten, das A/I-Zonendiagramm und den
+Gesundheitsverlauf auf Start ein. Jedes ist `null`, wenn das Stück fehlt — kein
+KPI-Block (etwa bei einem Graphen aus dem Bestand vor der KPI-Pipeline) oder
+keine Snapshot-Historie — und die Panels zeigen dann „not measured“ statt 0.
+Der Viewer hat keinen Dashboard-Tab und keinen Review-Tab-Knopf;
+`archguard review --format html` öffnet die Review-Ansicht direkt.
+Entscheidungen schreiben nur CLI und MCP; `serve` hat keinen Schreibendpunkt.
 
 ---

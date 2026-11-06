@@ -1,0 +1,266 @@
+// Document tabs (one per open project), the monorepo's Projects menu and
+// the start screen without a document. Filled from src/documents_ui.rs.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export struct DocItem {
+    name: string,
+    path: string,
+    loading: bool,
+    failed: bool,
+    // Has unsaved changes: the close button shows a dot until hovered.
+    dirty: bool,
+}
+
+// An entry of "Open recent".
+export struct RecentItem {
+    name: string,
+    path: string,
+}
+
+export struct SubProjectItem {
+    name: string,
+    kind: string,
+    path: string,
+}
+
+component DocTab inherits Rectangle {
+    in property <DocItem> item;
+    in property <bool> active;
+    callback select();
+    callback close();
+    height: 30px;
+    width: row.preferred-width;
+    border-radius: 7px;
+    background: active ? Theme.bg : touch.has-hover ? Theme.panel : transparent;
+    border-width: active ? 1px : 0px;
+    border-color: Theme.border;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+    }
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 4px;
+        spacing: 7px;
+        Rectangle {
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: root.item.failed ? Theme.danger : root.item.loading ? Theme.warning : root.active ? Theme.accent : Theme.dim;
+        }
+        Text {
+            text: root.item.name;
+            color: root.active ? Theme.text : Theme.muted;
+            font-size: 13px;
+            font-weight: root.active ? 650 : 450;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: 200px;
+        }
+        Rectangle {
+            width: 22px;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: close-touch.has-hover ? Theme.panel-2 : transparent;
+            Icon {
+                visible: !root.item.dirty || close-touch.has-hover;
+                icon: Icons.close;
+                tint: close-touch.has-hover ? Theme.text : Theme.muted;
+                width: 12px;
+                height: 12px;
+            }
+            Rectangle {
+                visible: root.item.dirty && !close-touch.has-hover;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.text;
+            }
+            close-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.close(); }
+            }
+        }
+    }
+}
+
+// The strip at the very top of the window.
+export component DocumentStrip inherits Rectangle {
+    in property <[DocItem]> docs;
+    in property <int> active;
+    callback select(int);
+    callback close(int);
+    callback add();
+    height: 38px;
+    background: Theme.panel-2;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 4px;
+        alignment: start;
+        for d[i] in root.docs: DocTab {
+            y: (parent.height - self.height) / 2;
+            item: d;
+            active: i == root.active;
+            select => { root.select(i); }
+            close => { root.close(i); }
+        }
+        Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.plus;
+            clicked => { root.add(); }
+        }
+    }
+}
+
+// Sub-projects of a monorepo; choosing one opens it as a document.
+export component ProjectsMenu inherits Rectangle {
+    in property <[SubProjectItem]> items;
+    in property <length> menu-x;
+    in property <length> menu-y;
+    callback chosen(int);
+    callback dismiss();
+    TouchArea {
+        clicked => { root.dismiss(); }
+    }
+    Rectangle {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 460px;
+        height: min(44px + root.items.length * 44px, root.height - root.menu-y - 24px);
+        background: Theme.panel;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Theme.shadow;
+        // Clicks inside the menu do not dismiss it.
+        TouchArea { }
+        VerticalLayout {
+            padding: 8px;
+            spacing: 2px;
+            Text {
+                height: 26px;
+                text: @tr("Build units in this repository ({})", Fmt.int(root.items.length));
+                color: Theme.muted;
+                font-size: 12px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            ListView {
+                for p[i] in root.items: Rectangle {
+                    height: 44px;
+                    border-radius: 6px;
+                    background: pt.has-hover ? Theme.panel-2 : transparent;
+                    pt := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.chosen(i); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        Icon {
+                            icon: Icons.package;
+                            tint: Theme.accent;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text { text: p.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                            Text { text: p.path; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                        }
+                        Text { text: p.kind; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Shown when no document is open, with the recent projects.
+export component EmptyStart inherits Rectangle {
+    in property <[RecentItem]> recent;
+    callback open-project();
+    callback open-recent(int);
+    background: Theme.bg;
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        Text {
+            text: @tr("No project open");
+            color: Theme.text;
+            font-size: Theme.font-page;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: @tr("Open a project folder to analyze its architecture.");
+            color: Theme.muted;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                primary: true;
+                icon: Icons.folder;
+                text: @tr("Open project");
+                clicked => { root.open-project(); }
+            }
+        }
+        if root.recent.length > 0: HorizontalLayout {
+            alignment: center;
+            padding-top: 14px;
+            VerticalLayout {
+                width: 460px;
+                spacing: 2px;
+                Text {
+                    height: 26px;
+                    text: @tr("Recent projects");
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                for r[i] in root.recent: Rectangle {
+                    height: 44px;
+                    border-radius: 6px;
+                    background: rt.has-hover ? Theme.panel-2 : transparent;
+                    rt := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-recent(i); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        Icon {
+                            icon: Icons.folder;
+                            tint: Theme.priority;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text { text: r.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                            Text { text: r.path; color: Theme.muted; font-size: 11px; font-family: "Menlo"; overflow: elide; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

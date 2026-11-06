@@ -1,7 +1,7 @@
 'use strict';
-// Review Dashboard KPI cards (R37). Renders the headline KPIs of the
+// Start KPI cards (R37). Renders the headline KPIs of the
 // ReviewKpis document (archguard-core's review_kpi.rs) as a card grid into
-// #dashboard-kpis. Field names below are the embedded JSON keys of that
+// the Start overview (viewer_development.js). Field names below are the embedded JSON keys of that
 // struct: propagation_cost, sdp_violations, tangledness, hub_gini, debt,
 // leaks, risk_gaps, health. Honesty rule: a null KPI means NOT MEASURED —
 // the card shows that text, never an invented zero. Cards with a real
@@ -9,7 +9,7 @@
 // use (showTab('graph') + revealNode, viewer.js); cards without one stay
 // plain. Read-only: this panel never edits code or decisions.
 
-// Shared with viewer_dash_zones.js: empties a dashboard panel down to its
+// Shared with viewer_dash_zones.js: empties a KPI panel down to its
 // static <h3> heading so re-renders (tab switch, language change) replace
 // the dynamic content without duplicating it.
 function dashClearPanel(container){for(const child of [...container.children])if(child.tagName!=='H3')child.remove();}

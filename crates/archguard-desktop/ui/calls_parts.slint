@@ -1,0 +1,68 @@
+// Small building blocks of the Calls tab (the web's .explorer-row,
+// .badge, <details> and the column frames).
+import { Theme } from "theme.slint";
+
+// A column of the tab (.calls-outline / .calls-master / .calls-detail).
+export component CallsColumn inherits Rectangle {
+    background: Theme.panel;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+}
+
+export component Muted inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+    wrap: word-wrap;
+}
+
+// A clickable card row (.explorer-row.call-relation).
+export component Card inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: selected ? Theme.accent : Theme.border;
+    background: touch.has-hover ? Theme.panel-2 : Theme.panel;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    if selected: Rectangle {
+        x: 0;
+        width: 3px;
+        background: Theme.accent;
+        border-radius: 2px;
+    }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 3px;
+        @children
+    }
+}
+
+// A full-width left-aligned button (.call-cycle-edge / .call-cycle-member).
+export component LineButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> pressed-state;
+    callback clicked();
+    height: label.preferred-height + 14px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: pressed-state ? Theme.accent : Theme.border;
+    background: touch.has-hover ? Theme.panel-2 : Theme.panel;
+    label := Text {
+        x: 10px;
+        width: root.width - 20px;
+        text: root.text;
+        color: root.pressed-state ? Theme.accent : Theme.text;
+        font-size: 12px;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

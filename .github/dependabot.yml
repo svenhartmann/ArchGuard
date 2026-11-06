@@ -12,8 +12,6 @@ updates:
     ignore:
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
-      # Must match the cxx version kuzu pins; see crates/archguard-store/Cargo.toml.
-      - dependency-name: cxx-build
   - package-ecosystem: github-actions
     directory: /
     schedule:

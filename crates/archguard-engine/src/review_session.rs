@@ -4,8 +4,11 @@ use crate::comparison::{self, Comparison};
 use crate::config::LoadedConfig;
 use crate::effective::AnalysisRun;
 use crate::evidence_import as evidence;
+pub use crate::review_register::ReviewDecisionImport;
+use crate::review_register::{decisions_fingerprint, review_disposition as disposition};
 use archguard_core::{
-    ArchguardError, Finding, Graph, NodeId, NodeKind, ReviewSources, ServiceTopology,
+    ArchguardError, DecisionKind, Finding, Graph, NodeId, NodeKind, ReviewDecision, ReviewSources,
+    ServiceTopology,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -15,7 +18,8 @@ use std::{
 };
 
 const LATEST: &str = ".archguard/review.json";
-const DECISIONS: &str = ".archguard/review-decisions.json";
+/// Saved review reports with the decision layout of the register.
+const REPORT_SCHEMA: u32 = 2;
 const MAX_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,27 +36,6 @@ pub struct ReviewFinding {
     pub suggested_owners: Vec<String>,
     pub disposition: String,
     pub decision: Option<ReviewDecision>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewDecision {
-    pub finding_id: String,
-    pub finding_fingerprint: String,
-    pub status: String,
-    pub owner: String,
-    pub reason: String,
-    pub expires_on: Option<String>,
-    #[serde(default)]
-    pub links: Vec<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewDecisions {
-    pub schema_version: u32,
-    pub review_revision: String,
-    #[serde(default)]
-    pub decision_revision: Option<String>,
-    pub decisions: Vec<ReviewDecision>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewReport {
@@ -77,7 +60,8 @@ pub struct ReviewReport {
     pub findings: Vec<ReviewFinding>,
     pub evidence: Vec<Value>,
     pub gaps: Vec<Value>,
-    pub decisions: ReviewDecisions,
+    /// Register entries bound to review findings (`finding_fingerprint`).
+    pub decisions: Vec<ReviewDecision>,
     pub unmatched_decisions: Vec<ReviewDecision>,
     pub architecture: Value,
     pub limitations: Vec<String>,
@@ -99,18 +83,12 @@ fn error(message: impl std::fmt::Display) -> ArchguardError {
 fn hash(value: &impl Serialize) -> Result<String, ArchguardError> {
     Ok(evidence::hash(&serde_json::to_vec(value).map_err(error)?))
 }
-fn snapshot_fingerprint(root: &Path, name: &str) -> String {
-    match crate::project_files::read_repo_file(root, Path::new(name), MAX_BYTES) {
-        Ok(bytes) => evidence::hash(&bytes),
-        Err(e) => format!("unavailable:{:?}", e.kind()),
-    }
-}
 /// Expiry can change the live review even when no file was edited.
 pub fn review_session_fingerprint(root: &Path, now: u64) -> String {
     format!(
         "{}:{}:{}",
-        snapshot_fingerprint(root, LATEST),
-        snapshot_fingerprint(root, DECISIONS),
+        evidence::file_fingerprint(root, LATEST, MAX_BYTES),
+        decisions_fingerprint(root),
         now / 86_400
     )
 }
@@ -124,13 +102,16 @@ fn inputs(
     let repository = crate::ownership::repository_root(root)?;
     let mut ownership = BTreeMap::new();
     for path in [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"] {
-        ownership.insert(path, snapshot_fingerprint(&repository, path));
+        ownership.insert(
+            path,
+            evidence::file_fingerprint(&repository, path, MAX_BYTES),
+        );
     }
     hash(&json!({
         "definition":"architecture-review/v3", "version":env!("CARGO_PKG_VERSION"),
         "source":source, "ownership":ownership, "services":services,
         "security":crate::security::security_fingerprint(root,&loaded.config)?,
-        "security_snapshot":snapshot_fingerprint(root,".archguard/security.json"),
+        "security_snapshot":evidence::file_fingerprint(root, ".archguard/security.json", MAX_BYTES),
         "coverage":crate::test_coverage::test_coverage_fingerprint(root),
         "quality":crate::quality_findings::quality_findings_fingerprint(root),
         "tests":crate::test_evidence::test_evidence_fingerprint(root),
@@ -159,7 +140,7 @@ pub fn generate_review(
     let declared = crate::config::load_config(config_path, &root)?;
     let request = ReviewRequest {
         before: inputs(&root, &declared, base)?,
-        decision_fingerprint: snapshot_fingerprint(&root, DECISIONS),
+        decision_fingerprint: decisions_fingerprint(&root),
         root,
         config_path,
         base,
@@ -203,7 +184,7 @@ impl ReviewRequest<'_> {
     fn ensure_unchanged(&self) -> Result<(), ArchguardError> {
         let declared = crate::config::load_config(self.config_path, &self.root)?;
         if self.before != inputs(&self.root, &declared, self.base)?
-            || self.decision_fingerprint != snapshot_fingerprint(&self.root, DECISIONS)
+            || self.decision_fingerprint != decisions_fingerprint(&self.root)
         {
             return Err(error(
                 "inputs changed during review; retry before recording decisions",
@@ -377,7 +358,7 @@ impl<'a> ReviewBuilder<'a> {
     fn assemble(
         request: &'a ReviewRequest<'a>,
         run: &'a AnalysisRun,
-        decisions: ReviewDecisions,
+        decisions: Vec<ReviewDecision>,
     ) -> Result<ReviewReport, ArchguardError> {
         let (root, base) = (request.root.as_path(), request.base);
         let effective = run.effective_config();
@@ -413,7 +394,7 @@ impl<'a> ReviewBuilder<'a> {
                 config_path: selected_config.clone(),
                 declared_inputs: request.before.clone(),
             }),
-            schema_version: 1,
+            schema_version: REPORT_SCHEMA,
             revision,
             input_fingerprint,
             decision_fingerprint: request.decision_fingerprint.clone(),
@@ -461,7 +442,10 @@ impl<'a> ReviewBuilder<'a> {
         let mut source_hashes = BTreeMap::new();
         for source in &sources.files {
             if let (Some(path), Some(name)) = (&source.path, names.get(&source.node_id)) {
-                source_hashes.insert((*name).to_owned(), snapshot_fingerprint(root, path));
+                source_hashes.insert(
+                    (*name).to_owned(),
+                    evidence::file_fingerprint(root, path, MAX_BYTES),
+                );
             }
         }
         Ok(Self {
@@ -809,48 +793,41 @@ fn affected_files(graph: &Graph, targets: &BTreeSet<String>) -> BTreeSet<String>
         .map(|n| n.name.clone())
         .collect()
 }
-fn load_decisions(root: &Path) -> Result<ReviewDecisions, ArchguardError> {
-    match crate::project_files::read_repo_file(root, Path::new(DECISIONS), MAX_BYTES) {
-        Ok(bytes) => {
-            let document: ReviewDecisions = serde_json::from_slice(&bytes).map_err(error)?;
-            validate_decisions(&document)?;
-            Ok(document)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ReviewDecisions {
-            schema_version: 1,
-            review_revision: String::new(),
-            decision_revision: None,
-            decisions: vec![],
-        }),
-        Err(e) => Err(e.into()),
-    }
+/// Register entries bound to review findings; other entries (recorded with
+/// `review-decision` or MCP for report findings) are not review decisions.
+fn load_decisions(root: &Path) -> Result<Vec<ReviewDecision>, ArchguardError> {
+    let bound: Vec<_> = crate::review_register::load_register(root)?
+        .decisions
+        .into_iter()
+        .filter(|d| d.finding_fingerprint.is_some())
+        .collect();
+    validate_decisions(&bound)?;
+    Ok(bound)
 }
-fn validate_decisions(document: &ReviewDecisions) -> Result<(), ArchguardError> {
-    if document.schema_version != 1
-        || !evidence::valid_hash(&document.review_revision)
-        || document.decisions.len() > 10_000
-    {
-        return Err(error(
-            "invalid decision document version, review revision or record count",
-        ));
+fn validate_decisions(decisions: &[ReviewDecision]) -> Result<(), ArchguardError> {
+    if decisions.len() > 10_000 {
+        return Err(error("too many review decisions"));
     }
     let mut ids = BTreeSet::new();
-    for d in &document.decisions {
-        if !evidence::valid_hash(&d.finding_id)
-            || !evidence::valid_hash(&d.finding_fingerprint)
-            || !ids.insert(&d.finding_id)
-        {
-            return Err(error("decision identities must be unique SHA-256 values"));
-        }
-        if !matches!(d.status.as_str(), "open" | "planned" | "accepted_risk")
-            || d.owner.trim().is_empty()
-            || d.owner.len() > 256
-            || d.reason.trim().is_empty()
-            || d.reason.len() > 8192
+    for d in decisions {
+        if !evidence::valid_hash(&d.finding_ref)
+            || d.id != d.finding_ref
+            || !d
+                .finding_fingerprint
+                .as_deref()
+                .is_some_and(evidence::valid_hash)
+            || !ids.insert(&d.finding_ref)
         {
             return Err(error(
-                "every decision needs open/planned/accepted_risk status, owner and reason",
+                "decision identities must be unique SHA-256 finding values with a fingerprint",
             ));
+        }
+        if d.author.trim().is_empty()
+            || d.author.len() > 256
+            || d.note.trim().is_empty()
+            || d.note.len() > 8192
+        {
+            return Err(error("every decision needs an author and a note"));
         }
         if d.links.len() > 20
             || d.links
@@ -859,9 +836,9 @@ fn validate_decisions(document: &ReviewDecisions) -> Result<(), ArchguardError> 
         {
             return Err(error("decision links exceed the supported size"));
         }
-        if d.status == "accepted_risk" && d.expires_on.is_none() {
+        if d.decision == DecisionKind::AcceptRisk && d.expires_on.is_none() {
             return Err(error(
-                "accepted risk requires expires_on (YYYY-MM-DD, inclusive UTC date)",
+                "accept-risk requires expires_on (YYYY-MM-DD, inclusive UTC date)",
             ));
         }
         if let Some(date) = &d.expires_on {
@@ -873,9 +850,8 @@ fn validate_decisions(document: &ReviewDecisions) -> Result<(), ArchguardError> 
 fn evaluate_decisions(report: &mut ReviewReport, now: u64) {
     let by_id: BTreeMap<_, _> = report
         .decisions
-        .decisions
         .iter()
-        .map(|d| (d.finding_id.as_str(), d))
+        .map(|d| (d.finding_ref.as_str(), d))
         .collect();
     let mut observed = BTreeSet::new();
     for f in &mut report.findings {
@@ -884,7 +860,7 @@ fn evaluate_decisions(report: &mut ReviewReport, now: u64) {
         f.disposition = if f.change == "not_observed_in_current" {
             "not_observed"
         } else if let Some(d) = &f.decision {
-            if d.finding_fingerprint != f.fingerprint {
+            if d.finding_fingerprint.as_deref() != Some(f.fingerprint.as_str()) {
                 "changed"
             } else if d
                 .expires_on
@@ -893,7 +869,7 @@ fn evaluate_decisions(report: &mut ReviewReport, now: u64) {
             {
                 "expired"
             } else {
-                &d.status
+                disposition(d.decision)
             }
         } else {
             "open"
@@ -902,9 +878,8 @@ fn evaluate_decisions(report: &mut ReviewReport, now: u64) {
     }
     report.unmatched_decisions = report
         .decisions
-        .decisions
         .iter()
-        .filter(|d| !observed.contains(&d.finding_id))
+        .filter(|d| !observed.contains(&d.finding_ref))
         .cloned()
         .collect();
     let open = report
@@ -989,57 +964,52 @@ pub fn apply_review_decisions(
     if bytes.len() as u64 > MAX_BYTES {
         return Err(error("decision document exceeds 32 MiB"));
     }
-    let document: ReviewDecisions = serde_json::from_slice(bytes).map_err(error)?;
-    validate_decisions(&document)?;
-    if document.review_revision != report.revision {
-        return Err(error(
-            "decision document belongs to a different review revision; regenerate and review the current evidence",
-        ));
-    }
-    if document.decision_revision.as_deref() != Some(report.decision_fingerprint.as_str())
-        && (!report
-            .decision_fingerprint
-            .starts_with("unavailable:NotFound")
-            || document.decision_revision.is_some())
-    {
-        return Err(error(
-            "decision export is based on an older decision revision; export again from the current review",
-        ));
-    }
-    let findings: BTreeMap<_, _> = report.findings.iter().map(|f| (f.id.as_str(), f)).collect();
-    for d in &document.decisions {
-        let unchanged = report.decisions.decisions.contains(d);
-        if let Some(f) = findings.get(d.finding_id.as_str()) {
-            if !unchanged
-                && (d.finding_fingerprint != f.fingerprint
-                    || f.disposition == "not_observed"
-                    || d.expires_on
-                        .as_ref()
-                        .is_some_and(|s| expiry_day(s).is_ok_and(|day| now / 86_400 > day)))
-            {
-                return Err(error(
-                    "new decisions require current observed evidence and an unexpired date",
-                ));
-            }
-        } else if !unchanged {
-            return Err(error("decision refers to an unknown finding"));
-        }
-    }
-    if snapshot_fingerprint(root, DECISIONS) != report.decision_fingerprint {
+    let mut document: ReviewDecisionImport = serde_json::from_slice(bytes).map_err(error)?;
+    validate_decisions(&document.decisions)?;
+    document.check(&report.revision, &report.decision_fingerprint)?;
+    stamp_and_check_new_decisions(report, &mut document.decisions, now)?;
+    if decisions_fingerprint(root) != report.decision_fingerprint {
         return Err(error(
             "decisions changed since review generation; reload before importing",
         ));
     }
-    let encoded = serde_json::to_vec_pretty(&document).map_err(error)?;
-    crate::project_files::write_project_file(
-        root,
-        Path::new("review-decisions.json"),
-        &encoded,
-        true,
-    )?;
-    report.decision_fingerprint = evidence::hash(&encoded);
-    report.decisions = document;
+    crate::review_register::replace_review_decisions(root, &document.decisions)?;
+    report.decision_fingerprint = decisions_fingerprint(root);
+    report.decisions = document.decisions;
     evaluate_decisions(report, now);
+    Ok(())
+}
+/// New or edited decisions need current observed evidence and an unexpired
+/// date; they get the import time when the export carries no timestamp.
+fn stamp_and_check_new_decisions(
+    report: &ReviewReport,
+    decisions: &mut [ReviewDecision],
+    now: u64,
+) -> Result<(), ArchguardError> {
+    let findings: BTreeMap<_, _> = report.findings.iter().map(|f| (f.id.as_str(), f)).collect();
+    for d in decisions
+        .iter_mut()
+        .filter(|d| !report.decisions.contains(d))
+    {
+        let Some(f) = findings.get(d.finding_ref.as_str()) else {
+            return Err(error("decision refers to an unknown finding"));
+        };
+        let expired = d
+            .expires_on
+            .as_ref()
+            .is_some_and(|s| expiry_day(s).is_ok_and(|day| now / 86_400 > day));
+        if d.finding_fingerprint.as_deref() != Some(f.fingerprint.as_str())
+            || f.disposition == "not_observed"
+            || expired
+        {
+            return Err(error(
+                "new decisions require current observed evidence and an unexpired date",
+            ));
+        }
+        if d.ts.is_empty() {
+            d.ts = crate::review_register::iso_from_unix(now);
+        }
+    }
     Ok(())
 }
 pub fn save_review(root: &Path, report: &ReviewReport) -> Result<(), ArchguardError> {
@@ -1081,12 +1051,29 @@ fn assert_current(root: &Path, report: &ReviewReport) -> Result<(), ArchguardErr
             "source, policy, base reference or evidence changed after review generation",
         ));
     }
-    if snapshot_fingerprint(&root, DECISIONS) != report.decision_fingerprint {
+    if decisions_fingerprint(&root) != report.decision_fingerprint {
         return Err(error(
             "decisions changed since review generation; reload before recording",
         ));
     }
     Ok(())
+}
+/// A saved report of the current layout with a valid identity.
+fn parse_saved_review(bytes: &[u8]) -> Result<ReviewReport, ArchguardError> {
+    let value: Value = serde_json::from_slice(bytes).map_err(error)?;
+    if value["schema_version"] == 1 {
+        return Err(error(
+            "saved review predates the shared decision register; generate a new review",
+        ));
+    }
+    let report: ReviewReport = serde_json::from_value(value).map_err(error)?;
+    if report.schema_version != REPORT_SCHEMA
+        || !evidence::valid_hash(&report.revision)
+        || !evidence::valid_hash(&report.input_fingerprint)
+    {
+        return Err(error("invalid saved review identity or version"));
+    }
+    Ok(report)
 }
 /// The supplied configuration must be the effective current analysis config.
 pub fn read_saved_review(root: &Path, loaded: &LoadedConfig, now: u64) -> SavedReview {
@@ -1102,13 +1089,7 @@ pub fn read_saved_review(root: &Path, loaded: &LoadedConfig, now: u64) -> SavedR
             }
             Err(e) => return Err(e.into()),
         };
-        let report: ReviewReport = serde_json::from_slice(&bytes).map_err(error)?;
-        if report.schema_version != 1
-            || !evidence::valid_hash(&report.revision)
-            || !evidence::valid_hash(&report.input_fingerprint)
-        {
-            return Err(error("invalid saved review identity or version"));
-        }
+        let report = parse_saved_review(&bytes)?;
         let root = root.canonicalize()?;
         let mut diagnostics = vec![];
         if root.to_string_lossy() != report.project_root {
@@ -1121,7 +1102,7 @@ pub fn read_saved_review(root: &Path, loaded: &LoadedConfig, now: u64) -> SavedR
             ),
             Err(e) => diagnostics.push(format!("Current inputs could not be verified: {e}")),
         }
-        if snapshot_fingerprint(&root, DECISIONS) != report.decision_fingerprint {
+        if decisions_fingerprint(&root) != report.decision_fingerprint {
             diagnostics.push("Decisions changed since this review.".into());
         }
         if report.findings.iter().any(|f| {
