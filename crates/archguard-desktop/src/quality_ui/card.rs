@@ -83,6 +83,25 @@ pub fn short(text: &str) -> String {
     }
 }
 
+impl Card {
+    /// The card as one tooltip text: paragraphs apart, a `<details>`
+    /// summary above its lines; buttons and bars have no text to show.
+    pub fn plain_text(&self) -> String {
+        let paragraph = |i: &Item| match i.kind {
+            Kind::Locate | Kind::Bar | Kind::Metrics | Kind::Groups => None,
+            Kind::Details => Some(
+                std::iter::once(i.text.as_str())
+                    .chain(i.lines.iter().map(|l| l.text.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => Some(i.text.clone()),
+        };
+        let parts: Vec<String> = self.items.iter().filter_map(paragraph).collect();
+        parts.join("\n\n")
+    }
+}
+
 impl Line {
     pub fn new(kind: Kind, text: impl AsRef<str>) -> Self {
         Line {
@@ -178,4 +197,31 @@ pub fn locate(lang: &Texts, nodes: &BTreeSet<String>, node: Option<&str>) -> Opt
         text: lang.t("Locate in graph").into(),
         node: node.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The status line's "?" shows the notes as one tooltip text, as the
+    /// web's `bindExplanation` joins `#engineering-note`'s children.
+    #[test]
+    fn plain_text_joins_paragraphs_and_keeps_details_lines() {
+        let lang = Texts::default();
+        let nodes = BTreeSet::from(["a".to_string()]);
+        let mut b = Builder::new(&lang, &nodes, "");
+        b.push(Kind::Muted, "Original analysis.")
+            .push(Kind::Text, "Classes × metrics.")
+            .details(
+                "Coverage",
+                vec![Line::new(Kind::Muted, "one"), Line::new(Kind::Text, "two")],
+            )
+            .push(Kind::Pre, "archguard quality import")
+            .locate(Some("a"))
+            .bar(0.5);
+        assert_eq!(
+            b.done().plain_text(),
+            "Original analysis.\n\nClasses × metrics.\n\nCoverage\none\ntwo\n\narchguard quality import"
+        );
+    }
 }

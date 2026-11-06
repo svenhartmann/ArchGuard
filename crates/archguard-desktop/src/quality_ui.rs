@@ -228,8 +228,6 @@ pub fn push(ui: &AppWindow, s: &mut QualityState) {
 }
 
 fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
-    let mut notes = card_model(p.notes);
-    adopt_card(&old.notes, &mut notes);
     QualityModel {
         loading: p.loading,
         section: p.section as i32,
@@ -240,7 +238,7 @@ fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
         status: p.status.into(),
         status_slot: p.status_slot,
         status_detail: p.status_detail.into(),
-        notes,
+        help: p.notes.plain_text().into(),
         heatmap: p.heatmap,
         filter: p.filter as i32,
         sort: p.sort as i32,

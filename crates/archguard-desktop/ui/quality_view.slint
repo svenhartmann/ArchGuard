@@ -3,7 +3,7 @@
 // src/quality_ui.rs; the view only lays them out.
 import { ComboBox, ScrollView, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState } from "widgets.slint";
+import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState, HelpTip, TipArea } from "widgets.slint";
 import { QualityCard, QualityCardView, QualityHeatRow } from "quality_cards.slint";
 
 export { QualityCard, QualityHeatRow }
@@ -19,7 +19,8 @@ export struct QualityModel {
     status: string,
     status-slot: int,
     status-detail: string,
-    notes: QualityCard,
+    // Section notes behind the status line's "?", as one tooltip text.
+    help: string,
     heatmap: bool,
     filter: int,
     sort: int,
@@ -58,19 +59,6 @@ component Caption inherits Text {
     font-size: Theme.field-label;
 }
 
-// The web's .context-help-trigger: a round "?".
-component HelpButton inherits Rectangle {
-    callback clicked;
-    width: 26px;
-    height: 26px;
-    border-radius: 13px;
-    border-width: 1px;
-    border-color: Theme.border;
-    background: touch.has-hover ? Theme.panel-2 : transparent;
-    Text { text: "?"; color: Theme.text; font-size: 12px; font-weight: 700; }
-    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-}
-
 export component QualityView inherits Rectangle {
     callback open-web();
     // Tabs must not change the window's preferred size; a split pane can
@@ -84,12 +72,6 @@ export component QualityView inherits Rectangle {
     // A split pane: the search moves below view and scope.
     property <bool> narrow: root.width < 620px;
     property <bool> picker;
-    property <bool> help;
-    property <bool> legend-help;
-    // Hover text and where to show it (relative to this view).
-    property <string> tip;
-    property <length> tip-x;
-    property <length> tip-y;
 
     VerticalLayout {
         padding-left: Theme.page-pad;
@@ -228,12 +210,7 @@ export component QualityView inherits Rectangle {
             alignment: start;
             spacing: 10px;
             StatusLine { status: root.m.status-slot; label: root.m.status; detail: root.m.status-detail; }
-            HelpButton { clicked => { root.help = !root.help; } }
-        }
-
-        if root.help: QualityCardView {
-            card: root.m.notes;
-            locate(n) => { QualityData.locate(n); }
+            HelpTip { size: 24px; y: (parent.height - self.height) / 2; tip: root.m.help; }
         }
 
         scroll := ScrollView {
@@ -283,15 +260,12 @@ export component QualityView inherits Rectangle {
                         RatingChip { rating: 3; text: @tr("High"); font: 11px; width: self.label-w + 16px; height: 24px; }
                         RatingChip { rating: 0; text: @tr("Unknown"); font: 11px; width: self.label-w + 16px; height: 24px; }
                         RatingChip { rating: 4; text: @tr("Informational"); font: 11px; width: self.label-w + 16px; height: 24px; }
-                        HelpButton { y: (parent.height - self.height) / 2 + 9px; clicked => { root.legend-help = !root.legend-help; } }
+                        HelpTip {
+                            size: 24px;
+                            y: (parent.height - self.height) / 2 + 9px;
+                            tip: @tr("Relative comparison within the original project and source language: low below the 50% rank, elevated from 50%, high from 80%. Equal values share a rank; fewer than five measurements or a constant nonzero population are neutral. Zero and one connected LCOM4 group are low. NOC is informational. Colors guide review; they do not prove class quality.");
+                        }
                     }
-                }
-
-                if root.legend-help && root.m.heatmap: Text {
-                    text: @tr("Relative comparison within the original project and source language: low below the 50% rank, elevated from 50%, high from 80%. Equal values share a rank; fewer than five measurements or a constant nonzero population are neutral. Zero and one connected LCOM4 group are low. NOC is informational. Colors guide review; they do not prove class quality.");
-                    color: Theme.muted;
-                    font-size: 12px;
-                    wrap: word-wrap;
                 }
 
                 for d in root.m.detail: VerticalLayout {
@@ -350,17 +324,7 @@ export component QualityView inherits Rectangle {
                                 y: (parent.height - self.height) / 2;
                             }
                         }
-                        head-touch := TouchArea {
-                            changed has-hover => {
-                                if self.has-hover {
-                                    root.tip = root.m.heat-help[j];
-                                    root.tip-x = self.absolute-position.x - root.absolute-position.x;
-                                    root.tip-y = self.absolute-position.y - root.absolute-position.y + 24px;
-                                } else {
-                                    root.tip = "";
-                                }
-                            }
-                        }
+                        TipArea { tip: root.m.heat-help[j]; }
                     }
                     for row[r] in root.m.heat: Rectangle {
                         y: 36px + r * 47px;
@@ -383,18 +347,11 @@ export component QualityView inherits Rectangle {
                                 overflow: elide;
                                 vertical-alignment: center;
                             }
-                            name-touch := TouchArea {
+                            TipArea {
+                                tip: row.class-id + " · " + row.file;
+                                pin-on-click: false;
                                 mouse-cursor: pointer;
-                                clicked => { QualityData.select-class(row.class-id); }
-                                changed has-hover => {
-                                    if self.has-hover {
-                                        root.tip = row.class-id + " · " + row.file;
-                                        root.tip-x = self.absolute-position.x - root.absolute-position.x;
-                                        root.tip-y = self.absolute-position.y - root.absolute-position.y + 36px;
-                                    } else {
-                                        root.tip = "";
-                                    }
-                                }
+                                activated => { QualityData.select-class(row.class-id); }
                             }
                         }
                         for cell[j] in row.cells: RatingChip {
@@ -404,18 +361,11 @@ export component QualityView inherits Rectangle {
                             height: 33px;
                             rating: cell.state;
                             text: cell.text;
-                            TouchArea {
+                            TipArea {
+                                tip: cell.tip;
+                                pin-on-click: false;
                                 mouse-cursor: pointer;
-                                clicked => { QualityData.select-class(row.class-id); }
-                                changed has-hover => {
-                                    if self.has-hover {
-                                        root.tip = cell.tip;
-                                        root.tip-x = self.absolute-position.x - root.absolute-position.x;
-                                        root.tip-y = self.absolute-position.y - root.absolute-position.y + 38px;
-                                    } else {
-                                        root.tip = "";
-                                    }
-                                }
+                                activated => { QualityData.select-class(row.class-id); }
                             }
                         }
                     }
@@ -437,29 +387,6 @@ export component QualityView inherits Rectangle {
                     Button { text: @tr("Show next 20"); clicked => { QualityData.more(); } }
                 }
             }
-        }
-    }
-
-    // Hover help (the web's metric tooltip), drawn above everything.
-    if root.tip != "": Rectangle {
-        x: min(max(0, root.tip-x), root.width - self.width - 8px);
-        y: min(root.tip-y, root.height - self.height - 8px);
-        width: 360px;
-        height: tip-text.preferred-height + 16px;
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: Theme.border;
-        background: Theme.panel;
-        drop-shadow-blur: 12px;
-        drop-shadow-color: Theme.shadow;
-        tip-text := Text {
-            x: 8px;
-            y: 8px;
-            width: parent.width - 16px;
-            text: root.tip;
-            color: Theme.text;
-            font-size: 12px;
-            wrap: word-wrap;
         }
     }
 }
