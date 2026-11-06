@@ -19,6 +19,8 @@ export struct StartPlate {
 }
 
 // x, y: top-left corner in canvas pixels; w: width (estimated in Rust).
+// ax, ay: the area's centre the leader points at. A collapsed pin found no
+// place clear of other pins and blocks: a dot at ax, ay, the pin on hover.
 export struct StartPin {
     area: int,
     name: string,
@@ -30,6 +32,9 @@ export struct StartPin {
     x: float,
     y: float,
     w: float,
+    collapsed: bool,
+    ax: float,
+    ay: float,
 }
 
 export struct StartCrumb {
