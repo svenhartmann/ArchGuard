@@ -304,6 +304,8 @@ export global StartData {
     callback source-graph();
     // A connection entry of the details (StartLine.id); its neighbour area.
     callback toggle-entry(int);
+    // A detail section by its key (StartLine.c) and whether it is open.
+    callback toggle-section(string, bool);
     callback pick-neighbor(int);
     // 0 Cycles, 1 Matrix, 2 Calls, 3 Class metrics, 4 Quality scope.
     callback detail-action(int);

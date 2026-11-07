@@ -64,11 +64,14 @@ component DetailLine inherits Rectangle {
         : line.a;
     property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 44 || line.kind == 54 || line.kind == 62;
     // A connection entry: opens and closes its evidence.
-    property <bool> entry: line.kind == 41 || line.kind == 52;
+    // A method entry (24): opens and closes its measurements.
+    property <bool> entry: line.kind == 41 || line.kind == 52 || line.kind == 24;
     property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52 || line.kind == 61 || line.kind == 70 || line.kind == 82;
     // Paths, class ids and evidence locations.
     property <bool> mono: line.kind == 2 || line.kind == 10 || line.kind == 53;
-    property <length> inset: button ? 10px : entry ? 18px : 0;
+    // An open method entry's measurements sit under its summary.
+    property <bool> nested: line.kind == 84 || line.kind == 85 || line.kind == 86 || (line.kind == 2 && line.flag);
+    property <length> inset: button ? 10px : entry || nested ? 18px : 0;
     height: label.preferred-height + (button ? 14px : heading ? 12px : entry ? 8px : 4px);
     border-radius: button || entry ? Theme.radius-sm : 0;
     background: button ? (t.has-hover ? Theme.panel-2 : Theme.panel) : entry && t.has-hover ? Theme.panel-2 : transparent;
@@ -98,7 +101,9 @@ component DetailLine inherits Rectangle {
         enabled: root.button || root.entry;
         mouse-cursor: self.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
-            if (root.entry) {
+            if (line.kind == 24) {
+                StartData.toggle-section(line.c, line.open);
+            } else if (root.entry) {
                 StartData.toggle-entry(line.id);
             } else if (line.kind == 62) {
                 StartData.open-source(line.a);

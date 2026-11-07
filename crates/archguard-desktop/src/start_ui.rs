@@ -225,6 +225,9 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
             s.toggle_entry(i);
         }
     }));
+    d.on_toggle_section(a.on2(|s, _, key: slint::SharedString, open: bool| {
+        s.sections.insert(key.into(), !open);
+    }));
     d.on_pick_neighbor(navigation(
         ui,
         a.on(|s, _, area: i32| {
