@@ -300,7 +300,7 @@ pub(crate) fn html_page_with_services(
         services,
         &insights,
     )?;
-    insights["arc42"] = serde_json::json!({"schema_version":arc42.schema_version,"scope":arc42.scope,"markdown":arc42.markdown(None),"chapters":arc42.chapters.iter().map(|c|serde_json::json!({"number":c.number,"title":c.title,"questions":c.questions,"markdown":arc42.markdown(Some(c.number))})).collect::<Vec<_>>()});
+    insights["arc42"] = serde_json::json!({"schema_version":arc42.schema_version,"scope":arc42.scope,"markdown":arc42.markdown(None),"diagrams":arc42.diagrams,"chapters":arc42.chapters.iter().map(|c|serde_json::json!({"number":c.number,"title":c.title,"questions":c.questions,"markdown":arc42.markdown(Some(c.number))})).collect::<Vec<_>>()});
     Ok(to_html_page(
         graph,
         focus,

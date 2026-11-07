@@ -21,7 +21,9 @@ try {
     await page.setViewport({width,height});await page.goto(url,{waitUntil:'load'});
     await page.waitForSelector('#architecture-content');
     await page.evaluate(()=>{setViewerLanguage('de');showTab('architecture');});
-    assert.equal(await page.$$eval('select.arc42-mobile option',n=>n.length),12);
+    const catalogue=await page.evaluate(()=>data.insights.arc42.diagrams?.length?data.insights.arc42.diagrams.map(d=>({id:d.id,chapter:d.chapter,kind:d.kind,shown:d.shown,elements:d.elements.length})):null);
+    assert.equal(await page.$$eval('select.arc42-mobile option',n=>n.map(o=>o.value).filter(v=>v!=='diagrams').length),12);
+    assert.equal(await page.$$eval('select.arc42-mobile option[value="diagrams"]',n=>n.length),catalogue?1:0,'the Diagrams view follows the chapters when the report has a catalogue');
     await page.select('select.arc42-mobile','5');
     assert.match(await page.$eval('article[data-arc42-chapter] h2',n=>n.textContent),/5\. Bausteinsicht/);
     assert.ok(await page.$('article[data-arc42-chapter] svg'));
@@ -44,10 +46,17 @@ try {
     await page.select('select.arc42-mobile','6');
     assert.ok(await page.$('[data-arc42-package-map="calls"] svg'));
     await page.select('select.arc42-mobile','7');
-    const deployments=await page.$$eval('select[data-arc42-deployment] option',nodes=>nodes.map(n=>n.value));
-    assert.ok(deployments.length>0);
-    for(const file of deployments){await page.select('select[data-arc42-deployment]',file);const expected=await page.evaluate(f=>arc42DeploymentProjection(f).nodes.length,file);assert.equal(await page.$$eval('g[data-arc42-node]',n=>n.length),expected);}
-    await page.select('select[data-arc42-deployment]',deployments[0]);
+    if(catalogue){
+      // ADR 0006: one catalogue figure per deployment file, its C4 source cut from the text.
+      const files=catalogue.filter(d=>d.kind==='deployment');assert.ok(files.length>0);
+      for(const d of files){const nodes=await page.$$eval('section[data-arc42-diagram="'+d.id+'"] g[data-arc42-node]',n=>n.length);assert.equal(nodes,d.shown?d.elements:0,d.id);}
+      assert.doesNotMatch(await page.$eval('article[data-arc42-chapter]',n=>n.textContent),/C4Deployment|Deployment_Node|syntax is not supported/);
+    } else {
+      const deployments=await page.$$eval('select[data-arc42-deployment] option',nodes=>nodes.map(n=>n.value));
+      assert.ok(deployments.length>0);
+      for(const file of deployments){await page.select('select[data-arc42-deployment]',file);const expected=await page.evaluate(f=>arc42DeploymentProjection(f).nodes.length,file);assert.equal(await page.$$eval('g[data-arc42-node]',n=>n.length),expected);}
+      await page.select('select[data-arc42-deployment]',deployments[0]);
+    }
     await page.screenshot({path:out+'/arc42-deployment-'+width+'.png'});
     await page.select('select.arc42-mobile','11');
     assert.ok(await page.$('[data-arc42-package-map="cycles"]'));

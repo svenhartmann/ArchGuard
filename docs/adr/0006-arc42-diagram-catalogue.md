@@ -138,3 +138,20 @@ What exists:
   `archguard doc --arc42`. Checked in headless snapshots of a copy of
   `fixtures/compose-services` (chapters 5, 6, 7, diagram view, hide and
   show via `ARCHGUARD_DESKTOP_ARC_TOGGLE`). Not tried in a real window.
+- **2026-11-07:** Web viewer. The HTML report now carries the catalogue
+  (`insights.arc42.diagrams`, `review_cmd.rs`). The reader
+  (`viewer_arc42_catalogue.js`) cuts the generated sections of shown
+  diagrams from the chapter text and draws C4 diagrams with Graphviz:
+  containers, databases as cylinders, dashed external containers, a dashed
+  cluster per group, one colour and label per relation kind. Chapter 7
+  shows one figure per deployment file from the catalogue; reports without
+  `diagrams` keep the projection from `data.services`. Every catalogue
+  diagram and the package maps of chapters 5, 6 and 11 get a tick. The
+  page cannot write `archguard.toml`: a tick changes only the view (hidden
+  diagrams collapse to one line) and shows the `[arc42] hidden_diagrams`
+  snippet to copy. A "Diagrams" entry below the chapters lists the whole
+  catalogue with preview, tick and the section source the document
+  contains; hidden diagrams say that their source appears after enabling.
+  Checked with `scripts/viewer/test_viewer_arc42_catalogue.js` and in
+  headless Chrome on copies of `fixtures/compose-services` and
+  `examples/service-shop`.

@@ -50,6 +50,8 @@ pub(crate) const APP_JS: &str = concat!(
     "\n",
     include_str!("viewer_architecture.js"),
     "\n",
+    include_str!("viewer_arc42_catalogue.js"),
+    "\n",
     include_str!("viewer_assessment.js"),
     "\n",
     include_str!("viewer_calls_tree.js"),
