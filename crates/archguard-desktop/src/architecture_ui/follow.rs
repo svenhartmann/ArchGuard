@@ -5,7 +5,7 @@
 
 use super::projection::{Group, Labels};
 use super::state::{ArchitectureState, current, derived, labels, open_scope};
-use super::visual::RELATIONS_PAGE;
+use super::visual::{Kind, RELATIONS_PAGE};
 use crate::follow::{self, Nav, Place};
 use crate::tab_support;
 use crate::ui::AppWindow;
@@ -32,13 +32,20 @@ pub(super) fn follow(s: &mut ArchitectureState, labels: &Labels, nav: &Nav) {
             open_scope(s, kind, node);
         }
         Nav::Select(name) => {
-            if !reveal(s, labels, name) && s.maps[kind as usize].scope.is_some() {
+            if !reveal(s, labels, name) && !in_scope(s, kind, name) {
                 open_scope(s, kind, None);
                 reveal(s, labels, name);
             }
         }
         Nav::Expand { .. } => {}
     }
+}
+
+/// Whether `name` lies in the scope of map `kind` (the scope package
+/// itself or a node below it); `false` on the overview.
+fn in_scope(s: &ArchitectureState, kind: Kind, name: &str) -> bool {
+    let scope = s.maps[kind as usize].scope.and_then(|n| s.graph.nodes.get(n));
+    scope.is_some_and(|dir| follow::within(name, &dir.name))
 }
 
 /// Select the deepest building block of the open map that holds `name`.
@@ -91,13 +98,16 @@ fn place(s: &ArchitectureState) -> Place {
     }
 }
 
-/// The tab beside a leading view follows it (at start-up).
+/// The tab beside a leading view follows it, also while it still builds;
+/// a pane beside it starts at its place (at start-up).
 pub(super) fn wire() {
     crate::follow_ui::on_follow("architecture", |ui, _, nav| {
-        tab_support::update(ui, |s: &mut ArchitectureState, ui: &AppWindow| {
-            follow(s, &labels(ui), nav);
+        let (labels, nav) = (labels(ui), nav.clone());
+        tab_support::update_or_queue(ui, move |s: &mut ArchitectureState| {
+            follow(s, &labels, &nav);
         });
     });
+    crate::follow_ui::on_state_place("architecture", place);
 }
 
 #[cfg(test)]
@@ -150,5 +160,27 @@ mod tests {
         assert_eq!(place(&s).selected.as_deref(), Some("api"));
         follow(&mut s, &labels(), &Nav::Scope(None));
         assert_eq!(place(&s), Place::default());
+    }
+
+    /// A package entered in a Graph is also its selection: the scope
+    /// stays, as do files inside it; only a node outside leaves it.
+    #[test]
+    fn a_selection_inside_the_scope_keeps_it() {
+        let mut s = state();
+        follow(&mut s, &labels(), &Nav::Scope(Some("domain".into())));
+        follow(&mut s, &labels(), &Nav::Select("domain".into()));
+        assert_eq!(place(&s).scope.as_deref(), Some("domain"));
+        follow(&mut s, &labels(), &Nav::Select("domain/ledger.py".into()));
+        assert_eq!(place(&s).scope.as_deref(), Some("domain"));
+        follow(&mut s, &labels(), &Nav::Select("api/rest.py".into()));
+        assert_eq!(place(&s).scope, None);
+    }
+
+    /// A new pair with Architecture on the left starts the right pane at
+    /// its place.
+    #[test]
+    fn architecture_leads_a_new_pair() {
+        wire();
+        assert!(crate::follow_ui::leads("architecture"));
     }
 }

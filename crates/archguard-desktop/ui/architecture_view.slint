@@ -4,7 +4,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { TextEdit } from "fields.slint";
 import { Theme } from "theme.slint";
-import { Button, Disclosure, PageTitle } from "widgets.slint";
+import { Button, Disclosure, HelpTip, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
@@ -211,7 +211,6 @@ export component ArchitectureView inherits Rectangle {
     callback open-web();
     property <bool> source-open;
     property <bool> about-open;
-    property <bool> setup-open;
     background: Theme.bg;
     // Tabs must not change the window's preferred size; a split pane can
     // be narrow.
@@ -418,27 +417,35 @@ export component ArchitectureView inherits Rectangle {
                             Rectangle { height: 14px; }
                             Rectangle { height: 1px; background: Theme.border; }
                             Rectangle { height: 10px; }
-                            Disclosure { text: @tr("Source and update"); open <=> root.about-open; }
-                            if root.about-open: VerticalLayout {
-                                Text {
-                                    text: @tr("Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks.");
-                                    color: Theme.muted;
-                                    font-size: Theme.font-small;
-                                    wrap: word-wrap;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Disclosure { text: @tr("Source and update"); open <=> root.about-open; }
+                                HelpTip {
+                                    size: 18px;
+                                    y: (parent.height - self.height) / 2;
+                                    tip: @tr("Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks.");
                                 }
-                                Rectangle { height: 8px; }
+                            }
+                            if root.about-open: VerticalLayout {
                                 for b in ArchitectureData.model.about: ArcBlockView { block: b; }
                             }
                             }
                         }
                     }
-                    if !ArchitectureData.model.has-model: VerticalLayout {
-                        Disclosure { text: @tr("Optional: compare with a target model"); open <=> root.setup-open; }
-                        if root.setup-open: Text {
-                            text: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
-                            color: Theme.text;
-                            font-size: Theme.font-body;
-                            wrap: word-wrap;
+                    if !ArchitectureData.model.has-model: HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: @tr("Optional: compare with a target model");
+                            color: Theme.muted;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                        }
+                        HelpTip {
+                            size: 18px;
+                            y: (parent.height - self.height) / 2;
+                            tip: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
                         }
                     }
                     if ArchitectureData.model.has-model: HorizontalLayout {

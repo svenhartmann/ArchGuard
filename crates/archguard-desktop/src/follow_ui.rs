@@ -124,6 +124,12 @@ pub fn on_state_place<S: 'static>(kind: &'static str, place: fn(&S) -> Place) {
     PLACES.with_borrow_mut(|r| r.push((kind, Rc::new(f))));
 }
 
+/// Whether views of `kind` report their place for a new pair.
+#[cfg(test)]
+pub fn leads(kind: &str) -> bool {
+    PLACES.with(|r| registered(r, kind)).is_some()
+}
+
 fn registered<F: Clone>(r: &RefCell<Vec<(&'static str, F)>>, kind: &str) -> Option<F> {
     r.borrow()
         .iter()
