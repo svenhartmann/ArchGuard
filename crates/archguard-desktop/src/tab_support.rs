@@ -45,6 +45,30 @@ pub fn update<T: TabState>(ui: &AppWindow, f: impl FnOnce(&mut T, &AppWindow)) {
     });
 }
 
+/// Changes to a `T` still building, done once it arrives ([`finish`]).
+struct Queued<T>(Vec<Change<T>>);
+
+type Change<T> = Box<dyn FnOnce(&mut T)>;
+
+/// Run `f` on the active document's `T`; while `T` is still building,
+/// keep `f` for when it arrives. Returns whether `f` ran.
+fn run_or_queue<T: 'static>(f: impl FnOnce(&mut T) + 'static) -> bool {
+    let mut f = Some(f);
+    let ran = documents::with_active_state(|s: &mut T| f.take().map(|f| f(s))).is_some();
+    if let Some(f) = f {
+        documents::with_active_state_or(|| Queued::<T>(Vec::new()), |q| q.0.push(Box::new(f)));
+    }
+    ran
+}
+
+/// As [`update`], but a change to a tab that is still building is done
+/// once its state arrives instead of being dropped ("Follow left").
+pub fn update_or_queue<T: TabState>(ui: &AppWindow, f: impl FnOnce(&mut T) + 'static) {
+    if run_or_queue(f) {
+        update(ui, |_: &mut T, _| ());
+    }
+}
+
 /// Builds Slint callbacks that change the active document's `T`.
 pub struct Actions<T> {
     ui: slint::Weak<AppWindow>,
@@ -171,7 +195,13 @@ fn start<T: 'static>() -> Start {
 /// its pending marker. Returns whether `doc` is active.
 fn finish<T: 'static>(doc: DocId, result: Result<T, String>) -> bool {
     match result {
-        Ok(state) => documents::set_state(doc, state),
+        Ok(mut state) => {
+            let queued = documents::with_state(doc, |q: &mut Queued<T>| std::mem::take(&mut q.0));
+            for f in queued.into_iter().flatten() {
+                f(&mut state);
+            }
+            documents::set_state(doc, state)
+        }
         Err(error) => documents::set_state(
             doc,
             Pending::<T> {
@@ -240,7 +270,11 @@ fn install<T: TabState>(ui: &AppWindow, doc: DocId, result: Result<T, String>) {
     }
     match error {
         None => {
-            documents::with_active_state(|s: &mut T| s.push(ui));
+            // Changes queued while it was building are in it.
+            documents::with_active_state(|s: &mut T| {
+                s.changed();
+                s.push(ui);
+            });
         }
         Some(e) => T::pending(ui, Some(&e)),
     }
@@ -432,6 +466,25 @@ mod tests {
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(1));
         documents::with_store(|s| s.activate(1));
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(2));
+    }
+
+    /// What reaches a tab while it builds ("Follow left") is kept and
+    /// done once its state arrives, in order and for its own document.
+    #[test]
+    fn changes_wait_for_a_building_tab() {
+        let (a, b) = two_documents();
+        assert_eq!(start::<Demo>(), Start::Build(b));
+        assert!(!run_or_queue(|d: &mut Demo| d.0 += 10), "kept");
+        assert!(!run_or_queue(|d: &mut Demo| d.0 *= 2), "kept");
+        documents::with_store(|s| s.activate(0));
+        assert_eq!(start::<Demo>(), Start::Build(a));
+        assert!(finish(a, Ok(Demo(1))));
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(1));
+        documents::with_store(|s| s.activate(1));
+        assert!(finish(b, Ok(Demo(1))));
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(22));
+        assert!(run_or_queue(|d: &mut Demo| d.0 += 1), "the state is there");
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(23));
     }
 
     /// A panicking build leaves an error, not a document pending forever,

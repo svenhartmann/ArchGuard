@@ -309,6 +309,12 @@ pub fn with_active_state<T: 'static, R>(f: impl FnOnce(&mut T) -> R) -> Option<R
     Some(run(cell, f))
 }
 
+/// As [`with_active_state`], on document `doc` (active or not).
+pub fn with_state<T: 'static, R>(doc: DocId, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+    let cell = with_store(|s| s.get(doc)?.cell::<T>())?;
+    Some(run(cell, f))
+}
+
 /// As [`with_active_state`], building the state with `build` first if the
 /// active document has none. `None` only without an active document.
 pub fn with_active_state_or<T: 'static, R>(
