@@ -86,8 +86,11 @@ function renderDashKpis(container,kpis){
     leak?t('{from} reaches {symbol}, which {in_file} does not export.','{from} nutzt {symbol}, das {in_file} nicht exportiert.',{from:leak.from_file,symbol:leak.symbol,in_file:leak.in_file}):t('No leaky-encapsulation findings recorded.','Keine Leck-Funde erfasst.'),
     leak?leak.from_file+' → '+leak.symbol:undefined,leak?leak.from_file:undefined));
   // Risk-weighted coverage gaps: count with the first gap path as navigation.
-  const gap=(kpis.risk_gaps||[])[0];
-  grid.appendChild(dashCard(t('Risk coverage gaps','Risiko-Abdeckungslücken'),String((kpis.risk_gaps||[]).length),
+  // Same rule as ReviewKpis::risk_gap_count: no listed coverage → not measured;
+  // unmeasured and fully covered files are no gaps.
+  const gaps=kpis.risk_gaps||[],gap=gaps[0];
+  const gapCount=gaps.some(g=>g.coverage!=null)?String(gaps.filter(g=>g.gap>0).length):dashNotMeasured();
+  grid.appendChild(dashCard(t('Risk coverage gaps','Risiko-Abdeckungslücken'),gapCount,
     gap?t('Hotspot {hotspot} with {coverage} uncovered — the gap stays null when coverage is unknown.','Hotspot {hotspot} mit {coverage} ungedeckten Zeilen — bei unbekannter Abdeckung bleibt die Lücke null.',{hotspot:dashFixed(gap.hotspot,1),coverage:gap.coverage==null?dashNotMeasured():dashPercent(1-gap.coverage)}):t('No risk-weighted coverage gaps recorded.','Keine risiko-gewichteten Abdeckungslücken erfasst.'),
     gap?gap.path:undefined,gap?gap.path:undefined));
 }

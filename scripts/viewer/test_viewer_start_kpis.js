@@ -24,3 +24,9 @@ assert.match(zoneApp.run('zonePanel.textContent'),/2 pain · 0 uselessness · 1 
 const zonesOf=zoneApp.run("(function walk(n,out){if(n.getAttribute&&n.getAttribute('data-dash-point'))out[n.getAttribute('data-dash-point')]=n.getAttribute('data-dash-zone');for(const c of n.children||n.childNodes||[])walk(c,out);return out;})(zonePanel,{})");
 assert.deepEqual({...zonesOf},{edge:'main',pain:'pain'},'SCC metrics are not plotted; the corridor edge is main');
 console.log('Start zones: KPI counts, corridor edge and node-only points passed');
+// Risk coverage gaps: unmeasured files are not a count; fully covered files are no gap.
+const riskCard=(gaps)=>{const a=launch({...fixture,reviewKpis:{risk_gaps:gaps}},{library:false});a.run("var riskPanel=element('div');renderDashKpis(riskPanel,data.reviewKpis)");
+  return a.run("riskPanel.querySelectorAll('div').filter(n=>n.classList.contains('dash-card')).find(n=>/Risk coverage gaps/.test(n.textContent)).querySelector('strong').textContent");};
+assert.equal(riskCard([{path:'a.rs',hotspot:10,coverage:null,gap:null}]),'not measured');
+assert.equal(riskCard([{path:'a.rs',hotspot:10,coverage:0,gap:10},{path:'b.rs',hotspot:10,coverage:1,gap:0},{path:'c.rs',hotspot:10,coverage:null,gap:null}]),'1');
+console.log('Start risk gaps: unmeasured is not a count, covered files are no gap passed');
