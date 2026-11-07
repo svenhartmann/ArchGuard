@@ -3,88 +3,34 @@
 //! comes from `archguard_engine::arc42_document`, as in the CLI's report.
 //!
 //! All tab state is one [`ArchitectureState`] per document (in
-//! [`documents`]), built by [`build_from`] and shown by [`push`] as one
-//! `ArchitectureModel` value.
+//! [`documents`]), built by [`state::build_from`] and shown by [`push`]
+//! as one `ArchitectureModel` value.
 
 mod blocks;
 mod diagram;
 mod edit;
+mod follow;
 mod markdown;
 mod names;
 mod projection;
+mod state;
 mod view;
 mod visual;
 
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{CallAnalysis, Config, Graph, Report};
-use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::follow::Place;
 use crate::format::Locale;
 use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
-use projection::{Group, Labels, SourceModel};
-use visual::{Action, Kind, Map, MapState, RELATIONS_PAGE};
-
-/// Everything the tab knows: the document, the source graph and its
-/// projections indexes, and the reader's position.
-pub struct ArchitectureState {
-    root: PathBuf,
-    graph: Graph,
-    /// The arc42 document, or why it could not be written.
-    doc: Result<Arc42Document, String>,
-    has_model: bool,
-    model: SourceModel,
-    deps: Vec<(usize, usize)>,
-    calls: Vec<(usize, usize)>,
-    calls_status: String,
-    chapter: u8,
-    /// Per map kind (dependencies, calls, cycles).
-    maps: [MapState; 3],
-    /// Path of the last export, or its error.
-    saved: String,
-    /// The project's own arc42 text and its chapter editor.
-    editor: edit::Editor,
-}
-
-/// Build the tab state (writes the arc42 document, runs the call analysis).
-fn build_from(
-    root: &Path,
-    config: &Config,
-    graph: Graph,
-    report: &Report,
-    calls: &CallAnalysis,
-) -> ArchitectureState {
-    let doc =
-        archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
-    let model = SourceModel::new(&graph);
-    let chapter = match &doc {
-        Ok(d) if !d.chapters.iter().any(|c| c.number == 5) => {
-            d.chapters.first().map_or(5, |c| c.number)
-        }
-        _ => 5,
-    };
-    let mut state = ArchitectureState {
-        root: root.to_path_buf(),
-        deps: projection::dependency_edges(&model, &graph),
-        calls: projection::call_edges(&graph, calls),
-        calls_status: calls.status.clone(),
-        has_model: config.architecture.model.is_some(),
-        graph,
-        doc,
-        model,
-        chapter,
-        maps: Default::default(),
-        saved: String::new(),
-        editor: edit::Editor::new(root),
-    };
-    snapshot_overrides(&mut state);
-    state
-}
+use follow::navigation;
+use projection::Group;
+pub use state::ArchitectureState;
+use state::{build_from, current, derived, labels, open_scope};
+use visual::{Action, Kind, RELATIONS_PAGE};
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
@@ -131,7 +77,7 @@ pub fn wire(ui: &AppWindow) {
     d.on_scope_selected(navigation(
         ui,
         a.on(|s, ui, i: i32| {
-            let Some((kind, map)) = current(s, ui) else {
+            let Some((kind, map)) = current(s, &labels(ui)) else {
                 return;
             };
             let scope = index(i).and_then(|i| map.scopes.get(i).copied().flatten());
@@ -149,6 +95,7 @@ pub fn wire(ui: &AppWindow) {
     d.on_card_action(move || action(()));
     d.on_download(a.on(|s, _, all: bool| download(s, all)));
     d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
+    follow::wire();
 }
 
 impl TabState for ArchitectureState {
@@ -189,98 +136,8 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     });
 }
 
-/// `ARCHGUARD_DESKTOP_CHAPTER=<n>` and `ARCHGUARD_DESKTOP_ARC_SCOPE=<package>`
-/// open a chapter and a building-block scope for snapshot runs.
-#[cfg(feature = "snapshot")]
-fn snapshot_overrides(s: &mut ArchitectureState) {
-    if let Some(n) = std::env::var("ARCHGUARD_DESKTOP_CHAPTER")
-        .ok()
-        .and_then(|n| n.parse().ok())
-    {
-        s.chapter = n;
-    }
-    if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_ARC_SCOPE") {
-        s.maps[Kind::Dependencies as usize].scope =
-            s.graph.nodes.iter().position(|n| n.name == name);
-    }
-}
-
-#[cfg(not(feature = "snapshot"))]
-fn snapshot_overrides(_: &mut ArchitectureState) {}
-
-/// The derived visual of a chapter, as `renderArc42Derived`. Chapter 7
-/// (deployment) and 4 (target model) are not native yet.
-fn derived(s: &ArchitectureState, chapter: u8) -> Option<Kind> {
-    match chapter {
-        5 if !s.graph.nodes.is_empty() => Some(Kind::Dependencies),
-        6 if !s.calls.is_empty() => Some(Kind::Calls),
-        11 if !s.graph.edges.is_empty() => Some(Kind::Cycles),
-        _ => None,
-    }
-}
-
-fn labels(ui: &AppWindow) -> Labels {
-    let texts = Texts::of(ui);
-    Labels {
-        direct_root: texts.t("Files without a package").into(),
-        direct: texts.t("direct files").into(),
-        outside: texts.t("Other project packages").into(),
-    }
-}
-
-/// The map of the open chapter, if it has one.
-fn current(s: &ArchitectureState, ui: &AppWindow) -> Option<(Kind, Map)> {
-    let kind = derived(s, s.chapter)?;
-    let edges = if kind == Kind::Calls {
-        &s.calls
-    } else {
-        &s.deps
-    };
-    let map = visual::build(
-        kind,
-        &s.maps[kind as usize],
-        &s.model,
-        &s.graph,
-        edges,
-        &labels(ui),
-    );
-    Some((kind, map))
-}
-
-/// A building-block callback that reports the map's scope and selected
-/// package for "Follow left".
-fn navigation<A: 'static>(ui: &AppWindow, f: impl Fn(A) + 'static) -> impl Fn(A) + 'static {
-    crate::follow_ui::reporting(ui, "architecture", place, f)
-}
-
-/// The open chapter's map: its package scope and selected package, by
-/// node name.
-fn place(s: &ArchitectureState) -> Place {
-    let Some(kind) = derived(s, s.chapter) else {
-        return Place::default();
-    };
-    let map = &s.maps[kind as usize];
-    let name = |n: usize| s.graph.nodes.get(n).map(|n| n.name.clone());
-    let selected = match map.selected {
-        Some(Group::Package(n)) => name(n),
-        _ => None,
-    };
-    Place {
-        scope: map.scope.and_then(name),
-        selected,
-    }
-}
-
-fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {
-    s.maps[kind as usize] = MapState {
-        scope,
-        selected: None,
-        relations: RELATIONS_PAGE,
-    };
-}
-
 fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
-    let Some((kind, map)) = current(s, ui) else {
+    let Some((kind, map)) = current(s, &labels(ui)) else {
         return;
     };
     let Some(node) = index(i).and_then(|i| map.shown.nodes.get(i)) else {
@@ -293,7 +150,7 @@ fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
 }
 
 fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
-    let Some((kind, map)) = current(s, ui) else {
+    let Some((kind, map)) = current(s, &labels(ui)) else {
         return;
     };
     match map.action {
@@ -335,7 +192,7 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
             );
             let texts = Texts::of(ui);
             (m.language_note, m.chapter_note) = notes(&texts, m.chapter);
-            if let Some((kind, map)) = current(s, ui) {
+            if let Some((kind, map)) = current(s, &labels(ui)) {
                 m.map = view::map_model(
                     &Texts::of(ui),
                     &s.graph,
@@ -388,7 +245,7 @@ fn download(s: &mut ArchitectureState, all: bool) {
 }
 
 fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
-    let Some((kind, map)) = current(s, ui) else {
+    let Some((kind, map)) = current(s, &labels(ui)) else {
         return;
     };
     let nodes: Vec<diagram::UmlNode<'_>> = map
