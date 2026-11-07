@@ -77,6 +77,11 @@ assert.match(figure('deployment-prod.yml').textContent,/appears in the chapter a
 assert.equal(snippet(),'[arc42]\nhidden_diagrams = ["deployment-prod.yml"]','the view always shows the current snippet');
 app.click('language-de');assert.match(article().textContent,/In der Dokumentation/);assert.match(article().textContent,/Diagramme/);app.click('language-en');
 
+// The Diagrams view survives a reload: its hash routes back to it.
+const hash=app.run('viewerRouteHash()');assert.match(hash,/chapter=diagrams/);
+open('7');app.run('applyViewerRoute(parseViewerRoute('+JSON.stringify(hash)+'))');
+assert.equal(app.run('architectureUi.chapter'),'diagrams','a reload of the Diagrams view opens it again');
+
 // Graphviz model: C4 shapes, a dashed cluster per group, one colour per relation kind.
 const graph=JSON.parse(app.run("JSON.stringify(arc42StandardGraph(arc42CatalogueModel(data.insights.arc42.diagrams[2]),null))"));
 assert.deepEqual(graph.subgraphs.map(s=>[s.graphAttributes.label,s.graphAttributes.style,s.nodes.length]),[['compose.yaml','dashed',3]]);

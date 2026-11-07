@@ -3085,7 +3085,8 @@ function applyViewerRoute(route){
       worldUi.kpi=['complexity',...WORLD_CLASS_KPIS].includes(route.kpi)?route.kpi:'complexity';
     }
     if(route.tab==='architecture'){
-      architectureUi.chapter=/^(?:[1-9]|1[0-2])$/.test(route.chapter)?route.chapter:'5';
+      // 'diagrams' is the catalogue view (ADR 0006), only when the report has a catalogue.
+      architectureUi.chapter=/^(?:[1-9]|1[0-2])$/.test(route.chapter)||(route.chapter==='diagrams'&&arc42Catalogue())?route.chapter:'5';
       const kind=architectureUi.chapter==='6'?'calls':architectureUi.chapter==='11'?'cycles':'dependencies';
       architectureUi.diagramStates??={};architectureUi.diagramStates[kind]={scope:source?String(source.id):null,selected:null};
     }
