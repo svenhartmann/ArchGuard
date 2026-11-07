@@ -106,11 +106,14 @@ pub(super) fn navigation<A: 'static>(
     crate::follow_ui::reporting(ui, "services", place, f)
 }
 
-/// The tab beside a leading view follows it (at start-up).
+/// The tab beside a leading view follows it, also while it still builds;
+/// a pane beside it starts at its place (at start-up).
 pub(super) fn wire() {
     crate::follow_ui::on_follow("services", |ui, _, nav| {
-        tab_support::update(ui, |s: &mut ServicesState, _| s.follow(nav));
+        let nav = nav.clone();
+        tab_support::update_or_queue(ui, move |s: &mut ServicesState| s.follow(&nav));
     });
+    crate::follow_ui::on_state_place("services", place);
 }
 
 #[cfg(test)]

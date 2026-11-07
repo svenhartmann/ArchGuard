@@ -20,11 +20,16 @@ use crate::ui::AppWindow;
 /// How a view instance follows: `(ui, tab id, navigation)`.
 type FollowFn = Rc<dyn Fn(&AppWindow, u32, &Nav)>;
 
+/// Where a view instance stands (`tab id`); `None` while it builds.
+type PlaceFn = Rc<dyn Fn(u32) -> Option<Place>>;
+
 thread_local! {
     static FOLLOWS: RefCell<Vec<(&'static str, FollowFn)>> = const { RefCell::new(Vec::new()) };
+    static PLACES: RefCell<Vec<(&'static str, PlaceFn)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Register the toggle once at start-up.
+/// Register the toggle once at start-up; a new pair (a view switched in
+/// a pane, Follow switched on) brings the right pane to the left place.
 pub fn wire(ui: &AppWindow) {
     let toggle = with_ui(ui, |ui, ()| {
         panes_ui::change(ui, |l| {
@@ -32,11 +37,58 @@ pub fn wire(ui: &AppWindow) {
         });
     });
     ui.on_toggle_follow(move || toggle(()));
+    panes_ui::on_change(|ui, before, after| {
+        if follow::resync(before, after) {
+            resync(ui);
+        }
+    });
 }
 
 /// Instances of `kind` follow the left pane with `f` (at start-up).
 pub fn on_follow(kind: &'static str, f: impl Fn(&AppWindow, u32, &Nav) + 'static) {
     FOLLOWS.with_borrow_mut(|r| r.push((kind, Rc::new(f))));
+}
+
+/// Instance `id` of `kind` stands at `f(id)`, for a pane that starts
+/// following it (at start-up).
+pub fn on_place(kind: &'static str, f: impl Fn(u32) -> Option<Place> + 'static) {
+    PLACES.with_borrow_mut(|r| r.push((kind, Rc::new(f))));
+}
+
+/// [`on_place`] for a view open once (`kind`), whose state is the active
+/// document's `S`.
+pub fn on_state_place<S: 'static>(kind: &'static str, place: fn(&S) -> Place) {
+    on_place(kind, move |_| {
+        documents::with_active_state(|s: &mut S| place(s))
+    });
+}
+
+fn registered<F: Clone>(r: &RefCell<Vec<(&'static str, F)>>, kind: &str) -> Option<F> {
+    r.borrow()
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, f)| f.clone())
+}
+
+/// The right pane takes the left pane's current place: its scope and its
+/// selection, inside the link guard so its own reports keep Follow on.
+fn resync(ui: &AppWindow) {
+    let layout = panes_ui::layout();
+    let (Some(left), Some(right)) = (layout.view(0), layout.view(1)) else {
+        return;
+    };
+    let place = PLACES
+        .with(|r| registered(r, &left.kind))
+        .and_then(|f| f(left.id));
+    let follow = FOLLOWS.with(|r| registered(r, &right.kind));
+    let (Some(place), Some(f)) = (place, follow) else {
+        return;
+    };
+    link::guarded(|| {
+        for nav in follow::replay(&left.kind, &right.kind, &place) {
+            f(ui, right.id, &nav);
+        }
+    });
 }
 
 /// Tab `from` navigated (`navs`, by the user unless a link runs): the
@@ -53,8 +105,9 @@ pub fn navigated(ui: &AppWindow, from: u32, navs: Vec<Nav>) {
         Route::Follow(kind, id) => (kind, id),
     };
     let left = layout.view(0).map(|t| t.kind.clone()).unwrap_or_default();
-    let f = FOLLOWS.with_borrow(|r| r.iter().find(|(k, _)| *k == kind).map(|(_, f)| f.clone()));
-    let Some(f) = f else { return };
+    let Some(f) = FOLLOWS.with(|r| registered(r, &kind)) else {
+        return;
+    };
     link::guarded(|| {
         for nav in navs.iter().filter_map(|n| follow::map(&left, &kind, n)) {
             f(ui, id, &nav);

@@ -14,6 +14,17 @@ pub(super) fn navigation<A: 'static>(
     crate::follow_ui::reporting(ui, "start", place, f)
 }
 
+/// The World beside a leading view follows its package and selection,
+/// also while it still builds; a pane beside the World starts at its
+/// place (at start-up).
+pub(super) fn wire() {
+    crate::follow_ui::on_follow("start", |ui, _, nav| {
+        let nav = nav.clone();
+        crate::tab_support::update_or_queue(ui, move |s: &mut StartState| s.follow(&nav));
+    });
+    crate::follow_ui::on_state_place("start", place);
+}
+
 impl StartState {
     /// "Follow left" with the Graph on the left: its package becomes the
     /// architecture World's scope, its selection the area or entity of

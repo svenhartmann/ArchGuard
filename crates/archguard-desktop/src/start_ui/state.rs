@@ -193,15 +193,14 @@ impl StartState {
                 entity: None,
                 members: None,
             });
+            self.details_open = true;
         }
     }
 
-    /// Select something; entities and files open the details as in the web.
+    /// Select something. Unlike the web, which opens the details of an
+    /// entity or a file at once, the details open only on request
+    /// (Details, Enter, [`Self::open_area`]); open ones stay open.
     pub(super) fn select(&mut self, sel: Selection) {
-        let module = self.scope.areas.get(sel.area).is_some_and(|a| a.module);
-        if sel.entity.is_some() || !module {
-            self.details_open = true;
-        }
         self.selection = Some(sel);
         self.limit = 20;
     }

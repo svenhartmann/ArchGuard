@@ -236,9 +236,24 @@ fn follow_hooks(ui: &AppWindow) {
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_ARC_OPEN").and_then(|n| node_named(&n)) {
         ui.global::<ArchitectureData>().invoke_navigate(n as i32);
     }
+    pair_hooks(ui);
     let l = panes_ui::layout();
     let tabs: Vec<_> = (0..l.panes.len()).filter_map(|p| l.view(p)).collect();
     eprintln!("follow: {} tabs {tabs:?}", l.follow_left);
+}
+
+/// After the left navigations: switch the right pane's view through the
+/// view bar (`ARCHGUARD_DESKTOP_RIGHT_VIEW=<kind>`), which it shows at
+/// the left place while it follows, and press the World's Details button
+/// (`ARCHGUARD_DESKTOP_WORLD_DETAILS=1`).
+fn pair_hooks(ui: &AppWindow) {
+    if let Ok(kind) = std::env::var("ARCHGUARD_DESKTOP_RIGHT_VIEW") {
+        ui.invoke_focus_pane(1);
+        ui.invoke_navigate(kind.as_str().into());
+    }
+    if env::<String>("ARCHGUARD_DESKTOP_WORLD_DETAILS").as_deref() == Some("1") {
+        ui.global::<crate::ui::StartData>().invoke_toggle_details();
+    }
 }
 
 /// Navigate in the left pane `left`: open a package in a Graph or as a

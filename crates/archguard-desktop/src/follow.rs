@@ -166,6 +166,40 @@ pub fn place_navs(before: &Place, after: &Place) -> Vec<Nav> {
     out
 }
 
+/// The tabs (left, right) of a split layout whose right pane follows.
+fn following(l: &Layout) -> Option<(u32, u32)> {
+    let (left, right) = (l.view(0)?, l.view(1)?);
+    (l.follow_left && pair(&left.kind, &right.kind)).then_some((left.id, right.id))
+}
+
+/// Whether the right pane takes the left pane's place again from
+/// `before` to `after`: a new pair follows (a view switched in a pane,
+/// Follow switched on, a split made with Follow on).
+pub fn resync(before: &Layout, after: &Layout) -> bool {
+    following(after).is_some_and(|p| following(before) != Some(p))
+}
+
+/// The navigations that bring the right view (`right`) to the left
+/// view's (`left`) `place`: its scope, then its selection. Unlike
+/// [`map`], the selection is replayed also where the linked selection
+/// reveals selections as they happen.
+pub fn replay(left: &str, right: &str, place: &Place) -> Vec<Nav> {
+    let scope = Nav::Scope(place.scope.clone());
+    let scope = map(left, right, &scope).is_some().then_some(scope);
+    let select = place.selected.clone().map(Nav::Select);
+    let select = select.filter(|_| pair(left, right));
+    scope.into_iter().chain(select).collect()
+}
+
+/// Where a tree view stands by node name: its scope and selection.
+pub fn marks_place(tree: &Tree, m: &Marks) -> Place {
+    let name = |n: usize| tree.nodes.get(n).map(|t| t.name.clone());
+    Place {
+        scope: m.scope.and_then(name),
+        selected: m.selected.and_then(name),
+    }
+}
+
 /// Why the right pane cannot follow, if it cannot: the layout is not
 /// split or the pair has no common context.
 pub fn blocked(l: &Layout) -> bool {
@@ -387,6 +421,58 @@ mod tests {
         );
         assert_eq!(place_navs(&picked, &overview), [Nav::Scope(None)]);
         assert!(place_navs(&picked, &picked).is_empty());
+    }
+
+    /// The right pane takes the left pane's place again when the pair it
+    /// follows changes: a view switched in either pane, Follow switched
+    /// on. Navigating within the same two tabs is no new pair.
+    #[test]
+    fn a_new_pair_takes_the_left_place() {
+        let (mut l, _, _) = split("start", "quality");
+        let off = Layout {
+            follow_left: false,
+            ..l.clone()
+        };
+        assert!(resync(&off, &l), "Follow switched on");
+        assert!(!resync(&l, &off), "Follow switched off");
+        assert!(!resync(&l, &l.clone()));
+        let before = l.clone();
+        l.focus(1);
+        l.navigate("graph");
+        assert_eq!(l.view(1).map(|t| t.kind.as_str()), Some("graph"));
+        assert!(resync(&before, &l), "the right pane switched view");
+        let before = l.clone();
+        l.focus(0);
+        l.navigate("dsm");
+        assert!(resync(&before, &l), "the left pane switched view");
+        let before = l.clone();
+        l.set_ratio(0.3);
+        assert!(!resync(&before, &l), "the same pair");
+        let (sec, _, _) = split("start", "security");
+        assert!(!resync(&off, &sec), "no common context");
+        assert!(!resync(&off, &Layout::single("graph")), "one pane");
+    }
+
+    /// Taking the left place: its scope, then its selection, also where
+    /// the linked selection would reveal a selection as it happens; a
+    /// File view keeps its node and takes the selection only.
+    #[test]
+    fn the_left_place_becomes_scope_and_selection() {
+        let place = Place {
+            scope: Some("domain".into()),
+            selected: Some("domain/ledger.py".into()),
+        };
+        let select = Nav::Select("domain/ledger.py".into());
+        let both = [scope("domain"), select.clone()];
+        assert_eq!(replay("start", "graph", &place), both);
+        assert_eq!(replay("graph", "dsm", &place), both);
+        assert_eq!(replay("start", "file", &place), [select]);
+        assert_eq!(
+            replay("quality", "graph", &Place::default()),
+            [Nav::Scope(None)],
+            "the project scope, no selection"
+        );
+        assert!(replay("start", "security", &place).is_empty());
     }
 
     /// A node lies within itself and its directories, by path segment.
