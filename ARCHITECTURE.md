@@ -638,6 +638,7 @@ the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
 | Review metrics | Analysis payload `review_kpis` block: propagation cost, SDP, zones, tangledness, hub Gini, layer drift, debt density, API surface, leaks, risk gaps and health; definitions and limits below | Implemented; measurement limits below |
 | Decision register | `archguard review-decision` / MCP `review_decisions`; `.archguard/reviews.json`, atomic upsert by ID (format below) | Implemented |
 | PR comment | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; format below | Implemented |
+| Evaluation against an expert assessment | `archguard evaluate` / MCP `evaluation`: recall and precision against `.archguard/assessment.toml`, written by a human expert; format, matching rule and metrics in [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md) | Implemented; no assessments shipped |
 | Native desktop viewer | `archguard-desktop` (Slint) on the engine API; decision and scope in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototype |
 | Quality goal assessment | `[[architecture.goals]]` with optional ISO/IEC 25010 `attribute`, `scope` globs and `scenario`; `archguard-analysis/src/goals.rs` links findings, review KPIs and saved evidence to goals by a fixed mapping; shown in `architecture_context`, `archguard doc` and arc42 chapters 1 and 10 ([ADR 0003](docs/adr/0003-quality-goal-assessment.md)) | Implemented |
 | IDE plugins | Not planned; HTML viewer, DB explorer UI and G.V() instead | — |

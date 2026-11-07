@@ -41,6 +41,8 @@ mod server;
 pub use server::ArchguardTools;
 pub use server::DEFAULT_LIMIT;
 use server::insight_error;
+mod evaluation_tools;
+pub use evaluation_tools::EvaluationParams;
 mod pattern_tools;
 mod staged_tools;
 pub use staged_tools::StagedDiffParams;
@@ -982,6 +984,7 @@ impl ArchguardTools {
         router.merge(Self::review_kpi_router());
         router.merge(Self::review_decision_router());
         router.merge(Self::pr_comment_router());
+        router.merge(Self::evaluation_router());
         #[cfg(feature = "db")]
         router.merge(Self::db_router());
         router
@@ -2805,10 +2808,11 @@ links = ["docs/adr/1.md"]
     fn graph_query_is_registered_only_with_the_db_feature() {
         let tools = ArchguardTools::full_router().list_all();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-        let expected = if cfg!(feature = "db") { 47 } else { 46 };
+        let expected = if cfg!(feature = "db") { 48 } else { 47 };
         assert_eq!(tools.len(), expected, "registered tools: {names:?}");
         assert_eq!(names.contains(&"graph_query"), cfg!(feature = "db"));
         for name in [
+            "evaluation",
             "development_guide",
             "architecture_atlas",
             "architecture_world",

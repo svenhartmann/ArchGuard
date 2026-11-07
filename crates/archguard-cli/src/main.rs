@@ -43,6 +43,7 @@ mod db;
 mod doctor_cmd;
 mod dsm_cmd;
 mod engineering_cmd;
+mod evaluate_cmd;
 mod insights_cmd;
 mod project_files;
 mod quality_cmd;
@@ -91,6 +92,7 @@ impl Command {
             | Command::Quality { path, .. }
             | Command::Architecture { path, .. }
             | Command::Patterns { path, .. }
+            | Command::Evaluate { path, .. }
             | Command::Services { path, .. }
             | Command::Workspace { path, .. }
             | Command::Doc { path, .. }
@@ -288,26 +290,8 @@ fn run(cli: &Cli) -> i32 {
     if let Command::QualityHistory { record: false, .. } = &cli.command {
         return engineering_cmd::history(cli, &root);
     }
-    if let Command::Review {
-        base,
-        decisions,
-        save,
-        out,
-        ..
-    } = &cli.command
-    {
-        return assessment_cmd::run(
-            cli,
-            &root,
-            base.as_deref(),
-            decisions.as_deref(),
-            *save,
-            out.as_deref(),
-        );
-    }
-    if let Command::ReviewDecision { action } = &cli.command {
-        // The register needs no analysis; run before the analysis path.
-        return review_session_cmd::run(cli, &root, action);
+    if let Some(code) = review_command(cli, &root) {
+        return code;
     }
     if let Command::Serve { port, depth, .. } = &cli.command {
         return match serve_cmd::run(&root, cli.config.as_deref(), *port, *depth) {
@@ -528,12 +512,40 @@ fn run(cli: &Cli) -> i32 {
         | Command::Serve { .. }
         | Command::Doctor
         | Command::Update { .. }
+        | Command::Evaluate { .. }
         | Command::ReviewDecision { .. } => {
             unreachable!(
-                "init, mcp, db, trend, services, security, serve, review-decision, doctor and update are handled before the analysis"
+                "init, mcp, db, trend, services, security, serve, evaluate, review-decision, doctor and update are handled before the analysis"
             )
         }
     }
+}
+
+/// Review, review decisions and expert evaluation: they run their own
+/// analysis (or none) instead of the shared analysis path.
+fn review_command(cli: &Cli, root: &Path) -> Option<i32> {
+    Some(match &cli.command {
+        Command::Review {
+            base,
+            decisions,
+            save,
+            out,
+            ..
+        } => assessment_cmd::run(
+            cli,
+            root,
+            base.as_deref(),
+            decisions.as_deref(),
+            *save,
+            out.as_deref(),
+        ),
+        Command::Evaluate {
+            assessment, init, ..
+        } => evaluate_cmd::run(cli, root, assessment.as_deref(), *init),
+        // The register needs no analysis; run before the analysis path.
+        Command::ReviewDecision { action } => review_session_cmd::run(cli, root, action),
+        _ => return None,
+    })
 }
 
 /// The project root to analyse: the `PATH` argument or the current

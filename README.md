@@ -115,6 +115,10 @@ Use `archguard --help` and `archguard <command> --help` for the complete command
 
 Arc42 generation updates explicitly marked evidence blocks. Your text outside those blocks remains unchanged. Generated architecture observations do not replace team decisions or establish a complete runtime architecture.
 
+### Compare findings with an expert assessment
+
+`archguard evaluate --init .` writes `.archguard/assessment.toml` with every current finding as an unjudged stub; it never overwrites an existing file. An expert records the problems they see (`[[expected]]`, with kind and node globs) and judges findings (`verdict = "true_positive"` or `"false_positive"`; empty means not judged). `archguard evaluate . [--assessment FILE] [--format json]` then reports recall (matched expected problems / expected problems), precision (true positives / judged current findings), unjudged findings, missed expected problems with reason and stale verdicts, and warns when the assessment revision is not `HEAD`. A metric with nothing counted is "not measured", never 0. ArchGuard never writes verdicts itself, and `evaluate` is not a gate. The MCP tool `evaluation` returns the same result. Format and matching rules: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).
+
 ## Configuration and project data
 
 Configuration precedence is: explicit `--config`, `.archguard/archguard.toml`, legacy `archguard.toml`, then derived values and defaults. Relative source paths are resolved against the project root. An invalid configuration is reported as an error rather than silently replaced.

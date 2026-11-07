@@ -16,6 +16,11 @@ pub const DEVELOPMENT_PATHS: &str = include_str!("development_paths.json");
 mod architecture;
 mod calls;
 mod config;
+mod evaluation;
+pub use evaluation::{
+    Assessment, AssessmentMeta, ExpectedKind, ExpectedProblem, JudgedFinding, Verdict,
+    finding_kind_name,
+};
 mod model;
 mod quality_goal;
 mod semantic_details;

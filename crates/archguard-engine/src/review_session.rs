@@ -712,7 +712,7 @@ fn priority(severity: &str) -> u8 {
     }
 }
 fn structural_finding(f: &Finding, change: &str) -> Result<ReviewFinding, ArchguardError> {
-    let id = hash(&comparison::identity(f))?;
+    let id = crate::evaluation::finding_id(f);
     let mut details = serde_json::to_value(f).map_err(error)?;
     details.as_object_mut().unwrap().remove("id");
     Ok(ReviewFinding {

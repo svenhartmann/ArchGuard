@@ -37,6 +37,12 @@ mod csharp_calls;
 mod dep_inventory;
 mod duplicates;
 mod effective;
+mod evaluation;
+pub use evaluation::{
+    DEFAULT_ASSESSMENT_PATH, EvaluatedFinding, Evaluation, MatchedExpectation, MissedExpectation,
+    Ratio, assessment_template, evaluate, evaluate_project, finding_id, init_assessment,
+    parse_assessment,
+};
 mod evidence_import;
 mod go_calls;
 mod go_sources;

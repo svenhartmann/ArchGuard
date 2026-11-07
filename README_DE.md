@@ -115,6 +115,10 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 
 Die arc42-Erzeugung aktualisiert ausdrücklich markierte Belegblöcke. Eigene Texte außerhalb dieser Blöcke bleiben unverändert. Erzeugte Architekturbeobachtungen ersetzen keine Teamentscheidungen und belegen keine vollständige Laufzeitarchitektur.
 
+### Befunde mit einer Expertenbewertung vergleichen
+
+`archguard evaluate --init .` schreibt `.archguard/assessment.toml` mit jedem aktuellen Befund als unbewertetem Eintrag; eine vorhandene Datei wird nie überschrieben. Eine Expertin trägt die Probleme ein, die sie sieht (`[[expected]]`, mit Art und Knoten-Globs), und bewertet Befunde (`verdict = "true_positive"` oder `"false_positive"`; leer heißt unbewertet). `archguard evaluate . [--assessment DATEI] [--format json]` meldet dann Recall (gefundene erwartete Probleme / erwartete Probleme), Precision (echte Treffer / bewertete aktuelle Befunde), unbewertete Befunde, nicht gefundene erwartete Probleme mit Grund und veraltete Bewertungen und warnt, wenn die Revision der Bewertung nicht `HEAD` ist. Eine Kennzahl ohne gezählte Fälle ist „nicht gemessen", nie 0. ArchGuard schreibt selbst keine Bewertungen, und `evaluate` ist kein Gate. Das MCP-Tool `evaluation` liefert dasselbe Ergebnis. Format und Zuordnungsregeln: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).
+
 ## Konfiguration und Projektdaten
 
 Die Konfiguration wird in dieser Reihenfolge gewählt: ausdrückliches `--config`, `.archguard/archguard.toml`, bisherige `archguard.toml`, danach abgeleitete Werte und Defaults. Relative Quellpfade beziehen sich auf das Projektverzeichnis. Eine fehlerhafte Konfiguration wird gemeldet und nicht stillschweigend ersetzt.
