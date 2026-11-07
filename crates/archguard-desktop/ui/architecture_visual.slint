@@ -1,10 +1,18 @@
 // Derived chapter visual: package map with building-block levels (the
 // web's .arc42-visual, renderArc42PackageMap and the basic arc42Graph).
-import { ScrollView } from "std-widgets.slint";
+import { ScrollView, Switch } from "std-widgets.slint";
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
 import { Fmt } from "format.slint";
+
+// The tick alone, for a diagram drawn elsewhere (the package maps).
+export component FigureSwitch inherits Switch {
+    in property <bool> value;
+    text: @tr("In documentation");
+    checked: value;
+    changed value => { self.checked = root.value; }
+}
 
 export struct ArcLevelItem {
     // Node position; -1 is the project overview.
@@ -265,6 +273,10 @@ export struct ArcMap {
 
 export component ArcVisual inherits Rectangle {
     in property <ArcMap> map;
+    // The map's catalogue id (ADR 0006); empty: no tick.
+    in property <string> doc-id;
+    in property <bool> doc-shown;
+    callback toggle-doc(string, bool);
     callback navigate(int);
     callback scope-selected(int);
     callback select(int);
@@ -351,11 +363,21 @@ export component ArcVisual inherits Rectangle {
                     }
                 }
             }
-            Text {
-                text: root.map.kind == 1 ? @tr("Static calls between packages") : root.map.kind == 2 ? @tr("Cyclic package relationships") : @tr("UML · Packages and dependencies");
-                color: Theme.text;
-                font-size: Theme.font-section;
-                font-weight: Theme.weight-title;
+            HorizontalLayout {
+                spacing: 12px;
+                Text {
+                    text: root.map.kind == 1 ? @tr("Static calls between packages") : root.map.kind == 2 ? @tr("Cyclic package relationships") : @tr("UML · Packages and dependencies");
+                    color: Theme.text;
+                    font-size: Theme.font-section;
+                    font-weight: Theme.weight-title;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+                if root.doc-id != "": FigureSwitch {
+                    value: root.doc-shown;
+                    toggled => { root.toggle-doc(root.doc-id, self.checked); }
+                }
             }
             combo := ComboBox {
                 model: root.map.scopes;

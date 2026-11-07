@@ -1,12 +1,11 @@
 // One diagram of the arc42 catalogue (ADR 0006): title, the tick that puts
 // it into the documentation, its note, the drawing and its Mermaid or
 // PlantUML source. Built in src/architecture_ui/figure.rs.
-import { Switch } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Disclosure, ZoomControls } from "widgets.slint";
-import { Diagram, ArcCard, ArcLine, ArcFrame } from "architecture_visual.slint";
+import { Diagram, ArcCard, ArcLine, ArcFrame, FigureSwitch } from "architecture_visual.slint";
 
-export { ArcFrame }
+export { ArcFrame, FigureSwitch }
 
 export struct ArcFigure {
     id: string,
@@ -25,14 +24,6 @@ export struct ArcFigure {
     source: string,
     // What the arrow colours mean; empty for package maps.
     legend: string,
-}
-
-// The tick alone, for a diagram drawn elsewhere (the package maps).
-export component FigureSwitch inherits Switch {
-    in property <bool> value;
-    text: @tr("In documentation");
-    checked: value;
-    changed value => { self.checked = root.value; }
 }
 
 export component FigureView inherits Rectangle {

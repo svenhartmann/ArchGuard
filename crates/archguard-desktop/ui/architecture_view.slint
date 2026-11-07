@@ -354,7 +354,8 @@ export component ArchitectureView inherits Rectangle {
                                     toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
                                 }
                             }
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "": HorizontalLayout {
+                            // A hidden map is one line with its tick; a shown one has it in its header.
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown: HorizontalLayout {
                                 padding-top: 8px;
                                 spacing: 12px;
                                 Text {
@@ -376,6 +377,9 @@ export component ArchitectureView inherits Rectangle {
                                 ArcVisual {
                                     compact: root.narrow;
                                     map: ArchitectureData.model.map;
+                                    doc-id: ArchitectureData.model.map-id;
+                                    doc-shown: ArchitectureData.model.map-shown;
+                                    toggle-doc(id, on) => { ArchitectureData.toggle-diagram(id, on); }
                                     navigate(s) => { ArchitectureData.navigate(s); }
                                     scope-selected(i) => { ArchitectureData.scope-selected(i); }
                                     select(i) => { ArchitectureData.select-card(i); }
