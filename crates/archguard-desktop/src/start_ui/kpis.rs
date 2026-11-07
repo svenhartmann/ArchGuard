@@ -108,7 +108,7 @@ pub fn cards(g: &Glance, l: Locale) -> (Vec<StartKpiCard>, Vec<i32>) {
         (card::GINI, gini(k, l)),
         (card::DEBT, debt(k, l)),
         (card::LEAKS, Some(leaks(k, l))),
-        (card::GAPS, Some(gaps(k, l))),
+        (card::GAPS, gaps(k, l)),
     ];
     let missing = all
         .iter()
@@ -219,9 +219,9 @@ fn leaks(k: &ReviewKpis, l: Locale) -> StartKpiCard {
 }
 
 /// The count; `a` the hotspot, `b` uncovered ("" unknown), `c` the path.
-fn gaps(k: &ReviewKpis, l: Locale) -> StartKpiCard {
-    let value = l.count(k.risk_gaps.len());
-    match k.risk_gaps.first() {
+fn gaps(k: &ReviewKpis, l: Locale) -> Option<StartKpiCard> {
+    let value = l.count(k.risk_gap_count()?);
+    Some(match k.risk_gaps.first() {
         Some(gap) => {
             let uncovered = gap.coverage.map_or(String::new(), |c| percent(l, 1.0 - c));
             let args = [l.dec(gap.hotspot, 1), uncovered, gap.path.clone()];
@@ -231,7 +231,7 @@ fn gaps(k: &ReviewKpis, l: Locale) -> StartKpiCard {
             }
         }
         None => new(card::GAPS, value, &[]),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -346,15 +346,56 @@ mod tests {
         let (cards, missing) = cards(&glance(Some(k)), Locale::De);
         assert_eq!(
             missing,
-            [card::HEALTH, card::TANGLED, card::GINI, card::DEBT]
+            [
+                card::HEALTH,
+                card::TANGLED,
+                card::GINI,
+                card::DEBT,
+                card::GAPS
+            ]
         );
         let kinds: Vec<i32> = cards.iter().map(|c| c.kind).collect();
-        assert_eq!(
-            kinds,
-            [card::PROPAGATION, card::SDP, card::LEAKS, card::GAPS]
-        );
+        assert_eq!(kinds, [card::PROPAGATION, card::SDP, card::LEAKS]);
         assert!(cards[0].empty);
         assert_eq!(cards[0].value, "");
+    }
+
+    fn gap(path: &str, coverage: Option<f64>) -> RiskCoverageGap {
+        RiskCoverageGap {
+            path: path.into(),
+            hotspot: 1.0,
+            coverage,
+            gap: coverage.map(|c| 1.0 - c),
+        }
+    }
+
+    /// Risk gaps count only files with a measured gap; without any
+    /// coverage the card is not measured, never zero.
+    #[test]
+    fn risk_gaps_count_measured_gaps_only() {
+        let only_unmeasured = ReviewKpis {
+            risk_gaps: vec![gap("a.rs", None), gap("b.rs", None)],
+            ..Default::default()
+        };
+        let (cards_none, missing) = cards(&glance(Some(only_unmeasured)), Locale::En);
+        assert!(missing.contains(&card::GAPS));
+        assert!(cards_none.iter().all(|c| c.kind != card::GAPS));
+
+        let mixed = ReviewKpis {
+            risk_gaps: vec![
+                gap("a.rs", Some(0.0)),
+                gap("b.rs", Some(1.0)),
+                gap("c.rs", None),
+            ],
+            ..Default::default()
+        };
+        let (cards_mixed, missing) = cards(&glance(Some(mixed)), Locale::En);
+        assert!(!missing.contains(&card::GAPS));
+        let card = cards_mixed
+            .iter()
+            .find(|c| c.kind == card::GAPS)
+            .expect("gaps card");
+        assert_eq!(card.value, "1");
     }
 
     /// The top cycle's card opens the cycle's first node; the history keeps
