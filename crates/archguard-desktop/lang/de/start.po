@@ -551,3 +551,24 @@ msgstr "Abstractness A"
 
 msgid "Abstractness over instability with the Martin main sequence. A point is one measured boundary; unmeasured boundaries are never plotted."
 msgstr "Abstractness über Instabilität mit der Martin-Hauptsequenz. Ein Punkt ist eine gemessene Grenze; nicht gemessene Grenzen werden nie eingezeichnet."
+
+msgid "Coverage and impact review"
+msgstr "Testabdeckung und Reichweite prüfen"
+
+msgid "Original source snapshot · {} · {} / {} imported files"
+msgstr "Ursprünglicher Quellcode-Snapshot · {} · {} / {} importierte Dateien"
+
+msgid "Review index = uncovered line fraction × (1 + transitive dependent files). It is a review order, not a defect probability. Impact uses the original file graph and is unchanged by simulation."
+msgstr "Prüfindex = Anteil ungetesteter Zeilen × (1 + transitiv abhängige Dateien). Er bestimmt eine Prüfreihenfolge, keine Fehlerwahrscheinlichkeit. Die Reichweite stammt aus dem ursprünglichen Dateigraphen und bleibt bei Simulationen unverändert."
+
+msgid "Report/source revision at import is unverified. Source changes after import make the affected index unavailable. Missing files and zero executable lines/branches are unknown (—), never 0% coverage. Line and branch counters have different denominators."
+msgstr "Die Quellcode-Revision des Berichts ist beim Import nicht verifiziert. Änderungen nach dem Import machen den betroffenen Index unverfügbar. Fehlende Dateien sowie null ausführbare Zeilen/Zweige bleiben unbekannt (—), niemals 0% Abdeckung. Zeilen- und Zweigzähler haben unterschiedliche Bezugsgrößen."
+
+msgid "Import or refresh a JaCoCo/Cobertura/Clover/LCOV report:"
+msgstr "JaCoCo-, Cobertura-, Clover- oder LCOV-Bericht importieren oder aktualisieren:"
+
+msgid "No test report imported. Coverage is unknown."
+msgstr "Kein Testbericht importiert. Die Testabdeckung ist unbekannt."
+
+msgid "No matching imported files. Missing measurements do not mean untested code."
+msgstr "Keine passenden importierten Dateien. Fehlende Messungen bedeuten nicht ungetesteten Code."

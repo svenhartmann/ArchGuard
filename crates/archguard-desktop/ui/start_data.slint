@@ -364,6 +364,13 @@ export global StartTones {
             : r == 6 ? @tr("Equal values") : @tr("Informational");
     }
 
+    // `coverageStatusText`: the import status of the coverage review.
+    public pure function coverage-status(s: string) -> string {
+        return s == "not_imported" ? @tr("not imported") : s == "ready" ? @tr("imported")
+            : s == "partial" ? @tr("incomplete report") : s == "stale" ? @tr("stale: sources changed")
+            : s == "error" ? @tr("unavailable: import error") : @tr("not available");
+    }
+
     public pure function kpi-label(k: int) -> string {
         return k == 1 ? "CBO" : k == 2 ? "RFC" : k == 3 ? "DIT" : k == 4 ? "NOC"
             : k == 5 ? "WMC" : k == 6 ? "LCOM4" : @tr("Complexity");
