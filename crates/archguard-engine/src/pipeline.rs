@@ -37,7 +37,7 @@ mod scanned_file;
 use scanned_file::ScannedFile;
 #[path = "rust_imports.rs"]
 mod rust_imports;
-pub(crate) use rust_imports::hash_manifests;
+pub(crate) use rust_imports::{CrateItems, ItemTarget, hash_manifests};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;

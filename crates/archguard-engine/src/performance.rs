@@ -398,6 +398,62 @@ fn javascript_code_lines(content: &str) -> Vec<String> {
         })
         .collect()
 }
+/// The language of a file node whose abstractness a provider can supply.
+fn abstractness_language(node: &archguard_core::Node) -> Option<&'static str> {
+    match node.lang.as_deref() {
+        Some("java") => Some("java"),
+        Some("cs" | "csharp") => Some("csharp"),
+        Some("rs") => Some("rust"),
+        _ => None,
+    }
+}
+/// Whether the providers enumerated every source file of each scope language.
+fn provider_coverage(
+    full: &Graph,
+    calls: &CallAnalysis,
+    scope_languages: &BTreeSet<Option<&str>>,
+) -> bool {
+    let source_files = |language: &str| {
+        full.nodes
+            .iter()
+            .filter(|node| {
+                node.kind == NodeKind::File
+                    && !node.name.ends_with("/*")
+                    && abstractness_language(node) == Some(language)
+            })
+            .count()
+    };
+    if calls.analyzers.is_empty() {
+        // Old reports only described Java. Their global status/file count is
+        // still required; absent metadata cannot silently opt C# into coverage.
+        return calls.status == "ready"
+            && *scope_languages == BTreeSet::from([Some("java")])
+            && source_files("java") == calls.files;
+    }
+    scope_languages.iter().all(|needed| {
+        let Some(needed) = needed else {
+            return false;
+        };
+        let providers: Vec<_> = calls
+            .analyzers
+            .iter()
+            .filter(|analyzer| analyzer.language == *needed)
+            .collect();
+        // Rust declarations come from syntax; its provider stays `partial`
+        // for calls, and files whose types syntax cannot enumerate carry an
+        // `unknown` class without abstractness instead.
+        let enumerated =
+            |status: &str| status == "ready" || (*needed == "rust" && status == "partial");
+        !providers.is_empty()
+            && providers
+                .iter()
+                .all(|provider| enumerated(&provider.status))
+            && providers
+                .iter()
+                .try_fold(0usize, |sum, provider| sum.checked_add(provider.files))
+                == Some(source_files(needed))
+    })
+}
 fn abstraction_metric(
     full: &Graph,
     view: &Graph,
@@ -425,10 +481,14 @@ fn abstraction_metric(
         .filter(|node| files.contains(&node.id))
         .map(|node| node.name.as_str())
         .collect();
+    // Function groups and Rust impl blocks are no type declarations.
     let types: Vec<_> = calls
         .classes
         .iter()
-        .filter(|class| file_names.contains(class.graph_node.as_str()))
+        .filter(|class| {
+            file_names.contains(class.graph_node.as_str())
+                && !matches!(class.kind.as_str(), "module" | "impl")
+        })
         .collect();
     let incoming: BTreeSet<_> = view
         .edges
@@ -455,59 +515,13 @@ fn abstraction_metric(
     } else {
         outgoing.len() as f64 / (incoming.len() + outgoing.len()) as f64
     };
-    let language = |node: &archguard_core::Node| match node.lang.as_deref() {
-        Some("java") => Some("java"),
-        Some("cs" | "csharp") => Some("csharp"),
-        _ => None,
-    };
     let scope_languages: BTreeSet<_> = full
         .nodes
         .iter()
         .filter(|node| files.contains(&node.id))
-        .map(language)
+        .map(abstractness_language)
         .collect();
-    let complete = if calls.analyzers.is_empty() {
-        // Old reports only described Java. Their global status/file count is
-        // still required; absent metadata cannot silently opt C# into coverage.
-        calls.status == "ready"
-            && scope_languages == BTreeSet::from([Some("java")])
-            && full
-                .nodes
-                .iter()
-                .filter(|node| {
-                    node.kind == NodeKind::File
-                        && !node.name.ends_with("/*")
-                        && language(node) == Some("java")
-                })
-                .count()
-                == calls.files
-    } else {
-        scope_languages.iter().all(|needed| {
-            let Some(needed) = needed else {
-                return false;
-            };
-            let providers: Vec<_> = calls
-                .analyzers
-                .iter()
-                .filter(|analyzer| analyzer.language == *needed)
-                .collect();
-            let source_files = full
-                .nodes
-                .iter()
-                .filter(|node| {
-                    node.kind == NodeKind::File
-                        && !node.name.ends_with("/*")
-                        && language(node) == Some(*needed)
-                })
-                .count();
-            !providers.is_empty()
-                && providers.iter().all(|provider| provider.status == "ready")
-                && providers
-                    .iter()
-                    .try_fold(0usize, |sum, provider| sum.checked_add(provider.files))
-                    == Some(source_files)
-        })
-    };
+    let complete = provider_coverage(full, calls, &scope_languages);
     let reason = if files.is_empty() || types.is_empty() {
         Some("No compiler-backed types in this scope.".into())
     } else if scope_languages.contains(&None) {

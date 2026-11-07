@@ -25,6 +25,10 @@ struct Unit<'a> {
     names: BTreeMap<Vec<String>, BTreeSet<String>>,
     modules: BTreeMap<Vec<String>, BTreeSet<String>>,
     aliases: BTreeMap<Vec<String>, BTreeSet<String>>,
+    /// `use` bindings: module path plus bound name → the imports binding it.
+    bindings: BTreeMap<Vec<String>, Vec<Import>>,
+    /// File → the module path its top level is declared at.
+    roots: BTreeMap<String, Vec<String>>,
     active: BTreeSet<String>,
     visited: BTreeSet<(String, Vec<String>)>,
     imports: Vec<Import>,
@@ -45,6 +49,9 @@ impl Unit<'_> {
         };
         let syntax = syntax.clone();
         self.active.insert(file.into());
+        self.roots
+            .entry(file.into())
+            .or_insert_with(|| module.clone());
         self.modules
             .entry(module.clone())
             .or_default()
@@ -98,31 +105,43 @@ impl Scanner<'_, '_> {
             }
             _ => {
                 let mut path = prefix;
-                match tree {
+                let bound = match tree {
                     UseTree::Name(name) => {
                         if name.ident != "self" {
                             path.push(name.ident.to_string());
                         }
-                        if let Some(name) = path.last() {
-                            self.alias(name.clone());
-                        }
+                        path.last().cloned()
                     }
                     UseTree::Rename(rename) => {
                         if rename.ident != "self" {
                             path.push(rename.ident.to_string());
                         }
-                        self.alias(rename.rename.to_string());
+                        Some(rename.rename.to_string())
                     }
-                    UseTree::Glob(_) => path.push("*".into()),
+                    UseTree::Glob(_) => {
+                        path.push("*".into());
+                        None
+                    }
                     _ => unreachable!(),
-                }
-                self.unit.imports.push(Import {
+                };
+                let import = Import {
                     file: self.file.clone(),
                     module: self.module.clone(),
                     path,
                     line,
                     raw: raw.into(),
-                });
+                };
+                if let Some(name) = bound {
+                    self.alias(name.clone());
+                    let mut key = self.module.clone();
+                    key.push(name);
+                    self.unit
+                        .bindings
+                        .entry(key)
+                        .or_default()
+                        .push(import.clone());
+                }
+                self.unit.imports.push(import);
             }
         }
     }
@@ -344,6 +363,179 @@ fn resolve(unit: &Unit<'_>, import: &Import) -> Option<String> {
     None
 }
 
+/// Where a type path written in Rust source points, from syntax alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ItemTarget {
+    /// Declared in this crate: the declaring file and the item's path inside it.
+    Project { file: String, name: String },
+    /// Rooted at `std`, `core` or `alloc`, as written after following `use`.
+    External(String),
+    /// A prelude name, an external glob, another crate (possibly a workspace
+    /// member), a macro-generated item or an ambiguous binding.
+    Unresolved,
+}
+
+/// Crate-local item resolution over the module tree of the import edges.
+pub(crate) struct CrateItems<'a> {
+    units: Vec<(String, Unit<'a>)>,
+    /// File → the first unit that reaches it.
+    owner: BTreeMap<String, usize>,
+}
+impl<'a> CrateItems<'a> {
+    pub(crate) fn new(sources: &'a BTreeMap<String, (String, syn::File)>) -> Self {
+        let units = units(sources);
+        let mut owner = BTreeMap::new();
+        for (index, (_, unit)) in units.iter().enumerate() {
+            for file in unit.roots.keys() {
+                owner.entry(file.clone()).or_insert(index);
+            }
+        }
+        Self { units, owner }
+    }
+    /// `path` as written in `file`, inside its inline modules `inline`.
+    pub(crate) fn resolve(&self, file: &str, inline: &[String], path: &[String]) -> ItemTarget {
+        let Some(unit) = self.owner.get(file).map(|&index| &self.units[index].1) else {
+            return ItemTarget::Unresolved;
+        };
+        let mut module = unit.roots[file].clone();
+        module.extend_from_slice(inline);
+        match item(unit, module, path, 0) {
+            Some((file, path)) => {
+                let root = &unit.roots[&file];
+                if path.len() > root.len() && path.starts_with(root) {
+                    ItemTarget::Project {
+                        name: path[root.len()..].join("::"),
+                        file,
+                    }
+                } else {
+                    ItemTarget::Unresolved
+                }
+            }
+            None if is_std(path) || std_binding(unit, path, &unit.roots[file], inline) => {
+                ItemTarget::External(external_path(unit, file, inline, path))
+            }
+            None => ItemTarget::Unresolved,
+        }
+    }
+}
+fn is_std(path: &[String]) -> bool {
+    path.len() > 1 && matches!(path[0].as_str(), "std" | "core" | "alloc")
+}
+/// The single `use` binding of `name` in `module`; several (cfg variants) are ambiguous.
+fn binding<'u>(unit: &'u Unit<'_>, module: &[String], name: &str) -> Option<&'u Import> {
+    let mut key = module.to_vec();
+    key.push(name.to_owned());
+    match unit.bindings.get(&key)?.as_slice() {
+        [import] => Some(import),
+        _ => None,
+    }
+}
+/// Whether the first segment is bound by `use` to a `std`/`core`/`alloc` path.
+fn std_binding(unit: &Unit<'_>, path: &[String], root: &[String], inline: &[String]) -> bool {
+    let module = [root, inline].concat();
+    path.first()
+        .and_then(|first| binding(unit, &module, first))
+        .is_some_and(|import| is_std(&import.path))
+}
+fn external_path(unit: &Unit<'_>, file: &str, inline: &[String], path: &[String]) -> String {
+    let module = [unit.roots[file].as_slice(), inline].concat();
+    match path.first().and_then(|first| binding(unit, &module, first)) {
+        Some(import) if !is_std(path) => [&import.path[..], &path[1..]].concat().join("::"),
+        _ => path.join("::"),
+    }
+}
+/// A local item's declaring file and crate-absolute path.
+type Found = Option<(String, Vec<String>)>;
+
+/// Where `path` starts: an absolute module path and the segments after it.
+/// `Err` carries the answer once a `use` binding or a glob decides.
+fn start<'p>(
+    unit: &Unit<'_>,
+    module: Vec<String>,
+    path: &'p [String],
+    depth: u8,
+) -> Result<(Vec<String>, &'p [String]), Found> {
+    let first = path.first().ok_or(None)?;
+    match first.as_str() {
+        "crate" => Ok((Vec::new(), &path[1..])),
+        "self" => Ok((module, &path[1..])),
+        "super" => {
+            let supers = path.iter().take_while(|p| *p == "super").count();
+            let mut base = module;
+            for _ in 0..supers {
+                base.pop().ok_or(None)?;
+            }
+            Ok((base, &path[supers..]))
+        }
+        _ => {
+            if let Some(import) = binding(unit, &module, first) {
+                let target = [&import.path[..], &path[1..]].concat();
+                return Err(item(unit, import.module.clone(), &target, depth + 1));
+            }
+            let scoped = [&module[..], std::slice::from_ref(first)].concat();
+            if unit.names.contains_key(&scoped) || unit.modules.contains_key(&scoped) {
+                Ok((module, path))
+            } else {
+                Err(glob(unit, &module, path, depth))
+            }
+        }
+    }
+}
+/// The declaring file and crate-absolute path of a local item, following `use`
+/// bindings, re-exports and globs from local modules.
+fn item(unit: &Unit<'_>, module: Vec<String>, path: &[String], depth: u8) -> Found {
+    if depth > 8 {
+        return None;
+    }
+    let (mut absolute, rest) = match start(unit, module, path, depth) {
+        Ok(start) => start,
+        Err(found) => return found,
+    };
+    for (index, segment) in rest.iter().enumerate() {
+        absolute.push(segment.clone());
+        let last = index + 1 == rest.len();
+        if (last && unit.names.contains_key(&absolute))
+            || (!last && unit.modules.contains_key(&absolute))
+        {
+            continue;
+        }
+        // A `pub use` re-export inside a module.
+        let (name, parent) = absolute.split_last()?;
+        let import = binding(unit, parent, name)?;
+        let target = [&import.path[..], &rest[index + 1..]].concat();
+        return item(unit, import.module.clone(), &target, depth + 1);
+    }
+    match unit
+        .names
+        .get(&absolute)?
+        .iter()
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [file] => Some(((*file).clone(), absolute)),
+        _ => None,
+    }
+}
+/// A name brought in by `use local::module::*`; only a single local match counts.
+fn glob(unit: &Unit<'_>, module: &[String], path: &[String], depth: u8) -> Found {
+    let found: BTreeSet<_> = unit
+        .imports
+        .iter()
+        .filter(|import| import.module == module && import.path.last().is_some_and(|p| p == "*"))
+        .filter_map(|import| {
+            let base = &import.path[..import.path.len() - 1];
+            item(
+                unit,
+                import.module.clone(),
+                &[base, path].concat(),
+                depth + 1,
+            )
+        })
+        .collect();
+    let [only] = found.into_iter().collect::<Vec<_>>().try_into().ok()?;
+    Some(only)
+}
+
 struct Manifest {
     package: String,
     /// Identifier used in code → local package it names.
@@ -458,6 +650,142 @@ fn workspace_edges(root: &Path, units: &[(String, Unit<'_>)]) -> Vec<Edge> {
     edges
 }
 
+/// Names that globs of known local modules bind, never external wildcards.
+fn glob_additions(unit: &Unit<'_>) -> Vec<(Vec<String>, String)> {
+    let mut additions = Vec::new();
+    for import in &unit.imports {
+        if !import.path.last().is_some_and(|p| p == "*") {
+            continue;
+        }
+        let Some((module, _)) = absolute_path(unit, import) else {
+            continue;
+        };
+        if !unit.modules.contains_key(&module) {
+            continue;
+        }
+        for name in unit
+            .names
+            .keys()
+            .chain(unit.aliases.keys())
+            .chain(unit.modules.keys())
+        {
+            if name.len() == module.len() + 1 && name.starts_with(&module) {
+                let mut alias = import.module.clone();
+                alias.push(name.last().unwrap().clone());
+                additions.push((alias, import.file.clone()));
+            }
+        }
+    }
+    additions
+}
+/// Bind glob imports until nothing changes. The finite symbol inventory
+/// bounds propagation even for cyclic re-exports.
+fn propagate_globs(unit: &mut Unit<'_>) {
+    for _ in 0..64 {
+        let mut changed = false;
+        for (alias, file) in glob_additions(unit) {
+            changed |= unit.aliases.entry(alias).or_default().insert(file);
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// One unit per crate root: `lib.rs`/`main.rs` first, then every unattached
+/// source file as its own root rather than guessing another crate's scope.
+fn units(sources: &BTreeMap<String, (String, syn::File)>) -> Vec<(String, Unit<'_>)> {
+    let mut roots: Vec<_> = sources
+        .keys()
+        .filter(|p| {
+            matches!(
+                Path::new(p).file_name().and_then(|p| p.to_str()),
+                Some("lib.rs" | "main.rs")
+            )
+        })
+        .cloned()
+        .collect();
+    roots.extend(
+        sources
+            .keys()
+            .filter(|p| !roots.contains(p))
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    let mut visited = BTreeSet::new();
+    let mut units = Vec::new();
+    for file in roots {
+        if visited.contains(&file) {
+            continue;
+        }
+        let mut unit = Unit {
+            sources,
+            names: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            aliases: BTreeMap::new(),
+            bindings: BTreeMap::new(),
+            roots: BTreeMap::new(),
+            active: BTreeSet::new(),
+            visited: BTreeSet::new(),
+            imports: Vec::new(),
+            crate_paths: Vec::new(),
+            edges: Vec::new(),
+        };
+        unit.file(&file, Vec::new(), module_directory(&file));
+        propagate_globs(&mut unit);
+        visited.extend(unit.visited.iter().map(|(file, _)| file.clone()));
+        units.push((file, unit));
+    }
+    units
+}
+
+/// Edges of one unit from its `use` imports and qualified paths in code.
+fn import_edges(
+    unit: &Unit<'_>,
+    names: &BTreeMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> Vec<Edge> {
+    let edge = |from: &str, to: String, line: u32, raw: &str| {
+        let evidence = Ref {
+            file: from.to_owned(),
+            line,
+            raw: raw.to_owned(),
+        };
+        (from.to_owned(), to, evidence)
+    };
+    let mut edges = Vec::new();
+    for import in &unit.imports {
+        if let Some(target) = resolve(unit, import) {
+            if target != import.file {
+                edges.push(edge(&import.file, target, import.line, &import.raw));
+            }
+        } else if matches!(
+            import.path.first().map(String::as_str),
+            Some("crate" | "super" | "self")
+        ) {
+            warnings.push(format!(
+                "unresolved Rust-local import `{}` in {} (line {}): {}",
+                import.path.join("::"),
+                names[&import.file],
+                import.line,
+                import.raw
+            ));
+        }
+    }
+    // Qualified paths in code (`crate::b::Repo::new()`) link without a `use`;
+    // unresolved ones are mostly external (`Vec::new`) and stay silent.
+    let mut seen = BTreeSet::new();
+    for path in &unit.crate_paths {
+        if let Some(target) = resolve(unit, path)
+            && target != path.file
+            && seen.insert((path.file.clone(), target.clone(), path.line))
+        {
+            edges.push(edge(&path.file, target, path.line, &path.raw));
+        }
+    }
+    edges
+}
+
 pub(super) fn edges(
     root: &Path,
     files: &[ScannedFile],
@@ -480,126 +808,11 @@ pub(super) fn edges(
         .iter()
         .map(|f| (f.rel_path.clone(), f.stripped.clone()))
         .collect();
-    let mut roots: Vec<_> = sources
-        .keys()
-        .filter(|p| {
-            matches!(
-                Path::new(p).file_name().and_then(|p| p.to_str()),
-                Some("lib.rs" | "main.rs")
-            )
-        })
-        .cloned()
-        .collect();
-    let mut visited = BTreeSet::new();
+    let mut units = units(&sources);
     let mut edges = Vec::new();
-    let mut units = Vec::new();
-    // Analyze unattached source files as separate roots rather than guessing another crate's scope.
-    roots.extend(
-        sources
-            .keys()
-            .filter(|p| !roots.contains(p))
-            .cloned()
-            .collect::<Vec<_>>(),
-    );
-    for file in roots {
-        if visited.contains(&file) {
-            continue;
-        }
-        let mut unit = Unit {
-            sources: &sources,
-            names: BTreeMap::new(),
-            modules: BTreeMap::new(),
-            aliases: BTreeMap::new(),
-            active: BTreeSet::new(),
-            visited: BTreeSet::new(),
-            imports: Vec::new(),
-            crate_paths: Vec::new(),
-            edges: Vec::new(),
-        };
-        unit.file(&file, Vec::new(), module_directory(&file));
-        // Resolve glob bindings only from known local modules, never external wildcards.
-        // The finite symbol inventory bounds propagation even for cyclic re-exports.
-        for _ in 0..64 {
-            let mut additions = Vec::new();
-            for import in &unit.imports {
-                if !import.path.last().is_some_and(|p| p == "*") {
-                    continue;
-                }
-                let Some((module, _)) = absolute_path(&unit, import) else {
-                    continue;
-                };
-                if !unit.modules.contains_key(&module) {
-                    continue;
-                }
-                for name in unit
-                    .names
-                    .keys()
-                    .chain(unit.aliases.keys())
-                    .chain(unit.modules.keys())
-                {
-                    if name.len() == module.len() + 1 && name.starts_with(&module) {
-                        let mut alias = import.module.clone();
-                        alias.push(name.last().unwrap().clone());
-                        additions.push((alias, import.file.clone()));
-                    }
-                }
-            }
-            let mut changed = false;
-            for (alias, file) in additions {
-                changed |= unit.aliases.entry(alias).or_default().insert(file);
-            }
-            if !changed {
-                break;
-            }
-        }
-        for import in &unit.imports {
-            if let Some(target) = resolve(&unit, import) {
-                if target != import.file {
-                    unit.edges.push((
-                        import.file.clone(),
-                        target,
-                        Ref {
-                            file: import.file.clone(),
-                            line: import.line,
-                            raw: import.raw.clone(),
-                        },
-                    ));
-                }
-            } else if matches!(
-                import.path.first().map(String::as_str),
-                Some("crate" | "super" | "self")
-            ) {
-                warnings.push(format!(
-                    "unresolved Rust-local import `{}` in {} (line {}): {}",
-                    import.path.join("::"),
-                    names[&import.file],
-                    import.line,
-                    import.raw
-                ));
-            }
-        }
-        // Qualified paths in code (`crate::b::Repo::new()`) link without a `use`;
-        // unresolved ones are mostly external (`Vec::new`) and stay silent.
-        let mut seen = BTreeSet::new();
-        for path in &unit.crate_paths {
-            if let Some(target) = resolve(&unit, path)
-                && target != path.file
-                && seen.insert((path.file.clone(), target.clone(), path.line))
-            {
-                unit.edges.push((
-                    path.file.clone(),
-                    target,
-                    Ref {
-                        file: path.file.clone(),
-                        line: path.line,
-                        raw: path.raw.clone(),
-                    },
-                ));
-            }
-        }
-        visited.extend(unit.visited.iter().map(|(file, _)| file.clone()));
+    for (_, unit) in &mut units {
         edges.append(&mut unit.edges);
-        units.push((file, unit));
+        edges.extend(import_edges(unit, &names, &mut warnings));
     }
     edges.extend(workspace_edges(root, &units));
     let edges = edges

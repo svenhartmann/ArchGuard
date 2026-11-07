@@ -332,7 +332,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 | **PHP** | `namespace A\B;` + PSR-4-Mapping aus `composer.json` (logisch) | `use A\B\C;` (auch Gruppen-Syntax, `use function/const`), `require`/`include`, voll qualifizierte Namen `\A\B\C` im Code | PSR-4 → Datei; sonst Pseudoknoten; `require` als Pfad |
 | **Rust** | Modulbaum (`mod`/Datei, physisch) | `use crate::…`, `use super::…`, `mod x;`, Pfade im Code wie `crate::a::B::new()` | Modulpfad-Match; Workspace-Crates über lokale `Cargo.toml`-Abhängigkeiten |
 
-Python ergänzt einen reinen Syntax-Helfer auf dem Standardmodul `ast` (`archguard-engine/src/python_calls.rs`), gestartet mit `-I -S`; die Zählregeln entsprechen dem Rust-Syntaxanalyzer. PHP nutzt mit denselben Regeln den Token-Scanner `archguard-extract/src/php_structure.rs` und braucht keine PHP-Installation. Rust-Aufrufziele stammen nach `ARCHGUARD_TRUST_PROJECT_COMPILER=1` aus `rust-analyzer scip` (`archguard-engine/src/rust_scip.rs`), mit ersetztem Build-Skript-Befehl, sodass kein Projektcode läuft; SCIP benennt jedes Symbol, die `syn`-Aufrufstellen bestimmen, was ein Aufruf ist.
+Python ergänzt einen reinen Syntax-Helfer auf dem Standardmodul `ast` (`archguard-engine/src/python_calls.rs`), gestartet mit `-I -S`; die Zählregeln entsprechen dem Rust-Syntaxanalyzer. PHP nutzt mit denselben Regeln den Token-Scanner `archguard-extract/src/php_structure.rs` und braucht keine PHP-Installation. Rust-Aufrufziele stammen nach `ARCHGUARD_TRUST_PROJECT_COMPILER=1` aus `rust-analyzer scip` (`archguard-engine/src/rust_scip.rs`), mit ersetztem Build-Skript-Befehl, sodass kein Projektcode läuft; SCIP benennt jedes Symbol, die `syn`-Aufrufstellen bestimmen, was ein Aufruf ist. Rust-Typbeziehungen (`archguard-engine/src/rust_types.rs`) brauchen kein Opt-in: Traits sind abstrakt, `impl Trait for Type` und Supertraits werden über den Modulbaum von `rust_imports.rs` aufgelöst; derselbe SCIP-Index entscheidet, falls vorhanden, die Trait-Ziele und listet die Referenzen jedes Typs in Feldern, Signaturen und Impl-Rümpfen als Typverwendungen. Dateien mit Item-Makroaufrufen oder Syntaxfehlern tragen eine `unknown`-Klasse ohne Abstraktheit.
 
 Go ergänzt Modul-/Paketimporte mit einem Parser-/Typ-Helper des Go SDK.
 Das semantische Modell enthält Pakete, Structs, Interfaces und Funktionsgruppen
@@ -654,7 +654,9 @@ gemessen“, nie „sauber“ oder null.
   von keiner Abstraktionsmetrik gedeckte Grenzen bleiben `unmeasured`. Die
   Pipeline startet keinen Compiler, deshalb bleibt `zones` im gecachten
   KPI-Block `None`. Der Viewer füllt es aus den Knoten-Abstraktionsmetriken
-  der Performance-Analyse (Java und C#); SCC-Metriken zählen nicht doppelt.
+  der Performance-Analyse (Java und C#, Rust aus Syntax-Deklarationen;
+  Rust-Impl-Blöcke und Funktionsgruppen sind keine Typen); SCC-Metriken
+  zählen nicht doppelt.
   Ohne eine einzige messbare Grenze bleibt es `None` — das Panel zeigt
   „not measured“, statt zu raten. Textbericht (`archguard scan`,
   `archguard check`) und MCP-Tool `review_kpis` lesen den gecachten Block
@@ -663,7 +665,7 @@ gemessen“, nie „sauber“ oder null.
   `review_kpis` starten dieselbe Aufruf- und Performance-Analyse
   (`archguard_engine::measure_review_zones`) und füllen `zones` vor der
   Ausgabe. Das Opt-in gibt es, weil die Compiler-Helfer langsam sind; ohne
-  messbare Java- oder C#-Grenze bleibt `zones` trotzdem `None`.
+  messbare Java-, C#- oder Rust-Grenze bleibt `zones` trotzdem `None`.
 - **Verstricktheit** (`tangles.rs`): Anteil der Knoten in einer zyklischen SCC
   mit mehr als einem Mitglied, bezogen auf die Sichtknoten.
 - **Hub-Gini** (`tangles.rs`): Gini-Koeffizient der Fan-in-Verteilung plus der

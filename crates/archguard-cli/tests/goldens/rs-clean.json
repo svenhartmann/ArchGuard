@@ -157,8 +157,8 @@
       {
         "backend": "syn",
         "diagnostics": [
-          "Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.",
-          "Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
+          "Declarations, complexity and Halstead per function come from syntax. Traits count as abstract; structs, enums and unions as concrete. Implemented traits (impl Trait for Type) and supertraits resolve from syntax within the crate; traits of std, core and alloc are external, other crates' traits, prelude names and blanket impls stay unresolved. Rust has no implementation inheritance: DIT/NOC are not applicable. Files with item macro invocations or syntax errors keep their types unknown, and macro bodies that are not expressions stay opaque.",
+          "Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
         ],
         "files": 6,
         "language": "rust",
@@ -168,8 +168,8 @@
       }
     ],
     "diagnostics": [
-      "rust: Declarations, complexity and Halstead per function come from syntax; types are not resolved, and macro bodies that are not expressions stay opaque.",
-      "rust: Rust calls stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
+      "rust: Declarations, complexity and Halstead per function come from syntax. Traits count as abstract; structs, enums and unions as concrete. Implemented traits (impl Trait for Type) and supertraits resolve from syntax within the crate; traits of std, core and alloc are external, other crates' traits, prelude names and blanket impls stay unresolved. Rust has no implementation inheritance: DIT/NOC are not applicable. Files with item macro invocations or syntax errors keep their types unknown, and macro bodies that are not expressions stay opaque.",
+      "rust: Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run."
     ],
     "projected_calls": 0,
     "projected_supertypes": 0,

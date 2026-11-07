@@ -62,6 +62,7 @@ mod review_sources;
 mod risk_gap;
 mod rust_calls;
 mod rust_scip;
+mod rust_types;
 mod security;
 // Declared here, not in their modules: a test file that imports its parent
 // back would close a file cycle.
@@ -69,6 +70,8 @@ mod security;
 mod manifest_render_tests;
 #[cfg(test)]
 mod rust_imports_tests;
+#[cfg(test)]
+mod rust_types_tests;
 #[cfg(test)]
 mod security_tests;
 mod semantic_calls;
