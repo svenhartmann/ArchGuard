@@ -115,6 +115,59 @@ export struct StartServices {
     flows: [StartFlow],
 }
 
+// One KPI card below the World (src/start_ui/kpis.rs, module `card`):
+// value formatted, a..d the arguments of its sub-line and help text,
+// level the health Ampel (0 none, 1 green, 2 yellow, 3 red), node the
+// graph node a click opens ("" none), empty: the list holds no entry.
+export struct StartKpiCard {
+    kind: int,
+    value: string,
+    a: string,
+    b: string,
+    c: string,
+    d: string,
+    level: int,
+    node: string,
+    empty: bool,
+}
+
+export struct StartKpiPart {
+    name: string,
+    value: string,
+}
+
+// "Architecture at a glance" (`renderStartKpis`): the project's review KPIs,
+// independent of the World scope. measured: the analysis carries review
+// KPIs; missing: card kinds without a measurement (hidden cards).
+// Health: ring the score arc in a 100 × 100 box ("" no score), trend
+// signed ("" no comparison), rising: trend ≥ 0. History: spark the
+// polyline in a 250 × 48 box ("" fewer than two measured snapshots).
+// reveal: scroll to the section; profile: the profile starts open.
+export struct StartGlance {
+    shown: bool,
+    // The analysed project's name.
+    project: string,
+    measured: bool,
+    cards: [StartKpiCard],
+    missing: [int],
+    score: string,
+    level: int,
+    ring: string,
+    trend: string,
+    rising: bool,
+    parts: [StartKpiPart],
+    zones-known: bool,
+    pain: int,
+    useless: int,
+    main: int,
+    unmeasured: int,
+    spark: string,
+    spark-from: string,
+    spark-to: string,
+    reveal: bool,
+    profile: bool,
+}
+
 export struct StartModel {
     ready: bool,
     // Why the world could not be built (shown instead of the progress).
@@ -175,6 +228,7 @@ export struct StartModel {
     detail-copy: string,
     detail-ai: string,
     services: StartServices,
+    glance: StartGlance,
 }
 
 // The surface under the pointer (src/start_ui/hover.rs): x, y in canvas
@@ -282,6 +336,13 @@ export global StartTones {
     // Connections: 0 cyclic, 1 into the selection, 2 other.
     public pure function edge(t: int) -> color {
         return t == 0 ? Theme.cycle : t == 1 ? Theme.accent : Theme.success;
+    }
+
+    // A class metric's rating (src/start_ui/class_detail.rs, state_code).
+    public pure function rating-label(r: int) -> string {
+        return r == 1 ? @tr("Low") : r == 2 ? @tr("Elevated") : r == 3 ? @tr("High")
+            : r == 4 ? @tr("Unknown") : r == 5 ? @tr("Few comparisons")
+            : r == 6 ? @tr("Equal values") : @tr("Informational");
     }
 
     public pure function kpi-label(k: int) -> string {

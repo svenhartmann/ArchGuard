@@ -4,6 +4,7 @@
 use slint::{ComponentHandle, SharedString};
 
 use super::details;
+use super::kpis;
 use super::layout::Cell;
 use super::overlay::{center, place_pins};
 use super::pins;
@@ -145,6 +146,13 @@ pub fn push(ui: &AppWindow, s: &StartState) {
         m.empty = true;
     }
     details::fill(&mut m, s, Texts::of(ui).locale());
+    kpis::fill(
+        &mut m,
+        &old,
+        &s.glance,
+        &ui.get_project(),
+        Texts::of(ui).locale(),
+    );
     d.set_model(m);
 }
 

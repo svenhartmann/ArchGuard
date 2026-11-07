@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use archguard_engine::core::{CallAnalysis, Finding, Graph, NodeKind};
-use archguard_engine::{ArchitectureWorld, ClassMetrics, WorldEntity};
+use archguard_engine::{ArchitectureWorld, ClassMetrics, MethodMetrics, WorldEntity};
 
 use crate::rating::Cohorts;
 pub use crate::rating::Rating;
@@ -23,6 +23,10 @@ pub struct Method {
     pub nesting: Option<u32>,
     pub file: String,
     pub line: u32,
+    pub end_line: Option<u32>,
+    /// Source maintainability (`code_metrics`): Cognitive and MI.
+    pub cognitive: Option<u32>,
+    pub maintainability: Option<f64>,
 }
 
 /// Everything the tab derives its views from; `Send`, so a worker thread
@@ -35,6 +39,9 @@ pub struct Evidence {
     pub kpis: HashMap<String, [(Option<f64>, Rating); 6]>,
     /// Class id (or file node for files without classes) -> methods.
     pub methods: HashMap<String, Vec<Method>>,
+    /// Class id -> its measurements, and the cohorts that rate them.
+    pub classes: HashMap<String, ClassMetrics>,
+    pub cohorts: Cohorts,
 }
 
 impl Evidence {
@@ -47,7 +54,13 @@ impl Evidence {
         let metrics = archguard_engine::code_metrics(calls);
         Evidence {
             kpis: rate_classes(&metrics.classes),
-            methods: methods(calls),
+            methods: methods(calls, &metrics.methods),
+            cohorts: Cohorts::new(&metrics.classes),
+            classes: metrics
+                .classes
+                .into_iter()
+                .map(|c| (c.class_id.clone(), c))
+                .collect(),
             graph,
             findings,
             world,
@@ -68,9 +81,15 @@ impl Evidence {
     }
 }
 
-fn methods(calls: &CallAnalysis) -> HashMap<String, Vec<Method>> {
+fn methods(calls: &CallAnalysis, measured: &[MethodMetrics]) -> HashMap<String, Vec<Method>> {
+    // As `worldClassMethods`: the measurement of the same method and class.
+    let extra: HashMap<(&str, &str), &MethodMetrics> = measured
+        .iter()
+        .map(|m| ((m.method_id.as_str(), m.class_id.as_str()), m))
+        .collect();
     let mut out: HashMap<String, Vec<Method>> = HashMap::new();
     for m in &calls.methods {
+        let extra = extra.get(&(m.id.as_str(), m.class_id.as_str()));
         let row = Method {
             name: if m.signature.is_empty() {
                 m.name.clone()
@@ -81,6 +100,9 @@ fn methods(calls: &CallAnalysis) -> HashMap<String, Vec<Method>> {
             nesting: m.complexity.as_ref().map(|c| c.max_nesting),
             file: m.file.clone(),
             line: m.line,
+            end_line: m.end_line,
+            cognitive: extra.and_then(|x| x.cognitive),
+            maintainability: extra.and_then(|x| x.maintainability_index),
         };
         out.entry(m.file.clone()).or_default().push(row.clone());
         out.entry(m.class_id.clone()).or_default().push(row);

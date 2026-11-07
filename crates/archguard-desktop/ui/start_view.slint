@@ -9,6 +9,8 @@ import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
 import { StartDetails } from "start_details.slint";
+import { StartKpis } from "start_kpis.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export { StartData }
 
@@ -81,11 +83,22 @@ export component StartView inherits Rectangle {
     property <string> metric: StartTones.kpi-label(m.kpi);
     background: Theme.bg;
 
+    // The World fills the view; the project's KPIs follow below it, as the
+    // web's Start page (`start-kpis`). The stage keeps the wheel for zoom.
+    property <bool> glance: m.glance.shown;
+    property <bool> reveal: m.glance.reveal;
+    page := ScrollView {
+        content-width: self.visible-width;
+        content-height: column.preferred-height;
+        // Snapshot runs open on the KPIs (src/start_ui.rs); scrolling
+        // replaces this binding.
+        content-y: root.reveal ? max(-card.height - 18px, self.visible-height - self.content-height) : 0;
+    column := VerticalLayout {
+    width: page.visible-width;
+    padding: 18px;
+    spacing: 18px;
     card := Rectangle {
-        x: 18px;
-        y: 18px;
-        width: parent.width - 36px;
-        height: parent.height - 36px;
+        height: max(460px, page.visible-height - 36px - (root.glance ? 44px : 0));
         border-radius: 18px;
         border-width: 1px;
         border-color: Theme.border;
@@ -300,5 +313,16 @@ export component StartView inherits Rectangle {
             y: stage.y;
             height: card.height - stage.y;
         }
+    }
+    if root.glance: Rectangle {
+        border-radius: 18px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.panel;
+        StartKpis {
+            world-view => { page.content-y = 0; }
+        }
+    }
+    }
     }
 }

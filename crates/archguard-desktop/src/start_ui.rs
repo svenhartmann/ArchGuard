@@ -9,13 +9,18 @@
 mod actions;
 mod arrows;
 mod camera_wire;
+mod class_detail;
 mod connections;
+mod coverage_detail;
 mod details;
 mod evidence;
 mod follow_place;
 mod hover;
 mod keys;
+mod kpis;
+mod kpis_profile;
 mod layout;
+mod lines;
 mod memo;
 mod modes;
 mod motion;
@@ -90,8 +95,13 @@ impl Inputs {
         let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
+        let review = archguard_engine::test_coverage_review(&graph, &coverage);
+        let snapshots = archguard_engine::read_snapshots(&root);
+        let glance = kpis::Glance::new(graph.review_kpis.clone(), &findings, &snapshots);
         let services = ServicesWorld::new(tab_support::topology(&topology, &root));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
+        state.glance = glance;
+        state.files = coverage_detail::Files::new(&coverage, &review);
         state.root = root.display().to_string();
         state.restore(&memo);
         snapshot_overrides(&mut state);
@@ -313,7 +323,9 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 
 /// `ARCHGUARD_DESKTOP_WORLD=<package>`, `ARCHGUARD_DESKTOP_LENS=<0..2>`,
 /// `ARCHGUARD_DESKTOP_KPI=<0..6>`, `ARCHGUARD_DESKTOP_ROTATE=<degrees>` and
-/// `ARCHGUARD_DESKTOP_PICK=<area name>` set the view for snapshot runs.
+/// `ARCHGUARD_DESKTOP_PICK=<area name>` set the view for snapshot runs;
+/// `ARCHGUARD_DESKTOP_START_FIND` selects a search match and
+/// `ARCHGUARD_DESKTOP_START_GLANCE` shows the KPIs below the World.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut StartState) {
     let var = |k: &str| std::env::var(k).ok();
@@ -339,6 +351,19 @@ fn snapshot_overrides(s: &mut StartState) {
         Some("1") => s.set_lens(Lens::Explore),
         Some("2") => s.set_lens(Lens::Coverage),
         _ => {}
+    }
+    // `ARCHGUARD_DESKTOP_START_FIND=<term>`: search and select the first
+    // match, as Enter in the search field.
+    if let Some(term) = var("ARCHGUARD_DESKTOP_START_FIND") {
+        s.set_search(term);
+        s.accept_search();
+        s.details_open = s.has_selection();
+    }
+    // `ARCHGUARD_DESKTOP_START_GLANCE=1`: scroll to the KPIs; `=profile`
+    // also opens the architecture profile.
+    if let Some(g) = var("ARCHGUARD_DESKTOP_START_GLANCE") {
+        s.glance.reveal = true;
+        s.glance.profile = g == "profile";
     }
     if let Some(r) = var("ARCHGUARD_DESKTOP_ROTATE").and_then(|r| r.parse::<f64>().ok()) {
         s.cam = scene::rotate(s.cam, r.to_radians());
@@ -724,5 +749,75 @@ mod tests {
         );
         s.set_mode(Mode::Architecture);
         assert_eq!((s.mode, s.entered), (Mode::Architecture, false));
+    }
+
+    fn fixture_root(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(name)
+    }
+
+    /// The kinds of the detail lines of the current selection.
+    fn detail_kinds(s: &StartState) -> Vec<i32> {
+        use slint::Model;
+        let mut m = StartModel::default();
+        details::fill(&mut m, s, crate::format::Locale::En);
+        m.detail_lines.iter().map(|l| l.kind).collect()
+    }
+
+    /// The glance carries the analysis' review KPIs: the fixture's cycle,
+    /// SDP violation and leak are cards that open their graph node.
+    #[test]
+    fn the_glance_shows_the_review_kpis_of_the_analysis() {
+        let s = fixture_state_at(&fixture_root("review-kpis"));
+        assert!(s.glance.kpis.is_some());
+        let (cards, _) = kpis::cards(&s.glance, crate::format::Locale::En);
+        let card = |k: i32| cards.iter().find(|c| c.kind == k).expect("card");
+        let cycle = card(kpis::card::PROPAGATION);
+        assert!(!cycle.empty && !cycle.node.is_empty(), "{cycle:?}");
+        assert_ne!(card(kpis::card::SDP).value, "0");
+        assert_ne!(card(kpis::card::LEAKS).value, "0");
+    }
+
+    /// A class in Explore shows its rating, other metrics and methods; the
+    /// Test gaps lens adds the file's coverage section.
+    #[test]
+    fn class_and_file_details_go_into_depth() {
+        let mut s = fixture_state_at(&fixture_root("java-packages"));
+        let e = (0..s.ev.world.entities.len())
+            .find(|&e| {
+                s.ev.entity(e)
+                    .class_id
+                    .as_ref()
+                    .is_some_and(|id| s.ev.classes.contains_key(id))
+            })
+            .expect("a measured class");
+        let area = s
+            .scope
+            .areas
+            .iter()
+            .position(|a| a.entities.contains(&e))
+            .expect("its area");
+        s.set_kpi(1);
+        s.select(state::Selection {
+            area,
+            entity: Some(e),
+            members: None,
+        });
+        let kinds = detail_kinds(&s);
+        for k in [
+            lines::kind::KPI_NOTE,
+            lines::kind::OTHER_METRICS,
+            lines::kind::METHODS,
+        ] {
+            assert!(kinds.contains(&k), "{k} in {kinds:?}");
+        }
+        s.set_lens(Lens::Coverage);
+        let kinds = detail_kinds(&s);
+        assert!(kinds.contains(&lines::kind::COV_HEAD), "{kinds:?}");
+        assert!(
+            kinds.contains(&lines::kind::COV_NONE),
+            "no coverage imported"
+        );
     }
 }

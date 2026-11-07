@@ -350,3 +350,183 @@ msgstr "{} · {} Verweise · Im Quellgraph öffnen"
 
 msgid "No recorded dependencies in this direction."
 msgstr "Keine erfassten Abhängigkeiten in dieser Richtung."
+
+msgid "Architecture score · /100"
+msgstr "Architektur-Score · /100"
+
+msgid "Propagation cost (top cycle)"
+msgstr "Propagationskosten (Top-Zyklus)"
+
+msgid "SDP violations"
+msgstr "SDP-Verstöße"
+
+msgid "Tangledness"
+msgstr "Verflechtung"
+
+msgid "Hub Gini"
+msgstr "Hub-Gini"
+
+msgid "Debt markers"
+msgstr "Schuld-Marker"
+
+msgid "Leaks"
+msgstr "Lecks"
+
+msgid "Risk coverage gaps"
+msgstr "Risiko-Abdeckungslücken"
+
+msgid "None recorded"
+msgstr "Nicht erfasst"
+
+msgid "No comparison snapshot yet"
+msgstr "Noch kein Vergleichssnapshot"
+
+msgid "{} vs. previous snapshot"
+msgstr "{} ggü. vorherigem Snapshot"
+
+msgid "top share {}"
+msgstr "Top-Anteil {}"
+
+msgid "per kloc not measured"
+msgstr "pro kloc nicht gemessen"
+
+msgid "{} per kloc"
+msgstr "{} pro kloc"
+
+msgid "Composite index 0–100 from the measurable KPI parts; absent parts are excluded, never zeroed."
+msgstr "Zusammengesetzter Index 0–100 aus den messbaren KPI-Teilen; fehlende Teile entfallen, werden nie null gesetzt."
+
+msgid "The payload carries no propagation-cost entries — that is the recorded state, not a measurement of zero."
+msgstr "Die Analyse enthält keine Propagationskosten-Einträge — das ist der erfasste Stand, keine Messung von null."
+
+msgid "Share of nodes reachable from cycle {}: {} of {} nodes ({} in the cycle)."
+msgstr "Anteil der von Zyklus {} erreichbaren Knoten: {} von {} ({} im Zyklus)."
+
+msgid "No Stable Dependencies Principle violations recorded."
+msgstr "Keine Verstöße gegen das Stable Dependencies Principle erfasst."
+
+msgid "A stable module imports a less stable one: {} → {}."
+msgstr "Ein stabiles Modul importiert ein instabileres: {} → {}."
+
+msgid "{} of {} nodes live in a cyclic group."
+msgstr "{} von {} Knoten liegen in einer zyklischen Gruppe."
+
+msgid "Inequality of the fan-in distribution (0 equal … 1 single hub); top-5 hubs take {} of all edges."
+msgstr "Ungleichheit der Fan-in-Verteilung (0 gleich … 1 einzelner Hub); die Top-5-Hubs halten {} aller Kanten."
+
+msgid "{} TODO/FIXME/HACK/XXX markers in {} source lines."
+msgstr "{} TODO/FIXME/HACK/XXX-Marker in {} Quellzeilen."
+
+msgid "No leaky-encapsulation findings recorded."
+msgstr "Keine Leck-Funde erfasst."
+
+msgid "{} reaches {}, which {} does not export."
+msgstr "{} nutzt {}, das {} nicht exportiert."
+
+msgid "No risk-weighted coverage gaps recorded."
+msgstr "Keine risiko-gewichteten Abdeckungslücken erfasst."
+
+msgid "Hotspot {} with {} uncovered — the gap stays null when coverage is unknown."
+msgstr "Hotspot {} mit {} ungedeckten Zeilen — bei unbekannter Abdeckung bleibt die Lücke leer."
+
+msgid "not measured"
+msgstr "nicht gemessen"
+
+msgid "Green"
+msgstr "Grün"
+
+msgid "Yellow"
+msgstr "Gelb"
+
+msgid "Red"
+msgstr "Rot"
+
+msgid "Score history"
+msgstr "Score-Verlauf"
+
+msgid "Not measured — this analysis carries no health index. Re-run archguard analyze with the KPI pipeline; absent values are never shown as zero."
+msgstr "Nicht gemessen — diese Analyse enthält keinen Gesundheits-Index. archguard analyze mit der KPI-Pipeline erneut ausführen; fehlende Werte werden nie als null angezeigt."
+
+msgid "Delta against the previous snapshot; a higher score is better."
+msgstr "Delta zum vorherigen Snapshot; ein höherer Score ist besser."
+
+msgid "The index carries no measurable parts — not measured, never zero."
+msgstr "Der Index enthält keine messbaren Teile — nicht gemessen, nie null."
+
+msgid "Trend needs at least two measured snapshots."
+msgstr "Verlauf braucht mindestens zwei gemessene Schnitte."
+
+msgid "Health score per snapshot, oldest first"
+msgstr "Gesundheits-Score pro Snapshot, ältester zuerst"
+
+msgid "Abstraction & stability"
+msgstr "Abstraktion & Stabilität"
+
+msgid "{} pain · {} uselessness · {} main sequence · {} unmeasured"
+msgstr "{} Pain · {} Uselessness · {} Hauptsequenz · {} nicht gemessen"
+
+msgid "Zone distribution not measured — the KPI block carries no zone statistics."
+msgstr "Zonenverteilung nicht gemessen — die Kennzahlen enthalten keine Zonen-Statistik."
+
+msgid "Architecture at a glance"
+msgstr "Architektur im Blick"
+
+msgid "Project analysis · independent of the World scope"
+msgstr "Projektanalyse · unabhängig vom World-Ausschnitt"
+
+msgid "Project-wide review KPIs of this analysis, independent of the package shown in the World. A KPI the analysis did not measure is listed as not measured, never shown as zero. Cards naming a module or file open it in the Graph."
+msgstr "Projektweite Review-Kennzahlen dieser Analyse, unabhängig vom Paket, das die World zeigt. Eine Kennzahl, die die Analyse nicht gemessen hat, erscheint als nicht gemessen, nie als null. Karten mit einem Modul oder einer Datei öffnen diese im Graph."
+
+msgid "World View ↑"
+msgstr "World-Ansicht ↑"
+
+msgid "Not measured"
+msgstr "Nicht gemessen"
+
+msgid "This analysis carries no review KPIs. Re-run archguard analyze with the KPI pipeline; absent values are never shown as zero."
+msgstr "Diese Analyse enthält keine Review-Kennzahlen. archguard analyze mit der KPI-Pipeline erneut ausführen; fehlende Werte werden nie als null angezeigt."
+
+msgid "Not measured:"
+msgstr "Nicht gemessen:"
+
+msgid "Architecture profile and history"
+msgstr "Architekturprofil und Verlauf"
+
+msgid "Test coverage"
+msgstr "Testabdeckung"
+
+msgid "Lines: {} · Branches: {}"
+msgstr "Zeilen: {} · Zweige: {}"
+
+msgid " · source changed since import"
+msgstr " · Quelle seit dem Import geändert"
+
+msgid " · source freshness unknown"
+msgstr " · Aktualität der Quelle unbekannt"
+
+msgid "Review index {} · {} transitive dependent files"
+msgstr "Prüfindex {} · {} transitiv abhängige Dateien"
+
+msgid "No imported measurement for this file. Coverage is unknown."
+msgstr "Keine importierte Messung für diese Datei. Die Testabdeckung ist unbekannt."
+
+msgid "Imported source evidence; report/source revision unverified."
+msgstr "Importierte Quellcode-Belege; Berichts-/Quellcode-Revision nicht verifiziert."
+
+msgid "Coverage unavailable: import error"
+msgstr "Abdeckung nicht verfügbar: Importfehler"
+
+msgid "Comparison: {} measured classes of the same source language. Search and package filters do not change the colors."
+msgstr "Vergleich: {} gemessene Klassen derselben Quellsprache. Suche und Paketfilter ändern die Farben nicht."
+
+msgid "Incomplete measurement · observed lower bound: {}"
+msgstr "Unvollständige Messung · beobachtete Untergrenze: {}"
+
+msgid "Other class metrics"
+msgstr "Weitere Klassenkennzahlen"
+
+msgid "Cyclomatic: {} · maximum nesting: {}"
+msgstr "Zyklomatisch: {} · maximale Verschachtelung: {}"
+
+msgid "No cyclomatic measurement for this method."
+msgstr "Keine zyklomatische Messung für diese Methode."
