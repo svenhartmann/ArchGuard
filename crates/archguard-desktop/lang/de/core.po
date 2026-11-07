@@ -269,3 +269,15 @@ msgstr "Ausgehend · Zyklen"
 
 msgid "Packages"
 msgstr "Pakete"
+
+msgid "Cut"
+msgstr "Ausschneiden"
+
+msgid "Copy"
+msgstr "Kopieren"
+
+msgid "Paste"
+msgstr "Einfügen"
+
+msgid "Select all"
+msgstr "Alles auswählen"

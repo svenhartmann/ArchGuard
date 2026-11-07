@@ -1,12 +1,13 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { FocusRing } from "widgets.slint";
-import { LineInput } from "field_menu.slint";
+import { FieldMenu, LineInput } from "field_menu.slint";
 
 // Text fields drawn like the app's other fields (SearchField, ComboBox) in
 // both themes: the style's LineEdit and TextEdit keep the style's own grey
 // backgrounds (Cupertino: #2C2C2E in the dark theme). The properties and
-// callbacks are those the views use of the std-widgets ones.
+// callbacks are those the views use of the std-widgets ones; the
+// right-click menu (Cut, Copy, Paste, Select all) is `FieldMenu`.
 
 export component LineEdit inherits Rectangle {
     in-out property <string> text;
@@ -57,6 +58,16 @@ export component TextEdit inherits Rectangle {
     accessible-role: text-input;
     accessible-value: root.text;
     FocusRing { has-focus: input.has-focus; }
+    FieldMenu {
+        enabled: input.enabled;
+        editable: !input.read-only;
+        has-selection: input.anchor-position-byte-offset != input.cursor-position-byte-offset;
+        has-text: root.text != "";
+        cut => { input.focus(); input.cut(); }
+        copy => { input.copy(); }
+        paste => { input.focus(); input.paste(); }
+        select-all => { input.focus(); input.select-all(); }
+    }
     scroll := ScrollView {
         x: 6px;
         y: 6px;

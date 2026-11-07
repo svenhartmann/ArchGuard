@@ -1,6 +1,8 @@
 //! Pixel checks of the app's own single-line text fields (`SearchField`,
 //! `LineEdit`): a text longer than the field stays inside it, and the end
 //! of the text scrolls with the caret while typing, as in a native field.
+//! A right click on any of the fields (also `TextEdit`) opens the field
+//! menu (Cut, Copy, Paste, Select all).
 
 use std::rc::Rc;
 
@@ -73,6 +75,13 @@ fn click(window: &MinimalSoftwareWindow, top: usize, button: PointerEventButton)
     window.dispatch_event(WindowEvent::PointerReleased { position, button });
 }
 
+/// Whether anything is drawn right of the fields, in the whole height.
+fn beside(buf: &[PremultipliedRgbaColor]) -> bool {
+    (0..H)
+        .flat_map(|y| (110..W).map(move |x| y * W + x))
+        .any(|i| buf[i].red > 40 || buf[i].green > 40 || buf[i].blue > 40)
+}
+
 /// Click into a field and type `text`.
 fn type_into(window: &MinimalSoftwareWindow, top: usize, text: &str) {
     click(window, top, PointerEventButton::Left);
@@ -107,5 +116,28 @@ fn typing_past_the_edge_keeps_the_caret_in_view() {
         assert!(!ink(&buf, top, start..start + 12), "the first letter scrolled away at {top}");
         assert!(ink(&buf, top, 70..92), "the last letter is shown at {top}");
     }
+}
+
+/// A right click into the field at `top` draws the menu beside the fields.
+fn right_click_opens_the_menu(top: usize) {
+    let (window, _fields) = show("Money");
+    assert!(!beside(&frame(&window)), "nothing beside the fields at first");
+    click(&window, top, PointerEventButton::Right);
+    assert!(beside(&frame(&window)), "a menu opened from the field at {top}");
+}
+
+#[test]
+fn a_right_click_opens_the_search_field_menu() {
+    right_click_opens_the_menu(FIELDS[0].0);
+}
+
+#[test]
+fn a_right_click_opens_the_line_edit_menu() {
+    right_click_opens_the_menu(FIELDS[1].0);
+}
+
+#[test]
+fn a_right_click_opens_the_text_edit_menu() {
+    right_click_opens_the_menu(80);
 }
 

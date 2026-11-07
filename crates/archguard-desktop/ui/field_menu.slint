@@ -1,5 +1,49 @@
 import { Theme } from "theme.slint";
 
+// The right-click menu of the app's text fields (LineEdit, TextEdit,
+// SearchField), as in a native field. The field places it behind its
+// TextInput, which ignores the right button, so the press reaches this
+// area; the field wires the callbacks to the TextInput. (`@children`
+// inside a ContextMenuArea panics Slint 1.18's compiler.) Keyboard
+// shortcuts stay with the TextInput.
+export component FieldMenu inherits Rectangle {
+    in property <bool> enabled: true;
+    // False for a read-only field: no Cut, no Paste.
+    in property <bool> editable: true;
+    in property <bool> has-selection;
+    in property <bool> has-text;
+    callback cut();
+    callback copy();
+    callback paste();
+    callback select-all();
+    ContextMenuArea {
+        enabled: root.enabled;
+        Menu {
+            MenuItem {
+                title: @tr("Cut");
+                enabled: root.editable && root.has-selection;
+                activated => { root.cut(); }
+            }
+            MenuItem {
+                title: @tr("Copy");
+                enabled: root.has-selection;
+                activated => { root.copy(); }
+            }
+            MenuItem {
+                title: @tr("Paste");
+                enabled: root.editable;
+                activated => { root.paste(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Select all");
+                enabled: root.has-text;
+                activated => { root.select-all(); }
+            }
+        }
+    }
+}
+
 // A single-line text input clipped to its box. The text scrolls
 // horizontally to keep the caret in view, as the std-widgets LineEdit
 // does; the placeholder shows while the text is empty.
@@ -26,6 +70,16 @@ export component LineInput inherits Rectangle {
         font-size: root.font-size;
         vertical-alignment: center;
         overflow: elide;
+    }
+    FieldMenu {
+        enabled: input.enabled;
+        editable: !input.read-only;
+        has-selection: input.anchor-position-byte-offset != input.cursor-position-byte-offset;
+        has-text: root.text != "";
+        cut => { input.focus(); input.cut(); }
+        copy => { input.copy(); }
+        paste => { input.focus(); input.paste(); }
+        select-all => { input.focus(); input.select-all(); }
     }
     input := TextInput {
         property <length> scroll-x;
