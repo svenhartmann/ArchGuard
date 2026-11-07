@@ -10,6 +10,7 @@ mod actions;
 mod cycles;
 mod evidence;
 mod evidence_view;
+mod follow;
 mod model;
 mod notes;
 mod rankings;
@@ -127,10 +128,13 @@ pub fn wire(ui: &AppWindow) {
         let language = pick(s.idx.languages(), i);
         actions::set_language(s, language);
     }));
-    d.on_set_package(a.on(|s, _, i: i32| {
-        let package = pick(s.idx.packages(s.filter.language.as_deref()), i);
-        actions::set_package(s, package);
-    }));
+    d.on_set_package(follow::navigation(
+        ui,
+        a.on(|s, _, i: i32| {
+            let package = pick(s.idx.packages(s.filter.language.as_deref()), i);
+            actions::set_package(s, package);
+        }),
+    ));
     let query = a.on(|s, _, q: SharedString| actions::set_query(s, q.into()));
     d.on_set_query(Coalesce::debounce(TYPING, query).callback());
     d.on_set_resolution(a.on(|s, _, i: i32| actions::set_resolution(s, Resolution::from_index(i))));
@@ -150,6 +154,7 @@ pub fn wire(ui: &AppWindow) {
     wire_rankings(ui);
     wire_cycles(ui);
     wire_evidence(ui);
+    follow::wire();
 }
 
 fn wire_tree(ui: &AppWindow) {
@@ -160,11 +165,14 @@ fn wire_tree(ui: &AppWindow) {
             actions::tree_toggle(s, n)
         }
     }));
-    d.on_tree_select(a.on(|s, _, n: i32| {
-        if let Some(n) = index(n) {
-            actions::tree_select(s, n)
-        }
-    }));
+    d.on_tree_select(follow::navigation(
+        ui,
+        a.on(|s, _, n: i32| {
+            if let Some(n) = index(n) {
+                actions::tree_select(s, n)
+            }
+        }),
+    ));
     d.on_tree_expand(a.on(|s, _, all: bool| actions::tree_expand(s, all)));
     d.on_tree_clear(a.on0(|s, _| {
         s.element = None;
@@ -186,11 +194,14 @@ fn wire_rankings(ui: &AppWindow) {
     let a = Actions::<CallsState>::new(ui);
     d.on_set_rank_method(a.on(|s, _, m: bool| s.rank_method = m));
     d.on_set_rank_sort(a.on(|s, _, i: i32| s.rank_sort = Sort::from_index(i)));
-    d.on_rank_select(a.on(|s, _, i: i32| {
-        if let Some(i) = index(i) {
-            actions::rank_select(s, i)
-        }
-    }));
+    d.on_rank_select(follow::navigation(
+        ui,
+        a.on(|s, _, i: i32| {
+            if let Some(i) = index(i) {
+                actions::rank_select(s, i)
+            }
+        }),
+    ));
     d.on_rank_more(a.on0(|s, _| s.rank_limit += RANK_PAGE));
 }
 
