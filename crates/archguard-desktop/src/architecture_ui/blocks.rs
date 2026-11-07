@@ -78,6 +78,7 @@ fn base(kind: i32) -> ArcBlock {
         cells: model(Vec::new()),
         heads: model(Vec::new()),
         align: model(Vec::new()),
+        widths: model(Vec::new()),
         quote: false,
         open: false,
         last: false,
@@ -156,8 +157,10 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
             Align::Right => 2,
         })
         .collect();
+    let widths = model(column_widths(columns, rows));
     out.push(ArcBlock {
         heads: model(columns.iter().map(|c| markdown::plain(c).into()).collect()),
+        widths: widths.clone(),
         ..base(3)
     });
     if rows.is_empty() {
@@ -171,10 +174,30 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
         out.push(ArcBlock {
             cells: model(row.iter().map(|c| styled(c)).collect()),
             align: model(align.clone()),
+            widths: widths.clone(),
             last: i + 1 == rows.len(),
             ..base(4)
         });
     }
+}
+
+/// Share of the table width per column, the same for every row: by the
+/// longest text in the column (6 to 48 characters), at least 8 %.
+fn column_widths(columns: &[String], rows: &[Vec<String>]) -> Vec<f32> {
+    let weight = |i: usize| {
+        std::iter::once(&columns[i])
+            .chain(rows.iter().filter_map(|r| r.get(i)))
+            .map(|c| markdown::plain(c).chars().count())
+            .max()
+            .unwrap_or(0)
+            .clamp(6, 48) as f32
+    };
+    let weights: Vec<f32> = (0..columns.len()).map(weight).collect();
+    let total: f32 = weights.iter().sum();
+    let floor = (1.0 / columns.len().max(1) as f32).min(0.08);
+    let raised: Vec<f32> = weights.iter().map(|w| (w / total).max(floor)).collect();
+    let sum: f32 = raised.iter().sum();
+    raised.iter().map(|w| w / sum).collect()
 }
 
 #[cfg(test)]
@@ -215,5 +238,25 @@ mod tests {
         assert!(rows[7].quote);
         let empty = ui_blocks(&markdown::parse("| a | b |\n| --- | --- |\n"), "");
         assert_eq!(empty.iter().map(|r| r.kind).collect::<Vec<_>>(), vec![3, 8]);
+    }
+
+    #[test]
+    fn all_rows_of_a_table_share_column_widths_by_content() {
+        let md = "| Baustein | Dateien | Nutzt |\n| --- | ---: | --- |\n| archguard-engine/src | 80 | archguard-core, archguard-extract/src, archguard-analysis |\n| core | 4 | – |\n";
+        let rows = ui_blocks(&markdown::parse(md), "");
+        let widths = |r: &ArcBlock| {
+            (0..r.widths.row_count())
+                .map(|i| r.widths.row_data(i).unwrap())
+                .collect::<Vec<f32>>()
+        };
+        let head = widths(&rows[0]);
+        assert_eq!(head.len(), 3);
+        assert!(
+            rows.iter().all(|r| widths(r) == head),
+            "every row uses the header's widths"
+        );
+        assert!((head.iter().sum::<f32>() - 1.0).abs() < 1e-4);
+        assert!(head[2] > head[0] && head[0] > head[1], "{head:?}");
+        assert!(head[1] >= 0.08, "a short column keeps a minimum: {head:?}");
     }
 }

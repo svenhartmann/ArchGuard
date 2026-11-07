@@ -14,6 +14,8 @@ export struct ArcBlock {
     heads: [string],
     // Per column: 0 left, 1 center, 2 right.
     align: [int],
+    // Per column: share of the table width, the same in every row.
+    widths: [float],
     quote: bool,
     // "Offen zu ergänzen": the web's .arc42-open-heading.
     open: bool,
@@ -82,9 +84,11 @@ component TableRow inherits Rectangle {
         padding-left: 1px;
         padding-right: 1px;
         if head: HorizontalLayout {
-            for h in block.heads: Rectangle {
-                horizontal-stretch: 1;
-                min-width: 60px;
+            // Stretch by share from a near-zero width: the same split in every row.
+            for h[i] in block.heads: Rectangle {
+                preferred-width: 1px;
+                min-width: 0;
+                horizontal-stretch: block.widths[i];
                 VerticalLayout {
                     padding: 10px;
                     padding-left: 12px;
@@ -95,8 +99,9 @@ component TableRow inherits Rectangle {
         }
         if block.kind == 4: HorizontalLayout {
             for c[i] in block.cells: Rectangle {
-                horizontal-stretch: 1;
-                min-width: 60px;
+                preferred-width: 1px;
+                min-width: 0;
+                horizontal-stretch: block.widths[i];
                 VerticalLayout {
                     padding: 10px;
                     padding-left: 12px;
