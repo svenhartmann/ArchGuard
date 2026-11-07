@@ -2,7 +2,7 @@
 //! `ArcFigure`: participants side by side, a lifeline below each and one
 //! horizontal message per step, top to bottom in measured order.
 
-use archguard_engine::core::{Diagram, RelationKind};
+use archguard_engine::core::{Diagram, DiagramElement, ElementKind, RelationKind};
 use slint::{ModelRc, VecModel};
 
 use super::diagram;
@@ -10,6 +10,8 @@ use crate::tab_support::Texts;
 use crate::ui::{ArcCard, ArcFigure, ArcLine};
 
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order.";
+/// Scenarios derived from the code (only calls): no measured order.
+const STATIC_LEGEND: &str = "Blue: calls between building blocks. Top to bottom in source order, derived from the code, not measured.";
 const COLUMN: f32 = 230.0;
 const CARD_W: f32 = 180.0;
 const CARD_H: f32 = 62.0;
@@ -26,22 +28,7 @@ pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> Ar
         .elements
         .iter()
         .enumerate()
-        .map(|(i, e)| {
-            let (name1, name2) = diagram::name_lines(&e.name);
-            ArcCard {
-                index: i as i32,
-                x: centre(i) - CARD_W / 2.0,
-                y: TOP,
-                w: CARD_W,
-                h: CARD_H,
-                kind: 3,
-                name1: name1.into(),
-                name2: name2.into(),
-                files: -1,
-                tag: texts.t("Container").into(),
-                ..Default::default()
-            }
-        })
+        .map(|(i, e)| participant(i, e, centre(i), texts))
         .collect();
     let lifelines = (0..d.elements.len()).map(|i| ArcLine {
         path: format!("M {} {} V {bottom}", centre(i), TOP + CARD_H).into(),
@@ -78,7 +65,7 @@ pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> Ar
         dw: 2.0 * MARGIN + d.elements.len().max(1) as f32 * COLUMN - (COLUMN - CARD_W),
         dh: bottom + 24.0,
         source: source.into(),
-        legend: texts.t(LEGEND).into(),
+        legend: legend(d, texts).into(),
     }
 }
 
@@ -92,5 +79,38 @@ pub fn tone(kind: RelationKind) -> i32 {
         RelationKind::Event => 4,
         RelationKind::Reference => 5,
         RelationKind::Data => 6,
+    }
+}
+
+/// A participant's card above its lifeline at `centre`. Building blocks of
+/// a scenario are packages; traces show services.
+fn participant(i: usize, e: &DiagramElement, centre: f32, texts: &Texts) -> ArcCard {
+    let (name1, name2) = diagram::name_lines(&e.name);
+    let package = e.kind == ElementKind::Package;
+    ArcCard {
+        index: i as i32,
+        x: centre - CARD_W / 2.0,
+        y: TOP,
+        w: CARD_W,
+        h: CARD_H,
+        kind: if package { 0 } else { 3 },
+        name1: name1.into(),
+        name2: name2.into(),
+        files: -1,
+        tag: if package {
+            Default::default()
+        } else {
+            texts.t("Container").into()
+        },
+        ..Default::default()
+    }
+}
+
+/// Scenarios derived from the code have only calls and no measured order.
+fn legend<'a>(d: &Diagram, texts: &'a Texts) -> &'a str {
+    if d.relations.iter().all(|r| r.kind == RelationKind::Call) {
+        texts.t(STATIC_LEGEND)
+    } else {
+        texts.t(LEGEND)
     }
 }

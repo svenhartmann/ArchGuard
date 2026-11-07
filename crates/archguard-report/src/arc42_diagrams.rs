@@ -4,6 +4,7 @@
 
 mod cyclic;
 mod render;
+mod scenarios;
 mod scoped;
 mod sequences;
 mod services;
@@ -80,6 +81,12 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
                 &calls,
             ));
         }
+        out.extend(scenarios::diagrams(
+            &blocks,
+            &elements,
+            input.source_graph,
+            input.calls,
+        ));
         out.extend(cycles(&elements, &relations));
     }
     out.extend(services::diagrams(input.services));

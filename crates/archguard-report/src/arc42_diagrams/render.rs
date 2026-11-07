@@ -244,6 +244,8 @@ fn sequence(d: &Diagram, plantuml: bool) -> String {
                 r.from,
                 r.to,
                 text.replace([':', ';', '#'], " ")
+                    .replace('<', "#lt;")
+                    .replace('>', "#gt;")
             )
         };
     }

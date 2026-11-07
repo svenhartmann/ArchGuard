@@ -185,3 +185,18 @@ What exists:
   the UI thread; the map stays visible when its level is off. Not in the
   web viewer yet. Checked with a copy of `fixtures/php-psr4` (level
   `App`): `archguard.toml`, `archguard doc --arc42 --stdout`, snapshot.
+- **2026-11-07:** Runtime scenarios from the code, asked for by the user
+  (chapter 6 stayed empty without traces or Compose files; "should work
+  for all languages"). `arc42_diagrams/scenarios.rs` works on the
+  language-neutral call model: entry points are methods that call but
+  are not called (`main` first, then by blocks reached; at most 3); from
+  each, resolved project calls are followed depth first in source order
+  (depth 6, at most 25 messages), and every call between building blocks
+  of the package overview is a message of a `sequence` diagram
+  `runtime-scenario-<entry>`, titled "(statisch)" with a note that order,
+  branches and loops are not measured. Shown by default like the other
+  default diagrams. Checked with `archguard doc --arc42 --stdout` on
+  copies of `fixtures/py-layers`, `java-packages`, `php-psr4` and
+  `rs-clean` (Rust with `ARCHGUARD_TRUST_PROJECT_COMPILER=1` and a
+  Cargo manifest; without rust-analyzer Rust has no resolved calls and
+  so no scenarios), and in a desktop snapshot.

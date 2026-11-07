@@ -220,19 +220,7 @@ impl<'a> Blocks<'a> {
     /// Project call sites between diagram boxes, through the classes'
     /// source-graph nodes.
     pub fn call_relations(&self, graph: &Graph, calls: &CallAnalysis) -> Vec<DiagramRelation> {
-        let by_name: BTreeMap<&str, NodeId> = graph
-            .nodes
-            .iter()
-            .map(|n| (n.name.as_str(), n.id))
-            .collect();
-        let boxes: BTreeMap<&str, usize> = calls
-            .classes
-            .iter()
-            .filter_map(|c| {
-                let block = self.owner.get(by_name.get(c.graph_node.as_str())?)?;
-                Some((c.id.as_str(), self.display[block]))
-            })
-            .collect();
+        let boxes = self.class_boxes(graph, calls);
         let mut counts = BTreeMap::new();
         for call in calls.calls.iter().filter(|c| c.resolution == "project") {
             let from = boxes.get(call.from_class.as_str());
@@ -244,6 +232,27 @@ impl<'a> Blocks<'a> {
             }
         }
         box_relations(&counts, RelationKind::Call)
+    }
+
+    /// The diagram box of every call-model class, through its source node.
+    pub fn class_boxes<'c>(
+        &self,
+        graph: &Graph,
+        calls: &'c CallAnalysis,
+    ) -> BTreeMap<&'c str, usize> {
+        let by_name: BTreeMap<&str, NodeId> = graph
+            .nodes
+            .iter()
+            .map(|n| (n.name.as_str(), n.id))
+            .collect();
+        calls
+            .classes
+            .iter()
+            .filter_map(|c| {
+                let block = self.owner.get(by_name.get(c.graph_node.as_str())?)?;
+                Some((c.id.as_str(), self.display[block]))
+            })
+            .collect()
     }
 
     /// The open question for packages whose manifest declares no responsibility.
