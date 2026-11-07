@@ -208,6 +208,122 @@ component ScoreHistory inherits VerticalLayout {
     }
 }
 
+component ZoneKey inherits HorizontalLayout {
+    in property <color> tone;
+    in property <string> text;
+    spacing: 4px;
+    Rectangle {
+        width: 10px;
+        height: 10px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: root.tone;
+    }
+    Text { text: root.text; color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; }
+}
+
+// A tick label of the scatter, centred on (x, y).
+component Tick inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-micro;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+    width: 30px;
+    height: 14px;
+}
+
+// Abstractness over instability with the Martin main sequence: the shaded
+// half-planes beyond the ±1/3 corridor, the dashed diagonal A + I = 1 and
+// one point per measured boundary; a point opens its node in the Graph.
+component Scatter inherits Rectangle {
+    in property <StartGlance> g;
+    property <length> left: 44px;
+    property <length> top: 22px;
+    property <length> plot: 230px;
+    width: left + plot + 14px;
+    height: top + plot + 38px;
+    TipArea {
+        tip: @tr("Abstractness over instability with the Martin main sequence. A point is one measured boundary; unmeasured boundaries are never plotted.");
+        pin-on-click: false;
+    }
+    Rectangle {
+        x: root.left;
+        y: root.top;
+        width: root.plot;
+        height: root.plot;
+        border-width: 1px;
+        border-color: Theme.border;
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 0 100 L 66.667 100 L 0 33.333 Z";
+            fill: Theme.cycle.with-alpha(0.12);
+        }
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 100 0 L 33.333 0 L 100 66.667 Z";
+            fill: Theme.outgoing.with-alpha(0.12);
+        }
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 0 0 L 2.5 2.5 M 4 4 L 6.5 6.5 M 8 8 L 10.5 10.5 M 12 12 L 14.5 14.5 M 16 16 L 18.5 18.5 M 20 20 L 22.5 22.5 M 24 24 L 26.5 26.5 M 28 28 L 30.5 30.5 M 32 32 L 34.5 34.5 M 36 36 L 38.5 38.5 M 40 40 L 42.5 42.5 M 44 44 L 46.5 46.5 M 48 48 L 50.5 50.5 M 52 52 L 54.5 54.5 M 56 56 L 58.5 58.5 M 60 60 L 62.5 62.5 M 64 64 L 66.5 66.5 M 68 68 L 70.5 70.5 M 72 72 L 74.5 74.5 M 76 76 L 78.5 78.5 M 80 80 L 82.5 82.5 M 84 84 L 86.5 86.5 M 88 88 L 90.5 90.5 M 92 92 L 94.5 94.5 M 96 96 L 98.5 98.5";
+            stroke: Theme.muted;
+            stroke-width: 1px;
+        }
+    }
+    for v in [0, 0.5, 1]: Tick {
+        x: root.left + v * root.plot - self.width / 2;
+        y: root.top + root.plot + 4px;
+        text: v;
+    }
+    for v in [0, 0.5, 1]: Tick {
+        x: root.left - self.width - 4px;
+        y: root.top + (1 - v) * root.plot - self.height / 2;
+        horizontal-alignment: right;
+        text: v;
+    }
+    Text {
+        x: root.left;
+        y: root.top + root.plot + 20px;
+        width: root.plot;
+        horizontal-alignment: center;
+        text: @tr("Instability I");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+    }
+    Text {
+        x: 0;
+        y: 2px;
+        text: @tr("Abstractness A");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+    }
+    for p in g.points: Rectangle {
+        x: root.left + p.x * root.plot - self.width / 2;
+        y: root.top + (1 - p.y) * root.plot - self.height / 2;
+        width: 9px;
+        height: 9px;
+        border-radius: 4.5px;
+        background: p.zone == 1 ? Theme.cycle : p.zone == 2 ? Theme.outgoing : Theme.success;
+        border-width: tip.has-hover ? 2px : 0;
+        border-color: Theme.text;
+        tip := TipArea {
+            tip: p.tip;
+            pin-on-click: false;
+            mouse-cursor: pointer;
+            activated => { StartData.open-source(p.name); }
+        }
+    }
+}
+
 // Zone counts (`renderDashZones`).
 component Zones inherits VerticalLayout {
     in property <StartGlance> g;
@@ -221,6 +337,21 @@ component Zones inherits VerticalLayout {
         color: g.zones-known ? Theme.text : Theme.muted;
         font-size: Theme.font-small;
         wrap: word-wrap;
+    }
+    // Counts are honest numbers; axes without points would claim a chart.
+    if g.points.length == 0: Text {
+        text: @tr("No measurable A/I points in this report — unmeasured boundaries remain unmeasured, never plotted.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if g.points.length > 0: Scatter { g: root.g; }
+    if g.points.length > 0: HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        ZoneKey { tone: Theme.cycle; text: @tr("Zone of Pain") + " (" + g.ai-pain + ")"; }
+        ZoneKey { tone: Theme.outgoing; text: @tr("Zone of Uselessness") + " (" + g.ai-useless + ")"; }
+        ZoneKey { tone: Theme.success; text: @tr("Main sequence") + " (" + g.ai-main + ")"; }
     }
 }
 

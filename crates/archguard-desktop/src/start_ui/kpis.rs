@@ -6,10 +6,13 @@
 //! never shown as zero. Texts are templates in `start_kpis.slint`.
 
 use archguard_engine::Snapshot;
-use archguard_engine::core::{Finding, FindingKind, PropagationCost, ReviewKpis};
+use archguard_engine::core::{
+    AbstractionMetric, Finding, FindingKind, PropagationCost, ReviewKpis,
+};
 use slint::SharedString;
 
 use super::kpis_profile::{self, Point, level, signed};
+use super::kpis_zones;
 use crate::format::Locale;
 use crate::model_sync::sync_rows;
 use crate::ui::{StartKpiCard, StartModel};
@@ -34,6 +37,8 @@ pub struct Glance {
     pub history: Vec<Point>,
     /// The first node of the top propagation-cost cycle, for its card.
     pub cycle_node: Option<String>,
+    /// Measured node boundaries of the A/I scatter ([`kpis_zones`]).
+    pub abstractions: Vec<AbstractionMetric>,
     /// Snapshot runs: scroll to the section, open the profile.
     pub reveal: bool,
     pub profile: bool,
@@ -86,6 +91,7 @@ pub fn fill(m: &mut StartModel, old: &StartModel, g: &Glance, project: &str, l: 
     gl.missing = sync_rows(&old.glance.missing, missing);
     if let Some(k) = &g.kpis {
         kpis_profile::fill(gl, &old.glance, k, &g.history, l);
+        kpis_zones::fill(gl, &old.glance, &g.abstractions, l);
     }
 }
 

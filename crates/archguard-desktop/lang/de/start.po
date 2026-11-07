@@ -530,3 +530,24 @@ msgstr "Zyklomatisch: {} · maximale Verschachtelung: {}"
 
 msgid "No cyclomatic measurement for this method."
 msgstr "Keine zyklomatische Messung für diese Methode."
+
+msgid "No measurable A/I points in this report — unmeasured boundaries remain unmeasured, never plotted."
+msgstr "Keine messbaren A/I-Punkte in diesem Bericht — nicht gemessene Grenzen bleiben ungemessen und werden nie eingezeichnet."
+
+msgid "Zone of Pain"
+msgstr "Pain-Zone"
+
+msgid "Zone of Uselessness"
+msgstr "Uselessness-Zone"
+
+msgid "Main sequence"
+msgstr "Hauptsequenz"
+
+msgid "Instability I"
+msgstr "Instabilität I"
+
+msgid "Abstractness A"
+msgstr "Abstractness A"
+
+msgid "Abstractness over instability with the Martin main sequence. A point is one measured boundary; unmeasured boundaries are never plotted."
+msgstr "Abstractness über Instabilität mit der Martin-Hauptsequenz. Ein Punkt ist eine gemessene Grenze; nicht gemessene Grenzen werden nie eingezeichnet."

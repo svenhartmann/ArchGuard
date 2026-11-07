@@ -136,6 +136,17 @@ export struct StartKpiPart {
     value: string,
 }
 
+// One measured boundary of the A/I scatter (`renderDashZones`): x the
+// instability I, y the abstractness A (both 0..1), zone 1 pain,
+// 2 uselessness, 3 main sequence; tip its name with A, I and D'.
+export struct StartAiPoint {
+    name: string,
+    x: float,
+    y: float,
+    zone: int,
+    tip: string,
+}
+
 // "Architecture at a glance" (`renderStartKpis`): the project's review KPIs,
 // independent of the World scope. measured: the analysis carries review
 // KPIs; missing: card kinds without a measurement (hidden cards).
@@ -161,6 +172,12 @@ export struct StartGlance {
     useless: int,
     main: int,
     unmeasured: int,
+    // Compiler-backed A/I points ([] none measured) and their count per
+    // zone for the legend.
+    points: [StartAiPoint],
+    ai-pain: int,
+    ai-useless: int,
+    ai-main: int,
     spark: string,
     spark-from: string,
     spark-to: string,
