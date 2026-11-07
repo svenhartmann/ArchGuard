@@ -17,6 +17,8 @@ mod documents;
 mod documents_ui;
 mod export;
 mod export_ui;
+#[cfg(test)]
+mod fields_check;
 mod file_ui;
 mod follow;
 mod follow_ui;

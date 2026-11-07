@@ -1,6 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { FocusRing } from "widgets.slint";
+import { LineInput } from "field_menu.slint";
 
 // Text fields drawn like the app's other fields (SearchField, ComboBox) in
 // both themes: the style's LineEdit and TextEdit keep the style's own grey
@@ -8,9 +9,9 @@ import { FocusRing } from "widgets.slint";
 // callbacks are those the views use of the std-widgets ones.
 
 export component LineEdit inherits Rectangle {
-    in-out property <string> text <=> input.text;
+    in-out property <string> text;
     in property <string> placeholder-text;
-    in property <bool> enabled <=> input.enabled;
+    in property <bool> enabled: true;
     in property <length> font-size: Theme.font-body;
     out property <bool> has-focus: input.has-focus;
     callback edited(string);
@@ -23,32 +24,16 @@ export component LineEdit inherits Rectangle {
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
     background: root.enabled ? Theme.panel : Theme.panel-2;
-    accessible-role: text-input;
-    accessible-value: root.text;
-    accessible-placeholder-text: root.placeholder-text;
     FocusRing { has-focus: input.has-focus; }
-    Rectangle {
+    input := LineInput {
         x: 10px;
         width: parent.width - 20px;
-        clip: true;
-        input := TextInput {
-            color: Theme.text;
-            font-size: root.font-size;
-            vertical-alignment: center;
-            single-line: true;
-            selection-background-color: Theme.accent.with-alpha(0.35);
-            selection-foreground-color: Theme.text;
-            accessible-role: none;
-            edited => { root.edited(self.text); }
-            accepted => { root.accepted(self.text); }
-        }
-        if root.text == "": Text {
-            text: root.placeholder-text;
-            color: Theme.muted;
-            font-size: root.font-size;
-            vertical-alignment: center;
-            overflow: elide;
-        }
+        text <=> root.text;
+        placeholder: root.placeholder-text;
+        enabled: root.enabled;
+        font-size: root.font-size;
+        edited(t) => { root.edited(t); }
+        accepted(t) => { root.accepted(t); }
     }
 }
 
