@@ -101,6 +101,17 @@ impl TabState for CallsState {
     }
 }
 
+/// The World's "Calls": class `id` as the focused element of the active
+/// document's tab (see [`actions::focus_class`]); a class without calls
+/// declaration becomes the search term.
+pub fn focus_class(ui: &AppWindow, id: &str) {
+    tab_support::update::<CallsState>(ui, |s, _| {
+        if !actions::focus_class(s, id) {
+            actions::set_query(s, id.to_string());
+        }
+    });
+}
+
 /// Picker index → value; 0 is "All".
 fn pick(list: Vec<String>, i: i32) -> Option<String> {
     index(i)

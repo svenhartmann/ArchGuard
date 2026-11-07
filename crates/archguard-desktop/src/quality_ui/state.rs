@@ -50,6 +50,21 @@ impl Default for View {
     }
 }
 
+impl View {
+    /// The World's "Class metrics": the heatmap of the whole source scope
+    /// with class `id` as the search term (as the web) and its card open;
+    /// the filter shows all classes, so the class stays listed.
+    pub fn focus_class(&mut self, id: &str) {
+        *self = View {
+            query: id.to_string(),
+            selected: Some(id.to_string()),
+            sort: self.sort,
+            cohesion: std::mem::take(&mut self.cohesion),
+            ..View::default()
+        };
+    }
+}
+
 pub struct QualityState {
     pub lang: Texts,
     /// `None` while the analysis runs.
@@ -626,5 +641,28 @@ mod tests {
         s.view.query = "f02".into();
         assert!(s.page().detail.is_none());
         assert_eq!(s.view.selected, None);
+    }
+
+    /// The World's "Class metrics": the heatmap of the whole source scope,
+    /// searched for the class, with its card open.
+    #[test]
+    fn focus_class_opens_the_heatmap_on_the_class() {
+        let mut s = QualityState::new(Texts::default(), inputs(classes(30)));
+        s.view.section = Section::Cohesion;
+        s.view.target = "b".into();
+        s.view.filter = Filter::High;
+        s.view.limit = 3 * PAGE;
+        s.view.focus_class("rust:a/f27.rs::C");
+        assert_eq!(s.view.filter, Filter::All);
+        assert_eq!(s.view.limit, PAGE);
+        let page = s.page();
+        assert!(page.heatmap);
+        assert_eq!(
+            page.detail.as_ref().map(|c| c.title.as_str()),
+            Some("rust:a/f27.rs::C")
+        );
+        let selected: Vec<_> = page.heat.iter().filter(|r| r.selected).collect();
+        assert_eq!(selected.len(), 1, "the class is a listed, marked row");
+        assert_eq!(selected[0].class_id, "rust:a/f27.rs::C");
     }
 }

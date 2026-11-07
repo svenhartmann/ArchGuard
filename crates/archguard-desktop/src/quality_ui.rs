@@ -141,6 +141,12 @@ fn wire_targets(ui: &AppWindow) {
     });
 }
 
+/// The World's "Class metrics": the heatmap on class `id` with its card
+/// open (see [`View::focus_class`]).
+pub fn focus_class(ui: &AppWindow, id: &str) {
+    tab_support::update::<QualityState>(ui, |s, _| s.view.focus_class(id));
+}
+
 /// Show the active document's tab. The measurements take seconds; they
 /// run once per document, on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {

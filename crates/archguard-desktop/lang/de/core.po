@@ -40,6 +40,12 @@ msgstr "Alle öffnen"
 msgid "Explorer"
 msgstr "Explorer"
 
+msgid "Exit fullscreen"
+msgstr "Vollbild beenden"
+
+msgid "Fullscreen"
+msgstr "Vollbild"
+
 msgid "Graph"
 msgstr "Graph"
 

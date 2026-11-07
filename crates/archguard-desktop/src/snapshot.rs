@@ -276,6 +276,7 @@ fn apply_view_hooks(ui: &AppWindow) {
         ui.set_projects_open(true);
     }
     start_keys(ui);
+    crate::start_ui::snapshot_hook(ui);
     crate::settings_view_ui::snapshot_hook(ui);
 }
 

@@ -108,6 +108,31 @@ pub fn open_in_tree(s: &mut State, kind: ElementKind, id: &str) {
     s.view.tree.open_path(&k, &mut s.expanded);
 }
 
+/// `openClassMetricCalls` (the World's "Calls"): the connections of class
+/// `id` in its language and package, unfiltered, with the class as the
+/// element and its tree path open. `false` for a class without calls
+/// declaration (the state stays as it was).
+pub fn focus_class(s: &mut State, id: &str) -> bool {
+    let Some(cls) = s.idx.class(Some(id)) else {
+        return false;
+    };
+    let language = Some(s.idx.language(cls)).filter(|l| !l.is_empty());
+    s.filter = model::Filter {
+        language,
+        package: Some(cls.package.clone()),
+        query: String::new(),
+        resolution: model::Resolution::All,
+        internal: true,
+    };
+    s.relation = None;
+    set_mode(s, Mode::Connections);
+    // The tree of the new scope holds the class.
+    s.refresh();
+    open_in_tree(s, ElementKind::Class, id);
+    select_element(s, ElementKind::Class, id);
+    true
+}
+
 /// `selectCallRanking`: the first connection of the element in the
 /// ranked direction, the element filter and its tree path.
 pub fn rank_select(s: &mut State, i: usize) {
@@ -232,6 +257,41 @@ mod tests {
         set_cycle_kind(&mut s, ElementKind::Method);
         s.refresh();
         assert_eq!(s.view.relations.len(), 3);
+    }
+
+    /// The World's "Calls" (`openClassMetricCalls`): the class's language
+    /// and package, all its connections, the class as the element and its
+    /// tree path open.
+    #[test]
+    fn focus_class_opens_its_scope_and_selects_it() {
+        let mut s = State::new(fixture::analysis());
+        set_mode(&mut s, Mode::Rankings);
+        set_package(&mut s, Some("green".into()));
+        set_query(&mut s, "Leaf".into());
+        s.filter.internal = false;
+        s.refresh();
+        assert!(focus_class(&mut s, "red.Red"));
+        s.refresh();
+        assert_eq!(s.mode, Mode::Connections);
+        assert_eq!(s.filter.language.as_deref(), Some("java"));
+        assert_eq!(s.filter.package.as_deref(), Some("red"));
+        assert_eq!(s.filter.query, "");
+        assert_eq!(s.filter.resolution, model::Resolution::All);
+        assert!(s.filter.internal);
+        assert_eq!(
+            s.element,
+            Some(Element {
+                kind: ElementKind::Class,
+                id: "red.Red".into()
+            })
+        );
+        let row = s.view.visible.iter().find(|&&n| {
+            let n = &s.view.tree.nodes[n];
+            n.kind == Kind::Class && n.id == "red.Red"
+        });
+        assert!(row.is_some(), "the class is a visible tree row");
+        assert!(!focus_class(&mut s, "no.Such"), "unknown classes are ignored");
+        assert_eq!(s.filter.package.as_deref(), Some("red"));
     }
 
     #[test]

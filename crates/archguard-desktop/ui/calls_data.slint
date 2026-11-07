@@ -180,6 +180,8 @@ export struct CallsModel {
     tree-missing: int,
     tree-more: bool,
     tree-nodes: int,
+    // The focused element's row in `tree`, -1 without one.
+    tree-focus: int,
     // Connections.
     relations: [CallsRelationRow],
     relations-more: bool,

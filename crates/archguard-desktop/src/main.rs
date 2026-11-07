@@ -21,6 +21,7 @@ mod file_ui;
 mod follow;
 mod follow_ui;
 mod format;
+mod fullscreen;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
@@ -75,6 +76,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     platform::apply(&ui);
     format::wire(&ui);
+    fullscreen::wire(&ui);
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     shell_ui::start(&ui, args);
