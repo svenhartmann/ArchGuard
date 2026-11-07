@@ -6,6 +6,7 @@
 //! [`push`] as one `ServicesModel` value.
 
 mod export;
+mod follow;
 mod layout;
 mod paths;
 mod state;
@@ -45,19 +46,22 @@ pub fn wire(ui: &AppWindow) {
         s.cycles_only = !s.cycles_only;
         s.cycle = None;
     }));
-    d.on_show_all(a.on0(|s, _| s.show_all()));
+    let all = follow::navigation(ui, a.on(|s, _, ()| s.show_all()));
+    d.on_show_all(move || all(()));
     d.on_close_details(a.on0(|s, _| s.details_hidden = true));
     d.on_show_more_projects(a.on0(|s, _| s.project_limit += 100));
-    d.on_select_service(a.on(|s, _, i: i32| {
+    let service = a.on(|s, _, i: i32| {
         if let Some(i) = index(i) {
             s.select_service(i)
         }
-    }));
-    d.on_select_project(a.on(|s, _, i: i32| {
+    });
+    d.on_select_service(follow::navigation(ui, service));
+    let project = a.on(|s, _, i: i32| {
         if let Some(i) = index(i) {
             s.select_project(i)
         }
-    }));
+    });
+    d.on_select_project(follow::navigation(ui, project));
     d.on_select_edge(a.on(|s, _, i: i32| {
         if let Some(i) = index(i) {
             s.select_edge(i)
@@ -73,6 +77,7 @@ pub fn wire(ui: &AppWindow) {
         view::fit(s, w, h, Texts::of(ui).t("Unmapped service"));
     }));
     d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
+    follow::wire();
 }
 
 impl TabState for ServicesState {
