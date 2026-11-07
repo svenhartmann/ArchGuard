@@ -2,8 +2,11 @@
 //! `LineEdit`): a text longer than the field stays inside it, and the end
 //! of the text scrolls with the caret while typing, as in a native field.
 //! A right click on any of the fields (also `TextEdit`) opens the field
-//! menu (Cut, Copy, Paste, Select all).
+//! menu (Cut, Copy, Paste, Select all). A read-only field (`LineInput`
+//! with `read-only`, `CommandField`) clips a long command, and its menu
+//! copies and selects but neither cuts nor pastes.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use slint::platform::software_renderer::{
@@ -14,20 +17,38 @@ use slint::{ComponentHandle, LogicalPosition, PhysicalSize};
 
 slint::slint! {
     import { SearchField } from "ui/widgets.slint";
-    import { LineEdit, TextEdit } from "ui/fields.slint";
+    import { LineEdit, TextEdit, CommandField } from "ui/fields.slint";
+    import { LineInput } from "ui/field_menu.slint";
     export component Fields inherits Window {
         width: 200px;
-        height: 240px;
+        height: 400px;
         background: black;
         in property <string> text;
+        in-out property <string> read-only-text;
         SearchField { x: 0; y: 0; width: 100px; text: root.text; }
         LineEdit { x: 0; y: 40px; width: 100px; text: root.text; }
         TextEdit { x: 0; y: 80px; width: 100px; height: 40px; text: root.text; }
+        CommandField { x: 0; y: 130px; width: 100px; command: root.text; }
+        Rectangle {
+            x: 0;
+            y: 170px;
+            width: 100px;
+            height: 28px;
+            LineInput { x: 10px; width: 80px; read-only: true; text <=> root.read-only-text; }
+        }
     }
 }
 
 const W: usize = 200;
-const H: usize = 240;
+const H: usize = 400;
+/// Top of the CommandField and of the read-only LineInput.
+const COMMAND: usize = 130;
+const READ_ONLY: usize = 170;
+
+thread_local! {
+    /// The test platform's clipboard.
+    static CLIPBOARD: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 /// Top and text start of each single-line field (SearchField, LineEdit),
 /// and the rows checked.
 const FIELDS: [(usize, usize); 2] = [(0, 33), (40, 10)];
@@ -40,6 +61,19 @@ impl slint::platform::Platform for Pixels {
         &self,
     ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
         Ok(self.0.clone())
+    }
+
+    fn set_clipboard_text(&self, text: &str, clipboard: slint::platform::Clipboard) {
+        if clipboard == slint::platform::Clipboard::DefaultClipboard {
+            CLIPBOARD.with(|c| *c.borrow_mut() = Some(text.to_owned()));
+        }
+    }
+
+    fn clipboard_text(&self, clipboard: slint::platform::Clipboard) -> Option<String> {
+        if clipboard != slint::platform::Clipboard::DefaultClipboard {
+            return None;
+        }
+        CLIPBOARD.with(|c| c.borrow().clone())
     }
 }
 
@@ -139,5 +173,72 @@ fn a_right_click_opens_the_line_edit_menu() {
 #[test]
 fn a_right_click_opens_the_text_edit_menu() {
     right_click_opens_the_menu(80);
+}
+
+
+/// Rows of the field menu below the right click that opened it.
+#[derive(Clone, Copy)]
+enum Item {
+    Cut = 20,
+    Copy = 52,
+    Paste = 84,
+    SelectAll = 125,
+}
+
+/// Right-click the field at `top` and choose `item` from its menu.
+fn choose(window: &MinimalSoftwareWindow, top: usize, item: Item) {
+    click(window, top, PointerEventButton::Right);
+    frame(window);
+    let position = LogicalPosition::new(60.0, top as f32 + 14.0 + item as i32 as f32);
+    let button = PointerEventButton::Left;
+    window.dispatch_event(WindowEvent::PointerPressed { position, button });
+    window.dispatch_event(WindowEvent::PointerReleased { position, button });
+    frame(window);
+}
+
+fn clipboard() -> Option<String> {
+    CLIPBOARD.with(|c| c.borrow().clone())
+}
+
+#[test]
+fn a_long_command_is_not_drawn_past_its_field() {
+    let (window, _fields) = show("archguard security -- '/a/very/long/path/to/project'");
+    let buf = frame(&window);
+    assert!(ink(&buf, COMMAND, 40..90), "the command is drawn in its field");
+    assert!(!ink(&buf, COMMAND, 106..W), "the command is drawn past its field");
+}
+
+/// The command stays selectable: Select all and Copy from its menu put
+/// the whole command on the clipboard.
+#[test]
+fn the_command_menu_selects_and_copies_the_command() {
+    let command = "archguard security -- '/a/very/long/path/to/project'";
+    let (window, _fields) = show(command);
+    choose(&window, COMMAND, Item::SelectAll);
+    choose(&window, COMMAND, Item::Copy);
+    assert_eq!(clipboard().as_deref(), Some(command));
+}
+
+/// Paste in a read-only field's menu is disabled: the text stays.
+#[test]
+fn a_read_only_field_does_not_paste() {
+    let (window, fields) = show("");
+    fields.set_read_only_text("Money".into());
+    CLIPBOARD.with(|c| *c.borrow_mut() = Some("pasted".into()));
+    choose(&window, READ_ONLY, Item::Paste);
+    assert_eq!(fields.get_read_only_text(), "Money");
+}
+
+/// Cut in a read-only field's menu is disabled; Copy still copies.
+#[test]
+fn a_read_only_field_copies_but_does_not_cut() {
+    let (window, fields) = show("");
+    fields.set_read_only_text("Money".into());
+    choose(&window, READ_ONLY, Item::SelectAll);
+    choose(&window, READ_ONLY, Item::Cut);
+    assert_eq!(fields.get_read_only_text(), "Money");
+    assert_eq!(clipboard(), None, "a disabled Cut copies nothing");
+    choose(&window, READ_ONLY, Item::Copy);
+    assert_eq!(clipboard().as_deref(), Some("Money"));
 }
 
