@@ -46,6 +46,10 @@ pub fn to_text(r: &Report) -> String {
 /// Shown whenever a KPI has no value — absence is "not measured", never 0.
 const NOT_MEASURED: &str = "not measured";
 
+fn count_or_not_measured(count: Option<usize>) -> String {
+    count.map_or_else(|| NOT_MEASURED.to_string(), |n| n.to_string())
+}
+
 /// One `KPI | Wert | Delta | Ampel` table row, plain text, fixed columns.
 /// `delta` is only available where the payload carries a baseline (the
 /// health trend); `ampel` only where a level is derived (health). Both
@@ -138,7 +142,7 @@ fn kpi_table(kpis: &ReviewKpis) -> String {
     ));
     out.push_str(&kpi_row(
         "risk_coverage_gaps",
-        &format!("{}", kpis.risk_gaps.len()),
+        &count_or_not_measured(kpis.risk_gap_count()),
         "-",
         "-",
     ));
@@ -602,5 +606,44 @@ mod tests {
         assert!(text.contains("not measured"));
         // Deterministic.
         assert_eq!(text, to_text(&report));
+    }
+
+    fn gap(path: &str, coverage: Option<f64>) -> archguard_core::RiskCoverageGap {
+        archguard_core::RiskCoverageGap {
+            path: path.into(),
+            hotspot: 10.0,
+            coverage,
+            gap: coverage.map(|c| 10.0 * (1.0 - c)),
+        }
+    }
+
+    fn risk_row(gaps: Vec<archguard_core::RiskCoverageGap>) -> String {
+        let mut report = sample_report();
+        report.review_kpis = Some(ReviewKpis {
+            risk_gaps: gaps,
+            ..ReviewKpis::default()
+        });
+        to_text(&report)
+            .lines()
+            .find(|l| l.trim_start().starts_with("risk_coverage_gaps"))
+            .expect("risk row")
+            .to_string()
+    }
+
+    #[test]
+    fn risk_gaps_without_coverage_are_not_measured_not_a_count() {
+        let row = risk_row(vec![gap("a.rs", None), gap("b.rs", None)]);
+        assert!(row.contains("not measured"), "{row}");
+    }
+
+    #[test]
+    fn risk_gaps_count_only_measured_uncovered_files() {
+        // Fully covered (gap 0) and unmeasured files are no gaps.
+        let row = risk_row(vec![
+            gap("a.rs", Some(0.0)),
+            gap("b.rs", Some(1.0)),
+            gap("c.rs", None),
+        ]);
+        assert!(row.contains(" 1  delta"), "{row}");
     }
 }

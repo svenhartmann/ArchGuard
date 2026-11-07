@@ -481,6 +481,41 @@ fn lcov_records_map_to_lines_branches_and_hits() {
     assert_eq!(read_test_coverage(root.path(), &config, &graph), report);
 }
 
+/// `cargo llvm-cov --lcov` and grcov write absolute `SF:` paths and may list
+/// files outside the project (dependency sources). In-project paths map like
+/// relative ones; outside paths are unmatched, never an import failure.
+#[test]
+fn lcov_absolute_paths_map_inside_the_project_and_outside_files_stay_unmatched() {
+    let (root, config, graph) = project();
+    let absolute = root.path().canonicalize().unwrap().join("src/pkg/A.java");
+    let lcov = format!(
+        "SF:{}\nDA:1,1\nDA:2,0\nend_of_record\nSF:/home/ci/.cargo/registry/src/serde-1.0.0/src/lib.rs\nDA:1,1\nend_of_record\n",
+        absolute.display()
+    );
+    fs::write(root.path().join("lcov.info"), lcov).unwrap();
+    let report =
+        import_test_coverage(root.path(), &config, &graph, Path::new("lcov.info"), None).unwrap();
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.files[0].path, "src/pkg/A.java");
+    let lines = report.files[0].lines.as_ref().unwrap();
+    assert_eq!((lines.covered, lines.total), (1, 2));
+    assert_eq!(report.unmatched_files, 1);
+    assert_eq!(report.status, "partial");
+}
+
+#[test]
+fn lcov_traversal_paths_are_still_rejected() {
+    let (root, config, graph) = project();
+    fs::write(
+        root.path().join("lcov.info"),
+        "SF:src/../../etc/A.java\nDA:1,1\nend_of_record\n",
+    )
+    .unwrap();
+    assert!(
+        import_test_coverage(root.path(), &config, &graph, Path::new("lcov.info"), None).is_err()
+    );
+}
+
 #[test]
 fn lcov_multiple_records_for_one_file_merge_and_drop_summary_counters() {
     let (root, config, graph) = project();

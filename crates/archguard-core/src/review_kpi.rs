@@ -319,6 +319,23 @@ pub struct ReviewKpis {
     pub health: Option<HealthIndex>,
 }
 
+impl ReviewKpis {
+    /// Files in `risk_gaps` with a measured gap above zero; `None` when no
+    /// listed file has coverage (not measured, never zero). Unmeasured and
+    /// fully covered files are no gaps.
+    pub fn risk_gap_count(&self) -> Option<usize> {
+        self.risk_gaps
+            .iter()
+            .any(|g| g.coverage.is_some())
+            .then(|| {
+                self.risk_gaps
+                    .iter()
+                    .filter(|g| g.gap.is_some_and(|v| v > 0.0))
+                    .count()
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

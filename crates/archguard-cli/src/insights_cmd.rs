@@ -355,6 +355,22 @@ fn delta_count(cur: usize, prev: Option<usize>) -> String {
     )
 }
 
+/// `risk_coverage_gaps`: "not measured" without coverage, a delta only
+/// where both sides measured.
+fn risk_gap_row(
+    current: &archguard_engine::core::ReviewKpis,
+    previous: Option<&archguard_engine::core::ReviewKpis>,
+) -> String {
+    let count = current.risk_gap_count();
+    let before = previous.and_then(archguard_engine::core::ReviewKpis::risk_gap_count);
+    kpi_row(
+        "risk_coverage_gaps",
+        &count.map_or_else(|| "not measured".to_string(), |n| n.to_string()),
+        &count.map_or_else(|| "-".to_string(), |n| delta_count(n, before)),
+        "-",
+    )
+}
+
 fn opt_f64(v: Option<f64>) -> String {
     v.map_or_else(|| "not measured".to_string(), |v| format!("{v:.2}"))
 }
@@ -459,12 +475,7 @@ pub(crate) fn review_kpi_lines(
         &delta_count(current.leaks.len(), previous.map(|p| p.leaks.len())),
         "-",
     ));
-    lines.push(kpi_row(
-        "risk_coverage_gaps",
-        &current.risk_gaps.len().to_string(),
-        &delta_count(current.risk_gaps.len(), previous.map(|p| p.risk_gaps.len())),
-        "-",
-    ));
+    lines.push(risk_gap_row(current, previous));
     let deps = current.dependencies.as_ref().map_or_else(
         || "not measured".to_string(),
         |d| format!("{} deps", d.total),

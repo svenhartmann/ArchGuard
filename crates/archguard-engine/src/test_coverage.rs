@@ -898,7 +898,9 @@ fn parse_lcov(text: &str) -> Result<ParsedReport, ArchguardError> {
             "SF" => {
                 commit_lcov(&mut files, &pending, active.take())?;
                 pending = (None, None, None, None);
-                let path = relative(value.trim())?;
+                // Absolute like Cobertura: mapping strips the project root and
+                // leaves outside files (dependency sources) unmatched.
+                let path = clean_path(value.trim())?;
                 if path.is_empty() {
                     return Err(error("empty LCOV source file path"));
                 }
