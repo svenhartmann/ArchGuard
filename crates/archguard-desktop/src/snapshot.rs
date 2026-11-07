@@ -202,8 +202,8 @@ fn apply_pane_hooks(ui: &AppWindow) {
 /// "Follow left", after the pane hooks: switch it on
 /// (`ARCHGUARD_DESKTOP_FOLLOW=1`), then navigate in the left pane as the
 /// user would: open a package in a left Graph as a breadcrumb does
-/// (`ARCHGUARD_DESKTOP_LEFT_OPEN=<name>`), expand a package row there
-/// (`ARCHGUARD_DESKTOP_LEFT_EXPAND=<name>`), enter a World package
+/// (`ARCHGUARD_DESKTOP_LEFT_OPEN=<name>`), expand a package row there or
+/// in a left Matrix (`ARCHGUARD_DESKTOP_LEFT_EXPAND=<name>`), enter a World package
 /// (`ARCHGUARD_DESKTOP_WORLD_OPEN=<area name>`, as a double-click) and go
 /// back out (`ARCHGUARD_DESKTOP_WORLD_BACK=1`), or open a building-block
 /// scope (`ARCHGUARD_DESKTOP_ARC_OPEN=<package>`). Logs the result.
@@ -218,8 +218,11 @@ fn follow_hooks(ui: &AppWindow) {
         let row = crate::instances::with(left as u32, |g: &mut crate::graph_ui::Graph| {
             g.g.view.rows.iter().position(|r| r.node == n)
         });
-        if let Some(Some(row)) = row {
-            ui.invoke_toggle_row(left, row as i32);
+        match row {
+            Some(Some(row)) => ui.invoke_toggle_row(left, row as i32),
+            // Not a Graph: a left Matrix opens the package by node.
+            None => ui.invoke_m_toggle(left, n as i32),
+            Some(None) => {}
         }
     }
     if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_WORLD_OPEN") {
