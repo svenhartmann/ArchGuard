@@ -76,7 +76,11 @@ export component LineInput inherits Rectangle {
     accessible-role: text-input;
     accessible-value: root.text;
     accessible-placeholder-text: root.placeholder;
+    // Placed explicitly: unplaced, it would be centred in the field.
     if root.text == "": Text {
+        x: 0;
+        width: 100%;
+        height: 100%;
         text: root.placeholder;
         color: Theme.muted;
         font-size: root.font-size;

@@ -36,6 +36,7 @@ slint::slint! {
             height: 28px;
             LineInput { x: 10px; width: 80px; read-only: true; text <=> root.read-only-text; }
         }
+        LineEdit { x: 0; y: 210px; width: 100px; placeholder-text: "Name"; }
     }
 }
 
@@ -44,6 +45,8 @@ const H: usize = 400;
 /// Top of the CommandField and of the read-only LineInput.
 const COMMAND: usize = 130;
 const READ_ONLY: usize = 170;
+/// Top of the empty LineEdit with a placeholder.
+const PLACEHOLDER: usize = 210;
 
 thread_local! {
     /// The test platform's clipboard.
@@ -175,6 +178,20 @@ fn a_right_click_opens_the_text_edit_menu() {
     right_click_opens_the_menu(80);
 }
 
+
+/// The placeholder starts at the text's start, as in a native field, not
+/// centred in the field.
+#[test]
+fn the_placeholder_starts_where_the_text_does() {
+    let (window, _fields) = show("");
+    let buf = frame(&window);
+    let muted = |xs: std::ops::Range<usize>| {
+        ROWS.flat_map(|y| xs.clone().map(move |x| (PLACEHOLDER + y) * W + x))
+            .any(|i| buf[i].red > 60 && buf[i].green > 60)
+    };
+    assert!(muted(10..16), "the placeholder's first letter at the text start");
+    assert!(!muted(70..90), "nothing at the field's end");
+}
 
 /// Rows of the field menu below the right click that opened it.
 #[derive(Clone, Copy)]
