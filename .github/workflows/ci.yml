@@ -197,6 +197,39 @@ jobs:
           node scripts/viewer/test_viewer_repository.js
           node scripts/viewer/test_viewer_security.js
           node scripts/viewer/test_serve_reload.js
+          node scripts/viewer/test_viewer_advanced_metrics.js
+          node scripts/viewer/test_viewer_arc42.js
+          node scripts/viewer/test_viewer_arc42_catalogue.js
+          node scripts/viewer/test_viewer_arc42_diagrams.js
+          node scripts/viewer/test_viewer_arc42_levels.js
+          node scripts/viewer/test_viewer_arc42_names.js
+          node scripts/viewer/test_viewer_arc42_standard.js
+          node scripts/viewer/test_viewer_class_cohesion.js
+          node scripts/viewer/test_viewer_class_heatmap.js
+          node scripts/viewer/test_viewer_cli_help.js
+          node scripts/viewer/test_viewer_deferred_payload.js
+          node scripts/viewer/test_viewer_inspector_overlay.js
+          node scripts/viewer/test_viewer_kpi_help.js
+          node scripts/viewer/test_viewer_mcp_help.js
+          node scripts/viewer/test_viewer_navigation.js
+          node scripts/viewer/test_viewer_overlays.js
+          node scripts/viewer/test_viewer_package_diff.js
+          node scripts/viewer/test_viewer_repository_connections.js
+          node scripts/viewer/test_viewer_review_scale.js
+          node scripts/viewer/test_viewer_staged_diff.js
+          node scripts/viewer/test_viewer_start_kpis.js
+          node scripts/viewer/test_viewer_topbar.js
+          node scripts/viewer/test_viewer_tree_matrix.js
+          node scripts/viewer/test_viewer_tree_order.js
+          node scripts/viewer/test_viewer_tree_performance.js
+          node scripts/viewer/test_viewer_world_context.js
+          node scripts/viewer/test_viewer_world_cycle_parity.js
+          node scripts/viewer/test_viewer_world_draw_cost.js
+          node scripts/viewer/test_viewer_world_gestures.js
+          node scripts/viewer/test_viewer_world_labels_drill.js
+          node scripts/viewer/test_viewer_world_overlay.js
+          node scripts/viewer/test_viewer_world_pointer_menu.js
+          node scripts/viewer/test_viewer_world_surface.js
 
       - name: Shop example business flows and service topology
         run: |

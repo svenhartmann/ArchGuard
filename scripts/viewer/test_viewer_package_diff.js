@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
-const {prepareDiffView,filterDiffCycles}=require('../crates/archguard-report/src/viewer_package_diff.js');
+const {prepareDiffView,filterDiffCycles}=require('../../crates/archguard-report/src/viewer_package_diff.js');
 const n=(id,name,parent=null,kind='module')=>({id,name,parent,kind});
 const nodes=[n(0,'app'),n(1,'app/client',0),n(2,'app/search',0),n(3,'app/util',0),n(10,'app/client/A.ts',1,'file'),n(11,'app/client/B.ts',1,'file'),n(20,'app/search/S.ts',2,'file'),n(30,'app/util/U.ts',3,'file'),n(40,'root.ts',null,'file')];
 const edge=(from,to,line=1,count=1)=>({from,to,count,refs:[{file:nodes.find(n=>n.id===from).name,line,raw:`import ${to}`} ]});

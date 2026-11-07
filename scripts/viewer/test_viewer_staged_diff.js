@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { buildDiffRows, visibleDiffEdges, diffLabels } = require('../crates/archguard-report/src/viewer_staged_diff.js');
+const { buildDiffRows, visibleDiffEdges, diffLabels } = require('../../crates/archguard-report/src/viewer_staged_diff.js');
 const node=(id,name,parent=null,kind='file')=>({id,name,parent,kind});
 const report={base_graph:{nodes:[node(0,'pkg',null,'module'),node(1,'pkg/a.ts',0),node(2,'pkg/b.ts',0)],edges:[{from:1,to:2,refs:[]}]},staged_graph:{nodes:[node(8,'pkg',null,'module'),node(9,'pkg/a.ts',8),node(10,'pkg/b.ts',8),node(11,'pkg/c.ts',8)],edges:[{from:9,to:10,refs:[]},{from:10,to:11,refs:[]}]},added_nodes:['pkg/c.ts'],removed_nodes:[],added_edges:[{from:'pkg/b.ts',to:'pkg/c.ts'}],removed_edges:[],changed_edges:[]};
 let rows=buildDiffRows(report,new Set(),true,'');
