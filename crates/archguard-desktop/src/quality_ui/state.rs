@@ -70,7 +70,8 @@ pub struct QualityState {
     /// `None` while the analysis runs.
     pub inputs: Option<Inputs>,
     pub view: View,
-    names: BTreeSet<String>,
+    /// The source node names, the targets the tab knows.
+    pub(super) names: BTreeSet<String>,
     cohorts: Cohorts,
 }
 

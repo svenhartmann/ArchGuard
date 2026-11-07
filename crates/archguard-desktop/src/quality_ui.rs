@@ -9,6 +9,7 @@ mod cards;
 mod cohesion;
 mod empty;
 mod evidence;
+mod follow;
 mod heatmap;
 mod heatmap_text;
 mod inputs;
@@ -88,10 +89,12 @@ pub fn wire(ui: &AppWindow) {
         v.limit = PAGE;
     }));
     q.on_more(a.on0(|s, _| s.view.limit += PAGE));
-    q.on_select_class(on_view(&a, |v, id: SharedString| {
-        v.selected = Some(id.to_string())
-    }));
-    q.on_back(a.on0(|s, _| s.view.selected = None));
+    q.on_select_class(follow::navigation(
+        ui,
+        on_view(&a, |v, id: SharedString| v.selected = Some(id.to_string())),
+    ));
+    let back = follow::navigation(ui, a.on(|s, _, ()| s.view.selected = None));
+    q.on_back(move || back(()));
     q.on_package(on_view(&a, |v, node: SharedString| {
         v.cohesion = cohesion::Selection {
             package: Some(node.to_string()),
@@ -103,12 +106,13 @@ pub fn wire(ui: &AppWindow) {
     }));
     q.on_more_groups(a.on0(|s, _| s.view.cohesion.limit += PAGE));
     wire_targets(ui);
+    follow::wire();
 }
 
 fn wire_targets(ui: &AppWindow) {
     let q = ui.global::<QualityData>();
     let w = ui.as_weak();
-    q.on_target(move |i| {
+    q.on_target(follow::navigation(ui, move |i| {
         let Some(ui) = w.upgrade() else { return };
         let name = ui
             .global::<QualityData>()
@@ -124,7 +128,7 @@ fn wire_targets(ui: &AppWindow) {
             };
             s.view.limit = PAGE;
         });
-    });
+    }));
     let w = ui.as_weak();
     q.on_locate(move |name| {
         let Some(ui) = w.upgrade() else { return };
