@@ -11,6 +11,8 @@ use archguard_core::{
 };
 use serde_yaml_ng::Value;
 
+#[path = "manifest_render.rs"]
+pub(crate) mod manifest_render;
 #[path = "service_clients.rs"]
 mod service_clients;
 #[path = "service_communications.rs"]
@@ -50,7 +52,15 @@ struct ParsedService {
 /// Discover Compose projects and their explicit startup/configured HTTP edges.
 /// Configuration is read as YAML, with anchor/merge support. Includes, overlays,
 /// env files and interpolation are reported as gaps rather than executed.
+/// Helm charts and Kustomize overlays are rendered only after the operator opts in
+/// with `ARCHGUARD_RENDER_MANIFESTS=1` (see `manifest_render`).
 pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> {
+    analyze_services_with(root, &manifest_render::Tools::from_env())
+}
+pub(crate) fn analyze_services_with(
+    root: &Path,
+    tools: &manifest_render::Tools,
+) -> Result<ServiceTopology, ArchguardError> {
     let root = fs::canonicalize(root)?;
     if !root.is_dir() {
         return Err(ArchguardError::Config(
@@ -76,6 +86,36 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
         parse_compose(&root, &path, &file, &mut parsed, &mut report)?;
     }
     parsed.sort_by(|a, b| a.service.id.cmp(&b.service.id));
+    compose_dependencies(parsed, &mut report);
+    crate::service_projects::augment(&root, &discovery, &mut report)?;
+    let (deployments, rendered) =
+        service_deployments::augment(&root, &discovery, &mut report, tools);
+    service_communications::augment(&root, &mut report);
+    let spring_datasources = service_spring::augment(&root, &mut report);
+    service_clients::augment(&root, &mut report, &deployments);
+    service_datastores::augment(&mut report, &deployments, &spring_datasources);
+    service_traces::augment(&root, &mut report);
+    manifest_render::mark(&mut report, &rendered);
+    if report
+        .projects
+        .iter()
+        .any(|p| matches!(p.ecosystem.as_str(), "go" | "python" | "gradle"))
+    {
+        diagnostic(
+            &mut report,
+            ".",
+            None,
+            "Communication coverage is partial: Go calls use bounded local value flow; Python/Gradle source clients, dynamic endpoints, generated deployment templates and runtime overrides are not fully resolved. Missing edges do not establish isolation.",
+        );
+    }
+    report.cycles = service_cycles(&report.services, &report.dependencies);
+    set_monorepo(&mut report);
+    report.diagnostics.sort();
+    report.diagnostics.dedup();
+    Ok(report)
+}
+/// Startup and configured HTTP edges between the parsed Compose services.
+fn compose_dependencies(parsed: Vec<ParsedService>, report: &mut ServiceTopology) {
     let mut dependencies: BTreeMap<
         (String, String, ServiceDependencyKind),
         BTreeSet<ServiceEvidence>,
@@ -101,8 +141,8 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
         }
     }
     for source in &parsed {
-        collect_startup(source, &local_names, &mut dependencies, &mut report);
-        collect_http(source, &network_hosts, &mut dependencies, &mut report);
+        collect_startup(source, &local_names, &mut dependencies, report);
+        collect_http(source, &network_hosts, &mut dependencies, report);
     }
     report.services = parsed.into_iter().map(|p| p.service).collect();
     report.dependencies = dependencies
@@ -114,26 +154,9 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
             evidence: evidence.into_iter().collect(),
         })
         .collect();
-    crate::service_projects::augment(&root, &discovery, &mut report)?;
-    let deployments = service_deployments::augment(&root, &discovery, &mut report);
-    service_communications::augment(&root, &mut report);
-    let spring_datasources = service_spring::augment(&root, &mut report);
-    service_clients::augment(&root, &mut report, &deployments);
-    service_datastores::augment(&mut report, &deployments, &spring_datasources);
-    service_traces::augment(&root, &mut report);
-    if report
-        .projects
-        .iter()
-        .any(|p| matches!(p.ecosystem.as_str(), "go" | "python" | "gradle"))
-    {
-        diagnostic(
-            &mut report,
-            ".",
-            None,
-            "Communication coverage is partial: Go calls use bounded local value flow; Python/Gradle source clients, dynamic endpoints, generated deployment templates and runtime overrides are not fully resolved. Missing edges do not establish isolation.",
-        );
-    }
-    report.cycles = service_cycles(&report.services, &report.dependencies);
+}
+/// Monorepo evidence from project roots and verified Compose build contexts.
+fn set_monorepo(report: &mut ServiceTopology) {
     let contexts: BTreeSet<&str> = report
         .services
         .iter()
@@ -152,9 +175,6 @@ pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> 
         project_paths.len(),
         contexts.len()
     );
-    report.diagnostics.sort();
-    report.diagnostics.dedup();
-    Ok(report)
 }
 fn discover(
     root: &Path,

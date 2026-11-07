@@ -201,3 +201,48 @@ fn compose_unique_application_name_can_offer_inferred_source_navigation() {
     );
     assert!(r.diagnostics.iter().any(|d| d.message.contains("inferred")));
 }
+
+#[test]
+fn unrendered_helm_charts_and_kustomize_overlays_explain_how_to_render_them() {
+    if std::env::var_os("ARCHGUARD_RENDER_MANIFESTS").is_some() {
+        eprintln!("Default-off rendering test skipped: ARCHGUARD_RENDER_MANIFESTS is set");
+        return;
+    }
+    let d = tempdir().unwrap();
+    put(
+        d.path(),
+        "charts/shop/Chart.yaml",
+        "apiVersion: v2\nname: shop\nversion: 0.1.0\n",
+    );
+    put(
+        d.path(),
+        "deploy/overlays/prod/kustomization.yaml",
+        "resources: [../../base]\n",
+    );
+    put(
+        d.path(),
+        "deploy/base/kustomization.yaml",
+        "resources: [app.yaml]\n",
+    );
+    let r = analyze_services(d.path()).unwrap();
+    for file in [
+        "charts/shop/Chart.yaml",
+        "deploy/overlays/prod/kustomization.yaml",
+    ] {
+        assert!(
+            r.diagnostics
+                .iter()
+                .any(|g| g.file == file && g.message.contains("ARCHGUARD_RENDER_MANIFESTS=1")),
+            "{file}: {:?}",
+            r.diagnostics
+        );
+    }
+    assert!(
+        !r.diagnostics
+            .iter()
+            .any(|g| g.file == "deploy/base/kustomization.yaml"),
+        "a base consumed by an overlay is reported with the overlay: {:?}",
+        r.diagnostics
+    );
+    assert!(!r.complete);
+}
