@@ -19,6 +19,7 @@ mod hover;
 mod keys;
 mod kpis;
 mod kpis_profile;
+mod kpis_zones;
 mod layout;
 mod lines;
 mod memo;
@@ -50,9 +51,9 @@ use services::ServicesWorld;
 pub use state::{Lens, StartState};
 use state::{Mode, from_evidence};
 
-pub use view::push;
 #[cfg(feature = "snapshot")]
 pub use actions::snapshot_hook;
+pub use view::push;
 
 /// What the tab's build needs, copied from an analysis.
 struct Inputs {
@@ -65,6 +66,8 @@ struct Inputs {
     topology: Shared<Topology>,
     /// The World view kept with the pane layout.
     memo: memo::Memo,
+    /// What the A/I scatter's performance report needs.
+    zones: kpis_zones::Inputs,
 }
 
 impl Inputs {
@@ -77,6 +80,7 @@ impl Inputs {
             findings: data.run.report.findings.clone(),
             topology: Shared::<Topology>::active(),
             memo: memo::kept(),
+            zones: kpis_zones::Inputs::of(data),
         }
     }
 
@@ -91,13 +95,15 @@ impl Inputs {
             findings,
             topology,
             memo,
+            zones,
         } = self;
         let calls = calls.get();
         let coverage = archguard_engine::read_test_coverage(&root, &config, &graph);
         let world = archguard_engine::architecture_world(&graph, &calls, &coverage);
         let review = archguard_engine::test_coverage_review(&graph, &coverage);
         let snapshots = archguard_engine::read_snapshots(&root);
-        let glance = kpis::Glance::new(graph.review_kpis.clone(), &findings, &snapshots);
+        let mut glance = kpis::Glance::new(graph.review_kpis.clone(), &findings, &snapshots);
+        glance.abstractions = kpis_zones::apply(glance.kpis.as_mut(), zones.measure(&calls));
         let services = ServicesWorld::new(tab_support::topology(&topology, &root));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
         state.glance = glance;
@@ -218,6 +224,9 @@ fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {
         if let Some(i) = index(i) {
             s.toggle_entry(i);
         }
+    }));
+    d.on_toggle_section(a.on2(|s, _, key: slint::SharedString, open: bool| {
+        s.sections.insert(key.into(), !open);
     }));
     d.on_pick_neighbor(navigation(
         ui,
@@ -589,7 +598,12 @@ mod tests {
         s.changed();
         assert!(!s.details_open, "no selection, no details");
         s.navigate(Some("domain".into()));
-        let file = s.scope.areas.iter().position(|a| !a.module).expect("a file");
+        let file = s
+            .scope
+            .areas
+            .iter()
+            .position(|a| !a.module)
+            .expect("a file");
         s.open_area(file);
         assert!(s.details_open, "a file's double click shows its details");
     }

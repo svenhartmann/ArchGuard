@@ -61,6 +61,18 @@ pub mod kind {
     pub const COV_NONE: i32 = 73;
     pub const COV_SOURCE: i32 = 74;
     pub const COV_ERROR: i32 = 75;
+    // The coverage and impact review (`renderTestCoveragePanel`).
+    /// The entry; `c` its section key, `open`.
+    pub const COV_REVIEW_OPEN: i32 = 76;
+    /// Import status `a`, `b` shown of `c` imported files.
+    pub const COV_STATUS: i32 = 77;
+    pub const COV_DEFINITION: i32 = 78;
+    pub const COV_UNVERIFIED: i32 = 79;
+    /// A ranked file `a`: opens it in the Graph.
+    pub const COV_ROW: i32 = 87;
+    pub const COV_IMPORT: i32 = 88;
+    /// No row: `a` "not_imported" or the import status.
+    pub const COV_EMPTY: i32 = 89;
     // A class's measurements (`class_detail.rs`).
     /// The rating `entity`, value `a` among `b` measured classes.
     pub const KPI_NOTE: i32 = 80;

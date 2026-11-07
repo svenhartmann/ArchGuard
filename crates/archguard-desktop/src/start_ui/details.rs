@@ -141,6 +141,8 @@ fn coverage(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection
     ));
     if let Some(e) = sel.entity {
         coverage_detail::lines(out, &s.files, &s.ev.entity(e).node, l);
+        let open = s.sections.get(coverage_detail::REVIEW).copied() == Some(true);
+        coverage_detail::review(out, &s.files, open.then_some(s.limit), l);
     }
 }
 

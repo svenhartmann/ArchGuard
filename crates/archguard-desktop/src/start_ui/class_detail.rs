@@ -1,8 +1,11 @@
 //! The Explore details of one class: the class-metric part of
 //! `renderWorldContext` (viewer_world.js) with `classMetricInterpretation`
 //! (viewer_class_heatmap.js), the method rows of `worldClassMethods` and
-//! "Other class metrics". Ratings come from [`crate::rating`], the one
+//! "Other class metrics". Method rows are entries that open and close
+//! (`toggle-section`), as the web's `<details data-world-method>`. Ratings come from [`crate::rating`], the one
 //! rating the Quality heatmap uses.
+
+use std::collections::BTreeMap;
 
 use super::evidence::{KPIS, Method, Rating};
 use super::lines::{kind, line};
@@ -112,28 +115,51 @@ pub fn methods(l: Locale, out: &mut Vec<StartLine>, s: &StartState, e: usize) {
         l.count(rows.len()),
         "",
     ));
-    for m in rows.iter().take(s.limit) {
-        method(l, out, m);
+    for (i, m) in rows.iter().take(s.limit).enumerate() {
+        let open = opened(&s.sections, &method_key(m), i == 0, s.kpi_active());
+        method(l, out, m, open);
     }
     if rows.len() > s.limit {
         out.push(line(kind::MORE, l.count(rows.len() - s.limit), "", ""));
     }
 }
 
-/// One method: name and CC, nesting, range, Cognitive and MI.
-fn method(l: Locale, out: &mut Vec<StartLine>, m: &Method) {
+/// The key of a method entry for `toggle-section`.
+fn method_key(m: &Method) -> String {
+    format!("method:{}:{}#{}", m.file, m.line, m.name)
+}
+
+/// Whether a method entry is open: toggled by the user, else the web's
+/// `item.open=!worldKpiActive()&&method===methods[0]`.
+fn opened(sections: &BTreeMap<String, bool>, key: &str, first: bool, kpi: bool) -> bool {
+    sections.get(key).copied().unwrap_or(first && !kpi)
+}
+
+/// One method entry: name and CC; open, also nesting, range, Cognitive
+/// and MI.
+fn method(l: Locale, out: &mut Vec<StartLine>, m: &Method, open: bool) {
     let int = |v: Option<u32>| known(v, |v| l.int(v.into()));
-    out.push(line(kind::METHOD, m.name.as_str(), int(m.cyclomatic), ""));
+    out.push(StartLine {
+        open,
+        ..line(
+            kind::METHOD,
+            m.name.as_str(),
+            int(m.cyclomatic),
+            method_key(m),
+        )
+    });
+    if !open {
+        return;
+    }
     if m.cyclomatic.is_some() {
         out.push(line(kind::METHOD_CC, int(m.cyclomatic), int(m.nesting), ""));
     }
     let end = m.end_line.map_or(String::new(), |e| format!("–{e}"));
-    out.push(line(
-        kind::PATH,
-        format!("{}:{}{end}", m.file, m.line),
-        "",
-        "",
-    ));
+    // `flag`: indented under its entry.
+    out.push(StartLine {
+        flag: true,
+        ..line(kind::PATH, format!("{}:{}{end}", m.file, m.line), "", "")
+    });
     if m.cognitive.is_some() || m.maintainability.is_some() {
         let mi = m.maintainability.map_or(UNKNOWN.into(), |v| l.num(v, 2));
         out.push(line(kind::METHOD_MAINT, int(m.cognitive), mi, ""));
@@ -149,7 +175,7 @@ mod tests {
 
     fn row(m: Method) -> Vec<(i32, String, String)> {
         let mut out = Vec::new();
-        method(Locale::En, &mut out, &m);
+        method(Locale::En, &mut out, &m, true);
         out.iter()
             .map(|l| (l.kind, l.a.to_string(), l.b.to_string()))
             .collect()
@@ -197,5 +223,31 @@ mod tests {
         let kinds: Vec<i32> = row(m).iter().map(|r| r.0).collect();
         assert_eq!(kinds, [kind::METHOD, kind::PATH, kind::METHOD_NO_CC]);
         assert_eq!(state_code(Rating::Info), 7);
+    }
+
+    /// A closed method entry is its summary only; it carries its key and
+    /// open state for the toggle.
+    #[test]
+    fn a_closed_method_is_its_summary_only() {
+        let mut out = Vec::new();
+        method(Locale::En, &mut out, &base(), false);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].kind, out[0].open), (kind::METHOD, false));
+        assert_eq!(out[0].c, method_key(&base()));
+        let mut open = Vec::new();
+        method(Locale::En, &mut open, &base(), true);
+        assert!(open[0].open);
+    }
+
+    /// As the web: the top method starts open in the complexity lens,
+    /// every method closed under a class metric; a toggle wins.
+    #[test]
+    fn the_top_method_starts_open_unless_a_metric_is_shown() {
+        let none = BTreeMap::new();
+        assert!(opened(&none, "k", true, false));
+        assert!(!opened(&none, "k", false, false));
+        assert!(!opened(&none, "k", true, true));
+        let toggled = BTreeMap::from([("k".to_string(), false)]);
+        assert!(!opened(&toggled, "k", true, false));
     }
 }

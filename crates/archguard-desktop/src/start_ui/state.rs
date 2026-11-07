@@ -1,7 +1,7 @@
 //! The Start tab's state: navigation, lenses, selection and camera, as
 //! `worldUi` in `viewer_world.js`. Views read it; they never write it.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::coverage_detail::Files;
 use super::evidence::{self, Evidence, Scope};
@@ -73,6 +73,9 @@ pub struct StartState {
     pub(super) limit: usize,
     /// Connection entries opened in the details, by area names.
     pub(super) open_connections: BTreeSet<(String, String)>,
+    /// Detail sections the user opened (`true`) or closed, by key
+    /// (method entries, the coverage review).
+    pub(super) sections: BTreeMap<String, bool>,
     /// The project's review KPIs below the World (independent of scope).
     pub(super) glance: Glance,
     /// Imported test coverage per source file.
@@ -107,6 +110,7 @@ pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> St
         details_open: false,
         limit: 20,
         open_connections: BTreeSet::new(),
+        sections: BTreeMap::new(),
         glance: Glance::default(),
         files: Files::default(),
         scope: Scope::default(),

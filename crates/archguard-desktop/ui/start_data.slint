@@ -136,6 +136,17 @@ export struct StartKpiPart {
     value: string,
 }
 
+// One measured boundary of the A/I scatter (`renderDashZones`): x the
+// instability I, y the abstractness A (both 0..1), zone 1 pain,
+// 2 uselessness, 3 main sequence; tip its name with A, I and D'.
+export struct StartAiPoint {
+    name: string,
+    x: float,
+    y: float,
+    zone: int,
+    tip: string,
+}
+
 // "Architecture at a glance" (`renderStartKpis`): the project's review KPIs,
 // independent of the World scope. measured: the analysis carries review
 // KPIs; missing: card kinds without a measurement (hidden cards).
@@ -161,6 +172,12 @@ export struct StartGlance {
     useless: int,
     main: int,
     unmeasured: int,
+    // Compiler-backed A/I points ([] none measured) and their count per
+    // zone for the legend.
+    points: [StartAiPoint],
+    ai-pain: int,
+    ai-useless: int,
+    ai-main: int,
     spark: string,
     spark-from: string,
     spark-to: string,
@@ -287,6 +304,8 @@ export global StartData {
     callback source-graph();
     // A connection entry of the details (StartLine.id); its neighbour area.
     callback toggle-entry(int);
+    // A detail section by its key (StartLine.c) and whether it is open.
+    callback toggle-section(string, bool);
     callback pick-neighbor(int);
     // 0 Cycles, 1 Matrix, 2 Calls, 3 Class metrics, 4 Quality scope.
     callback detail-action(int);
@@ -343,6 +362,13 @@ export global StartTones {
         return r == 1 ? @tr("Low") : r == 2 ? @tr("Elevated") : r == 3 ? @tr("High")
             : r == 4 ? @tr("Unknown") : r == 5 ? @tr("Few comparisons")
             : r == 6 ? @tr("Equal values") : @tr("Informational");
+    }
+
+    // `coverageStatusText`: the import status of the coverage review.
+    public pure function coverage-status(s: string) -> string {
+        return s == "not_imported" ? @tr("not imported") : s == "ready" ? @tr("imported")
+            : s == "partial" ? @tr("incomplete report") : s == "stale" ? @tr("stale: sources changed")
+            : s == "error" ? @tr("unavailable: import error") : @tr("not available");
     }
 
     public pure function kpi-label(k: int) -> string {
