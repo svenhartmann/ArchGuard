@@ -5,6 +5,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
+import { TextEdit } from "fields.slint";
 import { Button, SearchField, StatusLine, EmptyState, SectionHeading } from "widgets.slint";
 import { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit, SettingsFormItem, GroupRow, PreviewPanel } from "settings_parts.slint";
 
@@ -138,7 +139,8 @@ component Sidebar inherits VerticalLayout {
     Rectangle { vertical-stretch: 1; }
 }
 
-// The raw TOML, editable, with the parse error and its line.
+// The raw TOML, editable (with the field menu), with the parse error
+// and its line.
 component TextPane inherits VerticalLayout {
     in property <SettingsModel> model;
     padding: 16px;
@@ -150,29 +152,12 @@ component TextPane inherits VerticalLayout {
         }
     }
     if model.text-error != "": Message { text: model.text-error; font-family: Theme.mono-family; }
-    Rectangle {
-        vertical-stretch: 1;
-        background: Theme.panel;
-        border-width: 1px;
-        border-color: toml.has-focus ? Theme.accent : Theme.border;
-        border-radius: Theme.radius-sm;
-        clip: true;
-        ScrollView {
-            content-width: max(toml.preferred-width + 24px, self.visible-width);
-            content-height: max(toml.preferred-height + 24px, self.visible-height);
-            toml := TextInput {
-                x: 12px;
-                y: 12px;
-                width: max(self.preferred-width, parent.width - 24px);
-                text: root.value;
-                single-line: false;
-                wrap: no-wrap;
-                color: Theme.text;
-                font-family: Theme.mono-family;
-                font-size: Theme.font-small;
-                edited => { SettingsData.edit-text(self.text); }
-            }
-        }
+    toml := TextEdit {
+        text: root.value;
+        wrap: no-wrap;
+        font-family: Theme.mono-family;
+        font-size: Theme.font-small;
+        edited(t) => { SettingsData.edit-text(t); }
     }
 }
 

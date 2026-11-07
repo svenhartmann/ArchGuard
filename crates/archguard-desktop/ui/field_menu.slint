@@ -46,15 +46,27 @@ export component FieldMenu inherits Rectangle {
 
 // A single-line text input clipped to its box. The text scrolls
 // horizontally to keep the caret in view, as the std-widgets LineEdit
-// does; the placeholder shows while the text is empty.
+// does; the placeholder shows while the text is empty. A read-only one
+// still selects and copies (a command to copy).
 export component LineInput inherits Rectangle {
     in-out property <string> text <=> input.text;
     in property <string> placeholder;
     in property <bool> enabled <=> input.enabled;
     in property <length> font-size: Theme.font-body;
+    in property <string> font-family;
+    // A text to select and copy, not to change: no Cut and no Paste.
+    in property <bool> read-only <=> input.read-only;
     out property <bool> has-focus: input.has-focus;
+    // The width of the whole text, for a field sized to it.
+    out property <length> text-width: input.preferred-width + input.text-cursor-width;
     callback edited(string);
     callback accepted(string);
+    // Copies the whole text, without leaving it selected.
+    public function copy-all() {
+        input.select-all();
+        input.copy();
+        input.clear-selection();
+    }
     // Room kept between the caret and the edges when scrolling to it.
     property <length> edge: 2px;
     // A clipped TextInput narrower than 1px cannot take focus.
@@ -64,7 +76,11 @@ export component LineInput inherits Rectangle {
     accessible-role: text-input;
     accessible-value: root.text;
     accessible-placeholder-text: root.placeholder;
+    // Placed explicitly: unplaced, it would be centred in the field.
     if root.text == "": Text {
+        x: 0;
+        width: 100%;
+        height: 100%;
         text: root.placeholder;
         color: Theme.muted;
         font-size: root.font-size;
@@ -88,6 +104,7 @@ export component LineInput inherits Rectangle {
         height: 100%;
         color: Theme.text;
         font-size: root.font-size;
+        font-family: root.font-family;
         vertical-alignment: center;
         single-line: true;
         selection-background-color: Theme.accent.with-alpha(0.35);

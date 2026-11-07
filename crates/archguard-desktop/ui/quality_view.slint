@@ -6,6 +6,7 @@ import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState, HelpTip, TipArea } from "widgets.slint";
 import { QualityCard, QualityCardView, QualityHeatRow } from "quality_cards.slint";
+import { CommandField } from "fields.slint";
 
 export { QualityCard, QualityHeatRow }
 
@@ -68,30 +69,11 @@ component QualityEmpty inherits VerticalLayout {
     if root.command != "": HorizontalLayout {
         alignment: center;
         spacing: 10px;
-        Rectangle {
-            background: Theme.panel-2;
-            border-radius: 6px;
-            HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                padding-top: 6px;
-                padding-bottom: 6px;
-                command := TextInput {
-                    text: root.command;
-                    read-only: true;
-                    color: Theme.text;
-                    font-family: Theme.mono-family;
-                    font-size: Theme.font-small;
-                    vertical-alignment: center;
-                }
-            }
-        }
+        command := CommandField { command: root.command; }
         Button {
             text: @tr("Copy command");
             clicked => {
-                command.select-all();
-                command.copy();
-                command.clear-selection();
+                command.copy-all();
                 root.copied = @tr("Copied.");
             }
         }

@@ -102,3 +102,26 @@ export component TextEdit inherits Rectangle {
         }
     }
 }
+
+// A shell command shown for copying: read-only, in the monospace font,
+// one line that clips and scrolls; its menu has Copy and Select all.
+// It is as wide as the command where there is room.
+export component CommandField inherits Rectangle {
+    in property <string> command;
+    in property <length> font-size: Theme.font-small;
+    public function copy-all() { input.copy-all(); }
+    background: Theme.panel-2;
+    border-radius: Theme.radius-sm;
+    height: Theme.control-h;
+    min-width: 80px;
+    preferred-width: input.text-width + 20px;
+    forward-focus: input;
+    input := LineInput {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.command;
+        read-only: true;
+        font-family: Theme.mono-family;
+        font-size: root.font-size;
+    }
+}
