@@ -12,11 +12,23 @@ pub struct Arc42Config {
     pub diagram_format: DiagramFormat,
     /// Catalogue ids left out of the document; all others are shown.
     pub hidden_diagrams: Vec<String>,
+    /// Package map levels put into the document, as `<map>@<package>`
+    /// (`building-blocks@app/core`); levels are left out unless listed.
+    pub shown_diagrams: Vec<String>,
 }
 
 impl Arc42Config {
     pub fn shows(&self, id: &str) -> bool {
-        !self.hidden_diagrams.iter().any(|h| h == id)
+        if Self::level_of(id).is_some() {
+            self.shown_diagrams.iter().any(|s| s == id)
+        } else {
+            !self.hidden_diagrams.iter().any(|h| h == id)
+        }
+    }
+
+    /// The map id and package of a package map level id.
+    pub fn level_of(id: &str) -> Option<(&str, &str)> {
+        id.split_once('@')
     }
 }
 
@@ -141,5 +153,22 @@ mod tests {
             DiagramFormat::Mermaid
         );
         assert!(toml::from_str::<Arc42Config>("format = \"x\"").is_err());
+    }
+
+    #[test]
+    fn package_map_levels_are_shown_only_when_listed() {
+        let c: Arc42Config =
+            toml::from_str("shown_diagrams = [\"building-blocks@app/core\"]").unwrap();
+        assert!(c.shows("building-blocks@app/core"));
+        assert!(!c.shows("building-blocks@app/web"), "levels are opt-in");
+        assert!(
+            c.shows("deployment-stacks/a/compose.yaml"),
+            "a slash is no level"
+        );
+        assert_eq!(
+            Arc42Config::level_of("cycles@app/core"),
+            Some(("cycles", "app/core"))
+        );
+        assert_eq!(Arc42Config::level_of("cycles"), None);
     }
 }

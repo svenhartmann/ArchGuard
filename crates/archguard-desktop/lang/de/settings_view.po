@@ -438,3 +438,6 @@ msgstr "Textformat der Diagramme in arc42.md."
 
 msgid "Diagram ids left out of the document; all others are shown."
 msgstr "IDs der Diagramme, die im Dokument fehlen; alle anderen werden gezeigt."
+
+msgid "Package map levels put into the document, as map@package."
+msgstr "Ebenen der Paketkarte, die ins Dokument kommen, als karte@paket."

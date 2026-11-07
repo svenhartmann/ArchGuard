@@ -576,6 +576,8 @@ sync_on_check = false
 diagram_format = "mermaid"  # mermaid | plantuml
 hidden_diagrams = []        # catalogue ids left out: building-blocks, runtime-calls,
                             # runtime-services, deployment-<file>, cycles
+shown_diagrams = []         # package map levels put in: <map>@<package>,
+                            # e.g. building-blocks@app/core
 ```
 
 `archguard init` writes the inferred values and measured thresholds as

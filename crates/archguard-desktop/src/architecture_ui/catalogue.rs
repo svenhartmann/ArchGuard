@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use archguard_engine::core::{Diagram, DiagramFormat};
+use archguard_engine::core::{Diagram, DiagramFormat, Graph};
 use archguard_engine::report::{Arc42Document, diagram_section};
 
 use super::visual::Kind;
@@ -39,12 +39,21 @@ pub fn hidden_after(hidden: &[String], id: &str, show: bool) -> Vec<String> {
     out
 }
 
-/// Write `hidden` as `[arc42] hidden_diagrams` of the project at `root`;
-/// the rest of the file stays as written.
-pub fn write(root: &Path, hidden: &[String]) -> Result<(), String> {
+/// The catalogue id of a map view: the map's own id for the overview,
+/// `<map>@<package>` for a package's level.
+pub fn view_id(kind: Kind, scope: Option<usize>, graph: &Graph) -> String {
+    match scope.and_then(|n| graph.nodes.get(n)) {
+        Some(n) => format!("{}@{}", map_id(kind), n.name),
+        None => map_id(kind).to_string(),
+    }
+}
+
+/// Write `ids` as `[arc42] <key>` (`hidden_diagrams`, `shown_diagrams`) of
+/// the project at `root`; the rest of the file stays as written.
+pub fn write(root: &Path, key: &str, ids: &[String]) -> Result<(), String> {
     let mut editor = ConfigEditor::load(root)?;
     editor
-        .set("arc42.hidden_diagrams", FieldValue::List(hidden.to_vec()))
+        .set(&format!("arc42.{key}"), FieldValue::List(ids.to_vec()))
         .map_err(|e| e.to_string())?;
     editor.save().map(drop).map_err(|e| e.to_string())
 }
@@ -116,6 +125,16 @@ mod tests {
     }
 
     #[test]
+    fn a_map_level_has_its_own_catalogue_id() {
+        let mut b = archguard_engine::core::GraphBuilder::new();
+        b.ensure_path("app/core/a.rs", Some("rust"));
+        let g = b.build("p".into());
+        let core = g.nodes.iter().position(|n| n.name == "app/core").unwrap();
+        assert_eq!(view_id(Kind::Dependencies, None, &g), "building-blocks");
+        assert_eq!(view_id(Kind::Cycles, Some(core), &g), "cycles@app/core");
+    }
+
+    #[test]
     fn the_reader_drops_the_sections_it_draws() {
         let d = doc();
         assert_eq!(
@@ -146,10 +165,12 @@ mod tests {
         let file = dir.path().join(".archguard/archguard.toml");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "# mine\n[modules]\ndepth = 3\n").unwrap();
-        write(dir.path(), &["cycles".into()]).unwrap();
+        write(dir.path(), "hidden_diagrams", &["cycles".into()]).unwrap();
+        write(dir.path(), "shown_diagrams", &["cycles@app".into()]).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.starts_with("# mine\n[modules]\ndepth = 3\n"), "{text}");
         let config: archguard_engine::core::Config = toml::from_str(&text).unwrap();
         assert_eq!(config.arc42.hidden_diagrams, ["cycles"]);
+        assert_eq!(config.arc42.shown_diagrams, ["cycles@app"]);
     }
 }

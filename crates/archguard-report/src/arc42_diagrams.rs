@@ -2,12 +2,13 @@
 //! show, with a stable id, and the shown ones written into their chapter
 //! as Mermaid or PlantUML (`[arc42]` in `archguard.toml`).
 
+mod cyclic;
 mod render;
+mod scoped;
 mod sequences;
 mod services;
 
 use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, ElementKind};
-use std::collections::BTreeSet;
 
 use crate::arc42_blocks::{Arc42Inputs, Blocks};
 
@@ -83,6 +84,7 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     }
     out.extend(services::diagrams(input.services));
     out.extend(sequences::diagrams(input.services));
+    out.extend(scoped::diagrams(input));
     out.sort_by_key(|d| d.chapter);
     out
 }
@@ -113,7 +115,7 @@ fn packages(
         relations: relations.to_vec(),
         shown: true,
     };
-    mark_cycles(&mut d);
+    cyclic::mark(&mut d);
     d
 }
 
@@ -134,38 +136,6 @@ fn cycles(
     d.elements
         .retain(|e| e.cycle && e.kind != ElementKind::Remainder);
     (!d.relations.is_empty()).then_some(d)
-}
-
-/// Marks elements and relations inside a strongly connected group.
-fn mark_cycles(d: &mut Diagram) {
-    let ids: Vec<&str> = d.elements.iter().map(|e| e.id.as_str()).collect();
-    let n = ids.len();
-    let at = |id: &str| ids.iter().position(|&i| i == id);
-    let mut reach = vec![vec![false; n]; n];
-    for r in &d.relations {
-        if let (Some(a), Some(b)) = (at(&r.from), at(&r.to)) {
-            reach[a][b] = true;
-        }
-    }
-    for k in 0..n {
-        for i in 0..n {
-            for j in 0..n {
-                reach[i][j] = reach[i][j] || (reach[i][k] && reach[k][j]);
-            }
-        }
-    }
-    let mut on_cycle = BTreeSet::new();
-    for r in &mut d.relations {
-        if let (Some(a), Some(b)) = (at(&r.from), at(&r.to)) {
-            r.cycle = reach[b][a];
-            if r.cycle {
-                on_cycle.extend([a, b]);
-            }
-        }
-    }
-    for i in on_cycle {
-        d.elements[i].cycle = true;
-    }
 }
 
 #[cfg(test)]
@@ -239,6 +209,34 @@ mod tests {
         assert!(!diagrams[0].shown && diagrams[1].shown);
         assert!(!chapters[4].contains("```mermaid"));
         assert!(chapters[10].contains("```mermaid"));
+    }
+
+    #[test]
+    fn listed_package_map_levels_join_their_chapter() {
+        let mut config = Config::default();
+        config.arc42.shown_diagrams = vec![
+            "building-blocks@org/demo".into(),
+            "cycles@org/demo".into(),
+            "cycles@nope".into(),
+        ];
+        let (diagrams, chapters) = render(&config);
+        let ids: Vec<&str> = diagrams.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "building-blocks",
+                "building-blocks@org/demo",
+                "cycles",
+                "cycles@org/demo"
+            ]
+        );
+        let level = &diagrams[1];
+        let names: Vec<&str> = level.elements.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["p0", "p1", "p2"], "the packages inside org/demo");
+        assert_eq!(level.relations.len(), 3);
+        assert!(level.shown && level.title.ends_with("org/demo"));
+        assert_eq!(diagrams[3].relations.len(), 2, "only the cycle p0 ↔ p1");
+        assert!(chapters[4].contains(&section(level, DiagramFormat::Mermaid)));
     }
 
     #[test]

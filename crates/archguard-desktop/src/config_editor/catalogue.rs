@@ -684,6 +684,12 @@ pub const FIELDS: &[Field] = &[
         G::Arc42,
         "Diagram ids left out of the document; all others are shown.",
     ),
+    f(
+        "arc42.shown_diagrams",
+        K::List,
+        G::Arc42,
+        "Package map levels put into the document, as map@package.",
+    ),
 ];
 
 const DIAGRAM_FORMATS: &[&str] = &["mermaid", "plantuml"];

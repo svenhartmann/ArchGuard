@@ -172,3 +172,16 @@ What exists:
   (participants, lifelines, numbered messages, errors red, events
   dashed) instead of C4 boxes. Checked in headless Chrome on a report of
   the copy of `fixtures/compose-services` with its OTLP sample.
+- **2026-11-07:** Package map levels, asked for by the user ("every
+  diagram in a chapter"). Each level of the chapter 5, 6 and 11 maps (the
+  packages inside one package) is a catalogue diagram `<map>@<package>`,
+  e.g. `building-blocks@app/core`. Levels are opt-in, so the document
+  does not grow with every package: `[arc42] shown_diagrams` lists the
+  ones written into the document (next to `hidden_diagrams` for the
+  default diagrams). The engine writes them (`arc42_diagrams/scoped.rs`:
+  the level's packages, the package's direct files as one box, at most
+  eleven packages and a remainder box); the desktop's tick in the map
+  header writes `shown_diagrams` and has the document written again off
+  the UI thread; the map stays visible when its level is off. Not in the
+  web viewer yet. Checked with a copy of `fixtures/php-psr4` (level
+  `App`): `archguard.toml`, `archguard doc --arc42 --stdout`, snapshot.

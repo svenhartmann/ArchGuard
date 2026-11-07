@@ -137,6 +137,7 @@ orphans = "off"             # opt-in candidates: off | info | warning | error
 [arc42]                     # diagrams of arc42.md (ADR 0006)
 diagram_format = "mermaid"  # mermaid | plantuml
 hidden_diagrams = []        # catalogue ids left out, e.g. "runtime-calls"
+shown_diagrams = []         # package map levels put in, e.g. "building-blocks@app/core"
 "#;
 
 /// A parsed `archguard.toml` plus the provenance of its sections.

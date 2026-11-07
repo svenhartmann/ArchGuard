@@ -28,6 +28,7 @@ use crate::format::Locale;
 use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
+use archguard_engine::core::Arc42Config;
 use archguard_engine::report::Arc42Document;
 use follow::navigation;
 use projection::Group;
@@ -46,7 +47,8 @@ pub fn wire(ui: &AppWindow) {
         }
     }));
     d.on_open_catalogue(a.on0(|s, _| s.catalogue = !s.editor.is_open()));
-    let toggle = a.on(|s, _, (id, show): (SharedString, bool)| toggle_diagram(s, &id, show));
+    let toggle =
+        a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
     d.on_start_edit(a.on0(|s, ui| {
         if let Ok(doc) = &s.doc {
@@ -206,7 +208,9 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
             );
             let texts = Texts::of(ui);
             (m.language_note, m.chapter_note) = notes(&texts, m.chapter);
+            let mut view = None;
             if let Some((kind, map)) = current(s, &labels(ui)) {
+                view = Some((kind, catalogue::view_id(kind, map.scope, &s.graph)));
                 m.map = view::map_model(
                     &Texts::of(ui),
                     &s.graph,
@@ -216,7 +220,7 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
                     &map,
                 );
             }
-            fill_figures(&mut m, s, doc, &texts);
+            fill_figures(&mut m, s, doc, &texts, view);
         }
     }
     m.figure_error = s.figure_error.as_str().into();
@@ -231,23 +235,33 @@ fn fill_figures(
     s: &ArchitectureState,
     doc: &Arc42Document,
     texts: &Texts,
+    view: Option<(Kind, String)>,
 ) {
-    let map = derived(s, s.chapter).map(catalogue::map_id);
+    // The map draws its overview and the open level itself.
+    let map = view.as_ref().map(|(kind, _)| catalogue::map_id(*kind));
+    let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
         m.chapter_title = texts.t("Diagrams").into();
         m.map.kind = -1;
         m.blocks = Default::default();
         m.source = Default::default();
-    } else if let Some(d) = doc.diagrams.iter().find(|d| Some(d.id.as_str()) == map) {
-        m.map_id = d.id.as_str().into();
-        m.map_title = d.title.as_str().into();
-        m.map_shown = d.shown;
+    } else if let Some(id) = open {
+        let entry = doc.diagrams.iter().find(|d| d.id == id);
+        m.map_id = id.into();
+        m.map_optional = Arc42Config::level_of(id).is_some();
+        m.map_title = entry
+            .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
+            .into();
+        m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
     }
     let figures = doc
         .diagrams
         .iter()
-        .filter(|d| s.catalogue || (d.chapter == s.chapter && Some(d.id.as_str()) != map))
+        .filter(|d| {
+            let drawn = Some(d.id.as_str()) == map || Some(d.id.as_str()) == open;
+            s.catalogue || (d.chapter == s.chapter && !drawn)
+        })
         .map(|d| {
             let chapter = if s.catalogue {
                 format!("{} {}", texts.t("Chapter"), d.chapter)

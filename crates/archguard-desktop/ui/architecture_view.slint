@@ -53,6 +53,8 @@ export struct ArchitectureModel {
     map-id: string,
     map-title: string,
     map-shown: bool,
+    // A package map level: opt-in, so the map stays when it is off.
+    map-optional: bool,
     // Why a tick could not be written to archguard.toml.
     figure-error: string,
 }
@@ -355,7 +357,7 @@ export component ArchitectureView inherits Rectangle {
                                 }
                             }
                             // A hidden map is one line with its tick; a shown one has it in its header.
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown: HorizontalLayout {
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: HorizontalLayout {
                                 padding-top: 8px;
                                 spacing: 12px;
                                 Text {
@@ -371,7 +373,7 @@ export component ArchitectureView inherits Rectangle {
                                     toggled => { ArchitectureData.toggle-diagram(ArchitectureData.model.map-id, self.checked); }
                                 }
                             }
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown): VerticalLayout {
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown || ArchitectureData.model.map-optional): VerticalLayout {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
                                 ArcVisual {

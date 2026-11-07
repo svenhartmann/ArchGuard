@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{CallAnalysis, Config, DiagramFormat, Graph, Report};
+use archguard_engine::core::{Arc42Config, CallAnalysis, Config, DiagramFormat, Graph, Report};
 use archguard_engine::report::Arc42Document;
 
 use super::projection::{self, Labels, SourceModel};
@@ -11,6 +11,7 @@ use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
 use super::{catalogue, edit};
 use crate::tab_support::Texts;
 use crate::ui::AppWindow;
+use slint::ComponentHandle;
 
 /// Everything the tab knows: the document, the source graph and its
 /// projections indexes, and the reader's position.
@@ -38,6 +39,11 @@ pub struct ArchitectureState {
     pub(super) catalogue: bool,
     /// Why the last tick could not be written.
     pub(super) figure_error: String,
+    /// Package map levels in the document (`[arc42] shown_diagrams`).
+    pub(super) shown: Vec<String>,
+    /// What the document is written from, to write it again after a tick.
+    pub(super) config: Config,
+    pub(super) report: Report,
 }
 
 /// Build the tab state (writes the arc42 document, runs the call analysis).
@@ -74,6 +80,9 @@ pub(super) fn build_from(
         hidden: config.arc42.hidden_diagrams.clone(),
         catalogue: false,
         figure_error: String::new(),
+        shown: config.arc42.shown_diagrams.clone(),
+        config: config.clone(),
+        report: report.clone(),
     };
     snapshot_overrides(&mut state);
     state
@@ -98,7 +107,7 @@ pub(super) fn snapshot_overrides(s: &mut ArchitectureState) {
         && let Some((id, on)) = tick.rsplit_once(':')
         && std::path::Path::new(root) == s.root
     {
-        toggle_diagram(s, id, on == "1");
+        toggle_diagram(s, None, id, on == "1");
     }
     if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_ARC_SCOPE") {
         s.maps[Kind::Dependencies as usize].scope =
@@ -150,9 +159,17 @@ pub(super) fn current(s: &ArchitectureState, labels: &Labels) -> Option<(Kind, M
 
 /// Show (`show`) or hide catalogue diagram `id`: writes `archguard.toml`,
 /// then the document as the CLI would write it.
-pub(super) fn toggle_diagram(s: &mut ArchitectureState, id: &str, show: bool) {
+pub(super) fn toggle_diagram(
+    s: &mut ArchitectureState,
+    ui: Option<&AppWindow>,
+    id: &str,
+    show: bool,
+) {
+    if Arc42Config::level_of(id).is_some() {
+        return toggle_level(s, ui, id, show);
+    }
     let hidden = catalogue::hidden_after(&s.hidden, id, show);
-    s.figure_error = match catalogue::write(&s.root, &hidden) {
+    s.figure_error = match catalogue::write(&s.root, "hidden_diagrams", &hidden) {
         Ok(()) => String::new(),
         Err(e) => e,
     };
@@ -162,6 +179,54 @@ pub(super) fn toggle_diagram(s: &mut ArchitectureState, id: &str, show: bool) {
         }
         s.hidden = hidden;
     }
+}
+
+/// A package map level is written by the engine: list it in
+/// `shown_diagrams`, then write the document again (off the UI thread).
+fn toggle_level(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show: bool) {
+    let shown = catalogue::hidden_after(&s.shown, id, !show);
+    if let Err(e) = catalogue::write(&s.root, "shown_diagrams", &shown) {
+        s.figure_error = e;
+        return;
+    }
+    s.figure_error = String::new();
+    s.shown = shown;
+    s.config.arc42.shown_diagrams = s.shown.clone();
+    s.config.arc42.hidden_diagrams = s.hidden.clone();
+    let (root, config, graph, report) = (
+        s.root.clone(),
+        s.config.clone(),
+        s.graph.clone(),
+        s.report.clone(),
+    );
+    let write = move || {
+        archguard_engine::arc42_document(&root, &config, &graph, &report).map_err(|e| e.to_string())
+    };
+    match ui {
+        Some(ui) if !crate::tab_support::snapshot_mode() => write_later(ui, s.root.clone(), write),
+        _ => s.doc = write(),
+    }
+}
+
+/// Run `write` on a worker thread and give its document to the state of
+/// `root`, if that is still the active document.
+fn write_later(
+    ui: &AppWindow,
+    root: PathBuf,
+    write: impl FnOnce() -> Result<Arc42Document, String> + Send + 'static,
+) {
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let doc = write();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            crate::tab_support::update(&ui, |st: &mut ArchitectureState, _| {
+                if st.root == root {
+                    st.doc = doc;
+                }
+            });
+        });
+    });
 }
 
 pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {
