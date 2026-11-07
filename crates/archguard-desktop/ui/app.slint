@@ -145,6 +145,10 @@ export component AppWindow inherits Window {
     callback toggle-follow();
     in-out property <bool> show-explorer: true;
     in-out property <bool> show-details: true;
+    // View → Fullscreen (src/fullscreen.rs): the window's state after the
+    // last toggle.
+    in property <bool> fullscreen;
+    callback toggle-fullscreen();
 
     // Matrix instances.
     callback m-toggle(int, int);
@@ -316,6 +320,14 @@ export component AppWindow inherits Window {
                 title: @tr("Settings" => "Settings");
                 enabled: root.has-doc;
                 activated => { root.open-view-tab("settings"); }
+            }
+            MenuSeparator { }
+            // The web's fullscreen button; the platforms' own shortcuts
+            // (Control is ⌘ on macOS, Meta is ⌃).
+            MenuItem {
+                title: root.fullscreen ? @tr("Exit fullscreen") : @tr("Fullscreen");
+                shortcut: Theme.platform == 0 ? @keys(Meta + Control + F) : @keys(F11);
+                activated => { root.toggle-fullscreen(); }
             }
             MenuSeparator { }
             MenuItem {
