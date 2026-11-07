@@ -1,0 +1,106 @@
+import { Theme } from "theme.slint";
+
+// The right-click menu of the app's text fields (LineEdit, TextEdit,
+// SearchField), as in a native field. The field places it behind its
+// TextInput, which ignores the right button, so the press reaches this
+// area; the field wires the callbacks to the TextInput. (`@children`
+// inside a ContextMenuArea panics Slint 1.18's compiler.) Keyboard
+// shortcuts stay with the TextInput.
+export component FieldMenu inherits Rectangle {
+    in property <bool> enabled: true;
+    // False for a read-only field: no Cut, no Paste.
+    in property <bool> editable: true;
+    in property <bool> has-selection;
+    in property <bool> has-text;
+    callback cut();
+    callback copy();
+    callback paste();
+    callback select-all();
+    ContextMenuArea {
+        enabled: root.enabled;
+        Menu {
+            MenuItem {
+                title: @tr("Cut");
+                enabled: root.editable && root.has-selection;
+                activated => { root.cut(); }
+            }
+            MenuItem {
+                title: @tr("Copy");
+                enabled: root.has-selection;
+                activated => { root.copy(); }
+            }
+            MenuItem {
+                title: @tr("Paste");
+                enabled: root.editable;
+                activated => { root.paste(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: @tr("Select all");
+                enabled: root.has-text;
+                activated => { root.select-all(); }
+            }
+        }
+    }
+}
+
+// A single-line text input clipped to its box. The text scrolls
+// horizontally to keep the caret in view, as the std-widgets LineEdit
+// does; the placeholder shows while the text is empty.
+export component LineInput inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <bool> enabled <=> input.enabled;
+    in property <length> font-size: Theme.font-body;
+    out property <bool> has-focus: input.has-focus;
+    callback edited(string);
+    callback accepted(string);
+    // Room kept between the caret and the edges when scrolling to it.
+    property <length> edge: 2px;
+    // A clipped TextInput narrower than 1px cannot take focus.
+    min-width: 1px;
+    clip: true;
+    forward-focus: input;
+    accessible-role: text-input;
+    accessible-value: root.text;
+    accessible-placeholder-text: root.placeholder;
+    if root.text == "": Text {
+        text: root.placeholder;
+        color: Theme.muted;
+        font-size: root.font-size;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    FieldMenu {
+        enabled: input.enabled;
+        editable: !input.read-only;
+        has-selection: input.anchor-position-byte-offset != input.cursor-position-byte-offset;
+        has-text: root.text != "";
+        cut => { input.focus(); input.cut(); }
+        copy => { input.copy(); }
+        paste => { input.focus(); input.paste(); }
+        select-all => { input.focus(); input.select-all(); }
+    }
+    input := TextInput {
+        property <length> scroll-x;
+        x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll-x));
+        width: max(parent.width - self.text-cursor-width, self.preferred-width);
+        height: 100%;
+        color: Theme.text;
+        font-size: root.font-size;
+        vertical-alignment: center;
+        single-line: true;
+        selection-background-color: Theme.accent.with-alpha(0.35);
+        selection-foreground-color: Theme.text;
+        accessible-role: none;
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(self.text); }
+        cursor-position-changed(c) => {
+            if c.x + self.scroll-x < root.edge {
+                self.scroll-x = root.edge - c.x;
+            } else if c.x + self.scroll-x > parent.width - root.edge - self.text-cursor-width {
+                self.scroll-x = parent.width - root.edge - self.text-cursor-width - c.x;
+            }
+        }
+    }
+}

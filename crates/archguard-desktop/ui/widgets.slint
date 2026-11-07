@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
+import { LineInput } from "field_menu.slint";
 
 export global Icons {
     out property <string> info: "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 11 L 12 16.5 M 12 7.6 L 12 7.8";
@@ -170,10 +171,11 @@ export component FocusRing inherits Rectangle {
 
 export component SearchField inherits Rectangle {
     in property <string> placeholder;
-    in-out property <string> text <=> input.text;
+    in-out property <string> text;
     callback edited(string);
     callback accepted(string);
     height: Theme.control-h;
+    forward-focus: input;
     border-radius: Theme.radius-sm;
     background: Theme.panel;
     border-width: 1px;
@@ -190,27 +192,11 @@ export component SearchField inherits Rectangle {
             height: 15px;
             y: (parent.height - self.height) / 2;
         }
-        Rectangle {
-            input := TextInput {
-                width: 100%;
-                height: 100%;
-                color: Theme.text;
-                font-size: Theme.font-body;
-                vertical-alignment: center;
-                single-line: true;
-                edited => { root.edited(self.text); }
-                accepted => { root.accepted(self.text); }
-            }
-            if input.text == "": Text {
-                x: 0;
-                width: 100%;
-                height: 100%;
-                text: root.placeholder;
-                color: Theme.muted;
-                font-size: Theme.font-body;
-                vertical-alignment: center;
-                overflow: elide;
-            }
+        input := LineInput {
+            text <=> root.text;
+            placeholder: root.placeholder;
+            edited(t) => { root.edited(t); }
+            accepted(t) => { root.accepted(t); }
         }
     }
 }
