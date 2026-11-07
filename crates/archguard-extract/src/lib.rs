@@ -39,7 +39,10 @@ pub use java::JavaExtractor;
 pub use kotlin::KotlinExtractor;
 pub use memory::{MemoryCandidate, MemoryKind, scan_memory};
 pub use php::{PhpExtractor, parse_psr4};
-pub use php_structure::{PhpStructure, scan_php_structure};
+pub use php_structure::{
+    PhpCallSite, PhpClassFacts, PhpClassRef, PhpFunctionFacts, PhpStructure, PhpSymbols, PhpTarget,
+    scan_php_structure,
+};
 pub use py::PyExtractor;
 pub use resolve::{DeclMap, SymbolTarget, resolve_relative, strip_root};
 pub use rust::RustExtractor;

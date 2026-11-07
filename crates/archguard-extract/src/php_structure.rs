@@ -1,6 +1,7 @@
 //! Token-based PHP structure and measurements: classes, functions and methods
-//! with per-function complexity, cognitive and Halstead counts. Nothing is
-//! executed and no PHP installation is needed; calls and types stay unresolved.
+//! with per-function complexity, cognitive and Halstead counts, plus the call
+//! sites and declarations a call resolver needs ([`calls`]). Nothing is
+//! executed and no PHP installation is needed; types stay unresolved.
 
 //!
 //! Rules mirror the Rust and Python analyzers (`ast-decisions-v1`,
@@ -20,87 +21,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_core::{CallClass, CallMethod, MethodComplexity, SourceMethodMetrics};
 
-use crate::lex::{Flavor, tokens};
+use calls::Calls;
+use tokens::{KEYWORDS, Tok, class_kind, merged, pairs};
 
-/// Multi-character operators, longest first; the lexer emits single characters.
-const OPERATORS: [&str; 36] = [
-    "<=>", "**=", "...", "<<=", ">>=", "??=", "?->", "===", "!==", "->", "=>", "::", "&&", "||",
-    "??", "==", "!=", "<>", "<=", ">=", "++", "--", "+=", "-=", "*=", "/=", ".=", "%=", "&=", "|=",
-    "^=", "**", "<<", ">>", "?:", "#[",
-];
-const KEYWORDS: [&str; 71] = [
-    "abstract",
-    "and",
-    "array",
-    "as",
-    "break",
-    "callable",
-    "case",
-    "catch",
-    "class",
-    "clone",
-    "const",
-    "continue",
-    "declare",
-    "default",
-    "do",
-    "echo",
-    "else",
-    "elseif",
-    "empty",
-    "enddeclare",
-    "endfor",
-    "endforeach",
-    "endif",
-    "endswitch",
-    "endwhile",
-    "enum",
-    "eval",
-    "exit",
-    "extends",
-    "final",
-    "finally",
-    "fn",
-    "for",
-    "foreach",
-    "function",
-    "global",
-    "goto",
-    "if",
-    "implements",
-    "include",
-    "include_once",
-    "instanceof",
-    "insteadof",
-    "interface",
-    "isset",
-    "list",
-    "match",
-    "namespace",
-    "new",
-    "or",
-    "print",
-    "private",
-    "protected",
-    "public",
-    "readonly",
-    "require",
-    "require_once",
-    "return",
-    "static",
-    "switch",
-    "throw",
-    "trait",
-    "try",
-    "unset",
-    "use",
-    "var",
-    "while",
-    "xor",
-    "yield",
-    "self",
-    "parent",
-];
+mod calls;
+mod names;
+mod sites;
+mod symbols;
+mod tokens;
+pub use symbols::{
+    PhpCallSite, PhpClassFacts, PhpClassRef, PhpFunctionFacts, PhpSymbols, PhpTarget,
+};
+
 const MODIFIERS: [&str; 7] = [
     "public",
     "protected",
@@ -111,78 +43,6 @@ const MODIFIERS: [&str; 7] = [
     "readonly",
 ];
 
-struct Tok {
-    text: String,
-    literal: bool,
-    line: u32,
-    start: usize,
-    end: usize,
-}
-
-impl Tok {
-    fn is(&self, word: &str) -> bool {
-        !self.literal && self.text.eq_ignore_ascii_case(word)
-    }
-    fn is_name(&self) -> bool {
-        !self.literal
-            && self
-                .text
-                .starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '\\')
-    }
-}
-
-/// Lexer tokens without line breaks, with adjacent operator characters merged.
-fn merged(source: &str) -> Vec<Tok> {
-    let raw: Vec<_> = tokens(source, Flavor::Php)
-        .into_iter()
-        .filter(|token| token.text != "\n")
-        .collect();
-    let mut out: Vec<Tok> = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        let token = &raw[i];
-        let width = OPERATORS
-            .iter()
-            .find(|op| {
-                let n = op.chars().count();
-                i + n <= raw.len()
-                    && raw[i..i + n].windows(2).all(|w| w[0].end == w[1].start)
-                    && raw[i..i + n].iter().all(|t| !t.literal)
-                    && raw[i..i + n]
-                        .iter()
-                        .map(|t| t.text.as_str())
-                        .collect::<String>()
-                        == **op
-            })
-            .map_or(1, |op| op.chars().count());
-        out.push(Tok {
-            text: raw[i..i + width].iter().map(|t| t.text.as_str()).collect(),
-            literal: token.literal,
-            line: token.line,
-            start: token.start,
-            end: raw[i + width - 1].end,
-        });
-        i += width;
-    }
-    out
-}
-
-/// The index of the closing bracket for every opening one; `None` when unbalanced.
-fn pairs(toks: &[Tok]) -> Option<BTreeMap<usize, usize>> {
-    let mut open = Vec::new();
-    let mut out = BTreeMap::new();
-    for (index, token) in toks.iter().enumerate().filter(|(_, t)| !t.literal) {
-        match token.text.as_str() {
-            "(" | "[" | "{" | "#[" => open.push(index),
-            ")" | "]" | "}" => {
-                out.insert(open.pop()?, index);
-            }
-            _ => {}
-        }
-    }
-    open.is_empty().then_some(out)
-}
-
 /// Classes, methods and raw measurements of one PHP file.
 #[derive(Debug, Default)]
 pub struct PhpStructure {
@@ -190,33 +50,40 @@ pub struct PhpStructure {
     pub methods: Vec<CallMethod>,
     pub metrics: Vec<SourceMethodMetrics>,
     pub diagnostics: Vec<String>,
+    /// Declarations and call sites for the engine's call resolver.
+    pub symbols: PhpSymbols,
 }
 
 /// Scan one PHP source. `file` is the source path, `graph_node` the name of
 /// its node in the dependency graph.
 pub fn scan_php_structure(file: &str, graph_node: &str, source: &str) -> PhpStructure {
     let toks = merged(source);
+    let Some(pairs) = pairs(&toks) else {
+        return PhpStructure {
+            diagnostics: vec![format!("{file}: unbalanced brackets; not measured")],
+            ..Default::default()
+        };
+    };
     let mut scan = Scan {
         file,
         graph_node,
         source,
         toks: &toks,
-        pairs: BTreeMap::new(),
+        pairs: &pairs,
         package: file.rsplit_once('/').map_or("", |(dir, _)| dir).to_string(),
         out: PhpStructure::default(),
         seen: BTreeSet::new(),
+        calls: Calls::new(source, &toks, &pairs),
     };
-    match pairs(&toks) {
-        Some(found) => {
-            scan.pairs = found;
-            scan.walk();
-        }
-        None => scan
-            .out
-            .diagnostics
-            .push(format!("{file}: unbalanced brackets; not measured")),
+    scan.walk();
+    let symbols = scan.calls.finish();
+    if symbols.sites.iter().any(|site| site.from_method.is_none()) {
+        scan.klass("(module)", "module", 1, false, Vec::new());
     }
-    scan.out
+    PhpStructure {
+        symbols,
+        ..scan.out
+    }
 }
 
 struct Scan<'a> {
@@ -224,10 +91,12 @@ struct Scan<'a> {
     graph_node: &'a str,
     source: &'a str,
     toks: &'a [Tok],
-    pairs: BTreeMap<usize, usize>,
+    pairs: &'a BTreeMap<usize, usize>,
     package: String,
     out: PhpStructure,
     seen: BTreeSet<String>,
+    /// Declarations and call sites for the resolver.
+    calls: Calls<'a>,
 }
 
 impl Scan<'_> {
@@ -237,10 +106,8 @@ impl Scan<'_> {
     fn is(&self, index: usize, word: &str) -> bool {
         self.tok(index).is_some_and(|t| t.is(word))
     }
-    /// The first non-literal `want` token at or after `from`.
     fn find(&self, from: usize, want: &[&str]) -> Option<usize> {
-        (from..self.toks.len())
-            .find(|&i| !self.toks[i].literal && want.contains(&self.toks[i].text.as_str()))
+        self.calls.view.find(from, want)
     }
     fn klass(
         &mut self,
@@ -284,17 +151,12 @@ impl Scan<'_> {
                 i += 1;
                 continue;
             }
-            if token.is("namespace") && self.tok(i + 1).is_some_and(Tok::is_name) {
-                let end = self.find(i + 1, &[";", "{"]).unwrap_or(self.toks.len());
-                self.package = self.toks[i + 1..end]
-                    .iter()
-                    .map(|t| t.text.as_str())
-                    .collect();
-                i = end;
+            if let Some(next) = self.statement(i, &braces) {
+                i = next;
                 continue;
             }
             if token.is("new") && self.is(i + 1, "class") {
-                i = self.anonymous_end(i);
+                i = self.calls.view.anonymous_end(i);
                 continue;
             }
             if let Some(kind) = class_kind(token)
@@ -306,6 +168,7 @@ impl Scan<'_> {
                 let is_abstract = kind == "interface" || modifiers.contains("abstract");
                 let name = self.toks[i + 1].text.clone();
                 let id = self.klass(&name, kind, token.line, is_abstract, supertypes);
+                self.calls.declare_class(&id, &name, kind, (i + 2, open));
                 braces.push(Some(id));
                 i = open + 1;
                 continue;
@@ -324,6 +187,7 @@ impl Scan<'_> {
                     continue;
                 }
             }
+            self.top_level_site(i, &braces);
             match token.text.as_str() {
                 "{" => braces.push(None),
                 "}" => {
@@ -335,14 +199,56 @@ impl Scan<'_> {
         }
     }
 
-    /// The index after an anonymous class body that starts at `new`.
-    fn anonymous_end(&self, new: usize) -> usize {
-        let mut at = new + 2;
-        if self.tok(at).is_some_and(|t| t.text == "(") {
-            at = self.pairs[&at] + 1;
+    /// A `namespace` statement at `i`: the index after its name.
+    /// `namespace\f()` is a relative name, not a declaration.
+    fn namespace(&mut self, i: usize) -> Option<usize> {
+        if !self.is(i, "namespace") {
+            return None;
         }
-        self.find(at, &["{"])
-            .map_or(self.toks.len(), |open| self.pairs[&open] + 1)
+        if self.calls.view.text(i + 1) == "{" {
+            self.calls.names.enter(String::new());
+            return Some(i + 1);
+        }
+        self.tok(i + 1).filter(|t| t.is_name() && t.text != "\\")?;
+        let end = self.find(i + 1, &[";", "{"]).unwrap_or(self.toks.len());
+        self.package = self.toks[i + 1..end]
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect();
+        self.calls.names.enter(self.package.clone());
+        Some(end)
+    }
+
+    /// `use` at `i`: imports at file level, traits directly in the body of
+    /// `class`; `None` for a closure's `use (…)`.
+    fn use_statement(&mut self, i: usize, braces: &[Option<String>]) -> Option<usize> {
+        let in_class = braces.iter().any(Option::is_some);
+        match braces.last() {
+            _ if !in_class && self.calls.view.text(i.wrapping_sub(1)) != ")" => {
+                Some(self.calls.import(i))
+            }
+            Some(Some(class_id)) => {
+                let class_id = class_id.clone();
+                Some(self.calls.trait_use(i, &class_id))
+            }
+            _ => None,
+        }
+    }
+
+    /// A `namespace` or `use` statement at `i`: the index after it.
+    fn statement(&mut self, i: usize, braces: &[Option<String>]) -> Option<usize> {
+        if self.is(i, "use") {
+            return self.use_statement(i, braces);
+        }
+        self.namespace(i)
+    }
+
+    /// A call at `i` in code outside classes and functions.
+    fn top_level_site(&mut self, i: usize, braces: &[Option<String>]) {
+        if braces.iter().all(Option::is_none) {
+            let module = format!("{}::(module)", self.file);
+            self.calls.site(i, false, &module, None);
+        }
     }
 
     /// Lowercase modifiers directly before the declaration keyword at `at`.
@@ -363,6 +269,10 @@ impl Scan<'_> {
             return self.toks.len();
         };
         if self.toks[end].text == ";" {
+            if let Some(owner) = &owner {
+                let name = self.toks[named].text.clone();
+                self.calls.declare_bodiless(owner, &name);
+            }
             return end + 1;
         }
         let body_end = self.pairs[&end];
@@ -376,7 +286,12 @@ impl Scan<'_> {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        let measure = Measure::of(self.toks, &self.pairs, end + 1, body_end);
+        let measure = Measure::of(self.toks, self.pairs, end + 1, body_end);
+        if !in_class {
+            self.calls.declare_function(&name, &class_id, &id);
+        }
+        self.calls
+            .body_calls((end + 1, body_end), (&class_id, &id), in_class);
         self.out.methods.push(CallMethod {
             id: id.clone(),
             class_id,
@@ -404,12 +319,6 @@ impl Scan<'_> {
         });
         body_end + 1
     }
-}
-
-fn class_kind(token: &Tok) -> Option<&'static str> {
-    ["class", "interface", "trait", "enum"]
-        .into_iter()
-        .find(|kind| token.is(kind))
 }
 
 /// Names after `extends`/`implements`, sorted.

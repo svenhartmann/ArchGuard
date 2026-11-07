@@ -48,14 +48,14 @@
       "suggested_cuts": [
         {
           "from": "App/One/One.php",
-          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
-          "score": 1.0,
+          "reason": "ref_count: 2; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 0.5906161,
           "to": "App/Two/Two.php"
         },
         {
           "from": "App/Two/Two.php",
-          "reason": "ref_count: 1; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
-          "score": 1.0,
+          "reason": "ref_count: 2; cutting this dependency breaks 1 of 1 sampled cycles; consider dependency inversion: define an interface on the depended-upon side; root-limited sample, not an exhaustive cycle search",
+          "score": 0.5906161,
           "to": "App/One/One.php"
         }
       ]
@@ -214,7 +214,8 @@
     "sdp_violations": [
       {
         "evidence": [
-          "One/One.php:5"
+          "One/One.php:5",
+          "One/One.php:11"
         ],
         "from": "App/One/One.php",
         "i_from": 0.3333333432674408,
@@ -235,7 +236,8 @@
       {
         "backend": "archguard tokens",
         "diagnostics": [
-          "Token-based analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from interface and abstract class declarations."
+          "Calls: 8 sites, 4 project, 0 external, 4 unresolved (other receivers, dynamic names, closures or unknown classes).",
+          "Token-based analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from namespaces, use imports, project classes, traits, $this, self, static (read as self) and parent; calls on other variables, dynamic names and $this inside closures stay unresolved; callables passed to call_user_func are not followed. Types are not resolved; abstractness is read from interface and abstract class declarations."
         ],
         "files": 6,
         "language": "php",
@@ -245,9 +247,10 @@
       }
     ],
     "diagnostics": [
-      "php: Token-based analysis: classes, functions, complexity and Halstead counts. Calls and types are not resolved; abstractness is read from interface and abstract class declarations."
+      "php: Calls: 8 sites, 4 project, 0 external, 4 unresolved (other receivers, dynamic names, closures or unknown classes).",
+      "php: Token-based analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from namespaces, use imports, project classes, traits, $this, self, static (read as self) and parent; calls on other variables, dynamic names and $this inside closures stay unresolved; callables passed to call_user_func are not followed. Types are not resolved; abstractness is read from interface and abstract class declarations."
     ],
-    "projected_calls": 0,
+    "projected_calls": 4,
     "projected_supertypes": 0,
     "projected_type_uses": 0,
     "skipped_project_calls": 0,
