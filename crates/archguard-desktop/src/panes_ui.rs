@@ -35,10 +35,14 @@ type SyncFn = Rc<dyn Fn(&AppWindow, &Layout) -> Vec<u32>>;
 /// Called after a layout change with the layout before and after.
 type Changed = Rc<dyn Fn(&AppWindow, &Layout, &Layout)>;
 
+/// Called after the views' instances were built for the layout.
+type Synced = Rc<dyn Fn(&AppWindow)>;
+
 thread_local! {
     static REVEALS: RefCell<Vec<(&'static str, Reveal)>> = const { RefCell::new(Vec::new()) };
     static SYNCS: RefCell<Vec<(&'static str, SyncFn)>> = const { RefCell::new(Vec::new()) };
     static CHANGED: RefCell<Option<Changed>> = const { RefCell::new(None) };
+    static SYNCED: RefCell<Option<Synced>> = const { RefCell::new(None) };
     /// The window's pane list. Rows are updated in place, so a pane whose
     /// view stays keeps its Slint view instance (scroll position, zoom).
     static PANES: RefCell<Option<Rc<VecModel<PaneItem>>>> = const { RefCell::new(None) };
@@ -125,17 +129,14 @@ fn store(layout: &Layout) {
     });
 }
 
-fn tab_item(t: &Tab) -> TabItem {
-    TabItem {
-        kind: t.kind.as_str().into(),
-        id: t.id as i32,
-        label: t.label().into(),
-    }
-}
-
 /// Show the active document's layout.
 pub fn push(ui: &AppWindow) {
     let l = layout();
+    let tab_item = |t: &Tab| TabItem {
+        kind: t.kind.as_str().into(),
+        id: t.id as i32,
+        label: t.label().into(),
+    };
     let rows: Vec<PaneItem> = l
         .panes
         .iter()
@@ -199,18 +200,26 @@ pub fn sync(ui: &AppWindow) {
     let syncs: Vec<(&str, SyncFn)> = SYNCS.with_borrow(|s| s.clone());
     let l = layout();
     let gone: Vec<u32> = syncs.iter().flat_map(|(_, f)| f(ui, &l)).collect();
-    if gone.is_empty() {
-        return;
-    }
-    change(ui, |l| {
-        for id in gone {
-            match l.tab_mut(id) {
-                Some(t) if t.kind == crate::panes::FILE => panes::drop_tab(l, id),
-                Some(t) => t.node = None,
-                None => {}
+    if !gone.is_empty() {
+        change(ui, |l| {
+            for id in gone {
+                match l.tab_mut(id) {
+                    Some(t) if t.kind == crate::panes::FILE => panes::drop_tab(l, id),
+                    Some(t) => t.node = None,
+                    None => {}
+                }
             }
-        }
-    });
+        });
+    }
+    if let Some(f) = SYNCED.with_borrow(|c| c.clone()) {
+        f(ui);
+    }
+}
+
+/// After every [`sync`], once the views' instances exist, `f` runs
+/// ("Follow left" at start-up: a restored pair takes the left place).
+pub fn on_synced(f: impl Fn(&AppWindow) + 'static) {
+    SYNCED.set(Some(Rc::new(f)));
 }
 
 /// Tab `id` is now about `node` (a Graph opened on a package, a Matrix

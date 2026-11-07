@@ -52,7 +52,7 @@ type Change<T> = Box<dyn FnOnce(&mut T)>;
 
 /// Run `f` on the active document's `T`; while `T` is still building,
 /// keep `f` for when it arrives. Returns whether `f` ran.
-fn run_or_queue<T: 'static>(f: impl FnOnce(&mut T) + 'static) -> bool {
+pub fn run_or_queue<T: 'static>(f: impl FnOnce(&mut T) + 'static) -> bool {
     let mut f = Some(f);
     let ran = documents::with_active_state(|s: &mut T| f.take().map(|f| f(s))).is_some();
     if let Some(f) = f {
