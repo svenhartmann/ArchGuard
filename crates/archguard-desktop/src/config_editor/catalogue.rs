@@ -101,6 +101,17 @@ pub struct Field {
 pub const SEVERITIES: &[&str] = &["error", "warning", "info"];
 pub const DENY_CYCLES: &[&str] = &["module", "file", "off"];
 pub const ORPHANS: &[&str] = &["off", "info", "warning", "error"];
+/// Spellings of `archguard_core::QualityAttribute` (ISO/IEC 25010).
+pub const QUALITY_ATTRIBUTES: &[&str] = &[
+    "functional_suitability",
+    "performance_efficiency",
+    "compatibility",
+    "usability",
+    "reliability",
+    "security",
+    "maintainability",
+    "portability",
+];
 
 const fn f(path: &'static str, kind: Kind, group: Group, description: &'static str) -> Field {
     Field {
@@ -406,6 +417,24 @@ pub const FIELDS: &[Field] = &[
         K::Text,
         G::Architecture,
         "Why the goal matters.",
+    ),
+    f(
+        "architecture.goals[].attribute",
+        K::Enum(QUALITY_ATTRIBUTES),
+        G::Architecture,
+        "ISO/IEC 25010 characteristic the goal addresses; empty leaves the goal unclassified.",
+    ),
+    f(
+        "architecture.goals[].scope",
+        K::List,
+        G::Architecture,
+        "Node-name globs the goal covers; empty means the whole system.",
+    ),
+    f(
+        "architecture.goals[].scenario",
+        K::Text,
+        G::Architecture,
+        "Quality scenario: stimulus, response and measure.",
     ),
     f(
         "architecture.constraints",

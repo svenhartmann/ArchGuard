@@ -284,6 +284,7 @@ pub mod tests {
             cycles: Vec::new(),
             diagnostics: Vec::new(),
             complete: true,
+            ..Default::default()
         }
     }
 

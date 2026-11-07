@@ -301,6 +301,15 @@ msgstr "Die eigene Prioritätsangabe der Organisation; leer bedeutet nicht angeg
 msgid "Why the goal matters."
 msgstr "Warum das Ziel wichtig ist."
 
+msgid "ISO/IEC 25010 characteristic the goal addresses; empty leaves the goal unclassified."
+msgstr "Qualitätsmerkmal nach ISO/IEC 25010, auf das das Ziel zielt; leer lässt das Ziel unklassifiziert."
+
+msgid "Node-name globs the goal covers; empty means the whole system."
+msgstr "Globs für Knotennamen, die das Ziel umfasst; leer bedeutet das ganze System."
+
+msgid "Quality scenario: stimulus, response and measure."
+msgstr "Qualitätsszenario: Auslöser, Reaktion und Maß."
+
 msgid "Constraints the architecture must respect."
 msgstr "Randbedingungen, die die Architektur einhalten muss."
 
