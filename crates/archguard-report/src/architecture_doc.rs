@@ -1,6 +1,7 @@
 //! Deterministic architecture documentation from the supplied analysis scope.
 use archguard_core::{
-    Config, FindingKind, Graph, LayerOrigin, Report, ReviewReport, Severity, Status,
+    Config, FindingKind, GoalAssessment, GoalStatus, Graph, LayerOrigin, Report, ReviewReport,
+    Severity, Status,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -13,25 +14,14 @@ pub fn render_architecture_doc(
     report: &Report,
     config: &Config,
     review: Option<&ReviewReport>,
+    goals: &[GoalAssessment],
 ) -> String {
     let mut out = String::from("# Architecture\n\n");
     let _ = writeln!(
         out,
         "Generated from static dependency analysis. Scope and configuration determine these observations; runtime behavior and organization priorities require separate evidence.\n"
     );
-    let _ = writeln!(out, "## Declared intent\n\n### Quality goals\n");
-    if config.architecture.goals.is_empty() {
-        out.push_str("No declared quality goals.\n");
-    }
-    for goal in &config.architecture.goals {
-        let _ = writeln!(
-            out,
-            "- **{}** — priority: {}; rationale: {}",
-            md(&goal.name),
-            specified(&goal.priority),
-            specified(&goal.rationale)
-        );
-    }
+    goal_section(&mut out, config, goals);
     out.push_str("\n### Constraints\n\n");
     if config.architecture.constraints.is_empty() {
         out.push_str("No declared constraints.\n");
@@ -312,6 +302,48 @@ pub fn render_architecture_doc(
     out
 }
 
+/// Declared goals with characteristic, scope and assessment status (ADR 0003).
+fn goal_section(out: &mut String, config: &Config, goals: &[GoalAssessment]) {
+    let _ = writeln!(out, "## Declared intent\n\n### Quality goals\n");
+    if config.architecture.goals.is_empty() {
+        out.push_str("No declared quality goals.\n");
+    }
+    for goal in &config.architecture.goals {
+        let scope = if goal.scope.is_empty() {
+            "whole system".into()
+        } else {
+            list(&goal.scope)
+        };
+        let status = match goals.iter().find(|a| a.goal == goal.name) {
+            None => "unknown".into(),
+            Some(a) if a.findings.is_empty() => goal_status(a.status).to_string(),
+            Some(a) => format!("{} ({})", goal_status(a.status), bounded_names(&a.findings)),
+        };
+        let _ = writeln!(
+            out,
+            "- **{}** — priority: {}; rationale: {}; characteristic: {}; scope: {scope}; status: {status}",
+            md(&goal.name),
+            specified(&goal.priority),
+            specified(&goal.rationale),
+            goal.attribute.map_or("unspecified", |a| a.as_str()),
+        );
+        if !goal.scenario.trim().is_empty() {
+            let _ = writeln!(out, "  - Scenario: {}", md(&goal.scenario));
+        }
+    }
+    if !goals.is_empty() {
+        out.push_str("\nA status describes the available evidence (static analysis, review KPIs and saved reports under `.archguard/`), not whether a goal is reached; see ADR 0003 for the fixed mapping.\n");
+    }
+}
+fn goal_status(status: GoalStatus) -> &'static str {
+    match status {
+        GoalStatus::Unclassified => "unclassified",
+        GoalStatus::NotAssessable => "not assessable by ArchGuard",
+        GoalStatus::NoEvidence => "no evidence (needed source absent)",
+        GoalStatus::Findings => "findings",
+        GoalStatus::NoFindings => "no findings from the available sources",
+    }
+}
 fn severity(value: Severity) -> &'static str {
     match value {
         Severity::Error => "error",
@@ -413,6 +445,59 @@ mod tests {
     }
 
     #[test]
+    fn goals_show_characteristic_scope_status_and_linked_findings() {
+        use archguard_core::{ArchitectureGoal, GoalAssessment, GoalStatus, QualityAttribute};
+        let mut config = Config::default();
+        let goal = |name: &str, attribute, scope: &[&str]| ArchitectureGoal {
+            name: name.into(),
+            attribute,
+            scope: scope.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        config.architecture.goals = vec![
+            goal(
+                "Changeable",
+                Some(QualityAttribute::Maintainability),
+                &["app/**"],
+            ),
+            goal("Quiet", Some(QualityAttribute::Maintainability), &[]),
+            goal("Fast delivery", None, &[]),
+        ];
+        let assessed = |goal: &ArchitectureGoal, status, findings: &[&str]| GoalAssessment {
+            goal: goal.name.clone(),
+            priority: String::new(),
+            attribute: goal.attribute,
+            scope: goal.scope.clone(),
+            status,
+            findings: findings.iter().map(|s| s.to_string()).collect(),
+            finding_count_by_severity: Default::default(),
+            kpis: vec![],
+            evidence_sources: vec![],
+            gaps: vec![],
+        };
+        let goals = &config.architecture.goals;
+        let assessments = vec![
+            assessed(&goals[0], GoalStatus::Findings, &["scc-1"]),
+            assessed(&goals[1], GoalStatus::NoFindings, &[]),
+            assessed(&goals[2], GoalStatus::Unclassified, &[]),
+        ];
+        let doc = render_architecture_doc(&graph(), &report(), &config, None, &assessments);
+        assert!(
+            doc.contains(
+                "characteristic: maintainability; scope: app\\/\\*\\*; status: findings (scc\\-1)"
+            ),
+            "{doc}"
+        );
+        assert!(
+            doc.contains("scope: whole system; status: no findings from the available sources")
+        );
+        assert!(
+            doc.contains("characteristic: unspecified; scope: whole system; status: unclassified")
+        );
+        assert!(!doc.to_lowercase().contains("goal met"));
+    }
+
+    #[test]
     fn zero_cycle_document_explains_semantic_scope_and_partial_coverage() {
         let mut report = report();
         report.semantic = Some(archguard_core::SemanticDependencyCoverage {
@@ -422,7 +507,7 @@ mod tests {
             skipped_project_calls: 2,
             ..Default::default()
         });
-        let doc = render_architecture_doc(&graph(), &report, &Config::default(), None);
+        let doc = render_architecture_doc(&graph(), &report, &Config::default(), None, &[]);
         assert!(doc.contains("## Dependency scope"));
         assert!(doc.contains("Semantic dependency coverage: **partial**"));
         assert!(doc.contains("7 resolved call sites"));
@@ -459,7 +544,7 @@ mod tests {
             }],
             ..Default::default()
         });
-        let doc = render_architecture_doc(&graph(), &report(), &config, None);
+        let doc = render_architecture_doc(&graph(), &report(), &config, None, &[]);
         assert!(doc.contains("Logical &lt;system&gt;"));
         assert!(doc.contains("UI → Domain"));
         assert!(doc.contains("screen\\/\\*\\*"));
@@ -472,7 +557,7 @@ mod tests {
 
     #[test]
     fn documentation_contains_scope_metrics_and_directed_dsm() {
-        let doc = render_architecture_doc(&graph(), &report(), &Config::default(), None);
+        let doc = render_architecture_doc(&graph(), &report(), &Config::default(), None, &[]);
         assert!(doc.starts_with("# Architecture\n"));
         assert!(doc.contains("| ACD | 1.500 |"));
         assert!(doc.contains("| 1. a | · | 3 |"));
@@ -492,12 +577,13 @@ mod tests {
                 name: "[run](javascript:bad)".into(),
                 priority: "\n# forged".into(),
                 rationale: "<img src=x onerror=bad>".into(),
+                ..Default::default()
             });
-        let first = render_architecture_doc(&graph, &report(), &config, None);
+        let first = render_architecture_doc(&graph, &report(), &config, None, &[]);
         graph.nodes.reverse();
         graph.edges.reverse();
         assert_eq!(
-            render_architecture_doc(&graph, &report(), &config, None),
+            render_architecture_doc(&graph, &report(), &config, None, &[]),
             first
         );
         assert!(!first.contains("<script>"));
@@ -523,7 +609,7 @@ mod tests {
         graph.edges.clear();
         let mut report = report();
         report.summary.nodes = 100;
-        let doc = render_architecture_doc(&graph, &report, &Config::default(), None);
+        let doc = render_architecture_doc(&graph, &report, &Config::default(), None, &[]);
         assert!(doc.contains("| Scope nodes | 100 |"));
         assert!(doc.contains("Matrix truncated: 30 of 100 nodes shown"));
         assert!(!doc.contains("module\\-030"));
@@ -539,7 +625,7 @@ mod tests {
             line: 1,
             raw: "import b".into(),
         }];
-        let doc = render_architecture_doc(&graph, &report(), &Config::default(), None);
+        let doc = render_architecture_doc(&graph, &report(), &Config::default(), None, &[]);
         assert!(doc.contains("| 1. a | · | ≥1 |"));
     }
 }

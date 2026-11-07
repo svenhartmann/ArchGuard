@@ -1,5 +1,6 @@
 //! Explicit organization intent and observed architecture evidence for agents.
 use crate::model::{Finding, Ref, Severity, Summary};
+use crate::quality_goal::{GoalAssessment, QualityAttribute};
 use crate::review::OrphanPolicy;
 use crate::rules::{DependencyRule, OwnershipRule};
 use crate::settings::{LayerConfig, RulesConfig};
@@ -140,6 +141,15 @@ pub struct ArchitectureGoal {
     /// The organization's own priority vocabulary; empty means unspecified.
     pub priority: String,
     pub rationale: String,
+    /// ISO/IEC 25010 characteristic; absent means unclassified (ADR 0003).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<QualityAttribute>,
+    /// Node-name globs; empty means the whole system.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<String>,
+    /// Free text quality scenario (stimulus, response, measure); shown, not evaluated.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub scenario: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +194,9 @@ pub struct ArchitectureContext {
     pub project_root: String,
     pub intent: ArchitectureConfig,
     pub observed: ArchitectureObserved,
+    /// One assessment per declared goal, in file order (ADR 0003).
+    #[serde(default)]
+    pub goal_assessment: Vec<GoalAssessment>,
     pub questions: Vec<String>,
     pub limitations: Vec<String>,
 }

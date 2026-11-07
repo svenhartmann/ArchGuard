@@ -41,6 +41,13 @@ pub fn arc42_from_evidence(
             .filter_map(|p| Some((p.id.clone(), manifest_description(root, &p.manifest)?)))
             .collect(),
     };
+    let goals = crate::quality_goals::quality_goal_assessment(
+        root,
+        config,
+        graph,
+        findings,
+        graph.review_kpis.as_ref(),
+    );
     Ok(archguard_report::render_arc42(Arc42Inputs {
         source_graph: graph,
         view: &view,
@@ -51,6 +58,7 @@ pub fn arc42_from_evidence(
         insights,
         source_paths: &paths,
         blocks: &blocks,
+        goals: &goals,
     }))
 }
 

@@ -763,7 +763,7 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Read declared architecture goals, constraints and trade-offs alongside observed metrics, rules and an optional logical target model. Source mappings, allowed versus observed directions and mapping gaps are explicit. Large model details are bounded and omissions counted. Missing organizational intent is returned as questions; no preference is invented."
+        description = "Read declared architecture goals, constraints and trade-offs alongside observed metrics, rules and an optional logical target model. Source mappings, allowed versus observed directions and mapping gaps are explicit. Large model details are bounded and omissions counted. Missing organizational intent is returned as questions; no preference is invented. goal_assessment links each goal's ISO 25010 attribute to matching finding ids, KPIs and evidence sources by a fixed mapping (ADR 0003); a status describes available evidence, not goal attainment."
     )]
     async fn architecture_context(
         &self,
@@ -798,7 +798,14 @@ impl ArchguardTools {
             .map_err(|e| tools::invalid_params(e.to_string()))?;
             return Ok(arc42_tools::page(&doc.markdown(params.chapter), &params)?.to_string());
         }
-        Ok(tools::guarded(&json!({"markdown":archguard_engine::report::render_architecture_doc(&run.view,&run.report,&run.loaded.config,None)})).to_string())
+        let goals = archguard_engine::quality_goal_assessment(
+            &run.root,
+            &run.loaded.config,
+            &run.file_graph,
+            &run.report.findings,
+            run.report.review_kpis.as_ref(),
+        );
+        Ok(tools::guarded(&json!({"markdown":archguard_engine::report::render_architecture_doc(&run.view,&run.report,&run.loaded.config,None,&goals)})).to_string())
     }
 
     /// Local-BFS context around a module (Kap. 10.2 `module_neighborhood`).
@@ -1691,6 +1698,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn goal_assessments_keep_every_goal_status_within_the_response_budget() {
+        let dir = tempdir().unwrap();
+        // Twelve independent two-module cycles: more goal findings than fit.
+        for i in 0..12 {
+            for (from, to) in [("a", "b"), ("b", "a")] {
+                let path = dir.path().join(format!("src/m{i}{from}/x.ts"));
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(
+                    path,
+                    format!("import {{ x }} from '../m{i}{to}/x';\nexport const y = x;\n"),
+                )
+                .unwrap();
+            }
+        }
+        review_config(
+            dir.path(),
+            "[[architecture.goals]]\nname='Changeable'\nattribute='maintainability'\n[[architecture.goals]]\nname='Safe'\nattribute='security'\n[[architecture.goals]]\nname='Fast delivery'\n",
+        );
+        let handler = ArchguardTools::new(dir.path().into());
+        let value = review_tool(&handler, "architecture_context", json!({}))
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&value).unwrap().len() <= tools::MAX_RESPONSE_BYTES);
+        let goals = value["goal_assessment"].as_array().unwrap();
+        let statuses: Vec<_> = goals.iter().map(|g| g["status"].clone()).collect();
+        assert_eq!(
+            statuses,
+            [
+                json!("findings"),
+                json!("no_evidence"),
+                json!("unclassified")
+            ]
+        );
+        assert_eq!(value["truncated"], true);
+        let omitted = value["omitted_arrays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["path"] == "/goal_assessment/0/findings")
+            .expect("shortened goal findings are counted");
+        assert!(omitted["total"].as_u64().unwrap() >= 12);
+        assert_eq!(
+            omitted["returned"].as_u64().unwrap() as usize,
+            goals[0]["findings"].as_array().unwrap().len()
+        );
+        assert!(value["questions"].as_array().unwrap().contains(&json!(
+            "Which ISO 25010 characteristic does \"Fast delivery\" address?"
+        )));
+    }
+
+    #[tokio::test]
+    async fn goal_assessments_are_never_cut_to_a_prefix_of_the_goals() {
+        let dir = tempdir().unwrap();
+        write_cyclic_project(dir.path());
+        // A long scope makes goal_assessment the largest list of the context.
+        let long = format!("app/{}/**", "x".repeat(900));
+        review_config(
+            dir.path(),
+            &format!(
+                "[[architecture.goals]]\nname='Changeable checkout'\npriority='first'\nattribute='maintainability'\nscope=['app', 'app/**', '{long}']\nscenario='A pricing change ships within one day'\n[[architecture.goals]]\nname='Safe dependencies'\nattribute='security'\n[[architecture.goals]]\nname='Fast delivery'\n"
+            ),
+        );
+        let handler = ArchguardTools::new(dir.path().into());
+        let value = review_tool(&handler, "architecture_context", json!({}))
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&value).unwrap().len() <= tools::MAX_RESPONSE_BYTES);
+        let goals: Vec<_> = value["goal_assessment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| (g["goal"].clone(), g["status"].clone()))
+            .collect();
+        assert_eq!(
+            goals,
+            [
+                (json!("Changeable checkout"), json!("findings")),
+                (json!("Safe dependencies"), json!("no_evidence")),
+                (json!("Fast delivery"), json!("unclassified"))
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn architecture_tools_distinguish_declared_intent_from_missing_information() {
         let dir = tempdir().unwrap();
         write_cyclic_project(dir.path());
@@ -1712,6 +1803,7 @@ mod tests {
 name = "Fast delivery"
 priority = "First"
 rationale = "Weekly customer releases"
+attribute = "maintainability"
 [[architecture.constraints]]
 name = "Offline operation"
 rationale = "Customer environments have no network"
@@ -1742,6 +1834,8 @@ links = ["docs/adr/1.md"]
             json!(["Accept shared deployment"])
         );
         assert_eq!(declared["questions"], json!([]));
+        assert_eq!(declared["goal_assessment"][0]["status"], "findings");
+        assert_eq!(declared["goal_assessment"][0]["priority"], "First");
         assert_eq!(
             declared["observed"]["summary"],
             absent["observed"]["summary"]
@@ -1755,6 +1849,10 @@ links = ["docs/adr/1.md"]
         assert_eq!(document, again);
         let markdown = document["markdown"].as_str().unwrap();
         assert!(markdown.contains("Fast delivery"));
+        assert!(
+            markdown
+                .contains("characteristic: maintainability; scope: whole system; status: findings")
+        );
         assert!(markdown.contains("Accept shared deployment"));
         assert!(markdown.contains("| ACD | 2.000 |"));
         assert!(markdown.contains("Dependency structure matrix"));

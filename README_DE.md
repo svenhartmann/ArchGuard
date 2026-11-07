@@ -120,6 +120,23 @@ Erzeugte Regeln vor der Nutzung als Gates prüfen. Abgeleitete Schichten sind in
 
 Projektlokale Daten liegen unter `.archguard/`: Konfiguration, importierte Belege, Berichte, Caches und aufgezeichneter Verlauf. Erzeugte Berichte und Caches lassen sich neu erstellen; gewollte Konfiguration, Baselines, Szenarien und aufgezeichnete Messungen erhalten. Details und Beispiele stehen in [ARCHITECTURE_DE.md](ARCHITECTURE_DE.md).
 
+### Qualitätsziele
+
+Ein Qualitätsziel kann das Merkmal nach ISO/IEC 25010 nennen, auf das es zielt, den Teil des Systems, den es abdeckt, und ein Qualitätsszenario. Alle drei Felder sind optional:
+
+```toml
+[[architecture.goals]]
+name = "Changeable checkout"
+priority = "first"                       # eigene Formulierung; wird nie gereiht
+rationale = "Weekly price changes"
+attribute = "maintainability"            # functional_suitability, performance_efficiency, compatibility,
+                                         # usability, reliability, security, maintainability, portability
+scope = ["checkout/**"]                  # Globs auf Knotennamen; leer = Gesamtsystem
+scenario = "A price rule change ships within one day"
+```
+
+`architecture_context` (MCP und `archguard review`), `archguard doc` und die arc42-Kapitel 1 und 10 zeigen dann je Ziel die passenden Befund-IDs, Kennzahlen, die Belegquellen und einen Status: `unclassified`, `not_assessable`, `no_evidence`, `findings` oder `no_findings` (keine Befunde aus den verfügbaren Quellen, nicht „Ziel erreicht“). Die Zuordnung von Belegen zu Merkmalen ist fest: Strukturbefunde und Review-Kennzahlen zählen für Wartbarkeit, ein gespeicherter `archguard security`-Scan für Sicherheit, importierte Messungen, Testergebnisse, Abdeckungs- und Mutationsberichte für Leistungseffizienz und Zuverlässigkeit. Für die übrigen vier Merkmale hat ArchGuard keine Belege. Ziele ändern `[review] health_weights` nicht. Entscheidung: [ADR 0003](docs/adr/0003-quality-goal-assessment.md).
+
 ## MCP für Coding-Agenten
 
 ArchGuard im Client als stdio-MCP-Server registrieren und einen absoluten Projektpfad verwenden:

@@ -1,6 +1,7 @@
 //! Explicit architecture intent is reported separately from graph observations.
 use archguard_core::{
-    ArchitectureContext, ArchitectureObserved, Config, Graph, LayerOrigin, NodeKind, Report,
+    ArchitectureContext, ArchitectureGoal, ArchitectureObserved, Config, Graph, LayerOrigin,
+    NodeKind, Report,
 };
 use std::path::Path;
 
@@ -11,24 +12,7 @@ pub fn architecture_context(
     report: &Report,
 ) -> ArchitectureContext {
     let intent = &config.architecture;
-    let mut questions = vec![];
-    if intent.goals.is_empty() {
-        questions.push("Which quality goals matter most, and which trade-offs are acceptable to this organization?".into());
-    }
-    for goal in &intent.goals {
-        if goal.priority.trim().is_empty() {
-            questions.push(format!(
-                "What priority does {:?} have relative to the other declared goals?",
-                goal.name
-            ));
-        }
-        if goal.rationale.trim().is_empty() {
-            questions.push(format!(
-                "Why is {:?} important to this organization?",
-                goal.name
-            ));
-        }
-    }
+    let mut questions = goal_questions(&intent.goals);
     if intent.constraints.is_empty() {
         questions.push("Which constraints are non-negotiable, such as compatibility, deployment, data residency or team ownership?".into());
     }
@@ -79,6 +63,7 @@ pub fn architecture_context(
             findings:report.findings.iter().take(50).cloned().collect(),findings_total:report.findings.len() as u32,
             target_model:crate::target_architecture::analyze_target_architecture(graph,config).expect("loaded architecture config was validated"),
         },
+        goal_assessment:crate::quality_goals::quality_goal_assessment(root,config,graph,&report.findings,report.review_kpis.as_ref()),
         questions,
         limitations:vec![
             "Intent is supplied by the organization; graph structure cannot determine its preferences or accepted trade-offs.".into(),
@@ -87,6 +72,35 @@ pub fn architecture_context(
             "Decision links are untrusted references, not fetched evidence; priority and status retain the organization's own vocabulary.".into(),
         ],
     }
+}
+
+/// Missing goal intent becomes a question instead of an invented preference.
+fn goal_questions(goals: &[ArchitectureGoal]) -> Vec<String> {
+    let mut questions = vec![];
+    if goals.is_empty() {
+        questions.push("Which quality goals matter most, and which trade-offs are acceptable to this organization?".into());
+    }
+    for goal in goals {
+        if goal.priority.trim().is_empty() {
+            questions.push(format!(
+                "What priority does {:?} have relative to the other declared goals?",
+                goal.name
+            ));
+        }
+        if goal.rationale.trim().is_empty() {
+            questions.push(format!(
+                "Why is {:?} important to this organization?",
+                goal.name
+            ));
+        }
+        if goal.attribute.is_none() {
+            questions.push(format!(
+                "Which ISO 25010 characteristic does {:?} address?",
+                goal.name
+            ));
+        }
+    }
+    questions
 }
 
 #[cfg(test)]
@@ -152,6 +166,8 @@ mod tests {
             name: "Availability".into(),
             priority: "above cost".into(),
             rationale: "Customers need continuous access".into(),
+            attribute: Some(archguard_core::QualityAttribute::Reliability),
+            ..Default::default()
         }];
         config.architecture.constraints = vec![ArchitectureConstraint {
             name: "Data location".into(),
@@ -216,6 +232,39 @@ mod tests {
         let context = architecture_context(Path::new("/nonexistent"), &config, &graph, &report());
         assert_eq!(context.questions.len(), 1);
         assert!(context.questions[0].contains("ADR-1"));
+    }
+
+    #[test]
+    fn goal_characteristic_scope_and_scenario_are_optional_and_validated() {
+        use archguard_core::QualityAttribute;
+        let dir = tempfile::tempdir().unwrap();
+        let load = |text: &str| {
+            std::fs::write(dir.path().join("archguard.toml"), text).unwrap();
+            crate::config::load_config(None, dir.path())
+        };
+        let old = "[[architecture.goals]]\nname='Latency'\npriority='P0'\nrationale='SLA'\n";
+        let goal = &load(old).unwrap().config.architecture.goals[0];
+        assert_eq!(
+            (goal.attribute, goal.scope.len(), goal.scenario.as_str()),
+            (None, 0, "")
+        );
+        let full = format!(
+            "{old}attribute='performance_efficiency'\nscope=['checkout/**']\nscenario='p95 below 200 ms at 100 rps'\n"
+        );
+        let goal = &load(&full).unwrap().config.architecture.goals[0];
+        assert_eq!(
+            goal.attribute,
+            Some(QualityAttribute::PerformanceEfficiency)
+        );
+        assert_eq!(goal.scope, vec!["checkout/**"]);
+        assert_eq!(goal.scenario, "p95 below 200 ms at 100 rps");
+        let unknown = load(&format!("{old}attribute='speed'\n")).unwrap_err();
+        assert!(unknown.to_string().contains("speed"), "{unknown}");
+        let glob = load(&format!("{old}attribute='security'\nscope=['src/[app']\n")).unwrap_err();
+        assert!(
+            glob.to_string().contains("architecture.goals[0].scope[0]"),
+            "{glob}"
+        );
     }
 
     #[test]

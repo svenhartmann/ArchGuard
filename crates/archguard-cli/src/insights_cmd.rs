@@ -164,8 +164,20 @@ pub(crate) fn doc(
         graph,
         &Cut::at_depth(graph, loaded.config.modules.depth as usize),
     );
-    let document =
-        archguard_engine::report::render_architecture_doc(&view, report, &loaded.config, None);
+    let goals = archguard_engine::quality_goal_assessment(
+        root,
+        &loaded.config,
+        graph,
+        &report.findings,
+        report.review_kpis.as_ref(),
+    );
+    let document = archguard_engine::report::render_architecture_doc(
+        &view,
+        report,
+        &loaded.config,
+        None,
+        &goals,
+    );
     if options.stdout {
         if !cli.quiet {
             emit(&document);
