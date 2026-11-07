@@ -58,5 +58,30 @@
     "case": "only a source root",
     "names": ["lib"],
     "labels": ["lib"]
+  },
+  {
+    "case": "a Cargo workspace with a build script",
+    "names": ["crates/archguard-analysis/src", "crates/archguard-cli/src", "crates/archguard-cli/build.rs", "crates/archguard-engine/src/semantic_calls"],
+    "labels": ["archguard-analysis", "archguard-cli", "archguard-cli/build.rs", "archguard-engine/semantic_calls"]
+  },
+  {
+    "case": "Maven modules drop src/main/java",
+    "names": ["orders/src/main/java/com/shop/orders", "billing/src/main/java/com/shop/billing"],
+    "labels": ["orders/com/shop/orders", "billing/com/shop/billing"]
+  },
+  {
+    "case": "only the src root",
+    "names": ["src"],
+    "labels": ["src"]
+  },
+  {
+    "case": "two source roots of one block keep their names",
+    "names": ["app/src", "app/lib"],
+    "labels": ["src", "lib"]
+  },
+  {
+    "case": "unrelated names stay whole",
+    "names": ["services/catalog", "dev.js"],
+    "labels": ["services/catalog", "dev.js"]
   }
 ]

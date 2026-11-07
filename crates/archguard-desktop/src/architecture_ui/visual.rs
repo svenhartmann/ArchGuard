@@ -5,8 +5,9 @@ use archguard_engine::core::Graph;
 
 use std::collections::HashMap;
 
+use super::diagram;
 use super::projection::{self, Group, Labels, Levels, Projection, SourceModel};
-use super::{diagram, names};
+use crate::block_names as names;
 
 /// Relationships listed per page, as the web (30).
 pub const RELATIONS_PAGE: usize = 30;

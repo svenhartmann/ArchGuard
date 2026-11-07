@@ -13,7 +13,6 @@ mod edit;
 mod figure;
 mod follow;
 mod markdown;
-mod names;
 mod projection;
 mod sequence;
 mod state;

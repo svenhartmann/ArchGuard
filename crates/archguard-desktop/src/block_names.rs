@@ -1,7 +1,9 @@
-//! Building-block names in the arc42 views: the path below the segments
-//! all shown blocks share, without generic source roots, unique within
-//! the list. The same rule as `arc42ShortNames` (viewer_architecture.js);
-//! both test the cases in `scripts/viewer/arc42_block_names.json`.
+//! Building-block names: the path below the segments all shown blocks
+//! share, without generic source roots, unique within the list. The arc42
+//! views (`architecture_ui`) and the Matrix's top rows and columns
+//! (`matrix_ui`) use it. The same rule as `arc42ShortNames`
+//! (viewer_architecture.js); both test the cases in
+//! `scripts/viewer/arc42_block_names.json`.
 
 use std::collections::HashMap;
 
@@ -116,7 +118,7 @@ mod tests {
     /// The cases the web viewer's `test_viewer_arc42_names.js` checks too.
     #[test]
     fn shared_cases_match_the_web_viewer() {
-        let text = include_str!("../../../../scripts/viewer/arc42_block_names.json");
+        let text = include_str!("../../../scripts/viewer/arc42_block_names.json");
         let cases: Vec<serde_json::Value> = serde_json::from_str(text).expect("cases");
         assert!(cases.len() > 5);
         for c in &cases {
