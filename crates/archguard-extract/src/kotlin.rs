@@ -5,11 +5,19 @@
 //! imports. Backtick-quoted names, top-level functions without a file of the
 //! same stem and runtime-loaded classes remain unresolved or module-level.
 
+mod calls;
+mod sites;
 mod structure;
+mod symbols;
+mod tokens;
 
 use std::collections::BTreeSet;
 
 pub use structure::{KotlinStructure, scan_kotlin_structure};
+pub use symbols::{
+    KotlinCallSite, KotlinClassFacts, KotlinFunctionFacts, KotlinImport, KotlinSymbols,
+    KotlinTarget,
+};
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
 use crate::lex::Flavor;

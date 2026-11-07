@@ -135,8 +135,72 @@ fn kotlin_classes_reach_their_graph_nodes() {
     let label = calls.methods.iter().find(|m| m.name == "label").unwrap();
     assert_eq!(label.class_id, order.id);
     assert_eq!(label.complexity.as_ref().unwrap().cyclomatic, 1);
-    // Calls stay unresolved: the method enumeration is not complete.
+    // The token scanner cannot promise every method: enumeration incomplete.
     let details = calls.details.as_ref().unwrap();
     assert_eq!(details.enumeration_complete, Some(false));
-    assert!(calls.calls.is_empty());
+    // `formatDate()` is imported from the other file.
+    let format = calls
+        .methods
+        .iter()
+        .find(|m| m.name == "formatDate")
+        .unwrap();
+    assert_eq!(calls.calls.len(), 1, "{:#?}", calls.calls);
+    assert_eq!(calls.calls[0].resolution, "project");
+    assert_eq!(calls.calls[0].to_method.as_ref(), Some(&format.id));
+}
+
+/// A Kotlin-only project with one call of each kind the resolver tells apart.
+const SHOP: [(&str, &str); 3] = [
+    (
+        "src/main/kotlin/com/shop/order/Order.kt",
+        "package com.shop.order\n\nimport com.shop.pay.Payment\nimport com.shop.util.formatDate\n\nclass Order(val payment: Payment) {\n    fun label() = formatDate()\n    fun pay() = Payment.create(total())\n    fun total() = 1\n}\n",
+    ),
+    (
+        "src/main/kotlin/com/shop/pay/Payment.kt",
+        "package com.shop.pay\n\nclass Payment(val amount: Int) {\n    companion object {\n        fun create(amount: Int) = Payment(amount)\n    }\n}\n",
+    ),
+    (
+        "src/main/kotlin/com/shop/util/Dates.kt",
+        "package com.shop.util\n\nfun formatDate() = \"today\".uppercase()\nfun log(text: String) = println(text)\n",
+    ),
+];
+
+#[test]
+fn kotlin_calls_resolve_statically_and_reach_the_graph() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    for (rel, content) in &SHOP {
+        let path = dir.path().join(rel);
+        fs::create_dir_all(path.parent().expect("parent dir")).expect("create dirs");
+        fs::write(&path, content).expect("write fixture file");
+    }
+    let calls = archguard_engine::analyze_calls(dir.path(), &Config::default());
+    assert_eq!(calls.status, "partial");
+    let count = |kind: &str| calls.calls.iter().filter(|c| c.resolution == kind).count();
+    // formatDate(), Payment.create(…), total(), Payment(amount); println;
+    // a member call on a string literal.
+    assert_eq!(
+        (
+            calls.calls.len(),
+            count("project"),
+            count("external"),
+            count("unresolved")
+        ),
+        (6, 4, 1, 1),
+        "{:#?}",
+        calls.calls
+    );
+    // Project calls between two files become graph evidence: Order.kt →
+    // Dates.kt and Order.kt → Payment.kt; `total()` and `Payment(amount)`
+    // stay inside their files.
+    let (graph, _) = analyze(dir.path(), &Config::default(), Level::File).expect("analyze");
+    let semantic = graph.semantic.as_ref().unwrap();
+    assert_eq!(
+        (semantic.projected_calls, semantic.skipped_project_calls),
+        (2, 0)
+    );
+    let found = edges(&graph);
+    assert!(
+        found.contains(&("Order.kt".to_string(), "Dates.kt".to_string())),
+        "{found:?}"
+    );
 }
