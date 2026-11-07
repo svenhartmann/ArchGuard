@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::layered::{neighbours, Chain, Grid};
+use super::layered::{Chain, Grid, neighbours};
 
 pub const CARD_W: f32 = 204.0;
 pub const CARD_H: f32 = 98.0;
@@ -70,7 +70,9 @@ pub fn layout(g: &Grid) -> Layout {
     let right = (0..g.row_of.len())
         .map(|s| x[s] + width_of(s))
         .fold(0.0, f32::max);
-    let bottom = (0..g.row_of.len()).map(|s| top(s) + CARD_H).fold(0.0, f32::max);
+    let bottom = (0..g.row_of.len())
+        .map(|s| top(s) + CARD_H)
+        .fold(0.0, f32::max);
     Layout {
         width: (right + MARGIN).max(300.0),
         height: (bottom + MARGIN).max(230.0),
@@ -178,7 +180,11 @@ fn ports(g: &Grid, x: &[f32]) -> HashMap<(usize, bool), f32> {
         let n = list.len() as f32;
         let span = (CARD_W * 0.7).min(n * 18.0);
         for (k, &(_, chain, end)) in list.iter().enumerate() {
-            let offset = if n > 1.0 { span * (k as f32 / (n - 1.0) - 0.5) } else { 0.0 };
+            let offset = if n > 1.0 {
+                span * (k as f32 / (n - 1.0) - 0.5)
+            } else {
+                0.0
+            };
             out.insert((chain, end), (centre(card) + offset).round());
         }
     }
