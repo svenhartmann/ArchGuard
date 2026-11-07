@@ -283,6 +283,7 @@ pub mod tests {
             dependencies: Vec::new(),
             cycles: Vec::new(),
             diagnostics: Vec::new(),
+            datastores: Default::default(),
             complete: true,
         }
     }
