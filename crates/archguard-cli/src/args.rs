@@ -117,6 +117,11 @@ pub(crate) enum Command {
         /// Graph granularity.
         #[arg(long, value_enum, default_value = "module")]
         level: LevelArg,
+        /// Also measure the Martin A/I zones of the review KPIs: runs the
+        /// call analysis with compiler helpers (javac, .NET), so it is slow.
+        /// Zones stay "not measured" without Java/C# abstractness.
+        #[arg(long)]
+        measure_zones: bool,
     },
     /// Report cycles.
     Cycles {
@@ -155,6 +160,11 @@ pub(crate) enum Command {
         /// Reference: --base, otherwise the latest saved snapshot.
         #[arg(long, num_args=0..=1, default_missing_value="10")]
         fail_on_acd_regression: Option<f64>,
+        /// Also measure the Martin A/I zones of the review KPIs: runs the
+        /// call analysis with compiler helpers (javac, .NET), so it is slow.
+        /// Zones stay "not measured" without Java/C# abstractness.
+        #[arg(long)]
+        measure_zones: bool,
     },
     /// Scan dependency advisories with Trivy and save .archguard/security.json.
     Security {

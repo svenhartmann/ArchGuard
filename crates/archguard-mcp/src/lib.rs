@@ -399,28 +399,11 @@ impl ArchguardTools {
         Parameters(params): Parameters<InsightParams>,
     ) -> Result<String, ErrorData> {
         let run = tools::analyze_run(&self.root, params.path.as_deref())?;
-        let sources = archguard_engine::collect_review_sources(
-            &run.root,
-            &run.loaded.config,
-            &run.file_graph,
-            &run.loaded.config.review.git_since,
-        )
-        .map_err(insight_error)?;
-        let ids = archguard_engine::analysis::match_review_entry_points(
-            &run.file_graph,
-            &sources,
-            &run.loaded.config.review.entry_points,
-        )
-        .map_err(insight_error)?;
-        let calls = archguard_engine::analyze_calls(&run.root, &run.loaded.config);
-        let report = archguard_engine::analyze_performance(
+        let report = archguard_engine::review_performance(
             &run.root,
             &run.loaded.config,
             &run.file_graph,
             &run.view,
-            &sources,
-            &calls,
-            &ids,
         )
         .map_err(insight_error)?;
         Ok(tools::guarded(&report).to_string())

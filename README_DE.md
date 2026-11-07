@@ -94,6 +94,8 @@ Kotlin-Aufrufziele werden in der Namensreihenfolge von Kotlin aufgelöst: expliz
 
 Die **KPI-Hilfe** im Viewer enthält Einrichtung, unterstützte Messwerte und Importbeispiele pro Sprache. Testabdeckung und Laufzeitmessungen benötigen echte Berichte; fehlende Daten gelten nicht als Nullwerte.
 
+Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java und C#), deshalb melden `archguard scan` und `archguard check` sie standardmäßig als nicht gemessen. Mit `--measure-zones` (MCP: `review_kpis` mit `measure_zones=true`) läuft die langsamere Aufrufanalyse und füllt die Zonen-Zeile; siehe [Review-Kennzahlen und ihre Grenzen](ARCHITECTURE_DE.md#review-kennzahlen-und-ihre-grenzen).
+
 ## Häufige Arbeitsabläufe
 
 | Aufgabe | Befehl |
