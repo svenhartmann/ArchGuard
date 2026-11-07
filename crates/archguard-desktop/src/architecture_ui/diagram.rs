@@ -1,91 +1,17 @@
-//! Geometry of the web viewer's basic arc42 diagram (`arc42Graph`: cards in
-//! a grid, edges routed above the cards) and its PlantUML export
-//! (`arc42PlantUml`), both in viewer_architecture.js.
+//! The arc42 package map: a layered layout of cards and curved edges, as
+//! the web viewer draws it with Graphviz `dot` (`arc42Graph`), the card
+//! labels and the PlantUML export (`arc42PlantUml`), both in
+//! viewer_architecture.js.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Card {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
+mod layered;
+mod place;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Route {
-    /// SVG path of the line.
-    pub path: String,
-    /// SVG path of the arrow head at the target.
-    pub head: String,
-    /// Anchor of the count label: centre of the segment above the cards.
-    pub label: (f32, f32),
-}
+pub use place::Layout;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Layout {
-    pub width: f32,
-    pub height: f32,
-    pub cards: Vec<Card>,
-    pub routes: Vec<Route>,
-}
-
-/// Lay out `nodes` cards and route `edges` (positions into the cards).
+/// Lay out `nodes` cards and route `edges` (positions into the cards); one
+/// route per edge, in order.
 pub fn layout(nodes: usize, edges: &[(usize, usize)]) -> Layout {
-    let columns = if nodes <= 4 { 2 } else { 3 };
-    let rows = nodes.div_ceil(columns);
-    let cards: Vec<Card> = (0..nodes)
-        .map(|i| Card {
-            x: 35.0 + (i % columns) as f32 * 270.0,
-            y: 55.0 + (i / columns) as f32 * 148.0,
-            w: 204.0,
-            h: 98.0,
-        })
-        .collect();
-    let routes = edges
-        .iter()
-        .enumerate()
-        .map(|(i, &(from, to))| route(&cards[from], &cards[to], i))
-        .collect();
-    Layout {
-        width: columns as f32 * 270.0 + 40.0,
-        height: (rows as f32 * 148.0 + 64.0).max(230.0),
-        cards,
-        routes,
-    }
-}
-
-fn route(a: &Card, b: &Card, i: usize) -> Route {
-    let right = b.x >= a.x;
-    let sign = if right { 1.0 } else { -1.0 };
-    let x1 = if right { a.x + a.w } else { a.x };
-    let x2 = if right { b.x } else { b.x + b.w };
-    let y1 = a.y + a.h / 2.0 - 7.0;
-    let y2 = b.y + b.h / 2.0 + 7.0;
-    let lane = 16.0 + (i % 5) as f32 * 5.0;
-    let (path, tip, dir, label) = if a.x == b.x {
-        let out = a.x + a.w;
-        (
-            format!("M {out} {y1} H {} V {y2} H {}", out + lane, b.x + b.w),
-            b.x + b.w,
-            -1.0,
-            // Lanes 5 px apart: stagger the labels vertically too.
-            (out + lane + 6.0, (y1 + y2) / 2.0 + (lane - 16.0) * 2.4),
-        )
-    } else {
-        let top = a.y.min(b.y) - lane;
-        let (l, r) = (x1 + sign * lane, x2 - sign * lane);
-        (
-            format!("M {x1} {y1} H {l} V {top} H {r} V {y2} H {x2}"),
-            x2,
-            sign,
-            ((l + r) / 2.0, top - 1.0),
-        )
-    };
-    let back = tip - dir * 9.0;
-    Route {
-        path,
-        head: format!("M {tip} {y2} L {back} {} L {back} {} Z", y2 - 4.5, y2 + 4.5),
-        label,
-    }
+    place::layout(&layered::grid(nodes, edges))
 }
 
 /// The card's label in at most two lines of 24 characters, as
@@ -178,40 +104,110 @@ fn uml_label(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::place::Card;
     use super::*;
 
-    #[test]
-    fn grid_has_two_columns_up_to_four_cards_else_three() {
-        let small = layout(3, &[]);
-        assert_eq!((small.width, small.height), (580.0, 360.0));
-        assert_eq!(
-            small.cards[2],
-            Card {
-                x: 35.0,
-                y: 203.0,
-                w: 204.0,
-                h: 98.0
-            }
-        );
-        let big = layout(13, &[]);
-        assert_eq!((big.width, big.height), (850.0, 804.0));
-        assert_eq!(big.cards[4].x, 305.0);
-        assert_eq!(layout(1, &[]).height, 230.0);
+    fn centre(c: &Card) -> f32 {
+        c.x + c.w / 2.0
+    }
+
+    fn overlaps(a: &Card, b: &Card) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    /// The point after the first command letter `cmd` of an SVG path.
+    fn points(path: &str, cmd: char) -> Vec<(f32, f32)> {
+        let tokens: Vec<&str> = path.split_whitespace().collect();
+        tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| **t == cmd.to_string())
+            .map(|(i, _)| (tokens[i + 1].parse().unwrap(), tokens[i + 2].parse().unwrap()))
+            .collect()
     }
 
     #[test]
-    fn edges_run_above_the_cards_with_staggered_lanes() {
-        let l = layout(3, &[(0, 1), (1, 0), (0, 2)]);
-        // 0 → 1: right, lane 16, above row 0.
-        assert_eq!(l.routes[0].path, "M 239 97 H 255 V 39 H 289 V 111 H 305");
-        assert_eq!(l.routes[0].head, "M 305 111 L 296 106.5 L 296 115.5 Z");
-        assert_eq!(l.routes[0].label, (272.0, 38.0));
-        // 1 → 0: left, lane 21.
-        assert_eq!(l.routes[1].path, "M 305 97 H 284 V 34 H 260 V 111 H 239");
-        // Same column: out on the right, back in from the right.
-        assert_eq!(l.routes[2].path, "M 239 97 H 265 V 259 H 239");
-        assert_eq!(l.routes[2].head, "M 239 259 L 248 254.5 L 248 263.5 Z");
-        assert_eq!(l.routes[2].label, (271.0, 202.0));
+    fn dependencies_go_down_in_a_straight_line() {
+        let l = layout(3, &[(0, 1), (1, 2)]);
+        let [a, b, c] = [l.cards[0], l.cards[1], l.cards[2]];
+        assert!(a.y + a.h < b.y && b.y + b.h < c.y);
+        assert!((centre(&a) - centre(&b)).abs() < 1.0);
+        assert!((centre(&b) - centre(&c)).abs() < 1.0);
+        // Out of the bottom of the source, arrow tip on top of the target.
+        assert_eq!(points(&l.routes[0].path, 'M')[0].1, a.y + a.h);
+        assert_eq!(points(&l.routes[0].head, 'M')[0].1, b.y);
+        assert!(l.width >= c.x + c.w && l.height >= c.y + c.h);
+    }
+
+    #[test]
+    fn a_cycle_puts_one_edge_upwards() {
+        let l = layout(2, &[(0, 1), (1, 0)]);
+        let [a, b] = [l.cards[0], l.cards[1]];
+        assert!(a.y + a.h < b.y);
+        assert_eq!(points(&l.routes[1].path, 'M')[0].1, b.y);
+        assert_eq!(points(&l.routes[1].head, 'M')[0].1, a.y + a.h);
+        // Both lines between the same cards use different ports.
+        let starts: Vec<f32> = l.routes.iter().map(|r| points(&r.path, 'M')[0].0).collect();
+        assert!((starts[0] - starts[1]).abs() > 10.0);
+    }
+
+    #[test]
+    fn rows_hold_at_most_four_cards_without_overlap() {
+        let l = layout(13, &[]);
+        for c in &l.cards {
+            assert!(l.cards.iter().filter(|o| o.y == c.y).count() <= 4);
+            assert!(l.cards.iter().filter(|o| overlaps(c, o)).count() == 1);
+        }
+    }
+
+    #[test]
+    fn long_edges_pass_beside_the_cards_in_between() {
+        // 0 → 1 → 2 and 0 → 2: the long edge bends around card 1.
+        let l = layout(3, &[(0, 1), (1, 2), (0, 2)]);
+        let b = l.cards[1];
+        let bend: Vec<(f32, f32)> = points(&l.routes[2].path, 'L')
+            .into_iter()
+            .filter(|p| p.1 >= b.y && p.1 <= b.y + b.h)
+            .collect();
+        assert!(!bend.is_empty());
+        for (x, _) in bend {
+            assert!(x < b.x || x > b.x + b.w, "{x} inside {b:?}");
+        }
+    }
+
+    #[test]
+    fn order_avoids_crossings() {
+        // Input order would cross 0 → 3 with 1 → 2.
+        let l = layout(4, &[(0, 3), (1, 2)]);
+        let c = &l.cards;
+        assert_eq!(c[0].x < c[1].x, c[3].x < c[2].x);
+    }
+
+    #[test]
+    fn labels_do_not_overlap_and_every_edge_has_a_route() {
+        let mut edges = vec![(2, 2)];
+        for a in 0..6 {
+            for b in 0..6 {
+                if a != b {
+                    edges.push((a, b));
+                }
+            }
+        }
+        let l = layout(6, &edges);
+        assert_eq!(l.routes.len(), edges.len());
+        assert!(l.routes[0].path.is_empty());
+        let labels: Vec<(f32, f32)> = l.routes[1..].iter().map(|r| r.label).collect();
+        for (i, a) in labels.iter().enumerate() {
+            for b in &labels[i + 1..] {
+                assert!((a.0 - b.0).abs() >= 20.0 || (a.1 - b.1).abs() >= 12.0, "{a:?} {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn layout_is_deterministic() {
+        let edges = [(0, 1), (1, 2), (2, 0), (3, 1), (4, 2)];
+        assert_eq!(layout(5, &edges), layout(5, &edges));
     }
 
     #[test]

@@ -97,6 +97,17 @@ pub fn active() -> bool {
         && std::env::var_os("ARCHGUARD_DESKTOP_HOLD").is_none()
 }
 
+/// Logical window size: `ARCHGUARD_DESKTOP_SIZE=WIDTHxHEIGHT`, else [`SIZE`].
+fn size() -> (u32, u32) {
+    std::env::var("ARCHGUARD_DESKTOP_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or(SIZE)
+}
+
 /// Install the headless platform if [`active`]. Call before creating the
 /// first window.
 pub fn install() -> Result<(), PlatformError> {
@@ -107,9 +118,10 @@ pub fn install() -> Result<(), PlatformError> {
     window.dispatch_event(WindowEvent::ScaleFactorChanged {
         scale_factor: SCALE,
     });
+    let (w, h) = size();
     window.set_size(PhysicalSize::new(
-        (SIZE.0 as f32 * SCALE) as u32,
-        (SIZE.1 as f32 * SCALE) as u32,
+        (w as f32 * SCALE) as u32,
+        (h as f32 * SCALE) as u32,
     ));
     slint::platform::set_platform(Box::new(Headless {
         window,

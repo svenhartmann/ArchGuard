@@ -431,3 +431,19 @@ comparison of the native view against the web view on the same project
   KPI section, the Explore and Test gaps details depth, fullscreen; Calls
   and Class metrics search rather than select the class; gestures and
   the clipboard were not tried on real hardware (headless snapshots only).
+- **2026-11-07:** Layered arc42 package maps, asked for by the user
+  ("not happy with the diagrams"). Chapters 5, 6 and 11 no longer use the
+  web's fallback grid, whose edges all ran in lanes above the cards and
+  tangled on larger projects. Decision: a layered layout after Graphviz
+  `dot` (which the web viewer uses), written in Rust in
+  `architecture_ui/diagram/` instead of a layout crate, so cards keep
+  their selection, zoom and model. Cycles are broken by turning back
+  edges upwards, cards get the row below their users (at most 4 per row),
+  long edges get bend points in the rows they cross, barycentre sweeps
+  reduce crossings, and rows move towards their neighbours. Edges leave
+  the bottom and enter the top as curves, from ports spread over the
+  card; counts no longer overlap. Checked in headless snapshots of this
+  repository (chapters 5 and 11) and `fixtures/py-layers`. Open: wide
+  maps still fit by width (about 65 % on this repository), long edges
+  can bend in S-curves, Mermaid blocks in the chapter text are still
+  shown as source.
