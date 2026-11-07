@@ -23,6 +23,8 @@ assert.equal(tree.querySelector('svg'),svg,'opening an overlay must not rebuild 
 assert.equal(state(),before);
 const metric=app.ids.get('sidebar').querySelector('div[data-metric-help]');assert.ok(metric);metric.dispatch('focus');
 assert.equal(app.ids.get('metric-tooltip').hidden,false);key('Escape');
+// Escape closes the topmost layer first: the tooltip, then the details.
+assert.equal(app.ids.get('metric-tooltip').hidden,true);assert.equal(closed(),false,'the first Escape only hides the tooltip');key('Escape');
 assert.equal(closed(),true);assert.equal(state(),before,'Escape closes details without changing selection, directions or viewport');
 app.click('toggle-inspector');control('close').click();assert.equal(state(),before);
 app.run("selectEdge(view.edges[0])");assert.equal(closed(),true,'connections also select without opening');

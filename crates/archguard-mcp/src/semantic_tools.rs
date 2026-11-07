@@ -504,7 +504,10 @@ mod tests {
         .unwrap();
         assert_eq!(reply["status"], "partial");
         assert_eq!(reply["analyzers"][0]["language"], "kotlin");
-        // The default kind lists calls; token analysis resolves none.
-        assert_eq!(reply["total"], 0);
+        // The default kind lists calls; `println` is declared nowhere in the
+        // project, so its one call site is external, never a project target.
+        assert_eq!(reply["total"], 1);
+        assert_eq!(reply["items"][0]["resolution"], "external");
+        assert_eq!(reply["items"][0]["to_method"], Value::Null);
     }
 }
