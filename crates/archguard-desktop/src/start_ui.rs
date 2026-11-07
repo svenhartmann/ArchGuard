@@ -288,6 +288,12 @@ impl TabState for StartState {
         memo::keep(ui, self);
     }
 
+    /// As the web: without a selection the details close, so the next
+    /// selection does not show them unasked.
+    fn changed(&mut self) {
+        self.details_open &= self.has_selection();
+    }
+
     /// Keeps the canvas size the view reported.
     fn pending(ui: &AppWindow, error: Option<&str>) {
         let d = ui.global::<StartData>();
@@ -354,7 +360,6 @@ fn snapshot_overrides(s: &mut StartState) {
     if let Some(term) = var("ARCHGUARD_DESKTOP_START_FIND") {
         s.set_search(term);
         s.accept_search();
-        s.details_open = s.has_selection();
     }
     // `ARCHGUARD_DESKTOP_START_GLANCE=1`: scroll to the KPIs; `=profile`
     // also opens the architecture profile.
@@ -504,10 +509,7 @@ mod tests {
         s.accept_search();
         let sel = s.selection.clone().expect("a match");
         assert_eq!(s.scope.areas[sel.area].name, "domain", "domain/ledger.py");
-        // As the web: details open for a single entity or a file area, not
-        // for a batched surface inside a package.
-        let module = s.scope.areas[sel.area].module;
-        assert_eq!(s.details_open, sel.entity.is_some() || !module);
+        assert!(!s.details_open, "Enter in the search selects only");
         s.reset();
         assert_eq!((s.lens, s.kpi, s.query.as_str()), (Lens::Problems, 0, ""));
         assert_eq!(s.search, "");
@@ -558,6 +560,38 @@ mod tests {
         assert!(s.connection_open(0), "open entries stay open");
         s.toggle_connection(0);
         assert!(!s.connection_open(0));
+    }
+
+    /// Selecting (a click, the search, a neighbour, "Follow left") only
+    /// selects; the details open on request (Details, Enter, a file's
+    /// double click), then stay open and follow the selection until
+    /// closed, which keeps the selection. No selection, no details.
+    #[test]
+    fn the_details_open_on_request() {
+        use crate::follow::Nav;
+        let (mut s, _) = fixture_state("py-layers");
+        let cell = (0..s.layout.cells.len())
+            .find(|&c| s.layout.cells[c].entities.len() == 1)
+            .expect("a single surface");
+        s.select_cell(cell);
+        assert!(s.has_selection() && !s.details_open, "a click selects");
+        s.follow(&Nav::Select("domain".into()));
+        assert!(s.has_selection() && !s.details_open, "a follow selects");
+        s.details_open = true;
+        let c = s.scope.connections.first().cloned().expect("a connection");
+        s.select_neighbor(c.to);
+        s.changed();
+        assert!(s.details_open, "open details follow the selection");
+        s.details_open = false;
+        assert!(s.has_selection(), "closing keeps the selection");
+        s.details_open = true;
+        s.pick(0);
+        s.changed();
+        assert!(!s.details_open, "no selection, no details");
+        s.navigate(Some("domain".into()));
+        let file = s.scope.areas.iter().position(|a| !a.module).expect("a file");
+        s.open_area(file);
+        assert!(s.details_open, "a file's double click shows its details");
     }
 
     /// Copy path gives `file:line` of an entity, else the area; AI context
