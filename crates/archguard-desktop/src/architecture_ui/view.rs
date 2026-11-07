@@ -137,6 +137,7 @@ fn card(map: &Map, i: usize) -> ArcCard {
         files: n.files as i32,
         cycle: n.cycle,
         selected: map.selected == Some(i),
+        ..Default::default()
     }
 }
 
@@ -155,6 +156,7 @@ fn fill_diagram(m: &mut ArcMap, map: &Map) {
         cycle: e.cycle,
         dim: touches(e.from, e.to) == Some(false),
         strong: touches(e.from, e.to) == Some(true),
+        ..Default::default()
     }));
     let selected = map.selected.map(|s| &map.shown.nodes[s]);
     m.selected_name = selected

@@ -14,7 +14,8 @@ export struct ArcLevelItem {
     current: bool,
 }
 
-// kind: 0 source package, 1 direct source nodes, 2 project context.
+// kind: 0 source package, 1 direct source nodes, 2 project context,
+// 3 C4 container, 4 C4 database, 5 C4 external container.
 export struct ArcCard {
     index: int,
     x: float,
@@ -27,17 +28,33 @@ export struct ArcCard {
     files: int,
     cycle: bool,
     selected: bool,
+    // Replace the kind's header and the file count when set (C4 cards).
+    tag: string,
+    detail: string,
 }
 
+// tone: 0 dependency, 1 startup, 2 HTTP, 3 gRPC, 4 event, 5 reference,
+// 6 data use. `text` replaces the count as label when set.
 export struct ArcLine {
     path: string,
     head: string,
     count: int,
+    tone: int,
+    text: string,
     lx: float,
     ly: float,
     cycle: bool,
     dim: bool,
     strong: bool,
+}
+
+// A box around the cards of one group (deployment node, layer).
+export struct ArcFrame {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    label: string,
 }
 
 export struct ArcRelation {
@@ -75,15 +92,38 @@ component LevelButton inherits Rectangle {
 }
 
 // The diagram, scaled by `zoom` (cards, lines and texts alike).
-component Diagram inherits Rectangle {
+export component Diagram inherits Rectangle {
     in property <[ArcCard]> cards;
     in property <[ArcLine]> lines;
+    in property <[ArcFrame]> frames;
     in property <float> dw;
     in property <float> dh;
     in property <float> zoom;
     callback select(int);
     width: dw * zoom * 1px;
     height: dh * zoom * 1px;
+    pure function tone(l: ArcLine) -> color {
+        return l.cycle ? Theme.cycle : l.tone == 1 ? Theme.edge : l.tone == 3 ? Theme.incoming
+            : l.tone == 4 ? Theme.outgoing : l.tone == 5 ? Theme.muted : l.tone == 6 ? Theme.success : Theme.accent;
+    }
+    for f in root.frames: Rectangle {
+        x: f.x * root.zoom * 1px;
+        y: f.y * root.zoom * 1px;
+        width: f.w * root.zoom * 1px;
+        height: f.h * root.zoom * 1px;
+        border-radius: 10px * root.zoom;
+        border-width: 1.5px * root.zoom;
+        border-color: Theme.muted;
+        background: Theme.panel-2.with-alpha(0.5);
+        Text {
+            x: 10px * root.zoom;
+            y: 6px * root.zoom;
+            text: f.label;
+            color: Theme.muted;
+            font-size: 11px * root.zoom;
+            font-weight: Theme.weight-strong;
+        }
+    }
     for l in root.lines: Path {
         width: parent.width;
         height: parent.height;
@@ -91,7 +131,7 @@ component Diagram inherits Rectangle {
         viewbox-height: root.dh;
         commands: l.path;
         fill: transparent;
-        stroke: l.cycle ? Theme.cycle : Theme.accent;
+        stroke: root.tone(l);
         stroke-width: (l.strong ? 2.5px : 1.5px) * root.zoom;
         opacity: l.dim ? 0.25 : 1;
     }
@@ -101,14 +141,15 @@ component Diagram inherits Rectangle {
         viewbox-width: root.dw;
         viewbox-height: root.dh;
         commands: l.head;
-        fill: l.cycle ? Theme.cycle : Theme.accent;
+        fill: root.tone(l);
         stroke: transparent;
         opacity: l.dim ? 0.25 : 1;
     }
     for l in root.lines: Text {
-        x: l.lx * root.zoom * 1px - self.width / 2;
+        // Counts are centred beside the curve; words start beside it.
+        x: l.lx * root.zoom * 1px - (l.text != "" ? 0 : self.width / 2);
         y: l.ly * root.zoom * 1px - self.height;
-        text: Fmt.int(l.count);
+        text: l.text != "" ? l.text : Fmt.int(l.count);
         color: l.cycle ? Theme.cycle : Theme.muted;
         font-size: 9px * root.zoom;
         opacity: l.dim ? 0.25 : 1;
@@ -133,20 +174,29 @@ component Diagram inherits Rectangle {
             y: 10px * root.zoom;
             width: parent.width;
             height: c.h * root.zoom * 1px;
-            border-radius: 2px * root.zoom;
-            background: c.kind == 0 ? Theme.panel : Theme.panel-2;
+            border-radius: (c.kind == 3 ? 8px : 2px) * root.zoom;
+            border-top-left-radius: (c.kind == 4 ? 18px : c.kind == 3 ? 8px : 2px) * root.zoom;
+            border-top-right-radius: self.border-top-left-radius;
+            background: c.kind == 0 || c.kind == 3 || c.kind == 4 ? Theme.panel : Theme.panel-2;
             border-width: (c.selected ? 2.5px : 1.5px) * root.zoom;
-            border-color: c.selected ? Theme.accent : c.cycle ? Theme.cycle : Theme.border;
+            border-color: c.selected ? Theme.accent : c.cycle ? Theme.cycle : c.kind == 3 ? Theme.accent
+                : c.kind == 4 ? Theme.success : c.kind == 5 ? Theme.muted : Theme.border;
+            // The lid of a database cylinder.
+            if c.kind == 4: Rectangle {
+                y: 16px * root.zoom;
+                height: 1px;
+                background: Theme.success;
+            }
             Text {
                 x: 12px * root.zoom;
-                y: 8px * root.zoom;
-                text: c.kind == 0 ? @tr("Source package") : c.kind == 1 ? @tr("Direct source nodes") : @tr("Project context");
+                y: (c.kind == 4 ? 20px : 8px) * root.zoom;
+                text: c.tag != "" ? c.tag : c.kind == 0 ? @tr("Source package") : c.kind == 1 ? @tr("Direct source nodes") : @tr("Project context");
                 color: Theme.muted;
                 font-size: 10px * root.zoom;
             }
             Text {
                 x: 12px * root.zoom;
-                y: 28px * root.zoom;
+                y: (c.kind == 4 ? 35px : 28px) * root.zoom;
                 text: c.name1;
                 color: Theme.text;
                 font-size: 13px * root.zoom;
@@ -154,7 +204,7 @@ component Diagram inherits Rectangle {
             }
             Text {
                 x: 12px * root.zoom;
-                y: 45px * root.zoom;
+                y: (c.kind == 4 ? 52px : 45px) * root.zoom;
                 text: c.name2;
                 color: Theme.text;
                 font-size: 13px * root.zoom;
@@ -163,7 +213,9 @@ component Diagram inherits Rectangle {
             Text {
                 x: 12px * root.zoom;
                 y: 71px * root.zoom;
-                text: @tr("{} source nodes", Fmt.int(c.files));
+                width: parent.width - 24px * root.zoom;
+                overflow: elide;
+                text: c.detail != "" ? c.detail : c.files >= 0 ? @tr("{} source nodes", Fmt.int(c.files)) : "";
                 color: Theme.muted;
                 font-size: 10px * root.zoom;
             }

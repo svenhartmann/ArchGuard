@@ -3,12 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{CallAnalysis, Config, Graph, Report};
+use archguard_engine::core::{CallAnalysis, Config, DiagramFormat, Graph, Report};
 use archguard_engine::report::Arc42Document;
 
-use super::edit;
 use super::projection::{self, Labels, SourceModel};
 use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
+use super::{catalogue, edit};
 use crate::tab_support::Texts;
 use crate::ui::AppWindow;
 
@@ -31,6 +31,13 @@ pub struct ArchitectureState {
     pub(super) saved: String,
     /// The project's own arc42 text and its chapter editor.
     pub(super) editor: edit::Editor,
+    /// `[arc42]` of the project: diagram format and hidden catalogue ids.
+    pub(super) format: DiagramFormat,
+    pub(super) hidden: Vec<String>,
+    /// The diagram view is open instead of a chapter.
+    pub(super) catalogue: bool,
+    /// Why the last tick could not be written.
+    pub(super) figure_error: String,
 }
 
 /// Build the tab state (writes the arc42 document, runs the call analysis).
@@ -63,6 +70,10 @@ pub(super) fn build_from(
         maps: Default::default(),
         saved: String::new(),
         editor: edit::Editor::new(root),
+        format: config.arc42.diagram_format,
+        hidden: config.arc42.hidden_diagrams.clone(),
+        catalogue: false,
+        figure_error: String::new(),
     };
     snapshot_overrides(&mut state);
     state
@@ -77,6 +88,13 @@ pub(super) fn snapshot_overrides(s: &mut ArchitectureState) {
         .and_then(|n| n.parse().ok())
     {
         s.chapter = n;
+    }
+    s.catalogue = std::env::var("ARCHGUARD_DESKTOP_ARC_CATALOGUE").is_ok();
+    // `ARCHGUARD_DESKTOP_ARC_TOGGLE=<id>:<0|1>` ticks a diagram off or on.
+    if let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_ARC_TOGGLE")
+        && let Some((id, on)) = spec.rsplit_once(':')
+    {
+        toggle_diagram(s, id, on == "1");
     }
     if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_ARC_SCOPE") {
         s.maps[Kind::Dependencies as usize].scope =
@@ -124,6 +142,22 @@ pub(super) fn current(s: &ArchitectureState, labels: &Labels) -> Option<(Kind, M
         labels,
     );
     Some((kind, map))
+}
+
+/// Show (`show`) or hide catalogue diagram `id`: writes `archguard.toml`,
+/// then the document as the CLI would write it.
+pub(super) fn toggle_diagram(s: &mut ArchitectureState, id: &str, show: bool) {
+    let hidden = catalogue::hidden_after(&s.hidden, id, show);
+    s.figure_error = match catalogue::write(&s.root, &hidden) {
+        Ok(()) => String::new(),
+        Err(e) => e,
+    };
+    if s.figure_error.is_empty() {
+        if let Ok(doc) = &mut s.doc {
+            catalogue::rebase(doc, &hidden, s.format);
+        }
+        s.hidden = hidden;
+    }
 }
 
 pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {

@@ -122,3 +122,19 @@ What exists:
   `diagram_format = "plantuml"` and a hidden deployment. Not yet: the
   desktop draws these blocks only as source; native C4 drawing, ticks and
   the diagram view (step 2); trace sequences (step 3).
+- **2026-11-07:** Step 2 implemented in the desktop app. The reader draws
+  the catalogue's C4 diagrams natively with the layered layout
+  (`architecture_ui/figure.rs`, `ui/architecture_figure.slint`): containers,
+  databases (cylinder lid), external containers, a frame per deployment
+  node (only when no foreign card lies inside it, else the group is named
+  on the card), one colour per relation kind with a legend. The generated
+  Mermaid/PlantUML sections are cut from the chapter text where the app
+  draws them; the package maps of chapters 5, 6 and 11 get a tick. Hidden
+  diagrams stay as one line with their tick. A "Diagrams" entry below the
+  chapters lists the whole catalogue with preview, source and tick. A tick
+  writes `[arc42] hidden_diagrams` through the Settings view's
+  `ConfigEditor` (other keys and comments stay) and rewrites the open
+  document as the CLI would; `arc42.md` changes on the next save or
+  `archguard doc --arc42`. Checked in headless snapshots of a copy of
+  `fixtures/compose-services` (chapters 5, 6, 7, diagram view, hide and
+  show via `ARCHGUARD_DESKTOP_ARC_TOGGLE`). Not tried in a real window.

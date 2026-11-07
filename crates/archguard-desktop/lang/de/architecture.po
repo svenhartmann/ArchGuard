@@ -154,3 +154,51 @@ msgstr "Bitte einen Ort im Projektordner wählen, damit die App die Datei beim n
 
 msgid "Create the arc42 documentation"
 msgstr "arc42-Dokumentation anlegen"
+
+msgid "Diagrams"
+msgstr "Diagramme"
+
+msgid "Chapter"
+msgstr "Kapitel"
+
+msgid "starts first"
+msgstr "startet zuerst"
+
+msgid "event"
+msgstr "Event"
+
+msgid "reference"
+msgstr "Verweis"
+
+msgid "uses"
+msgstr "nutzt"
+
+msgid "Further packages"
+msgstr "Weitere Pakete"
+
+msgid "Container"
+msgstr "Container"
+
+msgid "Database"
+msgstr "Datenbank"
+
+msgid "External container"
+msgstr "Externer Container"
+
+msgid "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence."
+msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Grün: Datenbanknutzung · Grau: Startreihenfolge · Hellgrau: konfigurierter Verweis. Zahlen sind Konfigurationsbelege."
+
+msgid "In documentation"
+msgstr "In Dokumentation"
+
+msgid "Not in the documentation. Tick it or use the diagram view to take it back."
+msgstr "Nicht in der Dokumentation. Mit dem Haken oder in der Diagramm-Ansicht wieder aufnehmen."
+
+msgid "Diagram source"
+msgstr "Diagrammquelle"
+
+msgid "Every diagram ArchGuard derives for this project, hidden ones included. The tick decides whether it is written into the documentation; the choice is kept in archguard.toml."
+msgstr "Alle Diagramme, die ArchGuard für dieses Projekt ableitet, auch ausgeblendete. Der Haken entscheidet, ob ein Diagramm in die Dokumentation geschrieben wird; die Auswahl steht in archguard.toml."
+
+msgid "{}: not in the documentation."
+msgstr "{}: nicht in der Dokumentation."

@@ -7,8 +7,10 @@
 //! as one `ArchitectureModel` value.
 
 mod blocks;
+mod catalogue;
 mod diagram;
 mod edit;
+mod figure;
 mod follow;
 mod markdown;
 mod names;
@@ -26,10 +28,11 @@ use crate::format::Locale;
 use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
+use archguard_engine::report::Arc42Document;
 use follow::navigation;
 use projection::Group;
 pub use state::ArchitectureState;
-use state::{build_from, current, derived, labels, open_scope};
+use state::{build_from, current, derived, labels, open_scope, toggle_diagram};
 use visual::{Action, Kind, RELATIONS_PAGE};
 
 /// Register the tab's callbacks once at start-up.
@@ -39,8 +42,12 @@ pub fn wire(ui: &AppWindow) {
     d.on_select_chapter(a.on(|s, _, n: i32| {
         if !s.editor.is_open() {
             s.chapter = u8::try_from(n).unwrap_or(5);
+            s.catalogue = false;
         }
     }));
+    d.on_open_catalogue(a.on0(|s, _| s.catalogue = !s.editor.is_open()));
+    let toggle = a.on(|s, _, (id, show): (SharedString, bool)| toggle_diagram(s, &id, show));
+    d.on_toggle_diagram(move |id, show| toggle((id, show)));
     d.on_start_edit(a.on0(|s, ui| {
         if let Ok(doc) = &s.doc {
             s.editor.start(ui, doc, s.chapter);
@@ -178,11 +185,18 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
         Ok(doc) if doc.chapters.is_empty() => m.state = 2,
         Ok(doc) => {
             m.state = 1;
+            let drawn: Vec<_> = doc
+                .diagrams
+                .iter()
+                .filter(|d| d.chapter == s.chapter)
+                .cloned()
+                .collect();
+            let text = catalogue::strip(&s.editor.chapter(doc, s.chapter), &drawn, s.format);
             view::fill_document(
                 &mut m,
                 doc,
                 view::Sources {
-                    chapter: &s.editor.chapter(doc, s.chapter),
+                    chapter: &text,
                     whole: &s.editor.preamble(doc),
                 },
                 s.chapter,
@@ -202,10 +216,47 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
                     &map,
                 );
             }
+            fill_figures(&mut m, s, doc, &texts);
         }
     }
+    m.figure_error = s.figure_error.as_str().into();
     s.editor.fill(&mut m);
     d.set_model(m);
+}
+
+/// The catalogue diagrams: the open chapter's (its package map gets only
+/// a tick), or all of them in the diagram view.
+fn fill_figures(
+    m: &mut ArchitectureModel,
+    s: &ArchitectureState,
+    doc: &Arc42Document,
+    texts: &Texts,
+) {
+    let map = derived(s, s.chapter).map(catalogue::map_id);
+    if s.catalogue {
+        m.catalogue = true;
+        m.chapter_title = texts.t("Diagrams").into();
+        m.map.kind = -1;
+        m.blocks = Default::default();
+        m.source = Default::default();
+    } else if let Some(d) = doc.diagrams.iter().find(|d| Some(d.id.as_str()) == map) {
+        m.map_id = d.id.as_str().into();
+        m.map_title = d.title.as_str().into();
+        m.map_shown = d.shown;
+    }
+    let figures = doc
+        .diagrams
+        .iter()
+        .filter(|d| s.catalogue || (d.chapter == s.chapter && Some(d.id.as_str()) != map))
+        .map(|d| {
+            let chapter = if s.catalogue {
+                format!("{} {}", texts.t("Chapter"), d.chapter)
+            } else {
+                String::new()
+            };
+            figure::figure(d, s.format, chapter, texts)
+        });
+    m.figures = slint::ModelRc::new(slint::VecModel::from(figures.collect::<Vec<_>>()));
 }
 
 /// What the desktop says around the engine's German arc42 text: its

@@ -1,0 +1,138 @@
+// One diagram of the arc42 catalogue (ADR 0006): title, the tick that puts
+// it into the documentation, its note, the drawing and its Mermaid or
+// PlantUML source. Built in src/architecture_ui/figure.rs.
+import { Switch } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Disclosure, ZoomControls } from "widgets.slint";
+import { Diagram, ArcCard, ArcLine, ArcFrame } from "architecture_visual.slint";
+
+export { ArcFrame }
+
+export struct ArcFigure {
+    id: string,
+    // "Chapter 7" in the diagram view; empty in a chapter.
+    chapter: string,
+    title: string,
+    note: string,
+    // Part of the documentation (not in `hidden_diagrams`).
+    shown: bool,
+    cards: [ArcCard],
+    lines: [ArcLine],
+    frames: [ArcFrame],
+    dw: float,
+    dh: float,
+    // The text written into arc42.md, in the configured format.
+    source: string,
+    // What the arrow colours mean; empty for package maps.
+    legend: string,
+}
+
+// The tick alone, for a diagram drawn elsewhere (the package maps).
+export component FigureSwitch inherits Switch {
+    in property <bool> value;
+    text: @tr("In documentation");
+    checked: value;
+    changed value => { self.checked = root.value; }
+}
+
+export component FigureView inherits Rectangle {
+    in property <ArcFigure> figure;
+    // The diagram view draws hidden diagrams too; a chapter only names them.
+    in property <bool> preview;
+    callback toggle(string, bool);
+    property <bool> drawn: figure.shown || root.preview;
+    property <bool> source-open;
+    // 0: fit to the width; otherwise the user's zoom factor.
+    property <float> user-zoom: 0;
+    // Fit width and the box height, so the whole diagram is in view.
+    property <float> fit-zoom: figure.dw > 0 ? min(1, (root.width / 1px - 34) / figure.dw, 638 / figure.dh) : 1;
+    property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
+    background: Theme.panel-2;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                alignment: center;
+                if figure.chapter != "": Text { text: figure.chapter; color: Theme.muted; font-size: Theme.font-caption; }
+                Text {
+                    text: figure.title;
+                    color: root.drawn ? Theme.text : Theme.muted;
+                    font-size: root.drawn ? Theme.font-section : Theme.font-body;
+                    font-weight: root.drawn ? Theme.weight-title : Theme.weight-regular;
+                    wrap: word-wrap;
+                }
+            }
+            FigureSwitch {
+                value: figure.shown;
+                toggled => { root.toggle(figure.id, self.checked); }
+            }
+        }
+        if !root.drawn: Text {
+            text: @tr("Not in the documentation. Tick it or use the diagram view to take it back.");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+        if root.drawn: Text { text: figure.note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
+        if root.drawn && figure.legend != "": Text { text: figure.legend; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
+        if root.drawn: HorizontalLayout {
+            alignment: end;
+            ZoomControls {
+                zoom: root.zoom;
+                zoom-out => { root.user-zoom = max(0.2, root.zoom * 0.8); }
+                zoom-in => { root.user-zoom = min(5, root.zoom * 1.25); }
+                reset => { root.user-zoom = 1; }
+                fit => { root.user-zoom = 0; }
+            }
+        }
+        if root.drawn: Rectangle {
+            min-width: 0;
+            height: min(640px, figure.dh * root.zoom * 1px + 2px);
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+            Flickable {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                content-width: max(self.width, figure.dw * root.zoom * 1px);
+                content-height: figure.dh * root.zoom * 1px;
+                Diagram {
+                    x: max(0, (parent.width - self.width) / 2);
+                    cards: figure.cards;
+                    lines: figure.lines;
+                    frames: figure.frames;
+                    dw: figure.dw;
+                    dh: figure.dh;
+                    zoom: root.zoom;
+                }
+            }
+        }
+        if root.drawn: Disclosure { text: @tr("Diagram source"); open <=> root.source-open; }
+        if root.drawn && root.source-open: Rectangle {
+            background: Theme.panel;
+            border-radius: 8px;
+            VerticalLayout {
+                padding: 12px;
+                Text {
+                    text: figure.source;
+                    color: Theme.text;
+                    font-family: Theme.mono-family;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

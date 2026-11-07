@@ -7,8 +7,9 @@ import { Theme } from "theme.slint";
 import { Button, Disclosure, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
+import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
 
-export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation }
+export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation, ArcFigure, ArcFrame }
 
 export struct ArcChapter {
     number: int,
@@ -43,6 +44,17 @@ export struct ArchitectureModel {
     // No arc42 text in the project yet: where should it go?
     ask-location: bool,
     edit-error: string,
+    // The diagram catalogue (ADR 0006): the open chapter's diagrams that
+    // are not the package map, or all of them in the diagram view.
+    figures: [ArcFigure],
+    // The diagram view is open instead of a chapter.
+    catalogue: bool,
+    // The package map's catalogue id (empty: it has none) and its tick.
+    map-id: string,
+    map-title: string,
+    map-shown: bool,
+    // Why a tick could not be written to archguard.toml.
+    figure-error: string,
 }
 
 export global ArchitectureData {
@@ -56,6 +68,9 @@ export global ArchitectureData {
     callback card-action();
     callback more-relations();
     callback plantuml(string);
+    // Show (true) or hide a catalogue diagram in the documentation.
+    callback toggle-diagram(string, bool);
+    callback open-catalogue();
 
     // The chapter editor: its Markdown and the preview of it.
     in-out property <string> draft;
@@ -283,8 +298,15 @@ export component ArchitectureView inherits Rectangle {
                         for c in ArchitectureData.model.chapters: ChapterButton {
                             compact: root.narrow;
                             chapter: c;
-                            current: c.number == ArchitectureData.model.chapter;
+                            current: c.number == ArchitectureData.model.chapter && !ArchitectureData.model.catalogue;
                             clicked => { ArchitectureData.select-chapter(c.number); }
+                        }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        ChapterButton {
+                            compact: root.narrow;
+                            chapter: { number: 0, label: "D", title: @tr("Diagrams") };
+                            current: ArchitectureData.model.catalogue;
+                            clicked => { ArchitectureData.open-catalogue(); }
                         }
                     }
                 }
@@ -313,7 +335,43 @@ export component ArchitectureView inherits Rectangle {
                             }
                             Rectangle { height: 14px; }
                             if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
-                            if !ArchitectureData.model.editing && ArchitectureData.model.map.kind >= 0: VerticalLayout {
+                            if ArchitectureData.model.figure-error != "": Text {
+                                text: ArchitectureData.model.figure-error;
+                                color: Theme.danger;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                            if ArchitectureData.model.catalogue: VerticalLayout {
+                                spacing: 14px;
+                                Text {
+                                    text: @tr("Every diagram ArchGuard derives for this project, hidden ones included. The tick decides whether it is written into the documentation; the choice is kept in archguard.toml.");
+                                    color: Theme.muted;
+                                    font-size: Theme.font-small;
+                                    wrap: word-wrap;
+                                }
+                                for f in ArchitectureData.model.figures: FigureView {
+                                    figure: f;
+                                    preview: true;
+                                    toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                }
+                            }
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "": HorizontalLayout {
+                                padding-top: 8px;
+                                spacing: 12px;
+                                Text {
+                                    text: ArchitectureData.model.map-shown ? ArchitectureData.model.map-title : @tr("{}: not in the documentation.", ArchitectureData.model.map-title);
+                                    color: ArchitectureData.model.map-shown ? Theme.text : Theme.muted;
+                                    font-size: Theme.font-body;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    wrap: word-wrap;
+                                }
+                                FigureSwitch {
+                                    value: ArchitectureData.model.map-shown;
+                                    toggled => { ArchitectureData.toggle-diagram(ArchitectureData.model.map-id, self.checked); }
+                                }
+                            }
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown): VerticalLayout {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
                                 ArcVisual {
@@ -327,9 +385,18 @@ export component ArchitectureView inherits Rectangle {
                                     plantuml(u) => { ArchitectureData.plantuml(u); }
                                 }
                             }
-                            if !ArchitectureData.model.editing: VerticalLayout {
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
+                                spacing: 14px;
+                                padding-bottom: 8px;
+                                for f in ArchitectureData.model.figures: FigureView {
+                                    figure: f;
+                                    toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                }
+                            }
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
                                 for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
                             }
+                            if !ArchitectureData.model.catalogue: VerticalLayout {
                             Rectangle { height: 24px; }
                             Rectangle { height: 1px; background: Theme.border; }
                             Rectangle { height: 10px; }
@@ -361,6 +428,7 @@ export component ArchitectureView inherits Rectangle {
                                 }
                                 Rectangle { height: 8px; }
                                 for b in ArchitectureData.model.about: ArcBlockView { block: b; }
+                            }
                             }
                         }
                     }

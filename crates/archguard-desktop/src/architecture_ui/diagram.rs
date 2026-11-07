@@ -6,7 +6,7 @@
 mod layered;
 mod place;
 
-pub use place::Layout;
+pub use place::{Card, Layout};
 
 /// Lay out `nodes` cards and route `edges` (positions into the cards); one
 /// route per edge, in order.
@@ -104,7 +104,6 @@ fn uml_label(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::place::Card;
     use super::*;
 
     fn centre(c: &Card) -> f32 {
@@ -122,7 +121,12 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|(_, t)| **t == cmd.to_string())
-            .map(|(i, _)| (tokens[i + 1].parse().unwrap(), tokens[i + 2].parse().unwrap()))
+            .map(|(i, _)| {
+                (
+                    tokens[i + 1].parse().unwrap(),
+                    tokens[i + 2].parse().unwrap(),
+                )
+            })
             .collect()
     }
 
@@ -199,7 +203,10 @@ mod tests {
         let labels: Vec<(f32, f32)> = l.routes[1..].iter().map(|r| r.label).collect();
         for (i, a) in labels.iter().enumerate() {
             for b in &labels[i + 1..] {
-                assert!((a.0 - b.0).abs() >= 20.0 || (a.1 - b.1).abs() >= 12.0, "{a:?} {b:?}");
+                assert!(
+                    (a.0 - b.0).abs() >= 20.0 || (a.1 - b.1).abs() >= 12.0,
+                    "{a:?} {b:?}"
+                );
             }
         }
     }
