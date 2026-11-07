@@ -75,8 +75,9 @@ pub use review_kpi::{
 pub use review_session::{DecisionKind, FindingRef, ReviewDecision, ReviewRegister};
 pub use rules::{DependencyRule, OwnershipRule};
 pub use services::{
-    Service, ServiceCycle, ServiceDependency, ServiceDependencyKind, ServiceDiagnostic,
-    ServiceEvidence, ServiceProject, ServiceTopology,
+    Datastore, DatastoreUsage, Service, ServiceCycle, ServiceDatastores, ServiceDependency,
+    ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject, ServiceTopology,
+    SharedDatastore, SharedDatastoreScope,
 };
 pub use settings::{
     DenyCycles, LayerConfig, LayerOrigin, ModulesConfig, ProjectConfig, RulesConfig, StoreConfig,

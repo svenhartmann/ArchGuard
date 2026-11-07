@@ -63,6 +63,8 @@ Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/
 
 Deployment evidence comes from Compose files and plain Kubernetes manifests. For Kubernetes, ArchGuard reads Deployment, StatefulSet, DaemonSet, Job, CronJob and Pod workloads, matches Services to them by selector, and links literal endpoint variables such as `ORDERS_URL` to the selected workload. Values from `envFrom` and `configMapKeyRef` count when the ConfigMap is declared in the same manifest directory and namespace. Secrets are never read, Helm templates are not rendered, Kustomize overlays are not applied, and no cluster is contacted; such references are reported as analysis gaps.
 
+The service topology also lists datastores. Compose services and Kubernetes workloads with well-known database images (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, SQL Server, Oracle, Cassandra, Elasticsearch and others) become datastore nodes. Connection URLs (`postgres://`, `mysql://`, `mongodb://`, `redis://`, `jdbc:…`), host/database settings such as `DB_HOST` with `DB_NAME` or `POSTGRES_DB`, and Spring `spring.datasource.url` link a service to such a node or to a configured external host. Only engine, host, port and database name are kept; credentials and URL options never appear. Two services with the same datastore and database name are reported as a **shared database**; the same server with different or unknown database names only as a **shared server**. Tables are not analyzed, and a configured datastore does not prove runtime use. Values from Secrets stay unknown and appear as analysis gaps.
+
 ## Languages and source metrics
 
 | Language | Import graph | Additional source analysis | Required external tools |

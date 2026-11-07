@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use archguard_engine::core::ServiceDependencyKind;
+use archguard_engine::core::{ServiceDatastores, ServiceDependencyKind, SharedDatastoreScope};
 
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_FOUND, EXIT_OK, analysis_error, emit, usage};
@@ -76,14 +76,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
                 );
             }
             for edge in &topology.dependencies {
-                let kind = match edge.kind {
-                    ServiceDependencyKind::ConfiguredHttp => "configured HTTP",
-                    ServiceDependencyKind::Startup => "startup",
-                    ServiceDependencyKind::HttpCall => "HTTP client",
-                    ServiceDependencyKind::GrpcCall => "gRPC client",
-                    ServiceDependencyKind::Event => "event flow (inferred)",
-                    ServiceDependencyKind::ConfiguredReference => "configured reference",
-                };
+                let kind = kind_label(edge.kind);
                 println!("{kind}: {} -> {}", edge.from, edge.to);
                 for evidence in &edge.evidence {
                     println!(
@@ -100,16 +93,10 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
             }
             for cycle in &topology.cycles {
                 // These are SCC members, not a fabricated ordered cycle path.
-                let kind = match cycle.kind {
-                    ServiceDependencyKind::ConfiguredHttp => "configured HTTP",
-                    ServiceDependencyKind::Startup => "startup",
-                    ServiceDependencyKind::HttpCall => "HTTP client",
-                    ServiceDependencyKind::GrpcCall => "gRPC client",
-                    ServiceDependencyKind::Event => "event flow (inferred)",
-                    ServiceDependencyKind::ConfiguredReference => "configured reference",
-                };
+                let kind = kind_label(cycle.kind);
                 println!("{kind} cyclic group: {}", cycle.nodes.join(", "));
             }
+            print_datastores(&topology.datastores);
             for diagnostic in &topology.diagnostics {
                 println!(
                     "coverage: {}{}: {}",
@@ -129,4 +116,68 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
     } else {
         EXIT_OK
     }
+}
+
+fn kind_label(kind: ServiceDependencyKind) -> &'static str {
+    match kind {
+        ServiceDependencyKind::ConfiguredHttp => "configured HTTP",
+        ServiceDependencyKind::Startup => "startup",
+        ServiceDependencyKind::HttpCall => "HTTP client",
+        ServiceDependencyKind::GrpcCall => "gRPC client",
+        ServiceDependencyKind::Event => "event flow (inferred)",
+        ServiceDependencyKind::ConfiguredReference => "configured reference",
+    }
+}
+
+/// Datastore usages and shared datastores; informational, never a gate.
+fn print_datastores(datastores: &ServiceDatastores) {
+    if datastores.nodes.is_empty() {
+        return;
+    }
+    println!(
+        "Datastores: {} · usages: {}",
+        datastores.nodes.len(),
+        datastores.usages.len()
+    );
+    for node in &datastores.nodes {
+        println!(
+            "datastore [{}] {}",
+            node.engine.as_deref().unwrap_or("unknown"),
+            node.id
+        );
+    }
+    for usage in &datastores.usages {
+        println!(
+            "datastore usage: {} -> {}{}",
+            usage.service,
+            usage.datastore,
+            usage
+                .database
+                .as_ref()
+                .map(|name| format!(" (database {name})"))
+                .unwrap_or_default()
+        );
+        for evidence in &usage.evidence {
+            println!(
+                "  {} {}: {}",
+                evidence.file, evidence.pointer, evidence.description
+            );
+        }
+    }
+    for shared in &datastores.shared {
+        match shared.scope {
+            SharedDatastoreScope::Database => println!(
+                "shared database: {} database {}: {}",
+                shared.datastore,
+                shared.database.as_deref().unwrap_or("?"),
+                shared.services.join(", ")
+            ),
+            SharedDatastoreScope::Server => println!(
+                "shared server only (database names differ or are unknown): {}: {}",
+                shared.datastore,
+                shared.services.join(", ")
+            ),
+        }
+    }
+    println!("{}", datastores.note);
 }
