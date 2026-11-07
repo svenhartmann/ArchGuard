@@ -14,7 +14,8 @@ variants on native GitHub-hosted machines:
 Linux uses musl to avoid a dependency on the build runner's glibc version.
 The optional `db` feature is not included. Windows ARM64 is not built. Binaries
 are not Authenticode-signed or Apple Developer ID-signed/notarized; operating
-systems can therefore show an unrecognized-publisher warning.
+systems can therefore show an unrecognized-publisher warning. The unsigned
+desktop app packages are described in [Desktop app (unsigned)](#desktop-app-unsigned).
 
 ## Build and security flow
 
@@ -53,7 +54,8 @@ branch-protection settings.
    and merge the reviewed change through the normal CI process.
 2. Create and push the matching tag, for example `v0.1.0`. A mismatched tag fails.
 3. Inspect the successful **Release builds** run. It creates a **draft** GitHub
-   release with the five scanned archives, `SHA256SUMS`, and the report ZIP.
+   release with the five scanned archives, `SHA256SUMS`, the report ZIP, and the
+   scanned desktop packages with `SHA256SUMS-desktop`.
 4. Review the draft's notes and assets, then publish it in GitHub.
 
 Manual builds only produce workflow artifacts; they do not create a
@@ -72,6 +74,49 @@ see the viewer's help and `archguard doctor`.
 
 SHA-256 checksums verify consistency with the downloaded manifest; they are not
 a publisher signature. A successful malware scan is not a guarantee of safety.
+
+## Desktop app (unsigned)
+
+The same workflow packages the native desktop app (`crates/archguard-desktop`):
+
+| Platform | Rust target | Runner | Package |
+| --- | --- | --- | --- |
+| macOS Apple Silicon | `aarch64-apple-darwin` | macOS 15 ARM64 | `ArchGuard-<version>-aarch64-apple-darwin.dmg` |
+| macOS Intel | `x86_64-apple-darwin` | macOS 15 Intel | `ArchGuard-<version>-x86_64-apple-darwin.dmg` |
+| Windows x64 | `x86_64-pc-windows-msvc` | Windows 2025 | `.msi` installer and a plain `.zip` |
+| Linux x64 | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 x64 | `.AppImage` |
+
+`scripts/release/package_desktop.py` builds the packages; its unit tests cover
+the Info.plist, `.desktop` and WiX source, the file names and the complete-set
+check. The `.dmg` holds `ArchGuard.app` and an `/Applications` link. The `.msi`
+(WiX 5.0.2) installs to `Program Files\ArchGuard` with a Start menu shortcut. The
+AppImage is built with appimagetool 1.9.1 and type2 runtime 20251108, both
+pinned and checked by SHA-256. Linux uses glibc (Slint needs fontconfig), not
+musl: the AppImage needs glibc 2.39 or newer and the system's fontconfig.
+
+Each desktop job checks its package without starting the app: the `.dmg` is
+mounted and its app checked with `plutil -lint` and `codesign --verify`, the
+`.msi` is unpacked by an administrative install, the AppImage is extracted and
+its `.desktop` file validated. The scan job then rejects missing or extra
+packages, verifies every `.sha256`, writes `SHA256SUMS-desktop` and runs ClamAV
+over all packages and the extracted Windows ZIP. ClamAV unpacks the `.dmg` and
+`.msi` as far as it supports these formats; the AppImage's SquashFS is scanned
+as one file. `archguard update` updates the CLI only, never the desktop app.
+
+The desktop packages are **not signed**: there is no Apple Developer ID, no
+notarization and no Windows code-signing certificate. The macOS app has only an
+ad-hoc signature, which Apple Silicon needs to start it at all. On first start:
+
+- **macOS:** drag `ArchGuard.app` to Applications, then right-click it and choose
+  **Open**, and confirm. Or remove the quarantine flag:
+  `xattr -dr com.apple.quarantine /Applications/ArchGuard.app`.
+- **Windows:** when SmartScreen shows "Windows protected your PC", click
+  **More info**, then **Run anyway**.
+- **Linux:** `chmod +x ArchGuard-<version>-x86_64-unknown-linux-gnu.AppImage` and
+  run it.
+
+The app links Slint under the Slint Royalty-free License 2.0; the attribution it
+requires is shown in the app's About dialog.
 
 ## Update an installed binary
 
