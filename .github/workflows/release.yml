@@ -39,6 +39,7 @@ jobs:
           python -m unittest discover -s scripts/release -p test_release_artifacts.py
           python -m unittest discover -s scripts/release -p test_release_report.py
           python -m unittest discover -s scripts/release -p test_scan_malware.py
+          python -m unittest discover -s scripts/release -p test_package_desktop.py
 
   build:
     name: Build / ${{ matrix.target }}
@@ -103,9 +104,130 @@ jobs:
           retention-days: 3
           compression-level: 0
 
+  # Unsigned desktop app packages: no Apple Developer ID, no Authenticode
+  # certificate. macOS gets an ad-hoc signature only so it starts on Apple Silicon.
+  desktop:
+    name: Desktop / ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            suffix: .exe
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: macos
+            suffix: ''
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos
+            suffix: ''
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            suffix: ''
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      DESKTOP_TARGET: ${{ matrix.target }}
+      DESKTOP_BINARY: target/${{ matrix.target }}/release/archguard-desktop${{ matrix.suffix }}
+      # Pinned packaging tools; the checksums are the GitHub release asset digests.
+      WIX_VERSION: 5.0.2
+      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+      APPIMAGE_RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+      APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      # Slint's font lookup links the system fontconfig (see ci.yml);
+      # appimagetool refuses to run without desktop-file-validate.
+      - name: Install Linux build and packaging tools
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfontconfig1-dev desktop-file-utils
+          tools="$RUNNER_TEMP/appimage"
+          mkdir -p "$tools"
+          curl --fail --location --silent --show-error -o "$tools/appimagetool" "$APPIMAGETOOL_URL"
+          curl --fail --location --silent --show-error -o "$tools/runtime" "$APPIMAGE_RUNTIME_URL"
+          printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$tools/appimagetool" "$APPIMAGE_RUNTIME_SHA256" "$tools/runtime" | sha256sum --check --strict
+          chmod +x "$tools/appimagetool"
+      - name: Install WiX ${{ env.WIX_VERSION }}
+        if: matrix.platform == 'windows'
+        run: |
+          dotnet tool install --global wix --version "$WIX_VERSION"
+          echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
+      - name: Build locked release desktop app
+        run: cargo build -p archguard-desktop --release --locked --target "$DESKTOP_TARGET"
+      - name: Package .app and .dmg
+        if: matrix.platform == 'macos'
+        run: python scripts/release/package_desktop.py macos --binary "$DESKTOP_BINARY" --target "$DESKTOP_TARGET" --out dist-desktop
+      - name: Check the .dmg contents and signature without starting the app
+        if: matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" dist-desktop/*.dmg
+          trap 'hdiutil detach "$mount"' EXIT
+          test -L "$mount/Applications"
+          plutil -lint "$mount/ArchGuard.app/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$mount/ArchGuard.app"
+          file "$mount/ArchGuard.app/Contents/MacOS/archguard-desktop"
+      - name: Package .msi and .zip
+        if: matrix.platform == 'windows'
+        run: python scripts/release/package_desktop.py windows --binary "$DESKTOP_BINARY" --out dist-desktop
+      - name: Check the .msi contents with an administrative install
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem dist-desktop\*.msi | Select-Object -First 1).FullName
+          $target = Join-Path $env:RUNNER_TEMP 'msi-check'
+          $process = Start-Process msiexec.exe -ArgumentList '/a', "`"$msi`"", '/qn', "TARGETDIR=`"$target`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "msiexec /a failed with $($process.ExitCode)" }
+          $exe = Get-ChildItem -Recurse -Path $target -Filter archguard-desktop.exe
+          if (-not $exe) { throw 'archguard-desktop.exe missing from the MSI' }
+          $exe.FullName
+      - name: Package AppImage
+        if: matrix.platform == 'linux'
+        run: python scripts/release/package_desktop.py linux --binary "$DESKTOP_BINARY" --out dist-desktop --appimagetool "$RUNNER_TEMP/appimage/appimagetool" --runtime "$RUNNER_TEMP/appimage/runtime"
+      - name: Check the AppImage contents without starting the app
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          image="$(realpath dist-desktop/*.AppImage)"
+          mkdir -p "$RUNNER_TEMP/appimage-check"
+          cd "$RUNNER_TEMP/appimage-check"
+          "$image" --appimage-extract > /dev/null
+          test -x squashfs-root/usr/bin/archguard-desktop
+          desktop-file-validate squashfs-root/archguard.desktop
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-candidate-${{ matrix.target }}
+          path: dist-desktop/*
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
   scan:
     name: Verify and scan all release artifacts
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -122,6 +244,13 @@ jobs:
           path: dist
       - name: Verify complete release set and extract safely
         run: python scripts/release/release_artifacts.py verify --directory dist --extract "$RUNNER_TEMP/release-scan" --revision "$GITHUB_SHA"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-candidate-*
+          merge-multiple: true
+          path: dist-desktop
+      - name: Verify complete desktop set and extract the Windows ZIP safely
+        run: python scripts/release/package_desktop.py verify --out dist-desktop --extract "$RUNNER_TEMP/release-scan/desktop"
       - name: Install ClamAV and update signatures
         shell: bash
         run: |
@@ -132,15 +261,22 @@ jobs:
           sudo sed -i '/^NotifyClamd /d' /etc/clamav/freshclam.conf
           sudo freshclam 2>&1 | tee "$RUNNER_TEMP/release-signatures.log"
           clamscan --version
-      - name: Scan final archives AND extracted binaries for every OS
+      - name: Scan final archives, desktop packages AND extracted binaries for every OS
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/release/scan_malware.sh dist "$RUNNER_TEMP/release-scan" 2>&1 | tee "$RUNNER_TEMP/release-malware.log"
+          bash scripts/release/scan_malware.sh dist dist-desktop "$RUNNER_TEMP/release-scan" 2>&1 | tee "$RUNNER_TEMP/release-malware.log"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-scanned
           path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-desktop-scanned
+          path: dist-desktop/*
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -221,13 +357,19 @@ jobs:
           path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: release-desktop-scanned
+          path: dist-desktop
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
           name: release-bundle
           path: bundle
       - name: Verify report ZIP checksum
         working-directory: bundle
         run: sha256sum --check --strict *.sha256
       - name: Re-verify the scanned bytes before upload
-        run: python scripts/release/release_artifacts.py verify --directory dist --extract "$RUNNER_TEMP/release-verify" --revision "$GITHUB_SHA"
+        run: |
+          python scripts/release/release_artifacts.py verify --directory dist --extract "$RUNNER_TEMP/release-verify" --revision "$GITHUB_SHA"
+          python scripts/release/package_desktop.py verify --out dist-desktop --extract "$RUNNER_TEMP/release-verify-desktop"
       - name: Create draft with the exact scanned assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -237,6 +379,17 @@ jobs:
         run: |
           set -euo pipefail
           printf 'ArchGuard %s\n\nCommit: %s\n\nFive native CLI builds passed smoke tests and ClamAV archive/binary scans. CI, RustSec advisories and secret scanning passed. Verify downloads with SHA256SUMS. See RELEASES.md for installation, unsigned binaries and optional tool requirements.\n' "$RELEASE_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.md"
+          cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+
+          ## Desktop app (unsigned)
+
+          Packages of the native desktop app: macOS `.dmg` (Apple Silicon and Intel), Windows `.msi` and `.zip`, Linux x64 `.AppImage`. Verify them with `SHA256SUMS-desktop`. They are **not signed** with an Apple Developer ID or a Windows code-signing certificate and are not notarized, so the system warns on first start:
+
+          - macOS: drag ArchGuard.app to Applications, then right-click it and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/ArchGuard.app`.
+          - Windows: when SmartScreen blocks the installer or the exe, click **More info**, then **Run anyway**.
+          - Linux: `chmod +x` the AppImage and run it; it needs glibc 2.39 or newer and fontconfig.
+          NOTES
           gh release create "$RELEASE_TAG" --verify-tag --draft \
             --title "ArchGuard $RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" \
-            dist/*.zip dist/*.tar.gz dist/SHA256SUMS bundle/*.zip bundle/*.sha256
+            dist/*.zip dist/*.tar.gz dist/SHA256SUMS bundle/*.zip bundle/*.sha256 \
+            dist-desktop/*.dmg dist-desktop/*.msi dist-desktop/*.zip dist-desktop/*.AppImage dist-desktop/SHA256SUMS-desktop
