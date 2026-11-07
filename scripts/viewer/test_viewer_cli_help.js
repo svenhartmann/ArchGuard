@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
 const launch=vm.runInNewContext(harness+'\nlaunch;',{require,console,performance,Blob});
 const app=launch({root:'/example',nodes:[],edges:[],findings:[],cyclicEdges:[],view:{depth:0,visible:null}},{library:false});
-const source=fs.readFileSync('crates/archguard-cli/src/main.rs','utf8').split('enum Command {')[1].split('\n}\n')[0];
+const source=fs.readFileSync('crates/archguard-cli/src/args.rs','utf8').split('enum Command {')[1].split('\n}\n')[0];
 const commands=[...source.matchAll(/^    ([A-Z][A-Za-z]+)(?: \{|,)/gm)].map(m=>m[1].replace(/[A-Z]/g,(c,i)=>(i?'-':'')+c.toLowerCase())).concat('help').sort();
 const documented=JSON.parse(app.run('JSON.stringify(cliHelpGroups().flatMap(group=>group.commands.map(command=>command[0])))')).sort();
 assert.deepEqual(documented,commands,'every actual CLI entry point must be documented exactly once');
