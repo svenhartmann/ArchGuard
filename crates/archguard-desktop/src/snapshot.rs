@@ -27,7 +27,7 @@
 
 use std::cell::Cell;
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::graph_ui::node_named;
 use crate::panes_ui;
@@ -213,9 +213,7 @@ fn follow_hooks(ui: &AppWindow) {
         ui.invoke_toggle_follow();
     }
     let left = panes_ui::layout().view(0).map_or(-1, |t| t.id as i32);
-    if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_LEFT_OPEN").and_then(|n| node_named(&n)) {
-        ui.invoke_open_node(left, n as i32);
-    }
+    left_hooks(ui, left);
     if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_LEFT_EXPAND").and_then(|n| node_named(&n)) {
         let row = crate::instances::with(left as u32, |g: &mut crate::graph_ui::Graph| {
             g.g.view.rows.iter().position(|r| r.node == n)
@@ -241,6 +239,36 @@ fn follow_hooks(ui: &AppWindow) {
     let l = panes_ui::layout();
     let tabs: Vec<_> = (0..l.panes.len()).filter_map(|p| l.view(p)).collect();
     eprintln!("follow: {} tabs {tabs:?}", l.follow_left);
+}
+
+/// Navigate in the left pane `left`: open a package in a Graph or as a
+/// Matrix scope (`ARCHGUARD_DESKTOP_LEFT_OPEN=<name>`), select a node in
+/// a Graph (`ARCHGUARD_DESKTOP_LEFT_SELECT=<name>`), or search the World
+/// and take its first match as Enter does
+/// (`ARCHGUARD_DESKTOP_WORLD_SEARCH=<text>`).
+fn left_hooks(ui: &AppWindow, left: i32) {
+    use crate::ui::StartData;
+    let kind = panes_ui::layout().view(0).map(|t| t.kind.clone());
+    if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_LEFT_OPEN") {
+        let matrix = ui.get_matrix_panes().iter().find(|m| m.id == left);
+        match (kind.as_deref(), matrix, node_named(&name)) {
+            (Some("dsm"), Some(m), _) => {
+                if let Some(i) = m.scopes.iter().position(|s| s == name.as_str()) {
+                    ui.invoke_m_scope(left, i as i32);
+                }
+            }
+            (_, _, Some(n)) => ui.invoke_open_node(left, n as i32),
+            _ => {}
+        }
+    }
+    if let Some(n) = env::<String>("ARCHGUARD_DESKTOP_LEFT_SELECT").and_then(|n| node_named(&n)) {
+        ui.invoke_reveal(left, n as i32);
+    }
+    if let Ok(q) = std::env::var("ARCHGUARD_DESKTOP_WORLD_SEARCH") {
+        let d = ui.global::<StartData>();
+        d.invoke_search(q.as_str().into());
+        d.invoke_accept_search();
+    }
 }
 
 /// Graph hooks act on the Graph the view bar would show, Matrix hooks on
