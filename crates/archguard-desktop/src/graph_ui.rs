@@ -133,6 +133,11 @@ pub fn wire(ui: &AppWindow) {
             follow::marks_place(&s.g.tree, &marks(&s.g))
         })
     });
+    follow_ui::on_open("graph", |id| {
+        instances::with(id, |s: &mut Graph| {
+            follow::marks_open(&s.g.tree, &marks(&s.g))
+        })
+    });
     let select = on(ui, |g, r: i32| g.select_row(index(r)));
     ui.on_select_row(link(ui, select));
     let reveal = on(ui, |g, n: i32| g.reveal(index(n).unwrap_or(0)));

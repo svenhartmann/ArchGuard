@@ -167,7 +167,7 @@ pub fn place_navs(before: &Place, after: &Place) -> Vec<Nav> {
 }
 
 /// The tabs (left, right) of a split layout whose right pane follows.
-fn following(l: &Layout) -> Option<(u32, u32)> {
+pub fn following(l: &Layout) -> Option<(u32, u32)> {
     let (left, right) = (l.view(0)?, l.view(1)?);
     (l.follow_left && pair(&left.kind, &right.kind)).then_some((left.id, right.id))
 }
@@ -198,6 +198,32 @@ pub fn marks_place(tree: &Tree, m: &Marks) -> Place {
         scope: m.scope.and_then(name),
         selected: m.selected.and_then(name),
     }
+}
+
+/// The packages open in a tree view, by node name.
+pub fn marks_open(tree: &Tree, m: &Marks) -> BTreeSet<String> {
+    m.open
+        .iter()
+        .filter_map(|&n| tree.nodes.get(n).map(|t| t.name.clone()))
+        .collect()
+}
+
+/// What brings the packages open in the right view (`right_open`) to
+/// those open in the left view (`left_open`), where packages follow
+/// ([`map`]): open what only the left has open, close what only the
+/// right has. `None` when they match.
+pub fn expand(
+    left: &str,
+    right: &str,
+    left_open: &BTreeSet<String>,
+    right_open: &BTreeSet<String>,
+) -> Option<Nav> {
+    let open: Vec<String> = left_open.difference(right_open).cloned().collect();
+    let close: Vec<String> = right_open.difference(left_open).cloned().collect();
+    if open.is_empty() && close.is_empty() {
+        return None;
+    }
+    map(left, right, &Nav::Expand { open, close })
 }
 
 /// Why the right pane cannot follow, if it cannot: the layout is not
@@ -473,6 +499,84 @@ mod tests {
             "the project scope, no selection"
         );
         assert!(replay("start", "security", &place).is_empty());
+    }
+
+    fn names(v: &[&str]) -> BTreeSet<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Taking the left place between tree views also takes its open
+    /// packages: what only the left has open opens, what only the right
+    /// has open closes; both directions and the same kind.
+    #[test]
+    fn the_left_open_packages_are_taken_between_tree_views() {
+        let (left, right) = (names(&["a", "a/b"]), names(&["a", "c"]));
+        let nav = Nav::Expand {
+            open: vec!["a/b".into()],
+            close: vec!["c".into()],
+        };
+        for (l, r) in [
+            ("graph", "dsm"),
+            ("dsm", "graph"),
+            ("graph", "graph"),
+            ("dsm", "dsm"),
+        ] {
+            assert_eq!(expand(l, r, &left, &right), Some(nav.clone()), "{l} → {r}");
+        }
+        assert_eq!(
+            expand("graph", "dsm", &left, &left),
+            None,
+            "nothing to change"
+        );
+        for (l, r) in [("graph", "file"), ("start", "graph"), ("dsm", "quality")] {
+            assert_eq!(expand(l, r, &left, &right), None, "{l} → {r}: no tree");
+        }
+    }
+
+    /// A tree view's open packages by name.
+    #[test]
+    fn open_packages_are_named() {
+        let tree = crate::matrix::tests::tree();
+        let n = |name: &str| tree.nodes.iter().position(|t| t.name == name).expect(name);
+        let m = Marks {
+            open: [n("lib"), n("lib/src")].into(),
+            ..Marks::default()
+        };
+        assert_eq!(marks_open(&tree, &m), names(&["lib", "lib/src"]));
+    }
+
+    /// A left view without a scope resets the right scope to the
+    /// project, but a File view beside it keeps its node: no scope, no
+    /// packages, at most the selection.
+    #[test]
+    fn a_file_view_keeps_its_node_beside_a_view_without_scope() {
+        assert!(replay("quality", "file", &Place::default()).is_empty());
+        let picked = Place {
+            scope: None,
+            selected: Some("a/x.rs".into()),
+        };
+        assert_eq!(
+            replay("graph", "file", &picked),
+            [Nav::Select("a/x.rs".into())]
+        );
+        assert_eq!(
+            replay("graph", "dsm", &Place::default()),
+            [Nav::Scope(None)]
+        );
+    }
+
+    /// A split restored with Follow on is a following pair from the
+    /// start, so its right pane takes the left place once the views are
+    /// there.
+    #[test]
+    fn a_restored_split_with_follow_on_follows() {
+        let (l, left, right) = split("graph", "dsm");
+        assert_eq!(following(&l), Some((left, right)));
+        let off = Layout {
+            follow_left: false,
+            ..l.clone()
+        };
+        assert_eq!(following(&off), None);
     }
 
     /// A node lies within itself and its directories, by path segment.

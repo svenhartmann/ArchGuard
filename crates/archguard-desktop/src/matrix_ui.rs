@@ -156,8 +156,9 @@ impl MatrixState {
                     self.expanded.remove(&n);
                 }
             }
+            // The scope package itself is no row of its matrix: keep it.
             Nav::Select(name) => {
-                if let Some(n) = node(name) {
+                if let Some(n) = node(name).filter(|&n| Some(n) != self.scope) {
                     self.reveal(n);
                 }
             }
@@ -273,6 +274,11 @@ pub fn wire(ui: &AppWindow) {
     follow_ui::on_place("dsm", |id| {
         instances::with(id, |m: &mut MatrixState| {
             follow::marks_place(&m.tree, &m.marks())
+        })
+    });
+    follow_ui::on_open("dsm", |id| {
+        instances::with(id, |m: &mut MatrixState| {
+            follow::marks_open(&m.tree, &m.marks())
         })
     });
     // Linked selection from the pane beside.
@@ -580,6 +586,23 @@ mod tests {
             .iter()
             .position(|n| n.name == name)
             .expect("node in the test tree")
+    }
+
+    /// Following a Graph opened on a package (its scope and selection)
+    /// keeps that scope and the packages opened in it: the selected
+    /// package is the scope itself, not a node it hides.
+    #[test]
+    fn following_the_scope_package_keeps_the_scope() {
+        let mut m = state();
+        let (lib, src) = (named(&m, "lib"), named(&m, "lib/src"));
+        m.follow(&Nav::Scope(Some("lib".into())));
+        m.follow(&Nav::Expand {
+            open: vec!["lib/src".into()],
+            close: vec![],
+        });
+        m.follow(&Nav::Select("lib".into()));
+        assert_eq!(m.scope, Some(lib));
+        assert!(m.expanded.contains(&src), "{:?}", m.expanded);
     }
 
     /// Revealing a node from the pane beside it (linked selection) opens
