@@ -115,6 +115,14 @@ export component QualityView inherits Rectangle {
     preferred-height: 860px;
 
     property <QualityModel> m: QualityData.model;
+    // A class card opens above the heatmap: scroll up to it (the web
+    // focuses it), also when the World's "Class metrics" opened it.
+    property <string> detail-title: root.m.detail.length > 0 ? root.m.detail[0].title : "";
+    changed detail-title => {
+        if self.detail-title != "" {
+            scroll.content-y = 0;
+        }
+    }
     // A split pane: the search moves below view and scope.
     property <bool> narrow: root.width < 620px;
     property <bool> picker;

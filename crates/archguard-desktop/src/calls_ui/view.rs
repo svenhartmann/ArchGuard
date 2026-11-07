@@ -154,12 +154,17 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
     let (callers, targets) = (methods(|c| &c.from_method), methods(|c| &c.to_method));
     let mut rows = Vec::new();
     let mut skipped = 0;
+    m.tree_focus = -1;
     for &n in &v.visible {
         if !v.shown.contains(&n) {
             skipped += 1;
             continue;
         }
         let node = &t.nodes[n];
+        let pressed = pressed(s, node);
+        if pressed && node.kind != Kind::Leaf {
+            m.tree_focus = int(rows.len());
+        }
         let (from, to) = match node.kind {
             Kind::Class => (
                 sel.is_some_and(|r| r.from == node.id),
@@ -183,7 +188,7 @@ fn fill_tree(m: &mut CallsModel, s: &State, ui: &UiLabels) {
                     .class(Some(&node.id))
                     .is_some_and(|c| c.kind == "module"),
             cycle: s.is_cycle_member(node.kind, &node.id),
-            pressed: pressed(s, node),
+            pressed,
         });
     }
     m.tree = model(rows);
@@ -399,5 +404,27 @@ mod tests {
         module.file = "api/http.py".into();
         assert_eq!(short("http.py".into(), Some(&module)), "http.py");
         assert_eq!(short("x.Unknown".into(), None), "Unknown");
+    }
+
+    /// The tree scrolls to the focused element's row (`tree-focus`).
+    #[test]
+    fn the_focused_element_names_its_tree_row() {
+        use slint::Model;
+        let labels = UiLabels {
+            all_languages: "".into(),
+            all_packages: "".into(),
+            default_package: "".into(),
+            external_group: "".into(),
+            unresolved_group: "".into(),
+        };
+        let mut s = State::new(fixture::analysis());
+        s.refresh();
+        assert_eq!(fill(&s, &labels).tree_focus, -1, "no element, no row");
+        super::super::actions::focus_class(&mut s, "red.Red");
+        s.refresh();
+        let m = fill(&s, &labels);
+        let row = m.tree.row_data(m.tree_focus as usize).expect("a row");
+        assert!(row.pressed);
+        assert_eq!(row.label, "Red");
     }
 }

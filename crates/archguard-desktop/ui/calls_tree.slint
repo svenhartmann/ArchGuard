@@ -136,7 +136,23 @@ export component CallsTree inherits CallsColumn {
         if m.tree.length > 0: VerticalLayout {
             vertical-stretch: 1;
             padding-top: 3px;
-            ListView {
+            // Scroll the focused element's row into view (World → Calls,
+            // a ranking); also once the list has its height in a new view.
+            property <int> focus-row: m.tree-focus;
+            property <length> shown: list.visible-height;
+            changed focus-row => { self.reveal(); }
+            changed shown => { self.reveal(); }
+            function reveal() {
+                if self.focus-row < 0 || self.focus-row >= m.tree.length || list.visible-height <= 0 {
+                    return;
+                }
+                // TreeLine rows are 30px; "load more" notes are rare.
+                if self.focus-row * 30px >= -list.content-y && (self.focus-row + 1) * 30px <= -list.content-y + list.visible-height {
+                    return;
+                }
+                list.content-y = -max(0px, min(self.focus-row * 30px - list.visible-height / 3, list.content-height - list.visible-height));
+            }
+            list := ListView {
                 for row in m.tree: VerticalLayout {
                     if row.skipped > 0: Muted {
                         text: @tr("{} additional rows · load more below", Fmt.int(row.skipped));

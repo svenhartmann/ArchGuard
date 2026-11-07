@@ -1,17 +1,18 @@
 //! The detail panel's actions besides Explore and Source graph
 //! (`worldDetails` in `viewer_world.js`): Cycles, Matrix, Calls, Class
 //! metrics, Quality scope, and the texts of Copy path and AI context.
-//! They lead to the other views through their own callbacks, once the
-//! view's state exists.
+//! They open the other view in the focused pane and, once the view's
+//! state exists, reveal the selection there: Calls focuses the class,
+//! Class metrics opens its card in the heatmap.
 
 use std::time::Duration;
 
 use slint::{ComponentHandle, Timer, TimerMode};
 
 use super::state::StartState;
-use crate::calls_ui::CallsState;
+use crate::calls_ui::{self, CallsState};
 use crate::panes_ui;
-use crate::quality_ui::QualityState;
+use crate::quality_ui::{self, QualityState};
 use crate::ui::{AppWindow, CallsData, QualityData};
 
 /// `StartData.detail-action` values.
@@ -94,11 +95,6 @@ impl StartState {
     }
 }
 
-/// The short name of a class id (`python:a/b.py::Money` → `Money`).
-fn class_name(id: &str) -> &str {
-    id.rsplit("::").next().unwrap_or(id)
-}
-
 /// Run `f` once the active document has a `T` (a view's state is built
 /// when the view is first shown); gives up after a minute.
 fn when_ready<T: 'static>(ui: &AppWindow, f: impl Fn(&AppWindow) + 'static) {
@@ -141,29 +137,19 @@ pub fn run(ui: &AppWindow, t: Target, node: Option<usize>, which: i32) {
         },
         action::CALLS => {
             panes_ui::change(ui, |l| l.navigate("calls"));
-            let query = t
-                .class_id
-                .as_deref()
-                .map_or(&*t.node, class_name)
-                .to_string();
-            when_ready::<CallsState>(ui, move |ui| {
-                ui.global::<CallsData>()
-                    .invoke_set_query(query.as_str().into());
+            when_ready::<CallsState>(ui, move |ui| match &t.class_id {
+                Some(c) => calls_ui::focus_class(ui, c),
+                None => ui.global::<CallsData>().invoke_set_query(t.node.as_str().into()),
             });
         }
         action::CLASS_METRICS | action::QUALITY_SCOPE => {
             panes_ui::change(ui, |l| l.navigate("quality"));
-            when_ready::<QualityState>(ui, move |ui| {
-                let q = ui.global::<QualityData>();
-                match &t.class_id {
-                    Some(c) if which == action::CLASS_METRICS => {
-                        q.invoke_section(0);
-                        q.invoke_query(c.as_str().into());
-                    }
-                    _ => {
-                        q.invoke_section(5);
-                        q.invoke_package(t.node.as_str().into());
-                    }
+            when_ready::<QualityState>(ui, move |ui| match &t.class_id {
+                Some(c) if which == action::CLASS_METRICS => quality_ui::focus_class(ui, c),
+                _ => {
+                    let q = ui.global::<QualityData>();
+                    q.invoke_section(5);
+                    q.invoke_package(t.node.as_str().into());
                 }
             });
         }
@@ -171,13 +157,21 @@ pub fn run(ui: &AppWindow, t: Target, node: Option<usize>, which: i32) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn class_names_drop_the_file() {
-        assert_eq!(class_name("python:domain/money.py::Money"), "Money");
-        assert_eq!(class_name("Money"), "Money");
-    }
+/// `ARCHGUARD_DESKTOP_WORLD_ACTION=<action>:<class id>` (snapshot runs):
+/// run [`action`] `CALLS` (2) or `CLASS_METRICS` (3) for the class as its
+/// World detail button does.
+#[cfg(feature = "snapshot")]
+pub fn snapshot_hook(ui: &AppWindow) {
+    let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_WORLD_ACTION") else {
+        return;
+    };
+    let Some((which, id)) = spec.split_once(':') else {
+        return;
+    };
+    let t = Target {
+        node: String::new(),
+        class_id: Some(id.to_string()),
+        module: false,
+    };
+    run(ui, t, None, which.parse().unwrap_or(-1));
 }

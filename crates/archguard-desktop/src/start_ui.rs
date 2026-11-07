@@ -46,6 +46,8 @@ pub use state::{Lens, StartState};
 use state::{Mode, from_evidence};
 
 pub use view::push;
+#[cfg(feature = "snapshot")]
+pub use actions::snapshot_hook;
 
 /// What the tab's build needs, copied from an analysis.
 struct Inputs {
