@@ -5,7 +5,8 @@
 //!
 //! The views that can be open several times register a sync with
 //! [`on_sync`]; it runs after every layout change and builds, drops and
-//! shows their instances (`instances::sync`).
+//! shows their instances (`instances::sync`); then [`on_change`] sees the
+//! layout before and after.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -31,9 +32,13 @@ type Reveal = Rc<dyn Fn(&AppWindow, u32, usize)>;
 /// tabs whose node the analysis lacks.
 type SyncFn = Rc<dyn Fn(&AppWindow, &Layout) -> Vec<u32>>;
 
+/// Called after a layout change with the layout before and after.
+type Changed = Rc<dyn Fn(&AppWindow, &Layout, &Layout)>;
+
 thread_local! {
     static REVEALS: RefCell<Vec<(&'static str, Reveal)>> = const { RefCell::new(Vec::new()) };
     static SYNCS: RefCell<Vec<(&'static str, SyncFn)>> = const { RefCell::new(Vec::new()) };
+    static CHANGED: RefCell<Option<Changed>> = const { RefCell::new(None) };
     /// The window's pane list. Rows are updated in place, so a pane whose
     /// view stays keeps its Slint view instance (scroll position, zoom).
     static PANES: RefCell<Option<Rc<VecModel<PaneItem>>>> = const { RefCell::new(None) };
@@ -88,14 +93,23 @@ pub fn change(ui: &AppWindow, f: impl FnOnce(&mut Layout)) {
     let changed = documents::with_active_state_or(Layout::default, |l: &mut Layout| {
         let before = l.clone();
         f(l);
-        (*l != before).then(|| l.clone())
+        (*l != before).then(|| (before, l.clone()))
     })
     .flatten();
     push(ui);
-    if let Some(l) = changed {
+    if let Some((before, l)) = changed {
         sync(ui);
         store(&l);
+        if let Some(f) = CHANGED.with_borrow(|c| c.clone()) {
+            f(ui, &before, &l);
+        }
     }
+}
+
+/// After a layout change, once the views' instances exist, `f` gets the
+/// layout before and after ("Follow left", at start-up).
+pub fn on_change(f: impl Fn(&AppWindow, &Layout, &Layout) + 'static) {
+    CHANGED.set(Some(Rc::new(f)));
 }
 
 /// The project's last view in the settings follows the layout.

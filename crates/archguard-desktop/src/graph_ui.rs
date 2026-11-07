@@ -128,6 +128,11 @@ pub fn wire(ui: &AppWindow) {
     });
     panes_ui::on_sync("graph", sync);
     follow_ui::on_follow("graph", follow_nav);
+    follow_ui::on_place("graph", |id| {
+        instances::with(id, |s: &mut Graph| {
+            follow::marks_place(&s.g.tree, &marks(&s.g))
+        })
+    });
     let select = on(ui, |g, r: i32| g.select_row(index(r)));
     ui.on_select_row(link(ui, select));
     let reveal = on(ui, |g, n: i32| g.reveal(index(n).unwrap_or(0)));

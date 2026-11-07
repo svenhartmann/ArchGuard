@@ -177,10 +177,7 @@ pub fn wire(ui: &AppWindow) {
     d.on_reset(move || reset(()));
     wire_selection(ui, &d);
     services_wire::wire(ui, &d);
-    // The World beside a Graph follows its package and selection.
-    crate::follow_ui::on_follow("start", |ui, _, nav| {
-        tab_support::update(ui, |s: &mut StartState, _| s.follow(nav));
-    });
+    follow_place::wire();
 }
 
 fn wire_selection(ui: &AppWindow, d: &StartData<'_>) {

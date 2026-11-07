@@ -75,11 +75,14 @@ pub(super) fn navigation<A: 'static>(
     crate::follow_ui::reporting(ui, "quality", place, f)
 }
 
-/// The tab beside a leading view follows it (at start-up).
+/// The tab beside a leading view follows it, also while it still builds;
+/// a pane beside it starts at its place (at start-up).
 pub(super) fn wire() {
     crate::follow_ui::on_follow("quality", |ui, _, nav| {
-        tab_support::update(ui, |s: &mut QualityState, _| s.follow(nav));
+        let nav = nav.clone();
+        tab_support::update_or_queue(ui, move |s: &mut QualityState| s.follow(&nav));
     });
+    crate::follow_ui::on_state_place("quality", place);
 }
 
 #[cfg(test)]

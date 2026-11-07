@@ -270,6 +270,11 @@ pub fn wire(ui: &AppWindow) {
     ui.set_matrix_panes(PANES.with(|m| m.clone()).into());
     panes_ui::on_sync("dsm", sync);
     follow_ui::on_follow("dsm", |ui, id, nav| act(ui, id as i32, |m| m.follow(nav)));
+    follow_ui::on_place("dsm", |id| {
+        instances::with(id, |m: &mut MatrixState| {
+            follow::marks_place(&m.tree, &m.marks())
+        })
+    });
     // Linked selection from the pane beside.
     panes_ui::on_reveal("dsm", |ui, id, node| act(ui, id as i32, |m| m.reveal(node)));
     ui.on_m_toggle(on(ui, |m, n: i32| {

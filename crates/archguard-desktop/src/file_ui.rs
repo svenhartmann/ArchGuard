@@ -8,7 +8,7 @@ use std::rc::Rc;
 use slint::{SharedString, VecModel};
 
 use crate::documents::{self, with_store};
-use crate::follow::Nav;
+use crate::follow::{Nav, Place};
 use crate::follow_ui;
 use crate::instances::{self, Instance};
 use crate::node_view::{self, NodeView};
@@ -120,6 +120,16 @@ pub fn wire(ui: &AppWindow) {
         if let Nav::Select(name) = nav {
             show_node(ui, id, name);
         }
+    });
+    // A pane beside a File view starts at its node.
+    follow_ui::on_place(FILE, |id| {
+        let l = panes_ui::layout();
+        let (p, t) = l.find_id(id)?;
+        let selected = l.panes[p].tabs[t].node.clone();
+        Some(Place {
+            scope: None,
+            selected,
+        })
     });
     ui.on_file_select(move |id, node| select((id, node)));
     ui.on_show_in_graph(with_ui(ui, |ui, node: i32| {
