@@ -6,77 +6,11 @@ use std::collections::BTreeMap;
 
 use slint::{ModelRc, VecModel};
 
+pub(super) use super::lines::{kind, line};
 use super::state::{Lens, Selection, StartState};
+use super::{class_detail, coverage_detail};
 use crate::format::{Locale, known};
 use crate::ui::{StartLine, StartModel};
-
-/// Line kinds shared with `start_details.slint`.
-pub mod kind {
-    pub const TEXT: i32 = 0;
-    pub const MUTED: i32 = 1;
-    pub const PATH: i32 = 2;
-    pub const CLASS: i32 = 10;
-    pub const FILE_ONLY: i32 = 11;
-    pub const MAX_CC: i32 = 12;
-    pub const MEASURED_METHODS: i32 = 13;
-    pub const KPI_VALUE: i32 = 14;
-    pub const ENTRIES_MEASURED: i32 = 15;
-    pub const PICK_CLASS: i32 = 16;
-    pub const FILE_COVERAGE: i32 = 17;
-    pub const COVERAGE_UNKNOWN: i32 = 18;
-    pub const FILES_MEASURED: i32 = 19;
-    pub const IN_CYCLE: i32 = 20;
-    pub const NO_CYCLE: i32 = 21;
-    pub const FINDINGS: i32 = 22;
-    pub const METHODS: i32 = 23;
-    pub const METHOD: i32 = 24;
-    pub const NO_KPI: i32 = 25;
-    pub const METHOD_RECORDS: i32 = 26;
-    pub const MEMBER: i32 = 30;
-    pub const MORE: i32 = 31;
-    pub const EVIDENCE: i32 = 40;
-    pub const CONNECTION: i32 = 41;
-    pub const NO_EVIDENCE: i32 = 42;
-    /// An open connection's dependency count (`a`, "" unknown).
-    pub const REFERENCES: i32 = 43;
-    /// "Select neighbor" in the architecture World: `entity` the area.
-    pub const NEIGHBOR: i32 = 44;
-    // The services World (`services/view.rs`).
-    pub const SVC_NOTE: i32 = 50;
-    pub const SVC_EXTERNAL: i32 = 51;
-    /// `a` → `b`, `entity` the kind (`services::KINDS`), `flag` cyclic.
-    pub const SVC_LINK: i32 = 52;
-    pub const SVC_AT: i32 = 53;
-    /// "Select neighbor": `entity` the island.
-    pub const SVC_NEIGHBOR: i32 = 54;
-    pub const SVC_NONE: i32 = 55;
-    // Source dependencies (`source_deps.rs`).
-    /// `a` the node, `b`/`c` incoming/outgoing; `flag`: a class's file.
-    pub const SRC_HEAD: i32 = 60;
-    /// "Used by" (`entity` 0) or "Depends on" (1) · `a`.
-    pub const SRC_DIR: i32 = 61;
-    /// A neighbour `a` with `b` references: opens it in the Graph.
-    pub const SRC_NODE: i32 = 62;
-    pub const SRC_NONE: i32 = 63;
-}
-
-pub(super) fn line(
-    kind: i32,
-    a: impl Into<String>,
-    b: impl Into<String>,
-    c: impl Into<String>,
-) -> StartLine {
-    StartLine {
-        kind,
-        a: a.into().into(),
-        b: b.into().into(),
-        c: c.into().into(),
-        entity: -1,
-        flag: false,
-        id: -1,
-        open: false,
-    }
-}
 
 fn opt(l: Locale, v: Option<f64>) -> String {
     known(v, |v| l.num(v, 2))
@@ -153,13 +87,10 @@ fn explore(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection)
         None => line(kind::FILE_ONLY, "", "", ""),
     });
     if s.kpi_active() {
-        let known = ent
-            .class_id
-            .as_ref()
-            .is_some_and(|id| s.ev.kpis.contains_key(id));
         out.push(line(kind::KPI_VALUE, opt(l, s.value(e)), "", ""));
-        if !known {
-            out.push(line(kind::NO_KPI, "", "", ""));
+        match &ent.class_id {
+            Some(id) => class_detail::kpi(l, out, s, id),
+            None => out.push(line(kind::NO_KPI, "", "", "")),
         }
     } else {
         out.push(line(
@@ -175,36 +106,9 @@ fn explore(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection)
             "",
         ));
     }
-    methods(l, out, s, e);
-}
-
-/// `worldClassMethods`, highest complexity first.
-fn methods(l: Locale, out: &mut Vec<StartLine>, s: &StartState, e: usize) {
-    let ent = s.ev.entity(e);
-    let key = ent
-        .class_id
-        .as_deref()
-        .unwrap_or(ent.file.as_deref().unwrap_or(&ent.node));
-    let mut rows: Vec<_> =
-        s.ev.methods
-            .get(key)
-            .map(|m| m.iter().collect())
-            .unwrap_or_default();
-    rows.sort_by(|a, b| {
-        let cc = |m: &super::evidence::Method| m.cyclomatic.map_or(-1, i64::from);
-        cc(b).cmp(&cc(a)).then_with(|| a.name.cmp(&b.name))
-    });
-    out.push(line(kind::METHODS, "", "", ""));
-    out.push(line(
-        kind::METHOD_RECORDS,
-        n(l, s.limit.min(rows.len())),
-        n(l, rows.len()),
-        "",
-    ));
-    for m in rows.iter().take(s.limit) {
-        let cc = known(m.cyclomatic, |c| n(l, c));
-        out.push(line(kind::METHOD, m.name.as_str(), cc, ""));
-        out.push(line(kind::PATH, format!("{}:{}", m.file, m.line), "", ""));
+    class_detail::methods(l, out, s, e);
+    if let Some(id) = &ent.class_id {
+        class_detail::others(l, out, s, id);
     }
 }
 
@@ -235,6 +139,9 @@ fn coverage(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection
         n(l, files.len()),
         "",
     ));
+    if let Some(e) = sel.entity {
+        coverage_detail::lines(out, &s.files, &s.ev.entity(e).node, l);
+    }
 }
 
 fn problems(l: Locale, out: &mut Vec<StartLine>, s: &StartState, sel: &Selection) {

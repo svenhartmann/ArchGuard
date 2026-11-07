@@ -3,7 +3,9 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use super::coverage_detail::Files;
 use super::evidence::{self, Evidence, Scope};
+use super::kpis::Glance;
 use super::layout::{self, Layout, Region};
 use super::scene::{self, Camera};
 use super::services::ServicesWorld;
@@ -71,6 +73,10 @@ pub struct StartState {
     pub(super) limit: usize,
     /// Connection entries opened in the details, by area names.
     pub(super) open_connections: BTreeSet<(String, String)>,
+    /// The project's review KPIs below the World (independent of scope).
+    pub(super) glance: Glance,
+    /// Imported test coverage per source file.
+    pub(super) files: Files,
     // Derived from the above by `refresh`.
     pub(super) scope: Scope,
     pub(super) layout: Layout,
@@ -101,6 +107,8 @@ pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> St
         details_open: false,
         limit: 20,
         open_connections: BTreeSet::new(),
+        glance: Glance::default(),
+        files: Files::default(),
         scope: Scope::default(),
         layout: Layout::default(),
     };

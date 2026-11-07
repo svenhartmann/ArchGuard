@@ -1,0 +1,310 @@
+// "Architecture at a glance" below the World (`renderStartKpis` in
+// viewer_development.js, `renderDashKpis`, `renderDashHealth`). Values
+// and geometry come from src/start_ui/kpis.rs; texts are templates here.
+import { Theme } from "theme.slint";
+import { Button, Disclosure, EmptyState, HelpTip, TipArea } from "widgets.slint";
+import { StartData, StartKpiCard, StartGlance } from "start_data.slint";
+
+export global StartKpiTexts {
+    // Card kinds (src/start_ui/kpis.rs, module `card`).
+    public pure function label(k: int) -> string {
+        return k == 0 ? @tr("Architecture score · /100") : k == 1 ? @tr("Propagation cost (top cycle)")
+            : k == 2 ? @tr("SDP violations") : k == 3 ? @tr("Tangledness") : k == 4 ? @tr("Hub Gini")
+            : k == 5 ? @tr("Debt markers") : k == 6 ? @tr("Leaks") : @tr("Risk coverage gaps");
+    }
+
+    public pure function value(c: StartKpiCard) -> string {
+        return c.empty ? @tr("None recorded") : c.value;
+    }
+
+    public pure function sub(c: StartKpiCard) -> string {
+        return c.kind == 0 ? (c.a == "" ? @tr("No comparison snapshot yet") : @tr("{} vs. previous snapshot", c.a))
+            : c.kind == 1 ? (c.empty ? "" : c.a + " · " + c.b + "/" + c.c)
+            : c.kind == 2 ? (c.a == "" ? "" : c.a + " → " + c.b)
+            : c.kind == 3 ? c.a + " / " + c.b
+            : c.kind == 4 ? @tr("top share {}", c.a)
+            : c.kind == 5 ? (c.c == "" ? @tr("per kloc not measured") : @tr("{} per kloc", c.c))
+            : c.kind == 6 ? (c.a == "" ? "" : c.a + " → " + c.b)
+            : c.c;
+    }
+
+    public pure function tip(c: StartKpiCard) -> string {
+        return c.kind == 0 ? @tr("Composite index 0–100 from the measurable KPI parts; absent parts are excluded, never zeroed.")
+            : c.kind == 1 ? (c.empty ? @tr("The payload carries no propagation-cost entries — that is the recorded state, not a measurement of zero.")
+                : @tr("Share of nodes reachable from cycle {}: {} of {} nodes ({} in the cycle).", c.a, c.b, c.c, c.d))
+            : c.kind == 2 ? (c.a == "" ? @tr("No Stable Dependencies Principle violations recorded.")
+                : @tr("A stable module imports a less stable one: {} → {}.", c.a, c.b))
+            : c.kind == 3 ? @tr("{} of {} nodes live in a cyclic group.", c.a, c.b)
+            : c.kind == 4 ? @tr("Inequality of the fan-in distribution (0 equal … 1 single hub); top-5 hubs take {} of all edges.", c.a)
+            : c.kind == 5 ? @tr("{} TODO/FIXME/HACK/XXX markers in {} source lines.", c.a, c.b)
+            : c.kind == 6 ? (c.a == "" ? @tr("No leaky-encapsulation findings recorded.")
+                : @tr("{} reaches {}, which {} does not export.", c.a, c.b, c.c))
+            : c.a == "" ? @tr("No risk-weighted coverage gaps recorded.")
+            : @tr("Hotspot {} with {} uncovered — the gap stays null when coverage is unknown.", c.a, c.b == "" ? @tr("not measured") : c.b);
+    }
+
+    // The health Ampel (StartKpiCard.level).
+    public pure function level(l: int) -> string {
+        return l == 1 ? @tr("Green") : l == 2 ? @tr("Yellow") : l == 3 ? @tr("Red") : "";
+    }
+
+    public pure function level-color(l: int) -> color {
+        return l == 1 ? Theme.success : l == 2 ? Theme.warning : l == 3 ? Theme.danger : Theme.muted;
+    }
+}
+
+// One card; one with a graph node opens it in the Graph (the web's
+// `role=button` cards).
+component KpiCard inherits Rectangle {
+    in property <StartKpiCard> card;
+    in property <string> ring;
+    property <bool> health: card.kind == 0;
+    property <bool> link: card.node != "";
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: link && tip.has-hover ? Theme.accent : Theme.border;
+    background: health ? Theme.accent.with-alpha(0.14) : link && tip.has-hover ? Theme.accent.with-alpha(0.08) : Theme.panel-2;
+    clip: true;
+    VerticalLayout {
+        padding: 16px;
+        padding-right: root.health ? 96px : 16px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: StartKpiTexts.value(root.card);
+            color: Theme.text;
+            font-size: Theme.font-display;
+            font-weight: Theme.weight-strong;
+            overflow: elide;
+        }
+        Text {
+            text: StartKpiTexts.label(root.card.kind);
+            color: Theme.text;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-strong;
+            wrap: word-wrap;
+        }
+        if StartKpiTexts.sub(root.card) != "": Text {
+            text: StartKpiTexts.sub(root.card);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+            overflow: elide;
+        }
+    }
+    // The score ring (the web's conic `--score-angle`).
+    if root.health: Rectangle {
+        x: parent.width - self.width - 16px;
+        y: 16px;
+        width: 64px;
+        height: 64px;
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: "M 50 8 A 42 42 0 1 1 50 92 A 42 42 0 1 1 50 8";
+            fill: transparent;
+            stroke: Theme.border;
+            stroke-width: 6px;
+        }
+        if root.ring != "": Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 100;
+            viewbox-height: 100;
+            commands: root.ring;
+            fill: transparent;
+            stroke: StartKpiTexts.level-color(root.card.level);
+            stroke-width: 6px;
+        }
+        Text {
+            text: StartKpiTexts.level(root.card.level);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    tip := TipArea {
+        tip: StartKpiTexts.tip(root.card);
+        pin-on-click: !root.link;
+        mouse-cursor: root.link ? pointer : default;
+        activated => { StartData.open-source(root.card.node); }
+    }
+}
+
+// The health head, parts and sparkline (`renderDashHealth`).
+component ScoreHistory inherits VerticalLayout {
+    in property <StartGlance> g;
+    spacing: 8px;
+    alignment: start;
+    Text { text: @tr("Score history"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; }
+    if g.score == "": Text {
+        text: @tr("Not measured — this analysis carries no health index. Re-run archguard analyze with the KPI pipeline; absent values are never shown as zero.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if g.score != "": HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: StartKpiTexts.level-color(g.level);
+        }
+        Text { text: g.score; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-strong; vertical-alignment: center; }
+        if g.level != 0: Text { text: StartKpiTexts.level(g.level); color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
+        if g.trend != "": Text {
+            text: (g.rising ? "▲ " : "▼ ") + g.trend;
+            color: g.rising ? Theme.success : Theme.cycle;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            TipArea { tip: @tr("Delta against the previous snapshot; a higher score is better."); }
+        }
+    }
+    if g.score != "" && g.parts.length == 0: Text {
+        text: @tr("The index carries no measurable parts — not measured, never zero.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    for p in g.parts: Text {
+        text: "· " + p.name + " " + p.value;
+        color: Theme.text;
+        font-size: Theme.font-small;
+    }
+    if g.spark == "": Text {
+        text: @tr("Trend needs at least two measured snapshots.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if g.spark != "": VerticalLayout {
+        spacing: 2px;
+        Rectangle {
+            height: 56px;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            Path {
+                y: 4px;
+                height: parent.height - 8px;
+                viewbox-width: 250;
+                viewbox-height: 48;
+                commands: g.spark;
+                fill: transparent;
+                stroke: Theme.node;
+                stroke-width: 2px;
+            }
+            TipArea { tip: @tr("Health score per snapshot, oldest first"); }
+        }
+        HorizontalLayout {
+            Text { text: g.spark-from; color: Theme.muted; font-size: Theme.font-caption; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: g.spark-to; color: Theme.muted; font-size: Theme.font-caption; }
+        }
+    }
+}
+
+// Zone counts (`renderDashZones`).
+component Zones inherits VerticalLayout {
+    in property <StartGlance> g;
+    spacing: 8px;
+    alignment: start;
+    Text { text: @tr("Abstraction & stability"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; }
+    Text {
+        text: g.zones-known
+            ? @tr("{} pain · {} uselessness · {} main sequence · {} unmeasured", g.pain, g.useless, g.main, g.unmeasured)
+            : @tr("Zone distribution not measured — the KPI block carries no zone statistics.");
+        color: g.zones-known ? Theme.text : Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+}
+
+export component StartKpis inherits VerticalLayout {
+    callback world-view();
+    property <StartGlance> g: StartData.model.glance;
+    // Four columns, two below 1000 px (the web's media query).
+    property <int> columns: self.width < 1000px ? 2 : 4;
+    property <length> gap: 12px;
+    property <length> card-w: (self.width - 48px - (columns - 1) * gap) / columns;
+    property <length> card-h: 148px;
+    property <int> rows: ceil(g.cards.length / columns);
+    padding: 24px;
+    spacing: 14px;
+    HorizontalLayout {
+        spacing: 16px;
+        VerticalLayout {
+            spacing: 4px;
+            Text { text: @tr("Architecture at a glance"); color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; }
+            Text {
+                text: g.project + " · " + @tr("Project analysis · independent of the World scope");
+                color: Theme.muted;
+                font-size: Theme.font-caption;
+                wrap: word-wrap;
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        HelpTip {
+            y: (parent.height - self.height) / 2;
+            tip: @tr("Project-wide review KPIs of this analysis, independent of the package shown in the World. A KPI the analysis did not measure is listed as not measured, never shown as zero. Cards naming a module or file open it in the Graph.");
+        }
+        Button {
+            text: @tr("World View ↑");
+            compact: true;
+            y: (parent.height - self.height) / 2;
+            clicked => { root.world-view(); }
+        }
+    }
+    if !g.measured: EmptyState {
+        title: @tr("Not measured");
+        reason: @tr("This analysis carries no review KPIs. Re-run archguard analyze with the KPI pipeline; absent values are never shown as zero.");
+    }
+    if g.measured: Rectangle {
+        height: root.rows * root.card-h + max(0, root.rows - 1) * root.gap;
+        for c[i] in g.cards: KpiCard {
+            x: mod(i, root.columns) * (root.card-w + root.gap);
+            y: floor(i / root.columns) * (root.card-h + root.gap);
+            width: root.card-w;
+            height: root.card-h;
+            card: c;
+            ring: root.g.ring;
+        }
+    }
+    if g.missing.length > 0: HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        Text { text: @tr("Not measured:"); color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; }
+        for k[i] in g.missing: Text {
+            text: StartKpiTexts.label(k) + (i < g.missing.length - 1 ? " ·" : "");
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            vertical-alignment: center;
+        }
+    }
+    if g.measured: Rectangle {
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            spacing: 8px;
+            profile := Disclosure {
+                text: @tr("Architecture profile and history");
+                open: root.g.profile;
+            }
+            if profile.open: HorizontalLayout {
+                spacing: 24px;
+                padding-bottom: 8px;
+                Zones { g: root.g; horizontal-stretch: 1; }
+                ScoreHistory { g: root.g; horizontal-stretch: 1; }
+            }
+        }
+    }
+}

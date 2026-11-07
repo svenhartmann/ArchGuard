@@ -43,11 +43,29 @@ component DetailLine inherits Rectangle {
         : line.kind == 61 ? (line.entity == 0 ? @tr("Used by") : @tr("Depends on")) + " · " + line.a
         : line.kind == 62 ? @tr("{} · {} references · Open in source graph", line.a, line.b)
         : line.kind == 63 ? @tr("No recorded dependencies in this direction.")
+        : line.kind == 70 ? @tr("Test coverage")
+        : line.kind == 71 ? @tr("Lines: {} · Branches: {}", line.a, line.b)
+            + (line.c == "changed" ? @tr(" · source changed since import") : line.c == "unknown" ? @tr(" · source freshness unknown") : "")
+        : line.kind == 72 ? @tr("Review index {} · {} transitive dependent files", line.a, line.b)
+        : line.kind == 73 ? @tr("No imported measurement for this file. Coverage is unknown.")
+        : line.kind == 74 ? @tr("Imported source evidence; report/source revision unverified.")
+        : line.kind == 75 ? @tr("Coverage unavailable: import error")
+        : line.kind == 80 ? (line.entity == 0 ? @tr("Not applicable · Go embedding is composition, not inheritance.")
+            : StartTones.rating-label(line.entity) + " · " + line.a + ". "
+                + (line.entity == 4 ? @tr("Incomplete measurement. Observed lower bounds are not rated.")
+                    : line.entity == 7 ? @tr("More subclasses can reflect intended reuse; no good/bad rating.")
+                    : @tr("Comparison: {} measured classes of the same source language. Search and package filters do not change the colors.", line.b)))
+        : line.kind == 81 ? @tr("Incomplete measurement · observed lower bound: {}", line.a)
+        : line.kind == 82 ? @tr("Other class metrics")
+        : line.kind == 83 ? line.a + ": " + line.b
+        : line.kind == 84 ? @tr("Cyclomatic: {} · maximum nesting: {}", line.a, line.b)
+        : line.kind == 85 ? "Cognitive: " + line.a + " · MI: " + line.b
+        : line.kind == 86 ? @tr("No cyclomatic measurement for this method.")
         : line.a;
     property <bool> button: line.kind == 30 || line.kind == 31 || line.kind == 44 || line.kind == 54 || line.kind == 62;
     // A connection entry: opens and closes its evidence.
     property <bool> entry: line.kind == 41 || line.kind == 52;
-    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52 || line.kind == 61;
+    property <bool> heading: line.kind == 23 || line.kind == 40 || line.kind == 52 || line.kind == 61 || line.kind == 70 || line.kind == 82;
     // Paths, class ids and evidence locations.
     property <bool> mono: line.kind == 2 || line.kind == 10 || line.kind == 53;
     property <length> inset: button ? 10px : entry ? 18px : 0;
@@ -69,7 +87,8 @@ component DetailLine inherits Rectangle {
         width: parent.width - root.inset - (button ? 10px : 0);
         text: root.text;
         wrap: word-wrap;
-        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 || line.kind == 60 || line.kind == 63 ? Theme.muted
+        color: line.kind == 1 || line.kind == 13 || line.kind == 16 || line.kind == 19 || line.kind == 50 || line.kind == 51 || line.kind == 55 || line.kind == 60 || line.kind == 63
+            || line.kind == 72 || line.kind == 73 || line.kind == 74 || line.kind == 75 || line.kind == 80 || line.kind == 81 || line.kind == 86 ? Theme.muted
             : line.kind == 52 && line.flag ? Theme.cycle : Theme.text;
         font-size: heading ? Theme.font-body : line.kind == 12 ? Theme.font-section : mono ? Theme.font-mono : Theme.font-body;
         font-weight: heading || line.kind == 12 || line.kind == 53 ? Theme.weight-strong : Theme.weight-regular;
