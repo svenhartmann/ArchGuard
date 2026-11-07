@@ -168,3 +168,7 @@ What exists:
   Checked with `scripts/viewer/test_viewer_arc42_catalogue.js` and in
   headless Chrome on copies of `fixtures/compose-services` and
   `examples/service-shop`.
+- **2026-11-07:** The web viewer draws `sequence` diagrams as SVG lanes
+  (participants, lifelines, numbered messages, errors red, events
+  dashed) instead of C4 boxes. Checked in headless Chrome on a report of
+  the copy of `fixtures/compose-services` with its OTLP sample.

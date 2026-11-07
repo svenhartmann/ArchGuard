@@ -94,4 +94,18 @@ const oldRoot=old.ids.get('architecture-content');oldRoot.querySelectorAll('butt
 assert.ok(oldRoot.querySelector('select[data-arc42-deployment]'));
 assert.ok(!oldRoot.querySelectorAll('button[data-arc42-nav]').some(b=>b.getAttribute('data-arc42-nav')==='diagrams'));
 assert.equal(oldRoot.querySelectorAll('input[data-arc42-tick]').length,0);
-console.log('arc42 catalogue: sections cut and drawn, chapter 7 from the catalogue, ticks with snippet, Diagrams view and C4 styling passed');
+// A recorded trace is a sequence: participants, lifelines, messages in order, errors marked.
+const trace={id:'runtime-trace-0af76519',chapter:6,title:'Sequenz · POST /api/charge · Trace 0af76519',kind:'sequence',note:'Quelle: aufgezeichneter OTLP-Trace.',unit:'Aufrufe',shown:true,
+  elements:[{id:'e0',name:'orders',kind:'container',cycle:false},{id:'e1',name:'billing',kind:'container',cycle:false},{id:'e2',name:'shipping',kind:'container',cycle:false}],
+  relations:[{from:'e0',to:'e1',kind:'http',count:1,cycle:false,label:'1. HTTP POST /api/charge · 42.0 ms'},{from:'e1',to:'e2',kind:'http',count:1,cycle:false,error:true,label:'2. HTTP POST /api/ship · 25.0 ms · Fehler'}]};
+const traced={...fixture,insights:{arc42:{schema_version:1,scope:'/repo',chapters:[{...chapter(6),markdown:chapter(6).markdown.replace(sources[6],section(trace,'sequenceDiagram\n  participant e0 as orders\n'))}],diagrams:[trace]}}};
+const seq=launch(traced,{library:false});seq.run("showTab('architecture')");
+const seqRoot=seq.ids.get('architecture-content');seqRoot.querySelectorAll('button[data-arc42-nav]').find(b=>b.getAttribute('data-arc42-nav')==='6').click();
+const seqFigure=seqRoot.querySelectorAll('section[data-arc42-diagram]').find(s=>s.getAttribute('data-arc42-diagram')===trace.id);
+assert.doesNotMatch(seqRoot.querySelector('article[data-arc42-chapter]').textContent,/sequenceDiagram/,'the sequence source is cut from the chapter text');
+assert.ok(seqFigure.querySelector('svg[data-arc42-sequence]'),'a trace is drawn as a sequence, not as C4 boxes');
+assert.equal(seqFigure.querySelectorAll('g[data-arc42-participant]').length,3);
+const messages=[...seqFigure.querySelectorAll('g[data-arc42-message]')];
+assert.deepEqual(messages.map(m=>m.textContent),[trace.relations[0].label,trace.relations[1].label],'messages in recorded order with their labels');
+assert.deepEqual(messages.map(m=>m.getAttribute('data-arc42-error')),['false','true']);
+console.log('arc42 catalogue: sections cut and drawn, chapter 7 from the catalogue, ticks with snippet, Diagrams view, C4 styling and trace sequences passed');

@@ -38,7 +38,7 @@ function arc42SectionOf(d){const chapter=data.insights.arc42.chapters?.find(c=>c
 // The neutral catalogue model as the reader's graph model.
 function arc42CatalogueModel(d){
   const kinds={package:'package',remainder:'group',container:'container',database:'database',external:'external'};
-  return {c4:d.kind!=='packages',kind:d.id,scope:d.title,unit:d.unit,
+  return {c4:d.kind!=='packages'&&d.kind!=='sequence',kind:d.id,scope:d.title,unit:d.unit,
     nodes:(d.elements||[]).map(e=>({id:e.id,name:e.name,label:e.name,kind:kinds[e.kind]||'package',technology:e.technology,group:e.group,cycle:!!e.cycle,detail:[e.technology,e.group].filter(Boolean).join(' · ')})),
     edges:(d.relations||[]).map(r=>({from:r.from,to:r.to,kind:r.kind,count:r.count,cycle:!!r.cycle}))};
 }
@@ -106,11 +106,39 @@ function arc42DrawCatalogue(parent,d){
   const model=arc42CatalogueModel(d),shell=element('div',undefined,'arc42-visual');parent.appendChild(shell);
   shell.appendChild(element('h3',d.title));shell.appendChild(element('p',d.note,'arc42-map-note'));
   if(!model.nodes.length){shell.appendChild(element('p',t('This diagram has no elements.','Dieses Diagramm hat keine Elemente.')));return true;}
+  if(d.kind==='sequence')return arc42DrawSequence(shell,d);
   if(model.c4)shell.appendChild(element('p',t('Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey dashed: startup order · light grey dashed: configured reference. Counts are configuration evidence.','Blau: HTTP · Cyan: gRPC · Violett: Ereignisse · Grün: Datenbanknutzung · grau gestrichelt: Startreihenfolge · hellgrau gestrichelt: Konfigurationsverweis. Anzahlen sind Konfigurationsbelege.'),'arc42-map-note'));
   arc42Graph(shell,model,{title:d.title,all:true});
   const names=new Map(model.nodes.map(n=>[n.id,n.name])),list=element('details',undefined,'arc42-relations');list.appendChild(element('summary',t('Relationships and counts','Beziehungen und Anzahl')+' · '+model.edges.length));
   for(const e of model.edges)list.appendChild(element('p',names.get(e.from)+' → '+names.get(e.to)+' · '+(model.c4?arc42RelationText(e)+' · ':'')+(e.count??1)+' '+(model.unit||'')));
   shell.appendChild(list);return true;
+}
+// A recorded trace: participants side by side, a lifeline each, one message per step
+// top to bottom in measured order; errors red. Mirrors architecture_ui/sequence.rs.
+function arc42SvgNode(tag,attrs={},text){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(text!=null)n.textContent=text;return n;}
+function arc42DrawSequence(shell,d){
+  const col=200,box={w:160,h:44},top=12,first=top+box.h+30,row=40,n=d.elements.length,at=new Map(d.elements.map((e,i)=>[e.id,i]));
+  const x=i=>24+i*col+box.w/2,bottom=first+d.relations.length*row,width=48+n*col-(col-box.w);
+  const svg=arc42SvgNode('svg',{'data-arc42-sequence':'true',role:'img','aria-label':d.title,viewBox:'0 0 '+width+' '+(bottom+16),width,height:bottom+16});
+  svg.style.maxWidth='100%';shell.appendChild(element('p',t('Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order.','Blau: HTTP · Cyan: gRPC · Violett: Ereignisse · Rot: aufgezeichneter Fehler. Von oben nach unten in gemessener Startreihenfolge.'),'arc42-map-note'));
+  d.elements.forEach((e,i)=>svg.appendChild(arc42Participant(e,x(i),top,box,bottom)));
+  d.relations.forEach((r,k)=>{if(at.has(r.from)&&at.has(r.to))svg.appendChild(arc42Message(r,x(at.get(r.from)),x(at.get(r.to)),first+k*row));});
+  const wrap=element('div',undefined,'arc42-map');wrap.appendChild(svg);shell.appendChild(wrap);return true;
+}
+function arc42Participant(e,cx,top,box,bottom){
+  const g=arc42SvgNode('g',{'data-arc42-participant':e.id}),line=arc42ThemeToken('--muted','#8a99ad');
+  g.appendChild(arc42SvgNode('line',{x1:cx,y1:top+box.h,x2:cx,y2:bottom,stroke:line,'stroke-width':1.2}));
+  g.appendChild(arc42SvgNode('rect',{x:cx-box.w/2,y:top,width:box.w,height:box.h,rx:7,fill:'var(--panel)',stroke:arc42ThemeToken('--c-node','#2563EB'),'stroke-width':1.5}));
+  g.appendChild(arc42SvgNode('text',{x:cx,y:top+box.h/2+5,'text-anchor':'middle','font-size':13,'font-weight':600,fill:'var(--text)'},e.name));
+  return g;
+}
+function arc42Message(r,from,to,y){
+  const color=r.error?arc42ThemeToken('--c-cycle','#D92D20'):arc42RelationColor(r)||arc42ThemeToken('--c-node','#2563EB'),back=to>from?to-9:to+9;
+  const g=arc42SvgNode('g',{'data-arc42-message':String(r.from)+'>'+String(r.to),'data-arc42-error':String(!!r.error)});
+  g.appendChild(arc42SvgNode('path',{d:'M '+from+' '+y+' H '+to,fill:'none',stroke:color,'stroke-width':1.5,'stroke-dasharray':r.kind==='event'?'5 4':'none'}));
+  g.appendChild(arc42SvgNode('path',{d:'M '+to+' '+y+' L '+back+' '+(y-4.5)+' L '+back+' '+(y+4.5)+' Z',fill:color}));
+  g.appendChild(arc42SvgNode('text',{x:Math.min(from,to)+10,y:y-6,'font-size':11,fill:r.error?color:'var(--muted)'},r.label||arc42RelationText(r)));
+  return g;
 }
 // The chapter's catalogue diagrams the derived maps did not already draw.
 function renderArc42CatalogueFigures(parent,number,drawn){
