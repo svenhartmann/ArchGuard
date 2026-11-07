@@ -213,6 +213,8 @@ function renderArc42Documentation(root) {
     .arc42-table th{background:var(--panel-2);font-size:12px}.arc42-table tr:last-child td{border-bottom:0}
     .arc42-article .arc42-open-heading{border-top:1px solid var(--border);padding-top:22px;color:var(--accent)}
     .arc42-reader .detail-graph{margin:18px 0}.arc42-diagram{max-height:640px;overflow:auto}
+    .arc42-figure{margin:18px 0}.arc42-figure-head{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.arc42-figure[data-arc42-hidden]{padding:8px 12px;border:1px dashed var(--border);border-radius:8px}
+    .arc42-tick{display:inline-flex;gap:6px;align-items:center;font-size:12px;cursor:pointer}.arc42-snippet{margin:12px 0 18px;padding:12px 14px;border:1px solid var(--accent);border-radius:8px}.arc42-snippet pre{margin:8px 0}.arc42-snippet code{padding:0;background:none}
 
     .arc42-visual{margin:22px 0 30px;min-width:0;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2)}
     .arc42-visual h3{margin:0 0 12px!important}.arc42-map-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -239,17 +241,26 @@ function renderArc42Documentation(root) {
   const about=element('details',undefined,'arc42-about');about.appendChild(element('summary',t('Source and update','Quelle und Aktualisierung')));page.appendChild(about);
   about.appendChild(element('p',t('Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks.','Aus den ursprünglichen Projektbelegen erzeugt. Ansichtfilter und Simulationen ändern dieses Dokument nicht. Ergänze Projektkontext im exportierten Markdown; archguard doc --arc42 erhält eigene Texte außerhalb erzeugter Blöcke.')));
   const preamble=String(model.markdown||'').split(/^## \d+\./m)[0];arc42Markdown(about,preamble);
-  const buttons=new Map();
-  for(const c of model.chapters){const key=String(c.number),control=button('',()=>update(key,true));control.setAttribute('data-arc42-nav',key);control.appendChild(element('small',key.padStart(2,'0')));control.appendChild(element('span',c.title));nav.appendChild(control);buttons.set(key,control);const option=element('option',key+'. '+c.title);option.value=key;select.appendChild(option);}
-  function update(number,focus=false){
-    const chapter=model.chapters.find(c=>String(c.number)===String(number))||model.chapters[0];architectureUi.chapter=String(chapter.number);select.value=architectureUi.chapter;
-    for(const [key,control]of buttons){if(key===architectureUi.chapter)control.setAttribute('aria-current','page');else control.removeAttribute('aria-current');}
-    article.textContent='';article.setAttribute('data-arc42-chapter',architectureUi.chapter);const markdown=chapter.markdown||'',start=markdown.search(new RegExp('^## '+chapter.number+'\\.\\s','m'));
-    article.appendChild(element('h2',chapter.number+'. '+chapter.title));
+  const buttons=new Map(),entry=(key,small,title)=>{const control=button('',()=>update(key,true));control.setAttribute('data-arc42-nav',key);control.appendChild(element('small',small));control.appendChild(element('span',title));nav.appendChild(control);buttons.set(key,control);const option=element('option',(small.trim()?Number(small)+'. ':'')+title);option.value=key;select.appendChild(option);};
+  for(const c of model.chapters)entry(String(c.number),String(c.number).padStart(2,'0'),c.title);
+  if(arc42Catalogue())entry('diagrams',' ',t('Diagrams','Diagramme'));
+  function mark(key){
+    architectureUi.chapter=key;select.value=key;download.disabled=key==='diagrams';
+    for(const [name,control]of buttons){if(name===key)control.setAttribute('aria-current','page');else control.removeAttribute('aria-current');}
+    article.textContent='';article.setAttribute('data-arc42-chapter',key);source.open=false;
+  }
+  function chapterView(chapter){
+    mark(String(chapter.number));const markdown=chapter.markdown||'',start=markdown.search(new RegExp('^## '+chapter.number+'\\.\\s','m'));
+    article.appendChild(element('h2',chapter.number+'. '+chapter.title));arc42SnippetBox(article);
     const derived=renderArc42Derived(article,chapter.number);
     let body=start<0?markdown:markdown.slice(start).replace(/^## [^\n]+\n?/,'');
-    if(derived&&chapter.number===5)body=body.replace(/\x60\x60\x60mermaid[\s\S]*?\x60\x60\x60/g,'');
-    arc42Markdown(article,body);raw.textContent=markdown;source.open=false;
+    if(arc42Catalogue())body=arc42StripCatalogue(body,chapter.number);
+    else if(derived&&chapter.number===5)body=body.replace(/\x60\x60\x60mermaid[\s\S]*?\x60\x60\x60/g,'');
+    arc42Markdown(article,body);raw.textContent=markdown;source.hidden=false;
+  }
+  function update(number,focus=false){
+    if(String(number)==='diagrams'&&arc42Catalogue()){mark('diagrams');renderArc42DiagramView(article);raw.textContent='';source.hidden=true;}
+    else chapterView(model.chapters.find(c=>String(c.number)===String(number))||model.chapters[0]);
     if(focus){document.getElementById('tab-architecture').scrollTop=0;article.focus({preventScroll:true});}
   }
   select.addEventListener('change',()=>update(select.value,true));update(architectureUi.chapter);
@@ -328,20 +339,20 @@ function arc42Graph(parent,model,{title,onNode,selected=null,all=false}={}){
   svg.style.maxWidth=width+'px';svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.setAttribute('width',width);svg.setAttribute('height',height);
   const edges=model.edges;
   const seq='arc42-arrow-'+(++arc42GraphSequence),defs=svgNode('defs');svg.appendChild(defs);
-  for(const [kind,color]of [['normal','var(--accent)'],['cycle','var(--c-cycle)'],['startup','var(--muted)']]){const marker=svgNode('marker',{id:seq+'-'+kind,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto'});marker.appendChild(svgNode('path',{d:'M 0 0 L 10 5 L 0 10 Z',fill:color}));defs.appendChild(marker);}
+  for(const [kind,color]of [['normal','var(--accent)'],['cycle','var(--c-cycle)'],['startup','var(--muted)'],...Object.keys(arc42RelationStyles).map(k=>['rel-'+k,arc42RelationColor({kind:k})])]){const marker=svgNode('marker',{id:seq+'-'+kind,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto'});marker.appendChild(svgNode('path',{d:'M 0 0 L 10 5 L 0 10 Z',fill:color}));defs.appendChild(marker);}
   edges.forEach((edge,i)=>{
     const a=positions.get(edge.from),b=positions.get(edge.to);if(!a||!b)return;
-    const kind=edge.kind==='startup'?'startup':edge.cycle?'cycle':'normal',color=kind==='cycle'?'var(--c-cycle)':kind==='startup'?'var(--muted)':'var(--accent)',right=b.x>=a.x,sign=right?1:-1;
+    const style=model.c4&&arc42RelationStyles[edge.kind],kind=style?'rel-'+edge.kind:edge.kind==='startup'?'startup':edge.cycle?'cycle':'normal',color=style?arc42RelationColor(edge):kind==='cycle'?'var(--c-cycle)':kind==='startup'?'var(--muted)':'var(--accent)',right=b.x>=a.x,sign=right?1:-1;
     const x1=right?a.x+a.w:a.x,x2=right?b.x:b.x+b.w,y1=a.y+a.h/2-7,y2=b.y+b.h/2+7,lane=16+(i%5)*5;
     const route=a.x===b.x?'M '+(a.x+a.w)+' '+y1+' H '+(a.x+a.w+lane)+' V '+y2+' H '+(b.x+b.w):'M '+x1+' '+y1+' H '+(x1+sign*lane)+' V '+(Math.min(a.y,b.y)-lane)+' H '+(x2-sign*lane)+' V '+y2+' H '+x2;
-    const group=svgNode('g',{'data-arc42-edge':JSON.stringify([edge.from,edge.to])}),path=svgNode('path',{d:route,fill:'none',stroke:color,'stroke-width':selected&&(edge.from===selected||edge.to===selected)?2.5:1.5,opacity:selected&&edge.from!==selected&&edge.to!==selected?.25:1,'stroke-dasharray':edge.kind==='startup'?'5 4':'none','marker-end':'url(#'+seq+'-'+kind+')'});
+    const group=svgNode('g',{'data-arc42-edge':JSON.stringify([edge.from,edge.to])}),path=svgNode('path',{d:route,fill:'none',stroke:color,'stroke-width':selected&&(edge.from===selected||edge.to===selected)?2.5:1.5,opacity:selected&&edge.from!==selected&&edge.to!==selected?.25:1,'stroke-dasharray':edge.kind==='startup'||style?.dashed?'5 4':'none','marker-end':'url(#'+seq+'-'+kind+')'});
     const names=[nodes.find(n=>n.id===edge.from),nodes.find(n=>n.id===edge.to)];group.appendChild(svgNode('title',{},names.map(n=>n.name).join(' → ')+' · '+edge.count+' '+(model.unit||'')));group.appendChild(path);svg.appendChild(group);
   });
   for(const node of nodes){
     const p=positions.get(node.id),g=svgNode('g',{'data-arc42-node':node.id,role:onNode?'button':'img',tabindex:onNode?0:-1,'aria-label':node.name,'aria-pressed':String(selected===node.id),class:'arc42-map-node'+(selected===node.id?' selected':'')});
     if(node.kind==='package')g.appendChild(svgNode('rect',{x:p.x,y:p.y-10,width:55,height:16,rx:3,fill:'var(--panel-2)',stroke:'var(--border)'}));
-    g.appendChild(svgNode('rect',{x:p.x,y:p.y,width:p.w,height:p.h,rx:node.kind==='deployment'?5:2,fill:node.kind==='context'||node.kind==='group'?'var(--panel-2)':'var(--panel)',stroke:selected===node.id?'var(--accent)':node.cycle?'var(--c-cycle)':'var(--border)','stroke-width':selected===node.id?2.5:1.5,'stroke-dasharray':node.kind==='group'?'5 3':'none'}));
-    const type=node.kind==='deployment'?t('Deployment node · Docker','Deployment-Knoten · Docker'):node.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):node.kind==='context'?t('Project context','Projektkontext'):node.kind==='component'?t('Declared component','Deklarierte Komponente'):node.kind==='files'?t('Direct source nodes','Direkte Quellknoten'):t('Source package','Quellpaket');
+    g.appendChild(svgNode('rect',{x:p.x,y:p.y,width:p.w,height:p.h,rx:node.kind==='deployment'||model.c4?5:2,fill:node.kind==='context'||node.kind==='group'?'var(--panel-2)':'var(--panel)',stroke:selected===node.id?'var(--accent)':node.cycle?'var(--c-cycle)':'var(--border)','stroke-width':selected===node.id?2.5:1.5,'stroke-dasharray':node.kind==='group'||node.kind==='external'?'5 3':'none'}));
+    const type=arc42C4Type(node)||(node.kind==='deployment'?t('Deployment node · Docker','Deployment-Knoten · Docker'):node.kind==='group'?t('Grouped packages','Zusammengefasste Pakete'):node.kind==='context'?t('Project context','Projektkontext'):node.kind==='component'?t('Declared component','Deklarierte Komponente'):node.kind==='files'?t('Direct source nodes','Direkte Quellknoten'):t('Source package','Quellpaket'));
     g.appendChild(svgNode('text',{x:p.x+12,y:p.y+19,class:'arc42-map-kind'},type));
     arc42NameLines(node.label??(node.name.split('/').pop()||node.name)).forEach((line,i)=>g.appendChild(svgNode('text',{x:p.x+12,y:p.y+42+i*17,class:'arc42-map-name'},line)));
     const detail=node.files!=null?node.files+' '+t('source nodes','Quellknoten'):node.detail||'';
@@ -438,12 +449,17 @@ function renderArc42Deployment(parent){
   }
   draw();return true;
 }
+// Chapter figures: the derived package maps, then the catalogue's other diagrams (ADR 0006).
+// Reports without a catalogue keep chapter 7's own projection from data.services.
 function renderArc42Derived(parent,number){
-  if(number===5&&data.nodes.length){renderArc42PackageMap(parent);return true;}
-  if(number===6&&awaitDeferred(parent,['calls'],()=>{if(ui.workspace==='architecture')renderArchitecture();}))return true;
-  if(number===6&&data.calls?.calls?.length){renderArc42PackageMap(parent,'calls');return true;}
-  if(number===7)return renderArc42Deployment(parent);
-  if(number===11&&data.edges.length){renderArc42PackageMap(parent,'cycles');return true;}
+  const drawn=new Set(),map=renderArc42Map(parent,number,drawn);
+  if(!arc42Catalogue())return map||(number===7&&renderArc42Deployment(parent));
+  return renderArc42CatalogueFigures(parent,number,drawn)||map;
+}
+function renderArc42Map(parent,number,drawn){
+  if(number===6&&awaitDeferred(parent,['calls'],()=>{if(ui.workspace==='architecture')renderArchitecture();})){drawn.add(arc42MapIds.calls);return true;}
+  const kind=number===5&&data.nodes.length?'dependencies':number===6&&data.calls?.calls?.length?'calls':number===11&&data.edges.length?'cycles':null;
+  if(kind){drawn.add(arc42MapIds[kind]);arc42Figure(parent,arc42CatalogueEntry(arc42MapIds[kind]),host=>renderArc42PackageMap(host,kind));return true;}
   if(number===4&&architectureModel()){
     const model=architectureModel();parent.appendChild(element('h3',t('Declared component model','Deklariertes Komponentenmodell')));
     const graph={nodes:model.components.map(n=>({id:n.name,name:n.name,files:n.node_count,kind:'component'})),edges:model.dependencies.map(e=>({from:e.from,to:e.to,count:e.source_edges})),unit:t('source connections','Quellverbindungen')},membership=new Map();
@@ -497,6 +513,7 @@ function arc42NameTiers(parts,common,name){
   return [specific.join('/')||fallback,rest.join('/')||name,name];
 }
 function arc42StandardGraph(model,selected){
+  if(model.c4)return arc42C4Graph(model,selected);
   const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i])),short=arc42ShortNames(model.nodes.map(n=>n.name));
   const deployment=model.nodes.some(n=>n.kind==='deployment');
   // Graphviz needs concrete colours; read the active theme so light mode is not drawn in the dark palette.
@@ -513,6 +530,7 @@ function arc42StandardGraph(model,selected){
 function arc42PlantUml(model){
   // Encode delimiters and line controls as PlantUML Unicode escapes: source names stay labels.
   const label=value=>String(value??'').replace(/["\\<>\r\n\x00-\x1f]/g,c=>'<U+'+c.charCodeAt(0).toString(16).padStart(4,'0')+'>');
+  if(model.c4)return arc42C4PlantUml(model,label);
   const ids=new Map(model.nodes.map((n,i)=>[n.id,'n'+i])),deployment=model.nodes.some(n=>n.kind==='deployment');
   const lines=['@startuml','!pragma layout smetana','left to right direction','skinparam shadowing false','skinparam componentStyle uml2'];
   if(deployment)lines.push('!include <C4/C4_Deployment>','Deployment_Node(scope, "'+label(model.scope)+'", "Docker Compose configuration", "Declared configuration; runtime hosts are unknown") {');

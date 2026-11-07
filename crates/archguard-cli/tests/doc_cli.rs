@@ -162,3 +162,37 @@ fn architecture_doc_check_detects_graph_drift_without_rewriting() {
     assert!(cli(&["doc"]).status.success());
     assert!(cli(&["doc", "--check"]).status.success());
 }
+
+/// The web viewer draws and ticks the catalogue (ADR 0006), so the report
+/// payload carries it next to the chapters.
+#[test]
+fn html_report_carries_the_arc42_diagram_catalogue() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.ts"), "import './b';\n").unwrap();
+    fs::write(root.join("b.ts"), "export const b=1;\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["graph", "--format", "html"])
+        .arg(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let html = String::from_utf8(output.stdout).unwrap();
+    let payload = html
+        .split("<script id=\"archguard-data\" type=\"application/json\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</script>").next())
+        .unwrap();
+    let data: serde_json::Value = serde_json::from_str(payload).unwrap();
+    let diagrams = data["insights"]["arc42"]["diagrams"].as_array().unwrap();
+    let blocks = diagrams
+        .iter()
+        .find(|d| d["id"] == "building-blocks")
+        .unwrap();
+    assert_eq!(blocks["chapter"], 5);
+    assert_eq!(blocks["shown"], true);
+}
