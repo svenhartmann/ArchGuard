@@ -28,38 +28,57 @@ pub enum Nav {
     Select(String),
 }
 
+/// The views that share a context by tree node name: a package, a file
+/// or the file of a class. Security is not one: its findings name
+/// third-party packages and their manifests, not source nodes.
+const SHARED: [&str; 8] = [
+    "start",
+    "architecture",
+    "graph",
+    "dsm",
+    panes::FILE,
+    "quality",
+    "calls",
+    "services",
+];
+
 /// Whether a right pane showing `right` can follow a left pane showing
-/// `left`: World → Graph, Graph → World, Graph → Graph, Graph → Matrix, Graph or Matrix
-/// → File view, Architecture → Graph.
+/// `left`: any two views of [`SHARED`], also two of the same kind.
 pub fn pair(left: &str, right: &str) -> bool {
-    matches!(
-        (left, right),
-        ("start", "graph")
-            | ("graph", "start")
-            | ("graph", "graph")
-            | ("graph", "dsm")
-            | ("graph", "file")
-            | ("dsm", "file")
-            | ("architecture", "graph")
-    )
+    SHARED.contains(&left) && SHARED.contains(&right)
 }
 
-/// What the right view does for `nav` of the left. A selection between
-/// Graph and Matrix is left to the linked selection, which reveals it
-/// already; a File view follows selections only.
+/// Views that reveal their own selection in the pane beside (the linked
+/// selection, [`link`]).
+fn links(kind: &str) -> bool {
+    matches!(kind, "graph" | "dsm" | panes::FILE)
+}
+
+/// Views with a package tree to open and close.
+fn trees(kind: &str) -> bool {
+    matches!(kind, "graph" | "dsm")
+}
+
+/// What the right view does for `nav` of the left. A selection that the
+/// linked selection reveals already is left to it; packages opened and
+/// closed follow between tree views only; a File view follows
+/// selections only.
 pub fn map(left: &str, right: &str, nav: &Nav) -> Option<Nav> {
     if !pair(left, right) {
         return None;
     }
-    let linked = link::reveals(left) && link::reveals(right);
-    match nav {
-        Nav::Select(_) if linked => None,
-        Nav::Select(_) => Some(nav.clone()),
-        _ if right == panes::FILE => None,
-        Nav::Expand { .. } if right == "start" => None,
-        Nav::Expand { .. } if !matches!(left, "graph" | "dsm") => None,
-        _ => Some(nav.clone()),
-    }
+    let follows = match nav {
+        Nav::Select(_) => !(links(left) && link::reveals(right)),
+        Nav::Expand { .. } => trees(left) && trees(right),
+        Nav::Scope(_) => right != panes::FILE,
+    };
+    follows.then(|| nav.clone())
+}
+
+/// Whether node `name` is `dir` or lies below it (node names are paths).
+pub fn within(name: &str, dir: &str) -> bool {
+    name.strip_prefix(dir)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// What a navigation reported by tab `from` means for Follow.
@@ -173,44 +192,115 @@ mod tests {
         Nav::Scope(Some(n.into()))
     }
 
-    /// World → Graph, Graph → Graph, Graph → Matrix, Graph/Matrix → File
-    /// and Architecture → Graph follow; Security beside the World does not.
+    /// Every view with a package, file or class context leads and follows
+    /// every other one; Security, whose findings name third-party
+    /// packages, and Settings neither lead nor follow.
     #[test]
-    fn the_supported_pairs_follow_by_node() {
+    fn every_view_with_a_node_context_pairs() {
+        let views = [
+            "start",
+            "architecture",
+            "graph",
+            "dsm",
+            "file",
+            "quality",
+            "calls",
+            "services",
+        ];
+        for left in views {
+            for right in views {
+                assert!(pair(left, right), "{left} → {right}");
+            }
+            for other in ["security", "settings"] {
+                assert!(!pair(left, other), "{left} → {other}");
+                assert!(!pair(other, left), "{other} → {left}");
+            }
+        }
+    }
+
+    /// What follows of each navigation: scopes and selections everywhere,
+    /// except that a File view follows selections only and a selection
+    /// between tree views is left to the linked selection; expanded
+    /// packages only between tree views (Graph, Matrix).
+    #[test]
+    fn the_pairs_follow_by_node() {
         let expand = Nav::Expand {
             open: vec!["src".into()],
             close: vec![],
         };
         let select = Nav::Select("src/a.ts".into());
-        assert_eq!(map("start", "graph", &scope("src")), Some(scope("src")));
-        assert_eq!(
-            map("start", "graph", &Nav::Scope(None)),
-            Some(Nav::Scope(None))
-        );
-        assert_eq!(map("start", "graph", &select), Some(select.clone()));
-        assert_eq!(map("graph", "graph", &expand), Some(expand.clone()));
-        assert_eq!(map("graph", "dsm", &scope("src")), Some(scope("src")));
-        assert_eq!(map("graph", "dsm", &expand), Some(expand.clone()));
-        assert_eq!(map("graph", "dsm", &select), None, "the link reveals it");
-        assert_eq!(map("graph", "file", &select), Some(select.clone()));
-        assert_eq!(map("dsm", "file", &select), Some(select.clone()));
-        assert_eq!(map("graph", "file", &expand), None);
-        assert_eq!(
-            map("architecture", "graph", &scope("src")),
-            Some(scope("src"))
-        );
-        assert_eq!(map("architecture", "graph", &select), Some(select.clone()));
+        let follows = |l: &str, r: &str, n: &Nav| map(l, r, n) == Some(n.clone());
+        for (l, r) in [
+            ("start", "graph"),
+            ("start", "dsm"),
+            ("graph", "start"),
+            ("dsm", "graph"),
+            ("dsm", "start"),
+            ("architecture", "graph"),
+            ("graph", "quality"),
+            ("graph", "calls"),
+            ("graph", "services"),
+            ("graph", "architecture"),
+            ("quality", "calls"),
+            ("calls", "dsm"),
+            ("services", "start"),
+        ] {
+            assert!(follows(l, r, &scope("src")), "{l} → {r}");
+            assert!(follows(l, r, &Nav::Scope(None)), "{l} → {r}");
+        }
+        for (l, r) in [
+            ("start", "graph"),
+            ("start", "dsm"),
+            ("start", "file"),
+            ("graph", "start"),
+            ("graph", "file"),
+            ("dsm", "file"),
+            ("file", "file"),
+            ("file", "start"),
+            ("file", "quality"),
+            ("architecture", "graph"),
+            ("graph", "quality"),
+            ("graph", "calls"),
+            ("quality", "graph"),
+            ("calls", "file"),
+            ("services", "architecture"),
+        ] {
+            assert!(follows(l, r, &select), "{l} → {r}");
+        }
+        for (l, r) in [
+            ("graph", "dsm"),
+            ("dsm", "graph"),
+            ("dsm", "dsm"),
+            ("file", "graph"),
+        ] {
+            assert_eq!(map(l, r, &select), None, "{l} → {r}: the link reveals it");
+        }
+        for (l, r) in [
+            ("graph", "graph"),
+            ("graph", "dsm"),
+            ("dsm", "graph"),
+            ("dsm", "dsm"),
+        ] {
+            assert!(follows(l, r, &expand), "{l} → {r}");
+        }
+        for (l, r) in [
+            ("graph", "file"),
+            ("graph", "start"),
+            ("graph", "quality"),
+            ("dsm", "architecture"),
+            ("graph", "calls"),
+        ] {
+            assert_eq!(map(l, r, &expand), None, "{l} → {r}: no tree to expand");
+        }
+        for l in ["start", "graph", "dsm", "quality"] {
+            assert_eq!(
+                map(l, "file", &scope("src")),
+                None,
+                "{l}: a File view keeps its node"
+            );
+        }
         assert_eq!(map("start", "security", &scope("src")), None);
-        // Graph → World: packages entered and selections; the World has
-        // no tree to expand.
-        assert_eq!(map("graph", "start", &scope("src")), Some(scope("src")));
-        assert_eq!(map("graph", "start", &select), Some(select.clone()));
-        assert_eq!(map("graph", "start", &expand), None);
-        assert_eq!(
-            map("dsm", "graph", &scope("src")),
-            None,
-            "left leads only from the list"
-        );
+        assert_eq!(map("security", "graph", &select), None);
     }
 
     /// The left pane leads; a navigation in the right pane switches
@@ -230,6 +320,12 @@ mod tests {
         assert_eq!(route(&sec, left), Route::Ignore);
         assert!(blocked(&sec));
         assert!(!blocked(&l));
+        let (dsm, left, right) = split("dsm", "graph");
+        assert_eq!(route(&dsm, left), Route::Follow("graph".into(), right));
+        assert!(!blocked(&dsm));
+        let (world, left, right) = split("start", "quality");
+        assert_eq!(route(&world, left), Route::Follow("quality".into(), right));
+        assert!(!blocked(&world));
         assert!(blocked(&Layout::single("graph")), "one pane");
     }
 
@@ -291,6 +387,15 @@ mod tests {
         );
         assert_eq!(place_navs(&picked, &overview), [Nav::Scope(None)]);
         assert!(place_navs(&picked, &picked).is_empty());
+    }
+
+    /// A node lies within itself and its directories, by path segment.
+    #[test]
+    fn a_node_lies_within_its_directories() {
+        assert!(within("a/b/c.rs", "a/b"));
+        assert!(within("a/b", "a/b"));
+        assert!(!within("a/bc.rs", "a/b"));
+        assert!(!within("a", "a/b"));
     }
 
     /// Follow belongs to a split layout: closing the right pane drops it.
