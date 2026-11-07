@@ -7,6 +7,7 @@ import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Button, KpiItem, StatCard, SeverityChip, StatusLine, Disclosure, EmptyState } from "widgets.slint";
 import { SecurityLine, SecurityFindingItem, SecurityList, SecurityCard } from "security_parts.slint";
+import { CommandField, LineEdit } from "fields.slint";
 
 export { SecurityLine, SecurityFindingItem }
 
@@ -111,24 +112,14 @@ component Coverage inherits Rectangle {
                 font-size: Theme.font-body;
                 wrap: word-wrap;
             }
-            command := TextInput {
-                text: root.model.command;
-                read-only: true;
-                single-line: false;
-                wrap: word-wrap;
-                color: Theme.text;
-                font-family: Theme.mono-family;
-                font-size: Theme.font-body;
-            }
+            command := CommandField { command: root.model.command; }
             HorizontalLayout {
                 alignment: start;
                 spacing: 10px;
                 Button {
                     text: @tr("Security" => "Copy scan command");
                     clicked => {
-                        command.select-all();
-                        command.copy();
-                        command.clear-selection();
+                        command.copy-all();
                         root.copied = @tr("Security" => "Copied.");
                     }
                 }
@@ -159,33 +150,10 @@ component Controls inherits HorizontalLayout {
         spacing: 4px;
         alignment: start;
         Text { text: @tr("Security" => "Search package or CVE"); color: Theme.text; font-size: Theme.field-label; }
-        Rectangle {
-            height: Theme.control-h;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: input.has-focus ? Theme.accent : Theme.border;
-            background: Theme.panel;
-            input := TextInput {
-                x: 9px;
-                width: parent.width - 18px;
-                height: 100%;
-                text: root.model.query;
-                color: Theme.text;
-                font-size: Theme.font-body;
-                vertical-alignment: center;
-                single-line: true;
-                edited => { SecurityData.set-query(self.text); }
-            }
-            if input.text == "": Text {
-                x: 9px;
-                width: parent.width - 18px;
-                height: 100%;
-                text: @tr("Security" => "Package name or advisory ID");
-                color: Theme.muted;
-                font-size: Theme.font-body;
-                vertical-alignment: center;
-                overflow: elide;
-            }
+        LineEdit {
+            text: root.model.query;
+            placeholder-text: @tr("Security" => "Package name or advisory ID");
+            edited(t) => { SecurityData.set-query(t); }
         }
     }
     VerticalLayout {
