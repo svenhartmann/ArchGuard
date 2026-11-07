@@ -571,6 +571,11 @@ baseline = ".archguard/baseline.json"
 [store]                     # default
 db = ".archguard/graph.db"
 sync_on_check = false
+
+[arc42]                     # default; diagrams of arc42.md (ADR 0006)
+diagram_format = "mermaid"  # mermaid | plantuml
+hidden_diagrams = []        # catalogue ids left out: building-blocks, runtime-calls,
+                            # runtime-services, deployment-<file>, cycles
 ```
 
 `archguard init` writes the inferred values and measured thresholds as

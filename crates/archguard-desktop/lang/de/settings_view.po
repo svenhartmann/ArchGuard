@@ -426,3 +426,15 @@ msgstr "Pfad der Graphdatenbank."
 
 msgid "Refresh the database on every check."
 msgstr "Die Datenbank bei jeder Prüfung aktualisieren."
+
+msgid "arc42 diagrams"
+msgstr "arc42-Diagramme"
+
+msgid "Which derived diagrams the arc42 document shows."
+msgstr "Welche abgeleiteten Diagramme die arc42-Dokumentation zeigt."
+
+msgid "Text format of the diagrams written into arc42.md."
+msgstr "Textformat der Diagramme in arc42.md."
+
+msgid "Diagram ids left out of the document; all others are shown."
+msgstr "IDs der Diagramme, die im Dokument fehlen; alle anderen werden gezeigt."

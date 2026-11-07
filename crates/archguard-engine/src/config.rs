@@ -20,7 +20,7 @@ const CONFIG_FILE_NAME: &str = "archguard.toml";
 
 /// The configuration keys whose provenance [`load_config`] records: the
 /// five sections of Kap. 11 plus the top-level `derive_layers` switch.
-const SECTION_KEYS: [&str; 12] = [
+const SECTION_KEYS: [&str; 13] = [
     "project",
     "modules",
     "layers",
@@ -32,6 +32,7 @@ const SECTION_KEYS: [&str; 12] = [
     "architecture",
     "semantic",
     "store",
+    "arc42",
     "derive_layers",
 ];
 
@@ -132,6 +133,10 @@ orphans = "off"             # opt-in candidates: off | info | warning | error
 # alternatives = ["Another considered option"]
 # trade_offs = ["An explicitly accepted disadvantage"]
 # links = ["docs/adr-1.md"]
+
+[arc42]                     # diagrams of arc42.md (ADR 0006)
+diagram_format = "mermaid"  # mermaid | plantuml
+hidden_diagrams = []        # catalogue ids left out, e.g. "runtime-calls"
 "#;
 
 /// A parsed `archguard.toml` plus the provenance of its sections.

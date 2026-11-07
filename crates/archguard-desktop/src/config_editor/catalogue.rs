@@ -25,10 +25,11 @@ pub enum Group {
     Architecture,
     Semantic,
     Store,
+    Arc42,
 }
 
 impl Group {
-    pub const ALL: [Group; 11] = [
+    pub const ALL: [Group; 12] = [
         Group::Project,
         Group::Modules,
         Group::Layers,
@@ -40,6 +41,7 @@ impl Group {
         Group::Architecture,
         Group::Semantic,
         Group::Store,
+        Group::Arc42,
     ];
 
     /// English heading of the form section.
@@ -56,6 +58,7 @@ impl Group {
             Group::Architecture => "Architecture",
             Group::Semantic => "Semantic analysis",
             Group::Store => "Store",
+            Group::Arc42 => "arc42 diagrams",
         }
     }
 }
@@ -662,7 +665,28 @@ pub const FIELDS: &[Field] = &[
         G::Store,
         "Refresh the database on every check.",
     ),
+    // arc42 (ADR 0006)
+    f(
+        "arc42",
+        K::Table,
+        G::Arc42,
+        "Which derived diagrams the arc42 document shows.",
+    ),
+    f(
+        "arc42.diagram_format",
+        K::Enum(DIAGRAM_FORMATS),
+        G::Arc42,
+        "Text format of the diagrams written into arc42.md.",
+    ),
+    f(
+        "arc42.hidden_diagrams",
+        K::List,
+        G::Arc42,
+        "Diagram ids left out of the document; all others are shown.",
+    ),
 ];
+
+const DIAGRAM_FORMATS: &[&str] = &["mermaid", "plantuml"];
 
 /// The field of a pattern (`layers[].name`) or concrete path
 /// (`layers[3].name`).

@@ -1,12 +1,10 @@
 //! Evidence-driven arc42 sections shared by CLI, MCP and the viewer.
 //! Chapter structure adapted from arc42 by Gernot Starke and Peter Hruschka,
 //! CC BY-SA 4.0. All explanatory text and projections below are ArchGuard's.
-use archguard_core::{
-    CallAnalysis, Config, GoalAssessment, Graph, Report, ServiceDependencyKind, ServiceTopology,
-};
+use archguard_core::{Diagram, ServiceDependencyKind};
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, fmt::Write};
+use std::fmt::Write;
 
 const NOTICE: &str = "Kapitelstruktur nach [arc42](https://arc42.org/overview/) von Gernot Starke und Peter Hruschka, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Anpassung: automatisch befüllte Belegabschnitte und offene Ergänzungen. Die Lizenz der Kapitelvorlage gilt nicht automatisch für die eingefügten Projektdaten.\n";
 const TITLES: [&str; 12] = [
@@ -38,27 +36,12 @@ pub struct Arc42Document {
     pub scope: String,
     pub notice: &'static str,
     pub chapters: Vec<Arc42Chapter>,
+    /// The diagram catalogue (ADR 0006); `shown` ones are in the chapters.
+    pub diagrams: Vec<Diagram>,
 }
 
-pub struct Arc42Inputs<'a> {
-    /// Original containment tree and source edges, before view aggregation.
-    pub source_graph: &'a Graph,
-    pub view: &'a Graph,
-    pub report: &'a Report,
-    pub config: &'a Config,
-    pub calls: &'a CallAnalysis,
-    pub services: &'a ServiceTopology,
-    /// The same normalized evidence models that the viewer displays.
-    pub insights: &'a Value,
-    /// Logical compiler paths -> unambiguous physical project-relative paths.
-    pub source_paths: &'a BTreeMap<String, String>,
-    pub blocks: &'a Arc42Blocks,
-    /// One assessment per declared goal (ADR 0003).
-    pub goals: &'a [GoalAssessment],
-}
-
-pub use crate::arc42_blocks::Arc42Blocks;
 use crate::arc42_blocks::Blocks;
+pub use crate::arc42_blocks::{Arc42Blocks, Arc42Inputs};
 
 /// Escapes only what changes Markdown structure inside a line, so paths and
 /// sentences stay readable in the hand-edited file.
@@ -173,6 +156,20 @@ fn block(number: u8, content: &str) -> String {
     )
 }
 impl Arc42Document {
+    /// The document of `chapters` with the diagram catalogue; shown
+    /// diagrams open their chapters (ADR 0006).
+    fn new(scope: String, mut chapters: Vec<Arc42Chapter>, input: &Arc42Inputs<'_>) -> Self {
+        let text = chapters.iter_mut().map(|c| (c.number, &mut c.markdown));
+        let diagrams = crate::arc42_diagrams::add(text, input);
+        Self {
+            schema_version: 1,
+            scope,
+            notice: NOTICE,
+            chapters,
+            diagrams,
+        }
+    }
+
     /// Regeneration is limited to explicit generated blocks. Free prose and
     /// headings remain byte-for-byte unchanged, including a file's CRLF style.
     pub fn merge(&self, saved: &str, chapter: Option<u8>) -> Result<String, String> {
@@ -258,7 +255,6 @@ fn package_markdown(input: &Arc42Inputs<'_>, questions: &mut Vec<String>) -> Str
         blocks.covered,
         blocks.internal
     );
-    out.push_str(&blocks.mermaid());
     table(
         &mut out,
         "| Baustein | Verantwortung | Schicht | Dateien | Nutzt |\n| --- | --- | --- | ---: | --- |",
@@ -827,17 +823,14 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
             let _ = writeln!(c.markdown, "- {q}");
         }
     }
-    Arc42Document {
-        schema_version: 1,
-        scope: view.root.clone(),
-        notice: NOTICE,
-        chapters,
-    }
+    Arc42Document::new(view.root.clone(), chapters, &input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archguard_core::{CallAnalysis, Config, Report, ServiceTopology};
+    use std::collections::BTreeMap;
     #[test]
     fn imported_lists_show_omissions_and_manifest_projects_are_not_deployments() {
         let graph = archguard_core::GraphBuilder::new().build("test".into());
@@ -1072,7 +1065,7 @@ mod tests {
             "consumers before providers"
         );
         assert!(
-            md.contains("subgraph l2[\"Schicht cli\"]"),
+            md.contains("subgraph g0[\"Schicht cli\"]"),
             "the diagram groups blocks by layer: {md}"
         );
         assert!(
@@ -1202,6 +1195,7 @@ mod tests {
                     questions: vec![],
                 })
                 .collect(),
+            diagrams: vec![],
         }
     }
     #[test]

@@ -16,6 +16,11 @@ pub const DEVELOPMENT_PATHS: &str = include_str!("development_paths.json");
 mod architecture;
 mod calls;
 mod config;
+mod diagrams;
+pub use diagrams::{
+    Arc42Config, Diagram, DiagramElement, DiagramFormat, DiagramKind, DiagramRelation, ElementKind,
+    RelationKind,
+};
 mod evaluation;
 pub use evaluation::{
     Assessment, AssessmentMeta, ExpectedKind, ExpectedProblem, JudgedFinding, Verdict,

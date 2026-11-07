@@ -2,7 +2,11 @@
 //! which layer and project they belong to and how they use each other.
 //! The Markdown table around it stays in `arc42.rs`.
 
-use archguard_core::{Config, Graph, Node, NodeId, NodeKind, ServiceProject, ServiceTopology};
+use archguard_core::{
+    CallAnalysis, Config, DiagramElement, DiagramRelation, ElementKind, GoalAssessment, Graph,
+    Node, NodeId, NodeKind, RelationKind, Report, ServiceProject, ServiceTopology,
+};
+use serde_json::Value;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -17,6 +21,24 @@ pub struct Arc42Blocks {
     pub descriptions: BTreeMap<String, String>,
 }
 
+/// Everything the arc42 chapters are written from.
+pub struct Arc42Inputs<'a> {
+    /// Original containment tree and source edges, before view aggregation.
+    pub source_graph: &'a Graph,
+    pub view: &'a Graph,
+    pub report: &'a Report,
+    pub config: &'a Config,
+    pub calls: &'a CallAnalysis,
+    pub services: &'a ServiceTopology,
+    /// The same normalized evidence models that the viewer displays.
+    pub insights: &'a Value,
+    /// Logical compiler paths -> unambiguous physical project-relative paths.
+    pub source_paths: &'a BTreeMap<String, String>,
+    pub blocks: &'a Arc42Blocks,
+    /// One assessment per declared goal (ADR 0003).
+    pub goals: &'a [GoalAssessment],
+}
+
 /// Boxes in the diagram: nine blocks, or eight and a remainder box.
 const BOXES: usize = 9;
 
@@ -29,7 +51,6 @@ pub(crate) struct Blocks<'a> {
     frontier: Vec<&'a Node>,
     pub labels: Vec<String>,
     pub files: Vec<usize>,
-    layers: Vec<Option<usize>>,
     layer_names: Vec<Option<&'a str>>,
     descriptions: Vec<Option<&'a str>>,
     pub order: Vec<usize>,
@@ -38,6 +59,8 @@ pub(crate) struct Blocks<'a> {
     /// Blocks in the remainder box, 0 without one.
     more: usize,
     relations: BTreeMap<(usize, usize), usize>,
+    /// Source-graph node -> block.
+    owner: BTreeMap<NodeId, usize>,
     uses: BTreeMap<(usize, usize), usize>,
     /// Source connections whose both ends lie in blocks.
     pub covered: usize,
@@ -105,15 +128,16 @@ impl<'a> Blocks<'a> {
             frontier,
             labels,
             files: groups.files,
-            layers,
             order,
             more,
             relations: BTreeMap::new(),
+            owner: BTreeMap::new(),
             uses: BTreeMap::new(),
             covered: 0,
             internal: 0,
         };
         blocks.count_edges(graph, &groups.owner);
+        blocks.owner = groups.owner;
         blocks
     }
 
@@ -157,51 +181,69 @@ impl<'a> Blocks<'a> {
             .collect()
     }
 
-    /// The flowchart of the first blocks, grouped by layer; empty without blocks.
-    pub fn mermaid(&self) -> String {
+    /// The diagram boxes of the first blocks (grouped by layer) and, when
+    /// some are left out, a remainder box; empty without blocks.
+    pub fn elements(&self) -> Vec<DiagramElement> {
         let boxes = if self.more > 0 { BOXES - 1 } else { BOXES };
-        let shown = &self.order[..self.order.len().min(boxes)];
-        if shown.is_empty() {
-            return String::new();
+        let element = |position: usize, name: String, kind| DiagramElement {
+            id: format!("e{position}"),
+            name,
+            kind,
+            technology: None,
+            detail: None,
+            group: None,
+            cycle: false,
+        };
+        let mut out: Vec<DiagramElement> = self.order[..self.order.len().min(boxes)]
+            .iter()
+            .map(|&i| DiagramElement {
+                group: self.layer_names[i].map(|name| format!("Schicht {name}")),
+                ..element(
+                    self.display[&i],
+                    self.labels[i].clone(),
+                    ElementKind::Package,
+                )
+            })
+            .collect();
+        if self.more > 0 && !out.is_empty() {
+            let name = format!("Weitere {} Pakete", self.more);
+            out.push(element(BOXES - 1, name, ElementKind::Remainder));
         }
-        let mut out = String::from("```mermaid\nflowchart LR\n");
-        let mut open: Option<usize> = None;
-        for &i in shown {
-            open = self.switch_layer(&mut out, open, i);
-            let indent = if open.is_some() { "    " } else { "  " };
-            node(&mut out, self.display[&i], &self.labels[i], indent);
-        }
-        if open.is_some() {
-            out.push_str("  end\n");
-        }
-        if self.more > 0 {
-            node(
-                &mut out,
-                BOXES - 1,
-                &format!("Weitere {} Pakete", self.more),
-                "  ",
-            );
-        }
-        for ((a, b), count) in &self.relations {
-            let _ = writeln!(out, "  n{a} -->|{count}| n{b}");
-        }
-        out.push_str("```\n\n");
         out
     }
 
-    /// Closes the open layer box and opens block `i`'s when they differ.
-    fn switch_layer(&self, out: &mut String, open: Option<usize>, i: usize) -> Option<usize> {
-        let next = self.layers[i];
-        if next == open {
-            return open;
+    /// Source connections between diagram boxes.
+    pub fn relations(&self) -> Vec<DiagramRelation> {
+        box_relations(&self.relations, RelationKind::Dependency)
+    }
+
+    /// Project call sites between diagram boxes, through the classes'
+    /// source-graph nodes.
+    pub fn call_relations(&self, graph: &Graph, calls: &CallAnalysis) -> Vec<DiagramRelation> {
+        let by_name: BTreeMap<&str, NodeId> = graph
+            .nodes
+            .iter()
+            .map(|n| (n.name.as_str(), n.id))
+            .collect();
+        let boxes: BTreeMap<&str, usize> = calls
+            .classes
+            .iter()
+            .filter_map(|c| {
+                let block = self.owner.get(by_name.get(c.graph_node.as_str())?)?;
+                Some((c.id.as_str(), self.display[block]))
+            })
+            .collect();
+        let mut counts = BTreeMap::new();
+        for call in calls.calls.iter().filter(|c| c.resolution == "project") {
+            let from = boxes.get(call.from_class.as_str());
+            let to = call.to_class.as_deref().and_then(|c| boxes.get(c));
+            if let (Some(&a), Some(&b)) = (from, to)
+                && a != b
+            {
+                *counts.entry((a, b)).or_default() += 1;
+            }
         }
-        if open.is_some() {
-            out.push_str("  end\n");
-        }
-        if let (Some(l), Some(name)) = (next, self.layer_names[i]) {
-            let _ = writeln!(out, "  subgraph l{l}[\"Schicht {}\"]", escape(name));
-        }
-        next
+        box_relations(&counts, RelationKind::Call)
     }
 
     /// The open question for packages whose manifest declares no responsibility.
@@ -375,19 +417,18 @@ fn order(layers: &[Option<usize>], files: &[usize], labels: &[String]) -> Vec<us
     order
 }
 
-fn node(out: &mut String, position: usize, text: &str, indent: &str) {
-    let _ = writeln!(out, "{indent}n{position}[\"{}\"]", escape(text));
-}
-
-/// Mermaid label text: anything beyond plain characters as an entity.
-fn escape(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || " /._-".contains(ch) {
-                ch.to_string()
-            } else {
-                format!("#{};", ch as u32)
-            }
+fn box_relations(
+    counts: &BTreeMap<(usize, usize), usize>,
+    kind: RelationKind,
+) -> Vec<DiagramRelation> {
+    counts
+        .iter()
+        .map(|(&(a, b), &count)| DiagramRelation {
+            from: format!("e{a}"),
+            to: format!("e{b}"),
+            kind,
+            count,
+            cycle: false,
         })
         .collect()
 }

@@ -11,6 +11,7 @@
 
 mod arc42;
 mod arc42_blocks;
+mod arc42_diagrams;
 mod arc42_goals;
 mod architecture_doc;
 mod dot;
@@ -28,6 +29,7 @@ mod text;
 pub use staged::{branch_diff_html, staged_diff_html};
 
 pub use arc42::{Arc42Blocks, Arc42Chapter, Arc42Document, Arc42Inputs, render_arc42};
+pub use arc42_diagrams::{mermaid as diagram_mermaid, plantuml as diagram_plantuml, section as diagram_section};
 pub use architecture_doc::render_architecture_doc;
 pub use dot::to_dot;
 pub use dsm::{to_dsm_json, to_dsm_text};

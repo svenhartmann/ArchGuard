@@ -352,6 +352,7 @@ mod tests {
                     questions: vec![],
                 })
                 .collect(),
+            diagrams: vec![],
         }
     }
 
