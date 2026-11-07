@@ -138,3 +138,16 @@ What exists:
   `archguard doc --arc42`. Checked in headless snapshots of a copy of
   `fixtures/compose-services` (chapters 5, 6, 7, diagram view, hide and
   show via `ARCHGUARD_DESKTOP_ARC_TOGGLE`). Not tried in a real window.
+- **2026-11-07:** Step 3 implemented. The trace import keeps the matched
+  CLIENT/SERVER and producer/consumer pairs per trace
+  (`trace_sequences.rs`): at most 5 traces (most steps first), 40 steps
+  each, as `ServiceTopology.traces` with offset, duration, error and an
+  operation from `http.route` (with method) or `rpc.service`/`rpc.method`
+  only; URLs, queries, span names and message destinations are never
+  copied (topics stay private, as in the dependency evidence). Each trace
+  is a catalogue entry `runtime-trace-<first 8 hex of the trace id>` in
+  chapter 6, written as Mermaid `sequenceDiagram` or PlantUML sequence
+  (errors marked, events asynchronous) and drawn natively in the desktop
+  (participants, lifelines, messages in measured order). Checked with a
+  hand-written OTLP file in a copy of `fixtures/compose-services`
+  (`archguard doc --arc42 --stdout` and a desktop snapshot).

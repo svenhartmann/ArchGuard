@@ -429,6 +429,8 @@ fn box_relations(
             kind,
             count,
             cycle: false,
+            label: None,
+            error: false,
         })
         .collect()
 }

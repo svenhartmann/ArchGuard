@@ -3,6 +3,7 @@
 //! as Mermaid or PlantUML (`[arc42]` in `archguard.toml`).
 
 mod render;
+mod sequences;
 mod services;
 
 use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, ElementKind};
@@ -81,6 +82,7 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         out.extend(cycles(&elements, &relations));
     }
     out.extend(services::diagrams(input.services));
+    out.extend(sequences::diagrams(input.services));
     out.sort_by_key(|d| d.chapter);
     out
 }

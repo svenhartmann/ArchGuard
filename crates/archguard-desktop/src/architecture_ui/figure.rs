@@ -11,6 +11,7 @@ use archguard_engine::report::{diagram_mermaid, diagram_plantuml};
 use slint::{ModelRc, VecModel};
 
 use super::diagram::{self, Layout};
+use super::sequence::tone;
 use crate::tab_support::Texts;
 use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
 
@@ -20,6 +21,9 @@ fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
 
 /// `chapter` names the chapter in the diagram view; empty in a chapter.
 pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts) -> ArcFigure {
+    if d.kind == DiagramKind::Sequence {
+        return super::sequence::figure(d, source(d, format), chapter, texts);
+    }
     let at: HashMap<&str, usize> = d
         .elements
         .iter()
@@ -74,11 +78,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
         frames: model(frames),
         dw: l.width,
         dh: l.height,
-        source: match format {
-            DiagramFormat::Mermaid => diagram_mermaid(d),
-            DiagramFormat::Plantuml => diagram_plantuml(d),
-        }
-        .into(),
+        source: source(d, format).into(),
         legend: if c4 {
             texts.t(LEGEND).into()
         } else {
@@ -87,19 +87,15 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
     }
 }
 
-const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence.";
-
-fn tone(kind: RelationKind) -> i32 {
-    match kind {
-        RelationKind::Dependency | RelationKind::Call => 0,
-        RelationKind::Startup => 1,
-        RelationKind::Http => 2,
-        RelationKind::Grpc => 3,
-        RelationKind::Event => 4,
-        RelationKind::Reference => 5,
-        RelationKind::Data => 6,
+/// The text written into arc42.md.
+fn source(d: &Diagram, format: DiagramFormat) -> String {
+    match format {
+        DiagramFormat::Mermaid => diagram_mermaid(d),
+        DiagramFormat::Plantuml => diagram_plantuml(d),
     }
 }
+
+const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence.";
 
 /// The label of a C4 relation; package maps show their count.
 fn line_text(kind: RelationKind, texts: &Texts) -> &str {

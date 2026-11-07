@@ -90,9 +90,13 @@ pub(super) fn snapshot_overrides(s: &mut ArchitectureState) {
         s.chapter = n;
     }
     s.catalogue = std::env::var("ARCHGUARD_DESKTOP_ARC_CATALOGUE").is_ok();
-    // `ARCHGUARD_DESKTOP_ARC_TOGGLE=<id>:<0|1>` ticks a diagram off or on.
+    // `ARCHGUARD_DESKTOP_ARC_TOGGLE=<id>:<0|1>@<project root>` ticks a
+    // diagram off or on; only in that project, never in others the
+    // snapshot run restores.
     if let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_ARC_TOGGLE")
-        && let Some((id, on)) = spec.rsplit_once(':')
+        && let Some((tick, root)) = spec.rsplit_once('@')
+        && let Some((id, on)) = tick.rsplit_once(':')
+        && std::path::Path::new(root) == s.root
     {
         toggle_diagram(s, id, on == "1");
     }

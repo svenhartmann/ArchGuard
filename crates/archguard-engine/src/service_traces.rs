@@ -1,6 +1,7 @@
 //! Optional, local OTLP/JSON evidence. No collector, application or network is started.
 //! A service edge requires matched CLIENT/SERVER spans or explicitly correlated messaging spans. Resource
 //! coexistence, shared destinations and orphan spans never establish an edge.
+use crate::trace_sequences::Step;
 use archguard_core::{
     Service, ServiceDependency, ServiceDependencyKind as Kind, ServiceDiagnostic, ServiceEvidence,
     ServiceTopology,
@@ -179,6 +180,7 @@ struct Span {
     start: u64,
     end: u64,
     error: bool,
+    operation: Option<String>,
 }
 struct Entry {
     span: Span,
@@ -271,6 +273,9 @@ impl Span {
             start,
             end,
             error,
+            operation: crate::trace_sequences::operation(|key| {
+                string_attribute(value, key).map(str::to_owned)
+            }),
         })
     }
     fn ids(value: &Value) -> Option<(String, String, Option<String>)> {
@@ -502,6 +507,8 @@ struct Correlation<'a> {
     reasons: Reasons,
     observed: BTreeMap<(String, String, Kind), Observation>,
     used_servers: BTreeSet<Key>,
+    /// The same pairs one by one, for request sequences.
+    steps: Vec<Step>,
 }
 impl<'a> Correlation<'a> {
     fn new(collector: &'a Collector, reasons: Reasons, report: &mut ServiceTopology) -> Self {
@@ -511,6 +518,7 @@ impl<'a> Correlation<'a> {
             reasons,
             observed: BTreeMap::new(),
             used_servers: BTreeSet::new(),
+            steps: Vec::new(),
         };
         for (name, spaces) in &collector.namespaces {
             if spaces.len() != 1 {
@@ -579,6 +587,16 @@ impl<'a> Correlation<'a> {
                 .add("matched pairs without HTTP/gRPC protocol attributes", 1);
             return;
         };
+        self.steps.push(Step {
+            trace: client.trace.clone(),
+            from: from.clone(),
+            to: to.clone(),
+            kind,
+            start: client.start,
+            end: client.end,
+            error: client.error || server.error,
+            operation: server.operation.clone().or_else(|| client.operation.clone()),
+        });
         self.observed.entry((from, to, kind)).or_default().add(
             client.end - client.start,
             client.error || server.error,
@@ -646,6 +664,17 @@ impl<'a> Correlation<'a> {
             return false;
         };
         if from != to {
+            self.steps.push(Step {
+                trace: received.trace.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                kind: Kind::Event,
+                start: producer.start,
+                end: received.end,
+                error: producer.error || received.error,
+                // Topics stay private, as in the dependency evidence.
+                operation: None,
+            });
             self.observed
                 .entry((from, to, Kind::Event))
                 .or_default()
@@ -678,6 +707,7 @@ impl<'a> Correlation<'a> {
         }
     }
     fn publish(self, report: &mut ServiceTopology) {
+        report.traces = crate::trace_sequences::sequences(self.steps);
         for (key, sample) in self.observed {
             let description = sample.description(key.2);
             let proof = ServiceEvidence {
@@ -749,6 +779,7 @@ mod tests {
             diagnostics: vec![],
             datastores: Default::default(),
             complete: true,
+            traces: vec![],
         }
     }
     fn span(id: &str, parent: &str, kind: u64) -> Value {
@@ -797,6 +828,23 @@ mod tests {
         assert!(text.contains("mean_client_duration_ms=10.000"));
         assert!(!serde_json::to_string(&r).unwrap().contains("secret"));
         assert!(!r.complete);
+    }
+    #[test]
+    fn a_matched_pair_becomes_a_request_sequence_with_its_route() {
+        let mut r = report();
+        let client = span("2222222222222222", "", 3);
+        let mut server = span("3333333333333333", "2222222222222222", 2);
+        server["attributes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"key":"http.route","value":{"stringValue":"/orders/{id}"}}));
+        run(vec![resource("web", vec![client]), resource("orders", vec![server])], &mut r);
+        assert_eq!(r.traces.len(), 1);
+        let step = &r.traces[0].steps[0];
+        assert_eq!((step.from.as_str(), step.to.as_str()), ("trace:web", "trace:orders"));
+        assert_eq!(step.operation.as_deref(), Some("GET /orders/{id}"));
+        assert_eq!((step.offset_us, step.duration_us), (0, 10_000));
+        assert!(!serde_json::to_string(&r).unwrap().contains("secret"));
     }
     #[test]
     fn orphan_spans_and_coexistence_do_not_invent_edges() {

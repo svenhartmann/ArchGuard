@@ -15,6 +15,7 @@ mod follow;
 mod markdown;
 mod names;
 mod projection;
+mod sequence;
 mod state;
 mod view;
 mod visual;

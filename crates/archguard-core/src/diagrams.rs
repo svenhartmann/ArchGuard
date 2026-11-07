@@ -38,6 +38,8 @@ pub enum DiagramKind {
     Deployment,
     /// C4 container view of how services talk to each other.
     Communication,
+    /// One recorded request: participants and messages in time order.
+    Sequence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +99,13 @@ pub struct DiagramRelation {
     pub count: usize,
     #[serde(default)]
     pub cycle: bool,
+    /// Text on the arrow when the kind alone does not say enough
+    /// (sequence messages: order, operation, duration).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// A recorded error on this message.
+    #[serde(default)]
+    pub error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

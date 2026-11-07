@@ -169,6 +169,8 @@ impl<'a> Builder<'a> {
                     kind,
                     count,
                     cycle: false,
+                    label: None,
+                    error: false,
                 })
                 .collect(),
             shown: true,

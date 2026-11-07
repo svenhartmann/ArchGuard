@@ -88,6 +88,7 @@ mod snapshot;
 mod target_architecture;
 mod test_coverage;
 mod test_evidence;
+mod trace_sequences;
 mod typescript_calls;
 mod workspace;
 mod workspace_sources;

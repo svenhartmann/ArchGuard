@@ -68,6 +68,7 @@ pub fn mermaid(d: &Diagram) -> String {
         DiagramKind::Packages => mermaid_flowchart(d),
         DiagramKind::Deployment => c4(d, C4Text::Mermaid("C4Deployment")),
         DiagramKind::Communication => c4(d, C4Text::Mermaid("C4Container")),
+        DiagramKind::Sequence => sequence(d, false),
     }
 }
 
@@ -76,6 +77,7 @@ pub fn plantuml(d: &Diagram) -> String {
         DiagramKind::Packages => plantuml_packages(d),
         DiagramKind::Deployment => c4(d, C4Text::Plantuml("C4_Deployment")),
         DiagramKind::Communication => c4(d, C4Text::Plantuml("C4_Container")),
+        DiagramKind::Sequence => sequence(d, true),
     }
 }
 
@@ -205,4 +207,48 @@ fn c4_element(e: &DiagramElement) -> String {
         arg(e.technology.as_deref().unwrap_or("Dienst")),
         arg(e.detail.as_deref().unwrap_or(""))
     )
+}
+
+/// A sequence diagram: participants in first-use order, then one message
+/// per relation. Events are asynchronous, errors are marked.
+fn sequence(d: &Diagram, plantuml: bool) -> String {
+    let mut out = if plantuml {
+        format!("@startuml\ntitle {}\n", d.title)
+    } else {
+        format!("sequenceDiagram\n  title {}\n", d.title.replace(':', " "))
+    };
+    for e in &d.elements {
+        let _ = if plantuml {
+            writeln!(out, "participant {} as {}", arg(&e.name), e.id)
+        } else {
+            writeln!(out, "  participant {} as {}", e.id, entity(&e.name))
+        };
+    }
+    for r in &d.relations {
+        let text = r.label.clone().unwrap_or_else(|| label(r, &d.unit));
+        let event = r.kind == RelationKind::Event;
+        let arrow = match (plantuml, event, r.error) {
+            (true, _, true) => "-[#d33]>",
+            (true, true, _) => "->>",
+            (true, false, _) => "->",
+            (false, _, true) => "-x",
+            (false, true, _) => "-)",
+            (false, false, _) => "->>",
+        };
+        let _ = if plantuml {
+            writeln!(out, "{} {arrow} {} : {}", r.from, r.to, text)
+        } else {
+            writeln!(
+                out,
+                "  {}{arrow}{}: {}",
+                r.from,
+                r.to,
+                text.replace([':', ';', '#'], " ")
+            )
+        };
+    }
+    if plantuml {
+        out.push_str("@enduml\n");
+    }
+    out
 }

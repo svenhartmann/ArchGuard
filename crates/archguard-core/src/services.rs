@@ -22,6 +22,37 @@ pub struct ServiceTopology {
     /// Whether all discovered configuration was covered by this static reader.
     /// Even true does not establish runtime completeness or reachability.
     pub complete: bool,
+    /// Recorded requests from OTLP traces, as ordered service-to-service
+    /// steps (ADR 0006); empty without `.archguard/otel-traces.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<TraceSequence>,
+}
+
+/// One recorded trace: the matched service-to-service spans in start order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceSequence {
+    pub trace: String,
+    pub start_unix_ns: u64,
+    /// From the first step's start to the last step's end.
+    pub duration_us: u64,
+    pub steps: Vec<TraceStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceStep {
+    /// Repository service ids, as in `dependencies`.
+    pub from: String,
+    pub to: String,
+    /// `HttpCall`, `GrpcCall` or `Event`.
+    pub kind: ServiceDependencyKind,
+    /// Start relative to the trace's first step.
+    pub offset_us: u64,
+    /// Client span duration (consumer span for events).
+    pub duration_us: u64,
+    pub error: bool,
+    /// Route, RPC method or message destination; never a URL or a query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
