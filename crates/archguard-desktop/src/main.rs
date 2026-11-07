@@ -9,6 +9,7 @@ mod arc42_file;
 mod architecture_ui;
 #[cfg(feature = "snapshot")]
 mod bench;
+mod block_names;
 mod calls_ui;
 mod config_editor;
 mod context;

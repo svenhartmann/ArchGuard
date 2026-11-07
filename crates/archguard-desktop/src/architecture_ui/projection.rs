@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use archguard_engine::core::{CallAnalysis, Graph, NodeId, NodeKind};
 
-use super::names;
+use crate::block_names as names;
 
 /// Containment indexes over `graph.nodes` (positions, not ids).
 pub struct SourceModel {
@@ -117,7 +117,7 @@ pub struct PNode {
     pub group: Group,
     /// The full path (synthetic groups: their label).
     pub name: String,
-    /// What the views show ([`super::names`]); `name` stays the tooltip.
+    /// What the views show ([`crate::block_names`]); `name` stays the tooltip.
     pub label: String,
     pub files: usize,
     pub cycle: bool,
