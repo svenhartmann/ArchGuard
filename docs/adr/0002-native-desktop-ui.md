@@ -447,3 +447,12 @@ comparison of the native view against the web view on the same project
   maps still fit by width (about 65 % on this repository), long edges
   can bend in S-curves, Mermaid blocks in the chapter text are still
   shown as source.
+- **2026-11-08:** Monospace on macOS is Menlo instead of ".SF NS Mono"
+  (`fix/desktop-mono-italic`). The hidden SF Mono family holds
+  SFNSMono.ttf and SFNSMonoItalic.ttf; fontique, which every Slint
+  renderer uses for font matching, reads both as upright weight 295 and
+  picked the italic file, so paths, commands and the project chip were
+  drawn in italic (in snapshots and, since they share the code, in the
+  window). Slint cannot register a font file by path, so the family
+  changes. `platform::tests::the_monospace_font_is_upright` measures the
+  slant of a "|" in the configured family (".SF NS Mono": 7.9 px).
