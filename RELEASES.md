@@ -130,6 +130,15 @@ untouched and exits with code 3. A binary built for a target without a release
 archive (for example `*-linux-gnu` from `cargo build`) cannot update itself.
 `ARCHGUARD_UPDATE_API` replaces `https://api.github.com`, e.g. for a mirror.
 
+The lookup, download limit, checksum checks and install live in the crate
+`crates/archguard-update`, shared with the desktop app. Its `desktop` module
+already finds the desktop package of the latest release, checks it against
+`SHA256SUMS-desktop` and can install it (AppImage replaced in place, `.app`
+swapped from the mounted `.dmg`, `.msi` handed to `msiexec /passive`; anything
+else gets the release page for a manual download). The desktop app does not
+call it yet: self-update in the app is planned as the next step. Until then,
+update the desktop app by installing the new package by hand.
+
 ## Report ZIP
 
 The `release-bundle` artifact and the tag release draft include one ZIP containing:

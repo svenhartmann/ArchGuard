@@ -187,6 +187,7 @@ archguard/
 │   ├── archguard-analysis/       # L1: SCC, cycles, metrics, layer rules, cut suggestions, baseline
 │   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, html, graphml, sarif)
 │   ├── archguard-store/          # L1: GraphStore trait, Graph DB mirror (openCypher), query guard
+│   ├── archguard-update/         # L1: self-update from GitHub releases (CLI and desktop)
 │   ├── archguard-engine/         # L2: load config, orchestrate pipeline, graph cache
 │   ├── archguard-mcp/            # L3: MCP server (stdio), tool registration
 │   ├── archguard-cli/            # L3: Binary `archguard`, clap commands
@@ -202,6 +203,7 @@ archguard/
 | `archguard-analysis` | Tarjan SCC, bounded cycle enumeration, fan-in/out, instability, layer checks, **layer inference (ranking and name affinity)**, cut scoring, baseline diff | `petgraph` |
 | `archguard-report` | Serialize `Report` types into all output formats | `serde_json` |
 | `archguard-store` | `GraphStore` trait, DB mirror, read-only openCypher queries, query sanitizer | `lbug = "=0.22.1"` (LadybugDB, only with Cargo feature `db`) |
+| `archguard-update` | Latest-release lookup, version compare, size-limited download, `SHA256SUMS` check; CLI binary install and desktop package install (AppImage, `.app` from `.dmg`, `.msi`) | `ureq`, `sha2`, `tar`, `flate2`, `zip`, `self-replace` |
 | `archguard-engine` | `analyze(path, config) -> Report`, config parsing **and declared/derived/default resolution** (Section 11), caching, DB sync | `toml` |
 | `archguard-mcp` | MCP tools, JSON schemas, pagination guard | `rmcp` (official MCP Rust SDK), `tokio` (only here), `schemars` |
 | `archguard-cli` | Argument parsing, exit codes, format selection | `clap`, `anyhow` |

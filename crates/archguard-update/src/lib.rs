@@ -4,11 +4,16 @@
 //! [`release`] looks up the latest release and its assets, [`version`]
 //! compares versions, [`http`] downloads with a size limit and [`checksum`]
 //! checks bytes against a `SHA256SUMS` file. [`binary`] is the CLI's archive
-//! install.
+//! install; [`desktop`] finds and installs the desktop packages.
 //! Drafts and pre-releases are invisible to `releases/latest`.
 
 pub mod binary;
 pub mod checksum;
+pub mod desktop;
 pub mod http;
 pub mod release;
 pub mod version;
+
+mod appimage;
+mod macos_bundle;
+mod msi;
