@@ -1,0 +1,59 @@
+name: Compiler sandbox
+
+# ADR 0007: the confinement of project compiler tooling is platform code;
+# each platform runs its own tests. Runs whenever that code changes.
+on:
+  push:
+    paths:
+      - crates/archguard-engine/src/compiler_sandbox*.rs
+      - crates/archguard-engine/src/bin/archguard-confine.rs
+      - crates/archguard-engine/Cargo.toml
+      - .github/workflows/sandbox.yml
+  pull_request:
+    paths:
+      - crates/archguard-engine/src/compiler_sandbox*.rs
+      - crates/archguard-engine/src/bin/archguard-confine.rs
+      - crates/archguard-engine/Cargo.toml
+      - .github/workflows/sandbox.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  sandbox:
+    name: sandbox (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, verified 2026-10-27
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Build the Windows AppContainer starter
+        if: runner.os == 'Windows'
+        run: cargo build -p archguard-engine --bin archguard-confine
+
+      - name: Sandbox tests
+        run: cargo test -p archguard-engine --lib compiler_sandbox -- --nocapture
+
+      - name: Clippy for the sandbox code
+        run: cargo clippy -p archguard-engine --all-targets
