@@ -195,6 +195,9 @@ export component SecurityView inherits Rectangle {
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
+    // A split pane (as in Quality): KPI cards and severity chips in two
+    // rows each, a finding's ID and facts one below the other.
+    property <bool> narrow: root.width < 620px;
 
     if !root.model.loaded: Text {
         text: @tr("Security" => "Reading the saved dependency scan …");
@@ -213,15 +216,28 @@ export component SecurityView inherits Rectangle {
             Rectangle { height: 14px; }
             StatusText { code: root.model.status; status: root.model.status-slot; label: root.model.status-label; }
             Rectangle { height: 16px; }
-            HorizontalLayout {
+            if !root.narrow: HorizontalLayout {
                 spacing: 8px;
                 StatCard { kpi: root.model.metrics[0]; }
                 StatCard { kpi: root.model.metrics[1]; }
                 StatCard { kpi: root.model.metrics[2]; }
                 StatCard { kpi: root.model.metrics[3]; }
             }
+            if root.narrow: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    StatCard { kpi: root.model.metrics[0]; }
+                    StatCard { kpi: root.model.metrics[1]; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    StatCard { kpi: root.model.metrics[2]; }
+                    StatCard { kpi: root.model.metrics[3]; }
+                }
+            }
             Rectangle { height: 8px; }
-            HorizontalLayout {
+            if !root.narrow: HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
                 SeverityChip { key: "critical"; value: root.model.severities[0]; }
@@ -229,6 +245,22 @@ export component SecurityView inherits Rectangle {
                 SeverityChip { key: "medium"; value: root.model.severities[2]; }
                 SeverityChip { key: "low"; value: root.model.severities[3]; }
                 SeverityChip { key: "unknown"; value: root.model.severities[4]; }
+            }
+            if root.narrow: VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    SeverityChip { key: "critical"; value: root.model.severities[0]; }
+                    SeverityChip { key: "high"; value: root.model.severities[1]; }
+                    SeverityChip { key: "medium"; value: root.model.severities[2]; }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    SeverityChip { key: "low"; value: root.model.severities[3]; }
+                    SeverityChip { key: "unknown"; value: root.model.severities[4]; }
+                }
             }
             Rectangle { height: 16px; }
             Coverage { model: root.model; }
@@ -246,6 +278,7 @@ export component SecurityView inherits Rectangle {
                 padding-bottom: 8px;
                 SecurityCard {
                     item: f;
+                    narrow: root.narrow;
                     open-url(u) => { SecurityData.open-url(u); }
                 }
             }
