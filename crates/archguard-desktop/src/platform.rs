@@ -58,13 +58,17 @@ impl Platform {
         }
     }
 
-    /// The monospace family. macOS: SF Mono
-    /// (/System/Library/Fonts/SFNSMono.ttf, a hidden family). Windows:
-    /// Consolas, shipped with every Windows since Vista (Cascadia Mono only
-    /// with newer Windows 11 builds). Linux: fontconfig's alias.
+    /// The monospace family. macOS: Menlo (/System/Library/Fonts/Menlo.ttc,
+    /// shipped since 10.6, with separate upright and italic faces). Not
+    /// SF Mono: its hidden family ".SF NS Mono" also holds
+    /// SFNSMonoItalic.ttf, which Slint's font matcher (fontique) reads as
+    /// upright and picks for upright text, and Slint cannot register a font
+    /// file by path (ADR 0002, 2026-11-08). Windows: Consolas, shipped with
+    /// every Windows since Vista (Cascadia Mono only with newer Windows 11
+    /// builds). Linux: fontconfig's alias.
     fn mono_font(self) -> &'static str {
         match self {
-            Self::MacOs => ".SF NS Mono",
+            Self::MacOs => "Menlo",
             Self::Windows => "Consolas",
             Self::Linux => "monospace",
         }
@@ -93,9 +97,13 @@ pub fn apply(ui: &AppWindow) {
     let theme = ui.global::<Theme>();
     theme.set_platform(platform as i32);
     theme.set_font_family(font_family().into());
-    let mono = std::env::var("ARCHGUARD_DESKTOP_MONO_FONT")
-        .unwrap_or_else(|_| platform.mono_font().into());
-    theme.set_mono_family(mono.into());
+    theme.set_mono_family(mono_family().into());
+}
+
+/// The monospace family; `ARCHGUARD_DESKTOP_MONO_FONT` overrides it.
+fn mono_family() -> String {
+    std::env::var("ARCHGUARD_DESKTOP_MONO_FONT")
+        .unwrap_or_else(|_| Platform::current().mono_font().into())
 }
 
 #[cfg(test)]
@@ -174,6 +182,73 @@ mod tests {
                 .is_empty()
         );
         assert!(literal_fonts("font-size: max(6px, 11px * zoom);").is_empty());
+    }
+
+    slint::slint! {
+        export component Mono inherits Window {
+            width: 80px;
+            height: 80px;
+            background: black;
+            in property <string> family;
+            Text { x: 20px; y: 0; text: "|"; font-family: root.family; font-size: 60px; color: white; }
+        }
+    }
+
+    struct Pixels(std::rc::Rc<slint::platform::software_renderer::MinimalSoftwareWindow>);
+
+    impl slint::platform::Platform for Pixels {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<std::rc::Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// The red channel of a "|" drawn in `family`, 80×80 pixels.
+    fn draw_bar(family: &str) -> Vec<u8> {
+        use slint::platform::software_renderer::{
+            MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
+        };
+        use slint::ComponentHandle;
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        window.set_size(slint::PhysicalSize::new(80, 80));
+        slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
+        let mono = Mono::new().expect("component");
+        mono.set_family(family.into());
+        mono.show().expect("shown");
+        let mut buf = vec![PremultipliedRgbaColor::default(); 80 * 80];
+        window.draw_if_needed(|r| {
+            r.render(&mut buf, 80);
+        });
+        buf.iter().map(|p| p.red).collect()
+    }
+
+    /// The ink-weighted mean column of `rows`.
+    fn mean_column(red: &[u8], rows: std::ops::Range<usize>) -> f32 {
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for y in rows {
+            for x in 0..80 {
+                let v = f32::from(red[y * 80 + x]);
+                sum += v * x as f32;
+                weight += v;
+            }
+        }
+        sum / weight.max(1.0)
+    }
+
+    /// The monospace face is upright: the bar's top quarter sits above its
+    /// bottom quarter (".SF NS Mono" drew it 8 px slanted, see `mono_font`).
+    #[test]
+    fn the_monospace_font_is_upright() {
+        let red = draw_bar(&super::mono_family());
+        let rows: Vec<usize> = (0..80)
+            .filter(|y| red[y * 80..][..80].iter().any(|&v| v > 128))
+            .collect();
+        let (top, bottom) = (rows[0], rows[rows.len() - 1] + 1);
+        let quarter = (bottom - top) / 4;
+        let slant =
+            mean_column(&red, top..top + quarter) - mean_column(&red, bottom - quarter..bottom);
+        assert!(slant.abs() < 1.0, "bar slants by {slant:.1} px");
     }
 
     #[test]
