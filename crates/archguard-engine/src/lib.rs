@@ -86,6 +86,7 @@ mod security_tests;
 mod semantic_calls;
 mod semantic_graph;
 mod service_projects;
+mod service_flows;
 mod services;
 mod snapshot;
 mod target_architecture;

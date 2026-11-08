@@ -4,6 +4,7 @@
 
 mod context;
 mod cyclic;
+mod flows;
 mod layers;
 mod render;
 mod scenarios;
@@ -83,11 +84,17 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
                 &calls,
             ));
         }
-        out.extend(scenarios::diagrams(
-            &blocks,
-            input.source_graph,
-            input.calls,
-        ));
+        // Service flows describe a service system's runtime; method-level
+        // scenarios only where there are none.
+        let flows = flows::diagrams(input.services);
+        if flows.is_empty() {
+            out.extend(scenarios::diagrams(
+                &blocks,
+                input.source_graph,
+                input.calls,
+            ));
+        }
+        out.extend(flows);
         out.extend(cycles(&elements, &relations));
         out.extend(layers::diagram(&blocks, input.config, input.blocks));
     }

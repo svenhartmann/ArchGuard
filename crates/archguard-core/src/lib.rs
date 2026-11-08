@@ -87,7 +87,8 @@ pub use rules::{DependencyRule, OwnershipRule};
 pub use services::{
     Datastore, DatastoreUsage, Service, ServiceCycle, ServiceDatastores, ServiceDependency,
     ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject, ServiceTopology,
-    SharedDatastore, SharedDatastoreScope, TraceSequence, TraceStep,
+    RouteFailure, RouteStep, ServiceResilience, ServiceRoute, SharedDatastore, SharedDatastoreScope,
+    TraceSequence, TraceStep,
 };
 pub use settings::{
     DenyCycles, LayerConfig, LayerOrigin, ModulesConfig, ProjectConfig, RulesConfig, StoreConfig,

@@ -26,6 +26,57 @@ pub struct ServiceTopology {
     /// steps (ADR 0006); empty without `.archguard/otel-traces.json`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub traces: Vec<TraceSequence>,
+    /// HTTP routes the services' source handles, with the calls each makes
+    /// in source order (static; ADR 0006).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<ServiceRoute>,
+    /// Timeouts, retries, circuit breakers and fallbacks found in a
+    /// service's source or the client code it imports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resilience: Vec<ServiceResilience>,
+}
+
+/// One HTTP route of a service, read from its source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceRoute {
+    pub service: String,
+    pub method: String,
+    pub path: String,
+    pub file: String,
+    pub line: u32,
+    /// Calls to other services, in source order.
+    pub steps: Vec<RouteStep>,
+    /// Error responses the route raises itself (status and message).
+    pub failures: Vec<RouteFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteStep {
+    /// Service id of the target.
+    pub to: String,
+    pub method: String,
+    /// Path without query.
+    pub path: String,
+    pub line: u32,
+    /// Started together with other steps (`Promise.all`, `asyncio.gather`, …).
+    pub parallel: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteFailure {
+    pub status: u16,
+    pub message: String,
+    pub line: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceResilience {
+    pub service: String,
+    /// `timeout`, `retry`, `circuit_breaker` or `fallback`.
+    pub kind: String,
+    pub detail: String,
+    pub file: String,
+    pub line: u32,
 }
 
 /// One recorded trace: the matched service-to-service spans in start order.

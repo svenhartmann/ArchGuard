@@ -779,7 +779,7 @@ mod tests {
             diagnostics: vec![],
             datastores: Default::default(),
             complete: true,
-            traces: vec![],
+            ..Default::default()
         }
     }
     fn span(id: &str, parent: &str, kind: u64) -> Value {

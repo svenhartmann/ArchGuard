@@ -95,6 +95,7 @@ pub(crate) fn analyze_services_with(
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
     service_traces::augment(&root, &mut report);
+    crate::service_flows::augment(&root, &mut report);
     manifest_render::mark(&mut report, &rendered);
     if report
         .projects

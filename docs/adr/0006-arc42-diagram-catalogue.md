@@ -248,3 +248,25 @@ What exists:
   and are red in the layer diagram (the declared `may_depend_on` of cli
   lists only engine, mcp and update). The CLI without resolution does
   not see them.
+- **2026-11-08:** Service flows for chapter 6, after the user pointed to
+  arc42's example runtime view (wirschiffendas: named scenarios between
+  services, failure handling tables). `archguard-engine/src/service_flows.rs`
+  reads each service's source (its `build_context`): routes (`method ===
+  'POST' && path === '/x'`, `app.post('/x')`, `@PostMapping`,
+  `[HttpPost]`, `.route(`, `HandleFunc("POST /x")`), the calls each route
+  makes in source order (target from the configured endpoint key, e.g.
+  `PAYMENTS_API` → payments, or a URL naming a service; method from
+  `method: 'POST'`; `Promise.all`, `asyncio.gather`, `Task.WhenAll`,
+  `join!` mark parallel steps), the errors it raises (`HttpError(409,
+  '…')`, `HTTPException`, `http.Error`) and timeouts, retries, circuit
+  breakers and fallbacks in the service or the client code it imports.
+  New topology fields `routes` and `resilience`. The report makes one
+  scenario per entry route (no other service calls it): the user calls
+  the entry service, each call follows into the route it reaches; the
+  note lists trigger, errors on the way and the error handling. Service
+  flows replace the method-level scenarios where they exist. On
+  `examples/service-shop`: "POST /checkout · gateway" runs through
+  catalog, pricing, promotions, inventory, orders, payments, risk,
+  shipping and notifications, with the 404/409 errors and the 3000 ms
+  timeout of `runtime/http.js`. Static: no measured order or duration
+  (only traces give those).

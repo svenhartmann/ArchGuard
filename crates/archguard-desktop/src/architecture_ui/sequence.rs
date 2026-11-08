@@ -11,7 +11,8 @@ use crate::ui::{ArcCard, ArcFigure, ArcLine};
 
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order.";
 /// Scenarios derived from the code (only calls): no measured order.
-const STATIC_LEGEND: &str = "Blue: calls between building blocks. Top to bottom in source order, derived from the code, not measured.";
+const STATIC_LEGEND: &str =
+    "Blue: calls. Top to bottom in source order, derived from the code, not measured.";
 const COLUMN: f32 = 230.0;
 const CARD_W: f32 = 180.0;
 const CARD_H: f32 = 62.0;
@@ -88,30 +89,38 @@ pub fn tone(kind: RelationKind) -> i32 {
 fn participant(i: usize, e: &DiagramElement, centre: f32, texts: &Texts) -> ArcCard {
     let (name1, name2) = diagram::name_lines(&e.name);
     let package = e.kind == ElementKind::Package;
+    let tag = match e.kind {
+        ElementKind::Package => "",
+        ElementKind::Person => texts.t("Person"),
+        _ => texts.t("Container"),
+    };
     ArcCard {
         index: i as i32,
         x: centre - CARD_W / 2.0,
         y: TOP,
         w: CARD_W,
         h: CARD_H,
-        kind: if package { 0 } else { 3 },
+        kind: if package {
+            0
+        } else if e.kind == ElementKind::Person {
+            5
+        } else {
+            3
+        },
         name1: name1.into(),
         name2: name2.into(),
         files: -1,
-        tag: if package {
-            Default::default()
-        } else {
-            texts.t("Container").into()
-        },
+        tag: tag.into(),
         ..Default::default()
     }
 }
 
-/// Scenarios derived from the code have only calls and no measured order.
+/// Only a recorded trace (`runtime-trace-…`) has a measured order; code
+/// scenarios and service flows are derived from the source.
 fn legend<'a>(d: &Diagram, texts: &'a Texts) -> &'a str {
-    if d.relations.iter().all(|r| r.kind == RelationKind::Call) {
-        texts.t(STATIC_LEGEND)
-    } else {
+    if d.id.starts_with("runtime-trace-") {
         texts.t(LEGEND)
+    } else {
+        texts.t(STATIC_LEGEND)
     }
 }
