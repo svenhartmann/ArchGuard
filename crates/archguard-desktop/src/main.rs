@@ -41,6 +41,8 @@ mod panes_ui;
 mod platform;
 mod quality_ui;
 mod rating;
+#[cfg(test)]
+mod security_check;
 mod security_ui;
 mod services_ui;
 mod settings;
