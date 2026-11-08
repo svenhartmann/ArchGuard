@@ -472,5 +472,6 @@ comparison of the native view against the web view on the same project
   `main`).
 - **2026-11-08:** The default trust of project compilers now holds only
   where the tooling runs confined (macOS, ADR 0007; Linux with Landlock
-  ABI 4 since the same day); on Windows the app needs
-  `ARCHGUARD_TRUST_PROJECT_COMPILER=1` again.
+  ABI 4 since the same day; Windows with an AppContainer when
+  `archguard-confine.exe` lies next to the app, untested so far);
+  otherwise the app needs `ARCHGUARD_TRUST_PROJECT_COMPILER=1` again.

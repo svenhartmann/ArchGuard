@@ -43,7 +43,15 @@ project like in a sandbox.
      outside the domain, so other processes' `/proc/<pid>/environ` stays
      closed. Rules that cannot be built make the start fail, never run
      the tool unconfined.
-   - **Windows:** not confined yet (AppContainer planned, tested in CI).
+   - **Windows:** an AppContainer (`ArchGuard.Confined`, no network
+     capability) through the starter `archguard-confine.exe`, because
+     Rust's `Command` cannot start AppContainer processes yet
+     (`raw_attribute` is unstable). The starter grants the container
+     read/execute on the toolchain, read on the project and write on the
+     scratch directory (an inheritable ACE, added once and kept), starts
+     the tool in a kill-on-close job object and passes its exit code on.
+     The engine finds the starter next to the running program (or one
+     directory up); without it Windows counts as unconfined.
 2. **Pinned Rust toolchain.** rust-analyzer runs with
    `RUSTUP_TOOLCHAIN` set to the user's default toolchain (asked from the
    home directory, not the repository) and `RUSTC` /
@@ -73,8 +81,12 @@ project like in a sandbox.
   write outside its scratch directory, reach the network or start
   programs from the repository. It still runs repository code
   (TypeScript compiler) inside these limits.
-- Windows users of the app (and Linux kernels before 6.7) get no runtime
-  scenarios for Rust and TypeScript unless they set the variable.
+- Linux kernels before 6.7, and Windows installations without
+  `archguard-confine.exe` next to the program, get no runtime scenarios
+  for Rust and TypeScript unless the variable is set. The release
+  packages do not ship the starter yet.
+- On Windows the AppContainer's rights stay on the toolchain, project and
+  temporary directories after the analysis.
 - The profile is maintained by hand; a toolchain that needs another
   read location fails to resolve calls instead of reading more.
 
@@ -101,3 +113,10 @@ project like in a sandbox.
   in place, the trap script never ran. Clippy clean on Linux.
 - Programs are started under the path they were found at (not the
   symlink target): rustup's proxies choose the tool by that name.
+- Windows: compiles and is clippy-clean for `x86_64-pc-windows-gnu`
+  (checked in the Linux container); the Windows tests in
+  `compiler_sandbox.rs` and the `sandbox.yml` workflow (Windows, Linux,
+  macOS) have **not run yet**: the branch was merged into main at the
+  user's request (2026-11-08) without a push. Run on Windows:
+  `cargo build -p archguard-engine --bin archguard-confine` then
+  `cargo test -p archguard-engine --lib compiler_sandbox`.
