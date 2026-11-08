@@ -59,9 +59,27 @@ export component SecurityList inherits VerticalLayout {
     }
 }
 
-// article.security-finding
+component Installed inherits Text {
+    in property <SecurityFindingItem> item;
+    text: item.ecosystem + " · " + @tr("Security" => "Installed: {}", item.installed);
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+component Fixed inherits Text {
+    in property <SecurityFindingItem> item;
+    text: item.fixed != "" ? @tr("Security" => "Fixed version(s): {}", item.fixed) : @tr("Security" => "No fixed version reported");
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+// article.security-finding; `narrow`: the ID and the facts one below the
+// other.
 export component SecurityCard inherits Rectangle {
     in property <SecurityFindingItem> item;
+    in property <bool> narrow;
     callback open-url(string);
     border-radius: Theme.radius-sm;
     border-width: 1px;
@@ -74,26 +92,19 @@ export component SecurityCard inherits Rectangle {
             spacing: 16px;
             alignment: start;
             SeverityChip { key: root.item.severity; }
-            Text { text: root.item.package; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; vertical-alignment: center; }
-            Text { text: root.item.id; color: Theme.text; font-size: Theme.font-body; vertical-alignment: center; }
+            Text { text: root.item.package; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; vertical-alignment: center; wrap: word-wrap; }
+            if !root.narrow: Text { text: root.item.id; color: Theme.text; font-size: Theme.font-body; vertical-alignment: center; }
         }
+        if root.narrow: Text { text: root.item.id; color: Theme.text; font-size: Theme.font-body; wrap: word-wrap; }
         Text { text: root.item.title; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
-        HorizontalLayout {
+        if !root.narrow: HorizontalLayout {
             spacing: 16px;
             alignment: start;
-            Text {
-                text: root.item.ecosystem + " · " + @tr("Security" => "Installed: {}", root.item.installed);
-                color: Theme.muted;
-                font-size: Theme.font-small;
-            }
-            Text {
-                text: root.item.fixed != "" ? @tr("Security" => "Fixed version(s): {}", root.item.fixed) : @tr("Security" => "No fixed version reported");
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
-                horizontal-stretch: 1;
-            }
+            Installed { item: root.item; }
+            Fixed { item: root.item; horizontal-stretch: 1; }
         }
+        if root.narrow: Installed { item: root.item; }
+        if root.narrow: Fixed { item: root.item; }
         if root.item.url != "": HorizontalLayout {
             alignment: start;
             link := Text {

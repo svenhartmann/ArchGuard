@@ -2,6 +2,9 @@
 //! its texts wrap and the page is taller than the pane: the open panel's
 //! border encloses all its rows, the last one ("Scanner diagnostics") and
 //! that list's entries included, so nothing spills into the gap below it.
+//! And the page fits the pane: KPI cards, severity chips, the status line
+//! and the scan command wrap or shrink instead of being drawn beyond the
+//! right edge, where the pane would scroll sideways.
 
 use std::rc::Rc;
 
@@ -16,13 +19,13 @@ slint::slint! {
     export { SecurityData }
     export component Page inherits Window {
         width: 300px;
-        height: 900px;
+        height: 1000px;
         SecurityView {}
     }
 }
 
 const W: usize = 300;
-const H: usize = 900;
+const H: usize = 1000;
 /// Inside the panel's left padding: left of its texts, right of its border.
 const PANEL_X: usize = 20;
 /// Where the panel's texts start (page and panel padding).
@@ -148,4 +151,49 @@ fn the_open_scan_panel_encloses_its_last_row() {
     click(&window, 60, open - 22);
     let listed = encloses_its_rows(&frame(&window), top);
     assert!(listed > open + 100, "the list opened (bottom at {listed})");
+}
+
+fn kpi(value: &str, label: &str) -> KpiItem {
+    KpiItem { value: value.into(), label: label.into(), ..Default::default() }
+}
+
+/// A stale scan with the real KPI labels and severity counts.
+fn scan() -> SecurityModel {
+    SecurityModel {
+        status: "stale".into(),
+        status_label: "Scan: stale".into(),
+        metrics: rows(vec![
+            kpi("165", "Packages scanned"),
+            kpi("0", "Affected packages"),
+            kpi("0", "Findings"),
+            kpi("10", "Manifest / lockfile targets"),
+        ]),
+        severities: rows(vec![slint::SharedString::from("0"); 5]),
+        ..model()
+    }
+}
+
+/// Asserts that nothing is drawn in the page's right padding, between the
+/// content's right edge and the vertical scroll bar.
+fn fits(buf: &[PremultipliedRgbaColor], when: &str) {
+    let bg = buf[(H / 2) * W + 4];
+    let ink = (0..H - 20)
+        .flat_map(|y| (W - 28..W - 17).map(move |x| (x, y)))
+        .find(|&(x, y)| !same(&buf[y * W + x], &bg));
+    assert_eq!(ink, None, "{when}: drawn in the page's right padding");
+}
+
+#[test]
+fn the_page_fits_a_narrow_pane() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    window.set_size(PhysicalSize::new(W as u32, H as u32));
+    slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<SecurityData>().set_model(scan());
+    let closed = frame(&window);
+    fits(&closed, "closed");
+    let (top, bottom) = closed_panel(&closed);
+    click(&window, 60, (top + bottom) / 2);
+    fits(&frame(&window), "scan panel open");
 }
