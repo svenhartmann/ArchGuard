@@ -33,6 +33,11 @@ protobuf = "=3.7.2"
 # transitive closure.
 rustix = { version = "1.1.5", features = ["fs"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# ADR 0007: confine project compiler tooling with the kernel's Landlock
+# (the Landlock maintainers' crate; no helper program needed).
+landlock = "0.4.7"
+
 [features]
 db = ["archguard-store/db"]
 

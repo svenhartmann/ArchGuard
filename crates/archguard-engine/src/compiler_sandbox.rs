@@ -8,11 +8,16 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(not(target_os = "linux"))]
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
-/// Whether this platform confines the tooling.
+/// Whether this platform confines the tooling: macOS with `sandbox-exec`,
+/// Linux with Landlock including its network rules (kernel 6.7+).
 pub(crate) fn available() -> bool {
-    cfg!(target_os = "macos") && Path::new(SANDBOX_EXEC).exists()
+    #[cfg(target_os = "linux")]
+    return linux::available();
+    #[cfg(not(target_os = "linux"))]
+    return cfg!(target_os = "macos") && Path::new(SANDBOX_EXEC).exists();
 }
 
 /// `program` as a command that runs confined to `project` (read) and
@@ -22,26 +27,33 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
         return Command::new(program);
     }
     let program = resolve(program);
-    let mut command = Command::new(SANDBOX_EXEC);
-    command
-        .arg("-p")
-        .arg(profile(&program, project, scratch))
-        .arg(&program);
-    command
+    #[cfg(target_os = "linux")]
+    return linux::command(&program, toolchain(&program), project, scratch);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut command = Command::new(SANDBOX_EXEC);
+        command
+            .arg("-p")
+            .arg(profile(&program, project, scratch))
+            .arg(&program);
+        command
+    }
 }
 
 /// `program` as an absolute path: the sandbox starts no program by name.
+/// Symlinks stay as found: rustup's proxies (`rust-analyzer` → `rustup`)
+/// pick the tool by the name they are started under.
 fn resolve(program: &OsStr) -> PathBuf {
     let path = Path::new(program);
     if path.components().count() > 1 {
-        return real(path);
+        return path.to_path_buf();
     }
     std::env::var_os("PATH")
         .into_iter()
         .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
-        .map_or_else(|| path.to_path_buf(), |p| real(&p))
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// The real path (`/var` is `/private/var` on macOS; profiles need it).
@@ -69,6 +81,7 @@ fn toolchain(program: &Path) -> Vec<PathBuf> {
     dirs.into_iter().map(|d| real(&d)).collect()
 }
 
+#[cfg(not(target_os = "linux"))]
 /// System locations tools read and start programs from.
 const SYSTEM: [&str; 9] = [
     "/usr",
@@ -82,6 +95,7 @@ const SYSTEM: [&str; 9] = [
     "/dev",
 ];
 
+#[cfg(not(target_os = "linux"))]
 fn subpaths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -89,12 +103,14 @@ fn subpaths(paths: &[PathBuf]) -> String {
         .collect()
 }
 
+#[cfg(not(target_os = "linux"))]
 fn quote(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
 }
 
+#[cfg(not(target_os = "linux"))]
 /// Deny everything, then allow: reading the system, the toolchain and the
 /// project; writing the scratch directory; starting system and toolchain
 /// programs. No network rule is allowed, so there is none.
@@ -114,7 +130,11 @@ fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
     )
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(target_os = "linux")]
+#[path = "compiler_sandbox_linux.rs"]
+mod linux;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
     use std::net::TcpListener;
@@ -175,17 +195,15 @@ mod tests {
         let d = dirs();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
+        // bash's /dev/tcp opens a connection on macOS and Linux alike.
+        let probe = format!("exec 3<>/dev/tcp/127.0.0.1/{port}");
         let reach = |confined: bool| {
             let mut c = if confined {
-                command(
-                    OsStr::new("/usr/bin/nc"),
-                    d.project.path(),
-                    d.scratch.path(),
-                )
+                command(OsStr::new("/bin/bash"), d.project.path(), d.scratch.path())
             } else {
-                Command::new("/usr/bin/nc")
+                Command::new("/bin/bash")
             };
-            c.args(["-z", "-w", "2", "127.0.0.1", &port])
+            c.args(["-c", &probe])
                 .output()
                 .is_ok_and(|o| o.status.success())
         };
@@ -226,5 +244,26 @@ mod tests {
             String::from_utf8_lossy(&ok.stderr)
         );
         assert!(!read(&d.secret.path().join("s.txt")).status.success());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn other_processes_stay_closed_on_linux() {
+        let d = dirs();
+        // The parent's environment through /proc: readable outside, not inside.
+        let environ = format!("/proc/{}/environ", std::process::id());
+        assert!(
+            Command::new("/bin/cat")
+                .arg(&environ)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(!run(&d, "/bin/cat", &[&environ]));
+        assert!(
+            run(&d, "/bin/cat", &["/proc/self/status"]),
+            "its own /proc stays readable"
+        );
     }
 }

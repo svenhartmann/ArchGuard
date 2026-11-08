@@ -35,9 +35,15 @@ project like in a sandbox.
    network. File metadata stays readable.
    - **macOS:** `sandbox-exec` with a generated profile (Apple lists the
      tool as deprecated; it is what Bazel uses on macOS).
-   - **Linux, Windows:** not confined yet (Landlock or bubblewrap on
-     Linux could follow; nothing comparable without AppContainer on
-     Windows).
+   - **Linux:** Landlock (the Landlock maintainers' `landlock` crate),
+     applied by the child between fork and exec. It needs ABI 4 (kernel
+     6.7+, file and TCP rules); an older kernel counts as unavailable.
+     `/proc` and `/sys` are readable (rustup's proxies find themselves
+     through `/proc/self/exe`); Landlock forbids ptrace on processes
+     outside the domain, so other processes' `/proc/<pid>/environ` stays
+     closed. Rules that cannot be built make the start fail, never run
+     the tool unconfined.
+   - **Windows:** not confined yet (AppContainer planned, tested in CI).
 2. **Pinned Rust toolchain.** rust-analyzer runs with
    `RUSTUP_TOOLCHAIN` set to the user's default toolchain (asked from the
    home directory, not the repository) and `RUSTC` /
@@ -67,8 +73,8 @@ project like in a sandbox.
   write outside its scratch directory, reach the network or start
   programs from the repository. It still runs repository code
   (TypeScript compiler) inside these limits.
-- Linux and Windows users of the app get no runtime scenarios for Rust
-  and TypeScript unless they set the variable.
+- Windows users of the app (and Linux kernels before 6.7) get no runtime
+  scenarios for Rust and TypeScript unless they set the variable.
 - The profile is maintained by hand; a toolchain that needs another
   read location fails to resolve calls instead of reading more.
 
@@ -88,3 +94,10 @@ project like in a sandbox.
   calls still resolved.
 - Not checked: the project's TypeScript compiler confined (none
   installed locally; only Node itself was tested).
+- Linux (Docker Desktop, kernel 7.0, Debian bookworm image): the same
+  tests plus "another process' /proc/<pid>/environ is closed, its own
+  /proc readable"; Node confined; rust-analyzer confined resolves the 7
+  calls of the `rs-clean` copy with the `build.rustc` and toolchain traps
+  in place, the trap script never ran. Clippy clean on Linux.
+- Programs are started under the path they were found at (not the
+  symlink target): rustup's proxies choose the tool by that name.

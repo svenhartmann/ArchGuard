@@ -471,5 +471,6 @@ comparison of the native view against the web view on the same project
   variable (static call map with 9,614 call sites, scenarios from
   `main`).
 - **2026-11-08:** The default trust of project compilers now holds only
-  where the tooling runs confined (macOS, ADR 0007); on Linux and Windows
-  the app needs `ARCHGUARD_TRUST_PROJECT_COMPILER=1` again.
+  where the tooling runs confined (macOS, ADR 0007; Linux with Landlock
+  ABI 4 since the same day); on Windows the app needs
+  `ARCHGUARD_TRUST_PROJECT_COMPILER=1` again.
