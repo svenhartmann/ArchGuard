@@ -31,10 +31,12 @@ pub fn arc42_from_evidence(
     let root = Path::new(&graph.root);
     let paths = crate::reference_paths::source_reference_paths(root, config)?;
     // Only declared layers name a building block's place; derived ones are observations.
-    let mut layers = archguard_analysis::layer_assignment(graph, &config.layers)?;
+    let all_layers = archguard_analysis::layer_assignment(graph, &config.layers)?;
+    let mut layers = all_layers.clone();
     layers.retain(|_, i| config.layers[*i].origin == archguard_core::LayerOrigin::Declared);
     let blocks = Arc42Blocks {
         layers,
+        all_layers,
         descriptions: services
             .projects
             .iter()

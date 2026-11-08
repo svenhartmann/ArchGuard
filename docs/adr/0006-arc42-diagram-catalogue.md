@@ -221,3 +221,10 @@ What exists:
   ("(3×)"); titles name the handler and its block. This repository now
   gets `init`, `analyze_with_zones`, `cycles`, `graph_export` (CLI),
   `wire` (desktop) and `compare_branches`.
+- **2026-11-08:** Layer diagram in chapter 4 (`layers`): one box per
+  layer (declared or derived, from the engine's layer assignment, now
+  passed to the report as `Arc42Blocks.all_layers`) with its building
+  blocks, source connections between layers with their count, red where
+  the target is not in the source's `may_depend_on`. On this repository:
+  cli and mcp above engine, engine above extract, analysis, report and
+  store, core at the bottom; no violation.

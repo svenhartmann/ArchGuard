@@ -15,8 +15,11 @@ use std::fmt::Write;
 /// report crate cannot read or match itself.
 #[derive(Debug, Clone, Default)]
 pub struct Arc42Blocks {
-    /// Source-graph node -> index into `config.layers` (first matching layer).
+    /// Source-graph node -> index into `config.layers` (first matching
+    /// declared layer).
     pub layers: BTreeMap<NodeId, usize>,
+    /// The same with derived layers too, for the layer diagram.
+    pub all_layers: BTreeMap<NodeId, usize>,
     /// Manifest project id -> its declared description.
     pub descriptions: BTreeMap<String, String>,
 }
@@ -266,6 +269,19 @@ impl<'a> Blocks<'a> {
                 Some((c.id.as_str(), *block))
             })
             .collect()
+    }
+
+    /// Per block: its layer in `all` (index into `config.layers`); the
+    /// remainder of loose files has none.
+    pub fn block_layers(&self, all: &BTreeMap<NodeId, usize>) -> Vec<Option<usize>> {
+        (0..self.labels.len())
+            .map(|i| self.frontier.get(i).and_then(|n| all.get(&n.id)).copied())
+            .collect()
+    }
+
+    /// Source connections between blocks (not boxes), by block pair.
+    pub fn uses(&self) -> &BTreeMap<(usize, usize), usize> {
+        &self.uses
     }
 
     /// The open question for packages whose manifest declares no responsibility.

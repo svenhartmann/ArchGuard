@@ -1024,6 +1024,7 @@ mod tests {
                 .into_iter()
                 .map(|(name, i)| (layer_of(name), i))
                 .collect(),
+            all_layers: BTreeMap::new(),
             descriptions: [
                 ("cli", "the command-line interface"),
                 ("engine", "pipeline orchestration"),

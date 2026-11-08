@@ -3,6 +3,7 @@
 //! as Mermaid or PlantUML (`[arc42]` in `archguard.toml`).
 
 mod cyclic;
+mod layers;
 mod render;
 mod scenarios;
 mod scoped;
@@ -87,6 +88,7 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
             input.calls,
         ));
         out.extend(cycles(&elements, &relations));
+        out.extend(layers::diagram(&blocks, input.config, input.blocks));
     }
     out.extend(services::diagrams(input.services));
     out.extend(sequences::diagrams(input.services));
