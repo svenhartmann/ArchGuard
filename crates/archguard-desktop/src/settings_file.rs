@@ -163,6 +163,19 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
     write();
 }
 
+/// Read keys that [`Settings`] does not model, e.g. `[updates]`
+/// (`update_ui.rs`), from the loaded file.
+pub fn get_doc<R>(f: impl FnOnce(&DocumentMut) -> R) -> R {
+    CURRENT.with_borrow(|c| f(&c.doc))
+}
+
+/// Change such keys in the loaded file, then [`write`]; writing the
+/// settings later keeps them.
+pub fn update_doc(f: impl FnOnce(&mut DocumentMut)) {
+    CURRENT.with_borrow_mut(|c| f(&mut c.doc));
+    write();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

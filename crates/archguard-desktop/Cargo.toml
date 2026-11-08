@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 archguard-engine = { path = "../archguard-engine" }
+archguard-update = { path = "../archguard-update" }
 petgraph = "0.8"
 slint = "1.18"
 # PNG for image export (`export.rs`) and the off-screen snapshot.

@@ -1,0 +1,47 @@
+msgid "Check for updates…"
+msgstr "Nach Updates suchen …"
+
+msgid "Checking for updates …"
+msgstr "Suche nach Updates …"
+
+msgid "ArchGuard is up to date (version {})."
+msgstr "ArchGuard ist aktuell (Version {})."
+
+msgid "Could not check for updates: {}"
+msgstr "Suche nach Updates fehlgeschlagen: {}"
+
+msgid "ArchGuard {} is available."
+msgstr "ArchGuard {} ist verfügbar."
+
+msgid "Downloading and installing ArchGuard {} …"
+msgstr "ArchGuard {} wird geladen und installiert …"
+
+msgid "ArchGuard {} is installed. Restart to use it."
+msgstr "ArchGuard {} ist installiert. Nach einem Neustart ist die neue Version aktiv."
+
+msgid "The installer for ArchGuard {} runs when ArchGuard quits."
+msgstr "Das Installationsprogramm für ArchGuard {} startet, wenn ArchGuard beendet wird."
+
+msgid "This installation cannot update itself. Download ArchGuard {} from the release page."
+msgstr "Diese Installation kann sich nicht selbst aktualisieren. ArchGuard {} steht auf der Release-Seite zum Download bereit."
+
+msgid "Could not install ArchGuard {}: {}"
+msgstr "ArchGuard {} konnte nicht installiert werden: {}"
+
+msgid "Install"
+msgstr "Installieren"
+
+msgid "Restart now"
+msgstr "Jetzt neu starten"
+
+msgid "Quit and install"
+msgstr "Beenden und installieren"
+
+msgid "Try again"
+msgstr "Erneut versuchen"
+
+msgid "Release notes"
+msgstr "Versionshinweise"
+
+msgid "Later"
+msgstr "Später"

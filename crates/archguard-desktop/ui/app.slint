@@ -16,6 +16,7 @@ import { SecurityView, SecurityData } from "security_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
+import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
 import { Fmt } from "format.slint";
@@ -32,6 +33,8 @@ export { Templates, Template, Fmt, KpiItem }
 export { Theme }
 // The tooltip, placed by the snapshot hook `ARCHGUARD_DESKTOP_TIP`.
 export { Tips }
+// The update notice (src/update_ui.rs).
+export { UpdateNotice }
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -93,7 +96,8 @@ export component AppWindow inherits Window {
         || (root.focused-view == "graph" && root.graph-panes[root.focused-pane].display == 0);
     // The panes' top edge in the window, for the PNG of a pane.
     out property <length> body-top: strip.height + header.height
-        + (root.notice != "" ? 32px : 0) + (root.web-status != "" ? 30px : 0);
+        + (root.notice != "" ? 32px : 0) + (UpdateNotice.kind != 0 ? 36px : 0)
+        + (root.web-status != "" ? 30px : 0);
     // The window's content height: below a menu bar Slint draws itself
     // (not the native one), so the PNG crop can add the bar.
     out property <length> content-height: self.height;
@@ -358,6 +362,11 @@ export component AppWindow inherits Window {
         Menu {
             title: @tr("Help");
             MenuItem {
+                title: @tr("Check for updates…");
+                enabled: UpdateNotice.kind != 1 && UpdateNotice.kind != 5;
+                activated => { UpdateNotice.check(); }
+            }
+            MenuItem {
                 title: @tr("About ArchGuard");
                 activated => { about.show(); }
             }
@@ -525,6 +534,8 @@ export component AppWindow inherits Window {
             done: root.notice-kind >= 3 && root.notice-kind <= 5;
             dismiss => { root.notice = ""; }
         }
+
+        if UpdateNotice.kind != 0: UpdateBar { }
 
         if root.web-status != "": Rectangle {
             height: 30px;
