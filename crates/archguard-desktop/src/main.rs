@@ -60,6 +60,7 @@ mod timing;
 mod tree;
 mod tree_order;
 mod ui;
+mod update_ui;
 mod view_export;
 mod web;
 
@@ -85,6 +86,7 @@ fn main() -> Result<(), slint::PlatformError> {
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     shell_ui::start(&ui, args);
+    let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer
 
     let result = ui.run();
     web::shutdown();

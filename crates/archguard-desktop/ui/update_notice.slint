@@ -1,0 +1,95 @@
+// The update notice below the header: Help → Check for updates… and the
+// start-up check (src/update_ui.rs). Non-modal; the window stays usable.
+import { Theme } from "theme.slint";
+import { Icon, Icons, Button } from "widgets.slint";
+
+export global UpdateNotice {
+    // 0 hidden, 1 checking, 2 up to date, 3 check failed, 4 available,
+    // 5 downloading, 6 restart, 7 installer at quit, 8 manual download,
+    // 9 install failed (`Phase::kind` in src/update_ui/notice.rs).
+    in property <int> kind;
+    // The new version; for kind 2 the running one.
+    in property <string> version;
+    in property <string> error;
+    // Help → Check for updates…
+    callback check();
+    // Install, Try again, Restart now, Quit and install.
+    callback primary();
+    // Open the release page.
+    callback notes();
+    // Later, or close.
+    callback later();
+}
+
+export component UpdateBar inherits Rectangle {
+    property <int> kind: UpdateNotice.kind;
+    property <string> v: UpdateNotice.version;
+    property <bool> failed: self.kind == 3 || self.kind == 9;
+    property <bool> busy: self.kind == 1 || self.kind == 5;
+    property <string> message: self.kind == 1 ? @tr("Checking for updates …")
+        : self.kind == 2 ? @tr("ArchGuard is up to date (version {}).", self.v)
+        : self.kind == 3 ? @tr("Could not check for updates: {}", UpdateNotice.error)
+        : self.kind == 4 ? @tr("ArchGuard {} is available.", self.v)
+        : self.kind == 5 ? @tr("Downloading and installing ArchGuard {} …", self.v)
+        : self.kind == 6 ? @tr("ArchGuard {} is installed. Restart to use it.", self.v)
+        : self.kind == 7 ? @tr("The installer for ArchGuard {} runs when ArchGuard quits.", self.v)
+        : self.kind == 8 ? @tr("This installation cannot update itself. Download ArchGuard {} from the release page.", self.v)
+        : @tr("Could not install ArchGuard {}: {}", self.v, UpdateNotice.error);
+    property <string> primary-text: self.kind == 4 ? @tr("Install")
+        : self.kind == 6 ? @tr("Restart now")
+        : self.kind == 7 ? @tr("Quit and install")
+        : self.kind == 9 ? @tr("Try again")
+        : "";
+    // Later where something is offered, else a close button.
+    property <bool> offers: self.primary-text != "";
+    height: 36px;
+    background: self.failed ? Theme.danger.with-alpha(0.14)
+        : self.kind == 2 ? Theme.success.with-alpha(0.14)
+        : Theme.accent.with-alpha(0.14);
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 8px;
+        spacing: 8px;
+        Icon {
+            icon: root.busy ? Icons.cycle : Icons.info;
+            tint: root.failed ? Theme.danger : Theme.text;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.message;
+            color: Theme.text;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.kind >= 4: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.external;
+            text: @tr("Release notes");
+            clicked => { UpdateNotice.notes(); }
+        }
+        if root.offers: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            primary: true;
+            text: root.primary-text;
+            clicked => { UpdateNotice.primary(); }
+        }
+        if root.offers: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            text: @tr("Later");
+            clicked => { UpdateNotice.later(); }
+        }
+        if !root.offers && root.kind != 5: Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            icon: Icons.close;
+            clicked => { UpdateNotice.later(); }
+        }
+    }
+}

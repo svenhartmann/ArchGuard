@@ -131,13 +131,50 @@ archive (for example `*-linux-gnu` from `cargo build`) cannot update itself.
 `ARCHGUARD_UPDATE_API` replaces `https://api.github.com`, e.g. for a mirror.
 
 The lookup, download limit, checksum checks and install live in the crate
-`crates/archguard-update`, shared with the desktop app. Its `desktop` module
-already finds the desktop package of the latest release, checks it against
-`SHA256SUMS-desktop` and can install it (AppImage replaced in place, `.app`
-swapped from the mounted `.dmg`, `.msi` handed to `msiexec /passive`; anything
-else gets the release page for a manual download). The desktop app does not
-call it yet: self-update in the app is planned as the next step. Until then,
-update the desktop app by installing the new package by hand.
+`crates/archguard-update`, shared with the desktop app.
+
+## Update the desktop app
+
+The desktop app updates itself from the same published releases. **Help →
+Check for updates…** looks for a newer release; the app also checks on its own
+at start-up, at most once every 24 hours. Both run in the background; a check at
+start-up stays silent unless it finds an update (no network, no release: no
+message). A manual check without update says "ArchGuard is up to date
+(version X)", and its errors are shown.
+
+A newer release shows a notice below the header with **Install**, **Release
+notes** (opens the release page) and **Later**. Install downloads the package of
+the app's target, verifies it against `SHA256SUMS-desktop` and installs it the
+way the app was installed:
+
+- **macOS:** the `.app` is swapped from the mounted `.dmg`; **Restart now** quits
+  (asking about unsaved changes first) and starts the new bundle with `open -n`.
+- **Linux AppImage:** the AppImage file is replaced in place; **Restart now**
+  starts it again.
+- **Windows:** the `.msi` is saved to the temp directory and runs with
+  `msiexec /passive` when the app quits (**Quit and install**, or any later quit).
+- Anything else (a binary outside an `.app` bundle or AppImage, such as a
+  `cargo build`; an `.app` or AppImage in a folder the user cannot write): the
+  release page opens for a manual download.
+
+Any failure, a checksum mismatch included, is shown in the notice and leaves the
+installed app untouched. To turn the start-up check off, set in `desktop.toml`
+(macOS `~/Library/Application Support/ArchGuard`, Windows `%APPDATA%\ArchGuard`,
+Linux `$XDG_CONFIG_HOME/archguard`, default `~/.config/archguard`):
+
+```toml
+[updates]
+check = false
+```
+
+The app records the last automatic check there as `last_check` (Unix seconds).
+`ARCHGUARD_UPDATE_API` replaces the API base here as well.
+
+Tested without network against a local API stub: the 24-hour throttle and the
+opt-out, the notice's states, the silent start-up, the AppImage replacement and
+the checksum mismatch. **Not tested yet:** an update against a real GitHub
+release, the `.dmg` swap and the restart of a real `.app`, the AppImage restart
+and the Windows installer run, all in a real app window.
 
 ## Report ZIP
 
