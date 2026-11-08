@@ -200,3 +200,11 @@ What exists:
   `rs-clean` (Rust with `ARCHGUARD_TRUST_PROJECT_COMPILER=1` and a
   Cargo manifest; without rust-analyzer Rust has no resolved calls and
   so no scenarios), and in a desktop snapshot.
+- **2026-11-08:** The web viewer ticks package map levels too: the map's
+  tick follows the opened level (`<map>@<package>`, off unless listed),
+  the map stays when a level is off, and the snippet writes
+  `shown_diagrams` whenever levels are involved (also as an empty list,
+  so removing the last one is copied). The desktop maps also tuck cards
+  without edges into free row space (this repository's chapter 5: 79 %
+  instead of 61 % fit). Checked in headless Chrome on a report of the
+  copy of `fixtures/php-psr4` (level `App`).

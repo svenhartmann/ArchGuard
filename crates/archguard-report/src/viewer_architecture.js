@@ -459,7 +459,7 @@ function renderArc42Derived(parent,number){
 function renderArc42Map(parent,number,drawn){
   if(number===6&&awaitDeferred(parent,['calls'],()=>{if(ui.workspace==='architecture')renderArchitecture();})){drawn.add(arc42MapIds.calls);return true;}
   const kind=number===5&&data.nodes.length?'dependencies':number===6&&data.calls?.calls?.length?'calls':number===11&&data.edges.length?'cycles':null;
-  if(kind){drawn.add(arc42MapIds[kind]);arc42Figure(parent,arc42CatalogueEntry(arc42MapIds[kind]),host=>renderArc42PackageMap(host,kind));return true;}
+  if(kind){const entry=arc42MapEntry(kind,number);drawn.add(arc42MapIds[kind]);if(entry)drawn.add(entry.id);arc42Figure(parent,entry,host=>renderArc42PackageMap(host,kind));return true;}
   if(number===4&&architectureModel()){
     const model=architectureModel();parent.appendChild(element('h3',t('Declared component model','Deklariertes Komponentenmodell')));
     const graph={nodes:model.components.map(n=>({id:n.name,name:n.name,files:n.node_count,kind:'component'})),edges:model.dependencies.map(e=>({from:e.from,to:e.to,count:e.source_edges})),unit:t('source connections','Quellverbindungen')},membership=new Map();

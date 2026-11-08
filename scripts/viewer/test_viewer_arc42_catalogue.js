@@ -77,6 +77,15 @@ assert.match(figure('deployment-prod.yml').textContent,/appears in the chapter a
 assert.equal(snippet(),'[arc42]\nhidden_diagrams = ["deployment-prod.yml"]','the view always shows the current snippet');
 app.click('language-de');assert.match(article().textContent,/In der Dokumentation/);assert.match(article().textContent,/Diagramme/);app.click('language-en');
 
+// A map level has its own tick: off by default, the map stays, the snippet lists it.
+open('5');app.run("architectureUi.diagramStates.dependencies={scope:'1',selected:null};renderArchitecture()");
+assert.equal(tick('building-blocks@org/a').checked,false,'a level starts outside the document');
+assert.ok(figure('building-blocks@org/a').querySelector('section[data-arc42-package-map]'),'the map of an unticked level stays');
+toggle('building-blocks@org/a',true);
+assert.match(snippet(),/\nshown_diagrams = \["building-blocks@org\/a"\]/,'the snippet lists the level');
+toggle('building-blocks@org/a',false);assert.equal(snippet(),undefined,'back to the document as generated');
+app.run("architectureUi.diagramStates.dependencies={scope:null,selected:null};renderArchitecture()");open('diagrams');
+
 // The Diagrams view survives a reload: its hash routes back to it.
 const hash=app.run('viewerRouteHash()');assert.match(hash,/chapter=diagrams/);
 open('7');app.run('applyViewerRoute(parseViewerRoute('+JSON.stringify(hash)+'))');

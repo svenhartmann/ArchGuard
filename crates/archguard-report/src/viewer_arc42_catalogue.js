@@ -16,9 +16,32 @@ const arc42RelationStyles={
 function arc42Catalogue(){const list=data.insights?.arc42?.diagrams;return Array.isArray(list)&&list.length?list:null;}
 function arc42CatalogueEntry(id){return arc42Catalogue()?.find(d=>d.id===id)||null;}
 function arc42Shown(d){return architectureUi.arc42Ticks?.[d.id]??d.shown!==false;}
-function arc42HiddenIds(){return (arc42Catalogue()||[]).filter(d=>!arc42Shown(d)).map(d=>d.id);}
-function arc42TicksChanged(){return (arc42Catalogue()||[]).some(d=>arc42Shown(d)!==(d.shown!==false));}
-function arc42Snippet(){return '[arc42]\nhidden_diagrams = ['+arc42HiddenIds().map(id=>JSON.stringify(id)).join(', ')+']';}
+// Package map levels (`<map>@<package>`) are opt-in through shown_diagrams; the others are
+// shown unless listed in hidden_diagrams.
+const arc42IsLevel=id=>id.includes('@');
+function arc42HiddenIds(){return (arc42Catalogue()||[]).filter(d=>!arc42IsLevel(d.id)&&!arc42Shown(d)).map(d=>d.id);}
+function arc42ShownLevels(){
+  const ids=new Set((arc42Catalogue()||[]).filter(d=>arc42IsLevel(d.id)).map(d=>d.id));
+  for(const id of Object.keys(architectureUi.arc42Ticks||{}))if(arc42IsLevel(id))ids.add(id);
+  return [...ids].filter(id=>arc42Shown(arc42CatalogueEntry(id)||{id,shown:false})).sort(compareNames);
+}
+function arc42TicksChanged(){
+  const known=new Map((arc42Catalogue()||[]).map(d=>[d.id,d.shown!==false]));
+  return Object.entries(architectureUi.arc42Ticks||{}).some(([id,on])=>on!==(known.get(id)??false));
+}
+function arc42Snippet(){
+  const list=ids=>'['+ids.map(id=>JSON.stringify(id)).join(', ')+']',levels=arc42ShownLevels();
+  // Once levels are in play the line is always written, so removing the last one is copied too.
+  const known=levels.length||(arc42Catalogue()||[]).some(d=>arc42IsLevel(d.id))||Object.keys(architectureUi.arc42Ticks||{}).some(arc42IsLevel);
+  return '[arc42]\nhidden_diagrams = '+list(arc42HiddenIds())+(known?'\nshown_diagrams = '+list(levels):'');
+}
+// The catalogue entry of the map as opened: the overview, or a level (opt-in, off unless listed).
+function arc42MapEntry(kind,chapter){
+  const scope=architectureUi.diagramStates?.[kind]?.scope,node=scope!=null?data.nodes.find(n=>String(n.id)===String(scope)):null;
+  if(!node)return arc42CatalogueEntry(arc42MapIds[kind]);
+  const id=arc42MapIds[kind]+'@'+node.name;
+  return arc42CatalogueEntry(id)||(arc42Catalogue()&&{id,chapter,title:node.name,shown:false,level:true});
+}
 function arc42ThemeToken(name,fallback){const css=typeof getComputedStyle==='function'?getComputedStyle(document.documentElement):null;return css?.getPropertyValue(name).trim()||fallback;}
 
 // The section exactly as arc42_diagrams::section writes it: heading, note, one fenced block.
@@ -90,7 +113,8 @@ function arc42Figure(parent,d,draw){
   if(!d)return draw(parent);
   const shell=element('section',undefined,'arc42-figure');shell.setAttribute('data-arc42-diagram',d.id);parent.appendChild(shell);
   const head=element('div',undefined,'arc42-figure-head');shell.appendChild(head);
-  if(arc42Shown(d)){arc42Tick(head,d);return draw(shell);}
+  // A level's map stays when it is not in the documentation; the tick says so.
+  if(arc42Shown(d)||arc42IsLevel(d.id)){arc42Tick(head,d);return draw(shell);}
   shell.setAttribute('data-arc42-hidden','true');head.appendChild(element('span',d.title+' · '+t('not in the documentation','nicht in der Dokumentation'),'arc42-map-note'));arc42Tick(head,d);return true;
 }
 function arc42SnippetBox(parent,always=false){
