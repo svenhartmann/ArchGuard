@@ -123,8 +123,10 @@ mod tests {
             may_depend_on: deps.iter().map(|d| d.to_string()).collect(),
             origin: Default::default(),
         };
-        let mut config = Config::default();
-        config.layers = vec![layer("ui", &["core"]), layer("core", &[])];
+        let config = Config {
+            layers: vec![layer("ui", &["core"]), layer("core", &[])],
+            ..Default::default()
+        };
         let id = |name: &str| graph.nodes.iter().find(|n| n.name == name).unwrap().id;
         let facts = Arc42Blocks {
             all_layers: BTreeMap::from([(id("app/ui"), 0), (id("app/core"), 1)]),
