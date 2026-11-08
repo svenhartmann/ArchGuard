@@ -93,45 +93,56 @@ component Coverage inherits Rectangle {
         padding-right: 12px;
         padding-top: 10px;
         padding-bottom: 10px;
-        spacing: 8px;
+        spacing: 0;
         Disclosure { text: @tr("Security" => "Scan"); size: Theme.font-body; tint: Theme.text; open <=> root.open; }
-        if root.open: VerticalLayout {
-            spacing: 8px;
-            Text {
-                text: @tr("Security" => "Original scan snapshot; graph simulations do not update these findings. Top workspace KPIs describe source dependencies.");
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
-            }
-            Fact { label: @tr("Security" => "Scanner"); value: root.model.scanner; }
-            Fact { label: @tr("Security" => "Scanned at"); value: root.model.scanned-at; }
-            Fact { label: @tr("Security" => "Database updated at"); value: root.model.database-updated-at; }
-            Text {
-                text: @tr("Security" => "Run a fresh scan in your terminal; this viewer only reads the saved result.");
-                color: Theme.text;
-                font-size: Theme.font-body;
-                wrap: word-wrap;
-            }
-            command := CommandField { command: root.model.command; }
-            HorizontalLayout {
-                alignment: start;
-                spacing: 10px;
-                Button {
-                    text: @tr("Security" => "Copy scan command");
-                    clicked => {
-                        command.copy-all();
-                        root.copied = @tr("Security" => "Copied.");
-                    }
+        // Hidden, not `if root.open:`. A page taller than the pane is
+        // squeezed to its min-height (ScrollView's content-height), and
+        // Slint 1.18 counts each word-wrapped Text of a conditional element
+        // as one line there: in a narrow pane the panel came out shorter
+        // than its rows and the last one was drawn below the border.
+        Rectangle {
+            visible: root.open;
+            min-height: root.open ? body.min-height : 0px;
+            max-height: root.open ? 100000px : 0px;
+            body := VerticalLayout {
+                padding-top: 8px;
+                spacing: 8px;
+                Text {
+                    text: @tr("Security" => "Original scan snapshot; graph simulations do not update these findings. Top workspace KPIs describe source dependencies.");
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
                 }
-                Text { text: root.copied; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
-            }
-            SecurityList {
-                label: @tr("Security" => "Manifest / lockfile coverage");
-                entries: root.model.targets;
-            }
-            if root.model.diagnostics.length > 0: SecurityList {
-                label: @tr("Security" => "Scanner diagnostics (original text)");
-                entries: root.model.diagnostics;
+                Fact { label: @tr("Security" => "Scanner"); value: root.model.scanner; }
+                Fact { label: @tr("Security" => "Scanned at"); value: root.model.scanned-at; }
+                Fact { label: @tr("Security" => "Database updated at"); value: root.model.database-updated-at; }
+                Text {
+                    text: @tr("Security" => "Run a fresh scan in your terminal; this viewer only reads the saved result.");
+                    color: Theme.text;
+                    font-size: Theme.font-body;
+                    wrap: word-wrap;
+                }
+                command := CommandField { command: root.model.command; }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+                    Button {
+                        text: @tr("Security" => "Copy scan command");
+                        clicked => {
+                            command.copy-all();
+                            root.copied = @tr("Security" => "Copied.");
+                        }
+                    }
+                    Text { text: root.copied; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
+                }
+                SecurityList {
+                    label: @tr("Security" => "Manifest / lockfile coverage");
+                    entries: root.model.targets;
+                }
+                if root.model.diagnostics.length > 0: SecurityList {
+                    label: @tr("Security" => "Scanner diagnostics (original text)");
+                    entries: root.model.diagnostics;
+                }
             }
         }
     }
