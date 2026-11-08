@@ -3,10 +3,11 @@
 //! itself is JavaScript found through the analyzed repository, so it only runs
 //! after the operator opts in via [`TRUST_ENV`]; scanning alone executes nothing.
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -346,6 +347,20 @@ fn prepare(root: &Path, config: &Config, trusted: bool) -> Result<Input, String>
         blocked_compiler,
     })
 }
+/// Node running the helper, confined to the project and `scratch`
+/// (ADR 0007), without inherited Node options.
+fn node(root: &Path, scratch: &Path, script: &Path, manifest: &Path) -> std::process::Command {
+    let mut command = crate::compiler_sandbox::command(OsStr::new("node"), root, scratch);
+    command
+        .arg("--max-old-space-size=512")
+        .arg(script)
+        .arg(manifest)
+        .env_remove("NODE_OPTIONS")
+        .env_remove("NODE_PATH")
+        .current_dir(scratch);
+    command
+}
+
 fn run_helper(input: &Input) -> Result<HelperResult, String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     let script = directory.path().join("scanner.cjs");
@@ -358,13 +373,7 @@ fn run_helper(input: &Input) -> Result<HelperResult, String> {
         serde_json::to_vec(&input.manifest).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let mut child = Command::new("node")
-        .arg("--max-old-space-size=512")
-        .arg(&script)
-        .arg(&manifest)
-        .env_remove("NODE_OPTIONS")
-        .env_remove("NODE_PATH")
-        .current_dir(directory.path())
+    let mut child = node(&input.root, directory.path(), &script, &manifest)
         .stdin(Stdio::null())
         .stdout(File::create(&output).map_err(|e| e.to_string())?)
         .stderr(File::create(&errors).map_err(|e| e.to_string())?)
@@ -433,6 +442,7 @@ fn run_helper(input: &Input) -> Result<HelperResult, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     fn failing_compiler(root: &Path, counter: &Path) {
         let lib = root.join("node_modules/typescript/lib");
         fs::create_dir_all(&lib).unwrap();
@@ -444,7 +454,9 @@ mod tests {
         fs::write(
             lib.join("typescript.js"),
             format!(
-                "require('fs').appendFileSync({},'x');throw new Error('planted failure');",
+                // The counter is outside the sandbox's reach where it confines the
+                // compiler (ADR 0007); the error names its run either way.
+                "try{{require('fs').appendFileSync({},'x')}}catch(e){{}}throw new Error('planted failure '+process.hrtime.bigint());",
                 serde_json::to_string(counter.to_str().unwrap()).unwrap()
             ),
         )
@@ -460,9 +472,21 @@ mod tests {
         let counter = dir.path().join("runs");
         failing_compiler(dir.path(), &counter);
         let config = Config::default();
-        assert_eq!(analyze(dir.path(), &config, true).status, "unavailable");
-        assert_eq!(analyze(dir.path(), &config, true).status, "unavailable");
-        assert_eq!(fs::read(&counter).unwrap().len(), 2);
+        let (first, second) = (
+            analyze(dir.path(), &config, true),
+            analyze(dir.path(), &config, true),
+        );
+        assert_eq!(
+            (first.status.as_str(), second.status.as_str()),
+            ("unavailable", "unavailable")
+        );
+        let text = |a: &CallAnalysis| a.diagnostics.join(" ");
+        assert!(text(&first).contains("planted failure"), "{}", text(&first));
+        assert_ne!(
+            text(&first),
+            text(&second),
+            "the second run ran the compiler again"
+        );
     }
     #[test]
     fn project_compilers_stay_unselected_without_trust() {

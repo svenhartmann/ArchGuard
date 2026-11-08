@@ -31,6 +31,7 @@ pub use class_cohesion::class_cohesion;
 mod comparison;
 mod staged;
 pub use staged::{GitBranch, GitBranches, compare_branches, compare_staged, list_git_branches};
+mod compiler_sandbox;
 mod compiler_trust;
 mod config;
 mod coverage_review;

@@ -2,7 +2,8 @@
 //! the project's TypeScript compiler), which reads configuration from the
 //! repository. Off by default; turned on outside the repository: by the
 //! operator with `ARCHGUARD_TRUST_PROJECT_COMPILER=1`, or by an embedding
-//! application with [`trust_project_compiler`].
+//! application with [`trust_project_compiler`], which counts only where the
+//! tooling runs confined (ADR 0007).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,5 +17,6 @@ pub fn trust_project_compiler(on: bool) {
 }
 
 pub(crate) fn trusted() -> bool {
-    TRUSTED.load(Ordering::Relaxed) || std::env::var_os(TRUST_ENV).is_some_and(|v| v == "1")
+    let confined = TRUSTED.load(Ordering::Relaxed) && crate::compiler_sandbox::available();
+    confined || std::env::var_os(TRUST_ENV).is_some_and(|v| v == "1")
 }

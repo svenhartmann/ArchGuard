@@ -87,6 +87,36 @@ pub(crate) fn index(
     Ok(index)
 }
 
+/// Run on the user's default toolchain and its rustc: a `rust-toolchain.toml`
+/// or `build.rustc` in the repository could name a program of its own.
+/// Without rustup the environment stays as it is.
+fn pin_toolchain(command: &mut Command) {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let rustup = |args: &[&str]| {
+        let out = Command::new("rustup")
+            .args(args)
+            .current_dir(&home)
+            .output()
+            .ok()?;
+        let text = String::from_utf8(out.stdout).ok()?;
+        out.status
+            .success()
+            .then(|| text.split_whitespace().next().map(str::to_owned))
+            .flatten()
+    };
+    let Some(toolchain) = rustup(&["default"]) else {
+        return;
+    };
+    command.env("RUSTUP_TOOLCHAIN", &toolchain);
+    if let Some(rustc) = rustup(&["which", "rustc", "--toolchain", &toolchain]) {
+        command
+            .env("RUSTC", &rustc)
+            .env("CARGO_BUILD_RUSTC", &rustc);
+    }
+}
+
 fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
     let version = Command::new(executable)
         .arg("--version")
@@ -101,7 +131,9 @@ fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
     )
     .map_err(|e| e.to_string())?;
     let output = dir.path().join("index.scip");
-    let mut command = Command::new(executable);
+    // Confined to the project and `dir` (ADR 0007), on the user's toolchain.
+    let mut command = crate::compiler_sandbox::command(executable, root, dir.path());
+    pin_toolchain(&mut command);
     command
         .arg("scip")
         .arg(root)

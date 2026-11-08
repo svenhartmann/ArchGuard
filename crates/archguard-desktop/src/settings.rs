@@ -74,7 +74,8 @@ pub struct Settings {
     pub projects: BTreeMap<String, ProjectView>,
     /// `trust_project_compiler = false`: never run a project's own compiler
     /// tooling (rust-analyzer, its TypeScript compiler). The app trusts it
-    /// by default; the key is only read, never written.
+    /// by default where it runs confined (ADR 0007); the key is only read,
+    /// never written.
     pub distrust_project_compiler: bool,
 }
 
