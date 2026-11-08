@@ -37,6 +37,7 @@ pub fn arc42_from_evidence(
     let blocks = Arc42Blocks {
         layers,
         all_layers,
+        context: crate::arc42_context::scan(root),
         descriptions: services
             .projects
             .iter()

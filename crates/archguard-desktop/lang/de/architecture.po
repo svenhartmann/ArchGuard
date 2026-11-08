@@ -208,3 +208,12 @@ msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Rot: aufgezeichneter Fehl
 
 msgid "Blue: calls between building blocks. Top to bottom in source order, derived from the code, not measured."
 msgstr "Blau: Aufrufe zwischen Bausteinen. Von oben nach unten in Quelltext-Reihenfolge, aus dem Code abgeleitet, nicht gemessen."
+
+msgid "runs"
+msgstr "startet"
+
+msgid "Person"
+msgstr "Person"
+
+msgid "Grey: programs the code starts · blue: hosts it addresses over HTTP · green: datastores. Counts are source files."
+msgstr "Grau: Programme, die der Code startet · Blau: per HTTP angesprochene Hosts · Grün: Datenbanken. Zahlen sind Quelldateien."

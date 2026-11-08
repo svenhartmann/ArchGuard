@@ -20,8 +20,18 @@ pub struct Arc42Blocks {
     pub layers: BTreeMap<NodeId, usize>,
     /// The same with derived layers too, for the layer diagram.
     pub all_layers: BTreeMap<NodeId, usize>,
+    /// What the source starts and addresses, for the context diagram.
+    pub context: Arc42Context,
     /// Manifest project id -> its declared description.
     pub descriptions: BTreeMap<String, String>,
+}
+
+/// Programs the source starts and hosts it addresses over HTTP, with the
+/// number of files each appears in (gathered by the engine).
+#[derive(Debug, Clone, Default)]
+pub struct Arc42Context {
+    pub programs: Vec<(String, usize)>,
+    pub hosts: Vec<(String, usize)>,
 }
 
 /// Everything the arc42 chapters are written from.

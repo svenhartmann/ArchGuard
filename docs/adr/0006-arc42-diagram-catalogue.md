@@ -228,3 +228,23 @@ What exists:
   the target is not in the source's `may_depend_on`. On this repository:
   cli and mcp above engine, engine above extract, analysis, report and
   store, core at the bottom; no violation.
+- **2026-11-08:** Context diagram in chapter 3 (`context`, C4 system
+  context): the user reaches the system through its applications
+  (manifest projects of kind `application`); around it the programs the
+  source starts (literal first argument of `Command::new`,
+  `exec.Command`, `ProcessBuilder`, `Process.Start`, `subprocess.*`,
+  `spawn`, `execFile`, `proc_open`, `os.system`, …), the hosts it
+  addresses over HTTP (URLs in files that use an HTTP client or load
+  scripts; Markdown and HTML links, reserved domains and XML namespaces
+  excluded) and the configured datastores. Tests, Rust unit tests after
+  `#[cfg(test)]`, build output and vendored code are skipped
+  (`archguard-engine/src/arc42_context.rs`). New model values:
+  `ElementKind::Person`, `RelationKind::Runs`, `DiagramKind::Context`.
+  On this repository: git, node, cargo, rustup, gh, defaults, open,
+  rundll32, xdg-open; api.github.com, github.com, cdn.jsdelivr.net.
+- **2026-11-08:** Observation: with project compilers trusted, resolved
+  Rust references point at the defining crate, so the CLI's uses of
+  types re-exported by the engine show as `cli → core/analysis/report`
+  and are red in the layer diagram (the declared `may_depend_on` of cli
+  lists only engine, mcp and update). The CLI without resolution does
+  not see them.

@@ -58,7 +58,11 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
             head: route.head.as_str().into(),
             count: r.count as i32,
             tone: tone(r.kind),
-            text: line_text(r.kind, texts).into(),
+            text: r
+                .label
+                .as_deref()
+                .unwrap_or(line_text(r.kind, texts))
+                .into(),
             lx: route.label.0,
             ly: route.label.1,
             cycle: r.cycle,
@@ -66,7 +70,6 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
             strong: false,
         })
         .collect();
-    let c4 = d.kind != DiagramKind::Packages;
     ArcFigure {
         id: d.id.as_str().into(),
         chapter: chapter.into(),
@@ -80,11 +83,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
         dh: l.height,
         source: source(d, format).into(),
         sequence: false,
-        legend: if c4 {
-            texts.t(LEGEND).into()
-        } else {
-            Default::default()
-        },
+        legend: legend(d.kind, texts).into(),
     }
 }
 
@@ -95,6 +94,17 @@ fn source(d: &Diagram, format: DiagramFormat) -> String {
         DiagramFormat::Plantuml => diagram_plantuml(d),
     }
 }
+
+/// What the arrow colours of a diagram kind mean; none for package maps.
+fn legend(kind: DiagramKind, texts: &Texts) -> &str {
+    match kind {
+        DiagramKind::Packages => "",
+        DiagramKind::Context => texts.t(CONTEXT_LEGEND),
+        _ => texts.t(LEGEND),
+    }
+}
+
+const CONTEXT_LEGEND: &str = "Grey: programs the code starts · blue: hosts it addresses over HTTP · green: datastores. Counts are source files.";
 
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence.";
 
@@ -108,6 +118,7 @@ fn line_text(kind: RelationKind, texts: &Texts) -> &str {
         RelationKind::Event => texts.t("event"),
         RelationKind::Reference => texts.t("reference"),
         RelationKind::Data => texts.t("uses"),
+        RelationKind::Runs => texts.t("runs"),
     }
 }
 
@@ -118,7 +129,8 @@ fn card(i: usize, e: &DiagramElement, c: &diagram::Card, framed: bool, texts: &T
         ElementKind::Remainder => (2, texts.t("Further packages")),
         ElementKind::Container => (3, texts.t("Container")),
         ElementKind::Database => (4, texts.t("Database")),
-        ElementKind::External => (5, texts.t("External container")),
+        ElementKind::External => (5, texts.t("External")),
+        ElementKind::Person => (5, texts.t("Person")),
     };
     let tag = match (&e.technology, what) {
         (Some(t), w) if !w.is_empty() => format!("{w} · {t}"),

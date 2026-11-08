@@ -41,7 +41,7 @@ pub struct Arc42Document {
 }
 
 use crate::arc42_blocks::Blocks;
-pub use crate::arc42_blocks::{Arc42Blocks, Arc42Inputs};
+pub use crate::arc42_blocks::{Arc42Blocks, Arc42Context, Arc42Inputs};
 
 /// Escapes only what changes Markdown structure inside a line, so paths and
 /// sentences stay readable in the hand-edited file.
@@ -1024,7 +1024,6 @@ mod tests {
                 .into_iter()
                 .map(|(name, i)| (layer_of(name), i))
                 .collect(),
-            all_layers: BTreeMap::new(),
             descriptions: [
                 ("cli", "the command-line interface"),
                 ("engine", "pipeline orchestration"),
@@ -1033,6 +1032,7 @@ mod tests {
             .into_iter()
             .map(|(id, text)| (id.to_string(), text.to_string()))
             .collect(),
+            ..Default::default()
         };
         let doc = render_arc42(Arc42Inputs {
             source_graph: &graph,

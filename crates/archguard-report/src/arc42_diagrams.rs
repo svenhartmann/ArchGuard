@@ -2,6 +2,7 @@
 //! show, with a stable id, and the shown ones written into their chapter
 //! as Mermaid or PlantUML (`[arc42]` in `archguard.toml`).
 
+mod context;
 mod cyclic;
 mod layers;
 mod render;
@@ -90,6 +91,15 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         out.extend(cycles(&elements, &relations));
         out.extend(layers::diagram(&blocks, input.config, input.blocks));
     }
+    let system = std::path::Path::new(&input.view.root)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("System");
+    out.extend(context::diagram(
+        system,
+        &input.blocks.context,
+        input.services,
+    ));
     out.extend(services::diagrams(input.services));
     out.extend(sequences::diagrams(input.services));
     out.extend(scoped::diagrams(input));

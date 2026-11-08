@@ -74,7 +74,7 @@ pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> Ar
 pub fn tone(kind: RelationKind) -> i32 {
     match kind {
         RelationKind::Dependency | RelationKind::Call => 0,
-        RelationKind::Startup => 1,
+        RelationKind::Startup | RelationKind::Runs => 1,
         RelationKind::Http => 2,
         RelationKind::Grpc => 3,
         RelationKind::Event => 4,

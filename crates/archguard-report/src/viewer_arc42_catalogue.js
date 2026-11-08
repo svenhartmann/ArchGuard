@@ -11,7 +11,8 @@ const arc42RelationStyles={
   grpc:{color:['--c-incoming','#0369A1'],label:()=>'gRPC'},
   event:{color:['--c-outgoing','#7C3AED'],label:()=>t('event','Ereignis')},
   reference:{color:['--c-edge','#64748B'],dashed:true,label:()=>t('reference','Verweis')},
-  data:{color:['--c-resolved','#1E8E3E'],label:()=>t('uses','nutzt')}
+  data:{color:['--c-resolved','#1E8E3E'],label:()=>t('uses','nutzt')},
+  runs:{color:['--muted','#8a99ad'],label:()=>t('runs','startet')}
 };
 function arc42Catalogue(){const list=data.insights?.arc42?.diagrams;return Array.isArray(list)&&list.length?list:null;}
 function arc42CatalogueEntry(id){return arc42Catalogue()?.find(d=>d.id===id)||null;}
@@ -60,16 +61,16 @@ function arc42SectionOf(d){const chapter=data.insights.arc42.chapters?.find(c=>c
 
 // The neutral catalogue model as the reader's graph model.
 function arc42CatalogueModel(d){
-  const kinds={package:'package',remainder:'group',container:'container',database:'database',external:'external'};
+  const kinds={package:'package',remainder:'group',container:'container',database:'database',external:'external',person:'person'};
   return {c4:d.kind!=='packages'&&d.kind!=='sequence',kind:d.id,scope:d.title,unit:d.unit,
     nodes:(d.elements||[]).map(e=>({id:e.id,name:e.name,label:e.name,kind:kinds[e.kind]||'package',technology:e.technology,group:e.group,cycle:!!e.cycle,detail:[e.technology,e.group].filter(Boolean).join(' · ')})),
-    edges:(d.relations||[]).map(r=>({from:r.from,to:r.to,kind:r.kind,count:r.count,cycle:!!r.cycle}))};
+    edges:(d.relations||[]).map(r=>({from:r.from,to:r.to,kind:r.kind,count:r.count,cycle:!!r.cycle,label:r.label}))};
 }
 function arc42C4Type(node){
-  const what={container:t('Container','Container'),database:t('Database','Datenbank'),external:t('External container','Externer Container')}[node.kind];
+  const what={container:t('Container','Container'),database:t('Database','Datenbank'),external:t('External','Extern'),person:t('Person','Person')}[node.kind];
   return what&&(node.technology?what+' · '+node.technology:what);
 }
-function arc42RelationText(edge){return arc42RelationStyles[edge.kind]?.label()??String(edge.count??1);}
+function arc42RelationText(edge){return edge.label??arc42RelationStyles[edge.kind]?.label()??String(edge.count??1);}
 function arc42RelationColor(edge){const style=arc42RelationStyles[edge.kind];return style?arc42ThemeToken(...style.color):null;}
 
 // Graphviz model of a C4 diagram: cylinders for databases, dashed external containers,

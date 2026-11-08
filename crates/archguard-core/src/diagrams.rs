@@ -50,6 +50,8 @@ pub enum DiagramKind {
     Deployment,
     /// C4 container view of how services talk to each other.
     Communication,
+    /// C4 system context: users, the system, what it starts and reaches.
+    Context,
     /// One recorded request: participants and messages in time order.
     Sequence,
 }
@@ -62,8 +64,11 @@ pub enum ElementKind {
     Remainder,
     Container,
     Database,
-    /// A service of another deployment configuration.
+    /// A service of another deployment configuration, or an external
+    /// program or system in the context diagram.
     External,
+    /// Who uses the system (context diagram).
+    Person,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -81,6 +86,8 @@ pub enum RelationKind {
     Reference,
     /// A service uses a datastore.
     Data,
+    /// The system starts a program.
+    Runs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

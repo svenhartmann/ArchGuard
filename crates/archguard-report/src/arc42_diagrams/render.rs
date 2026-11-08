@@ -17,6 +17,7 @@ fn label(r: &DiagramRelation, unit: &str) -> String {
         RelationKind::Event => "Event".into(),
         RelationKind::Reference => "Konfigurationsverweis".into(),
         RelationKind::Data => "nutzt Datenbank".into(),
+        RelationKind::Runs => "startet".into(),
     }
 }
 
@@ -26,6 +27,7 @@ pub fn counted(n: usize, unit: &str) -> String {
         "Quellverbindungen" => "Quellverbindung",
         "Aufrufstellen" => "Aufrufstelle",
         "Konfigurationsbelege" => "Konfigurationsbeleg",
+        "Dateien" => "Datei",
         other => other,
     };
     format!("{n} {}", if n == 1 { one } else { unit })
@@ -68,6 +70,7 @@ pub fn mermaid(d: &Diagram) -> String {
         DiagramKind::Packages => mermaid_flowchart(d),
         DiagramKind::Deployment => c4(d, C4Text::Mermaid("C4Deployment")),
         DiagramKind::Communication => c4(d, C4Text::Mermaid("C4Container")),
+        DiagramKind::Context => c4(d, C4Text::Mermaid("C4Context")),
         DiagramKind::Sequence => sequence(d, false),
     }
 }
@@ -77,6 +80,7 @@ pub fn plantuml(d: &Diagram) -> String {
         DiagramKind::Packages => plantuml_packages(d),
         DiagramKind::Deployment => c4(d, C4Text::Plantuml("C4_Deployment")),
         DiagramKind::Communication => c4(d, C4Text::Plantuml("C4_Container")),
+        DiagramKind::Context => c4(d, C4Text::Plantuml("C4_Context")),
         DiagramKind::Sequence => sequence(d, true),
     }
 }
@@ -179,12 +183,13 @@ fn c4(d: &Diagram, text: C4Text) -> String {
     }
     for r in &d.relations {
         let evidence = counted(r.count, &d.unit);
+        let text = r.label.clone().unwrap_or_else(|| label(r, &d.unit));
         let _ = writeln!(
             out,
             "  Rel({}, {}, {}, {})",
             r.from,
             r.to,
-            arg(&label(r, &d.unit)),
+            arg(&text),
             arg(&evidence)
         );
     }
@@ -195,6 +200,10 @@ fn c4(d: &Diagram, text: C4Text) -> String {
 }
 
 fn c4_element(e: &DiagramElement) -> String {
+    if e.kind == ElementKind::Person {
+        let detail = e.detail.as_deref().unwrap_or("");
+        return format!("Person({}, {}, {})", e.id, arg(&e.name), arg(detail));
+    }
     let shape = match e.kind {
         ElementKind::Database => "ContainerDb",
         ElementKind::External => "Container_Ext",
