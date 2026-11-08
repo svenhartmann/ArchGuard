@@ -33,6 +33,19 @@ protobuf = "=3.7.2"
 # transitive closure.
 rustix = { version = "1.1.5", features = ["fs"] }
 
+[target.'cfg(windows)'.dependencies]
+# ADR 0007: the archguard-confine starter (AppContainer, ACLs, job object).
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Isolation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # ADR 0007: confine project compiler tooling with the kernel's Landlock
 # (the Landlock maintainers' crate; no helper program needed).

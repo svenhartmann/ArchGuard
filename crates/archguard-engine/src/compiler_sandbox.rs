@@ -8,16 +8,32 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
 /// Whether this platform confines the tooling: macOS with `sandbox-exec`,
-/// Linux with Landlock including its network rules (kernel 6.7+).
+/// Linux with Landlock including its network rules (kernel 6.7+), Windows
+/// with an AppContainer through the `archguard-confine` starter.
 pub(crate) fn available() -> bool {
     #[cfg(target_os = "linux")]
     return linux::available();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    return launcher().is_some();
+    #[cfg(not(any(target_os = "linux", windows)))]
     return cfg!(target_os = "macos") && Path::new(SANDBOX_EXEC).exists();
+}
+
+/// The `archguard-confine` starter next to the running program (or one
+/// directory up, where test binaries run from `deps`).
+#[cfg(windows)]
+fn launcher() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [Some(dir), dir.parent()]
+        .into_iter()
+        .flatten()
+        .map(|d| d.join("archguard-confine.exe"))
+        .find(|p| p.is_file())
 }
 
 /// `program` as a command that runs confined to `project` (read) and
@@ -29,7 +45,23 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
     let program = resolve(program);
     #[cfg(target_os = "linux")]
     return linux::command(&program, toolchain(&program), project, scratch);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let launcher = launcher().unwrap_or_default();
+        let mut command = Command::new(launcher);
+        for dir in toolchain(&program).into_iter().filter(|d| d.is_dir()) {
+            command.arg("--run").arg(dir);
+        }
+        command
+            .arg("--read")
+            .arg(project)
+            .arg("--write")
+            .arg(scratch)
+            .arg("--")
+            .arg(&program);
+        command
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let mut command = Command::new(SANDBOX_EXEC);
         command
@@ -51,7 +83,11 @@ fn resolve(program: &OsStr) -> PathBuf {
     std::env::var_os("PATH")
         .into_iter()
         .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-        .map(|dir| dir.join(program))
+        .flat_map(|dir| {
+            let plain = dir.join(program);
+            let exe = plain.with_extension("exe");
+            [plain, exe]
+        })
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| path.to_path_buf())
 }
@@ -64,7 +100,9 @@ fn real(path: &Path) -> PathBuf {
 /// Directories the toolchain of `program` lives in: rustup, cargo and the
 /// installation `program` comes from (`…/bin/node` → `…`).
 fn toolchain(program: &Path) -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
     let mut dirs: Vec<PathBuf> = home
         .iter()
         .flat_map(|h| [h.join(".rustup"), h.join(".cargo")])
@@ -81,7 +119,7 @@ fn toolchain(program: &Path) -> Vec<PathBuf> {
     dirs.into_iter().map(|d| real(&d)).collect()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 /// System locations tools read and start programs from.
 const SYSTEM: [&str; 9] = [
     "/usr",
@@ -95,7 +133,7 @@ const SYSTEM: [&str; 9] = [
     "/dev",
 ];
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn subpaths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -103,14 +141,14 @@ fn subpaths(paths: &[PathBuf]) -> String {
         .collect()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn quote(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 /// Deny everything, then allow: reading the system, the toolchain and the
 /// project; writing the scratch directory; starting system and toolchain
 /// programs. No network rule is allowed, so there is none.
@@ -264,6 +302,116 @@ mod tests {
         assert!(
             run(&d, "/bin/cat", &["/proc/self/status"]),
             "its own /proc stays readable"
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    const CMD: &str = r"C:\Windows\System32\cmd.exe";
+
+    struct Dirs {
+        project: tempfile::TempDir,
+        scratch: tempfile::TempDir,
+        secret: tempfile::TempDir,
+    }
+
+    fn dirs() -> Dirs {
+        let d = Dirs {
+            project: tempfile::tempdir().unwrap(),
+            scratch: tempfile::tempdir().unwrap(),
+            secret: tempfile::tempdir().unwrap(),
+        };
+        std::fs::write(d.project.path().join("p.txt"), "project").unwrap();
+        std::fs::write(d.secret.path().join("s.txt"), "secret").unwrap();
+        d
+    }
+
+    fn cmd(d: &Dirs, line: &str) -> std::process::Output {
+        command(OsStr::new(CMD), d.project.path(), d.scratch.path())
+            .args(["/c", line])
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn confined_tooling_reads_the_project_but_nothing_private() {
+        let d = dirs();
+        assert!(
+            available(),
+            "archguard-confine.exe is built next to the tests"
+        );
+        let p = cmd(
+            &d,
+            &format!("type \"{}\"", d.project.path().join("p.txt").display()),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&p.stdout).trim(),
+            "project",
+            "{}",
+            String::from_utf8_lossy(&p.stderr)
+        );
+        let s = cmd(
+            &d,
+            &format!("type \"{}\"", d.secret.path().join("s.txt").display()),
+        );
+        assert!(!String::from_utf8_lossy(&s.stdout).contains("secret"));
+    }
+
+    #[test]
+    fn confined_tooling_writes_only_its_scratch_directory() {
+        let d = dirs();
+        cmd(
+            &d,
+            &format!("echo x> \"{}\"", d.scratch.path().join("o").display()),
+        );
+        assert!(d.scratch.path().join("o").exists());
+        for target in [d.secret.path(), d.project.path()] {
+            cmd(&d, &format!("echo x> \"{}\"", target.join("o").display()));
+            assert!(!target.join("o").exists(), "{}", target.display());
+        }
+    }
+
+    #[test]
+    fn confined_tooling_has_no_network_and_runs_no_repository_program() {
+        let d = dirs();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            }
+        });
+        let curl = r"C:\Windows\System32\curl.exe";
+        let url = format!("http://127.0.0.1:{port}/");
+        let open = Command::new(curl)
+            .args(["-s", "-m", "5", &url])
+            .output()
+            .unwrap();
+        assert!(
+            open.status.success(),
+            "the listener answers outside the sandbox"
+        );
+        let closed = command(OsStr::new(curl), d.project.path(), d.scratch.path())
+            .args(["-s", "-m", "5", &url])
+            .output()
+            .unwrap();
+        assert!(!closed.status.success(), "no network inside");
+        let evil = d.project.path().join("evil.exe");
+        std::fs::copy(r"C:\Windows\System32\whoami.exe", &evil).unwrap();
+        let ran = command(evil.as_os_str(), d.project.path(), d.scratch.path())
+            .output()
+            .unwrap();
+        assert!(
+            !ran.status.success(),
+            "programs from the project do not start"
         );
     }
 }
