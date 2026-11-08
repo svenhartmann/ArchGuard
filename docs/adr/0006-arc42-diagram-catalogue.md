@@ -211,3 +211,13 @@ What exists:
 - **2026-11-08:** Scenarios name every building block on its own (no
   remainder box of the package overview), and long sequences fit their
   width in the desktop and scroll instead of shrinking.
+- **2026-11-08:** Scenarios per entry, after the user found chapter 6
+  still unfitting. A root (calling, not called) or a method up to three
+  calls below it that calls three or more methods is a dispatcher (a CLI
+  `main` calling `run`, which matches on the command; a router); each of
+  its handlers becomes a scenario of its own. Scenarios from a `main` (in
+  any language) come first, then by blocks reached; at most six. The
+  same call between the same blocks is one message with its count
+  ("(3×)"); titles name the handler and its block. This repository now
+  gets `init`, `analyze_with_zones`, `cycles`, `graph_export` (CLI),
+  `wire` (desktop) and `compare_branches`.
