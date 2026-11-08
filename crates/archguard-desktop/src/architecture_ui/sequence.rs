@@ -66,6 +66,7 @@ pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> Ar
         dh: bottom + 24.0,
         source: source.into(),
         legend: legend(d, texts).into(),
+        sequence: true,
     }
 }
 

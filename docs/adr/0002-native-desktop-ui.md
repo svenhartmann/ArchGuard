@@ -456,3 +456,17 @@ comparison of the native view against the web view on the same project
   window). Slint cannot register a font file by path, so the family
   changes. `platform::tests::the_monospace_font_is_upright` measures the
   slant of a "|" in the configured family (".SF NS Mono": 7.9 px).
+- **2026-11-08:** The desktop app trusts project compilers by default,
+  decided by the user ("always trust"), so Rust and TypeScript calls
+  resolve and arc42 chapter 6 has runtime scenarios without starting the
+  app with `ARCHGUARD_TRUST_PROJECT_COMPILER=1`. The engine got a
+  process switch (`archguard_engine::trust_project_compiler`, read next
+  to the environment variable); the app sets it at start from
+  `desktop.toml`, where `trust_project_compiler = false` turns it off
+  (the key is read, never written). Accepted risk: rust-analyzer and a
+  project's TypeScript compiler read configuration from the repository,
+  which can start commands; opening an untrusted repository in the app
+  runs them. The CLI and the MCP server stay off unless the variable is
+  set. Checked: chapter 6 of this repository in a snapshot without the
+  variable (static call map with 9,614 call sites, scenarios from
+  `main`).

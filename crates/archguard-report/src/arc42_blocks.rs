@@ -240,6 +240,19 @@ impl<'a> Blocks<'a> {
         graph: &Graph,
         calls: &'c CallAnalysis,
     ) -> BTreeMap<&'c str, usize> {
+        self.class_blocks(graph, calls)
+            .into_iter()
+            .map(|(class, block)| (class, self.display[&block]))
+            .collect()
+    }
+
+    /// The building block (index into `labels`) of every call-model class,
+    /// not merged into the remainder box.
+    pub fn class_blocks<'c>(
+        &self,
+        graph: &Graph,
+        calls: &'c CallAnalysis,
+    ) -> BTreeMap<&'c str, usize> {
         let by_name: BTreeMap<&str, NodeId> = graph
             .nodes
             .iter()
@@ -250,7 +263,7 @@ impl<'a> Blocks<'a> {
             .iter()
             .filter_map(|c| {
                 let block = self.owner.get(by_name.get(c.graph_node.as_str())?)?;
-                Some((c.id.as_str(), self.display[block]))
+                Some((c.id.as_str(), *block))
             })
             .collect()
     }

@@ -208,3 +208,6 @@ What exists:
   without edges into free row space (this repository's chapter 5: 79 %
   instead of 61 % fit). Checked in headless Chrome on a report of the
   copy of `fixtures/php-psr4` (level `App`).
+- **2026-11-08:** Scenarios name every building block on its own (no
+  remainder box of the package overview), and long sequences fit their
+  width in the desktop and scroll instead of shrinking.

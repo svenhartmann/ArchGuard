@@ -49,7 +49,7 @@ struct Input {
 }
 
 fn project_compiler_trusted() -> bool {
-    std::env::var_os(TRUST_ENV).is_some_and(|value| value == "1")
+    crate::compiler_trust::trusted()
 }
 
 pub fn analyze_typescript_calls(root: &Path, config: &Config) -> CallAnalysis {

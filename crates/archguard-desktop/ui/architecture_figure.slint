@@ -24,6 +24,8 @@ export struct ArcFigure {
     source: string,
     // What the arrow colours mean; empty for package maps.
     legend: string,
+    // A sequence: fit the width only.
+    sequence: bool,
 }
 
 export component FigureView inherits Rectangle {
@@ -35,8 +37,11 @@ export component FigureView inherits Rectangle {
     property <bool> source-open;
     // 0: fit to the width; otherwise the user's zoom factor.
     property <float> user-zoom: 0;
-    // Fit width and the box height, so the whole diagram is in view.
-    property <float> fit-zoom: figure.dw > 0 ? min(1, (root.width / 1px - 34) / figure.dw, 638 / figure.dh) : 1;
+    // Fit width and the box height, so the whole diagram is in view; a long
+    // sequence fits its width only and scrolls (its lanes would get tiny).
+    property <bool> fit-width: figure.sequence;
+    property <float> fit-zoom: figure.dw <= 0 ? 1 : root.fit-width ? min(1, (root.width / 1px - 34) / figure.dw)
+        : min(1, (root.width / 1px - 34) / figure.dw, 638 / figure.dh);
     property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
     background: Theme.panel-2;
     border-radius: 10px;

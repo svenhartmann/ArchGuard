@@ -72,6 +72,10 @@ pub struct Settings {
     /// `None` until a session was recorded once.
     pub session: Option<Session>,
     pub projects: BTreeMap<String, ProjectView>,
+    /// `trust_project_compiler = false`: never run a project's own compiler
+    /// tooling (rust-analyzer, its TypeScript compiler). The app trusts it
+    /// by default; the key is only read, never written.
+    pub distrust_project_compiler: bool,
 }
 
 impl Settings {
@@ -179,6 +183,8 @@ fn read(doc: &DocumentMut) -> Settings {
                 .unwrap_or(0),
         }),
         projects: read_projects(doc.get("projects")),
+        distrust_project_compiler: doc.get("trust_project_compiler").and_then(Item::as_bool)
+            == Some(false),
     }
 }
 
@@ -349,6 +355,15 @@ mod tests {
         l.set_ratio(0.62);
         l.focus(1);
         l
+    }
+
+    #[test]
+    fn project_compilers_are_trusted_unless_turned_off() {
+        assert!(!parse("").unwrap().1.distrust_project_compiler);
+        let (_, off) = parse("trust_project_compiler = false\n").unwrap();
+        assert!(off.distrust_project_compiler);
+        let (mut doc, settings) = parse("trust_project_compiler = false\n").unwrap();
+        assert!(render(&mut doc, &settings).contains("trust_project_compiler = false"));
     }
 
     #[test]

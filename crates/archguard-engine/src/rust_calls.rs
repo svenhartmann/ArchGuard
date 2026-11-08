@@ -516,13 +516,11 @@ fn visibility_name(visibility: &Visibility) -> String {
     }
 }
 
-/// Set to `1` outside the repository to let rust-analyzer load it and resolve calls.
-const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
 const UNTRUSTED: &str = "Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
 const RESOLVED: &str = "Calls, implemented traits, supertraits and type references in fields, signatures and impl bodies are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
 
 pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
-    let trusted = std::env::var_os(TRUST_ENV).is_some_and(|value| value == "1");
+    let trusted = crate::compiler_trust::trusted();
     let executable =
         std::env::var_os("ARCHGUARD_RUST_ANALYZER").unwrap_or_else(|| "rust-analyzer".into());
     analyze_with(root, config, trusted.then_some(executable.as_os_str()))

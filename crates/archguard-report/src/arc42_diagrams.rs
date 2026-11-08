@@ -83,7 +83,6 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         }
         out.extend(scenarios::diagrams(
             &blocks,
-            &elements,
             input.source_graph,
             input.calls,
         ));

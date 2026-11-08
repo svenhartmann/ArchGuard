@@ -2,7 +2,7 @@
 //! code for every language with a call model. From each entry point (a
 //! method that calls but is not called, `main` first) the resolved calls
 //! are followed in source order; every call that crosses building blocks
-//! of the package overview becomes a message. Static: no measured order,
+//! becomes a message (each block on its own, no remainder box). Static: no measured order,
 //! branches or loops.
 
 use archguard_core::{
@@ -17,13 +17,8 @@ const MAX_SCENARIOS: usize = 3;
 const MAX_MESSAGES: usize = 25;
 const MAX_DEPTH: usize = 6;
 
-pub fn diagrams(
-    blocks: &Blocks<'_>,
-    elements: &[DiagramElement],
-    graph: &Graph,
-    calls: &CallAnalysis,
-) -> Vec<Diagram> {
-    let boxes = blocks.class_boxes(graph, calls);
+pub fn diagrams(blocks: &Blocks<'_>, graph: &Graph, calls: &CallAnalysis) -> Vec<Diagram> {
+    let boxes = blocks.class_blocks(graph, calls);
     let mut out: BTreeMap<&str, Vec<&MethodCall>> = BTreeMap::new();
     let mut called = BTreeSet::new();
     for c in calls.calls.iter().filter(|c| c.resolution == "project") {
@@ -64,7 +59,7 @@ pub fn diagrams(
     scenarios
         .into_iter()
         .take(MAX_SCENARIOS)
-        .map(|(_, entry, messages)| diagram(entry, &messages, elements, calls))
+        .map(|(_, entry, messages)| diagram(entry, &messages, &blocks.labels, calls))
         .collect()
 }
 
@@ -140,12 +135,7 @@ fn short(method: &str) -> &str {
     &name[..end]
 }
 
-fn diagram(
-    entry: &str,
-    messages: &[Message],
-    elements: &[DiagramElement],
-    calls: &CallAnalysis,
-) -> Diagram {
+fn diagram(entry: &str, messages: &[Message], labels: &[String], calls: &CallAnalysis) -> Diagram {
     let mut order: Vec<usize> = Vec::new();
     for m in messages {
         for b in [m.from, m.to] {
@@ -155,10 +145,10 @@ fn diagram(
         }
     }
     let name = |b: usize| {
-        elements
-            .iter()
-            .find(|e| e.id == format!("e{b}"))
-            .map_or_else(|| format!("Baustein {b}"), |e| e.name.clone())
+        labels
+            .get(b)
+            .cloned()
+            .unwrap_or_else(|| format!("Baustein {b}"))
     };
     let at = |b: usize| order.iter().position(|&x| x == b).unwrap_or(0);
     let start = calls.methods.iter().find(|m| m.id == entry);
@@ -172,7 +162,7 @@ fn diagram(
         title: format!("Szenario · {entry_name} (statisch)"),
         kind: DiagramKind::Sequence,
         note: format!(
-            "Abgeleitet aus aufgelösten Aufrufen ab dem Einstiegspunkt {entry_name}{place}, in Quelltext-Reihenfolge bis Tiefe {MAX_DEPTH}. Statisch: keine gemessene Reihenfolge, keine Verzweigungen oder Schleifen; nur Aufrufe zwischen Bausteinen der Paketübersicht."
+            "Abgeleitet aus aufgelösten Aufrufen ab dem Einstiegspunkt {entry_name}{place}, in Quelltext-Reihenfolge bis Tiefe {MAX_DEPTH}. Statisch: keine gemessene Reihenfolge, keine Verzweigungen oder Schleifen; nur Aufrufe zwischen Bausteinen."
         ),
         unit: "Aufrufstellen".into(),
         elements: order
@@ -271,7 +261,7 @@ mod tests {
         let facts = Arc42Blocks::default();
         let blocks = Blocks::new(&graph, &config, &services, &BTreeMap::new(), &facts);
         let calls = calls();
-        let all = diagrams(&blocks, &blocks.elements(), &graph, &calls);
+        let all = diagrams(&blocks, &graph, &calls);
         assert_eq!(all.len(), 1, "only main calls without being called");
         let d = &all[0];
         assert_eq!(

@@ -31,6 +31,7 @@ pub use class_cohesion::class_cohesion;
 mod comparison;
 mod staged;
 pub use staged::{GitBranch, GitBranches, compare_branches, compare_staged, list_git_branches};
+mod compiler_trust;
 mod config;
 mod coverage_review;
 mod csharp_calls;
@@ -201,6 +202,7 @@ pub use archguard_analysis as analysis;
 /// edges into the lower layers): lets `archguard-cli`/`archguard-mcp` name
 /// [`archguard_core`] types without a direct dependency.
 pub use archguard_core as core;
+pub use compiler_trust::trust_project_compiler;
 /// Facade for L3 consumers, mirroring [`core`] for the renderers.
 pub use archguard_report as report;
 /// Facade for L3 consumers, mirroring [`core`] for the graph-DB mirror

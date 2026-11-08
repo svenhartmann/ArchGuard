@@ -24,6 +24,9 @@ thread_local! {
 /// without them the last session.
 pub fn start(ui: &AppWindow, args: Vec<PathBuf>) {
     let notice = settings_file::init(settings_file::default_path());
+    // The app runs project compilers so Rust and TypeScript calls resolve
+    // (arc42 runtime scenarios); `trust_project_compiler = false` turns it off.
+    archguard_engine::trust_project_compiler(!settings_file::get(|s| s.distrust_project_compiler));
     apply_settings(ui);
     let (roots, active) = settings_file::get(|s| {
         settings::startup_roots(args, s, std::env::current_dir().ok(), Path::exists)

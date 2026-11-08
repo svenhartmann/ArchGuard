@@ -79,6 +79,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
         dw: l.width,
         dh: l.height,
         source: source(d, format).into(),
+        sequence: false,
         legend: if c4 {
             texts.t(LEGEND).into()
         } else {
