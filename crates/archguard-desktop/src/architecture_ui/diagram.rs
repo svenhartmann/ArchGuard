@@ -212,6 +212,24 @@ mod tests {
     }
 
     #[test]
+    fn cards_without_edges_do_not_widen_the_map() {
+        // 0, 1 → 2 → 3..6 (a full row); 7 and 8 have no edges.
+        let edges = [(0, 2), (1, 2), (2, 3), (2, 4), (2, 5), (2, 6)];
+        let l = layout(9, &edges);
+        let span = |cards: &[Card]| {
+            let min = cards.iter().map(|c| c.x).fold(f32::INFINITY, f32::min);
+            cards.iter().map(|c| c.x + c.w).fold(0.0, f32::max) - min
+        };
+        let without = layout(7, &edges);
+        assert!(
+            span(&l.cards) <= span(&without.cards) + 1.0,
+            "lonely cards fit into the width the full row needs anyway: {} vs {}",
+            span(&l.cards),
+            span(&without.cards)
+        );
+    }
+
+    #[test]
     fn layout_is_deterministic() {
         let edges = [(0, 1), (1, 2), (2, 0), (3, 1), (4, 2)];
         assert_eq!(layout(5, &edges), layout(5, &edges));

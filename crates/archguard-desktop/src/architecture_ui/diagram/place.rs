@@ -128,8 +128,46 @@ fn xs(g: &Grid) -> Vec<f32> {
             place_row(row, &wanted, &mut x, g.nodes);
         }
     }
+    tuck_lonely(g, &mut x, &above, &below);
     let shift = MARGIN - x.iter().copied().fold(f32::INFINITY, f32::min);
     x.iter().map(|v| (v + shift).round()).collect()
+}
+
+/// Cards without edges go into free space of their row inside the width
+/// the connected slots need anyway: left of them first, then right; only
+/// what does not fit widens the map.
+fn tuck_lonely(g: &Grid, x: &mut [f32], above: &[Vec<usize>], below: &[Vec<usize>]) {
+    let w = |s: usize| if s < g.nodes { CARD_W } else { BEND_W };
+    let lonely = |s: usize| s < g.nodes && above[s].is_empty() && below[s].is_empty();
+    let linked: Vec<usize> = (0..g.row_of.len()).filter(|&s| !lonely(s)).collect();
+    let Some(lo) = linked.iter().map(|&s| x[s]).reduce(f32::min) else {
+        return;
+    };
+    for row in &g.rows {
+        let (mut quiet, mut busy): (Vec<usize>, Vec<usize>) = row.iter().partition(|&&s| lonely(s));
+        if quiet.is_empty() {
+            continue;
+        }
+        busy.sort_by(|a, b| x[*a].total_cmp(&x[*b]));
+        // A row of lonely cards only starts at the left edge.
+        let mut right = lo - CARD_GAP;
+        if let (Some(&first), Some(&last)) = (busy.first(), busy.last()) {
+            let mut left = x[first];
+            while let Some(&s) = quiet.first() {
+                let at = left - CARD_GAP - w(s);
+                if at < lo {
+                    break;
+                }
+                (x[s], left) = (at, at);
+                quiet.remove(0);
+            }
+            right = x[last] + w(last);
+        }
+        for s in quiet {
+            x[s] = right + CARD_GAP;
+            right = x[s] + w(s);
+        }
+    }
 }
 
 /// Positions closest to `wanted` in order: the mean of a left-to-right and
