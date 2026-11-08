@@ -131,7 +131,9 @@ archive (for example `*-linux-gnu` from `cargo build`) cannot update itself.
 `ARCHGUARD_UPDATE_API` replaces `https://api.github.com`, e.g. for a mirror.
 
 The lookup, download limit, checksum checks and install live in the crate
-`crates/archguard-update`, shared with the desktop app.
+`crates/archguard-update`, shared with the desktop app. A request fails
+after 30 seconds without progress (connecting, waiting for the response or for
+the next bytes); a slow download that keeps moving is not cut off.
 
 ## Update the desktop app
 
