@@ -61,10 +61,17 @@ name = "mcp"
 contains = ["archguard-mcp", "archguard-mcp/**"]
 may_depend_on = ["engine"]
 
+# Self-update from GitHub releases, shared by the CLI and the desktop app; it
+# depends on no other archguard crate.
+[[layers]]
+name = "update"
+contains = ["archguard-update", "archguard-update/**"]
+may_depend_on = []
+
 [[layers]]
 name = "cli"
 contains = ["archguard-cli", "archguard-cli/**"]
-may_depend_on = ["engine", "mcp"]
+may_depend_on = ["engine", "mcp", "update"]
 
 
 # No source file may take part in a cycle: child modules import from the module

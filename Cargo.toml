@@ -11,6 +11,7 @@ members = [
     "crates/archguard-mcp",
     "crates/archguard-report",
     "crates/archguard-store",
+    "crates/archguard-update",
 ]
 
 [workspace.package]

@@ -306,16 +306,14 @@ version = "0.2.1"
 dependencies = [
  "archguard-engine",
  "archguard-mcp",
+ "archguard-update",
  "assert_cmd",
  "clap",
  "flate2",
- "self-replace",
  "serde_json",
  "sha2",
  "tar",
  "tempfile",
- "ureq",
- "zip",
 ]
 
 [[package]]
@@ -416,6 +414,20 @@ dependencies = [
  "lbug",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "archguard-update"
+version = "0.2.1"
+dependencies = [
+ "flate2",
+ "self-replace",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
