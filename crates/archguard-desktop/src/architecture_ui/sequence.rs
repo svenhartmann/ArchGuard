@@ -12,7 +12,7 @@ use crate::ui::{ArcCard, ArcFigure, ArcLine};
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order.";
 /// Scenarios derived from the code (only calls): no measured order.
 const STATIC_LEGEND: &str =
-    "Blue: calls · red: error path. Top to bottom in source order, derived from the code, not measured.";
+    "Blue: calls · violet: events (async) · red: error path. Top to bottom in source order, derived from the code, not measured.";
 const COLUMN: f32 = 230.0;
 const CARD_W: f32 = 180.0;
 const CARD_H: f32 = 62.0;
@@ -92,6 +92,7 @@ fn participant(i: usize, e: &DiagramElement, centre: f32, texts: &Texts) -> ArcC
     let tag = match e.kind {
         ElementKind::Package => "",
         ElementKind::Person => texts.t("Person"),
+        ElementKind::External => texts.t("External"),
         _ => texts.t("Container"),
     };
     ArcCard {
@@ -102,7 +103,7 @@ fn participant(i: usize, e: &DiagramElement, centre: f32, texts: &Texts) -> ArcC
         h: CARD_H,
         kind: if package {
             0
-        } else if e.kind == ElementKind::Person {
+        } else if matches!(e.kind, ElementKind::Person | ElementKind::External) {
             5
         } else {
             3

@@ -48,10 +48,67 @@ pub(super) fn target<'a>(t: &'a ServiceTopology, step: &RouteStep) -> Option<&'a
         .find(|r| r.service == step.to && r.method == step.method && r.path == step.path)
 }
 
-/// The display name of a service id; "user" is the person at the start.
+/// One message of a scenario, between participant indices.
+pub(super) struct Message {
+    pub from: usize,
+    pub to: usize,
+    pub text: String,
+    pub error: bool,
+    pub event: bool,
+}
+
+impl Message {
+    /// A call or publication along `step`.
+    pub(super) fn step(from: usize, to: usize, step: &RouteStep) -> Self {
+        let together = if step.parallel && !event(&step.method) {
+            " (parallel)"
+        } else {
+            ""
+        };
+        Message {
+            from,
+            to,
+            text: format!("{}{together}", trigger(&step.method, &step.path)),
+            error: false,
+            event: event(&step.method),
+        }
+    }
+}
+
+/// Consumers are routes with method `EVENT` and the topic as path.
+pub(super) fn event(method: &str) -> bool {
+    method == "EVENT"
+}
+
+/// `POST /checkout`, or `Event order.placed (async)` for a topic.
+pub(super) fn trigger(method: &str, path: &str) -> String {
+    if event(method) {
+        format!("Event {path} (async)")
+    } else {
+        format!("{method} {path}")
+    }
+}
+
+/// Who starts `entry`: the user, or for a consumer whose publisher is
+/// not in the source, an external sender.
+pub(super) fn starter(entry: &ServiceRoute) -> &'static str {
+    if event(&entry.method) {
+        "external"
+    } else {
+        "user"
+    }
+}
+
+/// The display name of a participant id: the user, an external sender,
+/// a topic without consumer in the source, or a service.
 pub(super) fn name(t: &ServiceTopology, id: &str) -> String {
-    if id == "user" {
-        return "Nutzer".into();
+    match id {
+        "user" => return "Nutzer".into(),
+        "external" => return "Externer Absender".into(),
+        _ => {}
+    }
+    if let Some(topic) = id.strip_prefix("topic:") {
+        return format!("Topic {topic}");
     }
     t.services
         .iter()
@@ -88,10 +145,11 @@ pub(super) fn elements(t: &ServiceTopology, order: &[String]) -> Vec<DiagramElem
         .map(|(i, id)| DiagramElement {
             id: format!("e{i}"),
             name: name(t, id),
-            kind: if i == 0 {
-                ElementKind::Person
-            } else {
-                ElementKind::Container
+            kind: match id.as_str() {
+                "user" => ElementKind::Person,
+                "external" => ElementKind::External,
+                _ if id.starts_with("topic:") => ElementKind::External,
+                _ => ElementKind::Container,
             },
             technology: None,
             detail: None,
@@ -101,19 +159,23 @@ pub(super) fn elements(t: &ServiceTopology, order: &[String]) -> Vec<DiagramElem
         .collect()
 }
 
-/// Numbered messages between participant indices.
-pub(super) fn relations(messages: &[(usize, usize, String, bool)]) -> Vec<DiagramRelation> {
+/// Numbered relations; publications are events.
+pub(super) fn relations(messages: &[Message]) -> Vec<DiagramRelation> {
     messages
         .iter()
         .enumerate()
-        .map(|(n, (from, to, text, error))| DiagramRelation {
-            from: format!("e{from}"),
-            to: format!("e{to}"),
-            kind: RelationKind::Http,
+        .map(|(n, m)| DiagramRelation {
+            from: format!("e{}", m.from),
+            to: format!("e{}", m.to),
+            kind: if m.event {
+                RelationKind::Event
+            } else {
+                RelationKind::Http
+            },
             count: 1,
             cycle: false,
-            label: Some(format!("{}. {text}", n + 1)),
-            error: *error,
+            label: Some(format!("{}. {}", n + 1, m.text)),
+            error: m.error,
         })
         .collect()
 }
@@ -122,7 +184,7 @@ struct Flow<'a> {
     t: &'a ServiceTopology,
     /// Participants: "user", then service ids in first-use order.
     order: Vec<String>,
-    messages: Vec<(usize, usize, String)>,
+    messages: Vec<Message>,
     routes: Vec<&'a ServiceRoute>,
 }
 
@@ -130,7 +192,7 @@ impl<'a> Flow<'a> {
     fn new(t: &'a ServiceTopology) -> Self {
         Flow {
             t,
-            order: vec!["user".into()],
+            order: Vec::new(),
             messages: Vec::new(),
             routes: Vec::new(),
         }
@@ -148,9 +210,15 @@ impl<'a> Flow<'a> {
 
     /// The scenario of `entry` and how many services it involves.
     fn build(mut self, entry: &'a ServiceRoute) -> (usize, Diagram) {
+        self.at(starter(entry));
         let to = self.at(&entry.service);
-        self.messages
-            .push((0, to, format!("{} {}", entry.method, entry.path)));
+        self.messages.push(Message {
+            from: 0,
+            to,
+            text: trigger(&entry.method, &entry.path),
+            error: false,
+            event: event(&entry.method),
+        });
         let mut seen = BTreeSet::new();
         self.visit(entry, 0, &mut seen);
         let services = self.order.len() - 1;
@@ -170,9 +238,7 @@ impl<'a> Flow<'a> {
                 return;
             }
             let to = self.at(&step.to);
-            let together = if step.parallel { " (parallel)" } else { "" };
-            self.messages
-                .push((from, to, format!("{} {}{together}", step.method, step.path)));
+            self.messages.push(Message::step(from, to, step));
             let key = (step.to.clone(), step.method.clone(), step.path.clone());
             if depth + 1 < MAX_DEPTH
                 && seen.insert(key)
@@ -188,13 +254,8 @@ impl<'a> Flow<'a> {
     }
 
     fn diagram(&self, entry: &ServiceRoute) -> Diagram {
-        let messages: Vec<(usize, usize, String, bool)> = self
-            .messages
-            .iter()
-            .map(|(a, b, text)| (*a, *b, text.clone(), false))
-            .collect();
         let elements = elements(self.t, &self.order);
-        let relations = relations(&messages);
+        let relations = relations(&self.messages);
         let entry_service = self.name(&entry.service);
         Diagram {
             id: format!(
@@ -202,7 +263,10 @@ impl<'a> Flow<'a> {
                 slug(&format!("{entry_service} {} {}", entry.method, entry.path))
             ),
             chapter: 6,
-            title: format!("Ablauf · {} {} · {entry_service}", entry.method, entry.path),
+            title: format!(
+                "Ablauf · {} · {entry_service}",
+                trigger(&entry.method, &entry.path).trim_end_matches(" (async)")
+            ),
             kind: DiagramKind::Sequence,
             note: self.note(entry),
             unit: "Aufrufe".into(),
@@ -225,9 +289,8 @@ impl<'a> Flow<'a> {
         }
         let involved: BTreeSet<&str> = self.order.iter().skip(1).map(String::as_str).collect();
         format!(
-            "Auslöser: {} {} an {} ({}:{}). Schritte aus dem Quelltext der Dienste in Quelltext-Reihenfolge, statisch abgeleitet: keine gemessene Reihenfolge oder Dauer, Verzweigungen nicht unterschieden. Abbrüche unterwegs: {}. Fehlerbehandlung: {}.",
-            entry.method,
-            entry.path,
+            "Auslöser: {} an {} ({}:{}). Schritte aus dem Quelltext der Dienste in Quelltext-Reihenfolge, statisch abgeleitet: keine gemessene Reihenfolge oder Dauer, Verzweigungen nicht unterschieden. Abbrüche unterwegs: {}. Fehlerbehandlung: {}.{}",
+            trigger(&entry.method, &entry.path),
             self.name(&entry.service),
             entry.file,
             entry.line,
@@ -237,6 +300,11 @@ impl<'a> Flow<'a> {
                 failures.join("; ")
             },
             handling(self.t, &involved),
+            if self.messages.iter().any(|m| m.event) {
+                " Events laufen asynchron: der Absender wartet nicht auf die Empfänger, Fehler dort erreichen ihn nicht."
+            } else {
+                ""
+            },
         )
     }
 }

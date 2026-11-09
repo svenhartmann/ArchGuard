@@ -5,6 +5,8 @@
 //! imported client code sets up. Target services come from the configured
 //! endpoints (`PAYMENTS_API` → payments) or from URLs naming a service.
 
+mod events;
+
 use archguard_core::{
     RouteFailure, RouteStep, ServiceDependencyKind, ServiceResilience, ServiceRoute,
     ServiceTopology,
@@ -66,6 +68,7 @@ pub(crate) fn augment(root: &Path, report: &mut ServiceTopology) {
             }
         }
     }
+    events::connect(&mut routes);
     report.routes = routes;
     report.resilience = resilience;
 }
@@ -212,6 +215,11 @@ fn routes_in(text: &str) -> Vec<(Found, usize)> {
     let mut found: Vec<Found> = Vec::new();
     found.extend(compared_routes(text));
     found.extend(registered_routes(text));
+    found.extend(events::consumed(text).into_iter().map(|(topic, at)| Found {
+        method: events::EVENT.into(),
+        path: topic,
+        at,
+    }));
     found.sort_by_key(|f| f.at);
     found.dedup_by(|a, b| a.at == b.at);
     let ends: Vec<usize> = found
@@ -329,6 +337,11 @@ fn calls_in(segment: &str, targets: &Targets) -> Vec<RouteStep> {
             }
         }
     }
+    steps.extend(
+        events::published(segment)
+            .into_iter()
+            .map(|(topic, at)| (at, events::step(topic))),
+    );
     steps.sort_by_key(|(at, _)| *at);
     steps
         .into_iter()

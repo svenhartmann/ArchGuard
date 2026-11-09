@@ -10,7 +10,9 @@ use archguard_core::{
 };
 use std::collections::BTreeSet;
 
-use super::flows::{elements, entries, handling, name, relations, slug, target};
+use super::flows::{
+    Message, elements, entries, event, handling, name, relations, slug, starter, target, trigger,
+};
 
 const MAX_SCENARIOS: usize = 6;
 const MAX_DEPTH: usize = 6;
@@ -48,7 +50,9 @@ impl<'a> Walk<'a> {
     /// `chain[i]` that calls `chain[i + 1]`.
     fn walk(&mut self, chain: &mut Vec<&'a ServiceRoute>, hops: &mut Vec<&'a RouteStep>) {
         let route = chain[chain.len() - 1];
-        if chain.len() > 1 {
+        // An error in a consumer stays there: the publisher does not wait.
+        let answered = hops.last().is_some_and(|h| !event(&h.method));
+        if answered {
             for f in &route.failures {
                 if self
                     .seen
@@ -76,17 +80,26 @@ impl<'a> Walk<'a> {
     }
 }
 
+/// Where the red way back ends.
+enum End<'r> {
+    User,
+    /// A handler with catch/except.
+    Caught(&'r ServiceRoute),
+    /// A consumer: whoever published the event does not learn of it.
+    Async(&'r ServiceRoute),
+}
+
 struct Scenario<'a> {
     t: &'a ServiceTopology,
     order: Vec<String>,
-    messages: Vec<(usize, usize, String, bool)>,
+    messages: Vec<Message>,
 }
 
 impl<'a> Scenario<'a> {
     fn new(t: &'a ServiceTopology) -> Self {
         Scenario {
             t,
-            order: vec!["user".into()],
+            order: Vec::new(),
             messages: Vec::new(),
         }
     }
@@ -103,16 +116,31 @@ impl<'a> Scenario<'a> {
 
     fn call(&mut self, from: &str, to: &str, step: &RouteStep) {
         let (a, b) = (self.at(from), self.at(to));
-        self.messages
-            .push((a, b, format!("{} {}", step.method, step.path), false));
+        self.messages.push(Message::step(a, b, step));
+    }
+
+    fn red(&mut self, from: usize, to: usize, text: String) {
+        self.messages.push(Message {
+            from,
+            to,
+            text,
+            error: true,
+            event: false,
+        });
     }
 
     /// Down to the failing route, then the error back up.
     fn build(mut self, chain: &[&ServiceRoute], hops: &[&RouteStep], f: &RouteFailure) -> Diagram {
         let entry = chain[0];
+        self.at(starter(entry));
         let first = self.at(&entry.service);
-        self.messages
-            .push((0, first, format!("{} {}", entry.method, entry.path), false));
+        self.messages.push(Message {
+            from: 0,
+            to: first,
+            text: trigger(&entry.method, &entry.path),
+            error: false,
+            event: event(&entry.method),
+        });
         for (i, route) in chain.iter().enumerate() {
             let until = hops.get(i).map_or(f.line, |h| h.line);
             for step in route.steps.iter().filter(|s| s.line < until) {
@@ -122,54 +150,60 @@ impl<'a> Scenario<'a> {
                 self.call(&route.service, &hop.to, hop);
             }
         }
-        let caught = self.back(chain, f);
-        self.diagram(chain, f, caught)
+        let end = self.back(chain, hops, f);
+        self.diagram(chain, f, end)
     }
 
-    /// The red way back; the route that catches the error, if any.
+    /// The red way back and where it ends.
     fn back<'r>(
         &mut self,
         chain: &[&'r ServiceRoute],
+        hops: &[&RouteStep],
         f: &RouteFailure,
-    ) -> Option<&'r ServiceRoute> {
+    ) -> End<'r> {
         let last = chain.len() - 1;
-        let text = format!("{} {}", f.status, f.message);
         for j in (0..last).rev() {
             let (from, to) = (self.at(&chain[j + 1].service), self.at(&chain[j].service));
             let label = if j + 1 == last {
-                text.clone()
+                format!("{} {}", f.status, f.message)
             } else {
                 format!("{} weitergereicht", f.status)
             };
-            self.messages.push((from, to, label, true));
+            self.red(from, to, label);
             if chain[j].catches {
-                return Some(chain[j]);
+                return End::Caught(chain[j]);
+            }
+            if j > 0 && event(&hops[j - 1].method) {
+                return End::Async(chain[j]);
             }
         }
+        if event(&chain[0].method) {
+            return End::Async(chain[0]);
+        }
         let from = self.at(&chain[0].service);
-        self.messages
-            .push((from, 0, format!("{} weitergereicht", f.status), true));
-        None
+        self.red(from, 0, format!("{} weitergereicht", f.status));
+        End::User
     }
 
-    fn diagram(
-        &self,
-        chain: &[&ServiceRoute],
-        f: &RouteFailure,
-        caught: Option<&ServiceRoute>,
-    ) -> Diagram {
+    fn diagram(&self, chain: &[&ServiceRoute], f: &RouteFailure, end: End<'_>) -> Diagram {
         let (entry, failing) = (chain[0], chain[chain.len() - 1]);
         let service = name(self.t, &failing.service);
         let involved: BTreeSet<&str> = self.order.iter().skip(1).map(String::as_str).collect();
-        let end = match caught {
-            Some(r) => format!(
-                "{} fängt den Fehler ab (catch/except im Handler {} {}); was der Nutzer dann erhält, zeigt der Code nicht eindeutig",
+        let end = match end {
+            End::Caught(r) => format!(
+                "{} fängt den Fehler ab (catch/except im Handler {}); was der Nutzer dann erhält, zeigt der Code nicht eindeutig",
                 name(self.t, &r.service),
-                r.method,
-                r.path
+                trigger(&r.method, &r.path)
             ),
-            None => "kein Handler auf dem Weg fängt ihn ab, der Nutzer erhält den Fehler".into(),
+            End::Async(r) => format!(
+                "er endet bei {}, das per Event aufgerufen wurde (asynchron): der Absender erfährt davon nichts",
+                name(self.t, &r.service)
+            ),
+            End::User => {
+                "kein Handler auf dem Weg fängt ihn ab, der Nutzer erhält den Fehler".into()
+            }
         };
+        let trigger = trigger(&entry.method, &entry.path);
         Diagram {
             id: format!(
                 "runtime-failure-{}",
@@ -177,14 +211,14 @@ impl<'a> Scenario<'a> {
             ),
             chapter: 6,
             title: format!(
-                "Fehlerfall · {service} {} „{}“ · {} {}",
-                f.status, f.message, entry.method, entry.path
+                "Fehlerfall · {service} {} „{}“ · {}",
+                f.status,
+                f.message,
+                trigger.trim_end_matches(" (async)")
             ),
             kind: DiagramKind::Sequence,
             note: format!(
-                "Auslöser: {} {} an {}. Abbruch: {service} antwortet {} „{}“ ({}:{}). Vorher abgeschlossene Aufrufe stehen ohne ihre Folgeaufrufe. Rückweg rot: ein Handler ohne catch/except reicht den Fehler weiter; {end}. Statisch aus dem Quelltext abgeleitet, nicht gemessen. Fehlerbehandlung: {}.",
-                entry.method,
-                entry.path,
+                "Auslöser: {trigger} an {}. Abbruch: {service} antwortet {} „{}“ ({}:{}). Vorher abgeschlossene Aufrufe stehen ohne ihre Folgeaufrufe. Rückweg rot: ein Handler ohne catch/except reicht den Fehler weiter; {end}. Statisch aus dem Quelltext abgeleitet, nicht gemessen. Fehlerbehandlung: {}.",
                 name(self.t, &entry.service),
                 f.status,
                 f.message,
@@ -326,5 +360,94 @@ mod tests {
             line: 1,
         });
         assert!(diagrams(&t).is_empty());
+    }
+
+    /// orders publishes `order.placed` (shipping consumes it) and `audit`
+    /// (no consumer); shipping calls carrier, which fails.
+    fn evented() -> ServiceTopology {
+        let mut t = ServiceTopology::default();
+        for n in ["orders", "shipping", "carrier"] {
+            t.services.push(Service {
+                id: n.into(),
+                name: n.into(),
+                compose_file: "c".into(),
+                build_context: None,
+                networks: vec![],
+                profiles: vec![],
+                project: None,
+            });
+        }
+        let event = |to: &str, topic: &str, line| RouteStep {
+            to: to.into(),
+            method: "EVENT".into(),
+            path: topic.into(),
+            line,
+            parallel: false,
+        };
+        let mut orders = route("orders", "/orders", &[], None);
+        orders.steps = vec![
+            event("shipping", "order.placed", 2),
+            event("topic:audit", "audit", 3),
+        ];
+        let mut shipping = route(
+            "shipping",
+            "order.placed",
+            &[("carrier", "/labels", 2)],
+            None,
+        );
+        shipping.method = "EVENT".into();
+        t.routes = vec![orders, shipping, route("carrier", "/labels", &[], Some(3))];
+        t
+    }
+
+    #[test]
+    fn events_are_async_and_errors_stop_at_the_consumer() {
+        let t = evented();
+        let flows = super::super::flows::diagrams(&t);
+        assert_eq!(flows.len(), 1, "the consumer is reached, not an entry");
+        let f = &flows[0];
+        let names: Vec<&str> = f.elements.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Nutzer", "orders", "shipping", "carrier", "Topic audit"]
+        );
+        assert_eq!(f.elements[4].kind, archguard_core::ElementKind::External);
+        let kinds: Vec<(String, archguard_core::RelationKind)> = f
+            .relations
+            .iter()
+            .map(|r| (r.label.clone().unwrap_or_default(), r.kind))
+            .collect();
+        use archguard_core::RelationKind::{Event, Http};
+        let expected = [
+            ("1. POST /orders", Http),
+            ("2. Event order.placed (async)", Event),
+            ("3. POST /labels", Http),
+            ("4. Event audit (async)", Event),
+        ];
+        let expected: Vec<(String, archguard_core::RelationKind)> =
+            expected.iter().map(|(l, k)| ((*l).into(), *k)).collect();
+        assert_eq!(kinds, expected);
+        assert!(f.note.contains("Events laufen asynchron"), "{}", f.note);
+
+        let d = &diagrams(&t)[0];
+        let red: Vec<(String, bool)> = labels(d).into_iter().filter(|(_, e)| *e).collect();
+        assert_eq!(
+            red,
+            [("4. 409 Rejected".to_string(), true)],
+            "no red arrow back to orders"
+        );
+        assert!(d.note.contains("er endet bei shipping"), "{}", d.note);
+    }
+
+    #[test]
+    fn a_consumer_without_publisher_in_the_source_has_an_external_sender() {
+        let mut t = evented();
+        t.routes.remove(0);
+        let f = &super::super::flows::diagrams(&t)[0];
+        assert_eq!(f.title, "Ablauf · Event order.placed · shipping");
+        assert_eq!(f.elements[0].name, "Externer Absender");
+        let d = &diagrams(&t)[0];
+        assert!(d.note.contains("er endet bei shipping"), "{}", d.note);
+        assert_eq!(d.relations.last().unwrap().to, "e1", "red ends at shipping");
     }
 }

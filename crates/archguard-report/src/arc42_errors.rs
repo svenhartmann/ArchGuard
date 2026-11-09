@@ -44,7 +44,11 @@ pub(crate) fn section(t: &ServiceTopology, cell: fn(&str) -> String) -> String {
                 format!(
                     "| {} | {} {} | {} | {} | {} | {}:{} |",
                     cell(&name(&r.service)),
-                    r.method,
+                    if r.method == "EVENT" {
+                        "Event"
+                    } else {
+                        &r.method
+                    },
                     cell(&r.path),
                     f.status,
                     cell(&f.message),

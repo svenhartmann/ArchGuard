@@ -284,3 +284,17 @@ What exists:
   payments/inventory/orders 409), all passed on to the user. Static: the
   rule "no catch passes the error on" assumes the HTTP client raises on
   error statuses, as `runtime/http.js` does.
+- 2026-11-09: Event flows. The engine reads publications
+  (`producer.send({topic})`, `kafkaTemplate.send`, `convertAndSend`,
+  `sendToQueue`, `basic_publish(routing_key=…)`, `.publish('x')`) and
+  consumers (`consumer.subscribe({topics})`, `@KafkaListener`,
+  `@RabbitListener`, `@JmsListener`, `KafkaConsumer('x')`,
+  `basic_consume(queue=…)`, `.consume('x')`). A consumer is a route with
+  method `EVENT` and the topic as path; a publication is an `EVENT` step
+  to each consuming service, or to `topic:<name>` (drawn as an external
+  participant) when no consumer is in the source. Names match literally;
+  exchange-to-queue bindings are not resolved. Flows draw events as async
+  arrows (violet); a consumer without publisher in the source starts with
+  an external sender. The red way back of an error scenario ends at the
+  consumer: the publisher does not learn of it; errors raised by a
+  consumer itself get no scenario and stay in the chapter 8 table.
