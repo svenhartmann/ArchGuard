@@ -3,7 +3,9 @@
 //! Reads files only; no collector, application or network is started.
 mod aggregate;
 mod findings;
+mod index;
 mod input;
+mod requests;
 mod span;
 
 use archguard_core::{RuntimeConfig, RuntimeDiagnostic, RuntimeProfile};

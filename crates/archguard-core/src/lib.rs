@@ -43,7 +43,7 @@ mod rules;
 mod runtime;
 pub use runtime::{
     RuntimeCallSite, RuntimeConfig, RuntimeDiagnostic, RuntimeEndpoint, RuntimeEvidence,
-    RuntimeFinding, RuntimeProfile, RuntimeStatement, RuntimeStats,
+    RuntimeFinding, RuntimeProfile, RuntimeRequest, RuntimeSpan, RuntimeStatement, RuntimeStats,
 };
 mod services;
 mod staged;

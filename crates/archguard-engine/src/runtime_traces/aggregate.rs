@@ -2,86 +2,13 @@
 //! SERVER or CONSUMER span of the same service above it. When a database span
 //! wraps another one (an ORM span around the driver span), only the innermost
 //! is counted; it inherits the call site of the wrapping spans.
+use super::index::{Index, evidence, ms};
 use super::span::{Site, Span};
 use archguard_core::{
     RuntimeCallSite, RuntimeDiagnostic, RuntimeEndpoint, RuntimeEvidence, RuntimeProfile,
     RuntimeStatement, RuntimeStats,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-
-const MAX_PARENT_HOPS: usize = 256;
-
-type SpanKey<'a> = (&'a str, &'a str);
-
-struct Index<'a> {
-    spans: &'a [Span],
-    by_id: HashMap<SpanKey<'a>, usize>,
-    /// Database spans that have a database span as a child.
-    wrappers: HashSet<usize>,
-}
-
-impl<'a> Index<'a> {
-    fn new(spans: &'a [Span]) -> Self {
-        let by_id: HashMap<_, _> = spans
-            .iter()
-            .enumerate()
-            .map(|(i, s)| ((s.trace.as_str(), s.id.as_str()), i))
-            .collect();
-        let mut index = Index {
-            spans,
-            by_id,
-            wrappers: HashSet::new(),
-        };
-        for span in spans.iter().filter(|s| s.db.is_some()) {
-            if let Some(p) = index.parent(span).filter(|p| wraps(&spans[*p], span)) {
-                index.wrappers.insert(p);
-            }
-        }
-        index
-    }
-
-    fn parent(&self, span: &Span) -> Option<usize> {
-        self.by_id
-            .get(&(span.trace.as_str(), span.parent.as_deref()?))
-            .copied()
-    }
-
-    /// Ancestors of `span`, nearest first, bounded against cycles in bad input.
-    fn ancestors(&self, span: &'a Span) -> impl Iterator<Item = usize> + '_ {
-        let mut current = span;
-        (0..MAX_PARENT_HOPS).map_while(move |_| {
-            let p = self.parent(current)?;
-            current = &self.spans[p];
-            Some(p)
-        })
-    }
-
-    /// Nearest entry span of the same service, not crossing into another service.
-    fn entry(&self, span: &'a Span) -> Option<usize> {
-        self.ancestors(span)
-            .take_while(|p| self.spans[*p].service == span.service)
-            .find(|p| self.spans[*p].entry.is_some())
-    }
-
-    /// The call site on the span itself or on the database spans wrapping it.
-    fn site(&self, span: &'a Span) -> Option<Site> {
-        let mut inner = span;
-        for p in self.ancestors(span) {
-            if inner.site.is_some() || !wraps(&self.spans[p], inner) {
-                break;
-            }
-            inner = &self.spans[p];
-        }
-        inner.site.clone()
-    }
-}
-
-/// `parent` is a database span around `child` (an ORM span around the driver
-/// span): the child starts within the parent's time window. A finished span
-/// left as the ambient parent does not wrap later spans.
-fn wraps(parent: &Span, child: &Span) -> bool {
-    parent.db.is_some() && parent.start <= child.start && child.start <= parent.end
-}
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Default)]
 struct EndpointAcc {
@@ -117,10 +44,6 @@ struct StatementAcc {
     example: Option<usize>,
 }
 
-fn ms(span: &Span) -> f64 {
-    (span.end - span.start) as f64 / 1_000_000.0
-}
-
 fn stats(mut values: Vec<f64>) -> RuntimeStats {
     if values.is_empty() {
         return RuntimeStats::default();
@@ -134,16 +57,6 @@ fn stats(mut values: Vec<f64>) -> RuntimeStats {
         p50: round(rank(0.5)),
         p95: round(rank(0.95)),
         max: round(values[values.len() - 1]),
-    }
-}
-
-fn evidence(spans: &[Span], inputs: &[String], i: usize) -> RuntimeEvidence {
-    let s = &spans[i];
-    RuntimeEvidence {
-        file: inputs.get(s.input).cloned().unwrap_or_default(),
-        line: s.line,
-        trace_id: s.trace.clone(),
-        span_id: s.id.clone(),
     }
 }
 
@@ -255,6 +168,7 @@ pub(super) fn fill(spans: &[Span], profile: &mut RuntimeProfile) {
         .into_iter()
         .map(|(key, acc)| statement(key, acc, spans, &inputs))
         .collect();
+    (profile.requests, profile.requests_total) = super::requests::requests(&index, &inputs);
     counts(spans, profile);
     let example = calls.first_outside.map(|i| evidence(spans, &inputs, i));
     notes(&index, calls.outside, example, profile);

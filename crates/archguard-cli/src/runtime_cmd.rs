@@ -42,6 +42,7 @@ fn print_text(p: &RuntimeProfile) {
         p.spans, p.traces
     );
     print_findings(p);
+    print_requests(p);
     print_endpoints(p);
     print_statements(p);
     if !p.diagnostics.is_empty() {
@@ -67,6 +68,27 @@ fn print_findings(p: &RuntimeProfile) {
         println!("    {}", f.message);
     }
     more(p.findings.len());
+}
+
+/// The newest requests, one line each; the span tree is in the JSON output.
+fn print_requests(p: &RuntimeProfile) {
+    println!(
+        "\nRecent requests ({} of {}):",
+        p.requests.len().min(10),
+        p.requests_total
+    );
+    for r in p.requests.iter().take(10) {
+        println!(
+            "  {} · {} · {:.1} ms · {} DB calls, {:.1} ms{} · trace {}",
+            r.service,
+            r.name,
+            r.duration_ms,
+            r.db_calls,
+            r.db_time_ms,
+            if r.error { " · error" } else { "" },
+            r.trace_id
+        );
+    }
 }
 
 fn print_endpoints(p: &RuntimeProfile) {

@@ -409,3 +409,7 @@ Consequences for the design:
 - **2026-11-09, correction:** The user meant nothing that costs money. Free
   open-source tools are allowed again; Pyroscope (option 1) is back in
   spike 0b next to the own sampler. Paid APM products stay out.
+- **2026-11-09:** Step 2b, first part: the profile keeps single requests
+  (`requests`, newest first, at most 200, with their span tree; wrappers
+  folded), shown by `archguard runtime` and as MCP rows. The desktop tab
+  follows.

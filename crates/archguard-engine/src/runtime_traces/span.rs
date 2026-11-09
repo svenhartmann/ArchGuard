@@ -11,6 +11,9 @@ pub(super) struct Span {
     pub id: String,
     pub parent: Option<String>,
     pub service: String,
+    /// OTLP span kind (0 unspecified … 5 consumer).
+    pub kind: u8,
+    pub name: String,
     /// Endpoint name for SERVER and CONSUMER spans.
     pub entry: Option<String>,
     pub start: u64,
@@ -114,6 +117,12 @@ impl Span {
             id,
             parent,
             service: service.to_owned(),
+            kind: kind(value).unwrap_or(0),
+            name: value
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|n| bounded(n, MAX_NAME))
+                .unwrap_or_default(),
             entry: entry(value),
             start,
             end,

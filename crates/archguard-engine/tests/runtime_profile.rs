@@ -296,3 +296,49 @@ fn a_finished_parent_is_not_a_wrapper() {
     assert_eq!(p.statements[0].calls, 2, "{:#?}", p.statements);
     assert!(!p.diagnostics.iter().any(|d| d.message.contains("nested")));
 }
+
+/// ADR 0004 step 2b: single requests with their span tree, newest first.
+#[test]
+fn requests_keep_their_spans_newest_first() {
+    let p = shop();
+    let names: Vec<(&str, &str)> = p
+        .requests
+        .iter()
+        .map(|r| (r.service.as_str(), r.trace_id.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            ("orders", "b".repeat(32).as_str()),
+            ("orders", "a".repeat(32).as_str()),
+            ("web", "a".repeat(32).as_str()),
+        ],
+        "the background job is no request; newest first"
+    );
+    let a = &p.requests[1];
+    assert_eq!((a.name.as_str(), a.duration_ms), ("GET /orders/{id}", 70.0));
+    assert_eq!((a.db_calls, a.db_time_ms), (4, 25.0));
+    // The EF wrapper span is folded into its driver span, as when counting.
+    let db: Vec<(u32, f64, &str)> = a
+        .spans
+        .iter()
+        .filter(|s| s.db.is_some())
+        .map(|s| (s.depth, s.offset_ms, s.function.as_deref().unwrap_or("")))
+        .collect();
+    assert_eq!(
+        db,
+        vec![
+            (1, 5.0, "Shop.Orders.OrderService.Load"),
+            (1, 16.0, "Shop.Orders.OrderService.LoadLines"),
+            (1, 22.0, "Shop.Orders.OrderService.LoadLines"),
+            (1, 28.0, "Shop.Orders.OrderService.LoadLines"),
+        ]
+    );
+    assert_eq!(a.spans[0].line, Some(31));
+    // Calls into another service are that service's request, not part of this one.
+    let web = &p.requests[2];
+    assert_eq!(web.spans.len(), 1, "{:#?}", web.spans);
+    assert_eq!(web.spans[0].kind, "client");
+    assert_eq!(web.db_calls, 0);
+    assert_eq!(p.requests_total, 3);
+}

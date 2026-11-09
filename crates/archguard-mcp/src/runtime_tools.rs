@@ -2,7 +2,8 @@
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
 use archguard_engine::core::{
-    RuntimeDiagnostic, RuntimeEndpoint, RuntimeFinding, RuntimeProfile, RuntimeStatement,
+    RuntimeDiagnostic, RuntimeEndpoint, RuntimeFinding, RuntimeProfile, RuntimeRequest,
+    RuntimeStatement,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ErrorData, tool, tool_router};
@@ -18,6 +19,7 @@ enum Row<'a> {
     Statement(&'a RuntimeStatement),
     Endpoint(&'a RuntimeEndpoint),
     Diagnostic(&'a RuntimeDiagnostic),
+    Request(&'a RuntimeRequest),
 }
 
 fn total_ms(s: &RuntimeStatement) -> f64 {
@@ -43,6 +45,10 @@ fn record(row: Row) -> Value {
             "value":f.value,"threshold":f.threshold,"call_site":f.call_site,"message":f.message,
             "evidence":format!("{}:{}", f.evidence.file, f.evidence.line)})
         }
+        Row::Request(r) => json!({"kind":"request","service":r.service,"name":r.name,
+            "trace_id":r.trace_id,"span_id":r.span_id,"start_unix_ns":r.start_unix_ns,
+            "duration_ms":r.duration_ms,"error":r.error,"db_calls":r.db_calls,"db_time_ms":r.db_time_ms,
+            "spans":r.spans.len(),"evidence":format!("{}:{}", r.evidence.file, r.evidence.line)}),
         Row::Diagnostic(d) => {
             json!({"kind":"diagnostic","file":d.file,"line":d.line,"message":d.message})
         }
@@ -68,6 +74,7 @@ fn rows(p: &RuntimeProfile) -> Vec<Row<'_>> {
         .chain(statements.into_iter().map(Row::Statement))
         .chain(endpoints.into_iter().map(Row::Endpoint))
         .chain(p.diagnostics.iter().map(Row::Diagnostic))
+        .chain(p.requests.iter().map(Row::Request))
         .collect()
 }
 
@@ -113,7 +120,7 @@ pub fn runtime_value(
     };
     let metadata = json!({"inputs":profile.inputs.len(),"spans":profile.spans,"traces":profile.traces,
         "window_unix_ns":profile.window_unix_ns,"sampling":profile.sampling,"endpoints":profile.endpoints.len(),
-        "statements":profile.statements.len(),"findings":profile.findings.len(),"diagnostics":profile.diagnostics.len(),"note":profile.note});
+        "statements":profile.statements.len(),"findings":profile.findings.len(),"requests":profile.requests_total,"diagnostics":profile.diagnostics.len(),"note":profile.note});
     crate::engineering_tools::page(status, metadata, rows.into_iter(), p, record)
 }
 
@@ -238,5 +245,21 @@ mod tests {
         assert_eq!(first["kind"], "finding");
         assert_eq!(first["finding"], "slow_statement");
         assert!(first["subject"].as_str().unwrap().starts_with("DELETE"));
+    }
+
+    #[test]
+    fn runtime_profile_pages_single_requests() {
+        let dir = project(true);
+        let page = EngineeringParams {
+            query: Some("trace_id".into()),
+            ..Default::default()
+        };
+        let value = call(&dir, page);
+        assert_eq!(value["metadata"]["requests"], 3);
+        let first = &value["items"][0];
+        assert_eq!(first["kind"], "request");
+        assert_eq!(first["service"], "orders");
+        assert_eq!(first["db_calls"], 3);
+        assert_eq!(value["returned"], 3);
     }
 }

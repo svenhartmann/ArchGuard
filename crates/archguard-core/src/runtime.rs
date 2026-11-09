@@ -17,6 +17,10 @@ pub struct RuntimeProfile {
     pub sampling: Vec<String>,
     pub endpoints: Vec<RuntimeEndpoint>,
     pub statements: Vec<RuntimeStatement>,
+    /// Single requests with their span tree, newest first, at most
+    /// `MAX_REQUESTS` of `requests_total`.
+    pub requests: Vec<RuntimeRequest>,
+    pub requests_total: u64,
     /// Threshold findings (`[runtime]` in archguard.toml), most severe kinds first.
     pub findings: Vec<RuntimeFinding>,
     pub diagnostics: Vec<RuntimeDiagnostic>,
@@ -140,4 +144,42 @@ pub struct RuntimeFinding {
     pub call_site: Option<RuntimeCallSite>,
     pub message: String,
     pub evidence: RuntimeEvidence,
+}
+
+/// One request (an entry span) with the spans of its own service below it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeRequest {
+    pub service: String,
+    pub name: String,
+    pub trace_id: String,
+    pub span_id: String,
+    pub start_unix_ns: u64,
+    pub duration_ms: f64,
+    pub error: bool,
+    pub db_calls: u64,
+    pub db_time_ms: f64,
+    /// Pre-order, children by start time; a database span wrapping a driver
+    /// span is folded into it, as when counting.
+    pub spans: Vec<RuntimeSpan>,
+    /// More spans than kept.
+    pub spans_truncated: bool,
+    pub evidence: RuntimeEvidence,
+}
+
+/// A span inside a request, placed relative to the request's start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeSpan {
+    /// 1 for direct children of the request.
+    pub depth: u32,
+    pub offset_ms: f64,
+    pub duration_ms: f64,
+    /// `server`, `client`, `internal`, `producer`, `consumer` or `unspecified`.
+    pub kind: String,
+    pub name: String,
+    pub error: bool,
+    /// Statement key of a database call.
+    pub db: Option<String>,
+    pub function: Option<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
 }

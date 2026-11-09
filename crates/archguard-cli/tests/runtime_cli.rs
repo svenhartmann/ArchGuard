@@ -63,6 +63,8 @@ fn runtime_text_lists_endpoints_statements_and_call_sites() {
         "orders · GET /orders/{id}",
         "SELECT * FROM order_lines WHERE order_id = ?",
         "max 3 per request",
+        "Recent requests (3 of 3):",
+        "orders · GET /orders/{id} · 70.0 ms · 4 DB calls, 25.0 ms",
         "Shop.Orders.OrderService.LoadLines (/_/src/Orders/OrderService.cs:42)",
         "line 2",
         "sample",
