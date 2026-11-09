@@ -54,7 +54,7 @@ use archguard_analysis::{
 };
 use archguard_core::{
     ArchguardError, Config, ConfigSource, Cut, DenyCycles, Finding, FindingKind, Graph,
-    GraphBuilder, NodeId, Ref, Report, Severity, aggregate,
+    GraphBuilder, NodeId, Ref, Report, Severity, Status, Summary, aggregate,
 };
 use archguard_extract::{
     DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, parse_psr4,
@@ -338,11 +338,13 @@ pub(crate) fn build_report(
     findings.extend(crate::target_architecture::check_target_architecture(
         full, config,
     )?);
-    findings.extend(metric_findings(full, config)?);
-    findings.sort_by(|a, b| a.severity.cmp(&b.severity).then_with(|| a.id.cmp(&b.id)));
-
     let metrics = compute_metrics(&view, &sccs);
-    let summary = summarize(&view, &sccs, &findings);
+    let mut summary = summarize(&view, &sccs, &findings);
+    // At module level the summary measured the gates' module view already.
+    let module_acd = (level == Level::Module).then_some(summary.acd);
+    let gates = metric_findings(full, config, module_acd)?;
+    add_gates(&mut findings, &mut summary, gates);
+    findings.sort_by(|a, b| a.severity.cmp(&b.severity).then_with(|| a.id.cmp(&b.id)));
     Ok(Report {
         semantic: full.semantic.clone(),
         review_kpis: full.review_kpis.clone(),
@@ -357,9 +359,22 @@ pub(crate) fn build_report(
     })
 }
 
+/// Metric gates join the findings after the summary; an Error gate fails it.
+fn add_gates(findings: &mut Vec<Finding>, summary: &mut Summary, gates: Vec<Finding>) {
+    if gates.iter().any(|gate| gate.severity == Severity::Error) {
+        summary.status = Status::Fail;
+    }
+    findings.extend(gates);
+}
+
 /// Metric gates always use the configured module view; SCC size follows
 /// the file policy when enabled. Baselines only accept Cycle findings.
-fn metric_findings(full: &Graph, config: &Config) -> Result<Vec<Finding>, ArchguardError> {
+/// `module_acd` is that view's Lakos ACD when the caller measured it.
+fn metric_findings(
+    full: &Graph,
+    config: &Config,
+    module_acd: Option<f64>,
+) -> Result<Vec<Finding>, ArchguardError> {
     let view = aggregate(full, &Cut::at_depth(full, config.modules.depth as usize));
     let file_view;
     let scc_view = if config.rules.deny_cycles == DenyCycles::File {
@@ -395,8 +410,8 @@ fn metric_findings(full: &Graph, config: &Config) -> Result<Vec<Finding>, Archgu
             );
         }
     }
-    let (_, acd, _) = archguard_analysis::lakos_metrics(&view);
-    if config.rules.max_acd > 0.0 && acd > config.rules.max_acd as f64 {
+    let acd = || module_acd.unwrap_or_else(|| archguard_analysis::lakos_metrics(&view).1);
+    if config.rules.max_acd > 0.0 && acd() > config.rules.max_acd as f64 {
         emit(
             "metric-max-acd".into(),
             view.nodes.iter().map(|node| node.name.clone()).collect(),
@@ -906,5 +921,52 @@ mod qualified_name_tests {
         ]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(targets(&graph, "A/User.cs"), ["B/Repo.cs"]);
+    }
+}
+
+#[cfg(test)]
+mod acd_gate_tests {
+    use super::*;
+    use archguard_core::Status;
+
+    /// a/x.ts -> a/w.ts -> b/y.ts: ACD 2.0 over the files, 1.5 over modules a -> b.
+    fn chain() -> Graph {
+        let mut builder = GraphBuilder::new();
+        let ids = ["a/x.ts", "a/w.ts", "b/y.ts"].map(|path| builder.ensure_path(path, Some("ts")));
+        for pair in ids.windows(2) {
+            let evidence = Ref {
+                file: "a/x.ts".into(),
+                line: 1,
+                raw: "import".into(),
+            };
+            builder.edge(pair[0], pair[1], evidence).unwrap();
+        }
+        builder.build("/".into())
+    }
+
+    fn acd_gate(max_acd: f32, level: Level) -> (Option<Vec<String>>, Status) {
+        let mut config = Config::default();
+        config.modules.depth = 0;
+        config.rules.max_acd = max_acd;
+        let report = build_report(&chain(), &config, level).unwrap();
+        let gate = report.findings.iter().find(|f| f.id == "metric-max-acd");
+        (gate.map(|f| f.nodes.clone()), report.summary.status)
+    }
+
+    #[test]
+    fn acd_gate_reads_the_module_view_at_every_level() {
+        let modules = vec!["a".to_string(), "b".to_string()];
+        for level in [Level::Module, Level::File] {
+            assert_eq!(acd_gate(1.2, level), (Some(modules.clone()), Status::Fail));
+            assert_eq!(acd_gate(1.7, level), (None, Status::Pass), "{level:?}");
+            assert_eq!(acd_gate(0.0, level), (None, Status::Pass));
+        }
+        let mut config = Config::default();
+        config.modules.depth = 0;
+        let file_view = build_report(&chain(), &config, Level::File).unwrap();
+        assert_eq!(
+            file_view.summary.acd, 2.0,
+            "the file view alone would trip 1.7"
+        );
     }
 }
