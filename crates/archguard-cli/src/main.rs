@@ -349,7 +349,7 @@ fn run(cli: &Cli) -> i32 {
             &loaded,
             &graph,
             &report,
-            baseline.as_deref(),
+            baseline.as_ref().map(Option::as_deref),
             base.as_deref(),
             *fail_on_acd_regression,
         ),
@@ -488,7 +488,7 @@ fn run(cli: &Cli) -> i32 {
             &graph,
         ),
         Command::Suggest { cycle, max, .. } => suggest(cli, cycle.as_deref(), *max, &report),
-        Command::Baseline { action } => baseline(cli, action, &report),
+        Command::Baseline { action } => baseline(cli, &root, &loaded, action, &report),
         Command::Config { .. } => config(cli, &report, &loaded),
         Command::Snapshot { tag, .. } => {
             trend_cmd::snapshot(cli, &root, tag.as_deref(), &report, &loaded)
@@ -982,10 +982,18 @@ fn suggest(cli: &Cli, cycle: Option<&str>, max: Option<usize>, report: &Report) 
 /// `baseline write|diff` (Kap. 7 ratchet). The identity of a cycle is
 /// Kap. 7's [`cycle_hash`] over the sorted member names of its finding
 /// — the very hashes [`Baseline`] stores — so write and `check
-/// --baseline` agree by construction.
-fn baseline(cli: &Cli, action: &BaselineAction, report: &Report) -> i32 {
+/// --baseline` agree by construction, and so does the default file
+/// ([`check_cmd::baseline_path`]).
+fn baseline(
+    cli: &Cli,
+    root: &Path,
+    loaded: &LoadedConfig,
+    action: &BaselineAction,
+    report: &Report,
+) -> i32 {
     match action {
         BaselineAction::Write { file, .. } => {
+            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
             let hashes: BTreeSet<String> = cycle_hashes(report).into_values().collect();
             let baseline = Baseline {
                 schema_version: 1,
@@ -1008,6 +1016,7 @@ fn baseline(cli: &Cli, action: &BaselineAction, report: &Report) -> i32 {
             EXIT_OK
         }
         BaselineAction::Diff { file, .. } => {
+            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
             let baseline = match read_baseline(file) {
                 Ok(baseline) => baseline,
                 Err(err) => return analysis_error(err),

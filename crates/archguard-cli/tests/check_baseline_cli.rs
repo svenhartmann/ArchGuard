@@ -1,6 +1,8 @@
 //! `archguard check --baseline` with the stock rules: a baselined cycle
 //! is accepted together with the SCC-size gate for the same members, a
 //! new cycle still fails; and `check` rejects formats it cannot render.
+//! The default baseline file is `[rules].baseline` under the analysed
+//! project root, wherever the command runs from.
 
 use std::fs;
 use std::path::Path;
@@ -93,4 +95,51 @@ fn check_rejects_the_pr_comment_format() {
         "{}",
         report(&out)
     );
+}
+
+#[test]
+fn baseline_write_of_a_subproject_lands_in_that_project() {
+    let repo = tempdir().expect("tempdir");
+    let api = repo.path().join("api");
+    cyclic(&api);
+    let out = archguard(repo.path(), &["baseline", "write", "api"]);
+    assert_eq!(out.status.code(), Some(0), "{}", report(&out));
+    assert!(
+        api.join(".archguard/baseline.json").is_file(),
+        "{}",
+        report(&out)
+    );
+    assert!(!repo.path().join(".archguard/baseline.json").exists());
+
+    // Found from inside the project and from the repo root alike.
+    let out = archguard(&api, &["check", ".", "--baseline"]);
+    assert_eq!(out.status.code(), Some(0), "from api: {}", report(&out));
+    let out = archguard(repo.path(), &["check", "api", "--baseline"]);
+    assert_eq!(out.status.code(), Some(0), "from repo: {}", report(&out));
+    let out = archguard(repo.path(), &["baseline", "diff", "api"]);
+    assert_eq!(out.status.code(), Some(0), "diff: {}", report(&out));
+}
+
+#[test]
+fn configured_rules_baseline_is_the_default_file() {
+    let dir = tempdir().expect("tempdir");
+    cyclic(dir.path());
+    write(
+        dir.path(),
+        "archguard.toml",
+        "[rules]\nbaseline = \".archguard/accepted.json\"\n",
+    );
+    let out = archguard(dir.path(), &["baseline", "write"]);
+    assert_eq!(out.status.code(), Some(0), "{}", report(&out));
+    assert!(
+        dir.path().join(".archguard/accepted.json").is_file(),
+        "{}",
+        report(&out)
+    );
+    assert!(!dir.path().join(".archguard/baseline.json").exists());
+
+    let out = archguard(dir.path(), &["check", "--baseline"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", report(&out));
+    let out = archguard(dir.path(), &["baseline", "diff"]);
+    assert_eq!(out.status.code(), Some(0), "diff: {}", report(&out));
 }

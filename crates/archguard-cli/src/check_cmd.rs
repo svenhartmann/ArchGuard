@@ -9,7 +9,7 @@ use archguard_engine::{LoadedConfig, compare_to_ref, read_trend};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[expect(
     clippy::too_many_arguments,
     reason = "explicit check flags and shared run"
@@ -20,7 +20,7 @@ pub(crate) fn run(
     loaded: &LoadedConfig,
     graph: &archguard_engine::core::Graph,
     report: &Report,
-    baseline: Option<&Path>,
+    baseline: Option<Option<&Path>>,
     base: Option<&str>,
     acd_limit: Option<f64>,
 ) -> i32 {
@@ -81,7 +81,23 @@ pub(crate) fn run(
     } else {
         Default::default()
     };
-    check(cli, baseline, &checked, comparison.as_ref(), &paths)
+    let baseline = baseline.map(|file| baseline_path(root, loaded, file));
+    check(
+        cli,
+        baseline.as_deref(),
+        &checked,
+        comparison.as_ref(),
+        &paths,
+    )
+}
+
+/// The baseline file: `file` as given (relative to the working directory),
+/// or `[rules].baseline` under the project `root` — the file MCP reads too.
+pub(crate) fn baseline_path(root: &Path, loaded: &LoadedConfig, file: Option<&Path>) -> PathBuf {
+    file.map_or_else(
+        || root.join(&loaded.config.rules.baseline),
+        Path::to_path_buf,
+    )
 }
 
 /// The exit code of a check that must not run: an invalid ACD limit
@@ -222,7 +238,7 @@ fn gate_finding(id: String, nodes: Vec<String>, evidence: Vec<Ref>, message: Str
 /// Gate semantics: `check` fails (exit 1) as soon as one [`Finding`]
 /// has severity `Error` — the same rule that sets
 /// [`Report::summary`] to `Fail` (Kap. 5). With `--baseline <DATEI>`
-/// (default `.archguard/baseline.json`), **cycle** findings whose
+/// (default: [`baseline_path`]), **cycle** findings whose
 /// membership hash — Kap. 7's [`cycle_hash`] over the finding's sorted
 /// member names, the same identity [`Baseline`] stores — is present in
 /// the baseline are accepted and no longer fail the gate, together with
