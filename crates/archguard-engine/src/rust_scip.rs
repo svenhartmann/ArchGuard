@@ -117,13 +117,20 @@ fn pin_toolchain(command: &mut Command) {
     }
 }
 
+/// The `--version` line of `executable`, run like the index itself: confined,
+/// on the user's toolchain, in `scratch` and within the time budget.
+fn version(root: &Path, executable: &OsStr, scratch: &Path) -> Result<String, String> {
+    let mut command = crate::compiler_sandbox::command(executable, root, scratch);
+    pin_toolchain(&mut command);
+    command.arg("--version");
+    let out =
+        crate::go_calls::execute(&mut command, scratch, None, "rust-analyzer --version", HINT)?;
+    Ok(String::from_utf8_lossy(&out).trim().to_string())
+}
+
 fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
-    let version = Command::new(executable)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("{e}. {HINT}"))?;
-    let version = String::from_utf8_lossy(&version.stdout).trim().to_string();
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let version = version(root, executable, dir.path())?;
     let config = dir.path().join("rust-analyzer.json");
     std::fs::write(
         &config,
@@ -328,4 +335,36 @@ pub(crate) fn resolve(
         });
     }
     calls
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_version_probe_runs_confined_in_the_scratch_directory() {
+        assert!(crate::compiler_sandbox::available());
+        let (project, scratch, secret, tool) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        let file = secret.path().join("s.txt");
+        std::fs::write(&file, "secret").unwrap();
+        // A stand-in for rust-analyzer in its own installation (`…/bin/ra`).
+        std::fs::create_dir(tool.path().join("bin")).unwrap();
+        let fake = tool.path().join("bin").join("ra");
+        std::fs::write(
+            &fake,
+            format!("#!/bin/sh\ncat '{}' 2>/dev/null; pwd -P\n", file.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = version(project.path(), fake.as_os_str(), scratch.path()).unwrap();
+        assert!(!out.contains("secret"), "{out}");
+        let cwd = scratch.path().canonicalize().unwrap();
+        assert_eq!(out, cwd.to_string_lossy());
+    }
 }

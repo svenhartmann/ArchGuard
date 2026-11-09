@@ -43,13 +43,47 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
         return Command::new(program);
     }
     let program = resolve(program);
+    let mut command = confined(&program, project, scratch);
+    command.env_clear();
+    for name in ENVIRONMENT {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command
+}
+
+/// The environment confined tools get: finding programs (rustup's proxies,
+/// cargo, rustc, node through `PATH`), the toolchain, temporary files, the
+/// locale and, on Windows, the system and profile directories. Everything
+/// else (tokens, agent sockets, `NODE_OPTIONS`) stays outside.
+const ENVIRONMENT: [&str; 16] = [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "RUSTUP_HOME",
+    "CARGO_HOME",
+    "RUSTUP_TOOLCHAIN",
+    "LANG",
+    "LC_ALL",
+    "SystemRoot",
+    "windir",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "PATHEXT",
+    "ComSpec",
+];
+
+fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
     #[cfg(target_os = "linux")]
-    return linux::command(&program, toolchain(&program), project, scratch);
+    return linux::command(program, toolchain(program), project, scratch);
     #[cfg(windows)]
     {
         let launcher = launcher().unwrap_or_default();
         let mut command = Command::new(launcher);
-        for dir in toolchain(&program).into_iter().filter(|d| d.is_dir()) {
+        for dir in toolchain(program).into_iter().filter(|d| d.is_dir()) {
             command.arg("--run").arg(dir);
         }
         command
@@ -58,7 +92,7 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
             .arg("--write")
             .arg(scratch)
             .arg("--")
-            .arg(&program);
+            .arg(program);
         command
     }
     #[cfg(not(any(target_os = "linux", windows)))]
@@ -66,8 +100,8 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
         let mut command = Command::new(SANDBOX_EXEC);
         command
             .arg("-p")
-            .arg(profile(&program, project, scratch))
-            .arg(&program);
+            .arg(profile(program, project, scratch))
+            .arg(program);
         command
     }
 }
@@ -103,18 +137,33 @@ fn toolchain(program: &Path) -> Vec<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
+    toolchain_for(program, home.as_deref())
+}
+
+fn toolchain_for(program: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = home
-        .iter()
+        .into_iter()
         .flat_map(|h| [h.join(".rustup"), h.join(".cargo")])
         .chain(std::env::var_os("RUSTUP_HOME").map(PathBuf::from))
         .chain(std::env::var_os("CARGO_HOME").map(PathBuf::from))
         .collect();
     // `/bin/cat` would give `/`: an installation sits at least two levels
-    // deep (`/usr` is a system location anyway).
-    if let Some(install) = program.parent().and_then(Path::parent)
+    // deep (`/usr` is a system location anyway). `~/bin/node` would give
+    // the home directory with its keys: then only the program's directory.
+    let home = home.map(real);
+    let covers_home = |dir: &Path| home.as_ref().is_some_and(|h| h.starts_with(real(dir)));
+    if let Some(parent) = program.parent()
+        && let Some(install) = parent.parent()
         && install.components().count() > 2
     {
-        dirs.push(install.to_path_buf());
+        let dir = if covers_home(install) {
+            parent
+        } else {
+            install
+        };
+        if !covers_home(dir) {
+            dirs.push(dir.to_path_buf());
+        }
     }
     dirs.into_iter().map(|d| real(&d)).collect()
 }
@@ -175,7 +224,7 @@ mod linux;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, UdpSocket};
 
     struct Dirs {
         project: tempfile::TempDir,
@@ -229,24 +278,85 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_in_the_home_directory_does_not_open_the_home_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let real_home = real(home.path());
+        for program in [bin.join("tool"), home.path().join("tool")] {
+            let dirs = toolchain_for(&program, Some(home.path()));
+            assert!(
+                dirs.iter().all(|d| !real_home.starts_with(d)),
+                "{} opens {dirs:?}",
+                program.display()
+            );
+        }
+        assert!(toolchain_for(&bin.join("tool"), Some(home.path())).contains(&real(&bin)));
+    }
+
+    #[test]
+    fn confined_tooling_gets_only_the_allowed_environment() {
+        let d = dirs();
+        assert!(
+            std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+            "cargo sets it"
+        );
+        let out = command(
+            OsStr::new("/usr/bin/env"),
+            d.project.path(),
+            d.scratch.path(),
+        )
+        .output()
+        .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let names: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            names.contains(&"PATH") && names.contains(&"HOME"),
+            "{names:?}"
+        );
+        assert!(!names.contains(&"CARGO_MANIFEST_DIR"), "{names:?}");
+    }
+
+    #[test]
     fn confined_tooling_has_no_network_and_runs_no_repository_program() {
         let d = dirs();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
-        // bash's /dev/tcp opens a connection on macOS and Linux alike.
-        let probe = format!("exec 3<>/dev/tcp/127.0.0.1/{port}");
-        let reach = |confined: bool| {
+        // bash's /dev/tcp and /dev/udp open sockets on macOS and Linux alike.
+        let reach = |confined: bool, probe: &str| {
             let mut c = if confined {
                 command(OsStr::new("/bin/bash"), d.project.path(), d.scratch.path())
             } else {
                 Command::new("/bin/bash")
             };
-            c.args(["-c", &probe])
+            c.args(["-c", probe])
                 .output()
                 .is_ok_and(|o| o.status.success())
         };
-        assert!(reach(false), "the listener answers outside the sandbox");
-        assert!(!reach(true), "no network inside");
+        let tcp = format!("exec 3<>/dev/tcp/127.0.0.1/{port}");
+        assert!(
+            reach(false, &tcp),
+            "the listener answers outside the sandbox"
+        );
+        assert!(!reach(true, &tcp), "no network inside");
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        udp.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let send = format!(
+            "echo hi > /dev/udp/127.0.0.1/{}",
+            udp.local_addr().unwrap().port()
+        );
+        let mut buf = [0u8; 16];
+        assert!(
+            reach(false, &send) && udp.recv(&mut buf).is_ok(),
+            "UDP arrives outside"
+        );
+        reach(true, &send);
+        assert!(udp.recv(&mut buf).is_err(), "no UDP from inside");
         let evil = d.project.path().join("evil");
         std::fs::copy("/bin/echo", &evil).unwrap();
         assert!(
