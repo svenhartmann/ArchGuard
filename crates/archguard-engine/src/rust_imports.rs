@@ -536,20 +536,20 @@ fn glob(unit: &Unit<'_>, module: &[String], path: &[String], depth: u8) -> Found
     Some(only)
 }
 
-struct Manifest {
-    package: String,
+pub(crate) struct Manifest {
+    pub package: String,
     /// Identifier used in code → local package it names.
-    dependencies: BTreeMap<String, String>,
+    pub dependencies: BTreeMap<String, String>,
 }
 /// The package directory of a source file: the parent of its `src` ancestor.
-fn crate_directory(file: &str) -> Option<&Path> {
+pub(crate) fn crate_directory(file: &str) -> Option<&Path> {
     Path::new(file)
         .ancestors()
         .skip(1)
         .find(|dir| dir.file_name().is_some_and(|name| name == "src"))?
         .parent()
 }
-fn read_manifest(root: &Path, directory: &Path) -> Option<Manifest> {
+pub(crate) fn read_manifest(root: &Path, directory: &Path) -> Option<Manifest> {
     let path = directory.join("Cargo.toml");
     let bytes = crate::project_files::read_repo_file(root, &path, MANIFEST_LIMIT).ok()?;
     let table: toml::Table = std::str::from_utf8(&bytes).ok()?.parse().ok()?;

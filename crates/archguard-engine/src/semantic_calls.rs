@@ -29,9 +29,17 @@ pub(crate) fn integrate_graph_named(
     names: Option<&crate::pipeline::SourceNames>,
 ) -> Result<(), archguard_core::ArchguardError> {
     let calls = analyze_calls(root, config);
+    let crates = crate::semantic_crates::CrateDependencies::read(root, files, config);
+    let declared = crate::semantic_crates::declared_only(&calls, &crates);
+    let projected = declared.as_ref().map_or(&calls, |(kept, _)| kept);
     let projection =
-        crate::semantic_graph::apply_semantic_dependencies(files, config, graph, &calls, names)?;
+        crate::semantic_graph::apply_semantic_dependencies(files, config, graph, projected, names)?;
     let mut diagnostics = calls.diagnostics;
+    if let Some((_, left_out)) = declared {
+        diagnostics.push(format!(
+            "{left_out} Rust calls, type uses and supertypes reach a workspace crate the caller's manifest does not declare (through a re-export); their import edge stands for them."
+        ));
+    }
     if projection.skipped_project_calls > 0
         || projection.skipped_supertypes > 0
         || projection.skipped_type_uses > 0

@@ -29,7 +29,9 @@ fn key(root: &Path, config: &Config) -> Option<String> {
     let semantic = serde_json::to_string(&config.semantic).ok()?;
     let trusted = crate::compiler_trust::trusted();
     let index = crate::rust_scip::background::generation(root);
-    Some(format!("{sources}\n{project}\n{semantic}\n{trusted}\n{index}"))
+    Some(format!(
+        "{sources}\n{project}\n{semantic}\n{trusted}\n{index}"
+    ))
 }
 
 /// `compute` for `root`, or the kept result of an unchanged project.

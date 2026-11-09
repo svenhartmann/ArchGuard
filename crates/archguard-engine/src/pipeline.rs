@@ -37,7 +37,9 @@ mod scanned_file;
 use scanned_file::ScannedFile;
 #[path = "rust_imports.rs"]
 mod rust_imports;
-pub(crate) use rust_imports::{CrateItems, ItemTarget, hash_manifests};
+pub(crate) use rust_imports::{
+    CrateItems, ItemTarget, crate_directory, hash_manifests, read_manifest,
+};
 #[path = "source_names.rs"]
 mod source_names;
 #[cfg(test)]

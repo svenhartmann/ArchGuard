@@ -86,6 +86,7 @@ mod rust_types_tests;
 #[cfg(test)]
 mod security_tests;
 mod semantic_calls;
+mod semantic_crates;
 mod semantic_graph;
 mod service_flows;
 mod service_projects;
