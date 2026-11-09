@@ -7,8 +7,9 @@ use crate::export::{
 };
 use crate::tree::{EdgeMode, LANE_W, LinkKind, ROW_H, TOP, Tree, TreeView};
 
-/// The tree's width between the lanes in the SVG: `min-tree-w` of
-/// `ui/tree_view.slint`, so the file does not depend on the pane width.
+/// The tree's width between the lanes in the SVG, fixed (the tree in
+/// `ui/tree_view.slint` at a 1120 px pane), so the file does not depend on
+/// the pane width.
 const TREE_W: f32 = 560.0;
 /// Indent per depth level (`18px` in `ui/tree_view.slint`).
 const INDENT: f32 = 18.0;

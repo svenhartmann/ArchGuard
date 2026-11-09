@@ -59,6 +59,8 @@ mod tab_support;
 mod timing;
 mod tree;
 mod tree_order;
+#[cfg(test)]
+mod tree_width_check;
 mod ui;
 mod update_ui;
 mod view_export;
