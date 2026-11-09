@@ -716,38 +716,76 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
     })
 }
 
-/// Hand accepted connections to the HTTP workers. A failure belongs to one
-/// connection (ECONNABORTED, EMFILE, EINVAL on a socket the peer already
-/// reset) and never ends the server.
-fn dispatch(
-    incoming: impl Iterator<Item = io::Result<TcpStream>>,
-    send: &mpsc::SyncSender<TcpStream>,
-) {
-    for connection in incoming {
-        let stream = connection.and_then(|stream| {
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-            Ok(stream)
-        });
-        let stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("warning: skipped a connection: {error}");
-                // EMFILE repeats until a descriptor is free; do not spin.
-                thread::sleep(Duration::from_millis(50));
-                continue;
+/// Connection-level guards: what happens before a request reaches a route.
+mod guard {
+    use super::*;
+
+    /// Hand accepted connections to the HTTP workers. A failure belongs to one
+    /// connection (ECONNABORTED, EMFILE, EINVAL on a socket the peer already
+    /// reset) and never ends the server.
+    pub(super) fn dispatch(
+        incoming: impl Iterator<Item = io::Result<TcpStream>>,
+        send: &mpsc::SyncSender<TcpStream>,
+    ) {
+        for connection in incoming {
+            let stream = connection.and_then(|stream| {
+                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+                Ok(stream)
+            });
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("warning: skipped a connection: {error}");
+                    // EMFILE repeats until a descriptor is free; do not spin.
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+            };
+            if let Err(mpsc::TrySendError::Full(mut stream)) = send.try_send(stream) {
+                let _ = respond(
+                    &mut stream,
+                    503,
+                    "text/plain",
+                    "The local viewer is busy; retry shortly",
+                );
             }
-        };
-        if let Err(mpsc::TrySendError::Full(mut stream)) = send.try_send(stream) {
-            let _ = respond(
-                &mut stream,
-                503,
-                "text/plain",
-                "The local viewer is busy; retry shortly",
-            );
         }
     }
+
+    /// Why a request must not reach any route, from its header lines.
+    pub(super) fn refusal<'a>(
+        lines: impl Iterator<Item = &'a str>,
+        allowed_hosts: &[String; 2],
+    ) -> Option<&'static str> {
+        let fields: Vec<_> = lines
+            .take_while(|line| !line.is_empty())
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name, value.trim()))
+            .collect();
+        let header = |wanted: &'static str| {
+            fields
+                .iter()
+                .filter(move |(name, _)| name.eq_ignore_ascii_case(wanted))
+                .map(|(_, value)| *value)
+        };
+        let allowed = |host: &str| allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host));
+        let hosts: Vec<_> = header("host").collect();
+        if hosts.len() != 1 || !allowed(hosts[0]) {
+            return Some("Use the local viewer URL printed by archguard");
+        }
+        // Every route may run an analysis or write below .archguard/, so another
+        // website must not trigger one (`<img src>`, fetch, form). Browsers mark
+        // such requests; the viewer's own, the desktop app's link and clients
+        // without these headers (curl) stay allowed.
+        let foreign_site =
+            header("sec-fetch-site").any(|site| site != "same-origin" && site != "none");
+        let foreign_origin =
+            header("origin").any(|origin| !origin.strip_prefix("http://").is_some_and(allowed));
+        (foreign_site || foreign_origin).then_some("Requests from other websites are refused")
+    }
 }
+use guard::{dispatch, refusal};
 
 fn handle(
     stream: &mut TcpStream,
@@ -785,23 +823,8 @@ fn handle(
     if request.len() != 3 || !matches!(request[2], "HTTP/1.0" | "HTTP/1.1") {
         return respond(stream, 400, "text/plain", "Invalid request");
     }
-    let hosts: Vec<_> = lines
-        .take_while(|line| !line.is_empty())
-        .filter_map(|line| line.split_once(':'))
-        .filter(|(name, _)| name.eq_ignore_ascii_case("host"))
-        .map(|(_, value)| value.trim())
-        .collect();
-    if hosts.len() != 1
-        || !allowed_hosts
-            .iter()
-            .any(|host| host.eq_ignore_ascii_case(hosts[0]))
-    {
-        return respond(
-            stream,
-            403,
-            "text/plain",
-            "Use the local viewer URL printed by archguard",
-        );
+    if let Some(reason) = refusal(lines, allowed_hosts) {
+        return respond(stream, 403, "text/plain", reason);
     }
     let (path, query) = request[1]
         .split_once('?')
