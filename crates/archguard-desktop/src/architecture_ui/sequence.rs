@@ -12,7 +12,7 @@ use crate::ui::{ArcCard, ArcFigure, ArcLine};
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order.";
 /// Scenarios derived from the code (only calls): no measured order.
 const STATIC_LEGEND: &str =
-    "Blue: calls. Top to bottom in source order, derived from the code, not measured.";
+    "Blue: calls · red: error path. Top to bottom in source order, derived from the code, not measured.";
 const COLUMN: f32 = 230.0;
 const CARD_W: f32 = 180.0;
 const CARD_H: f32 = 62.0;

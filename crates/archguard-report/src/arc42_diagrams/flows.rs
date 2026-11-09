@@ -17,6 +17,16 @@ const MAX_DEPTH: usize = 6;
 const MAX_MESSAGES: usize = 40;
 
 pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
+    let mut flows: Vec<(usize, Diagram)> = entries(t)
+        .map(|entry| Flow::new(t).build(entry))
+        .filter(|(services, _)| *services > 1)
+        .collect();
+    flows.sort_by_key(|(services, _)| std::cmp::Reverse(*services));
+    flows.into_iter().take(MAX_FLOWS).map(|(_, d)| d).collect()
+}
+
+/// Routes no other service calls: where a scenario starts.
+pub(super) fn entries(t: &ServiceTopology) -> impl Iterator<Item = &ServiceRoute> {
     let called: BTreeSet<(&str, &str, &str)> = t
         .routes
         .iter()
@@ -26,15 +36,86 @@ pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
                 .map(|s| (s.to.as_str(), s.method.as_str(), s.path.as_str()))
         })
         .collect();
-    let mut flows: Vec<(usize, Diagram)> = t
-        .routes
+    t.routes.iter().filter(move |r| {
+        !called.contains(&(r.service.as_str(), r.method.as_str(), r.path.as_str()))
+    })
+}
+
+/// The route `step` reaches, if its service declares it.
+pub(super) fn target<'a>(t: &'a ServiceTopology, step: &RouteStep) -> Option<&'a ServiceRoute> {
+    t.routes
         .iter()
-        .filter(|r| !called.contains(&(r.service.as_str(), r.method.as_str(), r.path.as_str())))
-        .map(|entry| Flow::new(t).build(entry))
-        .filter(|(services, _)| *services > 1)
-        .collect();
-    flows.sort_by_key(|(services, _)| std::cmp::Reverse(*services));
-    flows.into_iter().take(MAX_FLOWS).map(|(_, d)| d).collect()
+        .find(|r| r.service == step.to && r.method == step.method && r.path == step.path)
+}
+
+/// The display name of a service id; "user" is the person at the start.
+pub(super) fn name(t: &ServiceTopology, id: &str) -> String {
+    if id == "user" {
+        return "Nutzer".into();
+    }
+    t.services
+        .iter()
+        .find(|s| s.id == id)
+        .map_or_else(|| id.to_string(), |s| s.name.clone())
+}
+
+/// Timeouts, retries, circuit breakers and fallbacks of the `involved`
+/// services, as one sentence part.
+pub(super) fn handling(t: &ServiceTopology, involved: &BTreeSet<&str>) -> String {
+    let mut found: Vec<String> = Vec::new();
+    for r in t
+        .resilience
+        .iter()
+        .filter(|r| involved.contains(r.service.as_str()))
+    {
+        let text = format!("{} {} ({})", kind(&r.kind), r.detail, r.file);
+        if !found.contains(&text) {
+            found.push(text);
+        }
+    }
+    if found.is_empty() {
+        "keine Timeouts, Retries oder Circuit Breaker gefunden".into()
+    } else {
+        found.join("; ")
+    }
+}
+
+/// Participants as diagram elements: the person first, then services.
+pub(super) fn elements(t: &ServiceTopology, order: &[String]) -> Vec<DiagramElement> {
+    order
+        .iter()
+        .enumerate()
+        .map(|(i, id)| DiagramElement {
+            id: format!("e{i}"),
+            name: name(t, id),
+            kind: if i == 0 {
+                ElementKind::Person
+            } else {
+                ElementKind::Container
+            },
+            technology: None,
+            detail: None,
+            group: None,
+            cycle: false,
+        })
+        .collect()
+}
+
+/// Numbered messages between participant indices.
+pub(super) fn relations(messages: &[(usize, usize, String, bool)]) -> Vec<DiagramRelation> {
+    messages
+        .iter()
+        .enumerate()
+        .map(|(n, (from, to, text, error))| DiagramRelation {
+            from: format!("e{from}"),
+            to: format!("e{to}"),
+            kind: RelationKind::Http,
+            count: 1,
+            cycle: false,
+            label: Some(format!("{}. {text}", n + 1)),
+            error: *error,
+        })
+        .collect()
 }
 
 struct Flow<'a> {
@@ -63,13 +144,6 @@ impl<'a> Flow<'a> {
                 self.order.len() - 1
             }
         }
-    }
-
-    fn route(&self, step: &RouteStep) -> Option<&'a ServiceRoute> {
-        self.t
-            .routes
-            .iter()
-            .find(|r| r.service == step.to && r.method == step.method && r.path == step.path)
     }
 
     /// The scenario of `entry` and how many services it involves.
@@ -102,7 +176,7 @@ impl<'a> Flow<'a> {
             let key = (step.to.clone(), step.method.clone(), step.path.clone());
             if depth + 1 < MAX_DEPTH
                 && seen.insert(key)
-                && let Some(next) = self.route(step)
+                && let Some(next) = target(self.t, step)
             {
                 self.visit(next, depth + 1, seen);
             }
@@ -110,49 +184,17 @@ impl<'a> Flow<'a> {
     }
 
     fn name(&self, id: &str) -> String {
-        if id == "user" {
-            return "Nutzer".into();
-        }
-        self.t
-            .services
-            .iter()
-            .find(|s| s.id == id)
-            .map_or_else(|| id.to_string(), |s| s.name.clone())
+        name(self.t, id)
     }
 
     fn diagram(&self, entry: &ServiceRoute) -> Diagram {
-        let elements = self
-            .order
-            .iter()
-            .enumerate()
-            .map(|(i, id)| DiagramElement {
-                id: format!("e{i}"),
-                name: self.name(id),
-                kind: if i == 0 {
-                    ElementKind::Person
-                } else {
-                    ElementKind::Container
-                },
-                technology: None,
-                detail: None,
-                group: None,
-                cycle: false,
-            })
-            .collect();
-        let relations = self
+        let messages: Vec<(usize, usize, String, bool)> = self
             .messages
             .iter()
-            .enumerate()
-            .map(|(n, (from, to, text))| DiagramRelation {
-                from: format!("e{from}"),
-                to: format!("e{to}"),
-                kind: RelationKind::Http,
-                count: 1,
-                cycle: false,
-                label: Some(format!("{}. {text}", n + 1)),
-                error: false,
-            })
+            .map(|(a, b, text)| (*a, *b, text.clone(), false))
             .collect();
+        let elements = elements(self.t, &self.order);
+        let relations = relations(&messages);
         let entry_service = self.name(&entry.service);
         Diagram {
             id: format!(
@@ -182,18 +224,6 @@ impl<'a> Flow<'a> {
             }
         }
         let involved: BTreeSet<&str> = self.order.iter().skip(1).map(String::as_str).collect();
-        let mut handling: Vec<String> = Vec::new();
-        for r in self
-            .t
-            .resilience
-            .iter()
-            .filter(|r| involved.contains(r.service.as_str()))
-        {
-            let text = format!("{} {} ({})", kind(&r.kind), r.detail, r.file);
-            if !handling.contains(&text) {
-                handling.push(text);
-            }
-        }
         format!(
             "Auslöser: {} {} an {} ({}:{}). Schritte aus dem Quelltext der Dienste in Quelltext-Reihenfolge, statisch abgeleitet: keine gemessene Reihenfolge oder Dauer, Verzweigungen nicht unterschieden. Abbrüche unterwegs: {}. Fehlerbehandlung: {}.",
             entry.method,
@@ -206,16 +236,12 @@ impl<'a> Flow<'a> {
             } else {
                 failures.join("; ")
             },
-            if handling.is_empty() {
-                "keine Timeouts, Retries oder Circuit Breaker gefunden".into()
-            } else {
-                handling.join("; ")
-            },
+            handling(self.t, &involved),
         )
     }
 }
 
-fn kind(k: &str) -> &str {
+pub(crate) fn kind(k: &str) -> &str {
     match k {
         "timeout" => "Timeout",
         "retry" => "Retry",
@@ -225,7 +251,7 @@ fn kind(k: &str) -> &str {
     }
 }
 
-fn slug(text: &str) -> String {
+pub(super) fn slug(text: &str) -> String {
     let s: String = text
         .chars()
         .map(|c| {
@@ -270,6 +296,7 @@ mod tests {
                 })
                 .collect(),
             failures: vec![],
+            catches: false,
         }
     }
 

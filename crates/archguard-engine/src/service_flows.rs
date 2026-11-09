@@ -195,6 +195,7 @@ fn route(
                 s
             })
             .collect(),
+        catches: catches(segment),
         failures: failures_in(segment)
             .into_iter()
             .map(|mut f| {
@@ -391,6 +392,22 @@ fn parallel_ranges(segment: &str) -> Vec<(usize, usize)> {
         }
     }
     out
+}
+
+/// The handler catches errors itself: `catch`, `except`, `rescue` as
+/// words, `recover()` or `err != nil`.
+fn catches(segment: &str) -> bool {
+    let word = |w: &str| {
+        segment.match_indices(w).any(|(at, _)| {
+            let before = segment[..at].chars().next_back();
+            let after = segment[at + w.len()..].chars().next();
+            let edge = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            edge(before) && edge(after)
+        })
+    };
+    ["catch", "except", "rescue"].into_iter().any(word)
+        || segment.contains("recover()")
+        || segment.contains("err != nil")
 }
 
 /// `HttpError(409, 'Insufficient stock')`, `HTTPException(status_code=404, …)`,
@@ -620,5 +637,29 @@ export function createHandler({call}) {
             .collect();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn a_handler_that_catches_errors_is_marked() {
+        let cases = [
+            (
+                "try { await call('PAYMENTS_API', '/p'); } catch (e) { return {}; }",
+                true,
+            ),
+            ("try:\n  call()\nexcept Timeout:\n  pass", true),
+            ("res, err := get(); if err != nil { return }", true),
+            ("defer func() { recover() }()", true),
+            (
+                "await call('PAYMENTS_API', '/p'); // catchy name: catchAll",
+                false,
+            ),
+            (
+                "const exceptional = 1; await call('PAYMENTS_API', '/p');",
+                false,
+            ),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(catches(body), expected, "{body}");
+        }
     }
 }

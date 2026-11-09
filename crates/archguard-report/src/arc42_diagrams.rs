@@ -4,6 +4,7 @@
 
 mod context;
 mod cyclic;
+mod failures;
 mod flows;
 mod layers;
 mod render;
@@ -16,6 +17,7 @@ use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, Eleme
 
 use crate::arc42_blocks::{Arc42Inputs, Blocks};
 
+pub(crate) use flows::kind as resilience_kind;
 pub use render::{mermaid, plantuml};
 
 /// The catalogue of `input`; shown diagrams are put at the start of
@@ -95,6 +97,7 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
             ));
         }
         out.extend(flows);
+        out.extend(failures::diagrams(input.services));
         out.extend(cycles(&elements, &relations));
         out.extend(layers::diagram(&blocks, input.config, input.blocks));
     }

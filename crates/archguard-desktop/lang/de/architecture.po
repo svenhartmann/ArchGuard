@@ -206,8 +206,8 @@ msgstr "{}: nicht in der Dokumentation."
 msgid "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order."
 msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Rot: aufgezeichneter Fehler. Von oben nach unten in gemessener Startreihenfolge."
 
-msgid "Blue: calls. Top to bottom in source order, derived from the code, not measured."
-msgstr "Blau: Aufrufe. Von oben nach unten in Quelltext-Reihenfolge, aus dem Code abgeleitet, nicht gemessen."
+msgid "Blue: calls · red: error path. Top to bottom in source order, derived from the code, not measured."
+msgstr "Blau: Aufrufe · Rot: Fehlerweg. Von oben nach unten in Quelltext-Reihenfolge, aus dem Code abgeleitet, nicht gemessen."
 
 msgid "runs"
 msgstr "startet"

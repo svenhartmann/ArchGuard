@@ -1123,7 +1123,6 @@ fn cycles_format_html_opens_the_cycles_panel() {
 #[test]
 fn project_typescript_compiler_runs_only_after_explicit_trust() {
     let dir = tempdir().unwrap();
-    let marker = dir.path().join("compiler-ran");
     let compiler = dir.path().join("node_modules/typescript/lib");
     fs::create_dir_all(&compiler).unwrap();
     fs::write(
@@ -1131,12 +1130,11 @@ fn project_typescript_compiler_runs_only_after_explicit_trust() {
         r#"{"name":"typescript","version":"5.8.2"}"#,
     )
     .unwrap();
+    // The compiler runs confined (ADR 0007) and may not write into the
+    // project; it shows that it ran through the error it reports.
     fs::write(
         compiler.join("typescript.js"),
-        format!(
-            "require('fs').writeFileSync({},'ran');\n",
-            serde_json::to_string(marker.to_str().unwrap()).unwrap()
-        ),
+        "throw new Error('stub-compiler-ran');\n",
     )
     .unwrap();
     fs::write(dir.path().join("main.ts"), "export const a = 1;\n").unwrap();
@@ -1148,7 +1146,10 @@ fn project_typescript_compiler_runs_only_after_explicit_trust() {
         .args(["calls", ".", "--format", "json"])
         .output()
         .unwrap();
-    assert!(!marker.exists(), "scanning must not run repository code");
+    assert!(
+        !stdout(&untrusted).contains("stub-compiler-ran"),
+        "scanning must not run repository code"
+    );
     assert!(
         stdout(&untrusted).contains("ARCHGUARD_TRUST_PROJECT_COMPILER"),
         "the diagnostic names the opt-in: {}",
@@ -1163,7 +1164,7 @@ fn project_typescript_compiler_runs_only_after_explicit_trust() {
     {
         return;
     }
-    Command::cargo_bin("archguard")
+    let trusted = Command::cargo_bin("archguard")
         .unwrap()
         .current_dir(dir.path())
         .env("ARCHGUARD_TRUST_PROJECT_COMPILER", "1")
@@ -1171,8 +1172,9 @@ fn project_typescript_compiler_runs_only_after_explicit_trust() {
         .output()
         .unwrap();
     assert!(
-        marker.exists(),
-        "the opt-in must reach the installed compiler"
+        stdout(&trusted).contains("stub-compiler-ran"),
+        "the opt-in must reach the installed compiler: {}",
+        stdout(&trusted)
     );
 }
 
