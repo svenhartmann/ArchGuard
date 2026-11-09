@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -122,6 +122,46 @@ pub(crate) fn analyze_go_calls(root: &Path, config: &Config) -> CallAnalysis {
 }
 /// Run a bundled helper with a 120 s and 64 MiB output budget; `hint` tells
 /// how to provide a missing toolchain.
+/// Why [`wait`] stopped a child before it exited (it is killed then).
+#[derive(Debug)]
+pub(crate) enum Stop {
+    Failed(std::io::Error),
+    Time,
+    Output,
+}
+
+/// The exit status of `child`, killed when it runs longer than `time` or one
+/// of `outputs` grows past `limit` bytes.
+pub(crate) fn wait(
+    child: &mut Child,
+    outputs: &[&Path],
+    time: Duration,
+    limit: u64,
+) -> Result<ExitStatus, Stop> {
+    let start = Instant::now();
+    loop {
+        let stop = match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Err(error) => Stop::Failed(error),
+            Ok(None) if start.elapsed() > time => Stop::Time,
+            Ok(None)
+                if outputs
+                    .iter()
+                    .any(|p| fs::metadata(p).is_ok_and(|m| m.len() > limit)) =>
+            {
+                Stop::Output
+            }
+            Ok(None) => {
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(stop);
+    }
+}
+
 pub(crate) fn execute(
     command: &mut Command,
     dir: &Path,
@@ -143,21 +183,16 @@ pub(crate) fn execute(
     let mut child = command
         .spawn()
         .map_err(|e| format!("{label}: {e}. {hint}"))?;
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
-        }
-        if start.elapsed() > Duration::from_secs(120)
-            || [output.path(), error.path()]
-                .iter()
-                .any(|p| fs::metadata(p).is_ok_and(|m| m.len() > 64 * 1024 * 1024))
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{label}: time/output budget exceeded"));
-        }
-        std::thread::sleep(Duration::from_millis(30));
+    let outputs = [output.path(), error.path()];
+    let status = match wait(
+        &mut child,
+        &outputs,
+        Duration::from_secs(120),
+        64 * 1024 * 1024,
+    ) {
+        Ok(status) => status,
+        Err(Stop::Failed(e)) => return Err(e.to_string()),
+        Err(_) => return Err(format!("{label}: time/output budget exceeded")),
     };
     if !status.success() {
         return Err(format!(
@@ -256,4 +291,31 @@ fn run(files: &[serde_json::Value]) -> Result<CallAnalysis, String> {
         GO_HINT,
     )?;
     serde_json::from_slice(&bytes).map_err(|e| format!("Invalid Go analysis: {e}"))
+}
+
+#[cfg(all(test, unix))]
+mod wait_tests {
+    use super::*;
+
+    #[test]
+    fn wait_stops_children_past_their_time_or_output_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let budget = |script: &str| {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdout(fs::File::create(&out).unwrap())
+                .spawn()
+                .unwrap();
+            let result = wait(&mut child, &[&out], Duration::from_millis(500), 1024);
+            (result, child.try_wait().unwrap().is_some())
+        };
+        let (done, _) = budget("echo hi");
+        assert!(done.is_ok_and(|s| s.success()));
+        let (slow, ended) = budget("sleep 5");
+        assert!(matches!(slow, Err(Stop::Time)) && ended, "{slow:?}");
+        // Past the output limit, then quiet (`yes` would fill a small disk).
+        let (loud, ended) = budget("head -c 4096 /dev/zero; sleep 5");
+        assert!(matches!(loud, Err(Stop::Output)) && ended, "{loud:?}");
+    }
 }

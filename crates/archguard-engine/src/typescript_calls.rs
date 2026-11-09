@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::{Lang, strip_root};
@@ -47,12 +47,8 @@ struct Input {
     blocked_compiler: bool,
 }
 
-fn project_compiler_trusted() -> bool {
-    crate::compiler_trust::trusted()
-}
-
 pub fn analyze_typescript_calls(root: &Path, config: &Config) -> CallAnalysis {
-    analyze(root, config, project_compiler_trusted())
+    analyze(root, config, crate::compiler_trust::trusted())
 }
 
 fn analyze(root: &Path, config: &Config, trusted: bool) -> CallAnalysis {
@@ -107,7 +103,7 @@ fn analyze(root: &Path, config: &Config, trusted: bool) -> CallAnalysis {
 
 /// Includes project sources and the compiler inputs observed by the cached run.
 pub fn typescript_calls_fingerprint(root: &Path, config: &Config) -> Result<[u8; 32], String> {
-    let input = prepare(root, config, project_compiler_trusted())?;
+    let input = prepare(root, config, crate::compiler_trust::trusted())?;
     let mut hash = Sha256::new();
     part(&mut hash, &input.fingerprint);
     if let Some(cache) = CACHE.get()
@@ -372,27 +368,10 @@ fn run_helper(input: &Input) -> Result<HelperResult, String> {
         .stderr(File::create(&errors).map_err(|e| e.to_string())?)
         .spawn()
         .map_err(|e| format!("TypeScript analysis requires Node.js on PATH: {e}"))?;
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.to_string());
-            }
-        }
-        if start.elapsed() > TIMEOUT
-            || [&output, &errors]
-                .iter()
-                .any(|path| fs::metadata(path).is_ok_and(|m| m.len() > LIMIT))
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("TypeScript analysis exceeded its 45-second/output budget".into());
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let status = match crate::go_calls::wait(&mut child, &[&output, &errors], TIMEOUT, LIMIT) {
+        Ok(status) => status,
+        Err(crate::go_calls::Stop::Failed(error)) => return Err(error.to_string()),
+        Err(_) => return Err("TypeScript analysis exceeded its 45-second/output budget".into()),
     };
     if !status.success() {
         return Err(format!(

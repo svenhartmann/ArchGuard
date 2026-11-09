@@ -120,3 +120,41 @@ project like in a sandbox.
   user's request (2026-11-08) without a push. Run on Windows:
   `cargo build -p archguard-engine --bin archguard-confine` then
   `cargo test -p archguard-engine --lib compiler_sandbox`.
+
+## History
+
+- **2026-11-09:** Holes from a security audit closed (branch
+  `fix/sandbox-holes`):
+  - **Home directory.** A tool in `~/bin` made the home directory "the
+    installation it comes from", so `~/.ssh` and the rest of HOME were
+    readable and executable. When that directory is HOME or above it
+    (compared as real paths), only the program's own directory is
+    granted.
+  - **Namespaces on Linux.** Landlock's network rules (ABI 4) cover TCP
+    only. The child now also moves into a new user and network
+    namespace (`unshare(CLONE_NEWUSER | CLONE_NEWNET)`, before Landlock),
+    so UDP and the host's abstract Unix sockets are closed as well. Where
+    unprivileged user namespaces are off (probed once at start; e.g.
+    Docker's default seccomp profile), Landlock alone confines the tooling
+    as before and a warning says once on stderr that UDP and abstract
+    sockets stay open. Linux still counts as confined then.
+  - **Environment.** Confined tools no longer inherit the environment
+    (tokens, agent sockets such as `SSH_AUTH_SOCK`). They get only `PATH`,
+    `HOME`, `TMPDIR`/`TMP`/`TEMP`, `RUSTUP_HOME`, `CARGO_HOME`,
+    `RUSTUP_TOOLCHAIN`, `LANG`, `LC_ALL` and, on Windows, `SystemRoot`,
+    `windir`, `USERPROFILE`, `LOCALAPPDATA`, `PATHEXT`, `ComSpec`; the
+    pinning and the callers set their own variables on top.
+  - **Version probe.** `rust-analyzer --version` ran unconfined, on the
+    repository's toolchain, in the current directory and without a time
+    limit. It now runs like the index: confined, pinned, in the scratch
+    directory, under the same time and output budget.
+  - **Verified:** the tests in `compiler_sandbox.rs` and `rust_scip.rs` on
+    macOS, and on Linux in Docker (kernel 7.0, Debian bookworm) both with
+    namespaces (`seccomp=unconfined`) and without them (default seccomp,
+    Landlock-only fallback); rust-analyzer confined resolves the calls of
+    `rust_calls`' test on macOS and in both Linux modes. Clippy clean.
+  - **Remaining gap:** on Linux, pathname Unix sockets (for example
+    `/var/run/docker.sock` or an ssh-agent socket) stay reachable: neither
+    Landlock ABI 4 nor a network namespace restricts connecting to them;
+    clearing the environment only hides their names. Windows (allowlist,
+    starter) is still untested.

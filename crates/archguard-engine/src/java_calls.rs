@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::{Extractor, JavaExtractor, Lang, strip_root};
@@ -460,37 +460,25 @@ fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> 
     let mut child = command.spawn().map_err(|e| {
         format!("Java call analysis requires JDK 17+ available as java on PATH: {e}")
     })?;
-    let start = Instant::now();
     let limit = process_time(input.files);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("Java call analysis process failed: {error}"));
-            }
+    let outputs = [output.as_path(), errors.as_path()];
+    let status = match crate::go_calls::wait(&mut child, &outputs, limit, MAX_OUTPUT_BYTES) {
+        Ok(status) => status,
+        Err(crate::go_calls::Stop::Failed(error)) => {
+            return Err(format!("Java call analysis process failed: {error}"));
         }
-        if start.elapsed() > limit {
-            let _ = child.kill();
-            let _ = child.wait();
+        Err(crate::go_calls::Stop::Time) => {
             return Err(format!(
                 "Java call analysis exceeded its {} second limit; import analysis remains available.",
                 limit.as_secs()
             ));
         }
-        if fs::metadata(&output).is_ok_and(|m| m.len() > MAX_OUTPUT_BYTES)
-            || fs::metadata(&errors).is_ok_and(|m| m.len() > MAX_OUTPUT_BYTES)
-        {
-            let _ = child.kill();
-            let _ = child.wait();
+        Err(crate::go_calls::Stop::Output) => {
             return Err(
                 "Java call analysis exceeded its output limit; import analysis remains available."
                     .into(),
             );
         }
-        std::thread::sleep(Duration::from_millis(20));
     };
     if !status.success() {
         let detail = read_bounded(&errors, MAX_OUTPUT_BYTES).unwrap_or_default();

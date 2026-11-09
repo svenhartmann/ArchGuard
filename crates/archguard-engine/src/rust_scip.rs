@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-use archguard_core::{CallAnalysis, MethodCall};
+use archguard_core::{CallAnalysis, CallClass, CallMethod, MethodCall};
 use protobuf::Message;
 use scip::types::{Index, PositionEncoding};
 use sha2::{Digest, Sha256};
@@ -117,13 +117,20 @@ fn pin_toolchain(command: &mut Command) {
     }
 }
 
+/// The `--version` line of `executable`, run like the index itself: confined,
+/// on the user's toolchain, in `scratch` and within the time budget.
+fn version(root: &Path, executable: &OsStr, scratch: &Path) -> Result<String, String> {
+    let mut command = crate::compiler_sandbox::command(executable, root, scratch);
+    pin_toolchain(&mut command);
+    command.arg("--version");
+    let out =
+        crate::go_calls::execute(&mut command, scratch, None, "rust-analyzer --version", HINT)?;
+    Ok(String::from_utf8_lossy(&out).trim().to_string())
+}
+
 fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
-    let version = Command::new(executable)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("{e}. {HINT}"))?;
-    let version = String::from_utf8_lossy(&version.stdout).trim().to_string();
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let version = version(root, executable, dir.path())?;
     let config = dir.path().join("rust-analyzer.json");
     std::fs::write(
         &config,
@@ -251,6 +258,28 @@ fn offset(line: &str, column: u32, encoding: PositionEncoding) -> u32 {
     }
 }
 
+type ByFileAndName<'a, T> = HashMap<(&'a str, &'a str), T>;
+
+/// Methods and classes by file and (last) name, in report order: the first
+/// match wins, as a search through the report would find it.
+fn declarations(
+    report: &CallAnalysis,
+) -> (
+    ByFileAndName<'_, Vec<&CallMethod>>,
+    ByFileAndName<'_, &CallClass>,
+) {
+    let mut methods: ByFileAndName<Vec<&CallMethod>> = HashMap::new();
+    for m in &report.methods {
+        methods.entry((&m.file, &m.name)).or_default().push(m);
+    }
+    let mut classes: ByFileAndName<&CallClass> = HashMap::new();
+    for c in &report.classes {
+        let name = c.name.rsplit("::").next().unwrap_or(&c.name);
+        classes.entry((&c.file, name)).or_insert(c);
+    }
+    (methods, classes)
+}
+
 /// Resolve every call site against the index and the measured declarations.
 pub(crate) fn resolve(
     index: &ScipIndex,
@@ -269,6 +298,7 @@ pub(crate) fn resolve(
         .iter()
         .map(|m| (m.id.as_str(), m.file.as_str()))
         .collect();
+    let (methods, classes) = declarations(report);
     let mut calls = Vec::new();
     for (class_id, method_id, site) in sites {
         let Some(source) = file_of
@@ -290,18 +320,14 @@ pub(crate) fn resolve(
                 None => ("external", None, None),
                 Some((path, line)) => {
                     let file = stripped_of.get(path.as_str()).copied().unwrap_or(path);
-                    let target = report.methods.iter().find(|m| {
-                        m.file == file
-                            && m.name == name
-                            && m.line <= line + 1
-                            && *line < m.end_line.unwrap_or(m.line)
+                    let target = methods.get(&(file, name)).and_then(|ms| {
+                        ms.iter()
+                            .find(|m| m.line <= line + 1 && *line < m.end_line.unwrap_or(m.line))
                     });
                     match target {
                         Some(m) => ("project", Some(m.class_id.clone()), Some(m.id.clone())),
                         None => {
-                            let class = report.classes.iter().find(|c| {
-                                c.file == file && c.name.rsplit("::").next() == Some(name)
-                            });
+                            let class = classes.get(&(file, name));
                             ("project", class.map(|c| c.id.clone()), None)
                         }
                     }
@@ -328,4 +354,114 @@ pub(crate) fn resolve(
         });
     }
     calls
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_version_probe_runs_confined_in_the_scratch_directory() {
+        assert!(crate::compiler_sandbox::available());
+        let (project, scratch, secret, tool) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        let file = secret.path().join("s.txt");
+        std::fs::write(&file, "secret").unwrap();
+        // A stand-in for rust-analyzer in its own installation (`…/bin/ra`).
+        std::fs::create_dir(tool.path().join("bin")).unwrap();
+        let fake = tool.path().join("bin").join("ra");
+        std::fs::write(
+            &fake,
+            format!("#!/bin/sh\ncat '{}' 2>/dev/null; pwd -P\n", file.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = version(project.path(), fake.as_os_str(), scratch.path()).unwrap();
+        assert!(!out.contains("secret"), "{out}");
+        let cwd = scratch.path().canonicalize().unwrap();
+        assert_eq!(out, cwd.to_string_lossy());
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn method(id: &str, class: &str, name: &str, line: u32, end: u32) -> serde_json::Value {
+        serde_json::json!({"id": id, "class_id": class, "name": name, "signature": "",
+            "file": "a.rs", "line": line, "end_line": end, "is_static": false})
+    }
+
+    fn class(id: &str, name: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "name": name, "package": "", "file": "a.rs",
+            "graph_node": "a.rs", "line": 1, "kind": "struct"})
+    }
+
+    #[test]
+    fn call_sites_resolve_to_the_first_matching_declaration() {
+        let report: CallAnalysis = serde_json::from_value(serde_json::json!({
+            "status": "partial", "files": 1, "calls": [], "diagnostics": [],
+            "classes": [class("X", "m::Thing"), class("Y", "Thing"), class("Z", "Other")],
+            "methods": [
+                method("main", "Z", "main", 1, 5),
+                method("A::run", "A", "run", 6, 8),
+                method("B::run", "B", "run", 10, 12),
+                method("C::run", "C", "run", 10, 12),
+            ],
+        }))
+        .unwrap();
+        let text = "fn main() {\n    run(); Thing(1); ext(); none();\n}\n".to_string();
+        let sources = [Source {
+            rel_path: "a.rs".into(),
+            stripped: "a.rs".into(),
+            text,
+        }];
+        let at = |column: u32, symbol: &str| ((1, column), symbol.to_string());
+        let index = ScipIndex {
+            version: String::new(),
+            occurrences: HashMap::from([(
+                "a.rs".to_string(),
+                BTreeMap::from([at(4, "s run"), at(11, "s Thing"), at(21, "s ext")]),
+            )]),
+            definitions: HashMap::from([
+                ("s run".to_string(), ("a.rs".to_string(), 10)),
+                ("s Thing".to_string(), ("a.rs".to_string(), 0)),
+            ]),
+            encodings: HashMap::new(),
+        };
+        let site = |column: u32, label: &str| {
+            let site = CallSite {
+                line: 2,
+                column,
+                label: label.into(),
+                method_call: false,
+            };
+            ("Z".to_string(), "main".to_string(), site)
+        };
+        let sites = [
+            site(4, "run"),
+            site(11, "Thing"),
+            site(21, "ext"),
+            site(28, "none"),
+        ];
+        let got: Vec<_> = resolve(&index, &report, &sources, &sites)
+            .into_iter()
+            .map(|c| (c.resolution, c.to_class, c.to_method))
+            .collect();
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            got,
+            [
+                ("project".into(), s("B"), s("B::run")),
+                ("project".into(), s("X"), None),
+                ("external".into(), None, None),
+                ("unresolved".into(), None, None),
+            ]
+        );
+    }
 }

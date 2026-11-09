@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
+pub(crate) const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
 
 static TRUSTED: AtomicBool = AtomicBool::new(false);
 
