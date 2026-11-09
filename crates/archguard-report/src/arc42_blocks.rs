@@ -3,13 +3,12 @@
 //! The Markdown table around it stays in `arc42.rs`.
 
 use archguard_core::{
-    CallAnalysis, Config, DiagramElement, DiagramRelation, ElementKind, GoalAssessment, Graph,
-    Node, NodeId, NodeKind, RelationKind, Report, ServiceProject, ServiceTopology,
+    CallAnalysis, Config, DiagramElement, DiagramRelation, DocLang, ElementKind, GoalAssessment,
+    Graph, Node, NodeId, NodeKind, RelationKind, Report, ServiceProject, ServiceTopology,
 };
 use serde_json::Value;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
-use std::fmt::Write;
 
 /// What a building block is for, gathered by the engine from files the
 /// report crate cannot read or match itself.
@@ -50,6 +49,8 @@ pub struct Arc42Inputs<'a> {
     pub blocks: &'a Arc42Blocks,
     /// One assessment per declared goal (ADR 0003).
     pub goals: &'a [GoalAssessment],
+    /// The language of the generated text (ADR 0008).
+    pub lang: DocLang,
 }
 
 /// Boxes in the diagram: nine blocks, or eight and a remainder box.
@@ -60,6 +61,8 @@ type Children<'a> = BTreeMap<Option<NodeId>, Vec<&'a Node>>;
 /// Building blocks in reading order (`order`); every vector is indexed by
 /// block, and "Files without a package" is the last block when present.
 pub(crate) struct Blocks<'a> {
+    /// The language of the labels this writes (ADR 0008).
+    lang: DocLang,
     /// The package node of each real block.
     frontier: Vec<&'a Node>,
     pub labels: Vec<String>,
@@ -94,11 +97,15 @@ impl<'a> Blocks<'a> {
         services: &'a ServiceTopology,
         source_paths: &BTreeMap<String, String>,
         facts: &'a Arc42Blocks,
+        lang: DocLang,
     ) -> Self {
         let frontier = frontier(graph);
         let mut names: Vec<String> = frontier.iter().map(|n| n.name.clone()).collect();
         if graph.nodes.iter().any(loose_file) {
-            names.push("Dateien ohne Paket".into());
+            names.push(
+                lang.pick("Files without a package", "Dateien ohne Paket")
+                    .into(),
+            );
         }
         let groups = group(graph, &frontier, names.len());
         let owners = owners(&groups.sample, frontier.len(), source_paths, services);
@@ -138,6 +145,7 @@ impl<'a> Blocks<'a> {
                 .enumerate()
                 .map(|(position, &i)| (i, position.min(BOXES - 1)))
                 .collect(),
+            lang,
             frontier,
             labels,
             files: groups.files,
@@ -210,7 +218,8 @@ impl<'a> Blocks<'a> {
         let mut out: Vec<DiagramElement> = self.order[..self.order.len().min(boxes)]
             .iter()
             .map(|&i| DiagramElement {
-                group: self.layer_names[i].map(|name| format!("Schicht {name}")),
+                group: self.layer_names[i]
+                    .map(|name| format!("{} {name}", self.lang.pick("Layer", "Schicht"))),
                 ..element(
                     self.display[&i],
                     self.labels[i].clone(),
@@ -295,7 +304,7 @@ impl<'a> Blocks<'a> {
     }
 
     /// The open question for packages whose manifest declares no responsibility.
-    pub fn missing_question(&self) -> Option<String> {
+    pub fn missing_question(&self, l: DocLang) -> Option<String> {
         let missing: Vec<&str> = self
             .order
             .iter()
@@ -307,11 +316,14 @@ impl<'a> Blocks<'a> {
         }
         let mut list = missing[..missing.len().min(10)].join(", ");
         if missing.len() > 10 {
-            let _ = write!(list, " und {} weitere", missing.len() - 10);
+            let more = l.pick(" and {} more", " und {} weitere");
+            list += &crate::arc42_text::fill(more, &[&(missing.len() - 10)]);
         }
-        Some(format!(
-            "Verantwortung ergänzen für: {list}. Am einfachsten als `description` im Manifest; sie erscheint dann hier."
-        ))
+        let text = l.pick(
+            "Add a responsibility for: {}. Simplest as `description` in the manifest; it then appears here.",
+            "Verantwortung ergänzen für: {}. Am einfachsten als `description` im Manifest; sie erscheint dann hier.",
+        );
+        Some(crate::arc42_text::fill(text, &[&list]))
     }
 }
 
@@ -479,6 +491,8 @@ fn box_relations(
             cycle: false,
             label: None,
             error: false,
+            caller: None,
+            reply: false,
         })
         .collect()
 }

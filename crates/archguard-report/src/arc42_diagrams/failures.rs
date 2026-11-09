@@ -6,8 +6,10 @@
 //! not a measured run.
 
 use archguard_core::{
-    Diagram, DiagramKind, RouteFailure, RouteStep, ServiceRoute, ServiceTopology,
+    Diagram, DiagramKind, DocLang, RouteFailure, RouteStep, ServiceRoute, ServiceTopology,
 };
+
+use crate::arc42_text::fill;
 use std::collections::BTreeSet;
 
 use super::flows::{
@@ -17,8 +19,9 @@ use super::flows::{
 const MAX_SCENARIOS: usize = 6;
 const MAX_DEPTH: usize = 6;
 
-pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
+pub fn diagrams(l: DocLang, t: &ServiceTopology) -> Vec<Diagram> {
     let mut found = Walk {
+        l,
         t,
         seen: BTreeSet::new(),
         out: Vec::new(),
@@ -39,6 +42,7 @@ pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
 }
 
 struct Walk<'a> {
+    l: DocLang,
     t: &'a ServiceTopology,
     /// Each error once, at the first path that reaches it.
     seen: BTreeSet<(String, u16, String)>,
@@ -58,7 +62,7 @@ impl<'a> Walk<'a> {
                     .seen
                     .insert((route.service.clone(), f.status, f.message.clone()))
                 {
-                    let d = Scenario::new(self.t).build(chain, hops, f);
+                    let d = Scenario::new(self.l, self.t).build(chain, hops, f);
                     self.out.push((chain.len(), d));
                 }
             }
@@ -90,14 +94,16 @@ enum End<'r> {
 }
 
 struct Scenario<'a> {
+    l: DocLang,
     t: &'a ServiceTopology,
     order: Vec<String>,
     messages: Vec<Message>,
 }
 
 impl<'a> Scenario<'a> {
-    fn new(t: &'a ServiceTopology) -> Self {
+    fn new(l: DocLang, t: &'a ServiceTopology) -> Self {
         Scenario {
+            l,
             t,
             order: Vec::new(),
             messages: Vec::new(),
@@ -114,18 +120,23 @@ impl<'a> Scenario<'a> {
         }
     }
 
-    fn call(&mut self, from: &str, to: &str, step: &RouteStep) {
+    /// The new message's index.
+    fn call(&mut self, from: &str, to: &str, step: &RouteStep, caller: usize) -> usize {
         let (a, b) = (self.at(from), self.at(to));
-        self.messages.push(Message::step(a, b, step));
+        self.messages.push(Message::step(a, b, step, Some(caller)));
+        self.messages.len() - 1
     }
 
-    fn red(&mut self, from: usize, to: usize, text: String) {
+    /// The error as the answer to message `answers`.
+    fn red(&mut self, from: usize, to: usize, text: String, answers: usize) {
         self.messages.push(Message {
             from,
             to,
             text,
             error: true,
             event: false,
+            caller: Some(answers),
+            reply: true,
         });
     }
 
@@ -140,17 +151,22 @@ impl<'a> Scenario<'a> {
             text: trigger(&entry.method, &entry.path),
             error: false,
             event: event(&entry.method),
+            caller: None,
+            reply: false,
         });
+        // `into[i]`: the message that entered `chain[i]`.
+        let mut into = vec![0];
         for (i, route) in chain.iter().enumerate() {
             let until = hops.get(i).map_or(f.line, |h| h.line);
             for step in route.steps.iter().filter(|s| s.line < until) {
-                self.call(&route.service, &step.to, step);
+                self.call(&route.service, &step.to, step, into[i]);
             }
             if let Some(hop) = hops.get(i) {
-                self.call(&route.service, &hop.to, hop);
+                let sent = self.call(&route.service, &hop.to, hop, into[i]);
+                into.push(sent);
             }
         }
-        let end = self.back(chain, hops, f);
+        let end = self.back(chain, hops, f, &into);
         self.diagram(chain, f, end)
     }
 
@@ -160,6 +176,7 @@ impl<'a> Scenario<'a> {
         chain: &[&'r ServiceRoute],
         hops: &[&RouteStep],
         f: &RouteFailure,
+        into: &[usize],
     ) -> End<'r> {
         let last = chain.len() - 1;
         for j in (0..last).rev() {
@@ -167,9 +184,13 @@ impl<'a> Scenario<'a> {
             let label = if j + 1 == last {
                 format!("{} {}", f.status, f.message)
             } else {
-                format!("{} weitergereicht", f.status)
+                format!(
+                    "{} {}",
+                    f.status,
+                    self.l.pick("passed on", "weitergereicht")
+                )
             };
-            self.red(from, to, label);
+            self.red(from, to, label, into[j + 1]);
             if chain[j].catches {
                 return End::Caught(chain[j]);
             }
@@ -181,29 +202,44 @@ impl<'a> Scenario<'a> {
             return End::Async(chain[0]);
         }
         let from = self.at(&chain[0].service);
-        self.red(from, 0, format!("{} weitergereicht", f.status));
+        let passed = format!(
+            "{} {}",
+            f.status,
+            self.l.pick("passed on", "weitergereicht")
+        );
+        self.red(from, 0, passed, into[0]);
         End::User
     }
 
     fn diagram(&self, chain: &[&ServiceRoute], f: &RouteFailure, end: End<'_>) -> Diagram {
+        let l = self.l;
         let (entry, failing) = (chain[0], chain[chain.len() - 1]);
-        let service = name(self.t, &failing.service);
+        let service = name(l, self.t, &failing.service);
         let involved: BTreeSet<&str> = self.order.iter().skip(1).map(String::as_str).collect();
         let end = match end {
-            End::Caught(r) => format!(
-                "{} fängt den Fehler ab (catch/except im Handler {}); was der Nutzer dann erhält, zeigt der Code nicht eindeutig",
-                name(self.t, &r.service),
-                trigger(&r.method, &r.path)
+            End::Caught(r) => fill(
+                l.pick(
+                    "{} catches the error (catch/except in handler {}); what the user then gets, the code does not show clearly",
+                    "{} fängt den Fehler ab (catch/except im Handler {}); was der Nutzer dann erhält, zeigt der Code nicht eindeutig",
+                ),
+                &[&name(l, self.t, &r.service), &trigger(&r.method, &r.path)],
             ),
-            End::Async(r) => format!(
-                "er endet bei {}, das per Event aufgerufen wurde (asynchron): der Absender erfährt davon nichts",
-                name(self.t, &r.service)
+            End::Async(r) => fill(
+                l.pick(
+                    "it ends at {}, which was called by an event (asynchronous): the sender learns nothing of it",
+                    "er endet bei {}, das per Event aufgerufen wurde (asynchron): der Absender erfährt davon nichts",
+                ),
+                &[&name(l, self.t, &r.service)],
             ),
-            End::User => {
-                "kein Handler auf dem Weg fängt ihn ab, der Nutzer erhält den Fehler".into()
-            }
+            End::User => l
+                .pick(
+                    "no handler on the way catches it, the user gets the error",
+                    "kein Handler auf dem Weg fängt ihn ab, der Nutzer erhält den Fehler",
+                )
+                .into(),
         };
         let trigger = trigger(&entry.method, &entry.path);
+        let (open, close) = l.pick(("“", "”"), ("„", "“"));
         Diagram {
             id: format!(
                 "runtime-failure-{}",
@@ -211,23 +247,34 @@ impl<'a> Scenario<'a> {
             ),
             chapter: 6,
             title: format!(
-                "Fehlerfall · {service} {} „{}“ · {}",
+                "{} · {service} {} {open}{}{close} · {}",
+                l.pick("Error case", "Fehlerfall"),
                 f.status,
                 f.message,
                 trigger.trim_end_matches(" (async)")
             ),
             kind: DiagramKind::Sequence,
-            note: format!(
-                "Auslöser: {trigger} an {}. Abbruch: {service} antwortet {} „{}“ ({}:{}). Vorher abgeschlossene Aufrufe stehen ohne ihre Folgeaufrufe. Rückweg rot: ein Handler ohne catch/except reicht den Fehler weiter; {end}. Statisch aus dem Quelltext abgeleitet, nicht gemessen. Fehlerbehandlung: {}.",
-                name(self.t, &entry.service),
-                f.status,
-                f.message,
-                failing.file,
-                f.line,
-                handling(self.t, &involved),
+            note: fill(
+                l.pick(
+                    "Trigger: {} to {}. Abort: {} answers {} {}{}{} ({}:{}). Calls completed before are shown without their follow-up calls. Way back in red: a handler without catch/except passes the error on; {}. Derived statically from the source, not measured. Error handling: {}.",
+                    "Auslöser: {} an {}. Abbruch: {} antwortet {} {}{}{} ({}:{}). Vorher abgeschlossene Aufrufe stehen ohne ihre Folgeaufrufe. Rückweg rot: ein Handler ohne catch/except reicht den Fehler weiter; {}. Statisch aus dem Quelltext abgeleitet, nicht gemessen. Fehlerbehandlung: {}.",
+                ),
+                &[
+                    &trigger,
+                    &name(l, self.t, &entry.service),
+                    &service,
+                    &f.status,
+                    &open,
+                    &f.message,
+                    &close,
+                    &failing.file,
+                    &f.line,
+                    &end,
+                    &handling(l, self.t, &involved),
+                ],
             ),
-            unit: "Aufrufe".into(),
-            elements: elements(self.t, &self.order),
+            unit: l.pick("calls", "Aufrufe").into(),
+            elements: elements(l, self.t, &self.order),
             relations: relations(&self.messages),
             shown: true,
         }
@@ -309,7 +356,7 @@ mod tests {
 
     #[test]
     fn a_downstream_error_goes_back_to_the_user_in_red() {
-        let all = diagrams(&topology());
+        let all = diagrams(DocLang::De, &topology());
         assert_eq!(all.len(), 1);
         let d = &all[0];
         assert_eq!(
@@ -344,7 +391,7 @@ mod tests {
     fn a_catching_handler_stops_the_red_path() {
         let mut t = topology();
         t.routes[1].catches = true;
-        let d = &diagrams(&t)[0];
+        let d = &diagrams(DocLang::De, &t)[0];
         let red: Vec<(String, bool)> = labels(d).into_iter().filter(|(_, e)| *e).collect();
         assert_eq!(red, [("5. 409 Rejected".to_string(), true)]);
         assert!(d.note.contains("orders fängt den Fehler ab"), "{}", d.note);
@@ -359,7 +406,7 @@ mod tests {
             message: "Bad".into(),
             line: 1,
         });
-        assert!(diagrams(&t).is_empty());
+        assert!(diagrams(DocLang::De, &t).is_empty());
     }
 
     /// orders publishes `order.placed` (shipping consumes it) and `audit`
@@ -403,7 +450,7 @@ mod tests {
     #[test]
     fn events_are_async_and_errors_stop_at_the_consumer() {
         let t = evented();
-        let flows = super::super::flows::diagrams(&t);
+        let flows = super::super::flows::diagrams(DocLang::De, &t);
         assert_eq!(flows.len(), 1, "the consumer is reached, not an entry");
         let f = &flows[0];
         let names: Vec<&str> = f.elements.iter().map(|e| e.name.as_str()).collect();
@@ -429,7 +476,7 @@ mod tests {
         assert_eq!(kinds, expected);
         assert!(f.note.contains("Events laufen asynchron"), "{}", f.note);
 
-        let d = &diagrams(&t)[0];
+        let d = &diagrams(DocLang::De, &t)[0];
         let red: Vec<(String, bool)> = labels(d).into_iter().filter(|(_, e)| *e).collect();
         assert_eq!(
             red,
@@ -443,10 +490,10 @@ mod tests {
     fn a_consumer_without_publisher_in_the_source_has_an_external_sender() {
         let mut t = evented();
         t.routes.remove(0);
-        let f = &super::super::flows::diagrams(&t)[0];
+        let f = &super::super::flows::diagrams(DocLang::De, &t)[0];
         assert_eq!(f.title, "Ablauf · Event order.placed · shipping");
         assert_eq!(f.elements[0].name, "Externer Absender");
-        let d = &diagrams(&t)[0];
+        let d = &diagrams(DocLang::De, &t)[0];
         assert!(d.note.contains("er endet bei shipping"), "{}", d.note);
         assert_eq!(d.relations.last().unwrap().to, "e1", "red ends at shipping");
     }

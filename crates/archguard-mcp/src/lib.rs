@@ -1403,7 +1403,7 @@ mod tests {
                 None => break,
             }
         }
-        assert!(text.contains("## 5. Bausteinsicht"));
+        assert!(text.contains("## 5. Building Block View"));
         assert!(text.contains("```mermaid"));
         assert!(!text.contains("## 6."));
         assert!(!dir.path().join("arc42.md").exists());

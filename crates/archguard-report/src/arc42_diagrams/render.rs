@@ -7,17 +7,29 @@ use archguard_core::{
 };
 use std::fmt::Write;
 
+/// German units: the unit is written in the document's language (ADR
+/// 0008), so it also tells the language of the relation labels.
+const GERMAN_UNITS: [&str; 5] = [
+    "Quellverbindungen",
+    "Aufrufstellen",
+    "Konfigurationsbelege",
+    "Dateien",
+    "Aufrufe",
+];
+
 /// The relation's label in the document's language.
 fn label(r: &DiagramRelation, unit: &str) -> String {
+    let de = GERMAN_UNITS.contains(&unit);
+    let say = |en: &str, german: &str| if de { german } else { en }.to_string();
     match r.kind {
         RelationKind::Dependency | RelationKind::Call => counted(r.count, unit),
-        RelationKind::Startup => "benötigt Start von".into(),
+        RelationKind::Startup => say("needs start of", "benötigt Start von"),
         RelationKind::Http => "HTTP".into(),
         RelationKind::Grpc => "gRPC".into(),
         RelationKind::Event => "Event".into(),
-        RelationKind::Reference => "Konfigurationsverweis".into(),
-        RelationKind::Data => "nutzt Datenbank".into(),
-        RelationKind::Runs => "startet".into(),
+        RelationKind::Reference => say("configuration reference", "Konfigurationsverweis"),
+        RelationKind::Data => say("uses datastore", "nutzt Datenbank"),
+        RelationKind::Runs => say("starts", "startet"),
     }
 }
 
@@ -28,6 +40,12 @@ pub fn counted(n: usize, unit: &str) -> String {
         "Aufrufstellen" => "Aufrufstelle",
         "Konfigurationsbelege" => "Konfigurationsbeleg",
         "Dateien" => "Datei",
+        "Aufrufe" => "Aufruf",
+        "source connections" => "source connection",
+        "call sites" => "call site",
+        "configuration evidence" => "configuration evidence",
+        "files" => "file",
+        "calls" => "call",
         other => other,
     };
     format!("{n} {}", if n == 1 { one } else { unit })
@@ -175,7 +193,7 @@ fn c4(d: &Diagram, text: C4Text) -> String {
             );
         }
         for e in elements {
-            let _ = writeln!(out, "{indent}{}", c4_element(e));
+            let _ = writeln!(out, "{indent}{}", c4_element(e, &d.unit));
         }
         if group.is_some() {
             out.push_str("  }\n");
@@ -199,7 +217,7 @@ fn c4(d: &Diagram, text: C4Text) -> String {
     out
 }
 
-fn c4_element(e: &DiagramElement) -> String {
+fn c4_element(e: &DiagramElement, unit: &str) -> String {
     if e.kind == ElementKind::Person {
         let detail = e.detail.as_deref().unwrap_or("");
         return format!("Person({}, {}, {})", e.id, arg(&e.name), arg(detail));
@@ -213,7 +231,14 @@ fn c4_element(e: &DiagramElement) -> String {
         "{shape}({}, {}, {}, {})",
         e.id,
         arg(&e.name),
-        arg(e.technology.as_deref().unwrap_or("Dienst")),
+        arg(e
+            .technology
+            .as_deref()
+            .unwrap_or(if GERMAN_UNITS.contains(&unit) {
+                "Dienst"
+            } else {
+                "Service"
+            })),
         arg(e.detail.as_deref().unwrap_or(""))
     )
 }

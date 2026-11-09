@@ -124,8 +124,5 @@ msgstr "Plug-in"
 msgid "service"
 msgstr "Dienst"
 
-msgid "Document language: German. The analysis engine writes the arc42 text in German."
-msgstr "Dokumentsprache: Deutsch. Die Analyse-Engine schreibt den arc42-Text auf Deutsch."
-
 msgid "{{acd}} and the cycle figures of this chapter are counted on modules (depth 2). {{shown}} is in the Graph tab; package cycles are in the chapter 5 diagram."
 msgstr "{{acd}} und die Zyklus-Kennzahlen dieses Kapitels werden auf Modulen (Tiefe 2) gezählt. {{shown}} steht im Graph-Tab, Paketzyklen im Diagramm von Kapitel 5."

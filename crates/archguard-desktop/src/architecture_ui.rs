@@ -16,7 +16,7 @@ mod figure;
 mod follow;
 mod markdown;
 mod projection;
-mod sequence;
+pub mod sequence;
 mod state;
 mod sync;
 mod view;
@@ -33,7 +33,7 @@ use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use follow::navigation;
 use projection::Group;
 pub use state::ArchitectureState;
-use state::{build_from, current, derived, labels, open_scope, toggle_diagram};
+use state::{build_from, current, derived, follow_language, labels, open_scope, toggle_diagram};
 use visual::{Action, Kind, RELATIONS_PAGE};
 
 /// Register the tab's callbacks once at start-up.
@@ -109,6 +109,7 @@ pub fn wire(ui: &AppWindow) {
 
 impl TabState for ArchitectureState {
     fn push(&mut self, ui: &AppWindow) {
+        follow_language(self, ui, Texts::of(ui).doc_lang());
         push(ui, self);
     }
 
@@ -133,6 +134,7 @@ impl TabState for ArchitectureState {
 /// Show the active document's tab. Its state is built once per document,
 /// on a worker thread.
 pub fn show(ui: &AppWindow, data: &Loaded) {
+    let lang = Texts::of(ui).doc_lang();
     tab_support::show_async(ui, || {
         let calls = Calls::of(data);
         let (root, config, graph, report) = (
@@ -141,7 +143,7 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
             data.run.graph.clone(),
             data.run.report.clone(),
         );
-        move || build_from(&root, &config, graph, &report, &calls.get())
+        move || build_from(&root, &config, graph, &report, &calls.get(), lang)
     });
 }
 
@@ -259,7 +261,14 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let calls = archguard_engine::analyze_calls(&root, &run.config);
-        let state = build_from(&root, &run.config, run.graph.clone(), &run.report, &calls);
+        let state = build_from(
+            &root,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        );
         let doc = state.doc.as_ref().expect("arc42 document");
         assert_eq!(doc.chapters.len(), 12);
         assert_eq!(state.chapter, 5);

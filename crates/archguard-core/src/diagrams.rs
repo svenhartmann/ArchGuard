@@ -4,6 +4,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The language of generated arc42 text (ADR 0008).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DocLang {
+    #[default]
+    En,
+    De,
+}
+
+impl DocLang {
+    /// The text for this language.
+    pub fn pick<T>(self, en: T, de: T) -> T {
+        match self {
+            DocLang::En => en,
+            DocLang::De => de,
+        }
+    }
+}
+
 /// `[arc42]` in `archguard.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -15,6 +33,11 @@ pub struct Arc42Config {
     /// Package map levels put into the document, as `<map>@<package>`
     /// (`building-blocks@app/core`); levels are left out unless listed.
     pub shown_diagrams: Vec<String>,
+    /// The language of the generated text, set by the caller (the desktop:
+    /// its window language); never read from or written to the file
+    /// (ADR 0008).
+    #[serde(skip)]
+    pub lang: DocLang,
 }
 
 impl Arc42Config {
@@ -125,6 +148,14 @@ pub struct DiagramRelation {
     /// A recorded error on this message.
     #[serde(default)]
     pub error: bool,
+    /// Sequences: the message (index into `relations`) this one is sent
+    /// within; `None`: sent by the initiator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<usize>,
+    /// Sequences: the explicit answer to `caller`, which then needs no
+    /// drawn return of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reply: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

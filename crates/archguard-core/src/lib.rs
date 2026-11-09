@@ -18,6 +18,7 @@ mod calls;
 mod config;
 mod diagrams;
 pub use diagrams::{
+    DocLang,
     Arc42Config, Diagram, DiagramElement, DiagramFormat, DiagramKind, DiagramRelation, ElementKind,
     RelationKind,
 };

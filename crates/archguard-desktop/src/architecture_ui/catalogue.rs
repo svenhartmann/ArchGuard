@@ -112,6 +112,7 @@ mod tests {
         );
         Arc42Document {
             schema_version: 1,
+            lang: archguard_engine::core::DocLang::De,
             scope: "p".into(),
             notice: "",
             chapters: vec![Arc42Chapter {

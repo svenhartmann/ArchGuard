@@ -25,9 +25,7 @@ export struct ArchitectureModel {
     chapters: [ArcChapter],
     chapter: int,
     chapter-title: string,
-    // "Document language: German" in an English window; the level of
-    // chapter 10's figures.
-    language-note: string,
+    // The level of chapter 10's figures.
     chapter-note: string,
     blocks: [ArcBlock],
     source: string,
@@ -322,7 +320,6 @@ export component ArchitectureView inherits Rectangle {
                 spacing: 8px;
                 horizontal-stretch: 1;
                 PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
-                if ArchitectureData.model.language-note != "": Text { text: ArchitectureData.model.language-note; color: Theme.warning; font-size: Theme.font-small; wrap: word-wrap; }
             }
             if !root.narrow && !ArchitectureData.model.editing: Button { y: (parent.height - self.height) / 2; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }

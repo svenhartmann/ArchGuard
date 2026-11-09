@@ -129,7 +129,14 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let calls = archguard_engine::analyze_calls(&root, &run.config);
-        build_from(&root, &run.config, run.graph.clone(), &run.report, &calls)
+        build_from(
+            &root,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        )
     }
 
     fn labels() -> Labels {

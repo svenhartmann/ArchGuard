@@ -203,11 +203,11 @@ msgstr "Alle Diagramme, die ArchGuard für dieses Projekt ableitet, auch ausgebl
 msgid "{}: not in the documentation."
 msgstr "{}: nicht in der Dokumentation."
 
-msgid "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error. Top to bottom in measured start order."
-msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Rot: aufgezeichneter Fehler. Von oben nach unten in gemessener Startreihenfolge."
+msgid "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error · dashed: return to the caller. Top to bottom in measured start order."
+msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Rot: aufgezeichneter Fehler · gestrichelt: Rückkehr zum Aufrufer. Von oben nach unten in gemessener Startreihenfolge."
 
-msgid "Blue: calls · violet: events (async) · red: error path. Top to bottom in source order, derived from the code, not measured."
-msgstr "Blau: Aufrufe · Violett: Events (asynchron) · Rot: Fehlerweg. Von oben nach unten in Quelltext-Reihenfolge, aus dem Code abgeleitet, nicht gemessen."
+msgid "Blue: calls · violet: events (async) · red: error path · dashed: return to the caller. Top to bottom in source order, derived from the code, not measured."
+msgstr "Blau: Aufrufe · Violett: Events (asynchron) · Rot: Fehlerweg · gestrichelt: Rückkehr zum Aufrufer. Von oben nach unten in Quelltext-Reihenfolge, aus dem Code abgeleitet, nicht gemessen."
 
 msgid "runs"
 msgstr "startet"

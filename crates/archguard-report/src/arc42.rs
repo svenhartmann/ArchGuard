@@ -1,13 +1,30 @@
 //! Evidence-driven arc42 sections shared by CLI, MCP and the viewer.
 //! Chapter structure adapted from arc42 by Gernot Starke and Peter Hruschka,
 //! CC BY-SA 4.0. All explanatory text and projections below are ArchGuard's.
-use archguard_core::{Diagram, ServiceDependencyKind};
+use archguard_core::{Diagram, DocLang};
 use serde::Serialize;
-use serde_json::Value;
 use std::fmt::Write;
 
-const NOTICE: &str = "Kapitelstruktur nach [arc42](https://arc42.org/overview/) von Gernot Starke und Peter Hruschka, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Anpassung: automatisch befüllte Belegabschnitte und offene Ergänzungen. Die Lizenz der Kapitelvorlage gilt nicht automatisch für die eingefügten Projektdaten.\n";
-const TITLES: [&str; 12] = [
+use crate::arc42_text::{LIMIT, cell, fill};
+use crate::{arc42_chapters as chapters, arc42_quality as quality};
+
+const NOTICE_EN: &str = "Chapter structure after [arc42](https://arc42.org/overview/) by Gernot Starke and Peter Hruschka, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Adaptation: automatically filled evidence sections and open additions. The licence of the chapter template does not automatically apply to the inserted project data.\n";
+const NOTICE_DE: &str = "Kapitelstruktur nach [arc42](https://arc42.org/overview/) von Gernot Starke und Peter Hruschka, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Anpassung: automatisch befüllte Belegabschnitte und offene Ergänzungen. Die Lizenz der Kapitelvorlage gilt nicht automatisch für die eingefügten Projektdaten.\n";
+const TITLES_EN: [&str; 12] = [
+    "Introduction and Goals",
+    "Constraints",
+    "Context and Scope",
+    "Solution Strategy",
+    "Building Block View",
+    "Runtime View",
+    "Deployment View",
+    "Crosscutting Concepts",
+    "Architecture Decisions",
+    "Quality Requirements",
+    "Risks and Technical Debt",
+    "Glossary",
+];
+const TITLES_DE: [&str; 12] = [
     "Einführung und Ziele",
     "Randbedingungen",
     "Kontextabgrenzung",
@@ -21,7 +38,6 @@ const TITLES: [&str; 12] = [
     "Risiken und technische Schulden",
     "Glossar",
 ];
-const LIMIT: usize = 30;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Arc42Chapter {
@@ -33,6 +49,9 @@ pub struct Arc42Chapter {
 #[derive(Debug, Clone, Serialize)]
 pub struct Arc42Document {
     pub schema_version: u32,
+    /// The language of the generated text (ADR 0008).
+    #[serde(skip)]
+    pub lang: DocLang,
     pub scope: String,
     pub notice: &'static str,
     pub chapters: Vec<Arc42Chapter>,
@@ -40,116 +59,8 @@ pub struct Arc42Document {
     pub diagrams: Vec<Diagram>,
 }
 
-use crate::arc42_blocks::Blocks;
 pub use crate::arc42_blocks::{Arc42Blocks, Arc42Context, Arc42Inputs};
 
-/// Escapes only what changes Markdown structure inside a line, so paths and
-/// sentences stay readable in the hand-edited file.
-fn cell(text: &str) -> String {
-    let short: String = text.chars().take(512).collect();
-    let text = if text.chars().count() > 512 {
-        short + " … [gekürzt]"
-    } else {
-        short
-    };
-    let mut out = String::new();
-    for (i, ch) in text.chars().enumerate() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '\r' | '\n' | '\t' => out.push(' '),
-            '\\' | '`' | '*' | '_' | '[' | ']' | '|' | '~' | '!' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            '#' | '+' | '-' | '=' if i == 0 => {
-                out.push('\\');
-                out.push(ch);
-            }
-            ch => out.push(ch),
-        }
-    }
-    out
-}
-fn val(value: &Value) -> String {
-    match value {
-        Value::Null => "unbekannt".into(),
-        Value::Bool(b) => yes(*b).into(),
-        Value::String(s) => cell(s),
-        other => cell(&other.to_string()),
-    }
-}
-fn yes(value: bool) -> &'static str {
-    if value { "ja" } else { "nein" }
-}
-/// Producer status codes in German; unknown codes stay visible as code.
-fn status(value: &Value) -> String {
-    let Some(code) = value.as_str() else {
-        return val(value);
-    };
-    let label = match code {
-        "ready" => "verfügbar",
-        "partial" => "teilweise",
-        "unavailable" => "nicht verfügbar",
-        "not_imported" => "nicht importiert",
-        "not_scanned" => "nicht gescannt",
-        "not_applicable" => "nicht anwendbar",
-        "not_recorded" => "nicht erfasst",
-        "error" => "Fehler",
-        "stale" => "veraltet",
-        "current" => "aktuell",
-        "changed_since_import" => "seit Import geändert",
-        "unchanged_since_import" => "seit Import unverändert",
-        "changed_since_report" => "seit Bericht geändert",
-        "analyzed" => "analysiert",
-        "measured" => "gemessen",
-        "incomplete" => "unvollständig",
-        "unmapped" => "nicht zugeordnet",
-        "mixed" => "gemischt",
-        "unverified" => "ungeprüft",
-        _ => return format!("`{}`", code.replace('`', "'")),
-    };
-    label.into()
-}
-/// Writes header and alignment lines plus rows, or one sentence when there
-/// is nothing to show (no output for an empty sentence).
-fn table(out: &mut String, head: &str, rows: Vec<String>, empty: &str) {
-    if rows.is_empty() {
-        if !empty.is_empty() {
-            let _ = writeln!(out, "{empty}\n");
-        }
-        return;
-    }
-    let _ = writeln!(out, "{head}");
-    for row in rows {
-        let _ = writeln!(out, "{row}");
-    }
-    out.push('\n');
-}
-fn rows(value: &Value) -> &[Value] {
-    value.as_array().map(Vec::as_slice).unwrap_or_default()
-}
-fn note(out: &mut String, count: usize) {
-    if count > LIMIT {
-        let _ = writeln!(
-            out,
-            "\nAuszug: {LIMIT} von {count} Einträgen. Weitere Belege sind in den jeweiligen ArchGuard-Ansichten verfügbar.\n"
-        );
-    }
-}
-fn source(input: &Arc42Inputs<'_>, logical: &str, line: u32) -> String {
-    input
-        .source_paths
-        .get(logical)
-        .map(|p| format!("{}:{line}", cell(p)))
-        .unwrap_or_else(|| {
-            format!(
-                "Logischer Quellpfad {}:{line}; physische Zuordnung unbekannt",
-                cell(logical)
-            )
-        })
-}
 fn block(number: u8, content: &str) -> String {
     format!(
         "<!-- archguard:arc42:{number:02}:start -->\n{content}\n<!-- archguard:arc42:{number:02}:end -->"
@@ -163,8 +74,9 @@ impl Arc42Document {
         let diagrams = crate::arc42_diagrams::add(text, input);
         Self {
             schema_version: 1,
+            lang: input.lang,
             scope,
-            notice: NOTICE,
+            notice: input.lang.pick(NOTICE_EN, NOTICE_DE),
             chapters,
             diagrams,
         }
@@ -212,25 +124,31 @@ impl Arc42Document {
         Ok(result)
     }
     pub fn markdown(&self, chapter: Option<u8>) -> String {
-        let mut out = format!(
-            "# arc42 – Architekturdokumentation\n\n{NOTICE}\nAnalysierter Umfang: **{}**. Statische Beobachtungen, deklarierte Absichten und importierte Messwerte bleiben getrennt. Keine simulierten Graphänderungen. Keine Aussage über Vollständigkeit der Architektur.\n\nListen enthalten höchstens {LIMIT} Einträge; lange Texte werden sichtbar gekürzt. Eigene Erläuterungen außerhalb der archguard-Blöcke bleiben bei Aktualisierungen erhalten.\n",
-            // The header is written once and committed; a machine path means nothing to readers.
-            cell(
-                std::path::Path::new(&self.scope)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(&self.scope)
-            )
+        let header = self.lang.pick(
+            "# arc42 – Architecture Documentation\n\n{}\nAnalysed scope: **{}**. Static observations, declared intentions and imported measurements stay separate. No simulated graph changes. No statement about the completeness of the architecture.\n\nLists hold at most {} entries; long texts are visibly shortened. Your own explanations outside the archguard blocks are kept on updates.\n",
+            "# arc42 – Architekturdokumentation\n\n{}\nAnalysierter Umfang: **{}**. Statische Beobachtungen, deklarierte Absichten und importierte Messwerte bleiben getrennt. Keine simulierten Graphänderungen. Keine Aussage über Vollständigkeit der Architektur.\n\nListen enthalten höchstens {} Einträge; lange Texte werden sichtbar gekürzt. Eigene Erläuterungen außerhalb der archguard-Blöcke bleiben bei Aktualisierungen erhalten.\n",
+        );
+        // The header is written once and committed; a machine path means nothing to readers.
+        let scope = cell(
+            std::path::Path::new(&self.scope)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&self.scope),
+        );
+        let mut out = fill(header, &[&self.notice, &scope, &LIMIT]);
+        let own = self.lang.pick(
+            "<!-- Add your own explanations for chapter {} here. -->",
+            "<!-- Eigene Erläuterungen zu Kapitel {} hier ergänzen. -->",
         );
         for c in &self.chapters {
             if chapter.is_none_or(|n| n == c.number) {
                 let _ = writeln!(
                     out,
-                    "\n## {}. {}\n\n{}\n\n<!-- Eigene Erläuterungen zu Kapitel {} hier ergänzen. -->",
+                    "\n## {}. {}\n\n{}\n\n{}",
                     c.number,
                     c.title,
                     block(c.number, &c.markdown),
-                    c.number
+                    fill(own, &[&c.number])
                 );
             }
         }
@@ -238,69 +156,10 @@ impl Arc42Document {
     }
 }
 
-/// Chapter 5: packages become building blocks with the responsibility their
-/// manifest declares, the layer they belong to and the blocks they use.
-fn package_markdown(input: &Arc42Inputs<'_>, questions: &mut Vec<String>) -> String {
-    let blocks = Blocks::new(
-        input.source_graph,
-        input.config,
-        input.services,
-        input.source_paths,
-        input.blocks,
-    );
-    let mut out = format!(
-        "### Bausteine\n\nQuelle: vollständiger ursprünglicher Quellgraph. {} Datei-/Symbolknoten, {} Paketgruppen, {} Quellverbindungen; {} davon liegen innerhalb dargestellter Bausteine. Verantwortung: `description` des zugehörigen Manifests. Schicht: erste passende Schicht aus `layers`. „Nutzt“ nennt Bausteine mit Quellverbindungen dorthin, die häufigsten zuerst.\n\n",
-        blocks.files.iter().sum::<usize>(),
-        blocks.labels.len(),
-        blocks.covered,
-        blocks.internal
-    );
-    table(
-        &mut out,
-        "| Baustein | Verantwortung | Schicht | Dateien | Nutzt |\n| --- | --- | --- | ---: | --- |",
-        blocks
-            .order
-            .iter()
-            .take(LIMIT)
-            .map(|&i| block_row(&blocks, i))
-            .collect(),
-        "Keine Pakete im Quellgraph erfasst.",
-    );
-    note(&mut out, blocks.labels.len());
-    questions.extend(blocks.missing_question());
-    questions.push(
-        "Schnittstellen der Bausteine und bei Bedarf eine feinere Zerlegung erläutern.".into(),
-    );
-    out
-}
-
-fn block_row(blocks: &Blocks<'_>, i: usize) -> String {
-    let used: Vec<_> = blocks.used(i).into_iter().map(cell).collect();
-    format!(
-        "| {} | {} | {} | {} | {} |",
-        cell(&blocks.labels[i]),
-        blocks.describe(i).map_or("–".into(), cell),
-        blocks.layer_name(i).map_or("–".into(), cell),
-        blocks.files[i],
-        if used.is_empty() {
-            "–".into()
-        } else {
-            used.join(", ")
-        }
-    )
-}
-
 pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
-    let Arc42Inputs {
-        view,
-        report,
-        config,
-        calls,
-        services,
-        insights,
-        ..
-    } = &input;
-    let mut chapters: Vec<_> = TITLES
+    let l = input.lang;
+    let mut chapters: Vec<_> = l
+        .pick(TITLES_EN, TITLES_DE)
         .iter()
         .enumerate()
         .map(|(i, title)| Arc42Chapter {
@@ -310,527 +169,105 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
             questions: vec![],
         })
         .collect();
-    let c = &mut chapters[0];
-    c.markdown.push_str("### Deklarierte Qualitätsziele\n\nQuelle: `architecture.goals` in der wirksamen Konfiguration.\n\n");
-    table(
-        &mut c.markdown,
-        "| Ziel | Priorität | Begründung | Merkmal (ISO/IEC 25010) | Umfang | Status |\n| --- | --- | --- | --- | --- | --- |",
-        crate::arc42_goals::goal_rows(config, input.goals, LIMIT, cell),
-        "Keine Qualitätsziele deklariert.",
-    );
-    note(&mut c.markdown, config.architecture.goals.len());
-    if config.architecture.goals.is_empty() {
-        c.questions
-            .push("Qualitätsziele und Prioritäten sind nicht deklariert.".into());
-    }
-    c.questions
-        .extend(crate::arc42_goals::goal_questions(config, cell));
-    c.questions.push("Fachlicher Zweck, wesentliche Anforderungen und Stakeholder mit ihren Erwartungen ergänzen.".into());
-
-    let c = &mut chapters[1];
-    c.markdown.push_str("Quelle: `architecture.constraints`. Technisch beobachtete Sprachen und Werkzeuge sind allein keine verbindlichen Randbedingungen.\n\n");
-    for r in config.architecture.constraints.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- **{}**: {}",
-            cell(&r.name),
-            cell(&r.rationale)
-        );
-    }
-    note(&mut c.markdown, config.architecture.constraints.len());
-    if config.architecture.constraints.is_empty() {
-        c.markdown.push_str("Keine Randbedingungen deklariert.\n");
-    }
-    c.questions.push(
-        "Nicht erfasste organisatorische, regulatorische und technische Vorgaben ergänzen.".into(),
-    );
-
-    let c = &mut chapters[2];
-    c.markdown.push_str("### Konfigurierte technische Beziehungen\n\nDiese Beziehungen stammen aus Deployment-Konfiguration. Sie belegen weder tatsächlich ausgeführte Kommunikation noch eine vollständige Systemgrenze.\n\n");
-    let http: Vec<_> = services
-        .dependencies
-        .iter()
-        .filter(|d| d.kind == ServiceDependencyKind::ConfiguredHttp)
-        .collect();
-    table(
-        &mut c.markdown,
-        "| Quelle | Ziel | Beleg |\n| --- | --- | --- |",
-        http.iter()
-            .take(LIMIT)
-            .map(|d| {
-                format!(
-                    "| {} | {} | {} |",
-                    cell(&d.from),
-                    cell(&d.to),
-                    d.evidence
-                        .first()
-                        .map(|e| format!("{} · {}", cell(&e.file), cell(&e.pointer)))
-                        .unwrap_or_else(|| "unbekannt".into())
-                )
-            })
-            .collect(),
-        "Keine konfigurierten HTTP-Beziehungen erfasst.",
-    );
-    note(&mut c.markdown, http.len());
-    let _ = writeln!(
-        c.markdown,
-        "API-Vertragsimport: **{}**. Verträge sind deklarierte Schnittstellen; Nutzung und Erreichbarkeit sind damit nicht nachgewiesen.\n",
-        status(&insights["contracts"]["status"])
-    );
-    for contract in rows(&insights["contracts"]["contracts"]).iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- Provider {} · Quelle {} · Quellstatus {} · {} deklarierte Operationen.",
-            val(&contract["provider"]),
-            val(&contract["source_path"]),
-            status(&contract["source_status"]),
-            rows(&contract["operations"]).len()
-        );
-    }
-    note(
-        &mut c.markdown,
-        rows(&insights["contracts"]["contracts"]).len(),
-    );
-    c.questions.push("Systemgrenze, Benutzerrollen, externe Nachbarsysteme und fachliche Schnittstellen bestätigen.".into());
-
-    let c = &mut chapters[3];
-    if let Some(model) = &config.architecture.model {
-        let _ = writeln!(
-            c.markdown,
-            "Deklariertes Zielmodell: **{}**. Quelle: `architecture.model`.\n",
-            cell(&model.name)
-        );
-        for component in model.components.iter().take(LIMIT) {
-            let _ = writeln!(
-                c.markdown,
-                "- Komponente {}: {}",
-                cell(&component.name),
-                cell(&component.include.join(", "))
-            );
-        }
-        note(&mut c.markdown, model.components.len());
-    }
-    if config.architecture.model.is_none() {
-        c.markdown.push_str("Eine Lösungsstrategie ist nicht deklariert. Aus Abhängigkeiten wird kein Architekturstil abgeleitet.\n");
-    }
-    c.questions.push("Tragende Entwurfsentscheidungen und ihre Zuordnung zu Qualitätszielen erläutern. Erfasste Entscheidungen stehen in Kapitel 9.".into());
-
-    let c = &mut chapters[4];
-    c.markdown
-        .push_str(&package_markdown(&input, &mut c.questions));
-
-    let c = &mut chapters[5];
-    let _ = writeln!(
-        c.markdown,
-        "### Statische Aufrufbelege\n\nCompilerstatus: **{}**. {} erfasste Aufrufstellen. Dies ist kein Laufzeittrace und keine Ausführungsreihenfolge.\n",
-        status(&Value::from(calls.status.as_str())),
-        calls.calls.len()
-    );
-    let mut sites: Vec<_> = calls.calls.iter().collect();
-    sites.sort_by_key(|s| (&s.file, s.line, s.column, &s.target_label));
-    table(
-        &mut c.markdown,
-        "| Aufrufer | Ziel | Auflösung | Quellbeleg |\n| --- | --- | --- | --- |",
-        sites
-            .iter()
-            .take(LIMIT)
-            .map(|s| {
-                format!(
-                    "| {} | {} | {} | {} |",
-                    cell(s.from_method.as_deref().unwrap_or(&s.from_class)),
-                    cell(&s.target_label),
-                    cell(&s.resolution),
-                    source(&input, &s.file, s.line)
-                )
-            })
-            .collect(),
-        "Keine Aufrufstellen erfasst.",
-    );
-    note(&mut c.markdown, sites.len());
-    c.questions.push("Relevante Ablauf- und Fehlerszenarien mit Auslöser, Reihenfolge, Nebenläufigkeit und Ergebnis beschreiben; mit Laufzeitbelegen prüfen.".into());
-
-    let c = &mut chapters[6];
-    let _ = writeln!(
-        c.markdown,
-        "### Gelesene Deployment-Konfiguration\n\nKonfigurationsleser vollständig: **{}**. Keine Aussage über tatsächlichen Betrieb.\n",
-        yes(services.complete)
-    );
-    let deployments: Vec<_> = services
-        .services
-        .iter()
-        .filter(|s| !s.compose_file.is_empty())
-        .collect();
-    let list = |items: &[String]| {
-        if items.is_empty() {
-            "–".into()
-        } else {
-            cell(&items.join(", "))
-        }
-    };
-    table(
-        &mut c.markdown,
-        "| Dienst | Quelle | Build-Kontext | Netzwerke | Profile |\n| --- | --- | --- | --- | --- |",
-        deployments
-            .iter()
-            .take(LIMIT)
-            .map(|s| {
-                format!(
-                    "| {} | {} | {} | {} | {} |",
-                    cell(&s.name),
-                    cell(&s.compose_file),
-                    s.build_context
-                        .as_deref()
-                        .map(cell)
-                        .unwrap_or_else(|| "–".into()),
-                    list(&s.networks),
-                    list(&s.profiles)
-                )
-            })
-            .collect(),
-        "Keine Compose-Dienstdeklarationen erfasst. Manifest-Projekte folgen separat.",
-    );
-    note(&mut c.markdown, deployments.len());
-    c.markdown.push_str("### Build- und Projekteinteilung\n\nManifest-Einheiten sind nicht automatisch eigenständige Laufzeitdienste.\n\n");
-    for p in services.projects.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- {} · {} · {} · Manifest {}",
-            cell(&p.name),
-            cell(&p.kind),
-            cell(&p.ecosystem),
-            cell(&p.manifest)
-        );
-    }
-    note(&mut c.markdown, services.projects.len());
-    c.questions.push("Produktionsumgebungen, Hosts, Skalierung, Ressourcengrenzen und Betriebsverantwortung ergänzen.".into());
-
-    let c = &mut chapters[7];
-    c.markdown.push_str("### Deklarierte Abhängigkeitskonventionen\n\nQuelle: wirksame `layers`, `dependency_rules` und `ownership_rules`. Regeln beschreiben Vorgaben; ihre bloße Existenz beweist keine Einhaltung.\n\n");
-    let (declared, derived): (Vec<_>, Vec<_>) = config
-        .layers
-        .iter()
-        .partition(|l| l.origin == archguard_core::LayerOrigin::Declared);
-    let layers = |out: &mut String, layers: &[&archguard_core::LayerConfig]| {
-        for l in layers.iter().take(LIMIT) {
-            let _ = writeln!(
-                out,
-                "- Schicht {} · enthält {} · darf abhängen von {}",
-                cell(&l.name),
-                cell(&l.contains.join(", ")),
-                if l.may_depend_on.is_empty() {
-                    "keiner anderen Schicht".into()
-                } else {
-                    cell(&l.may_depend_on.join(", "))
-                }
-            );
-        }
-        note(out, layers.len());
-    };
-    layers(&mut c.markdown, &declared);
-    let rules = config.dependency_rules.len() + config.ownership_rules.len();
-    if declared.is_empty() && rules == 0 {
-        c.markdown
-            .push_str("Keine Schichten oder Abhängigkeitsregeln deklariert.\n");
-    }
-    for r in config.dependency_rules.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- Verbot {}: {} → {}",
-            cell(&r.name),
-            cell(&r.from.join(", ")),
-            cell(&r.to.join(", "))
-        );
-    }
-    note(&mut c.markdown, config.dependency_rules.len());
-    for r in config.ownership_rules.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- Verbotene Eigentümerrichtung: {} → {}",
-            cell(&r.from),
-            cell(&r.to)
-        );
-    }
-    note(&mut c.markdown, config.ownership_rules.len());
-    if !derived.is_empty() {
-        c.markdown.push_str("\n### Abgeleitete Schichten\n\nVon ArchGuard aus den beobachteten Abhängigkeiten berechnet. Das ist eine Beobachtung, keine Vorgabe; Verstöße gegen diese Schichten sind nur Hinweise.\n\n");
-        layers(&mut c.markdown, &derived);
-    }
-    crate::arc42_errors::add(&mut c.markdown, &mut c.questions, services, cell);
-
-    let c = &mut chapters[8];
-    c.markdown.push_str("Quelle: `architecture.decisions`. Status, Alternativen und Abwägungen werden ausschließlich aus deklarierten Angaben übernommen.\n\n");
-    for d in config.architecture.decisions.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "### {}: {}\n\n- Status: {}\n- Gewählte Option: {}\n- Alternativen: {}\n- Akzeptierte Nachteile: {}\n- Ungeprüfte Referenzen: {}\n",
-            cell(&d.id),
-            cell(&d.title),
-            cell(&d.status),
-            cell(&d.chosen_option),
-            cell(&d.alternatives.join("; ")),
-            cell(&d.trade_offs.join("; ")),
-            cell(&d.links.join("; "))
-        );
-    }
-    note(&mut c.markdown, config.architecture.decisions.len());
-    if config.architecture.decisions.is_empty() {
-        c.markdown
-            .push_str("Keine Architekturentscheidungen deklariert.\n");
-    }
-    c.questions.push("Fehlende Entscheidungen, Begründungen und Konsequenzen ergänzen; erkannte Muster sind keine automatisch akzeptierten ADRs.".into());
-
-    let c = &mut chapters[9];
-    let s = &report.summary;
-    let _ = writeln!(
-        c.markdown,
-        "Qualitätsziele siehe Kapitel 1. Messwerte sind Beobachtungen, keine automatisch festgelegten Anforderungen.\n\n### Abhängigkeitskennzahlen\n\nQuelle: Analysebericht des in Kapitel 5 genannten Umfangs.\n\n| Kennzahl | Wert |\n| --- | ---: |\n| CCD | {} |\n| ACD | {:.3} |\n| NCCD | {:.3} |\n| Zyklische Gruppen | {} |\n| Größte zyklische Gruppe | {} |\n",
-        s.ccd, s.acd, s.nccd, s.sccs, s.largest_scc
-    );
-    c.markdown.push_str(&crate::arc42_goals::assessment_section(
-        config,
-        input.goals,
-        LIMIT,
-        cell,
-    ));
-    let _ = writeln!(
-        c.markdown,
-        "Konfigurierte Prüfkriterien: Zyklen verboten {}, maximale SCC-Größe {}, ACD-Grenze {} (0 = deaktiviert). Quelle: `rules`.\n",
-        match config.rules.deny_cycles {
-            archguard_core::DenyCycles::Module => "zwischen Modulen",
-            archguard_core::DenyCycles::File => "auch zwischen Dateien",
-            archguard_core::DenyCycles::Off => "nicht",
-        },
-        config.rules.max_scc_size,
-        config.rules.max_acd
-    );
-    let code = &insights["code_metrics"];
-    let _ = writeln!(
-        c.markdown,
-        "### Quellcodemessung und Abdeckung\n\nStatus: **{}** · Definition: {}. Nicht anwendbare oder unbekannte Werte werden nicht als 0 interpretiert.\n",
-        status(&code["status"]),
-        val(&code["definition"])
-    );
-    // Without any declaration there is nothing a metric could have measured.
-    let coverage: Vec<_> = code["coverage"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(_, counts)| counts[1].as_u64().is_some_and(|total| total > 0))
-        .map(|(metric, counts)| {
-            format!(
-                "| {} | {} | {} |",
-                cell(metric),
-                val(&counts[0]),
-                val(&counts[1])
-            )
-        })
-        .collect();
-    table(
-        &mut c.markdown,
-        "| Metrik | Gemessen | Deklarationen insgesamt |\n| --- | ---: | ---: |",
-        coverage,
-        "Keine Deklarationen gemessen.",
-    );
-    c.markdown.push_str("### Gemessene Klassenwerte\n\n");
-    table(
-        &mut c.markdown,
-        "| Klasse | CBO | RFC | DIT | NOC | WMC | LCOM4 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-        rows(&code["classes"])
-            .iter()
-            .take(LIMIT)
-            .map(|row| {
-                format!(
-                    "| {} | {} | {} | {} | {} | {} | {} |",
-                    val(&row["class_id"]),
-                    val(&row["cbo"]["value"]),
-                    val(&row["rfc"]["value"]),
-                    val(&row["dit"]["value"]),
-                    val(&row["noc"]["value"]),
-                    val(&row["wmc"]["value"]),
-                    val(&row["lcom4"])
-                )
-            })
-            .collect(),
-        "Keine Klassenwerte gemessen.",
-    );
-    note(&mut c.markdown, rows(&code["classes"]).len());
-    c.markdown.push_str("### Methodenwartbarkeit\n\nNach Cognitive-Wert absteigend. Cognitive und Halstead verwenden die versionierten ArchGuard-Quellcode-/AST-Zählregeln; MI verwendet dieses Halstead-Volumen.\n\n");
-    let mut methods: Vec<_> = rows(&code["methods"]).iter().collect();
-    methods.sort_by(|a, b| {
-        b["cognitive"]
-            .as_u64()
-            .cmp(&a["cognitive"].as_u64())
-            .then_with(|| a["method_id"].as_str().cmp(&b["method_id"].as_str()))
-    });
-    table(
-        &mut c.markdown,
-        "| Methode | Cognitive | Halstead-Volumen | MI | Quellbeleg |\n| --- | ---: | ---: | ---: | --- |",
-        methods
-            .iter()
-            .take(LIMIT)
-            .map(|row| {
-                format!(
-                    "| {} | {} | {} | {} | {} |",
-                    val(&row["method_id"]),
-                    val(&row["cognitive"]),
-                    val(&row["halstead"]["volume"]),
-                    val(&row["maintainability_index"]),
-                    source(
-                        &input,
-                        row["file"].as_str().unwrap_or(""),
-                        row["line"].as_u64().unwrap_or(0) as u32
-                    )
-                )
-            })
-            .collect(),
-        "Keine Methodenwerte gemessen.",
-    );
-    note(&mut c.markdown, methods.len());
-    c.markdown.push_str("### Importierte Berichte\n\nAktualität und Messumfang der gespeicherten Berichte sind separat zu prüfen.\n\n");
-    for (key, label) in [
-        ("test_coverage", "Testabdeckung"),
-        ("measurement_runs", "Build-/Laufzeit-/Testmessungen"),
-        ("mutations", "Mutationstests"),
-        ("duplicates", "Duplikate"),
-    ] {
-        let _ = writeln!(
-            c.markdown,
-            "- {label}: **{}** (`{key}`)",
-            status(&insights[key]["status"])
-        );
-    }
-    c.markdown.push('\n');
-    let files = rows(&insights["test_coverage"]["files"]);
-    if !files.is_empty() {
-        c.markdown.push_str("### Testabdeckung je Datei\n\n");
-    }
-    table(
-        &mut c.markdown,
-        "| Coverage-Datei | Quellstatus | Berichtete gedeckte Zeilen | Berichtete ausführbare Zeilen |\n| --- | --- | ---: | ---: |",
-        files
-            .iter()
-            .take(LIMIT)
-            .map(|row| {
-                format!(
-                    "| {} | {} | {} | {} |",
-                    val(&row["path"]),
-                    status(&row["status"]),
-                    val(&row["lines"]["covered"]),
-                    val(&row["lines"]["total"])
-                )
-            })
-            .collect(),
-        "",
-    );
-    note(&mut c.markdown, files.len());
-    let groups = rows(&insights["measurement_runs"]["groups"]);
-    if !groups.is_empty() {
-        c.markdown.push_str("### Importierte Laufmessungen\n\nNur gleichartige Revision, Umgebung und Producer bilden eine Messgruppe. Median/p95 sind Sekunden erfolgreicher Läufe; wechselnde Testergebnisse sind ein Hinweis, keine Ursachenanalyse.\n\n");
-    }
-    table(
-        &mut c.markdown,
-        "| Messung | Revision / Umgebung / Producer | Erfolgreiche Zeitmessungen | Median | p95 | Wechselnde Ergebnisse |\n| --- | --- | ---: | ---: | ---: | --- |",
-        groups
-            .iter()
-            .take(LIMIT)
-            .map(|row| {
-                format!(
-                    "| {} · {} | {} / {} / {} | {} | {} | {} | {} |",
-                    val(&row["kind"]),
-                    val(&row["name"]),
-                    val(&row["revision"]),
-                    val(&row["environment"]),
-                    val(&row["producer"]),
-                    val(&row["duration_samples"]),
-                    val(&row["median_seconds"]),
-                    val(&row["p95_seconds"]),
-                    val(&row["inconsistent"])
-                )
-            })
-            .collect(),
-        "",
-    );
-    note(&mut c.markdown, groups.len());
-    c.questions.push("Messbare Qualitätsszenarien mit Kontext, Auslöser, Reaktion und Akzeptanzgrenze festlegen. Laufzeitziele nicht aus statischen Kennzahlen ableiten.".into());
-
-    let c = &mut chapters[10];
-    c.markdown.push_str("### Befunde zur Prüfung\n\nQuelle: Analysebericht. Statische Befunde sind keine automatisch akzeptierten technischen Schulden. Fehlende Befunde beweisen keine Fehlerfreiheit; Compilerabdeckung siehe Kapitel 6 und 10.\n\n");
-    let mut findings: Vec<_> = report.findings.iter().collect();
-    findings.sort_by(|a, b| a.id.cmp(&b.id));
-    let ident = |value: Value| value.as_str().map(str::to_owned).unwrap_or_default();
-    for f in findings.iter().take(LIMIT) {
-        let _ = writeln!(
-            c.markdown,
-            "- {} · `{}` · {} · {} · {}",
-            cell(&f.id),
-            ident(serde_json::to_value(f.kind).unwrap_or_default()),
-            match f.severity {
-                archguard_core::Severity::Error => "Fehler",
-                archguard_core::Severity::Warning => "Warnung",
-                archguard_core::Severity::Info => "Hinweis",
-            },
-            cell(&f.nodes.join(", ")),
-            cell(f.message.as_deref().unwrap_or(""))
-        );
-        for e in f.evidence.iter().take(2) {
-            let _ = writeln!(c.markdown, "  - Quelle {}:{}", cell(&e.file), e.line);
-        }
-    }
-    note(&mut c.markdown, findings.len());
-    if findings.is_empty() {
-        c.markdown
-            .push_str("Die Analyse hat keine Befunde gemeldet.\n");
-    }
-    for (key, label) in [
-        ("quality", "Importierte Qualitätsbefunde"),
-        ("security", "Sicherheitsbefunde"),
-    ] {
-        let model = &insights[key];
-        let _ = writeln!(
-            c.markdown,
-            "\n### {label}\n\nImportstatus: **{}**.",
-            status(&model["status"])
-        );
-        let found = rows(&model["findings"]);
-        if !found.is_empty() {
-            c.markdown.push_str("Aufgelistete Einträge behalten ihren ursprünglichen Status; veraltete oder unterdrückte Einträge sind nicht automatisch aktive Probleme.\n\n");
-        }
-        for f in found.iter().take(LIMIT) {
-            let _ = writeln!(
-                c.markdown,
-                "- {} · {} · {} · Quellstatus {} · unterdrückt {} · Baseline {}",
-                val(&f["id"]),
-                val(f.get("severity").unwrap_or(&f["level"])),
-                val(f.get("message").unwrap_or(&f["title"])),
-                status(&f["status"]),
-                val(&f["suppressed"]),
-                status(&f["baseline_state"])
-            );
-        }
-        note(&mut c.markdown, found.len());
-    }
-    c.questions.push("Risikoauswirkung, Verantwortliche, Priorität, akzeptierte Schulden und Maßnahmen mit dem Team bewerten.".into());
-
-    let c = &mut chapters[11];
-    c.markdown.push_str("| Begriff | Bedeutung in diesem Dokument |\n| --- | --- |\n| SCC | Gruppe gegenseitig erreichbarer Knoten; eine zyklische Gruppe ist keine Liste aller Einzelzyklen. |\n| CCD / ACD | Summe / Durchschnitt transitiv erreichbarer Knoten einschließlich des Ausgangsknotens. |\n| NCCD | CCD im Verhältnis zur verwendeten balancierten Baumreferenz. |\n| CBO / RFC | Erfasste Klassenzielkopplung / eigene Methoden plus direkte Aufrufziele. |\n| DIT / NOC | Compilerbekannte Basisklassentiefe / direkte Unterklassen im Quellumfang. |\n| WMC / LCOM4 | Summierte Methodenkomplexität / Gruppen expliziter Instanzmethoden anhand Zustand und Aufrufen. |\n| Cognitive / Halstead / MI | Versionierte Quellcode- bzw. AST-Messungen; keine Laufzeitmessung oder zugesicherte Werkzeuggleichheit. |\n| Unbekannt | Keine ausreichende Messgrundlage; ausdrücklich kein Nullwert. |\n");
-    c.questions.push(
-        "Fachbegriffe und Abkürzungen des Projekts mit abgestimmten Definitionen ergänzen.".into(),
-    );
-    for c in &mut chapters {
-        c.markdown.push_str("\n### Offen zu ergänzen\n\n");
-        // Questions are fixed prose from this file, not project data.
+    let write: [Chapter; 12] = [
+        chapters::goals,
+        chapters::constraints,
+        chapters::context,
+        chapters::strategy,
+        |input, md, q| md.push_str(&chapters::package_markdown(input, q)),
+        chapters::calls,
+        chapters::deployment,
+        chapters::conventions,
+        chapters::decisions,
+        quality::requirements,
+        quality::risks,
+        quality::glossary,
+    ];
+    let open = l.pick("\n### Still to add\n\n", "\n### Offen zu ergänzen\n\n");
+    for (c, write) in chapters.iter_mut().zip(write) {
+        write(&input, &mut c.markdown, &mut c.questions);
+        c.markdown.push_str(open);
+        // Questions are fixed prose of this crate, not project data.
         for q in &c.questions {
             let _ = writeln!(c.markdown, "- {q}");
         }
     }
-    Arc42Document::new(view.root.clone(), chapters, &input)
+    Arc42Document::new(input.view.root.clone(), chapters, &input)
 }
+
+/// Writes one chapter's text and its open questions.
+type Chapter = fn(&Arc42Inputs<'_>, &mut String, &mut Vec<String>);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use archguard_core::{CallAnalysis, Config, Report, ServiceTopology};
     use std::collections::BTreeMap;
+
+    /// The default language is English throughout: chapter titles, the
+    /// generated blocks, diagrams and the open questions (ADR 0008).
+    #[test]
+    fn an_english_document_has_no_german_text() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        let a = builder.ensure_path("org/demo/a/A.java", Some("java"));
+        let b = builder.ensure_path("org/demo/b/B.java", Some("java"));
+        builder.ensure_path("Loose.java", Some("java"));
+        for (from, to) in [(a, b), (b, a)] {
+            let r = archguard_core::Ref {
+                file: "x".into(),
+                line: 1,
+                raw: "import".into(),
+            };
+            builder.edge(from, to, r).unwrap();
+        }
+        let graph = builder.build("shop".into());
+        let report: Report = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"summary":{"nodes":0,"edges":0,"sccs":1,"largest_scc":2,"layer_violations":0,"status":"pass"},
+            "findings":[],"metrics":{}
+        }))
+        .unwrap();
+        let services: ServiceTopology = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"root":"shop","monorepo":false,"monorepo_reason":"","compose_files":["compose.yaml"],
+            "services":[{"id":"web","name":"web","compose_file":"compose.yaml","build_context":".","networks":[],"profiles":[]}],
+            "dependencies":[],"cycles":[],"diagnostics":[],"complete":true
+        }))
+        .unwrap();
+        let doc = render_arc42(Arc42Inputs {
+            source_graph: &graph,
+            view: &graph,
+            report: &report,
+            config: &Config::default(),
+            calls: &CallAnalysis::default(),
+            services: &services,
+            insights: &serde_json::json!({}),
+            source_paths: &BTreeMap::new(),
+            blocks: &Arc42Blocks::default(),
+            goals: &[],
+            lang: DocLang::default(),
+        });
+        assert_eq!(doc.chapters[5].title, "Runtime View");
+        let text = doc.markdown(None);
+        assert!(
+            text.starts_with("# arc42 – Architecture Documentation"),
+            "{text}"
+        );
+        assert!(text.contains("### Still to add") && text.contains("Files without a package"));
+        assert!(!doc.diagrams.is_empty(), "the catalogue is written too");
+        for d in &doc.diagrams {
+            assert!(
+                !d.title.contains("Paket") && !d.note.contains("Quelle"),
+                "{d:?}"
+            );
+        }
+        let german = [
+            "ä", "ö", "ü", "ß", "Quelle", "Kapitel", " und ", " nicht ", "Keine ",
+        ];
+        let found: Vec<_> = german.iter().filter(|w| text.contains(*w)).collect();
+        assert!(
+            found.is_empty(),
+            "German in the English document: {found:?}\n{text}"
+        );
+    }
     #[test]
     fn imported_lists_show_omissions_and_manifest_projects_are_not_deployments() {
         let graph = archguard_core::GraphBuilder::new().build("test".into());
@@ -859,6 +296,7 @@ mod tests {
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
             goals: &[],
+            lang: archguard_core::DocLang::De,
         });
         assert!(!doc.chapters[3].markdown.contains("Musterhypothesen"));
         assert!(!doc.chapters[3].markdown.contains("layered"));
@@ -918,6 +356,7 @@ mod tests {
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
             goals: &[],
+            lang: archguard_core::DocLang::De,
         });
         let chapter = &doc.chapters[4].markdown;
         let fence = char::from(96).to_string().repeat(3);
@@ -963,6 +402,7 @@ mod tests {
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
             goals: &[],
+            lang: archguard_core::DocLang::De,
         });
         let md = &doc.chapters[4].markdown;
         assert!(!md.contains("Weitere 1 Pakete"), "{md}");
@@ -1045,6 +485,7 @@ mod tests {
             source_paths: &source_paths,
             blocks: &blocks,
             goals: &[],
+            lang: archguard_core::DocLang::De,
         });
         let chapter = &doc.chapters[4];
         let md = &chapter.markdown;
@@ -1130,6 +571,7 @@ mod tests {
             source_paths: &BTreeMap::new(),
             blocks: &Arc42Blocks::default(),
             goals: &[],
+            lang: archguard_core::DocLang::De,
         });
         let all = doc.markdown(None);
         let lines: Vec<_> = all.lines().collect();
@@ -1184,9 +626,10 @@ mod tests {
     fn document() -> Arc42Document {
         Arc42Document {
             schema_version: 1,
+            lang: DocLang::De,
             scope: "test".into(),
-            notice: NOTICE,
-            chapters: TITLES
+            notice: NOTICE_DE,
+            chapters: TITLES_DE
                 .iter()
                 .enumerate()
                 .map(|(i, title)| Arc42Chapter {

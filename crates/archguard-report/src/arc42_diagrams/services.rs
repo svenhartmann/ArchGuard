@@ -4,20 +4,20 @@
 //! measured traffic.
 
 use archguard_core::{
-    Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind, Service,
-    ServiceDependencyKind, ServiceTopology,
+    Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang, ElementKind, RelationKind,
+    Service, ServiceDependencyKind, ServiceTopology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
+pub fn diagrams(l: DocLang, t: &ServiceTopology) -> Vec<Diagram> {
     let files: BTreeSet<&str> = t
         .services
         .iter()
         .map(|s| s.compose_file.as_str())
         .filter(|f| !f.is_empty())
         .collect();
-    let mut out: Vec<Diagram> = files.into_iter().map(|f| deployment(t, f)).collect();
-    out.extend(communication(t));
+    let mut out: Vec<Diagram> = files.into_iter().map(|f| deployment(l, t, f)).collect();
+    out.extend(communication(l, t));
     out
 }
 
@@ -35,6 +35,7 @@ fn kind_of(k: ServiceDependencyKind) -> RelationKind {
 
 /// Collects elements by service or datastore id, in first-use order.
 struct Builder<'a> {
+    l: DocLang,
     t: &'a ServiceTopology,
     elements: Vec<DiagramElement>,
     ids: BTreeMap<String, String>,
@@ -42,8 +43,9 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(t: &'a ServiceTopology) -> Self {
+    fn new(l: DocLang, t: &'a ServiceTopology) -> Self {
         Builder {
+            l,
             t,
             elements: Vec::new(),
             ids: BTreeMap::new(),
@@ -148,7 +150,10 @@ impl<'a> Builder<'a> {
             title,
             kind,
             note: note.into(),
-            unit: "Konfigurationsbelege".into(),
+            unit: self
+                .l
+                .pick("configuration evidence", "Konfigurationsbelege")
+                .into(),
             elements: self.elements.clone(),
             relations: self
                 .relations
@@ -171,6 +176,8 @@ impl<'a> Builder<'a> {
                     cycle: false,
                     label: None,
                     error: false,
+                    caller: None,
+                    reply: false,
                 })
                 .collect(),
             shown: true,
@@ -180,8 +187,8 @@ impl<'a> Builder<'a> {
 
 /// Chapter 7: the services of `file` in one deployment node, the
 /// datastores they use and the services of other files they reach.
-fn deployment(t: &ServiceTopology, file: &str) -> Diagram {
-    let mut b = Builder::new(t);
+fn deployment(l: DocLang, t: &ServiceTopology, file: &str) -> Diagram {
+    let mut b = Builder::new(l, t);
     let local: Vec<&Service> = t
         .services
         .iter()
@@ -224,14 +231,17 @@ fn deployment(t: &ServiceTopology, file: &str) -> Diagram {
         7,
         format!("C4 · Deployment · {file}"),
         DiagramKind::Deployment,
-        "Quelle: deklarierte Deployment-Konfiguration. Container sind die dort deklarierten Dienste; Laufzeithosts, Skalierung und tatsächlicher Betrieb sind nicht bekannt.",
+        l.pick(
+            "Source: declared deployment configuration. Containers are the services declared there; runtime hosts, scaling and actual operation are not known.",
+            "Quelle: deklarierte Deployment-Konfiguration. Container sind die dort deklarierten Dienste; Laufzeithosts, Skalierung und tatsächlicher Betrieb sind nicht bekannt.",
+        ),
     )
 }
 
 /// Chapter 6: services that call, notify or reference each other, and the
 /// datastores they use; startup order is left to chapter 7.
-fn communication(t: &ServiceTopology) -> Option<Diagram> {
-    let mut b = Builder::new(t);
+fn communication(l: DocLang, t: &ServiceTopology) -> Option<Diagram> {
+    let mut b = Builder::new(l, t);
     for d in t
         .dependencies
         .iter()
@@ -259,9 +269,15 @@ fn communication(t: &ServiceTopology) -> Option<Diagram> {
     Some(b.finish(
         "runtime-services".into(),
         6,
-        "C4 · Kommunikation zwischen Diensten".into(),
+        format!(
+            "C4 · {}",
+            l.pick("Communication between services", "Kommunikation zwischen Diensten")
+        ),
         DiagramKind::Communication,
-        "Quelle: konfigurierte und im Code erkannte HTTP-, gRPC- und Event-Verbindungen sowie Datenbanknutzung. Statisch erfasst; keine gemessene Kommunikation und keine Reihenfolge.",
+        l.pick(
+            "Source: HTTP, gRPC and event connections configured or found in the code, and datastore use. Statically recorded; no measured communication and no order.",
+            "Quelle: konfigurierte und im Code erkannte HTTP-, gRPC- und Event-Verbindungen sowie Datenbanknutzung. Statisch erfasst; keine gemessene Kommunikation und keine Reihenfolge.",
+        ),
     ))
 }
 
@@ -296,7 +312,7 @@ mod tests {
 
     #[test]
     fn one_deployment_per_file_with_containers_databases_and_external_targets() {
-        let all = diagrams(&topology());
+        let all = diagrams(DocLang::De, &topology());
         let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -327,7 +343,7 @@ mod tests {
 
     #[test]
     fn communication_leaves_startup_order_to_the_deployment_view() {
-        let all = diagrams(&topology());
+        let all = diagrams(DocLang::De, &topology());
         let c = all.iter().find(|d| d.id == "runtime-services").unwrap();
         assert_eq!((c.chapter, c.kind), (6, DiagramKind::Communication));
         assert!(c.relations.iter().all(|r| r.kind != RelationKind::Startup));
@@ -341,7 +357,7 @@ mod tests {
         let mut reference = t.dependencies[1].clone();
         (reference.to, reference.kind) = ("db".into(), ServiceDependencyKind::ConfiguredReference);
         t.dependencies.push(reference);
-        let d = &diagrams(&t)[0];
+        let d = &diagrams(DocLang::De, &t)[0];
         let to_db: Vec<RelationKind> = d
             .relations
             .iter()
@@ -353,6 +369,6 @@ mod tests {
 
     #[test]
     fn no_services_no_diagrams() {
-        assert!(diagrams(&ServiceTopology::default()).is_empty());
+        assert!(diagrams(DocLang::De, &ServiceTopology::default()).is_empty());
     }
 }

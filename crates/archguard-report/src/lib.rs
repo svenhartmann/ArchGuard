@@ -12,6 +12,9 @@
 mod arc42;
 mod arc42_blocks;
 mod arc42_diagrams;
+mod arc42_chapters;
+mod arc42_quality;
+mod arc42_text;
 mod arc42_errors;
 mod arc42_goals;
 mod architecture_doc;
@@ -33,7 +36,8 @@ pub use arc42::{
     Arc42Blocks, Arc42Chapter, Arc42Context, Arc42Document, Arc42Inputs, render_arc42,
 };
 pub use arc42_diagrams::{
-    mermaid as diagram_mermaid, plantuml as diagram_plantuml, section as diagram_section,
+    class_sequence, mermaid as diagram_mermaid, plantuml as diagram_plantuml,
+    section as diagram_section,
 };
 pub use architecture_doc::render_architecture_doc;
 pub use dot::to_dot;

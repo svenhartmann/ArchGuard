@@ -36,6 +36,8 @@ export component FigureView inherits Rectangle {
     // A narrow pane, set by the view from its own width (never from the
     // content, which sits in a scroll view).
     in property <bool> compact;
+    // false: no documentation tick (a figure outside the arc42 view).
+    in property <bool> doc: true;
     callback toggle(string, bool);
     property <bool> drawn: figure.shown || root.preview;
     property <bool> source-open;
@@ -70,13 +72,13 @@ export component FigureView inherits Rectangle {
                     wrap: word-wrap;
                 }
             }
-            if !root.compact: FigureSwitch {
+            if root.doc && !root.compact: FigureSwitch {
                 value: figure.shown;
                 toggled => { root.toggle(figure.id, self.checked); }
             }
         }
         // The tick below the title in a narrow pane.
-        if root.compact: HorizontalLayout {
+        if root.doc && root.compact: HorizontalLayout {
             alignment: start;
             FigureSwitch {
                 value: figure.shown;

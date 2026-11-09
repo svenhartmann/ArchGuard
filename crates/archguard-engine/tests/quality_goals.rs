@@ -93,7 +93,7 @@ fn a_cycle_is_linked_to_the_maintainability_goal_whose_scope_it_touches() {
 
     let doc = arc42_document(dir.path(), &run.config, &run.graph, &run.report).unwrap();
     let chapter1 = &doc.chapters[0].markdown;
-    assert!(chapter1.contains("| Changeable checkout | first | Weekly releases | maintainability | app, app/\\*\\* | Befunde |"), "{chapter1}");
+    assert!(chapter1.contains("| Changeable checkout | first | Weekly releases | maintainability | app, app/\\*\\* | Findings |"), "{chapter1}");
     let chapter10 = &doc.chapters[9].markdown;
     assert!(
         chapter10.contains("A pricing change ships within one day"),
@@ -103,7 +103,7 @@ fn a_cycle_is_linked_to_the_maintainability_goal_whose_scope_it_touches() {
         chapter10.contains(&format!("`{}`", cycle.id)),
         "{chapter10}"
     );
-    assert!(chapter10.contains("Keine Befunde aus den verfügbaren Quellen"));
+    assert!(chapter10.contains("No findings from the available sources"));
 }
 
 #[test]

@@ -30,19 +30,19 @@ fn arc42_populates_twelve_chapters_and_preserves_manual_text_on_update() {
         12
     );
     for text in [
-        "Bausteinsicht",
+        "Building Block View",
         "Modifiability",
         "ADR-1",
         "ACD",
-        "statische",
+        "Static",
         "CC BY-SA 4.0",
         "archguard:arc42:05:start",
     ] {
         assert!(before.contains(text), "missing {text}");
     }
     let manual = before.replace(
-        "## 5. Bausteinsicht",
-        "## 5. Bausteinsicht\n\nUnsere fachliche Erläuterung bleibt erhalten.",
+        "## 5. Building Block View",
+        "## 5. Building Block View\n\nUnsere fachliche Erläuterung bleibt erhalten.",
     );
     fs::write(&target, &manual).unwrap();
     assert!(cli(&["doc", "--arc42", "--check"]).status.success());
@@ -57,7 +57,7 @@ fn arc42_populates_twelve_chapters_and_preserves_manual_text_on_update() {
     let chapter = cli(&["doc", "--arc42", "--chapter", "5", "--stdout"]);
     assert!(chapter.status.success());
     let chapter = String::from_utf8(chapter.stdout).unwrap();
-    assert!(chapter.contains("## 5. Bausteinsicht"));
+    assert!(chapter.contains("## 5. Building Block View"));
     assert!(!chapter.contains("## 6."));
     assert!(cli(&["doc", "--arc42", "--chapter", "13"]).status.code() == Some(2));
 }
