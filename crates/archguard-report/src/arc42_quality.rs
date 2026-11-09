@@ -184,7 +184,7 @@ pub(crate) fn method_values(input: &Arc42Inputs<'_>, md: &mut String) {
                     val(l, &row["halstead"]["volume"]),
                     val(l, &row["maintainability_index"]),
                     source(
-                        &input,
+                        input,
                         row["file"].as_str().unwrap_or(""),
                         row["line"].as_u64().unwrap_or(0) as u32
                     )

@@ -23,6 +23,8 @@ pub(super) struct Span {
     pub site: Option<Site>,
     /// `archguard.caller.function` of a method span.
     pub caller: Option<String>,
+    /// `archguard.section.kind` of a method span.
+    pub section: Option<String>,
     /// Input index and 1-based line, for evidence.
     pub input: usize,
     pub line: u32,
@@ -129,6 +131,7 @@ impl Span {
             db: db(value),
             site: site(value),
             caller: text(value, "archguard.caller.function", MAX_NAME),
+            section: text(value, "archguard.section.kind", 32),
             input,
             line,
         })

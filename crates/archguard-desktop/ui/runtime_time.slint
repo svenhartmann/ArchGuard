@@ -1,0 +1,183 @@
+// Runtime tab, "Time": where the time goes. Per endpoint a stacked bar of the
+// mean time per request by category, and the methods with the most self
+// time; plus the flame graph of one request. Rust (src/runtime_ui/time.rs)
+// computes every share and formats every number.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SectionHeading } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export struct RtPart {
+    // Index into RtTime.label / RtTime.color.
+    category: int,
+    // Share of the widest bar (the slowest endpoint's mean).
+    width: float,
+    ms: string,
+}
+
+export struct RtBreakdown {
+    service: string,
+    name: string,
+    requests: int,
+    mean: string,
+    parts: [RtPart],
+}
+
+export struct RtHot {
+    name: string,
+    category: int,
+    calls: int,
+    self-ms: string,
+    total-ms: string,
+    // Share of the largest self time.
+    share: float,
+}
+
+export struct RtFlame {
+    depth: int,
+    label: string,
+    x: float,
+    w: float,
+    category: int,
+}
+
+export global RtTime {
+    // Order as in src/runtime_ui/time.rs CATEGORIES.
+    public pure function label(c: int) -> string {
+        return c == 0 ? @tr("Database")
+            : c == 1 ? @tr("Outgoing calls")
+            : c == 2 ? @tr("Controller")
+            : c == 3 ? @tr("Service")
+            : c == 4 ? @tr("Repository")
+            : c == 5 ? @tr("Component")
+            : c == 6 ? @tr("Method")
+            : c == 7 ? @tr("Other spans")
+            : @tr("Not covered by spans");
+    }
+    public pure function color(c: int) -> color {
+        return c == 0 ? Theme.accent
+            : c == 1 ? Theme.outgoing
+            : c == 2 ? Theme.incoming
+            : c == 3 ? Theme.success
+            : c == 4 ? Theme.rate-medium
+            : c == 5 ? Theme.priority
+            : c == 6 ? Theme.package-border
+            : c == 7 ? Theme.edge
+            : Theme.dim;
+    }
+}
+
+component Small inherits Text {
+    in property <bool> muted;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    overflow: elide;
+    vertical-alignment: center;
+}
+
+component Legend inherits HorizontalLayout {
+    spacing: 14px;
+    alignment: start;
+    for c in [0, 1, 2, 3, 4, 5, 6, 7, 8]: HorizontalLayout {
+        spacing: 5px;
+        Rectangle { width: 10px; height: 10px; y: (parent.height - self.height) / 2; border-radius: 2px; background: RtTime.color(c); }
+        Small { text: RtTime.label(c); muted: true; }
+    }
+}
+
+component EndpointBar inherits VerticalLayout {
+    in property <RtBreakdown> b;
+    spacing: 3px;
+    HorizontalLayout {
+        spacing: 8px;
+        Small { text: b.service + " · " + b.name; font-family: Theme.mono-family; horizontal-stretch: 1; }
+        Small { text: @tr("Ø {1} ms over {0} request" | "Ø {1} ms over {0} requests" % b.requests, Fmt.int(b.requests), b.mean); muted: true; horizontal-stretch: 0; }
+    }
+    track := Rectangle {
+        height: 16px;
+        HorizontalLayout {
+            alignment: start;
+            for p in b.parts: Rectangle {
+                width: max(1px, p.width * track.width);
+                background: RtTime.color(p.category);
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        for p in b.parts: HorizontalLayout {
+            spacing: 4px;
+            Rectangle { width: 8px; height: 8px; y: (parent.height - self.height) / 2; border-radius: 2px; background: RtTime.color(p.category); }
+            Small { text: @tr("{} ms", p.ms); muted: true; }
+        }
+    }
+}
+
+component HotRow inherits HorizontalLayout {
+    in property <RtHot> h;
+    spacing: 8px;
+    height: 22px;
+    Small { text: h.name; font-family: Theme.mono-family; width: 38%; }
+    bar := Rectangle {
+        horizontal-stretch: 1;
+        Rectangle {
+            x: 0;
+            width: max(2px, h.share * bar.width);
+            height: 10px;
+            y: (bar.height - self.height) / 2;
+            border-radius: 2px;
+            background: RtTime.color(h.category);
+        }
+    }
+    Small {
+        width: 230px;
+        horizontal-alignment: right;
+        text: @tr("self {1} ms · total {2} ms · {0} call" | "self {1} ms · total {2} ms · {0} calls" % h.calls, Fmt.int(h.calls), h.self-ms, h.total-ms);
+    }
+}
+
+// The flame graph of one request: depth from top to bottom, width is time.
+export component FlameGraph inherits Rectangle {
+    in property <[RtFlame]> spans;
+    in property <string> title;
+    in property <int> depth;
+    height: (self.depth + 1) * 20px;
+    Rectangle {
+        y: 0;
+        height: 18px;
+        border-radius: 2px;
+        background: Theme.dim;
+        Small { x: 4px; width: parent.width - 8px; text: root.title; }
+    }
+    for f in spans: Rectangle {
+        x: f.x * root.width;
+        y: f.depth * 20px;
+        width: max(1px, f.w * root.width);
+        height: 18px;
+        border-radius: 2px;
+        background: RtTime.color(f.category);
+        if self.width > 40px: Small { x: 3px; width: parent.width - 6px; text: f.label; color: Theme.accent-contrast; }
+    }
+}
+
+export component RuntimeTime inherits Rectangle {
+    in property <[RtBreakdown]> breakdown;
+    in property <[RtHot]> hot;
+    ScrollView {
+        VerticalLayout {
+            width: parent.visible-width;
+            padding: Theme.page-pad;
+            padding-top: 12px;
+            spacing: 8px;
+            alignment: start;
+            Small { muted: true; wrap: word-wrap; overflow: clip; text: @tr("Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."); }
+            Legend { }
+            SectionHeading { label: @tr("Endpoints ({})", Fmt.int(breakdown.length)); }
+            for b in breakdown: EndpointBar { b: b; }
+            SectionHeading { label: @tr("Methods by self time ({})", Fmt.int(hot.length)); }
+            if hot.length == 0: Small { muted: true; text: @tr("No method spans recorded; probes record them at application boundaries."); }
+            for h in hot: HotRow { h: h; }
+        }
+    }
+}

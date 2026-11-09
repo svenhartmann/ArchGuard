@@ -138,6 +138,7 @@ fn span_row(s: &RuntimeSpan, total: f64, repeated: bool) -> RtSpanRow {
 
 pub fn detail(r: &RuntimeRequest, threshold: u64) -> RtDetail {
     let counts = repeats(r);
+    let (flame, flame_depth) = super::time::flame(r);
     let rows: Vec<RtSpanRow> = r
         .spans
         .iter()
@@ -158,6 +159,8 @@ pub fn detail(r: &RuntimeRequest, threshold: u64) -> RtDetail {
         trace: SharedString::from(r.trace_id.as_str()),
         truncated: r.spans_truncated,
         spans: ModelRc::new(VecModel::from(rows)),
+        flame,
+        flame_depth,
     }
 }
 
@@ -179,6 +182,8 @@ mod tests {
             file: Some("/_/src/Orders/OrderService.cs".into()),
             line: Some(line),
             caller: None,
+            section: None,
+            category: if db.is_some() { "database" } else { "other" }.into(),
         }
     }
 

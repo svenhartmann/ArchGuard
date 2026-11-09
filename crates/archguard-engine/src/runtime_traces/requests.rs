@@ -131,6 +131,13 @@ fn node(index: &Index, root: &Span, span: &Span, depth: u32) -> RuntimeSpan {
         file,
         line,
         caller: span.caller.clone(),
+        section: span.section.clone(),
+        category: super::time::category(
+            span.db.is_some(),
+            kind(span.kind),
+            span.section.as_deref(),
+        )
+        .into(),
     }
 }
 

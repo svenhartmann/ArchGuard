@@ -6,6 +6,7 @@
 
 mod model;
 mod summary;
+mod time;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,6 +19,9 @@ use crate::context::Loaded;
 use crate::documents::{self, DocId};
 use crate::tab_support::{self, Actions, TabState, index};
 use crate::ui::{AppWindow, RtDetail, RuntimeData, RuntimeModel};
+
+/// The page the tab opens on: "Time", where the slow spots are.
+const TIME_PAGE: usize = 2;
 
 /// Input files' count, total size and newest change: cheap to read each second.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -75,7 +79,8 @@ fn build_from(root: PathBuf) -> RuntimeState {
         root,
         stamp,
         selected: None,
-        page: 0,
+        // Open where the slow spots are; the request list is one click away.
+        page: TIME_PAGE,
         live: true,
         reloading: false,
     };
@@ -87,7 +92,7 @@ fn build_from(root: PathBuf) -> RuntimeState {
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<RuntimeData>();
     let a = Actions::<RuntimeState>::new(ui);
-    d.on_select_page(a.on(|s, _, i: i32| s.page = usize::from(i == 1)));
+    d.on_select_page(a.on(|s, _, i: i32| s.page = index(i).unwrap_or(0).min(2)));
     d.on_toggle_live(a.on0(|s, _| s.live = !s.live));
     d.on_select_request(a.on(|s, _, i: i32| {
         let chosen = index(i).and_then(|i| s.profile.as_ref()?.requests.get(i));
@@ -214,15 +219,20 @@ fn build(s: &RuntimeState) -> RuntimeModel {
             .get(chosen)
             .map_or_else(RtDetail::default, |r| model::detail(r, threshold)),
         summary,
+        breakdown: time::breakdown(p),
+        hot: time::hot(p),
     }
 }
 
-/// `ARCHGUARD_DESKTOP_RUNTIME_PAGE=summary` and
+/// `ARCHGUARD_DESKTOP_RUNTIME_PAGE=requests|summary|time` and
 /// `ARCHGUARD_DESKTOP_RUNTIME_REQUEST=<index>` set the view for snapshot runs.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut RuntimeState) {
-    s.page =
-        usize::from(std::env::var("ARCHGUARD_DESKTOP_RUNTIME_PAGE").is_ok_and(|p| p == "summary"));
+    s.page = match std::env::var("ARCHGUARD_DESKTOP_RUNTIME_PAGE").as_deref() {
+        Ok("requests") => 0,
+        Ok("summary") => 1,
+        _ => TIME_PAGE,
+    };
     let request = std::env::var("ARCHGUARD_DESKTOP_RUNTIME_REQUEST")
         .ok()
         .and_then(|i| i.parse::<usize>().ok());
