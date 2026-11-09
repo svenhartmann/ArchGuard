@@ -8,7 +8,7 @@
 //! that keep their state in [`documents`] only push it again then.
 
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use archguard_engine::{Level, analyze_run_quiet, collect_review_sources, load_config};
 use slint::{ComponentHandle, SharedString};
@@ -211,7 +211,7 @@ fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>
         };
         match result {
             Ok((analysis, projects)) => {
-                doc.analysis = Some(Rc::new(analysis));
+                doc.analysis = Some(Arc::new(analysis));
                 doc.projects = projects;
                 doc.status = Status::Ready;
             }

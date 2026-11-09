@@ -44,6 +44,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use archguard_engine::core::ServiceTopology;
 
@@ -74,7 +75,7 @@ pub struct Document {
     pub root: PathBuf,
     pub name: String,
     pub status: Status,
-    pub analysis: Option<Rc<Analysis>>,
+    pub analysis: Option<Arc<Analysis>>,
     pub projects: Vec<SubProject>,
     states: HashMap<TypeId, Rc<dyn Any>>,
     /// What is unsaved, in the order it was first marked; empty: clean.
