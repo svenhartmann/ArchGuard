@@ -218,7 +218,8 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)]
+    /// Snapshot hooks and tests; the window asks [`Document::is_dirty`].
+    #[cfg(any(test, feature = "snapshot"))]
     pub fn is_dirty(&self, id: DocId) -> bool {
         self.get(id).is_some_and(Document::is_dirty)
     }
@@ -365,7 +366,8 @@ pub fn mark_clean(doc: DocId) {
     dirty_changed();
 }
 
-#[allow(dead_code)]
+/// Snapshot hooks (`settings_view_ui`) and tests.
+#[cfg(any(test, feature = "snapshot"))]
 pub fn is_dirty(doc: DocId) -> bool {
     with_store(|s| s.is_dirty(doc))
 }
