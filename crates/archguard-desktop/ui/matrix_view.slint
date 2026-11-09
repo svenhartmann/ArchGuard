@@ -28,7 +28,7 @@ export struct MatrixRowItem {
     // Revealed from the pane beside the matrix (linked selection).
     marked: bool,
     badges: string,
-    // One entry per column (all columns, not only the visible page).
+    // One entry per column.
     cells: [string],
 }
 
@@ -54,7 +54,7 @@ export struct MatrixData {
     marked-row: int,
 }
 
-// One pager style for rows and target packages: the range, then ‹ ›.
+// The rows pager: the range, then ‹ ›.
 component Pager inherits HorizontalLayout {
     in property <string> text;
     // A fixed width for the range; 0: its own.
@@ -97,7 +97,6 @@ export component MatrixView inherits Rectangle {
     in property <string> evidence-title;
     in property <string> cycle-path;
     in-out property <bool> compact;
-    in-out property <int> col-page: 0;
     // The marked row's index in `rows` (-1: none); the body scrolls to it.
     in property <int> marked-row: -1;
     changed marked-row => { root.scroll-to-marked(); }
@@ -130,11 +129,9 @@ export component MatrixView inherits Rectangle {
 
     property <length> label-w: min(280px, max(150px, (root.width - 32px) * 0.4));
     property <length> col-w: 96px;
-    // Columns never reach under the rows' overlay scroll bar.
-    property <int> col-size: max(2, min(12, floor((root.width - label-w - 32px - Theme.scrollbar-w) / col-w)));
-    property <int> col-pages: max(1, ceil(columns.length / col-size));
-    property <int> col-start: min(col-page, col-pages - 1) * col-size;
-    property <int> col-count: max(0, min(col-size, columns.length - col-start));
+    // All columns side by side; the body scrolls them horizontally and the
+    // header follows. Room for the rows' overlay scroll bar at the end.
+    property <length> cols-w: columns.length * col-w + Theme.scrollbar-w;
     property <length> row-h: compact ? 24px : 30px;
     property <int> hover-row: -1;
     property <int> hover-col: -1;
@@ -295,37 +292,14 @@ export component MatrixView inherits Rectangle {
             }
         }
 
-        // Rows and target packages page alike; the second pager moves
-        // under the first when both do not fit side by side.
-        pagers := Rectangle {
-            property <length> h: Theme.control-h-sm;
-            property <bool> one-row: rows-pager.preferred-width + 24px + cols-pager.preferred-width <= self.width;
-            height: self.one-row ? self.h : 2 * self.h + 6px;
-            rows-pager := Pager {
-                x: 0;
-                y: 0;
-                width: self.preferred-width;
-                height: parent.h;
-                text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
-                can-prev: root.row-start > 0;
-                can-next: root.row-start + root.rows.length < root.row-total;
-                prev => { root.page(-1); }
-                next => { root.page(1); }
-            }
-            cols-pager := Pager {
-                x: parent.one-row ? rows-pager.preferred-width + 24px : 0;
-                y: parent.one-row ? 0 : parent.h + 6px;
-                width: self.preferred-width;
-                height: parent.h;
-                // Fixed: the range depends on the columns per page, which
-                // depend on the width.
-                text-w: 170px;
-                text: @tr("Target packages {}–{} / {}", Fmt.int(root.col-count > 0 ? root.col-start + 1 : 0), Fmt.int(root.col-start + root.col-count), Fmt.int(root.columns.length));
-                can-prev: root.col-page > 0;
-                can-next: root.col-page < root.col-pages - 1;
-                prev => { root.col-page -= 1; }
-                next => { root.col-page += 1; }
-            }
+        Pager {
+            height: Theme.control-h-sm;
+            alignment: start;
+            text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
+            can-prev: root.row-start > 0;
+            can-next: root.row-start + root.rows.length < root.row-total;
+            prev => { root.page(-1); }
+            next => { root.page(1); }
         }
 
         // Header row.
@@ -333,18 +307,15 @@ export component MatrixView inherits Rectangle {
             height: 40px;
             background: Theme.panel-2;
             border-radius: Theme.radius-sm;
-            // Columns are placed absolutely: their number depends on the
-            // width, so they must stay out of layouts (no binding loop).
+            // Column heads move with the body's horizontal scroll.
             Rectangle {
-                x: 0;
-                width: root.label-w;
-                Text { x: 8px; text: @tr("Tree / source"); color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; height: 100%; }
-            }
-            for j in root.col-count: Rectangle {
-                    property <MatrixColumn> column: root.columns[root.col-start + j];
-                    x: root.label-w + j * root.col-w;
+                x: root.label-w;
+                width: parent.width - root.label-w;
+                clip: true;
+            for column[j] in root.columns: Rectangle {
+                    x: body.content-x + j * root.col-w;
                     width: root.col-w;
-                    background: root.hover-col == root.col-start + j ? Theme.accent.with-alpha(0.10) : transparent;
+                    background: root.hover-col == j ? Theme.accent.with-alpha(0.10) : transparent;
                     VerticalLayout {
                         alignment: center;
                         padding-left: 6px;
@@ -376,6 +347,12 @@ export component MatrixView inherits Rectangle {
                         }
                     }
                 }
+            }
+            Rectangle {
+                x: 0;
+                width: root.label-w;
+                Text { x: 8px; text: @tr("Tree / source"); color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; height: 100%; }
+            }
         }
 
         // Body.
@@ -383,6 +360,7 @@ export component MatrixView inherits Rectangle {
             vertical-stretch: 1;
             // A view created after the reveal (a new pane) scrolls on start.
             init => { root.scroll-to-marked(); }
+            content-width: max(self.visible-width, root.label-w + root.cols-w);
             VerticalLayout {
                 alignment: start;
                 for r[i] in root.rows: Rectangle {
@@ -393,9 +371,43 @@ export component MatrixView inherits Rectangle {
                         height: 1px;
                         background: Theme.border.with-alpha(0.55);
                     }
+                        for value[j] in r.cells: Rectangle {
+                            x: root.label-w + j * root.col-w;
+                            width: root.col-w;
+                            background: root.hover-col == j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
+                            if value != "": Rectangle {
+                                width: max(30px, label.preferred-width + 14px);
+                                height: root.row-h - 8px;
+                                border-radius: 4px;
+                                background: area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18);
+                                label := Text {
+                                    text: value;
+                                    color: Theme.accent;
+                                    font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-strong;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                area := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.cell(r.node, j); }
+                                }
+                            }
+                            hover := TouchArea {
+                                changed has-hover => {
+                                    if (self.has-hover) {
+                                        root.hover-row = i;
+                                        root.hover-col = j;
+                                    }
+                                }
+                            }
+                        }
+                        // Pinned left while the cells scroll under it.
                         Rectangle {
-                            x: 0;
+                            x: -body.content-x;
                             width: root.label-w;
+                            background: r.package ? Theme.panel-2 : Theme.bg;
+                        Rectangle {
                             background: r.marked ? Theme.accent.with-alpha(0.2) : r.in-cycle-path ? Theme.cycle.with-alpha(0.12) : root.hover-row == i ? Theme.accent.with-alpha(0.08) : transparent;
                             row-menu := NodeMenu {
                                 package: r.package;
@@ -447,37 +459,6 @@ export component MatrixView inherits Rectangle {
                                 }
                             }
                         }
-                        for j in root.col-count: Rectangle {
-                            property <string> value: r.cells[root.col-start + j];
-                            x: root.label-w + j * root.col-w;
-                            width: root.col-w;
-                            background: root.hover-col == root.col-start + j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
-                            if value != "": Rectangle {
-                                width: max(30px, label.preferred-width + 14px);
-                                height: root.row-h - 8px;
-                                border-radius: 4px;
-                                background: area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18);
-                                label := Text {
-                                    text: value;
-                                    color: Theme.accent;
-                                    font-size: Theme.font-caption;
-                                    font-weight: Theme.weight-strong;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-                                area := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.cell(r.node, root.col-start + j); }
-                                }
-                            }
-                            hover := TouchArea {
-                                changed has-hover => {
-                                    if (self.has-hover) {
-                                        root.hover-row = i;
-                                        root.hover-col = root.col-start + j;
-                                    }
-                                }
-                            }
                         }
                 }
                 if root.rows.length == 0: Text {
