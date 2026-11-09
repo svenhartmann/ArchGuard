@@ -144,6 +144,30 @@ component Code inherits VerticalLayout {
     }
 }
 
+// The root of a conditional element with word-wrapped texts
+// (`if c: Fit { … }`): as tall as its children at its width. Slint 1.18
+// measures the wrapped texts of a conditional element as one line each
+// (as in Security's scan panel): in a narrow pane, where they wrap into
+// several, the chapter panel came out shorter than its content, which was
+// drawn below its border. A height bound to the laid-out children avoids
+// that.
+export component Fit inherits Rectangle {
+    in property <length> spacing;
+    // Space above and below the children.
+    in property <length> top;
+    in property <length> bottom;
+    height: body.preferred-height;
+    max-width: 100000px;
+    horizontal-stretch: 1;
+    body := VerticalLayout {
+        width: root.width;
+        spacing: root.spacing;
+        padding-top: root.top;
+        padding-bottom: root.bottom;
+        @children
+    }
+}
+
 export component ArcBlockView inherits HorizontalLayout {
     in property <ArcBlock> block;
     spacing: 0;
@@ -152,15 +176,15 @@ export component ArcBlockView inherits HorizontalLayout {
         background: block.quote ? Theme.panel-2 : transparent;
         VerticalLayout {
             padding-left: block.quote ? 16px : 0;
-            if block.kind == 0: Heading { block: block; }
-            if block.kind == 1 || block.kind == 7: Paragraph { block: block; }
-            if block.kind == 2: Item { block: block; }
-            if block.kind == 3 || block.kind == 4 || block.kind == 8: VerticalLayout {
-                padding-top: block.kind == 3 ? 10px : 0;
-                padding-bottom: block.last ? 16px : 0;
+            if block.kind == 0: Fit { Heading { block: block; } }
+            if block.kind == 1 || block.kind == 7: Fit { Paragraph { block: block; } }
+            if block.kind == 2: Fit { Item { block: block; } }
+            if block.kind == 3 || block.kind == 4 || block.kind == 8: Fit {
+                top: block.kind == 3 ? 10px : 0;
+                bottom: block.last ? 16px : 0;
                 TableRow { block: block; }
             }
-            if block.kind == 5: Code { block: block; }
+            if block.kind == 5: Fit { Code { block: block; } }
             if block.kind == 6: VerticalLayout {
                 padding-top: 10px;
                 padding-bottom: 10px;

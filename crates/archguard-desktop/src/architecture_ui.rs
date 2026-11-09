@@ -8,6 +8,8 @@
 
 mod blocks;
 mod catalogue;
+#[cfg(test)]
+mod check;
 mod diagram;
 mod edit;
 mod figure;
