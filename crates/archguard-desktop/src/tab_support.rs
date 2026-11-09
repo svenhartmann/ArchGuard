@@ -213,7 +213,7 @@ fn finish<T: 'static>(doc: DocId, result: Result<T, String>) -> bool {
 }
 
 /// Run `work`, turning a panic into its message.
-fn catch<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+pub(crate) fn catch<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).map_err(|e| {
         e.downcast_ref::<&str>()
             .map(|s| s.to_string())

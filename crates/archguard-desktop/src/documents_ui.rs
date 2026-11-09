@@ -189,13 +189,19 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let result = analyze(&root, &topology);
+        let result = guarded(|| analyze(&root, &topology));
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 finished(&ui, id, result);
             }
         });
     });
+}
+
+/// Run a document's analysis on its worker thread. A panic becomes the
+/// document's error, so it leaves "Loading" either way.
+fn guarded<T>(analyze: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    tab_support::catch(analyze).and_then(|r| r)
 }
 
 fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>), String>) {
@@ -348,4 +354,23 @@ fn open_web(ui: &AppWindow, tab: &str) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A panicking analysis still ends in a result, so the document leaves
+    /// "Loading" and shows the panic as its error.
+    #[test]
+    fn a_panicking_analysis_becomes_the_error() {
+        let result: Result<(), String> = guarded(|| panic!("parser blew up"));
+        assert_eq!(result, Err("parser blew up".to_string()));
+    }
+
+    #[test]
+    fn an_analysis_error_stays_the_error() {
+        let result: Result<(), String> = guarded(|| Err("no config".into()));
+        assert_eq!(result, Err("no config".to_string()));
+    }
 }
