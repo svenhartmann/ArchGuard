@@ -10,7 +10,7 @@ use std::path::Path;
 use rmcp::ErrorData;
 // `use rmcp::schemars;` (not the derive directly): the JsonSchema derive
 // macro expands to `schemars::…` paths, so the module name must be in scope.
-use archguard_engine::store::{GraphStore, LadybugStore, sanitize_query};
+use archguard_engine::store::{LadybugStore, sanitize_query};
 use rmcp::schemars;
 use serde::Deserialize;
 use serde_json::{Value, json};

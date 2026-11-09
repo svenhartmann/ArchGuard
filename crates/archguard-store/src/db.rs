@@ -14,7 +14,7 @@ use archguard_core::{
 use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
 use serde_json::{Number, Value as JsonValue};
 
-use crate::api::{GraphStore, QueryResult, SnapshotRecord};
+use crate::api::{QueryResult, SnapshotRecord};
 
 /// Schema of Kap. 8.2, in creation order (node tables before their rel
 /// tables). `(table name, CREATE statement)`.
@@ -101,11 +101,11 @@ pub const QUERY_TIMEOUT_MS: u64 = 5_000;
 /// structures from a hostile database become a `…` marker.
 const MAX_JSON_DEPTH: usize = 16;
 
-/// A [`GraphStore`] mirroring graph and report into a LadybugDB database
+/// The graph-DB mirror: graph and report in a LadybugDB database
 /// file (Kap. 8.2 schema). Open an existing or new database with
 /// [`LadybugStore::open`]; `sync` clears all rows and bulk-inserts — the
 /// T41 `snapshot` table excepted —, `query` runs read-only openCypher and
-/// [`GraphStore::record_snapshot`] upserts one trend row.
+/// [`LadybugStore::record_snapshot`] upserts one trend row.
 pub struct LadybugStore {
     /// lbug's `Connection` borrows the `Database`, so only the `Database` is
     /// stored and a fresh `Connection` is created per operation.
@@ -222,9 +222,7 @@ impl LadybugStore {
         .map_err(db_error)?;
         Ok(())
     }
-}
 
-impl GraphStore for LadybugStore {
     /// Idempotent full refresh (Kap. 8.2): delete all rows of the mirror
     /// tables (the T41 `snapshot` table is deliberately not among them),
     /// then bulk-insert modules, `depends_on` edges (`ref_count` = the
@@ -237,7 +235,7 @@ impl GraphStore for LadybugStore {
     /// level; `lang` carries the file language. Findings may name modules
     /// that the graph does not contain (e.g. another zoom level): placeholder
     /// module rows are inserted so `involves` stays complete.
-    fn sync(&mut self, g: &Graph, r: &Report) -> Result<(), ArchguardError> {
+    pub fn sync(&mut self, g: &Graph, r: &Report) -> Result<(), ArchguardError> {
         let conn = Connection::new(&self.db).map_err(db_error)?;
         for stmt in [
             "MATCH ()-[d:depends_on]->() DELETE d;",
@@ -366,7 +364,11 @@ impl GraphStore for LadybugStore {
     /// leaves no spare row for the probe, so further existing rows stay
     /// unflagged — `truncated` reports the server budget, not the
     /// statement's own limit.
-    fn query(&self, cypher: &str, limit: usize) -> Result<QueryResult, ArchguardError> {
+    ///
+    /// Read-only by contract; callers that only read open the store with
+    /// [`LadybugStore::open_for_query`] (F04) so a query creates no
+    /// database, schema or files.
+    pub fn query(&self, cypher: &str, limit: usize) -> Result<QueryResult, ArchguardError> {
         // F05: caller `limit` can only lower the server-owned budget,
         // never raise it; zero stays zero. The enforced LIMIT still gets
         // one spare row so `truncated` can be detected below; i64::MAX
@@ -416,7 +418,7 @@ impl GraphStore for LadybugStore {
     /// with the same primary key, then create the new one — a plain
     /// replace, so re-recording an id is idempotent. `tag` stays NULL when
     /// absent. `sync` never touches this table.
-    fn record_snapshot(&mut self, record: &SnapshotRecord) -> Result<(), ArchguardError> {
+    pub fn record_snapshot(&mut self, record: &SnapshotRecord) -> Result<(), ArchguardError> {
         let conn = Connection::new(&self.db).map_err(db_error)?;
         let mut delete = conn
             .prepare("MATCH (s:snapshot {id: $id}) DELETE s;")
