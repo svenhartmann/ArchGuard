@@ -242,7 +242,8 @@ fn source_nodes(
             continue;
         };
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = extractor.extract(&stripped, &fs::read_to_string(&file.path)?);
+        let extraction =
+            extractor.extract(&stripped, &String::from_utf8_lossy(&fs::read(&file.path)?));
         let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
         if let Some(ids) = nodes.get(name.as_str()) {
             candidates.extend(ids);

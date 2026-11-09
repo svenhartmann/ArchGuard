@@ -241,8 +241,21 @@ pub(crate) fn extraction_fingerprint(
     files: &[SourceFile],
     config: &Config,
 ) -> Result<String, ArchguardError> {
+    extraction_key(root, files, config, env!("CARGO_PKG_VERSION"))
+}
+
+/// The cache key of one extraction. `version` is the archguard release, so
+/// a parser fix shipped by an update takes effect on an unchanged repo.
+fn extraction_key(
+    root: &Path,
+    files: &[SourceFile],
+    config: &Config,
+    version: &str,
+) -> Result<String, ArchguardError> {
     let mut hash = Sha256::new();
     hash.update(CACHE_SCHEMA.to_le_bytes());
+    hash.update(version.len().to_le_bytes());
+    hash.update(version);
     hash.update(fingerprint(files));
     hash.update(crate::go_sources::fingerprint(root, files));
     hash.update(serde_json::to_vec(&config.project).expect("project config serializes"));
@@ -525,6 +538,15 @@ mod tests {
         let (graph, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(!hit, "schema 6 results lack Java qualified-name edges");
         assert_eq!(graph.edges.len(), 1);
+    }
+
+    #[test]
+    fn another_archguard_version_gives_another_extraction_key() {
+        let dir = fixture(&[("src/a.ts", "export const a = 1;\n")]);
+        let files = pipeline::walk_files(dir.path(), &Config::default()).unwrap();
+        let key = |version| extraction_key(dir.path(), &files, &Config::default(), version);
+        assert_eq!(key("0.2.1").unwrap(), key("0.2.1").unwrap());
+        assert_ne!(key("0.2.1").unwrap(), key("0.2.2").unwrap());
     }
 
     #[test]

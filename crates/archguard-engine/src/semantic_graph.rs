@@ -241,7 +241,7 @@ fn source_nodes(
         let Some(extractor) = extractor_for(file.lang) else {
             continue;
         };
-        let content = fs::read_to_string(&file.path)?;
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
         let source = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = extractor.extract(&source, &content);
         let name = crate::pipeline::file_node_name(&source, &extraction.declarations);

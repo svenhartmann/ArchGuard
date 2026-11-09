@@ -18,7 +18,6 @@ pub mod go;
 pub mod java;
 pub mod kotlin;
 mod lex;
-pub mod memory;
 pub mod php;
 pub mod php_structure;
 pub mod py;
@@ -37,7 +36,6 @@ pub use extract::{
 pub use go::GoExtractor;
 pub use java::JavaExtractor;
 pub use kotlin::KotlinExtractor;
-pub use memory::{MemoryCandidate, MemoryKind, scan_memory};
 pub use php::{PhpExtractor, parse_psr4};
 pub use php_structure::{
     PhpCallSite, PhpClassFacts, PhpClassRef, PhpFunctionFacts, PhpStructure, PhpSymbols, PhpTarget,

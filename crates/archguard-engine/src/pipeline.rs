@@ -39,7 +39,7 @@ use scanned_file::ScannedFile;
 mod rust_imports;
 pub(crate) use rust_imports::{CrateItems, ItemTarget, hash_manifests};
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -126,7 +126,7 @@ pub(crate) fn build_graph(
         let Some(extractor) = extractor_for(file.lang) else {
             continue; // a language walk accepted but no scanner registered
         };
-        let content = fs::read_to_string(&file.path)?;
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = extractor.extract(&stripped, &content);
         let node_name = file_node_name(&stripped, &extraction.declarations);
@@ -159,32 +159,7 @@ pub(crate) fn build_graph(
             .filter(|file| import_family(file.lang) == family)
             .map(|file| file.stripped.clone())
             .collect();
-        let local: Vec<_> = declarations
-            .iter()
-            .filter(|d| paths.contains(&d.file))
-            .cloned()
-            .collect();
-        let mut stems: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        let mut dirs = BTreeSet::new();
-        for path in &paths {
-            stems.entry(stem_path(path)).or_default().push(path.clone());
-            let mut dir = parent_dir(path);
-            loop {
-                dirs.insert(dir.to_owned());
-                if dir.is_empty() {
-                    break;
-                }
-                dir = parent_dir(dir);
-            }
-        }
-        indexes.insert(
-            family,
-            ImportIndex {
-                declarations: DeclMap::new(&local, &paths),
-                stems,
-                dirs,
-            },
-        );
+        indexes.insert(family, ImportIndex::new(&paths, &declarations));
     }
 
     // ---- Kap. 6 step 6: one file node (plus ancestor modules) per file.
@@ -518,6 +493,36 @@ struct ImportIndex {
     declarations: DeclMap,
     stems: BTreeMap<String, Vec<String>>,
     dirs: BTreeSet<String>,
+}
+impl ImportIndex {
+    /// The index of one import family over its stripped `paths`, binding
+    /// only the `declarations` made in those files.
+    fn new(paths: &[String], declarations: &[Declaration]) -> Self {
+        let path_set: HashSet<&str> = paths.iter().map(String::as_str).collect();
+        let local: Vec<_> = declarations
+            .iter()
+            .filter(|d| path_set.contains(d.file.as_str()))
+            .cloned()
+            .collect();
+        let mut stems: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut dirs = BTreeSet::new();
+        for path in paths {
+            stems.entry(stem_path(path)).or_default().push(path.clone());
+            let mut dir = parent_dir(path);
+            loop {
+                dirs.insert(dir.to_owned());
+                if dir.is_empty() {
+                    break;
+                }
+                dir = parent_dir(dir);
+            }
+        }
+        ImportIndex {
+            declarations: DeclMap::new(&local, paths),
+            stems,
+            dirs,
+        }
+    }
 }
 fn import_family(lang: &str) -> &str {
     match lang {
