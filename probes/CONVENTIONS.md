@@ -74,6 +74,14 @@ continue a word (not preceded by a letter, digit, `_`, `@`, `$`, `:`, `.`,
 `"` or `` ` ``) by `?`; collapse all whitespace to single spaces and trim.
 Case is kept. Placeholders such as `@p0`, `$1`, `:name` and `?` stay.
 
+A number literal starts with a digit and runs over the following ASCII
+letters, digits and `.` (so `1.5`, `1e3` and `0x1F` each become one `?`).
+Quoted identifiers are not parsed: a number after a space inside `"col 2"`
+or `[col 2]` is replaced, and whitespace inside them is collapsed. A
+positional placeholder `?1` becomes `??`. These cases follow the importer
+(`normalize_sql`) and are part of the contract, so producers and importer
+hash the same text.
+
 **`archguard.db.statement_hash`**: the first 16 lowercase hexadecimal
 characters of SHA-256 over the UTF-8 bytes of the normalized text. Probes
 send the normalized text as `db.query.text` (or `db.statement`) next to it,
@@ -113,7 +121,9 @@ declared method it belongs to:
 it. Matching it to the checkout by path suffix is planned (ADR 0004, step 5);
 today the importer shows it as recorded.
 
-- .NET: the path from the PDB, absolute or deterministic (`/_/src/...`).
+- .NET: the path from the PDB. Prefer deterministic builds or `PathMap`
+  (`/_/src/...`). An absolute path is cut to the part below the project's
+  root directory before it is written, so it carries no user name.
 - Java: package directory and file name, `com/example/shop/OrderRepository.java`
   (stack frames carry only the file name; the package comes from the class).
 
@@ -139,7 +149,16 @@ Producers must not write:
 - the command line and the executable path (`process.command_args`,
   `process.command_line`, `process.executable.path`), host and user names
   (`host.name`, `process.owner`, `db.user`), connection strings
-  (`db.connection_string`) and any credentials.
+  (`db.connection_string`) and any credentials;
+- client identity: `user_agent.original`, `client.address`,
+  `client.port`, `network.peer.address`, and HTTP header attributes
+  (`http.request.header.*`, `http.response.header.*`);
+- exception text: of `exception.*` only `exception.type` is written, never
+  `exception.message` or `exception.stacktrace` (a SQL error can quote
+  values); the span status description is dropped too.
+
+Paths (`url.path`, `http.route`) are kept: they are needed to tell
+requests apart, and routes keep IDs out where the framework knows them.
 
 Files under `.archguard/runtime/` may be committed or shared by mistake, so
 this holds even though the importer keeps no other attribute values than
@@ -154,3 +173,7 @@ A change that makes older input read differently needs a new
   file formats, outgoing call names, span kind and the privacy list fixed
   after the first Java probe. The hash now wins over `db.query.summary`; no
   producer sent both before, so schema 1 stays.
+- 2026-11-09: after the first .NET probe: number literals and quoted
+  identifiers in the normalization, absolute .NET paths cut below the
+  project root, client identity, headers and exception text added to the
+  privacy list.
