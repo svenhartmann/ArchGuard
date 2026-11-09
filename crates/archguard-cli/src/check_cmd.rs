@@ -241,9 +241,8 @@ fn gate_finding(id: String, nodes: Vec<String>, evidence: Vec<Ref>, message: Str
 /// (default: [`baseline_path`]), **cycle** findings whose
 /// membership hash — Kap. 7's [`cycle_hash`] over the finding's sorted
 /// member names, the same identity [`Baseline`] stores — is present in
-/// the baseline are accepted and no longer fail the gate, together with
-/// the `metric-max-scc-size-*` finding for the same members; every other
-/// Error finding (declared layer violations, other metric thresholds) fails
+/// the baseline are accepted and no longer fail the gate; every other
+/// Error finding (declared layer violations, metric thresholds) fails
 /// regardless. The full report is still printed either way; a missing
 /// or unparsable baseline file is an IO error (exit 3).
 pub(crate) fn check(
@@ -268,9 +267,12 @@ pub(crate) fn check(
     };
     let fails = report.findings.iter().any(|finding| {
         finding.severity == Severity::Error
-            && !baseline
-                .as_ref()
-                .is_some_and(|baseline| baselined(baseline, finding))
+            && match (&baseline, finding.kind) {
+                (Some(baseline), FindingKind::Cycle) => {
+                    !baseline.hashes.contains(&cycle_hash(&finding.nodes))
+                }
+                _ => true,
+            }
     });
     let mut report = report.clone();
     report.summary.status = if fails {
@@ -297,15 +299,6 @@ pub(crate) fn check(
         }
     }
     if fails { EXIT_FOUND } else { EXIT_OK }
-}
-
-/// Whether `baseline` accepts `finding`: a cycle, or the SCC-size gate
-/// for the same members, whose membership hash the baseline stores.
-fn baselined(baseline: &Baseline, finding: &Finding) -> bool {
-    let cycle_like = finding.kind == FindingKind::Cycle
-        || (finding.kind == FindingKind::MetricThreshold
-            && finding.id.starts_with("metric-max-scc-size-"));
-    cycle_like && baseline.hashes.contains(&cycle_hash(&finding.nodes))
 }
 
 /// Read and parse a baseline JSON (Kap. 7); any IO or parse problem is

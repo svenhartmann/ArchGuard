@@ -1,6 +1,6 @@
-//! `archguard check --baseline` with the stock rules: a baselined cycle
-//! is accepted together with the SCC-size gate for the same members, a
-//! new cycle still fails; and `check` rejects formats it cannot render.
+//! `archguard check --baseline` with the stock rules: the baseline accepts
+//! only the cycle finding, the SCC-size gate keeps failing until the cycle
+//! is fixed; and `check` rejects formats it cannot render.
 //! The default baseline file is `[rules].baseline` under the analysed
 //! project root, wherever the command runs from.
 
@@ -52,36 +52,23 @@ fn report(out: &std::process::Output) -> String {
     )
 }
 
+/// Lets a baselined cycle pass: the stock `max_scc_size = 1` gate is
+/// independent of the baseline, so a known cycle still fails `check`.
+const TOLERATE_SCC_SIZE: &str = "[rules]\nmax_scc_size = 100\n";
+
 #[test]
-fn baselined_cycle_passes_with_the_default_scc_size_gate() {
+fn baselined_cycle_still_fails_the_default_scc_size_gate() {
     let dir = tempdir().expect("tempdir");
     cyclic(dir.path());
-    let out = archguard(dir.path(), &["check"]);
-    assert_eq!(
-        out.status.code(),
-        Some(1),
-        "cycle fails unbaselined: {}",
-        report(&out)
-    );
-
     let out = archguard(dir.path(), &["baseline", "write"]);
     assert_eq!(out.status.code(), Some(0), "{}", report(&out));
     let out = archguard(dir.path(), &["check", "--baseline"]);
-    assert_eq!(out.status.code(), Some(0), "baselined: {}", report(&out));
-
-    // A new cycle is neither in the baseline nor accepted by size.
-    write(
-        dir.path(),
-        "src/x.ts",
-        "import { y } from \"./y\";\nexport const x = y;\n",
+    assert_eq!(out.status.code(), Some(1), "{}", report(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("metric-max-scc-size"),
+        "{}",
+        report(&out)
     );
-    write(
-        dir.path(),
-        "src/y.ts",
-        "import { x } from \"./x\";\nexport const y = x;\n",
-    );
-    let out = archguard(dir.path(), &["check", "--baseline"]);
-    assert_eq!(out.status.code(), Some(1), "new cycle: {}", report(&out));
 }
 
 #[test]
@@ -102,6 +89,7 @@ fn baseline_write_of_a_subproject_lands_in_that_project() {
     let repo = tempdir().expect("tempdir");
     let api = repo.path().join("api");
     cyclic(&api);
+    write(&api, "archguard.toml", TOLERATE_SCC_SIZE);
     let out = archguard(repo.path(), &["baseline", "write", "api"]);
     assert_eq!(out.status.code(), Some(0), "{}", report(&out));
     assert!(
@@ -127,7 +115,7 @@ fn configured_rules_baseline_is_the_default_file() {
     write(
         dir.path(),
         "archguard.toml",
-        "[rules]\nbaseline = \".archguard/accepted.json\"\n",
+        &format!("{TOLERATE_SCC_SIZE}baseline = \".archguard/accepted.json\"\n"),
     );
     let out = archguard(dir.path(), &["baseline", "write"]);
     assert_eq!(out.status.code(), Some(0), "{}", report(&out));
