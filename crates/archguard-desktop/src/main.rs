@@ -40,8 +40,8 @@ mod panes;
 mod panes_ui;
 mod platform;
 mod quality_ui;
-mod runtime_ui;
 mod rating;
+mod runtime_ui;
 #[cfg(test)]
 mod security_check;
 mod security_ui;

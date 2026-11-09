@@ -11,12 +11,12 @@
 
 mod arc42;
 mod arc42_blocks;
-mod arc42_diagrams;
 mod arc42_chapters;
-mod arc42_quality;
-mod arc42_text;
+mod arc42_diagrams;
 mod arc42_errors;
 mod arc42_goals;
+mod arc42_quality;
+mod arc42_text;
 mod architecture_doc;
 mod dot;
 mod dsm;

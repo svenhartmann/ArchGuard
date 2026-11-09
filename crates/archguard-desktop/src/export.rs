@@ -173,8 +173,8 @@ mod tests {
                 .expect("analysis");
         let text = arc42(&root, &run, None, Default::default()).expect("arc42");
         let cli = archguard_engine::arc42_document(&root, &run.config, &run.graph, &run.report)
-        .expect("document")
-        .markdown(None);
+            .expect("document")
+            .markdown(None);
         assert_eq!(text, cli);
         assert!(text.contains("arc42"), "{text}");
         let chapter = arc42(&root, &run, Some(5), Default::default()).expect("chapter 5");
