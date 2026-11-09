@@ -1747,11 +1747,6 @@ function viewMetrics() {
   });
 }
 
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
 // F01: force-graph inserts a STRING label into its tooltip via innerHTML
 // — node names, paths and raw imports are untrusted source-code content,
 // so both label accessors hand the library a pre-built element instead
