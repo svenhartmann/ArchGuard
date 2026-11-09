@@ -107,6 +107,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect cycles | `archguard cycles . --format json` |
 | Inspect compiler evidence | `archguard calls . --format json` |
 | Inspect service connections | `archguard services . --format json` |
+| Inspect recorded runtime (requests, DB calls per request, slow and repeated queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
 | Compare with a Git revision | `archguard review . --base main --format html` |
 | Inspect effective configuration | `archguard config . --format json` |

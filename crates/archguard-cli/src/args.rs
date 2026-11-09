@@ -386,6 +386,11 @@ pub(crate) enum Command {
         #[arg(long)]
         fail_on_found: bool,
     },
+    /// Runtime profile from recorded OTLP traces in .archguard/runtime (ADR 0004).
+    Runtime {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+    },
     /// Analyze declared dependencies between local projects; source analysis is opt-in.
     Workspace {
         #[arg(value_name = "PFAD")]

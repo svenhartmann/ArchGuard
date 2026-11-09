@@ -285,3 +285,5 @@ Each step ends with tests; estimates are for one developer, not measurements.
   `probes/CONVENTIONS.md`, fixture `fixtures/runtime/shop.jsonl`,
   `archguard_engine::runtime_profile` with endpoints and statements (moved
   forward from step 2). Open from step 1: observed use in the datastore model.
+- **2026-11-09:** CLI `archguard runtime` and MCP tool `runtime_profile`
+  (step 2 surfaces) implemented; findings (`n_plus_one`, ...) still open.

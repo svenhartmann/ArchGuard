@@ -107,6 +107,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Zyklen untersuchen | `archguard cycles . --format json` |
 | Compilerbelege untersuchen | `archguard calls . --format json` |
 | Dienstverbindungen untersuchen | `archguard services . --format json` |
+| Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
 | Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |

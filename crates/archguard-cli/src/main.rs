@@ -49,6 +49,7 @@ mod project_files;
 mod quality_cmd;
 mod review_cmd;
 mod review_session_cmd;
+mod runtime_cmd;
 mod sarif;
 mod security_cmd;
 mod serve_cmd;
@@ -94,6 +95,7 @@ impl Command {
             | Command::Patterns { path, .. }
             | Command::Evaluate { path, .. }
             | Command::Services { path, .. }
+            | Command::Runtime { path }
             | Command::Workspace { path, .. }
             | Command::Doc { path, .. }
             | Command::Graph { path, .. }
@@ -262,15 +264,8 @@ fn run(cli: &Cli) -> i32 {
             },
         );
     }
-    // Compose-only repositories do not need an import graph or archguard.toml.
-    if let Command::Services { fail_on_found, .. } = &cli.command {
-        return service_cmd::run(cli, &root, *fail_on_found);
-    }
-    if let Command::Workspace {
-        sources, target, ..
-    } = &cli.command
-    {
-        return workspace_cmd::run(cli, &root, *sources, target);
+    if let Some(code) = standalone(cli, &root) {
+        return code;
     }
     if let Command::Contracts {
         report,
@@ -505,6 +500,7 @@ fn run(cli: &Cli) -> i32 {
         | Command::Db { .. }
         | Command::Trend { .. }
         | Command::Services { .. }
+        | Command::Runtime { .. }
         | Command::Workspace { .. }
         | Command::Contracts { .. }
         | Command::Security { .. }
@@ -515,7 +511,7 @@ fn run(cli: &Cli) -> i32 {
         | Command::Evaluate { .. }
         | Command::ReviewDecision { .. } => {
             unreachable!(
-                "init, mcp, db, trend, services, security, serve, evaluate, review-decision, doctor and update are handled before the analysis"
+                "init, mcp, db, trend, services, runtime, security, serve, evaluate, review-decision, doctor and update are handled before the analysis"
             )
         }
     }
@@ -550,6 +546,19 @@ fn review_command(cli: &Cli, root: &Path) -> Option<i32> {
 
 /// The project root to analyse: the `PATH` argument or the current
 /// directory, canonicalised so an unreadable path fails early (exit 3).
+/// Commands that need neither an import graph nor archguard.toml
+/// (Compose-only repositories, recorded runtime traces, manifests).
+fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
+    Some(match &cli.command {
+        Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
+        Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::Workspace {
+            sources, target, ..
+        } => workspace_cmd::run(cli, root, *sources, target),
+        _ => return None,
+    })
+}
+
 fn resolve_root(path: Option<&Path>) -> Result<PathBuf, std::io::Error> {
     let root = path.unwrap_or_else(|| Path::new("."));
     root.canonicalize().map_err(|err| {
