@@ -21,6 +21,12 @@ pub struct RuntimeProfile {
     /// `MAX_REQUESTS` of `requests_total`.
     pub requests: Vec<RuntimeRequest>,
     pub requests_total: u64,
+    /// Mean time per request of each endpoint by category, from the kept requests.
+    #[serde(default)]
+    pub breakdown: Vec<RuntimeBreakdown>,
+    /// Methods with the most self time over the kept requests, slowest first.
+    #[serde(default)]
+    pub hot_methods: Vec<RuntimeMethod>,
     /// The `[runtime]` thresholds the findings used.
     #[serde(default)]
     pub thresholds: RuntimeConfig,
@@ -192,4 +198,43 @@ pub struct RuntimeSpan {
     /// The calling method of a method span (`archguard.caller.function`).
     #[serde(default)]
     pub caller: Option<String>,
+    /// `archguard.section.kind` of a method span.
+    #[serde(default)]
+    pub section: Option<String>,
+
+    /// Where its self time counts: `database`, `outgoing`, the section kind,
+    /// or `other` (see [`RuntimeBreakdown::parts`]).
+    #[serde(default)]
+    pub category: String,
+}
+
+/// Where an endpoint's time goes: mean milliseconds per request by category.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeBreakdown {
+    pub service: String,
+    pub name: String,
+    pub requests: u64,
+    pub mean_ms: f64,
+    /// `database`, `outgoing`, `controller`, `service`, `repository`,
+    /// `component`, `method`, `other` (spans without a section) and
+    /// `unattributed` (request time no child span covers); empty ones left out.
+    pub parts: Vec<RuntimeTimePart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeTimePart {
+    pub category: String,
+    pub mean_ms: f64,
+}
+
+/// A method span name summed over requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeMethod {
+    pub service: String,
+    pub name: String,
+    pub function: Option<String>,
+    pub kind: Option<String>,
+    pub calls: u64,
+    pub total_ms: f64,
+    pub self_ms: f64,
 }

@@ -7,8 +7,9 @@ import { Theme } from "theme.slint";
 import { Button, Badge, EmptyState, SectionHeading } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { RuntimeSummary, RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite } from "runtime_summary.slint";
+import { RuntimeTime, FlameGraph, RtBreakdown, RtPart, RtHot, RtFlame } from "runtime_time.slint";
 
-export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite }
+export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite, RtBreakdown, RtPart, RtHot, RtFlame }
 
 export struct RtRequest {
     // UTC time of day.
@@ -58,18 +59,23 @@ export struct RtDetail {
     trace: string,
     truncated: bool,
     spans: [RtSpanRow],
+    // The flame graph: the same spans by depth, categories as on the Time page.
+    flame: [RtFlame],
+    flame-depth: int,
 }
 
 export struct RuntimeModel {
     // 0 loading, 1 ready, 2 no runtime input.
     state: int,
-    // 0 requests, 1 summary.
+    // 0 requests, 1 summary, 2 time.
     page: int,
     live: bool,
     requests-total: int,
     requests: [RtRequest],
     detail: RtDetail,
     summary: RtSummary,
+    breakdown: [RtBreakdown],
+    hot: [RtHot],
 }
 
 export global RuntimeData {
@@ -176,6 +182,7 @@ component Timeline inherits VerticalLayout {
         wrap: word-wrap;
         overflow: clip;
     }
+    if d.has: FlameGraph { spans: d.flame; title: d.title; depth: d.flame-depth; }
     if d.has: Rectangle { height: 1px; background: Theme.border; }
     if d.has: ScrollView {
         vertical-stretch: 1;
@@ -225,6 +232,11 @@ export component RuntimeView inherits Rectangle {
                 clicked => { RuntimeData.select-page(1); }
             }
             Button {
+                text: @tr("Time");
+                pressed-state: m.page == 2;
+                clicked => { RuntimeData.select-page(2); }
+            }
+            Button {
                 text: m.live ? @tr("Live: on") : @tr("Live: off");
                 pressed-state: m.live;
                 clicked => { RuntimeData.toggle-live(); }
@@ -239,6 +251,7 @@ export component RuntimeView inherits Rectangle {
                 : @tr("Send a request to the application; with Live on it appears here within about a second.");
         }
         if m.state == 1 && m.page == 1: RuntimeSummary { vertical-stretch: 1; data: m.summary; }
+        if m.state == 1 && m.page == 2: RuntimeTime { vertical-stretch: 1; breakdown: m.breakdown; hot: m.hot; }
         if m.state == 1 && m.page == 0 && m.requests.length > 0: HorizontalLayout {
             vertical-stretch: 1;
             ScrollView {

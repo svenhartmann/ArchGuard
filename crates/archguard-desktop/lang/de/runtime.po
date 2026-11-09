@@ -166,3 +166,52 @@ msgstr "aufgerufen aus {}"
 
 msgid "self {} ms"
 msgstr "eigen {} ms"
+
+msgid "Time"
+msgstr "Zeitverteilung"
+
+msgid "Outgoing calls"
+msgstr "Ausgehende Aufrufe"
+
+msgid "Controller"
+msgstr "Controller"
+
+msgid "Service"
+msgstr "Service"
+
+msgid "Repository"
+msgstr "Repository"
+
+msgid "Component"
+msgstr "Komponente"
+
+msgid "Method"
+msgstr "Methode"
+
+msgid "Other spans"
+msgstr "Sonstige Spans"
+
+msgid "Not covered by spans"
+msgstr "Nicht durch Spans erfasst"
+
+msgid "Ø {1} ms over {0} request"
+msgid_plural "Ø {1} ms over {0} requests"
+msgstr[0] "Ø {1} ms über {0} Request"
+msgstr[1] "Ø {1} ms über {0} Requests"
+
+msgid "Endpoints ({})"
+msgstr "Endpoints ({})"
+
+msgid "Methods by self time ({})"
+msgstr "Methoden nach Eigenzeit ({})"
+
+msgid "No method spans recorded; probes record them at application boundaries."
+msgstr "Keine Methoden-Spans aufgezeichnet; die Sonden erfassen sie an den Grenzen der Anwendung."
+
+msgid "Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."
+msgstr "Mittlere Zeit pro Request nach Kategorie: die Eigenzeit jedes Spans (Dauer minus seiner Kinder), daher ergeben die Teile zusammen den Request. Berechnet aus den aufbewahrten Requests."
+
+msgid "self {1} ms · total {2} ms · {0} call"
+msgid_plural "self {1} ms · total {2} ms · {0} calls"
+msgstr[0] "eigen {1} ms · gesamt {2} ms · {0} Aufruf"
+msgstr[1] "eigen {1} ms · gesamt {2} ms · {0} Aufrufe"

@@ -7,6 +7,7 @@ mod index;
 mod input;
 mod requests;
 mod span;
+mod time;
 
 use archguard_core::{RuntimeConfig, RuntimeDiagnostic, RuntimeProfile};
 use std::{collections::HashSet, path::Path};
@@ -40,6 +41,8 @@ pub fn runtime_profile(root: &Path, config: Option<&Path>) -> Option<RuntimeProf
     let thresholds = thresholds(root, config, &mut profile);
     profile.findings = findings::findings(&profile, &thresholds);
     profile.thresholds = thresholds;
+    profile.breakdown = time::breakdown(&profile.requests);
+    profile.hot_methods = time::hot_methods(&profile.requests);
     Some(profile)
 }
 

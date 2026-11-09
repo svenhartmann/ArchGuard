@@ -233,3 +233,65 @@ fn spans_carry_self_time_and_caller() {
     let repository = span("OrderRepository.GetLinesWithProductsAsync");
     assert!(repository.self_ms < repository.duration_ms);
 }
+
+/// Where the time goes per endpoint: the self times of a request's spans by
+/// category add up to its duration (no parallel children in the sample).
+#[test]
+fn endpoint_time_splits_into_categories() {
+    let p = profile("shop-dotnet.jsonl");
+    let summary = p
+        .breakdown
+        .iter()
+        .find(|b| b.name.contains("summary"))
+        .unwrap_or_else(|| panic!("{:#?}", p.breakdown));
+    let part = |c: &str| {
+        summary
+            .parts
+            .iter()
+            .find(|x| x.category == c)
+            .map_or(0.0, |x| x.mean_ms)
+    };
+    let sum: f64 = summary.parts.iter().map(|x| x.mean_ms).sum();
+    assert!(
+        (sum - summary.mean_ms).abs() < 0.05,
+        "{sum} vs {}",
+        summary.mean_ms
+    );
+    assert!(part("repository") > 0.7 * summary.mean_ms, "{summary:#?}");
+    assert!(part("database") > 0.0 && part("controller") > 0.0 && part("service") > 0.0);
+    assert!(part("unattributed") >= 0.0);
+}
+
+/// The methods with the most self time over all requests, slowest first.
+#[test]
+fn hot_methods_rank_self_time() {
+    let p = profile("shop-dotnet.jsonl");
+    // The first request of the run pays EF Core's cold start inside GetOrderAsync.
+    let names: Vec<&str> = p
+        .hot_methods
+        .iter()
+        .take(2)
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "OrderRepository.GetOrderAsync",
+            "OrderRepository.GetLinesWithProductsAsync"
+        ]
+    );
+    let first = &p.hot_methods[0];
+    assert_eq!(first.kind.as_deref(), Some("repository"));
+    assert!(first.self_ms > 100.0 && first.self_ms <= first.total_ms);
+    assert!(
+        p.hot_methods
+            .windows(2)
+            .all(|w| w[0].self_ms >= w[1].self_ms)
+    );
+    let java = profile("shop-java.jsonl");
+    assert!(
+        java.hot_methods
+            .iter()
+            .any(|m| m.name == "OrderRepository.findLinesOneByOne")
+    );
+}

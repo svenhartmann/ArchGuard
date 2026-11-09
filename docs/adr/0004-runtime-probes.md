@@ -439,3 +439,8 @@ Consequences for the design:
   show controller → service → repository → database calls with exact
   durations. Measured cost per instrumented call: about 2.5 µs (Java), about
   44–59 µs (.NET, mostly the stack walk for the caller). Fixtures updated.
+- **2026-11-09:** Desktop tab "Runtime" opens on the new page "Time":
+  per endpoint the mean time per request by category (database, outgoing
+  calls, controller, service, repository, component, method, other, not
+  covered), the methods by self time, and a flame graph per request. The
+  profile carries `breakdown`, `hot_methods` and a `category` per span.
