@@ -234,9 +234,9 @@ not enough for that. Decided with the user on 2026-11-09:
   concern it.
 - **Own code by sampling profiler.** CPU samples taken while the request
   runs are attributed to it and shown as the methods that used the time.
-  Decided 2026-11-09: no third-party profiler products; the probes sample
-  themselves with what the runtime ships (option 3). Options 1 and 2 are
-  kept below as the alternatives considered:
+  Only tools without licence fees (user, 2026-11-09): free open-source
+  libraries and what the runtime ships; paid APM products are out.
+  Candidates, to be decided by spike 0b:
   1. Pyroscope span profiles (Grafana; `Pyroscope.OpenTelemetry` for .NET,
      the OTel Java agent extension for Java): samples tagged with the span
      id. Needs a Pyroscope server that ArchGuard reads, or a local ingest
@@ -282,7 +282,7 @@ Each step ends with tests; estimates are for one developer, not measurements.
 | 3 | .NET probe with EF package and sample app; golden fixtures | 1–2 weeks |
 | 4 | Java agent extension with sample app; golden fixtures | 1 week |
 | 5 | Join to the call model; `runtime_hotspot`; desktop overlay | 1–2 weeks |
-| 0b | Spike: own sampler attributed to requests (.NET EventPipe, Java JFR), on macOS and Linux | 3–5 days |
+| 0b | Spike: sampling profiler attributed to requests, options 1 (Pyroscope, licence terms to check) and 3 (own sampler on EventPipe / JFR), on macOS and Linux | 3–5 days |
 | 2b | Requests in the profile (span tree per request, bounded); desktop tab "Runtime" with request list, timeline and live file watching; aggregate view moves there | 1–2 weeks |
 | 3b / 4b | Probe repositories `../hse-perf-net`, `../hse-perf-java` with the profiler chosen in 0b | with 3 / 4 |
 | 6 | Comparing two runs (before/after a refactoring), building on baseline diff | later |
@@ -406,3 +406,6 @@ Consequences for the design:
 - **2026-11-09:** No third-party profiler products (user): Pyroscope and
   similar are out; the probes build their own sampler on .NET EventPipe and
   Java JFR (Section 6, option 3).
+- **2026-11-09, correction:** The user meant nothing that costs money. Free
+  open-source tools are allowed again; Pyroscope (option 1) is back in
+  spike 0b next to the own sampler. Paid APM products stay out.
