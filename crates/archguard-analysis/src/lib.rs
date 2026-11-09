@@ -1,4 +1,4 @@
-//! `archguard-analysis` — L1: graph analysis (Tarjan SCC, cycles, metrics,
+//! `archguard-analysis` — L1: graph analysis (SCC, cycles, metrics,
 //! layer checks, cut suggestions, baseline diff). Lands in T12–T17.
 //!
 //! T12 contributes the SCC detection of [`find_sccs`], T13 the cycle

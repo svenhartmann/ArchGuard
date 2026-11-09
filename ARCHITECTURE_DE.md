@@ -188,7 +188,7 @@ archguard/
 │   ├── archguard-extract/        # L1: Walker, Extractor-Trait, Scanner (Java, C#, Py, TS/JS, PHP, Rust, Go), Resolver
 │   ├── archguard-analysis/       # L1: SCC, Zyklen, Metriken, Layer-Regeln, Cut-Vorschläge, Baseline
 │   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, html, graphml, sarif)
-│   ├── archguard-store/          # L1: GraphStore-Trait, Graph-DB-Spiegel (openCypher), Query-Guard
+│   ├── archguard-store/          # L1: Graph-DB-Spiegel (openCypher), Query-Guard
 │   ├── archguard-engine/         # L2: Config laden, Pipeline orchestrieren, Graph-Cache
 │   ├── archguard-mcp/            # L3: MCP-Server (stdio), Tool-Registrierung
 │   ├── archguard-cli/            # L3: Binary `archguard`, clap-Kommandos
@@ -201,9 +201,9 @@ archguard/
 | --- | --- | --- |
 | `archguard-core` | `Node`, `Edge`, `Ref`, `Graph`, `GraphBuilder`, `Finding`, `Report`, `Config`, `ArchguardError` | `serde`, `serde_json`, `thiserror` |
 | `archguard-extract` | Dateisuche (`.gitignore`-aware), `Extractor`-Trait, Scanner für Java, C#, Python, TS/JS, PHP, Rust, Go; zweistufige Auflösung (Pfad + Deklarations-Map/PSR-4) | `ignore`, `globset`, `serde_json` |
-| `archguard-analysis` | Tarjan-SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
+| `archguard-analysis` | SCC, begrenzte Zyklen-Aufzählung, Fan-in/out, Instabilität, Layer-Check, **Layer-Ableitung (Ranking + Namensaffinität)**, Cut-Scoring, Baseline-Diff | `petgraph` |
 | `archguard-report` | Serialisierung der `Report`-Typen in alle Ausgabeformate | `serde_json` |
-| `archguard-store` | `GraphStore`-Trait, DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
+| `archguard-store` | `LadybugStore`-DB-Spiegel + read-only openCypher-Queries, Query-Sanitizer | `lbug = "=0.22.1"` (LadybugDB, nur hinter Cargo-Feature `db`) |
 | `archguard-engine` | `analyze(path, config) -> Report`, Config-Parsing **+ Auflösung deklariert/abgeleitet/Default** (Kap. 11), Caching, DB-Sync | `toml` |
 | `archguard-mcp` | MCP-Tools, JSON-Schemas, Pagination-Guard | `rmcp` (offizielles MCP-Rust-SDK), `tokio` (nur hier), `schemars` |
 | `archguard-cli` | Argument-Parsing, Exit-Codes, Formatauswahl | `clap`, `anyhow` |
@@ -354,7 +354,7 @@ Workspace-Crates.
 
 | Problem | Verfahren | Begründung |
 | --- | --- | --- |
-| Zyklenerkennung | **Tarjan SCC** (`petgraph::algo::tarjan_scc`), O(V+E) | Implementierung aus `petgraph` |
+| Zyklenerkennung | **Kosaraju-SCC** (`petgraph::algo::kosaraju_scc`), O(V+E), iterativ, damit lange Abhängigkeitsketten den Stack nicht sprengen | Implementierung aus `petgraph` |
 | Zyklen aufzählen | Wurzelbegrenzte DFS **innerhalb** jeder SCC mit Kanten-, Ergebnis- und Längenbudget; `sampling` weist Grenzen/Vollständigkeit aus | Beispielsuche bleibt begrenzt, auch ohne kurzen gefundenen Zyklus; SCC-Erkennung bleibt unabhängig |
 | Cut-Vorschläge | Greedy-Heuristik: pro SCC-Kante `score = (gebrochene Sample-Zyklen / Zyklen gesamt) × 1/(1 + ln(ref_count))` ; weniger Import-Stellen ergeben einen höheren Score | Heuristik für das NP-schwere Minimum-Feedback-Arc-Set; jeder Vorschlag enthält Score und Begründungstext |
 | Metriken | Fan-in (Ca), Fan-out (Ce), Instabilität `I = Ce/(Ca+Ce)`, Zyklus-Beteiligung %, SCC-Größenverteilung | Martin-Metriken; nur aus Graphkanten berechnet |
@@ -378,7 +378,7 @@ Backend ist **[LadybugDB](https://ladybugdb.com/)** (embedded, spaltenorientiert
 
 Umsetzung:
 
-1. **Trait statt Direktabhängigkeit:** `archguard-store` definiert `GraphStore { sync(graph, report), query(cypher, limit) }`. Das DB-Backend ist dahinter austauschbar (Ladybug-Rust-SDK, CozoDB, …), ohne dass Engine, CLI oder MCP sich ändern.
+1. **Direktabhängigkeit auf das eine Backend:** CLI und MCP rufen `LadybugStore::{sync, query, record_snapshot}` direkt auf. *Geändert 2026-11-09:* Das frühere Trait `GraphStore` (und der unbenutzte `NullStore`) hatte nur eine Implementierung und wurde entfernt (YAGNI). Ein zweites Backend bringt das Trait zusammen mit seiner zweiten Implementierung zurück.
 2. **Binding:** gepinntes `lbug = "=0.22.1"`, das offizielle Rust-Crate von LadybugDB, gebaut aus den C++-Quellen im Crate (`LBUG_BUILD_FROM_SOURCE` in `.cargo/config.toml`; braucht CMake und OpenSSL 3). Eine vom früheren Backend `kuzu = "=0.11.3"` geschriebene `graph.db` lässt sich nicht öffnen: `.archguard/graph.db*` löschen und `archguard db sync` neu ausführen. Darin gespeicherte Trend-Snapshots gehen verloren.
 3. **Optionales Cargo-Feature `db`:** Das C++-Backend vergrößert Build-Zeit und Binary. Ohne `db` fehlen nur die `db`-Kommandos und `graph_query`; alle Analysen sind enthalten. Release-Archive enthalten den Build ohne `db` ([RELEASES.md](RELEASES.md)); `cargo build -p archguard-cli --features db` fügt es hinzu.
 4. **Read-only nach außen:** Query-Zugang (CLI/MCP) läuft durch einen Sanitizer — nur `MATCH`/`RETURN`, erzwungenes `LIMIT`. Schreiben kann ausschließlich `sync`.
@@ -591,7 +591,7 @@ Vorschläge.
 | --- | --- | --- |
 | Rust | Go, Zig | Ein statisches Binary ohne GC; `petgraph`, `ignore`, `clap` und `rmcp` sind verfügbar |
 | Zeilenbasierte Scanner | tree-sitter | Keine Grammatik-Abhängigkeit je Sprache; tree-sitter kann später hinter dem `Extractor`-Trait ergänzt werden |
-| `petgraph` statt eigenem Tarjan | Eigenimplementierung | Getestete Implementierung; eigener Code beschränkt sich auf das Mapping `Graph` ↔ `petgraph` |
+| `petgraph` statt eigenem SCC-Algorithmus | Eigenimplementierung | Getestete Implementierung; eigener Code beschränkt sich auf das Mapping `Graph` ↔ `petgraph` |
 | Sync-Core, async nur im MCP-Crate | durchgängig async | Fachlogik ohne async; `tokio` nur im MCP-Crate |
 | Ein Binary mit `mcp`-Subkommando | zwei Binaries | Ein Release-Artefakt je Variante |
 | Zyklen-**Sampling** statt Vollaufzählung | Johnson vollständig | Begrenzte Antwortgröße und Laufzeit |
@@ -611,7 +611,7 @@ CLI, MCP und den HTML-Viewer. Analysegrenzen stehen in [README_DE.md](README_DE.
 
 | Funktion | Umsetzung | Status |
 | --- | --- | --- |
-| Zyklenerkennung + Breakup-Vorschläge | SCC (Tarjan), Zyklen-Sampling, Cut-Scoring mit Begründung | implementiert |
+| Zyklenerkennung + Breakup-Vorschläge | SCC, Zyklen-Sampling, Cut-Scoring mit Begründung | implementiert |
 | Architekturregeln (Schichten, Komponenten) | `archguard.toml`-Layer-Regeln + Layer-**Ableitung** mit Promotion (Kap. 11) | implementiert |
 | Basis-Metriken (Martin: Ca/Ce/Instabilität) | Ein-/ausgehende Kopplung und Instabilität aus dem Abhängigkeitsgraphen | implementiert |
 | Hierarchischer Drill-down / Zoom-in | Containment-Baum + Sichten (Kap. 5.2): `graph_expand`, `--expand`, HTML-Viewer mit Doppelklick-Zoom | implementiert |

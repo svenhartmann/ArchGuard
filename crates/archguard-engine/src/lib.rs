@@ -210,7 +210,7 @@ pub use archguard_core as core;
 /// Facade for L3 consumers, mirroring [`core`] for the renderers.
 pub use archguard_report as report;
 /// Facade for L3 consumers, mirroring [`core`] for the graph-DB mirror
-/// ([`archguard_store::GraphStore`], [`archguard_store::QueryResult`],
+/// ([`archguard_store::QueryResult`],
 /// [`archguard_store::sanitize_query`] and — behind the `db` feature —
 /// [`archguard_store::LadybugStore`]) the CLI's `db sync|query` and the MCP's
 /// `graph_query` need (Kap. 8/9, T33).

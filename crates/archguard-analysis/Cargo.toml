@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 archguard-core = { path = "../archguard-core" }
-# Only the SCC detection needs an external crate; Tarjan is petgraph's.
+# Only the SCC detection needs an external crate; Kosaraju is petgraph's.
 petgraph = "0.8"
 # The layer check matches `contains` globs against node names (Kap. 9).
 globset = "0.4"

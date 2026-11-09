@@ -1,6 +1,6 @@
 [package]
 name = "archguard-store"
-description = "L1: GraphStore trait, graph-DB mirror (openCypher), query guard."
+description = "L1: graph-DB mirror (openCypher), query guard."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
