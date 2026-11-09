@@ -1,4 +1,5 @@
 //! Explicit test-report imports. Test execution and producer revision are not inferred.
+use crate::pipeline::NamedGraph;
 use archguard_core::{ArchguardError, Config, Graph};
 use roxmltree::{Document, Node};
 use serde::{Deserialize, Serialize};
@@ -95,12 +96,13 @@ pub fn test_coverage_fingerprint(root: &Path) -> String {
     }
 }
 
-fn source_paths(
+fn source_paths<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
 ) -> Result<BTreeMap<String, String>, ArchguardError> {
-    let nodes: BTreeMap<_, _> = graph.nodes.iter().map(|n| (n.id, &n.name)).collect();
+    let graph = graph.into();
+    let nodes: BTreeMap<_, _> = graph.graph.nodes.iter().map(|n| (n.id, &n.name)).collect();
     let mut candidates = BTreeMap::<String, Vec<String>>::new();
     for evidence in crate::review_sources::collect_source_evidence(root, config, graph)? {
         if let (Some(path), Some(node)) = (evidence.path, nodes.get(&evidence.node_id)) {
@@ -118,7 +120,12 @@ fn source_paths(
 }
 
 /// Return a saved measurement with current source freshness; never execute tests.
-pub fn read_test_coverage(root: &Path, config: &Config, graph: &Graph) -> TestCoverageReport {
+/// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+pub fn read_test_coverage<'a>(
+    root: &Path,
+    config: &Config,
+    graph: impl Into<NamedGraph<'a>>,
+) -> TestCoverageReport {
     let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

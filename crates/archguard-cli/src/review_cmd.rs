@@ -84,8 +84,9 @@ pub(crate) fn pr_comment(cli: &Cli, root: &Path, base: Option<&str>, out: Option
             &run.graph,
             &Cut::at_depth(&run.graph, run.config.modules.depth as usize),
         );
+        let named = (&run.graph, &run.source_names);
         let sources =
-            collect_review_sources(&root, &run.config, &run.graph, &run.config.review.git_since)?;
+            collect_review_sources(&root, &run.config, named, &run.config.review.git_since)?;
         let current = analyze_review(&run.graph, &view, &sources, &run.config.review.entry_points)?;
         // Same effective-policy comparison the review session uses; the
         // base priority report rides along in the comparison (R27).

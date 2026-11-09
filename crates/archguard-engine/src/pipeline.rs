@@ -38,6 +38,12 @@ use scanned_file::ScannedFile;
 #[path = "rust_imports.rs"]
 mod rust_imports;
 pub(crate) use rust_imports::{CrateItems, ItemTarget, hash_manifests};
+#[path = "source_names.rs"]
+mod source_names;
+#[cfg(test)]
+pub(crate) use source_names::extractions;
+pub use source_names::{NamedGraph, SourceNames};
+pub(crate) use source_names::{file_node_name, source_node_name};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -51,8 +57,8 @@ use archguard_core::{
     GraphBuilder, NodeId, Ref, Report, Severity, aggregate,
 };
 use archguard_extract::{
-    DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, extractor_for,
-    parse_psr4, resolve_relative, strip_root, walk,
+    DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, parse_psr4,
+    resolve_relative, walk,
 };
 
 /// `schema_version` of the emitted [`Report`] (Kap. 5).
@@ -120,24 +126,17 @@ pub(crate) fn build_graph(
     files: &[SourceFile],
     config: &Config,
 ) -> Result<(Graph, Vec<String>), ArchguardError> {
+    build_graph_named(root, files, config).map(|(graph, _, warnings)| (graph, warnings))
+}
+
+/// [`build_graph`] plus the [`SourceNames`] of the extracted files.
+pub(crate) fn build_graph_named(
+    root: &Path,
+    files: &[SourceFile],
+    config: &Config,
+) -> Result<(Graph, SourceNames, Vec<String>), ArchguardError> {
     // ---- Kap. 6 step 4: extract every file against its stripped path.
-    let mut scanned: Vec<ScannedFile> = Vec::new();
-    for file in files {
-        let Some(extractor) = extractor_for(file.lang) else {
-            continue; // a language walk accepted but no scanner registered
-        };
-        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = extractor.extract(&stripped, &content);
-        let node_name = file_node_name(&stripped, &extraction.declarations);
-        scanned.push(ScannedFile {
-            rel_path: file.rel_path.clone(),
-            stripped,
-            node_name,
-            lang: lang_name(file.lang),
-            extraction,
-        });
-    }
+    let scanned = scan(files, config)?;
 
     // ---- Kap. 6 step 5 preparation: the declaration map of the whole
     // run — real declarations, path-derived entries and PSR-4 prefixes.
@@ -195,54 +194,89 @@ pub(crate) fn build_graph(
     for (from, to, evidence) in rust_edges {
         builder.edge(node_of[&from], node_of[&to], evidence)?;
     }
-    for file in &scanned {
-        if file.lang == "rs" {
-            continue;
-        }
-        let from = node_of[&file.stripped];
-        let index = &indexes[import_family(file.lang)];
-        for raw_import in &file.extraction.imports {
-            let resolved = if file.lang == "go" {
-                match &raw_import.target {
-                    TargetSpec::Symbol { path, .. } => go_packages
-                        .get(path)
-                        .filter(|dirs| dirs.len() == 1)
-                        .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
-                    _ => None,
-                }
-            } else if file.lang == "py" {
-                resolve_python(raw_import, &index.dirs, &node_of, &mut builder)
-            } else {
-                resolve_target(
-                    raw_import,
-                    &index.declarations,
-                    &index.stems,
-                    &index.dirs,
-                    &node_of,
-                    &mut builder,
-                    file.lang,
-                )
-            };
-            let Some(to) = resolved else {
-                // A dotted name in code may be a member access, not a dependency.
-                if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
-                    warnings.push(external_warning(raw_import));
-                }
-                continue;
-            };
-            builder.edge(
-                from,
-                to,
-                Ref {
-                    file: file.stripped.clone(),
-                    line: raw_import.line,
-                    raw: raw_import.raw.clone(),
-                },
-            )?;
-        }
-    }
+    let context = (&indexes, &go_packages, &node_of);
+    resolve_imports(&scanned, context, &mut builder, &mut warnings)?;
     let full = builder.build(root.to_string_lossy().into_owned());
-    Ok((full, warnings))
+    let names = scanned
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.node_name.as_str()));
+    Ok((full, source_names::names(names), warnings))
+}
+
+/// Kap. 6 step 4: read and extract every file against its stripped path.
+fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, ArchguardError> {
+    let mut scanned = Vec::new();
+    for file in files {
+        let Some(extractor) = archguard_extract::extractor_for(file.lang) else {
+            continue; // a language walk accepted but no scanner registered
+        };
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
+        let stripped = archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
+        let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);
+        let node_name = file_node_name(&stripped, &extraction.declarations);
+        scanned.push(ScannedFile {
+            rel_path: file.rel_path.clone(),
+            stripped,
+            node_name,
+            lang: lang_name(file.lang),
+            extraction,
+        });
+    }
+    Ok(scanned)
+}
+
+/// Kap. 6 step 5 for every non-Rust import: record its edge or warn.
+fn resolve_imports(
+    scanned: &[ScannedFile],
+    (indexes, go_packages, node_of): ImportContext<'_>,
+    builder: &mut GraphBuilder,
+    warnings: &mut Vec<String>,
+) -> Result<(), ArchguardError> {
+    let imports = scanned
+        .iter()
+        .filter(|file| file.lang != "rs")
+        .flat_map(|file| file.extraction.imports.iter().map(move |raw| (file, raw)));
+    for (file, raw_import) in imports {
+        let index = &indexes[import_family(file.lang)];
+        let resolved = if file.lang == "go" {
+            match &raw_import.target {
+                TargetSpec::Symbol { path, .. } => go_packages
+                    .get(path)
+                    .filter(|dirs| dirs.len() == 1)
+                    .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
+                _ => None,
+            }
+        } else if file.lang == "py" {
+            resolve_python(raw_import, &index.dirs, node_of, builder)
+        } else {
+            resolve_target(
+                raw_import,
+                &index.declarations,
+                &index.stems,
+                &index.dirs,
+                node_of,
+                builder,
+                file.lang,
+            )
+        };
+        let Some(to) = resolved else {
+            // A dotted name in code may be a member access, not a dependency.
+            if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
+                warnings.push(external_warning(raw_import));
+            }
+            continue;
+        };
+        builder.edge(
+            node_of[&file.stripped],
+            to,
+            Ref {
+                file: file.stripped.clone(),
+                line: raw_import.line,
+                raw: raw_import.raw.clone(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// Kap. 6 steps 8–10 over a complete graph: default view, analyses
@@ -447,22 +481,6 @@ fn cycle_findings(
         .collect()
 }
 
-/// The graph node name of a scanned file: its declared module path plus
-/// the file name when the file declares a module, else its stripped
-/// path (Kap. 6.1: logical hierarchies hang under their declaration,
-/// physical ones under their directory).
-pub(crate) fn file_node_name(stripped: &str, declarations: &[Declaration]) -> String {
-    let file_name = stripped.rsplit('/').next().unwrap_or(stripped);
-    match declarations
-        .first()
-        .map(|declaration| declaration.module_path.as_str())
-        .filter(|module| !module.is_empty())
-    {
-        Some(module) => format!("{module}/{file_name}"),
-        None => stripped.to_string(),
-    }
-}
-
 /// Whether `deny_cycles` forbids cycles *at* `level` (Kap. 11):
 /// `"module"` forbids module cycles, `"file"` file cycles — each one
 /// makes findings of its own level gate failures; `"off"` never does.
@@ -488,6 +506,14 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Kotlin => "kt",
     }
 }
+
+/// Lookup tables [`resolve_imports`] reads: import indexes per family, Go
+/// package directories and the file node per stripped path.
+type ImportContext<'a> = (
+    &'a BTreeMap<&'a str, ImportIndex>,
+    &'a BTreeMap<String, BTreeSet<String>>,
+    &'a HashMap<String, NodeId>,
+);
 
 struct ImportIndex {
     declarations: DeclMap,

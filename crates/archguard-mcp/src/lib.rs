@@ -177,7 +177,7 @@ impl ArchguardTools {
         }
         let calls = archguard_engine::analyze_calls(&run.root, &run.loaded.config);
         let coverage =
-            archguard_engine::read_test_coverage(&run.root, &run.loaded.config, &run.file_graph);
+            archguard_engine::read_test_coverage(&run.root, &run.loaded.config, run.named());
         let world = archguard_engine::architecture_world(&run.file_graph, &calls, &coverage);
         development_tools::world_value(&world, &params).map(|v| v.to_string())
     }
@@ -315,7 +315,7 @@ impl ArchguardTools {
         let sources = archguard_engine::collect_review_sources(
             &run.root,
             &run.loaded.config,
-            &run.file_graph,
+            run.named(),
             params
                 .since
                 .as_deref()
@@ -364,7 +364,7 @@ impl ArchguardTools {
             max_results: params.top.unwrap_or(50),
         };
         let report =
-            archguard_engine::co_change(&run.root, &run.loaded.config, &run.file_graph, &options)
+            archguard_engine::co_change(&run.root, &run.loaded.config, run.named(), &options)
                 .map_err(insight_error)?;
         Ok(tools::guarded(&report).to_string())
     }
@@ -380,7 +380,7 @@ impl ArchguardTools {
         let sources = archguard_engine::collect_review_sources(
             &run.root,
             &run.loaded.config,
-            &run.file_graph,
+            run.named(),
             &run.loaded.config.review.git_since,
         )
         .map_err(insight_error)?;
@@ -448,7 +448,7 @@ impl ArchguardTools {
         quality_tools::validate(&params)?;
         let run = tools::analyze_run(&self.root, params.path.as_deref())?;
         let report =
-            archguard_engine::read_quality_findings(&run.root, &run.loaded.config, &run.file_graph);
+            archguard_engine::read_quality_findings(&run.root, &run.loaded.config, run.named());
         quality_tools::quality_value(&report, &params).map(|value| value.to_string())
     }
 
@@ -492,7 +492,7 @@ impl ArchguardTools {
         let calls = archguard_engine::analyze_calls(&run.root, &run.loaded.config);
         let code = archguard_engine::code_metrics(&calls);
         let knowledge =
-            archguard_engine::knowledge_metrics(&run.root, &run.loaded.config, &run.file_graph)
+            archguard_engine::knowledge_metrics(&run.root, &run.loaded.config, run.named())
                 .map_err(insight_error)?;
         let observations = archguard_engine::read_measurement_runs(&run.root);
         engineering_tools::metrics_value(&code, &knowledge, &observations, &params)
@@ -511,7 +511,7 @@ impl ArchguardTools {
         let changes = archguard_engine::co_change(
             &run.root,
             &run.loaded.config,
-            &run.file_graph,
+            run.named(),
             &Default::default(),
         )
         .map_err(insight_error)?;
@@ -665,7 +665,7 @@ impl ArchguardTools {
         test_coverage_tools::validate(&params)?;
         let run = tools::analyze_run(&self.root, params.path.as_deref())?;
         let report =
-            archguard_engine::read_test_coverage(&run.root, &run.loaded.config, &run.file_graph);
+            archguard_engine::read_test_coverage(&run.root, &run.loaded.config, run.named());
         let review = archguard_engine::test_coverage_review(&run.file_graph, &report);
         test_coverage_tools::coverage_value(&report, &review, &params).map(|v| v.to_string())
     }

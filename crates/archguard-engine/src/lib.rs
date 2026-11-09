@@ -139,7 +139,7 @@ pub use patterns::{
 pub use performance::{
     analyze_performance, measure_review_zones, review_performance, review_zones,
 };
-pub use pipeline::Level;
+pub use pipeline::{Level, NamedGraph, SourceNames};
 pub use project_files::write_project_file;
 pub use quality_findings::{
     QualityFinding, QualityReport, import_quality_findings, quality_findings_fingerprint,

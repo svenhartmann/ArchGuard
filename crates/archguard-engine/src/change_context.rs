@@ -1,6 +1,6 @@
 //! Evidence-backed, versioned context for a proposed source change.
 use archguard_core::{ArchguardError, Config, Graph, NodeId, NodeKind};
-use archguard_extract::{extractor_for, strip_root};
+use archguard_extract::strip_root;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -56,7 +56,7 @@ pub fn build_change_context(
     let run =
         crate::effective::analyze_run_quiet(&root, &declared, crate::pipeline::Level::Module)?;
     let calls = crate::semantic_calls::analyze_calls(&root, &run.config);
-    let source_nodes = source_nodes(&root, &run.config, &run.graph)?;
+    let source_nodes = source_nodes(&root, &run.config, &run.graph, Some(&run.source_names))?;
     let mut targets = options.targets.clone();
     let mut unresolved = vec![];
     if let Some(diff) = &diff {
@@ -217,6 +217,7 @@ fn source_nodes(
     root: &Path,
     config: &Config,
     graph: &Graph,
+    names: Option<&crate::pipeline::SourceNames>,
 ) -> Result<BTreeMap<String, Vec<NodeId>>, ArchguardError> {
     let mut nodes = BTreeMap::<&str, Vec<NodeId>>::new();
     for node in graph
@@ -238,13 +239,10 @@ fn source_nodes(
         let candidates = sources
             .entry(file.rel_path.clone())
             .or_insert_with(Vec::new);
-        let Some(extractor) = extractor_for(file.lang) else {
+        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
+        let Some(name) = crate::pipeline::source_node_name(&file, &stripped, names, None)? else {
             continue;
         };
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction =
-            extractor.extract(&stripped, &String::from_utf8_lossy(&fs::read(&file.path)?));
-        let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
         if let Some(ids) = nodes.get(name.as_str()) {
             candidates.extend(ids);
         }
@@ -684,7 +682,7 @@ mod tests {
         let mut duplicate = graph.nodes[0].clone();
         duplicate.id = NodeId(42);
         graph.nodes.push(duplicate);
-        let sources = source_nodes(root.path(), &Config::default(), &graph).unwrap();
+        let sources = source_nodes(root.path(), &Config::default(), &graph, None).unwrap();
         assert_eq!(
             sources.len(),
             2,
@@ -692,6 +690,20 @@ mod tests {
         );
         assert_eq!(sources["src/b.ts"], Vec::<NodeId>::new());
         assert_eq!(sources["src/a.ts"], vec![NodeId(0), NodeId(42)]);
+    }
+
+    #[test]
+    fn source_mapping_with_build_names_matches_a_fresh_extraction() {
+        let root = fixture();
+        let config = Config::default();
+        let files = crate::pipeline::walk_files(root.path(), &config).unwrap();
+        let (graph, names, _) =
+            crate::pipeline::build_graph_named(root.path(), &files, &config).unwrap();
+        let plain = source_nodes(root.path(), &config, &graph, None).unwrap();
+        let before = crate::pipeline::extractions::count();
+        let named = source_nodes(root.path(), &config, &graph, Some(&names)).unwrap();
+        assert_eq!(crate::pipeline::extractions::count(), before);
+        assert_eq!(named, plain);
     }
 
     #[test]

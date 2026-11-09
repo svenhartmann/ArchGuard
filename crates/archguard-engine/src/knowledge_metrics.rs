@@ -1,9 +1,10 @@
 //! Contribution concentration in a bounded Git history window, not actual expertise.
 use crate::config::validate_review_since;
+use crate::pipeline::NamedGraph;
 use crate::review_sources::{
     MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence,
 };
-use archguard_core::{ArchguardError, Config, GitStatus, Graph};
+use archguard_core::{ArchguardError, Config, GitStatus};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
@@ -69,18 +70,20 @@ fn row(node: String, touches: BTreeMap<String, u64>, complete: bool) -> Knowledg
         .into(),
     }
 }
-pub fn knowledge_metrics(
+/// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+pub fn knowledge_metrics<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
 ) -> Result<KnowledgeReport, ArchguardError> {
+    let graph = graph.into();
     validate_review_since(&config.review.git_since)?;
     let history = collect_git_history(root, &config.review.git_since, MAX_COMMITS, MAX_LOG_BYTES);
     let complete = history.evidence.status == GitStatus::Available
         && !history.evidence.shallow
         && !history.evidence.truncated
         && history.commits.iter().all(|c| !c.author.trim().is_empty());
-    let nodes: BTreeMap<_, _> = graph.nodes.iter().map(|n| (n.id, n)).collect();
+    let nodes: BTreeMap<_, _> = graph.graph.nodes.iter().map(|n| (n.id, n)).collect();
     let mut file_touches = BTreeMap::<String, BTreeMap<String, u64>>::new();
     let mut package_touches = BTreeMap::<String, BTreeMap<String, u64>>::new();
     let mut paths = BTreeMap::new();
