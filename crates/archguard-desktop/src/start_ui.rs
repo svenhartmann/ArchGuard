@@ -24,6 +24,8 @@ mod layout;
 mod lines;
 mod memo;
 mod modes;
+#[cfg(test)]
+mod narrow_check;
 mod motion;
 mod overlay;
 mod pins;

@@ -21,7 +21,7 @@ const BACKEND: &str = "python ast";
 const HINT: &str = "Install Python 3.9+ or set ARCHGUARD_PYTHON to its executable.";
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
 const INPUT_LIMIT: usize = 64 * 1024 * 1024;
-const LIMITATION: &str = "Syntax-only analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); calls on other values, rebound names and star imports stay unresolved. Types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod.";
+const LIMITATION: &str = CallAnalyzer::PYTHON_SYNTAX;
 
 /// What the helper writes to stdout.
 #[derive(Deserialize)]

@@ -15,7 +15,7 @@ mod index;
 mod names;
 mod resolve;
 
-const LIMITATION: &str = "Token-based analysis: classes, objects, functions, complexity and Halstead counts. Call targets are resolved statically from the package, imports (aliases; star imports with a single candidate), Kotlin classes, objects, companion objects, top-level functions, this, super and the project class hierarchy; calls on variables, properties and call results, extension functions, every call inside lambdas, local and extension functions, and Java classes of the project stay unresolved; overloads are not told apart. Types are not resolved; abstractness is read from interface, abstract class and sealed declarations. Property accessors, constructors, init blocks and property initializers are not measured, and calls in them are not counted.";
+const LIMITATION: &str = archguard_core::CallAnalyzer::KOTLIN_TOKENS;
 
 pub(crate) fn analyze_kotlin_calls(root: &Path, config: &Config) -> CallAnalysis {
     let scanned = RefCell::new(Vec::new());

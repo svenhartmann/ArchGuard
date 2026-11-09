@@ -58,6 +58,9 @@ msgstr "Matrix"
 msgid "Modules"
 msgstr "Module"
 
+msgid "About ArchGuard · Hartmann Software Engineering"
+msgstr "Über ArchGuard · Hartmann Software Engineering"
+
 msgid "Native viewer. License: MIT OR Apache-2.0."
 msgstr "Native Oberfläche. Lizenz: MIT OR Apache-2.0."
 

@@ -4,7 +4,7 @@
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, SearchField, StatInline, HelpTip } from "widgets.slint";
-import { WorldLegend, ServicesLegend } from "start_legend.slint";
+import { WorldLegend, ServicesLegend, Flow } from "start_legend.slint";
 import { Fmt } from "format.slint";
 import { StartData, StartTones, StartModel } from "start_data.slint";
 import { StartStage } from "start_world.slint";
@@ -61,6 +61,38 @@ component FilterPick inherits HorizontalLayout {
     }
 }
 
+// The World's figures: the services status, the area cycle groups or
+// the lens's measurement.
+component WorldStatus inherits HorizontalLayout {
+    in property <bool> services;
+    in property <string> services-status;
+    in property <string> metric;
+    // On a row of its own: left-aligned and wrapping.
+    in property <bool> wrap;
+    property <StartModel> m: StartData.model;
+    alignment: root.wrap ? start : end;
+    if root.services: Text {
+        text: root.services-status;
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        horizontal-stretch: 100;
+        horizontal-alignment: root.wrap ? left : right;
+        vertical-alignment: center;
+        overflow: elide;
+        wrap: root.wrap ? word-wrap : no-wrap;
+    }
+    if !root.services && m.lens == 0: StatInline { kpi: m.cycle-groups; }
+    if !root.services && m.lens != 0: Text {
+        text: m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {} / {} lines", Fmt.int(m.gaps), Fmt.int(m.covered-lines), Fmt.int(m.total-lines)) : @tr("Unknown · no usable coverage"))
+            : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
+            : @tr("Observed {} measurements", root.metric);
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        vertical-alignment: center;
+        wrap: root.wrap ? word-wrap : no-wrap;
+    }
+}
+
 export component StartView inherits Rectangle {
     callback open-web();
     property <StartModel> m: StartData.model;
@@ -81,6 +113,8 @@ export component StartView inherits Rectangle {
     property <string> search-text: m.search;
     changed search-text => { if search.text != self.search-text { search.text = self.search-text; } }
     property <string> metric: StartTones.kpi-label(m.kpi);
+    // The card stacks its status and footer rows below this width.
+    property <bool> narrow: card.width < 960px;
     background: Theme.bg;
 
     // The World fills the view; the project's KPIs follow below it, as the
@@ -134,27 +168,61 @@ export component StartView inherits Rectangle {
                     tip: @tr("Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag or arrow keys: pan. Right-, Shift- or Ctrl-drag, Q/E or a two-finger twist: rotate; pinch or + / −: zoom, 0: fit; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match. On the World, Enter shows the details and Esc closes them without clearing the selection.");
                 }
             }
-            // The services World's filters (`repositoryWorldControls`).
-            if root.services: HorizontalLayout {
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 8px;
-                padding-bottom: 8px;
-                spacing: 10px;
-                if m.services.deployments.length > 2: FilterPick {
+            // The services World's filters (`repositoryWorldControls`); they
+            // flow into further rows in a narrow card.
+            if root.services: Rectangle {
+                property <length> pad: 24px;
+                property <length> gap: 10px;
+                property <length> h: 32px;
+                property <length> avail: self.width - 2 * self.pad;
+                property <length> w0: m.services.deployments.length > 2 ? deployment.preferred-width : 0;
+                property <length> w1: evidence.preferred-width;
+                property <length> x1: Flow.x(self.w0, self.w1, self.gap, self.avail);
+                property <int> r1: Flow.row(self.w0, self.w1, self.gap, self.avail, 0);
+                property <length> w2: kind.preferred-width;
+                property <length> x2: Flow.x(self.x1 + self.w1, self.w2, self.gap, self.avail);
+                property <int> r2: Flow.row(self.x1 + self.w1, self.w2, self.gap, self.avail, self.r1);
+                property <length> w3: direction.preferred-width;
+                property <length> x3: Flow.x(self.x2 + self.w2, self.w3, self.gap, self.avail);
+                property <int> r3: Flow.row(self.x2 + self.w2, self.w3, self.gap, self.avail, self.r2);
+                property <length> w4: cycles.width;
+                property <length> x4: Flow.x(self.x3 + self.w3, self.w4, self.gap, self.avail);
+                property <int> r4: Flow.row(self.x3 + self.w3, self.w4, self.gap, self.avail, self.r3);
+                property <length> w5: flow.width;
+                property <length> x5: Flow.x(self.x4 + self.w4, self.w5, self.gap, self.avail);
+                property <int> r5: Flow.row(self.x4 + self.w4, self.w5, self.gap, self.avail, self.r4);
+                property <length> w6: all.width;
+                property <length> x6: Flow.x(self.x5 + self.w5, self.w6, self.gap, self.avail);
+                property <int> r6: Flow.row(self.x5 + self.w5, self.w6, self.gap, self.avail, self.r5);
+                pure function row-y(r: int) -> length { return 8px + r * (self.h + 8px); }
+                height: self.row-y(self.r6) + self.h + 8px;
+                deployment := FilterPick {
+                    visible: m.services.deployments.length > 2;
+                    x: parent.pad;
+                    y: parent.row-y(0);
+                    width: self.preferred-width;
+                    height: parent.h;
                     label: @tr("Deployment");
                     model: m.services.deployments;
                     index: m.services.deployment;
                     picked(i) => { StartData.services-filter(0, i); }
                 }
-                FilterPick {
+                evidence := FilterPick {
+                    x: parent.pad + parent.x1;
+                    y: parent.row-y(parent.r1);
+                    width: self.preferred-width;
+                    height: parent.h;
                     label: @tr("Evidence");
                     model: [@tr("Combined"), @tr("Source code"), @tr("Configuration"), @tr("Observed traces")];
                     index: m.services.source;
                     box-width: 125px;
                     picked(i) => { StartData.services-filter(1, i); }
                 }
-                FilterPick {
+                kind := FilterPick {
+                    x: parent.pad + parent.x2;
+                    y: parent.row-y(parent.r2);
+                    width: self.preferred-width;
+                    height: parent.h;
                     label: @tr("Connection kind");
                     model: [@tr("Communication"), StartTones.kind-label(0), StartTones.kind-label(1), StartTones.kind-label(2),
                         StartTones.kind-label(3), StartTones.kind-label(4), StartTones.kind-label(5)];
@@ -162,40 +230,81 @@ export component StartView inherits Rectangle {
                     box-width: 170px;
                     picked(i) => { StartData.services-filter(2, i); }
                 }
-                FilterPick {
+                direction := FilterPick {
+                    x: parent.pad + parent.x3;
+                    y: parent.row-y(parent.r3);
+                    width: self.preferred-width;
+                    height: parent.h;
                     label: @tr("Direction");
                     model: [@tr("Both"), @tr("Incoming"), @tr("Outgoing"), @tr("Where data flows (all hops)"), @tr("Where data comes from (all hops)")];
                     index: m.services.direction;
                     box-width: 170px;
                     picked(i) => { StartData.services-filter(3, i); }
                 }
-                LensButton { text: @tr("Cycles"); active: m.services.cycles-only; clicked => { StartData.services-toggle(0); } }
-                LensButton { text: @tr("Data flow"); active: m.services.flow; clicked => { StartData.services-toggle(1); } }
-                LensButton {
+                cycles := LensButton {
+                    x: parent.pad + parent.x4;
+                    y: parent.row-y(parent.r4);
+                    text: @tr("Cycles");
+                    active: m.services.cycles-only;
+                    clicked => { StartData.services-toggle(0); }
+                }
+                flow := LensButton {
+                    x: parent.pad + parent.x5;
+                    y: parent.row-y(parent.r5);
+                    text: @tr("Data flow");
+                    active: m.services.flow;
+                    clicked => { StartData.services-toggle(1); }
+                }
+                all := LensButton {
+                    x: parent.pad + parent.x6;
+                    y: parent.row-y(parent.r6);
                     text: m.services.all-projects ? @tr("Services only") : @tr("All projects");
                     clicked => { StartData.services-toggle(2); }
                 }
-                Rectangle { horizontal-stretch: 1; }
             }
-            // Lenses, metric and legend.
-            if !root.services: HorizontalLayout {
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 8px;
-                padding-bottom: 8px;
-                spacing: 8px;
-                LensButton { text: @tr("Problems"); active: m.lens == 0; clicked => { StartData.set-lens(0); } }
-                LensButton { text: @tr("Explore"); active: m.lens == 1; clicked => { StartData.set-lens(1); } }
-                LensButton { text: @tr("Test gaps"); active: m.lens == 2; clicked => { StartData.set-lens(2); } }
-                ComboBox {
+            // Lenses, metric and legend; they flow into further rows in a
+            // narrow card, where the legend wraps too. On the lenses' row
+            // the legend keeps to the right edge.
+            if !root.services: Rectangle {
+                property <length> pad: 24px;
+                property <length> gap: 8px;
+                property <length> h: 32px;
+                property <length> avail: self.width - 2 * self.pad;
+                property <length> w1: problems.width;
+                property <length> w2: explore.width;
+                property <length> x2: Flow.x(self.w1, self.w2, self.gap, self.avail);
+                property <int> r2: Flow.row(self.w1, self.w2, self.gap, self.avail, 0);
+                property <length> w3: gaps.width;
+                property <length> x3: Flow.x(self.x2 + self.w2, self.w3, self.gap, self.avail);
+                property <int> r3: Flow.row(self.x2 + self.w2, self.w3, self.gap, self.avail, self.r2);
+                property <length> w4: kpi-box.width;
+                property <length> x4: Flow.x(self.x3 + self.w3, self.w4, self.gap, self.avail);
+                property <int> r4: Flow.row(self.x3 + self.w3, self.w4, self.gap, self.avail, self.r3);
+                property <length> w5: min(legend.full-width, self.avail);
+                property <int> r5: Flow.row(self.x4 + self.w4, self.w5, 2 * self.gap, self.avail, self.r4);
+                property <length> x5: self.r5 == 0 ? self.avail - self.w5 : Flow.x(self.x4 + self.w4, self.w5, 2 * self.gap, self.avail);
+                pure function row-y(r: int) -> length { return 8px + r * (self.h + 8px); }
+                height: self.row-y(self.r5) + legend.height + 8px;
+                problems := LensButton { x: parent.pad; y: parent.row-y(0); text: @tr("Problems"); active: m.lens == 0; clicked => { StartData.set-lens(0); } }
+                explore := LensButton { x: parent.pad + parent.x2; y: parent.row-y(parent.r2); text: @tr("Explore"); active: m.lens == 1; clicked => { StartData.set-lens(1); } }
+                gaps := LensButton { x: parent.pad + parent.x3; y: parent.row-y(parent.r3); text: @tr("Test gaps"); active: m.lens == 2; clicked => { StartData.set-lens(2); } }
+                kpi-box := ComboBox {
+                    x: parent.pad + parent.x4;
+                    y: parent.row-y(parent.r4);
                     width: 140px;
+                    height: parent.h;
                     enabled: m.lens == 1;
                     model: [@tr("Complexity"), "CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
                     current-index: m.kpi;
                     selected => { StartData.set-kpi(self.current-index); }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                WorldLegend { lens: m.lens; kpi: m.kpi; }
+                legend := WorldLegend {
+                    x: parent.pad + parent.x5;
+                    y: parent.row-y(parent.r5);
+                    width: parent.w5;
+                    lens: m.lens;
+                    kpi: m.kpi;
+                }
             }
             // Back, package path and status.
             HorizontalLayout {
@@ -235,27 +344,31 @@ export component StartView inherits Rectangle {
                         }
                     }
                 }
-                if root.services: Rectangle { width: 12px; }
-                if root.services: ServicesLegend { }
+                if root.services && !root.narrow: Rectangle { width: 12px; }
+                if root.services && !root.narrow: ServicesLegend { }
                 Rectangle { horizontal-stretch: 1; }
-                if root.services: Text {
-                    text: root.services-status;
-                    color: Theme.muted;
-                    font-size: Theme.font-caption;
+                if !root.narrow: WorldStatus {
                     horizontal-stretch: 100;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                    overflow: elide;
+                    services: root.services;
+                    services-status: root.services-status;
+                    metric: root.metric;
                 }
-                if !root.services && m.lens == 0: StatInline { kpi: m.cycle-groups; }
-                if !root.services && m.lens != 0: Text {
-                    text: m.lens == 2 ? (m.coverage-known ? @tr("{} surfaces with gaps · {} / {} lines", Fmt.int(m.gaps), Fmt.int(m.covered-lines), Fmt.int(m.total-lines)) : @tr("Unknown · no usable coverage"))
-                        : m.top-value != "" ? @tr("Highest recorded {}: {} · {}", root.metric, m.top-value, m.top-area)
-                        : @tr("Observed {} measurements", root.metric);
-                    color: Theme.muted;
-                    font-size: Theme.font-caption;
-                    vertical-alignment: center;
-                }
+            }
+            // A narrow card puts the legend and the figures on rows of
+            // their own.
+            if root.services && root.narrow: HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                ServicesLegend { }
+            }
+            if root.narrow: WorldStatus {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-bottom: 8px;
+                wrap: true;
+                services: root.services;
+                services-status: root.services-status;
+                metric: root.metric;
             }
             stage := StartStage {
                 vertical-stretch: 1;
@@ -268,40 +381,56 @@ export component StartView inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            // Search, area picker, counts, details.
-            HorizontalLayout {
-                padding-left: 24px;
-                padding-right: 24px;
-                padding-top: 12px;
-                padding-bottom: 12px;
-                spacing: 16px;
+            // Search, area picker, counts, details; in a narrow card the
+            // search shares a row with Details, the picker and the counts
+            // follow below.
+            Rectangle {
+                property <length> pad: 24px;
+                property <length> gap: 16px;
+                property <length> avail: self.width - 2 * self.pad;
+                property <length> row-h: Theme.control-h;
+                property <length> text-x: root.narrow ? 0 : 2 * (220px + self.gap);
+                property <length> text-y: root.narrow ? 2 * (self.row-h + 8px) : 0;
+                property <length> text-w: root.narrow ? self.avail : self.avail - self.text-x - details.width - self.gap;
+                height: 24px + (root.narrow ? self.text-y + counts.preferred-height : self.row-h);
                 search := SearchField {
-                    width: 220px;
+                    x: parent.pad;
+                    y: 12px + (parent.row-h - self.height) / 2;
+                    width: root.narrow ? parent.avail - details.width - 8px : 220px;
                     text: root.search-text;
                     placeholder: root.services ? @tr("Find service or project…") : @tr("Search classes / files…");
                     edited(t) => { StartData.search(t); }
                     accepted => { StartData.accept-search(); }
                 }
-                ComboBox {
-                    width: 220px;
+                area := ComboBox {
+                    x: parent.pad + (root.narrow ? 0 : 220px + parent.gap);
+                    y: 12px + (root.narrow ? parent.row-h + 8px : 0) + (parent.row-h - self.height) / 2;
+                    width: root.narrow ? parent.avail : 220px;
+                    height: parent.row-h;
                     model: m.areas;
                     current-index: m.area-index;
                     selected => { StartData.pick-area(self.current-index); }
                 }
-                Text {
-                    horizontal-stretch: 1;
+                counts := Text {
+                    x: parent.pad + parent.text-x;
+                    y: 12px + parent.text-y;
+                    width: parent.text-w;
+                    height: root.narrow ? self.preferred-height : parent.row-h;
                     text: (root.services ? @tr("{} services / projects · {} local source projects", Fmt.int(m.services.islands), Fmt.int(m.services.local))
                         : @tr("{} elements · {} surfaces", Fmt.int(m.count), Fmt.int(m.tiles))) + (m.query != "" ? @tr(" · {} surfaces match", Fmt.int(m.matching)) : "");
                     color: Theme.muted;
                     font-size: Theme.font-caption;
-                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-alignment: root.narrow ? left : center;
                     vertical-alignment: center;
                 }
-                Button {
+                details := Button {
+                    x: parent.pad + parent.avail - self.width;
+                    y: 12px + (parent.row-h - self.height) / 2;
+                    width: self.preferred-width;
                     text: @tr("Details");
                     enabled: m.has-selection;
                     pressed-state: m.details-open;
-                    y: (parent.height - self.height) / 2;
                     clicked => { StartData.toggle-details(); }
                 }
             }
