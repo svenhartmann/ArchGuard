@@ -248,6 +248,61 @@ Each step ends with tests; estimates are for one developer, not measurements.
 | 5 | Join to the call model; `runtime_hotspot`; desktop overlay | 1–2 weeks |
 | 6 | Comparing two runs (before/after a refactoring), building on baseline diff | later |
 
+## Spike results (step 0, 2026-11-09)
+
+Setup: .NET 8, EF Core 8.0.11, Npgsql 8.0.9, OpenTelemetry 1.20.1,
+OpenTelemetry.Instrumentation.EntityFrameworkCore 1.20.2-beta.1, PostgreSQL 16
+in a local container. Nine query patterns (sync and async, cold and warm
+connection pool, N+1 loop, query after explicit open, query after nested
+awaits, `TagWithCallSite`), 19 query executions. "Found" means the first frame of
+application code was on the stack with method, file and line.
+
+| Observation point | Found |
+| --- | --- |
+| Stack in `ReaderExecuting(Async)`, `CommandCreating`, or OTel `OnStart` of the EF or Npgsql span | sync 2/2; async 13/17. All 4 misses are async queries that had to open a physical connection (cold pool); they lose the caller at every one of these points |
+| Stack in `DbConnectionInterceptor.ConnectionOpening(Async)` | 19/19: EF calls it before the first real await |
+| Driver span (`Npgsql`) `OnStart`, reading the site the EF interceptor put into an `AsyncLocal` just before execution (from the stack, else from the site remembered at connection opening for the same `DbContext`) | 19/19 |
+
+Further results:
+
+- EF instrumentation plus Npgsql tracing gives two spans per query, the
+  Npgsql span a correct child of the EF span; the broken parent links of
+  contrib issue 1764 did not occur with Npgsql. SqlClient was not tested
+  (no SQL Server on arm64 here).
+- With the EF instrumentation, every synchronous query leaves its finished
+  EF span as `Activity.Current`: the EF span ends before its Npgsql child,
+  whose end restores the finished parent. Later spans of the same flow
+  become children of a finished span. Without the EF instrumentation,
+  `Activity.Current` stays clean.
+- Both instrumentations write the old attribute names (`db.system`,
+  `db.statement`, `db.name`), not `db.system.name` / `db.query.text`.
+- EF 8 `TagWithCallSite()` writes `-- File: <path>:<line>` (capital F) as
+  the first line of the command text.
+- Exporters: no official OTLP file exporter for .NET (one third-party
+  package, 0.1.0). Java `io.opentelemetry:opentelemetry-exporter-logging-otlp`
+  1.68.0 registers the span exporters `logging-otlp` (OTLP JSON through
+  `java.util.logging`) and `experimental-otlp/stdout` (OTLP JSON lines to a
+  stream); both live in `internal` packages and are experimental. Whether the
+  Java agent bundles them was not checked.
+
+Consequences for the design:
+
+1. The .NET probe does not enable the OTel EF instrumentation. Its EF
+   interceptor finds the call site (stack, else the site remembered in
+   `ConnectionOpening` per `DbContext`), hands it to the driver span through
+   an `AsyncLocal` that is cleared after execution, and the probe's
+   processor writes it as `code.*` attributes onto the driver span. One
+   span per query; read time from the interceptor goes onto the same span.
+2. Plain ADO.NET or Dapper without EF has no `ConnectionOpening` hook; the
+   stack alone loses async callers on a cold pool. Version 1 records
+   `archguard.callsite.source = none` there; the importer reports the share.
+3. The importer treats a database span as wrapping another only when the
+   child starts within the parent's time window, so a finished span left
+   as `Activity.Current` is not mistaken for a wrapper.
+4. The .NET probe writes OTLP JSON Lines itself. The Java extension may use
+   `experimental-otlp/stdout` if the agent bundles it, else its own writer;
+   decided in step 4.
+
 ## Alternatives
 
 - **Own file format.** Simpler to parse, but every language would need an
@@ -296,3 +351,8 @@ Each step ends with tests; estimates are for one developer, not measurements.
   with `[runtime]` thresholds implemented in the engine instead of
   archguard-analysis, because they read only the profile. `runtime_hotspot`
   waits for the join to the call model (step 5).
+- **2026-11-09:** Step 0 spikes done for .NET and the exporter question
+  (see "Spike results"); the .NET probe drops the OTel EF instrumentation
+  and hands the call site to the driver span. SqlClient and the Java call
+  site remain untested. Consequence 3 (time-window rule for wrapping DB
+  spans) is implemented in the importer.

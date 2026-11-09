@@ -248,3 +248,51 @@ fn an_invalid_config_falls_back_to_default_thresholds() {
         p.diagnostics
     );
 }
+
+/// A finished DB span left as the ambient parent (seen with the EF
+/// instrumentation in the ADR 0004 spike) is not a wrapper: the later
+/// "child" starts after it ended, so both calls count.
+#[test]
+fn a_finished_parent_is_not_a_wrapper() {
+    let span = |id: &str, parent: Option<&str>, kind: u8, start: u64, end: u64, db: bool| {
+        let mut attrs = vec![];
+        if db {
+            attrs.push(serde_json::json!({"key":"db.system","value":{"stringValue":"postgresql"}}));
+            attrs
+                .push(serde_json::json!({"key":"db.statement","value":{"stringValue":"SELECT 1"}}));
+        }
+        let mut v = serde_json::json!({"traceId":"d".repeat(32),"spanId":id,"name":"s","kind":kind,
+            "startTimeUnixNano":(1_000_000_000u64 + start * 1_000_000).to_string(),
+            "endTimeUnixNano":(1_000_000_000u64 + end * 1_000_000).to_string(),"attributes":attrs});
+        if let Some(p) = parent {
+            v["parentSpanId"] = p.into();
+        }
+        v
+    };
+    let spans = vec![
+        span("1000000000000001", None, 2, 0, 100, false),
+        span(
+            "1000000000000002",
+            Some("1000000000000001"),
+            3,
+            10,
+            20,
+            true,
+        ),
+        span(
+            "1000000000000003",
+            Some("1000000000000002"),
+            3,
+            30,
+            40,
+            true,
+        ),
+    ];
+    let line = serde_json::json!({"resourceSpans":[{"resource":{"attributes":[
+        {"key":"service.name","value":{"stringValue":"orders"}}]},
+        "scopeSpans":[{"spans":spans}]}]});
+    let dir = project(&[(".archguard/runtime/stale.jsonl", &line.to_string())]);
+    let p = runtime_profile(dir.path(), None).unwrap();
+    assert_eq!(p.statements[0].calls, 2, "{:#?}", p.statements);
+    assert!(!p.diagnostics.iter().any(|d| d.message.contains("nested")));
+}
