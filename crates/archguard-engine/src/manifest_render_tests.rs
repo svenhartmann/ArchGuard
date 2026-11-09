@@ -92,6 +92,35 @@ fn a_remote_reference_in_a_base_blocks_the_overlay_and_names_the_field() {
 }
 
 #[test]
+fn a_remote_reference_behind_a_generator_directory_blocks_the_overlay() {
+    for field in ["generators", "transformers", "validators"] {
+        let (_dir, root) = root();
+        put(
+            &root,
+            "overlay/kustomization.yaml",
+            &format!("resources: [app.yaml]\n{field}: [gen]\n"),
+        );
+        put(&root, "overlay/app.yaml", "kind: ConfigMap\n");
+        put(
+            &root,
+            "overlay/gen/kustomization.yaml",
+            "resources:\n- https://evil.example/x.yaml\n",
+        );
+        let error = inspect(
+            &root,
+            "overlay/kustomization.yaml",
+            &mut BTreeSet::new(),
+            &mut BTreeSet::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("overlay/gen/kustomization.yaml") && error.contains("resources"),
+            "{field}: {error}"
+        );
+    }
+}
+
+#[test]
 fn local_overlays_consume_their_files_and_bases_but_not_unrelated_subdirectories() {
     let (_dir, root) = root();
     put(
@@ -304,6 +333,46 @@ fn remote_kustomizations_are_never_handed_to_the_tool() {
             .diagnostics
             .iter()
             .any(|d| d.file == "k/kustomization.yaml" && d.message.contains("remote")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn charts_with_symlinked_directories_leading_out_of_the_root_are_not_rendered() {
+    let (_dir, root) = root();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), "x").unwrap();
+    let tools_dir = tempfile::tempdir().unwrap();
+    let tool = recording_tool(tools_dir.path());
+    put(
+        &root,
+        "chart/Chart.yaml",
+        "apiVersion: v2\nname: shop\nversion: 0.1.0\n",
+    );
+    fs::create_dir_all(root.join("chart/templates")).unwrap();
+    fs::create_dir_all(root.join("shared")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        root.join("shared/x.yaml"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("../../shared", root.join("chart/templates/l")).unwrap();
+    // A loop back into the chart must not hang the walk.
+    std::os::unix::fs::symlink("..", root.join("shared/up")).unwrap();
+    let tools = Tools {
+        enabled: true,
+        helm: Some(tool),
+        kustomize: None,
+    };
+    let report = analyze(&root, &tools);
+    assert!(!tools_dir.path().join("RAN").exists(), "helm must not run");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.file == "chart/Chart.yaml" && d.message.contains("x.yaml")),
         "{:?}",
         report.diagnostics
     );

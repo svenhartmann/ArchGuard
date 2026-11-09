@@ -275,10 +275,10 @@ pub(crate) fn inspect(
             continue;
         }
         regions.insert(Region::Dir(path.clone()));
-        if matches!(field, "resources" | "bases" | "components")
-            && let Some(name) = KUSTOMIZATIONS
-                .iter()
-                .find(|name| root.join(&path).join(name).is_file())
+        // Every field kustomize resolves as a directory builds its kustomization.
+        if let Some(name) = KUSTOMIZATIONS
+            .iter()
+            .find(|name| root.join(&path).join(name).is_file())
         {
             inspect(root, &join(&path, name), seen, regions)?;
         }
@@ -344,9 +344,11 @@ pub(crate) fn local(root: &Path, dir: &str, entry: &str) -> Option<String> {
 }
 
 /// A chart path helm could read outside `root`: a symlink pointing out of it, or
-/// any path that could not be checked within the entry limit.
+/// any path that could not be checked within the entry limit. Symlinked
+/// directories inside `root` are walked too, since helm follows them.
 fn escaping_symlink(root: &Path, dir: &Path) -> Option<String> {
     let mut stack = vec![dir.to_path_buf()];
+    let mut visited: BTreeSet<PathBuf> = std::fs::canonicalize(dir).into_iter().collect();
     let mut entries = 0;
     while let Some(next) = stack.pop() {
         let Ok(listing) = std::fs::read_dir(&next) else {
@@ -363,17 +365,34 @@ fn escaping_symlink(root: &Path, dir: &Path) -> Option<String> {
             if entries > MAX_CHART_ENTRIES {
                 return Some(relative(root, dir));
             }
-            if kind.is_symlink() {
-                let inside = std::fs::canonicalize(&path).is_ok_and(|p| p.starts_with(root));
-                if !inside {
-                    return Some(relative(root, &path));
-                }
-            } else if kind.is_dir() {
-                stack.push(path);
+            match descend(root, path, kind, &mut visited) {
+                Ok(Some(dir)) => stack.push(dir),
+                Ok(None) => {}
+                Err(escape) => return Some(escape),
             }
         }
     }
     None
+}
+
+/// Whether the walk enters `path`: a directory, or a symlink to a directory
+/// inside `root` not seen before. A symlink out of `root` is the escape.
+fn descend(
+    root: &Path,
+    path: PathBuf,
+    kind: std::fs::FileType,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    if !kind.is_symlink() {
+        return Ok(kind.is_dir().then_some(path));
+    }
+    let Some(target) = std::fs::canonicalize(&path)
+        .ok()
+        .filter(|p| p.starts_with(root))
+    else {
+        return Err(relative(root, &path));
+    };
+    Ok((target.is_dir() && visited.insert(target)).then_some(path))
 }
 /// A command with an empty environment and temporary home, cache and config dirs.
 fn isolated(executable: &Path, home: &Path) -> Command {
