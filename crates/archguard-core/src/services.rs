@@ -48,6 +48,11 @@ pub struct ServiceRoute {
     pub steps: Vec<RouteStep>,
     /// Error responses the route raises itself (status and message).
     pub failures: Vec<RouteFailure>,
+    /// The handler catches errors itself (`catch`, `except`, `rescue`,
+    /// `recover()`, `err != nil`); errors from its calls do not simply
+    /// pass through.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub catches: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

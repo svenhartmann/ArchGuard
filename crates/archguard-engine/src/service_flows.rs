@@ -5,6 +5,8 @@
 //! imported client code sets up. Target services come from the configured
 //! endpoints (`PAYMENTS_API` → payments) or from URLs naming a service.
 
+mod events;
+
 use archguard_core::{
     RouteFailure, RouteStep, ServiceDependencyKind, ServiceResilience, ServiceRoute,
     ServiceTopology,
@@ -66,6 +68,7 @@ pub(crate) fn augment(root: &Path, report: &mut ServiceTopology) {
             }
         }
     }
+    events::connect(&mut routes);
     report.routes = routes;
     report.resilience = resilience;
 }
@@ -195,6 +198,7 @@ fn route(
                 s
             })
             .collect(),
+        catches: catches(segment),
         failures: failures_in(segment)
             .into_iter()
             .map(|mut f| {
@@ -211,6 +215,11 @@ fn routes_in(text: &str) -> Vec<(Found, usize)> {
     let mut found: Vec<Found> = Vec::new();
     found.extend(compared_routes(text));
     found.extend(registered_routes(text));
+    found.extend(events::consumed(text).into_iter().map(|(topic, at)| Found {
+        method: events::EVENT.into(),
+        path: topic,
+        at,
+    }));
     found.sort_by_key(|f| f.at);
     found.dedup_by(|a, b| a.at == b.at);
     let ends: Vec<usize> = found
@@ -328,6 +337,11 @@ fn calls_in(segment: &str, targets: &Targets) -> Vec<RouteStep> {
             }
         }
     }
+    steps.extend(
+        events::published(segment)
+            .into_iter()
+            .map(|(topic, at)| (at, events::step(topic))),
+    );
     steps.sort_by_key(|(at, _)| *at);
     steps
         .into_iter()
@@ -391,6 +405,22 @@ fn parallel_ranges(segment: &str) -> Vec<(usize, usize)> {
         }
     }
     out
+}
+
+/// The handler catches errors itself: `catch`, `except`, `rescue` as
+/// words, `recover()` or `err != nil`.
+fn catches(segment: &str) -> bool {
+    let word = |w: &str| {
+        segment.match_indices(w).any(|(at, _)| {
+            let before = segment[..at].chars().next_back();
+            let after = segment[at + w.len()..].chars().next();
+            let edge = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+            edge(before) && edge(after)
+        })
+    };
+    ["catch", "except", "rescue"].into_iter().any(word)
+        || segment.contains("recover()")
+        || segment.contains("err != nil")
 }
 
 /// `HttpError(409, 'Insufficient stock')`, `HTTPException(status_code=404, …)`,
@@ -620,5 +650,29 @@ export function createHandler({call}) {
             .collect();
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn a_handler_that_catches_errors_is_marked() {
+        let cases = [
+            (
+                "try { await call('PAYMENTS_API', '/p'); } catch (e) { return {}; }",
+                true,
+            ),
+            ("try:\n  call()\nexcept Timeout:\n  pass", true),
+            ("res, err := get(); if err != nil { return }", true),
+            ("defer func() { recover() }()", true),
+            (
+                "await call('PAYMENTS_API', '/p'); // catchy name: catchAll",
+                false,
+            ),
+            (
+                "const exceptional = 1; await call('PAYMENTS_API', '/p');",
+                false,
+            ),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(catches(body), expected, "{body}");
+        }
     }
 }

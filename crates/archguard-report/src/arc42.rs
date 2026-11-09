@@ -555,7 +555,7 @@ pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
         c.markdown.push_str("\n### Abgeleitete Schichten\n\nVon ArchGuard aus den beobachteten Abhängigkeiten berechnet. Das ist eine Beobachtung, keine Vorgabe; Verstöße gegen diese Schichten sind nur Hinweise.\n\n");
         layers(&mut c.markdown, &derived);
     }
-    c.questions.push("Sicherheits-, Fehlerbehandlungs-, Persistenz-, Transaktions- und Observability-Konzepte anhand zusätzlicher Belege beschreiben.".into());
+    crate::arc42_errors::add(&mut c.markdown, &mut c.questions, services, cell);
 
     let c = &mut chapters[8];
     c.markdown.push_str("Quelle: `architecture.decisions`. Status, Alternativen und Abwägungen werden ausschließlich aus deklarierten Angaben übernommen.\n\n");
