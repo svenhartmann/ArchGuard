@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 mod kotlin_calls;
+mod memo;
 pub(crate) mod token_calls;
 
 /// Enrich the import graph before any SCC, gate or metric is calculated.
@@ -70,8 +71,14 @@ pub(crate) fn integrate_graph_named(
 
 /// Detect source languages once and combine independently reported providers.
 /// Unavailable or partial providers remain explicit coverage gaps, not clean call graphs.
-#[tracing::instrument(skip_all)]
+/// Reuses the last result for `root` while configuration and sources are
+/// unchanged (`memo`).
 pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
+    memo::cached(root, config, || compute_calls(root, config))
+}
+
+#[tracing::instrument(skip_all)]
+fn compute_calls(root: &Path, config: &Config) -> CallAnalysis {
     let files = match crate::pipeline::walk_files(root, config) {
         Ok(files) => files,
         Err(error) => {
@@ -87,65 +94,83 @@ pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
     for file in files {
         *counts.entry(file.lang).or_insert(0usize) += 1;
     }
-    let mut reports = Vec::new();
-    let mut typescript_analyzed = false;
     let script_counts = [
         ("typescript", *counts.get(&Lang::Ts).unwrap_or(&0)),
         ("javascript", *counts.get(&Lang::Js).unwrap_or(&0)),
     ];
+    let mut reports = Vec::new();
+    let mut typescript_analyzed = false;
     for (lang, count) in counts {
-        let language = language_name(lang);
-        let mut report = match lang {
-            Lang::Java => crate::java_calls::analyze_java_calls(root, config),
-            Lang::CSharp => crate::csharp_calls::analyze_csharp_calls(root, config),
-            Lang::Go => crate::go_calls::analyze_go_calls(root, config),
-            Lang::Rust => crate::rust_calls::analyze_rust_calls(root, config),
-            Lang::Py => crate::python_calls::analyze_python_calls(root, config),
-            Lang::Php => crate::php_calls::analyze_php_calls(root, config),
-            Lang::Ts | Lang::Js => {
-                if typescript_analyzed {
-                    continue;
-                }
-                typescript_analyzed = true;
-                crate::typescript_calls::analyze_typescript_calls(root, config)
-            }
-            Lang::Kotlin => kotlin_calls::analyze_kotlin_calls(root, config),
-        };
-        if report.files == 0 && report.status == "unavailable" {
-            report.files = if matches!(lang, Lang::Ts | Lang::Js) {
-                script_counts.iter().map(|(_, count)| count).sum()
-            } else {
-                count
-            };
-            if report.analyzers.len() == 1 {
-                report.analyzers[0].files = count;
-            }
+        let script = matches!(lang, Lang::Ts | Lang::Js);
+        if script && std::mem::replace(&mut typescript_analyzed, true) {
+            continue;
         }
-        if matches!(lang, Lang::Ts | Lang::Js) && report.status == "unavailable" {
-            report.analyzers = script_counts
-                .iter()
-                .filter(|(_, count)| *count > 0)
-                .map(|(language, count)| archguard_core::CallAnalyzer {
-                    language: (*language).into(),
-                    backend: "typescript".into(),
-                    status: "unavailable".into(),
-                    files: *count,
-                    version: None,
-                    project: config.semantic.typescript.project.clone(),
-                    diagnostics: report.diagnostics.clone(),
-                })
-                .collect();
+        let mut report = backend_report(lang, root, config);
+        if report.status == "unavailable" {
+            mark_unavailable(&mut report, lang, count, &script_counts, config);
         }
         reports.push((
-            if matches!(lang, Lang::Ts | Lang::Js) {
+            if script {
                 "typescript"
             } else {
-                language
+                language_name(lang)
             },
             report,
         ));
     }
     combine(reports)
+}
+
+/// The call analysis of one language's backend; JavaScript is analysed with
+/// TypeScript.
+fn backend_report(lang: Lang, root: &Path, config: &Config) -> CallAnalysis {
+    match lang {
+        Lang::Java => crate::java_calls::analyze_java_calls(root, config),
+        Lang::CSharp => crate::csharp_calls::analyze_csharp_calls(root, config),
+        Lang::Go => crate::go_calls::analyze_go_calls(root, config),
+        Lang::Rust => crate::rust_calls::analyze_rust_calls(root, config),
+        Lang::Py => crate::python_calls::analyze_python_calls(root, config),
+        Lang::Php => crate::php_calls::analyze_php_calls(root, config),
+        Lang::Ts | Lang::Js => crate::typescript_calls::analyze_typescript_calls(root, config),
+        Lang::Kotlin => kotlin_calls::analyze_kotlin_calls(root, config),
+    }
+}
+
+/// An unavailable backend still reports how many files it would have
+/// covered; TypeScript and JavaScript each as their own analyzer.
+fn mark_unavailable(
+    report: &mut CallAnalysis,
+    lang: Lang,
+    count: usize,
+    script_counts: &[(&str, usize); 2],
+    config: &Config,
+) {
+    let script = matches!(lang, Lang::Ts | Lang::Js);
+    if report.files == 0 {
+        report.files = if script {
+            script_counts.iter().map(|(_, count)| count).sum()
+        } else {
+            count
+        };
+        if report.analyzers.len() == 1 {
+            report.analyzers[0].files = count;
+        }
+    }
+    if script {
+        report.analyzers = script_counts
+            .iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(language, count)| archguard_core::CallAnalyzer {
+                language: (*language).into(),
+                backend: "typescript".into(),
+                status: "unavailable".into(),
+                files: *count,
+                version: None,
+                project: config.semantic.typescript.project.clone(),
+                diagnostics: report.diagnostics.clone(),
+            })
+            .collect();
+    }
 }
 
 /// The language name of call analyzers and their reports.

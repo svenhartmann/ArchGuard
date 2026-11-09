@@ -138,7 +138,12 @@ fn tick(ui: &AppWindow) {
     let Some(root) = root else { return };
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let (profile, new) = (archguard_engine::runtime_profile(&root, None), stamp(&root));
+        // Untraced: reading its own recording would record itself and
+        // change the file it watches, so it would reload every second.
+        let profile = archguard_engine::self_trace::untraced(|| {
+            archguard_engine::runtime_profile(&root, None)
+        });
+        let new = stamp(&root);
         let _ = slint::invoke_from_event_loop(move || arrive(&weak, doc, profile, new));
     });
 }

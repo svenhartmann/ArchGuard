@@ -52,6 +52,13 @@ pub fn entry_span(name: &str) -> tracing::Span {
     tracing::info_span!(parent: None, "entry", otel.name = name, archguard.entry = true)
 }
 
+/// Run `f` on this thread without recording spans: for ArchGuard reading
+/// its own recordings (the Runtime tab's live reload), which would otherwise
+/// record itself, change the file and reload again every second.
+pub fn untraced<R>(f: impl FnOnce() -> R) -> R {
+    tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), f)
+}
+
 /// Install the probe when `ARCHGUARD_PROBE=1`. Keep the returned value
 /// until the process ends: dropping it writes the remaining spans.
 /// `None` when the probe is off or another subscriber is installed.
@@ -174,6 +181,18 @@ fn export_line(resource: &Value, spans: Vec<Value>) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn untraced_work_records_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (probe, subscriber) =
+            Probe::recorder(dir.path().to_path_buf(), DEFAULT_MAX_BYTES, "test");
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(!tracing::info_span!("recorded").is_disabled());
+            untraced(|| assert!(tracing::info_span!("hidden").is_disabled()));
+        });
+        drop(probe);
+    }
     use super::*;
 
     /// Run `f` with a recorder installed on this thread; the written lines.

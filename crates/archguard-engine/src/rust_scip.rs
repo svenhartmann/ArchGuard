@@ -18,6 +18,8 @@ use protobuf::Message;
 use scip::types::{Index, PositionEncoding};
 use sha2::{Digest, Sha256};
 
+mod disk;
+
 const HINT: &str = "Install rust-analyzer (rustup component add rust-analyzer, or brew install rust-analyzer) or set ARCHGUARD_RUST_ANALYZER to its executable.";
 /// SCIP `SymbolRole::Definition`.
 const DEFINITION: i32 = 1;
@@ -82,7 +84,21 @@ pub(crate) fn index(
     {
         return Ok(index.clone());
     }
-    let index = run(root, executable)?;
+    let dir = disk::cache_dir();
+    let kept = dir
+        .as_deref()
+        .and_then(|d| disk::load(d, root, &fingerprint))
+        .and_then(|(version, bytes)| parse(version, &bytes).ok());
+    let index = match kept {
+        Some(index) => index,
+        None => {
+            let (version, bytes) = run(root, executable)?;
+            if let Some(d) = &dir {
+                let _ = disk::store(d, root, &fingerprint, &version, &bytes);
+            }
+            parse(version, &bytes)?
+        }
+    };
     // Failures are not cached: a missing tool or a timeout may be transient.
     *guard = Some((fingerprint, index.clone()));
     Ok(index)
@@ -129,7 +145,8 @@ fn version(root: &Path, executable: &OsStr, scratch: &Path) -> Result<String, St
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
-fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
+/// rust-analyzer's version and the raw SCIP index it wrote for `root`.
+fn run(root: &Path, executable: &OsStr) -> Result<(String, Vec<u8>), String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let version = version(root, executable, dir.path())?;
     let config = dir.path().join("rust-analyzer.json");
@@ -157,7 +174,12 @@ fn run(root: &Path, executable: &OsStr) -> Result<ScipIndex, String> {
         .env("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "");
     crate::go_calls::execute(&mut command, dir.path(), None, "rust-analyzer scip", HINT)?;
     let bytes = std::fs::read(&output).map_err(|e| format!("rust-analyzer wrote no index: {e}"))?;
-    let parsed = Index::parse_from_bytes(&bytes).map_err(|e| format!("invalid SCIP index: {e}"))?;
+    Ok((version, bytes))
+}
+
+#[tracing::instrument(skip_all)]
+fn parse(version: String, bytes: &[u8]) -> Result<ScipIndex, String> {
+    let parsed = Index::parse_from_bytes(bytes).map_err(|e| format!("invalid SCIP index: {e}"))?;
     let mut index = ScipIndex {
         version,
         occurrences: HashMap::new(),
