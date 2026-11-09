@@ -387,6 +387,16 @@ pub fn derive_project_hints(root: &Path) -> Result<(Vec<String>, Vec<String>), A
     }
     let mut roots = ranked_roots(&per_dir, files.len());
 
+    // A directory with `__init__.py` is a Python package, not a source root:
+    // the root is the parent of its outermost package (flat layout `mypkg/`
+    // → `.`), so `import mypkg.b` keeps its package name and resolves.
+    roots = roots
+        .into_iter()
+        .map(|dir| python_package_parent(root, dir))
+        .collect();
+    roots.sort();
+    roots.dedup();
+
     // A composer.json's PSR-4 directories are the authoritative roots.
     if let Ok(content) = fs::read_to_string(root.join("composer.json")) {
         let mut psr4: Vec<String> = parse_psr4(&content)
@@ -478,6 +488,18 @@ fn merge_layers(declared: &[LayerConfig], derived: Vec<LayerConfig>) -> Vec<Laye
         .collect();
     merged.extend(appended);
     merged
+}
+
+/// `dir` itself, or — when it holds `__init__.py` — the parent of the
+/// outermost enclosing Python package (`.` for a top-level package).
+fn python_package_parent(root: &Path, mut dir: String) -> String {
+    while dir != "." && root.join(&dir).join("__init__.py").is_file() {
+        dir = match dir.rsplit_once('/') {
+            Some((parent, _)) => parent.to_string(),
+            None => ".".to_string(),
+        };
+    }
+    dir
 }
 
 /// The top-level directories by descending file count until
@@ -860,6 +882,28 @@ mod tests {
         let (roots, languages) = derive_project_hints(dir.path()).expect("hints");
         assert_eq!(roots, ["src"]);
         assert_eq!(languages, ["ts"]);
+    }
+
+    #[test]
+    fn python_package_dir_is_not_a_source_root() {
+        // Flat layout: `mypkg` is the package, so its parent is the root.
+        let dir = fixture(&[
+            ("pyproject.toml", "[project]\nname = \"mypkg\"\n"),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/a.py", "from mypkg import b\n"),
+            ("mypkg/b.py", "from mypkg import a\n"),
+        ]);
+        let (roots, _) = derive_project_hints(dir.path()).expect("hints");
+        assert_eq!(roots, ["."]);
+
+        // src layout: `src` holds the package and stays the root.
+        let dir = fixture(&[
+            ("src/mypkg/__init__.py", ""),
+            ("src/mypkg/a.py", "from mypkg import b\n"),
+            ("src/mypkg/b.py", "from mypkg import a\n"),
+        ]);
+        let (roots, _) = derive_project_hints(dir.path()).expect("hints");
+        assert_eq!(roots, ["src"]);
     }
 
     #[test]

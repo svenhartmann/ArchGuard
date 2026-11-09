@@ -24,8 +24,8 @@ pub(crate) fn run(
     base: Option<&str>,
     acd_limit: Option<f64>,
 ) -> i32 {
-    if acd_limit.is_some_and(|n| !n.is_finite() || n < 0.0) {
-        return usage("--fail-on-acd-regression must be finite and nonnegative");
+    if let Some(code) = precondition_error(root, graph, acd_limit) {
+        return code;
     }
     let comparison = match base
         .map(|base| compare_to_ref(root, loaded, graph, report, base))
@@ -82,6 +82,28 @@ pub(crate) fn run(
         Default::default()
     };
     check(cli, baseline, &checked, comparison.as_ref(), &paths)
+}
+
+/// The exit code of a check that must not run: an invalid ACD limit
+/// (usage) or an analysis without any source file (error).
+fn precondition_error(
+    root: &Path,
+    graph: &archguard_engine::core::Graph,
+    acd_limit: Option<f64>,
+) -> Option<i32> {
+    if acd_limit.is_some_and(|n| !n.is_finite() || n < 0.0) {
+        return Some(usage(
+            "--fail-on-acd-regression must be finite and nonnegative",
+        ));
+    }
+    // Nothing analysed is no evidence of a clean architecture: a wrong path
+    // (e.g. the GitHub Action's `path:`) must not turn the gate green.
+    graph.nodes.is_empty().then(|| {
+        analysis_error(format!(
+            "no source files found under {}; check the path and [project] source_roots/languages",
+            root.display()
+        ))
+    })
 }
 
 /// How many per-violation evidence strings a gate finding samples at most.
