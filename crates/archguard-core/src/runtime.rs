@@ -176,6 +176,10 @@ pub struct RuntimeSpan {
     pub depth: u32,
     pub offset_ms: f64,
     pub duration_ms: f64,
+    /// Duration minus the time covered by this span's own children (their
+    /// union, so parallel children are not subtracted twice).
+    #[serde(default)]
+    pub self_ms: f64,
     /// `server`, `client`, `internal`, `producer`, `consumer` or `unspecified`.
     pub kind: String,
     pub name: String,
@@ -185,4 +189,7 @@ pub struct RuntimeSpan {
     pub function: Option<String>,
     pub file: Option<String>,
     pub line: Option<u32>,
+    /// The calling method of a method span (`archguard.caller.function`).
+    #[serde(default)]
+    pub caller: Option<String>,
 }

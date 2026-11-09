@@ -21,6 +21,8 @@ pub(super) struct Span {
     pub error: bool,
     pub db: Option<Db>,
     pub site: Option<Site>,
+    /// `archguard.caller.function` of a method span.
+    pub caller: Option<String>,
     /// Input index and 1-based line, for evidence.
     pub input: usize,
     pub line: u32,
@@ -126,6 +128,7 @@ impl Span {
                 .is_some_and(|c| c.as_u64() == Some(2) || c.as_str() == Some("STATUS_CODE_ERROR")),
             db: db(value),
             site: site(value),
+            caller: text(value, "archguard.caller.function", MAX_NAME),
             input,
             line,
         })

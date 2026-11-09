@@ -195,3 +195,41 @@ fn dotnet_method_spans_nest_controller_service_repository_and_db() {
         .count();
     assert!(db_below_repository >= 7, "{db_below_repository}");
 }
+
+/// Self time = duration minus the time covered by the span's own children;
+/// method spans carry the caller the probe recorded (`archguard.caller.function`).
+#[test]
+fn spans_carry_self_time_and_caller() {
+    let p = profile("shop-dotnet.jsonl");
+    let request = p
+        .requests
+        .iter()
+        .filter(|r| r.name.contains("summary"))
+        .max_by_key(|r| r.db_calls)
+        .unwrap();
+    let span = |name: &str| request.spans.iter().find(|s| s.name == name).unwrap();
+    let controller = span("OrdersController.GetSummary");
+    let service = span("OrderService.GetSummaryAsync");
+    assert_eq!(
+        service.caller.as_deref(),
+        Some("Shop.Orders.OrdersController.GetSummary")
+    );
+    // The controller's only child is the service call.
+    let expected = controller.duration_ms - service.duration_ms;
+    assert!(
+        (controller.self_ms - expected).abs() < 0.01,
+        "{} vs {expected}",
+        controller.self_ms
+    );
+    for s in &request.spans {
+        assert!(
+            s.self_ms >= 0.0 && s.self_ms <= s.duration_ms + 1e-9,
+            "{s:#?}"
+        );
+        if s.db.is_some() {
+            assert_eq!(s.self_ms, s.duration_ms, "a database call has no children");
+        }
+    }
+    let repository = span("OrderRepository.GetLinesWithProductsAsync");
+    assert!(repository.self_ms < repository.duration_ms);
+}

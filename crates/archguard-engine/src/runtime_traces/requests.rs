@@ -68,7 +68,10 @@ fn request(index: &Index, inputs: &[String], e: usize) -> RuntimeRequest {
         error: root.error,
         db_calls: walk.db_calls,
         db_time_ms: round(walk.db_time),
-        spans: walk.spans,
+        spans: {
+            self_times(&mut walk.spans);
+            walk.spans
+        },
         spans_truncated: walk.truncated,
         evidence: evidence(index.spans, inputs, e),
     }
@@ -116,6 +119,7 @@ fn node(index: &Index, root: &Span, span: &Span, depth: u32) -> RuntimeSpan {
         depth,
         offset_ms: round(span.start.saturating_sub(root.start) as f64 / 1_000_000.0),
         duration_ms: round(ms(span)),
+        self_ms: 0.0,
         kind: kind(span.kind).into(),
         name: span.name.clone(),
         error: span.error,
@@ -126,5 +130,36 @@ fn node(index: &Index, root: &Span, span: &Span, depth: u32) -> RuntimeSpan {
         function,
         file,
         line,
+        caller: span.caller.clone(),
+    }
+}
+
+/// Fills `self_ms` of the pre-order list: duration minus the union of the
+/// direct children's time windows, clipped to the span.
+fn self_times(spans: &mut [RuntimeSpan]) {
+    for i in 0..spans.len() {
+        let (depth, start) = (spans[i].depth, spans[i].offset_ms);
+        let end = start + spans[i].duration_ms;
+        let mut children: Vec<(f64, f64)> = spans[i + 1..]
+            .iter()
+            .take_while(|s| s.depth > depth)
+            .filter(|s| s.depth == depth + 1)
+            .map(|s| {
+                (
+                    s.offset_ms.max(start),
+                    (s.offset_ms + s.duration_ms).min(end),
+                )
+            })
+            .filter(|(a, b)| b > a)
+            .collect();
+        children.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (mut covered, mut reached) = (0.0, f64::MIN);
+        for (a, b) in children {
+            if b > reached {
+                covered += b - a.max(reached);
+                reached = b;
+            }
+        }
+        spans[i].self_ms = round((spans[i].duration_ms - covered).max(0.0));
     }
 }

@@ -160,3 +160,9 @@ msgstr "Mehr Spans als angezeigt; die JSON-Ausgabe der CLI enthält alle Zahlen.
 
 msgid "Trace {}"
 msgstr "Trace {}"
+
+msgid "called from {}"
+msgstr "aufgerufen aus {}"
+
+msgid "self {} ms"
+msgstr "eigen {} ms"

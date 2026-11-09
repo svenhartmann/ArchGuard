@@ -29,6 +29,11 @@ export struct RtSpanRow {
     depth: int,
     label: string,
     site: string,
+    // `site` is the calling method and line of a method span.
+    called-from: bool,
+    // Duration minus the time of the span's children, when it has any.
+    self-time: string,
+    has-self: bool,
     // Start and length as shares of the request's duration.
     x: float,
     w: float,
@@ -128,7 +133,7 @@ component SpanRow inherits Rectangle {
             padding-left: s.depth * 14px - 14px;
             alignment: center;
             Small { text: s.label; mono: s.kind != 2; color: s.error || s.repeated ? Theme.danger : Theme.text; }
-            if s.site != "": Small { text: s.site; muted: true; mono: true; }
+            if s.site != "": Small { text: s.called-from ? @tr("called from {}", s.site) : s.site; muted: true; mono: true; }
         }
         track := Rectangle {
             horizontal-stretch: 1;
@@ -143,7 +148,12 @@ component SpanRow inherits Rectangle {
                     : root.s.kind == 1 ? Theme.outgoing : Theme.edge;
             }
         }
-        Small { text: @tr("{} ms", s.duration); width: 72px; horizontal-alignment: right; }
+        VerticalLayout {
+            width: 96px;
+            alignment: center;
+            Small { text: @tr("{} ms", s.duration); horizontal-alignment: right; }
+            if s.has-self: Small { text: @tr("self {} ms", s.self-time); muted: true; horizontal-alignment: right; }
+        }
     }
 }
 
