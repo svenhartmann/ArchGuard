@@ -38,6 +38,12 @@ use scanned_file::ScannedFile;
 #[path = "rust_imports.rs"]
 mod rust_imports;
 pub(crate) use rust_imports::{CrateItems, ItemTarget, hash_manifests};
+#[path = "source_names.rs"]
+mod source_names;
+#[cfg(test)]
+pub(crate) use source_names::extractions;
+pub use source_names::{NamedGraph, SourceNames};
+pub(crate) use source_names::{file_node_name, source_node_name};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -48,11 +54,11 @@ use archguard_analysis::{
 };
 use archguard_core::{
     ArchguardError, Config, ConfigSource, Cut, DenyCycles, Finding, FindingKind, Graph,
-    GraphBuilder, NodeId, Ref, Report, Severity, aggregate,
+    GraphBuilder, NodeId, Ref, Report, Severity, Status, Summary, aggregate,
 };
 use archguard_extract::{
-    DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, extractor_for,
-    parse_psr4, resolve_relative, strip_root, walk,
+    DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, parse_psr4,
+    resolve_relative, walk,
 };
 
 /// `schema_version` of the emitted [`Report`] (Kap. 5).
@@ -120,24 +126,17 @@ pub(crate) fn build_graph(
     files: &[SourceFile],
     config: &Config,
 ) -> Result<(Graph, Vec<String>), ArchguardError> {
+    build_graph_named(root, files, config).map(|(graph, _, warnings)| (graph, warnings))
+}
+
+/// [`build_graph`] plus the [`SourceNames`] of the extracted files.
+pub(crate) fn build_graph_named(
+    root: &Path,
+    files: &[SourceFile],
+    config: &Config,
+) -> Result<(Graph, SourceNames, Vec<String>), ArchguardError> {
     // ---- Kap. 6 step 4: extract every file against its stripped path.
-    let mut scanned: Vec<ScannedFile> = Vec::new();
-    for file in files {
-        let Some(extractor) = extractor_for(file.lang) else {
-            continue; // a language walk accepted but no scanner registered
-        };
-        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = extractor.extract(&stripped, &content);
-        let node_name = file_node_name(&stripped, &extraction.declarations);
-        scanned.push(ScannedFile {
-            rel_path: file.rel_path.clone(),
-            stripped,
-            node_name,
-            lang: lang_name(file.lang),
-            extraction,
-        });
-    }
+    let scanned = scan(files, config)?;
 
     // ---- Kap. 6 step 5 preparation: the declaration map of the whole
     // run — real declarations, path-derived entries and PSR-4 prefixes.
@@ -195,54 +194,89 @@ pub(crate) fn build_graph(
     for (from, to, evidence) in rust_edges {
         builder.edge(node_of[&from], node_of[&to], evidence)?;
     }
-    for file in &scanned {
-        if file.lang == "rs" {
-            continue;
-        }
-        let from = node_of[&file.stripped];
-        let index = &indexes[import_family(file.lang)];
-        for raw_import in &file.extraction.imports {
-            let resolved = if file.lang == "go" {
-                match &raw_import.target {
-                    TargetSpec::Symbol { path, .. } => go_packages
-                        .get(path)
-                        .filter(|dirs| dirs.len() == 1)
-                        .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
-                    _ => None,
-                }
-            } else if file.lang == "py" {
-                resolve_python(raw_import, &index.dirs, &node_of, &mut builder)
-            } else {
-                resolve_target(
-                    raw_import,
-                    &index.declarations,
-                    &index.stems,
-                    &index.dirs,
-                    &node_of,
-                    &mut builder,
-                    file.lang,
-                )
-            };
-            let Some(to) = resolved else {
-                // A dotted name in code may be a member access, not a dependency.
-                if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
-                    warnings.push(external_warning(raw_import));
-                }
-                continue;
-            };
-            builder.edge(
-                from,
-                to,
-                Ref {
-                    file: file.stripped.clone(),
-                    line: raw_import.line,
-                    raw: raw_import.raw.clone(),
-                },
-            )?;
-        }
-    }
+    let context = (&indexes, &go_packages, &node_of);
+    resolve_imports(&scanned, context, &mut builder, &mut warnings)?;
     let full = builder.build(root.to_string_lossy().into_owned());
-    Ok((full, warnings))
+    let names = scanned
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.node_name.as_str()));
+    Ok((full, source_names::names(names), warnings))
+}
+
+/// Kap. 6 step 4: read and extract every file against its stripped path.
+fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, ArchguardError> {
+    let mut scanned = Vec::new();
+    for file in files {
+        let Some(extractor) = archguard_extract::extractor_for(file.lang) else {
+            continue; // a language walk accepted but no scanner registered
+        };
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
+        let stripped = archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
+        let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);
+        let node_name = file_node_name(&stripped, &extraction.declarations);
+        scanned.push(ScannedFile {
+            rel_path: file.rel_path.clone(),
+            stripped,
+            node_name,
+            lang: lang_name(file.lang),
+            extraction,
+        });
+    }
+    Ok(scanned)
+}
+
+/// Kap. 6 step 5 for every non-Rust import: record its edge or warn.
+fn resolve_imports(
+    scanned: &[ScannedFile],
+    (indexes, go_packages, node_of): ImportContext<'_>,
+    builder: &mut GraphBuilder,
+    warnings: &mut Vec<String>,
+) -> Result<(), ArchguardError> {
+    let imports = scanned
+        .iter()
+        .filter(|file| file.lang != "rs")
+        .flat_map(|file| file.extraction.imports.iter().map(move |raw| (file, raw)));
+    for (file, raw_import) in imports {
+        let index = &indexes[import_family(file.lang)];
+        let resolved = if file.lang == "go" {
+            match &raw_import.target {
+                TargetSpec::Symbol { path, .. } => go_packages
+                    .get(path)
+                    .filter(|dirs| dirs.len() == 1)
+                    .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
+                _ => None,
+            }
+        } else if file.lang == "py" {
+            resolve_python(raw_import, &index.dirs, node_of, builder)
+        } else {
+            resolve_target(
+                raw_import,
+                &index.declarations,
+                &index.stems,
+                &index.dirs,
+                node_of,
+                builder,
+                file.lang,
+            )
+        };
+        let Some(to) = resolved else {
+            // A dotted name in code may be a member access, not a dependency.
+            if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
+                warnings.push(external_warning(raw_import));
+            }
+            continue;
+        };
+        builder.edge(
+            node_of[&file.stripped],
+            to,
+            Ref {
+                file: file.stripped.clone(),
+                line: raw_import.line,
+                raw: raw_import.raw.clone(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// Kap. 6 steps 8–10 over a complete graph: default view, analyses
@@ -304,11 +338,13 @@ pub(crate) fn build_report(
     findings.extend(crate::target_architecture::check_target_architecture(
         full, config,
     )?);
-    findings.extend(metric_findings(full, config)?);
-    findings.sort_by(|a, b| a.severity.cmp(&b.severity).then_with(|| a.id.cmp(&b.id)));
-
     let metrics = compute_metrics(&view, &sccs);
-    let summary = summarize(&view, &sccs, &findings);
+    let mut summary = summarize(&view, &sccs, &findings);
+    // At module level the summary measured the gates' module view already.
+    let module_acd = (level == Level::Module).then_some(summary.acd);
+    let gates = metric_findings(full, config, module_acd)?;
+    add_gates(&mut findings, &mut summary, gates);
+    findings.sort_by(|a, b| a.severity.cmp(&b.severity).then_with(|| a.id.cmp(&b.id)));
     Ok(Report {
         semantic: full.semantic.clone(),
         review_kpis: full.review_kpis.clone(),
@@ -323,9 +359,22 @@ pub(crate) fn build_report(
     })
 }
 
+/// Metric gates join the findings after the summary; an Error gate fails it.
+fn add_gates(findings: &mut Vec<Finding>, summary: &mut Summary, gates: Vec<Finding>) {
+    if gates.iter().any(|gate| gate.severity == Severity::Error) {
+        summary.status = Status::Fail;
+    }
+    findings.extend(gates);
+}
+
 /// Metric gates always use the configured module view; SCC size follows
 /// the file policy when enabled. Baselines only accept Cycle findings.
-fn metric_findings(full: &Graph, config: &Config) -> Result<Vec<Finding>, ArchguardError> {
+/// `module_acd` is that view's Lakos ACD when the caller measured it.
+fn metric_findings(
+    full: &Graph,
+    config: &Config,
+    module_acd: Option<f64>,
+) -> Result<Vec<Finding>, ArchguardError> {
     let view = aggregate(full, &Cut::at_depth(full, config.modules.depth as usize));
     let file_view;
     let scc_view = if config.rules.deny_cycles == DenyCycles::File {
@@ -361,8 +410,8 @@ fn metric_findings(full: &Graph, config: &Config) -> Result<Vec<Finding>, Archgu
             );
         }
     }
-    let (_, acd, _) = archguard_analysis::lakos_metrics(&view);
-    if config.rules.max_acd > 0.0 && acd > config.rules.max_acd as f64 {
+    let acd = || module_acd.unwrap_or_else(|| archguard_analysis::lakos_metrics(&view).1);
+    if config.rules.max_acd > 0.0 && acd() > config.rules.max_acd as f64 {
         emit(
             "metric-max-acd".into(),
             view.nodes.iter().map(|node| node.name.clone()).collect(),
@@ -447,22 +496,6 @@ fn cycle_findings(
         .collect()
 }
 
-/// The graph node name of a scanned file: its declared module path plus
-/// the file name when the file declares a module, else its stripped
-/// path (Kap. 6.1: logical hierarchies hang under their declaration,
-/// physical ones under their directory).
-pub(crate) fn file_node_name(stripped: &str, declarations: &[Declaration]) -> String {
-    let file_name = stripped.rsplit('/').next().unwrap_or(stripped);
-    match declarations
-        .first()
-        .map(|declaration| declaration.module_path.as_str())
-        .filter(|module| !module.is_empty())
-    {
-        Some(module) => format!("{module}/{file_name}"),
-        None => stripped.to_string(),
-    }
-}
-
 /// Whether `deny_cycles` forbids cycles *at* `level` (Kap. 11):
 /// `"module"` forbids module cycles, `"file"` file cycles — each one
 /// makes findings of its own level gate failures; `"off"` never does.
@@ -488,6 +521,14 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Kotlin => "kt",
     }
 }
+
+/// Lookup tables [`resolve_imports`] reads: import indexes per family, Go
+/// package directories and the file node per stripped path.
+type ImportContext<'a> = (
+    &'a BTreeMap<&'a str, ImportIndex>,
+    &'a BTreeMap<String, BTreeSet<String>>,
+    &'a HashMap<String, NodeId>,
+);
 
 struct ImportIndex {
     declarations: DeclMap,
@@ -880,5 +921,52 @@ mod qualified_name_tests {
         ]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(targets(&graph, "A/User.cs"), ["B/Repo.cs"]);
+    }
+}
+
+#[cfg(test)]
+mod acd_gate_tests {
+    use super::*;
+    use archguard_core::Status;
+
+    /// a/x.ts -> a/w.ts -> b/y.ts: ACD 2.0 over the files, 1.5 over modules a -> b.
+    fn chain() -> Graph {
+        let mut builder = GraphBuilder::new();
+        let ids = ["a/x.ts", "a/w.ts", "b/y.ts"].map(|path| builder.ensure_path(path, Some("ts")));
+        for pair in ids.windows(2) {
+            let evidence = Ref {
+                file: "a/x.ts".into(),
+                line: 1,
+                raw: "import".into(),
+            };
+            builder.edge(pair[0], pair[1], evidence).unwrap();
+        }
+        builder.build("/".into())
+    }
+
+    fn acd_gate(max_acd: f32, level: Level) -> (Option<Vec<String>>, Status) {
+        let mut config = Config::default();
+        config.modules.depth = 0;
+        config.rules.max_acd = max_acd;
+        let report = build_report(&chain(), &config, level).unwrap();
+        let gate = report.findings.iter().find(|f| f.id == "metric-max-acd");
+        (gate.map(|f| f.nodes.clone()), report.summary.status)
+    }
+
+    #[test]
+    fn acd_gate_reads_the_module_view_at_every_level() {
+        let modules = vec!["a".to_string(), "b".to_string()];
+        for level in [Level::Module, Level::File] {
+            assert_eq!(acd_gate(1.2, level), (Some(modules.clone()), Status::Fail));
+            assert_eq!(acd_gate(1.7, level), (None, Status::Pass), "{level:?}");
+            assert_eq!(acd_gate(0.0, level), (None, Status::Pass));
+        }
+        let mut config = Config::default();
+        config.modules.depth = 0;
+        let file_view = build_report(&chain(), &config, Level::File).unwrap();
+        assert_eq!(
+            file_view.summary.acd, 2.0,
+            "the file view alone would trip 1.7"
+        );
     }
 }

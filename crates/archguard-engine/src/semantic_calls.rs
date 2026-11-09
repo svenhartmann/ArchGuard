@@ -16,9 +16,20 @@ pub(crate) fn integrate_graph(
     config: &Config,
     graph: &mut archguard_core::Graph,
 ) -> Result<(), archguard_core::ArchguardError> {
+    integrate_graph_named(root, files, config, graph, None)
+}
+
+/// [`integrate_graph`] reusing the build's node names instead of extracting again.
+pub(crate) fn integrate_graph_named(
+    root: &Path,
+    files: &[archguard_extract::SourceFile],
+    config: &Config,
+    graph: &mut archguard_core::Graph,
+    names: Option<&crate::pipeline::SourceNames>,
+) -> Result<(), archguard_core::ArchguardError> {
     let calls = analyze_calls(root, config);
     let projection =
-        crate::semantic_graph::apply_semantic_dependencies(files, config, graph, &calls)?;
+        crate::semantic_graph::apply_semantic_dependencies(files, config, graph, &calls, names)?;
     let mut diagnostics = calls.diagnostics;
     if projection.skipped_project_calls > 0
         || projection.skipped_supertypes > 0

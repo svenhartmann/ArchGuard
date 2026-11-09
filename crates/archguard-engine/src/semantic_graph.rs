@@ -1,14 +1,13 @@
 //! Project compiler-resolved dependencies onto the existing file graph.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_core::{
     ArchguardError, CallAnalysis, CallClass, Config, Edge, Graph, NodeId, NodeKind, Ref,
 };
-use archguard_extract::{SourceFile, extractor_for, strip_root};
+use archguard_extract::{SourceFile, strip_root};
+
+use crate::pipeline::SourceNames;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProjectionSummary {
@@ -26,12 +25,13 @@ pub(crate) fn apply_semantic_dependencies(
     config: &Config,
     graph: &mut Graph,
     calls: &CallAnalysis,
+    names: Option<&SourceNames>,
 ) -> Result<ProjectionSummary, ArchguardError> {
     let mut summary = ProjectionSummary::default();
     if calls.classes.is_empty() && calls.calls.is_empty() {
         return Ok(summary);
     }
-    let sources = source_nodes(files, config, graph)?;
+    let sources = source_nodes(files, config, graph, names)?;
     let names: BTreeMap<_, _> = graph
         .nodes
         .iter()
@@ -228,6 +228,7 @@ fn source_nodes(
     files: &[SourceFile],
     config: &Config,
     graph: &Graph,
+    names: Option<&SourceNames>,
 ) -> Result<BTreeMap<String, NodeId>, ArchguardError> {
     let nodes: BTreeMap<_, _> = graph
         .nodes
@@ -238,13 +239,10 @@ fn source_nodes(
     let mut by_source = BTreeMap::<String, Vec<NodeId>>::new();
     let mut by_node = BTreeMap::<NodeId, usize>::new();
     for file in files {
-        let Some(extractor) = extractor_for(file.lang) else {
+        let source = strip_root(&file.rel_path, &config.project.source_roots);
+        let Some(name) = crate::pipeline::source_node_name(file, &source, names, None)? else {
             continue;
         };
-        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
-        let source = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = extractor.extract(&source, &content);
-        let name = crate::pipeline::file_node_name(&source, &extraction.declarations);
         let Some(&node) = nodes.get(name.as_str()) else {
             continue;
         };
@@ -347,7 +345,7 @@ mod tests {
             {"from_class":"a.A","from_method":null,"to_class":"b.B","target_label":"b.B","role":"field","resolution":"project","file":"a/A.cs","line":1,"code":"b.B"},
             {"from_class":"b.B","from_method":null,"to_class":"a.A","target_label":"a.A","role":"return","resolution":"project","file":"b/B.cs","line":1,"code":"a.A"}
         ]})).unwrap());
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(pair(&graph, "a/A.cs", "b/B.cs"));
         assert!(pair(&graph, "b/B.cs", "a/A.cs"));
         assert!(
@@ -358,8 +356,34 @@ mod tests {
         );
         calls.details.as_mut().unwrap().type_uses[0].resolution = "unresolved".into();
         graph.edges.clear();
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(!pair(&graph, "a/A.cs", "b/B.cs"));
+    }
+
+    #[test]
+    fn build_names_project_like_a_fresh_extraction_without_one() {
+        let (root, files, config, graph) = fixture(&[
+            ("a/A.cs", "namespace a; class A { b.B field; }"),
+            ("b/B.cs", "namespace b; class B { a.A field; }"),
+        ]);
+        let (_, names, _) =
+            crate::pipeline::build_graph_named(root.path(), &files, &config).unwrap();
+        let calls = analysis(
+            vec![
+                class("a.A", "a/A.cs", "a/A.cs"),
+                class("b.B", "b/B.cs", "b/B.cs"),
+            ],
+            vec![call("a.A", "b.B", "a/A.cs", "b.B.M()")],
+        );
+        let mut plain = graph.clone();
+        let expected = apply_semantic_dependencies(&files, &config, &mut plain, &calls, None);
+        let mut named = graph;
+        let before = crate::pipeline::extractions::count();
+        let result = apply_semantic_dependencies(&files, &config, &mut named, &calls, Some(&names));
+        assert_eq!(crate::pipeline::extractions::count(), before);
+        assert_eq!(result.unwrap(), expected.unwrap());
+        assert_eq!(named, plain);
+        assert!(pair(&named, "a/A.cs", "b/B.cs"));
     }
 
     #[test]
@@ -388,7 +412,8 @@ mod tests {
                 call("b", "a", "B.cs", "Left.A.Run()"),
             ],
         );
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert_eq!(
             find_sccs(&graph).len(),
             1,
@@ -432,12 +457,12 @@ mod tests {
                 call("a", "b", "A.cs", "B.Run()"),
             ],
         );
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert_eq!(graph.edges.len(), 1);
         assert_eq!(graph.edges[0].weight(), 2);
         assert!(graph.edges[0].refs.contains(&import));
         let before = graph.clone();
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert_eq!(graph, before);
     }
 
@@ -471,7 +496,7 @@ mod tests {
             is_static: false,
             complexity: None,
         });
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(pair(&graph, "P/A.Other.cs", "P/B.cs"));
         assert!(pair(&graph, "P/B.cs", "P/A.Other.cs"));
         assert!(!pair(&graph, "P/B.cs", "P/A.cs"));
@@ -495,12 +520,14 @@ mod tests {
         );
         calls.calls[0].resolution = "external".into();
         calls.calls[1].resolution = "unresolved".into();
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(graph.edges.is_empty());
         assert_eq!(result.skipped_project_calls, 1);
         calls.classes.push(class("b", "A.cs", "P/A.cs"));
         calls.calls = vec![call("a", "b", "A.cs", "ambiguous()")];
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(graph.edges.is_empty());
         assert_eq!(result.skipped_project_calls, 1);
     }
@@ -519,7 +546,8 @@ mod tests {
             ],
             vec![call("a", "b", "first/A.cs", "B.Run()")],
         );
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(graph.edges.is_empty());
         assert_eq!(result.skipped_project_calls, 1);
     }
@@ -541,7 +569,8 @@ mod tests {
             vec![class("base", "Base.cs", "P/Base.cs"), child],
             vec![call("base", "child", "Base.cs", "new Child()")],
         );
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert_eq!(find_sccs(&graph).len(), 1);
         assert_eq!(result.projected_supertypes, 1);
         let edge = graph
@@ -572,7 +601,7 @@ mod tests {
             line: 2,
         }]);
         let calls = analysis(vec![class("base", "Base.cs", "P/Base.cs"), child], vec![]);
-        apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(pair(&graph, "P/Child.Inheritance.cs", "P/Base.cs"));
         assert!(
             !pair(&graph, "P/Child.cs", "P/Base.cs"),
@@ -597,7 +626,8 @@ mod tests {
             vec![partial, class("b", "B.cs", "P/B.cs")],
             vec![constructor],
         );
-        let result = apply_semantic_dependencies(&files, &config, &mut graph, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut graph, &calls, None).unwrap();
         assert!(
             graph.edges.is_empty(),
             "implicit partial constructors have no unique declaring file"
@@ -615,12 +645,13 @@ mod tests {
         child.supertypes = vec!["base".into()];
         let mut calls = analysis(vec![class("base", "Base.cs", "P/Base.cs"), child], vec![]);
         let mut csharp = graph.clone();
-        let result = apply_semantic_dependencies(&files, &config, &mut csharp, &calls).unwrap();
+        let result =
+            apply_semantic_dependencies(&files, &config, &mut csharp, &calls, None).unwrap();
         assert!(csharp.edges.is_empty());
         assert_eq!(result.skipped_supertypes, 1);
         calls.classes[1].language = Some("java".into());
         let mut java = graph;
-        let result = apply_semantic_dependencies(&files, &config, &mut java, &calls).unwrap();
+        let result = apply_semantic_dependencies(&files, &config, &mut java, &calls, None).unwrap();
         assert!(pair(&java, "P/Child.cs", "P/Base.cs"));
         assert_eq!(result.projected_supertypes, 1);
     }
@@ -646,6 +677,7 @@ mod tests {
             &config,
             &mut graph,
             &analysis(vec![base, child], vec![]),
+            None,
         )
         .unwrap();
         assert!(graph.edges.is_empty());
