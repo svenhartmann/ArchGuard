@@ -22,19 +22,17 @@ use archguard_engine::core::{Finding, FindingKind, Graph, ModuleMetrics, Report}
 use archguard_engine::report::{to_dot, to_gexf, to_graphml, to_json, to_mermaid, to_text};
 use archguard_engine::self_trace;
 use archguard_engine::{
-    Level, LoadedConfig, analyze_run, default_config_string, effective_config_string, load_config,
+    LoadedConfig, analyze_run, default_config_string, effective_config_string, load_config,
 };
 use clap::{CommandFactory, FromArgMatches};
 use serde_json::{Value, json};
 
 mod args;
 mod output;
-use args::{BaselineAction, Cli, Command, DbAction, Format, LevelArg};
+use args::{BaselineAction, Cli, Command, Format, format_label};
 use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
-use output::{
-    EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, format_label, to_pretty_json, usage,
-};
+use output::{EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, to_pretty_json, usage};
 mod architecture_cmd;
 mod assessment_cmd;
 mod check_cmd;
@@ -60,94 +58,6 @@ mod trend_cmd;
 mod update_cmd;
 mod view_util;
 mod workspace_cmd;
-
-impl LevelArg {
-    fn to_engine(self) -> Level {
-        match self {
-            LevelArg::Module => Level::Module,
-            LevelArg::File => Level::File,
-        }
-    }
-}
-
-impl Command {
-    fn path(&self) -> Option<&Path> {
-        match self {
-            Command::Scan { path, .. }
-            | Command::Review { path, .. }
-            | Command::Cycles { path, .. }
-            | Command::Check { path, .. }
-            | Command::Metrics { path, .. }
-            | Command::Security { path, .. }
-            | Command::Hotspots { path, .. }
-            | Command::CoChange { path, .. }
-            | Command::Ownership { path, .. }
-            | Command::Performance { path, .. }
-            | Command::Calls { path, .. }
-            | Command::Cohesion { path, .. }
-            | Command::QualityHistory { path, .. }
-            | Command::TestEvidence { path, .. }
-            | Command::Mutations { path, .. }
-            | Command::Duplicates { path, .. }
-            | Command::Contracts { path, .. }
-            | Command::Coverage { path, .. }
-            | Command::Quality { path, .. }
-            | Command::Architecture { path, .. }
-            | Command::Patterns { path, .. }
-            | Command::Evaluate { path, .. }
-            | Command::Services { path, .. }
-            | Command::Runtime { path }
-            | Command::Workspace { path, .. }
-            | Command::Doc { path, .. }
-            | Command::Graph { path, .. }
-            | Command::Diff { path, .. }
-            | Command::Serve { path, .. }
-            | Command::Suggest { path, .. }
-            | Command::Dsm { path, .. }
-            | Command::Simulate { path, .. }
-            | Command::Snapshot { path, .. }
-            | Command::Trend { path, .. }
-            | Command::Init { path, .. }
-            | Command::Config { path, .. } => path.as_deref(),
-            Command::Baseline { action } => match action {
-                BaselineAction::Write { path, .. } | BaselineAction::Diff { path, .. } => {
-                    path.as_deref()
-                }
-            },
-            Command::Db { action } => match action {
-                DbAction::Sync { path, .. } => path.as_deref(),
-                // `query` only opens the database file — no project root.
-                DbAction::Query { .. } => None,
-            },
-            Command::Mcp { .. } => None,
-            Command::Doctor | Command::Update { .. } => None,
-            Command::ReviewDecision { .. } => None,
-        }
-    }
-
-    /// `--measure-zones` on `scan`/`check`.
-    fn measure_zones(&self) -> bool {
-        matches!(
-            self,
-            Command::Scan {
-                measure_zones: true,
-                ..
-            } | Command::Check {
-                measure_zones: true,
-                ..
-            }
-        )
-    }
-
-    fn level(&self) -> Level {
-        match self {
-            Command::Scan { level, .. }
-            | Command::Cycles { level, .. }
-            | Command::Hotspots { level, .. } => level.to_engine(),
-            _ => Level::Module,
-        }
-    }
-}
 
 /// With `ARCHGUARD_PROBE=1` the run records its own spans into the analyzed
 /// project's `.archguard/runtime/` (ADR 0004): the command is one request
@@ -1205,13 +1115,6 @@ fn source_name(source: archguard_engine::core::ConfigSource) -> &'static str {
         ConfigSource::Derived => "derived",
         ConfigSource::Default => "default",
         ConfigSource::Mixed => "mixed",
-    }
-}
-
-impl Cli {
-    /// The CLI spelling of the selected global format (for usage errors).
-    fn format_name(&self) -> &'static str {
-        format_label(self.format)
     }
 }
 

@@ -14,8 +14,9 @@ use archguard_engine::{
     LoadedConfig, SnapshotRow, read_trend, snapshot_scope, write_snapshot_with_scope,
 };
 
+use crate::args::format_label;
 use crate::args::{Cli, Format};
-use crate::output::{EXIT_OK, analysis_error, emit, format_label, to_pretty_json, usage};
+use crate::output::{EXIT_OK, analysis_error, emit, to_pretty_json, usage};
 
 /// Handler of `Command::Snapshot`, called after the normal analysis
 /// pipeline: writes one history file and prints its path (unless

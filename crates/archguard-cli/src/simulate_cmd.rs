@@ -17,8 +17,9 @@ use archguard_engine::analysis::SimOp;
 use archguard_engine::analysis::simulate;
 use archguard_engine::core::Graph;
 
+use crate::args::format_label;
 use crate::args::{Cli, Format};
-use crate::output::{EXIT_OK, analysis_error, emit, format_label, usage};
+use crate::output::{EXIT_OK, analysis_error, emit, usage};
 use crate::view_util::{effective_layers, module_cut};
 
 /// Handler for `Command::Simulate`; the flag vectors hold the raw

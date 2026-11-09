@@ -13,8 +13,9 @@ use archguard_engine::LoadedConfig;
 use archguard_engine::core::{Graph, aggregate};
 use archguard_engine::report::{to_dsm_json, to_dsm_text};
 
+use crate::args::format_label;
 use crate::args::{Cli, Format};
-use crate::output::{EXIT_OK, emit, format_label, usage};
+use crate::output::{EXIT_OK, emit, usage};
 use crate::view_util::{dsm_layout, expand_cut, find_node, module_cut, within_cut};
 
 /// Handler for `Command::Dsm`; `expand` and `within` are the raw flag

@@ -1,7 +1,8 @@
 //! The command-line interface as clap sees it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use archguard_engine::Level;
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Default location of the graph-DB mirror of `db sync|query`
@@ -663,4 +664,118 @@ pub(crate) enum BaselineAction {
         #[arg(value_name = "DATEI")]
         file: Option<PathBuf>,
     },
+}
+
+impl LevelArg {
+    pub(crate) fn to_engine(self) -> Level {
+        match self {
+            LevelArg::Module => Level::Module,
+            LevelArg::File => Level::File,
+        }
+    }
+}
+
+impl Command {
+    pub(crate) fn path(&self) -> Option<&Path> {
+        match self {
+            Command::Scan { path, .. }
+            | Command::Review { path, .. }
+            | Command::Cycles { path, .. }
+            | Command::Check { path, .. }
+            | Command::Metrics { path, .. }
+            | Command::Security { path, .. }
+            | Command::Hotspots { path, .. }
+            | Command::CoChange { path, .. }
+            | Command::Ownership { path, .. }
+            | Command::Performance { path, .. }
+            | Command::Calls { path, .. }
+            | Command::Cohesion { path, .. }
+            | Command::QualityHistory { path, .. }
+            | Command::TestEvidence { path, .. }
+            | Command::Mutations { path, .. }
+            | Command::Duplicates { path, .. }
+            | Command::Contracts { path, .. }
+            | Command::Coverage { path, .. }
+            | Command::Quality { path, .. }
+            | Command::Architecture { path, .. }
+            | Command::Patterns { path, .. }
+            | Command::Evaluate { path, .. }
+            | Command::Services { path, .. }
+            | Command::Runtime { path }
+            | Command::Workspace { path, .. }
+            | Command::Doc { path, .. }
+            | Command::Graph { path, .. }
+            | Command::Diff { path, .. }
+            | Command::Serve { path, .. }
+            | Command::Suggest { path, .. }
+            | Command::Dsm { path, .. }
+            | Command::Simulate { path, .. }
+            | Command::Snapshot { path, .. }
+            | Command::Trend { path, .. }
+            | Command::Init { path, .. }
+            | Command::Config { path, .. } => path.as_deref(),
+            Command::Baseline { action } => match action {
+                BaselineAction::Write { path, .. } | BaselineAction::Diff { path, .. } => {
+                    path.as_deref()
+                }
+            },
+            Command::Db { action } => match action {
+                DbAction::Sync { path, .. } => path.as_deref(),
+                // `query` only opens the database file — no project root.
+                DbAction::Query { .. } => None,
+            },
+            Command::Mcp { .. } => None,
+            Command::Doctor | Command::Update { .. } => None,
+            Command::ReviewDecision { .. } => None,
+        }
+    }
+
+    /// `--measure-zones` on `scan`/`check`.
+    pub(crate) fn measure_zones(&self) -> bool {
+        matches!(
+            self,
+            Command::Scan {
+                measure_zones: true,
+                ..
+            } | Command::Check {
+                measure_zones: true,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn level(&self) -> Level {
+        match self {
+            Command::Scan { level, .. }
+            | Command::Cycles { level, .. }
+            | Command::Hotspots { level, .. } => level.to_engine(),
+            _ => Level::Module,
+        }
+    }
+}
+
+impl Cli {
+    /// The CLI spelling of the selected global format (for usage errors).
+    pub(crate) fn format_name(&self) -> &'static str {
+        format_label(self.format)
+    }
+}
+
+/// Stable lowercase label for any [`Format`] value — the string the user
+/// typed. Used for usage messages of commands with their own subcommand
+/// `--format` (`graph`, `dsm`, `simulate`), which must quote the value
+/// that was actually rejected, not the global flag's.
+pub(crate) fn format_label(format: Format) -> &'static str {
+    match format {
+        Format::Text => "text",
+        Format::Json => "json",
+        Format::Mermaid => "mermaid",
+        Format::Sarif => "sarif",
+        Format::Dot => "dot",
+        Format::Html => "html",
+        Format::Graphml => "graphml",
+        Format::Gexf => "gexf",
+        Format::Table => "table",
+        Format::PrComment => "pr-comment",
+    }
 }

@@ -2,8 +2,6 @@
 
 use serde_json::Value;
 
-use crate::args::Format;
-
 /// Ok (Kap. 9).
 pub(crate) const EXIT_OK: i32 = 0;
 
@@ -21,25 +19,6 @@ pub(crate) fn to_pretty_json(value: &Value) -> String {
     let json = serde_json::to_string_pretty(value)
         .expect("SARIF/table documents are plain data and always serializable");
     format!("{json}\n")
-}
-
-/// Stable lowercase label for any [`Format`] value — the string the user
-/// typed. Used for usage messages of commands with their own subcommand
-/// `--format` (`graph`, `dsm`, `simulate`), which must quote the value
-/// that was actually rejected, not the global flag's.
-pub(crate) fn format_label(format: Format) -> &'static str {
-    match format {
-        Format::Text => "text",
-        Format::Json => "json",
-        Format::Mermaid => "mermaid",
-        Format::Sarif => "sarif",
-        Format::Dot => "dot",
-        Format::Html => "html",
-        Format::Graphml => "graphml",
-        Format::Gexf => "gexf",
-        Format::Table => "table",
-        Format::PrComment => "pr-comment",
-    }
 }
 
 /// Print `text` to stdout, guaranteeing a trailing newline.
