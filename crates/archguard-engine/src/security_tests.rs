@@ -417,6 +417,24 @@ fn finished_scanner_output_is_bounded_on_stdout_and_stderr() {
 
 #[cfg(unix)]
 #[test]
+fn running_scanner_is_stopped_past_its_output_limit() {
+    let runner = tempfile::tempdir().unwrap();
+    // Past the limit, then quiet: only the polling budget can end it early.
+    let executable = executable(runner.path(), "head -c 4096 /dev/zero; exec /bin/sleep 5");
+    let mut command = std::process::Command::new(executable);
+    let start = Instant::now();
+    let error = run_command(&mut command, Duration::from_secs(4), 16).unwrap_err();
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(
+        error
+            .to_string()
+            .contains("Trivy exceeded its output limit"),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn snapshot_and_dependency_symlinks_are_never_read_through() {
     use std::os::unix::fs::symlink;
     let root = tempfile::tempdir().unwrap();

@@ -340,12 +340,19 @@ fn lookup(g: &Graph, id: NodeId) -> &archguard_core::Node {
 }
 
 /// `root` plus all its containment-tree descendants, ids in a
-/// `BTreeSet` for deterministic iteration.
+/// `BTreeSet` for deterministic iteration. The children are indexed in
+/// one pass; asking the graph per visited node would scan it every time.
 fn subtree(g: &Graph, root: NodeId) -> BTreeSet<NodeId> {
+    let mut children = BTreeMap::<NodeId, Vec<NodeId>>::new();
+    for node in &g.nodes {
+        if let Some(parent) = node.parent {
+            children.entry(parent).or_default().push(node.id);
+        }
+    }
     let mut set = BTreeSet::from([root]);
     let mut frontier = vec![root];
     while let Some(id) = frontier.pop() {
-        for child in g.children_of(id) {
+        for &child in children.get(&id).into_iter().flatten() {
             if set.insert(child) {
                 frontier.push(child);
             }

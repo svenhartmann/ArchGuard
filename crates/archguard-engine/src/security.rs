@@ -472,8 +472,8 @@ pub(crate) fn run_command(
     timeout: std::time::Duration,
     output_limit: u64,
 ) -> Result<Vec<u8>, ArchguardError> {
+    use crate::go_calls::{Stop, wait};
     use std::io::Read;
-    use std::time::{Duration, Instant};
     let output = tempfile::tempdir()?;
     let stdout = output.path().join("stdout");
     let stderr = output.path().join("stderr");
@@ -485,30 +485,11 @@ pub(crate) fn run_command(
             "cannot start Trivy; install trivy and make it available on PATH: {e}"
         ))
     })?;
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error(err));
-            }
-        }
-        if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error("Trivy exceeded its process timeout"));
-        }
-        if std::fs::metadata(&stdout)?.len() > output_limit
-            || std::fs::metadata(&stderr)?.len() > output_limit
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error("Trivy exceeded its output limit"));
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let status = match wait(&mut child, &[&stdout, &stderr], timeout, output_limit) {
+        Ok(status) => status,
+        Err(Stop::Failed(err)) => return Err(error(err)),
+        Err(Stop::Time) => return Err(error("Trivy exceeded its process timeout")),
+        Err(Stop::Output) => return Err(error("Trivy exceeded its output limit")),
     };
     // A fast process can exit before the polling loop observes its output.
     if std::fs::metadata(&stdout)?.len() > output_limit

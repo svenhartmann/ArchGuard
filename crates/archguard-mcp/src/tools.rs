@@ -27,7 +27,7 @@ use archguard_engine::core::{
 };
 use archguard_engine::load_config;
 use archguard_engine::report::to_dsm_json;
-use archguard_engine::{Level, analyze_run as engine_run};
+use archguard_engine::{Level, NamedGraph, SourceNames, analyze_run as engine_run};
 use rmcp::{ErrorData, schemars};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -120,6 +120,15 @@ pub struct Run {
     pub report: Report,
     /// The loaded configuration (declared values and defaults).
     pub loaded: LoadedConfig,
+    /// Node name per extracted file of `file_graph`.
+    pub source_names: SourceNames,
+}
+
+impl Run {
+    /// `file_graph` with its names, so source evidence skips re-extraction.
+    pub fn named(&self) -> NamedGraph<'_> {
+        (&self.file_graph, &self.source_names).into()
+    }
 }
 
 /// Resolve the root, load the config and run the cached module-level
@@ -138,6 +147,7 @@ pub fn analyze_run(server_root: &Path, path: Option<&str>) -> Result<Run, ErrorD
         view,
         report,
         loaded,
+        source_names: run.source_names,
     })
 }
 

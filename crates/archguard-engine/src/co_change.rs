@@ -3,10 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use archguard_core::{ArchguardError, Config, GitEvidence, GitStatus, Graph, NodeId};
+use archguard_core::{ArchguardError, Config, GitEvidence, GitStatus, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::config::validate_review_since;
+use crate::pipeline::NamedGraph;
 use crate::review_sources::{
     MAX_COMMITS, MAX_LOG_BYTES, collect_git_history, collect_source_evidence,
 };
@@ -77,16 +78,17 @@ pub struct CoChangeReport {
 }
 
 /// Report review candidates, not proof of missing abstractions or runtime coupling.
-pub fn co_change(
+/// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+pub fn co_change<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
     options: &CoChangeOptions,
 ) -> Result<CoChangeReport, ArchguardError> {
     co_change_with_limits(
         root,
         config,
-        graph,
+        graph.into(),
         options,
         (
             MAX_FILES_PER_COMMIT,
@@ -99,7 +101,7 @@ pub fn co_change(
 fn co_change_with_limits(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    NamedGraph { graph, names }: NamedGraph<'_>,
     options: &CoChangeOptions,
     limits: (usize, u64, usize),
 ) -> Result<CoChangeReport, ArchguardError> {
@@ -114,7 +116,7 @@ fn co_change_with_limits(
                 .into(),
         ));
     }
-    let sources = collect_source_evidence(root, config, graph)?;
+    let sources = collect_source_evidence(root, config, NamedGraph { graph, names })?;
     let history = collect_git_history(root, &options.since, MAX_COMMITS, MAX_LOG_BYTES);
     let mut report = CoChangeReport {
         git: history.evidence, options: options.clone(),
@@ -253,7 +255,7 @@ fn co_change_with_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{GitStatus, NodeKind};
+    use archguard_core::{GitStatus, Graph, NodeKind};
     use std::fs;
     use std::process::Command;
 
@@ -422,7 +424,7 @@ mod tests {
         let bulk = co_change_with_limits(
             &root,
             &config,
-            &graph,
+            (&graph).into(),
             &CoChangeOptions::default(),
             (2, MAX_PAIR_OCCURRENCES, MAX_CANDIDATE_PAIRS),
         )
@@ -438,7 +440,7 @@ mod tests {
         let limited = co_change_with_limits(
             &root,
             &config,
-            &graph,
+            (&graph).into(),
             &CoChangeOptions::default(),
             (MAX_FILES_PER_COMMIT, 1, MAX_CANDIDATE_PAIRS),
         )
@@ -455,7 +457,7 @@ mod tests {
         let pair_limit = co_change_with_limits(
             &root,
             &config,
-            &graph,
+            (&graph).into(),
             &CoChangeOptions::default(),
             (MAX_FILES_PER_COMMIT, MAX_PAIR_OCCURRENCES, 1),
         )

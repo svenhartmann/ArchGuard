@@ -37,7 +37,7 @@ use archguard_extract::SourceFile;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::pipeline;
+use crate::pipeline::{self, SourceNames};
 
 /// Cache directory under the analysed root (hidden, hence never walked).
 /// Also the anchor of the T41 snapshot history (see [`crate::snapshot`]).
@@ -45,7 +45,7 @@ pub(crate) const CACHE_DIR: &str = crate::project_files::PROJECT_DIR;
 /// The single cache entry inside [`CACHE_DIR`]: [`CacheEntry`] as JSON.
 pub(crate) const CACHE_FILE: &str = "cache.json";
 // Increment when extractor semantics or the cache contract change.
-const CACHE_SCHEMA: u32 = 7;
+const CACHE_SCHEMA: u32 = 8;
 
 /// On-disk shape of [`CACHE_FILE`]: graph and fingerprint are
 /// serialised as one unit and committed via one atomic replacement,
@@ -55,6 +55,7 @@ struct CacheEntryRef<'a> {
     schema_version: u32,
     fingerprint: &'a str,
     graph: &'a Graph,
+    source_names: &'a SourceNames,
     warnings: &'a [String],
 }
 
@@ -64,6 +65,7 @@ pub(crate) struct CacheEntry {
     schema_version: u32,
     pub(crate) fingerprint: String,
     graph: Graph,
+    source_names: SourceNames,
     warnings: Vec<String>,
 }
 
@@ -163,12 +165,13 @@ fn file_stamp(path: &Path) -> FileStamp {
 /// [`crate::effective::analyze_cached`] turns that into a warning, so analysis
 /// never depends on the cache being writable.
 pub fn save_graph(dir: &Path, graph: &Graph, fp: &str) -> Result<(), ArchguardError> {
-    save_entry(dir, graph, fp, &[])
+    save_entry(dir, graph, &SourceNames::new(), fp, &[])
 }
 
 fn save_entry(
     dir: &Path,
     graph: &Graph,
+    source_names: &SourceNames,
     fp: &str,
     warnings: &[String],
 ) -> Result<(), ArchguardError> {
@@ -176,6 +179,7 @@ fn save_entry(
         schema_version: CACHE_SCHEMA,
         fingerprint: fp,
         graph,
+        source_names,
         warnings,
     })
     .map_err(|e| ArchguardError::Analysis(e.to_string()))?;
@@ -356,25 +360,43 @@ mod safe {
     }
 }
 
+/// The extraction of `files`: graph, [`SourceNames`], warnings and whether
+/// the cache served them.
+pub(crate) type Extracted = (Graph, SourceNames, Vec<String>, bool);
+
+/// [`extract_cached`] when `cached`, else a plain build that leaves the cache alone.
+pub(crate) fn extract(
+    root: &Path,
+    files: &[SourceFile],
+    config: &Config,
+    cached: bool,
+) -> Result<Extracted, ArchguardError> {
+    if cached {
+        return extract_cached(root, files, config);
+    }
+    let (graph, names, warnings) = pipeline::build_graph_named(root, files, config)?;
+    Ok((graph, names, warnings, false))
+}
+
 pub(crate) fn extract_cached(
     root: &Path,
     files: &[SourceFile],
     config: &Config,
-) -> Result<(Graph, Vec<String>, bool), ArchguardError> {
+) -> Result<Extracted, ArchguardError> {
     let fp = extraction_fingerprint(root, files, config)?;
     if let Some(entry) = load_entry(root, &fp) {
-        return Ok((entry.graph, entry.warnings, true));
+        return Ok((entry.graph, entry.source_names, entry.warnings, true));
     }
-    let (full, mut warnings) = pipeline::build_graph(root, files, config)?;
+    let (full, names, mut warnings) = pipeline::build_graph_named(root, files, config)?;
     // A source changing during extraction must not be saved under an old key.
     if extraction_fingerprint(root, files, config)? != fp {
         warnings.insert(
             0,
             "sources changed during extraction; cache was not written".into(),
         );
-        return Ok((full, warnings, false));
+        return Ok((full, names, warnings, false));
     }
-    if let Err(e) = save_entry(root, &full, &fp, &warnings) {
+    if let Err(e) = save_entry(root, &full, &names, &fp, &warnings) {
         warnings.insert(
             0,
             format!(
@@ -383,7 +405,7 @@ pub(crate) fn extract_cached(
             ),
         );
     }
-    Ok((full, warnings, false))
+    Ok((full, names, warnings, false))
 }
 
 #[cfg(test)]
@@ -436,13 +458,14 @@ mod tests {
                 schema_version: 2,
                 fingerprint: &old_fingerprint,
                 graph: &old_graph,
+                source_names: &SourceNames::new(),
                 warnings: &[],
             })
             .unwrap(),
         )
         .unwrap();
 
-        let (graph, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        let (graph, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(
             !hit,
             "old extractor results must not survive a semantic change"
@@ -459,7 +482,7 @@ mod tests {
                 .iter()
                 .any(|node| node.name == "Elsewhere/Widget.cs")
         );
-        let (warm, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        let (warm, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(hit, "the rebuilt current-version cache is reusable");
         assert_eq!(warm, graph);
     }
@@ -491,13 +514,14 @@ mod tests {
                 schema_version: 5,
                 fingerprint: &extraction_fingerprint(dir.path(), &files, &config).unwrap(),
                 graph: &old_graph,
+                source_names: &SourceNames::new(),
                 warnings: &[],
             })
             .unwrap(),
         )
         .unwrap();
 
-        let (graph, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        let (graph, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(!hit, "schema 5 results lack qualified-name edges");
         assert_eq!(graph.edges.len(), 1);
     }
@@ -529,13 +553,14 @@ mod tests {
                 schema_version: 6,
                 fingerprint: &extraction_fingerprint(dir.path(), &files, &config).unwrap(),
                 graph: &old_graph,
+                source_names: &SourceNames::new(),
                 warnings: &[],
             })
             .unwrap(),
         )
         .unwrap();
 
-        let (graph, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        let (graph, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
         assert!(!hit, "schema 6 results lack Java qualified-name edges");
         assert_eq!(graph.edges.len(), 1);
     }

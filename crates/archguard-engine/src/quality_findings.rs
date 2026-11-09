@@ -1,4 +1,5 @@
 //! Explicit SARIF imports; no analyzer execution or remote artifact fetching.
+use crate::pipeline::NamedGraph;
 use archguard_core::{ArchguardError, Config, Graph};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -96,12 +97,14 @@ pub fn quality_findings_fingerprint(root: &Path) -> String {
         Err(e) => format!("unavailable:{:?}", e.kind()),
     }
 }
-fn source_paths(
+fn source_paths<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
 ) -> Result<BTreeMap<String, String>, ArchguardError> {
+    let graph = graph.into();
     let nodes: BTreeMap<_, _> = graph
+        .graph
         .nodes
         .iter()
         .map(|node| (node.id, &node.name))
@@ -123,7 +126,12 @@ fn source_paths(
 }
 
 /// Read normalized evidence and recheck mapped source files, never execute tools.
-pub fn read_quality_findings(root: &Path, config: &Config, graph: &Graph) -> QualityReport {
+/// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+pub fn read_quality_findings<'a>(
+    root: &Path,
+    config: &Config,
+    graph: impl Into<NamedGraph<'a>>,
+) -> QualityReport {
     let bytes = match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

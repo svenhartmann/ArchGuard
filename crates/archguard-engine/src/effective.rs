@@ -30,7 +30,7 @@ use std::path::Path;
 use archguard_analysis::{find_sccs, infer_layers, suggest_depth};
 use archguard_core::{
     ArchguardError, Config, ConfigSource, Cut, DenyCycles, Finding, FindingKind, Graph,
-    LayerConfig, LayerOrigin, ProjectConfig, Report, ReviewSources, Severity, Status, aggregate,
+    LayerConfig, LayerOrigin, ProjectConfig, Report, Severity, Status, aggregate,
 };
 use archguard_extract::{extractor_for, parse_psr4, strip_root, walk};
 
@@ -69,6 +69,8 @@ pub struct AnalysisRun {
     /// External-import warnings, as [`pipeline::print_warnings`] prints them.
     pub warnings: Vec<String>,
     pub cache_hit: bool,
+    /// Node name per extracted file, for joining sources to `graph` nodes.
+    pub source_names: pipeline::SourceNames,
 }
 
 impl AnalysisRun {
@@ -152,16 +154,12 @@ fn run_inner(
 
     // ---- Kap. 6 steps 3–6: walk, extract, resolve, build.
     let files = pipeline::walk_files(root, &config)?;
-    let (mut graph, mut warnings, cache_hit) = if cached {
-        crate::cache::extract_cached(root, &files, &config)?
-    } else {
-        let (graph, warnings) = pipeline::build_graph(root, &files, &config)?;
-        (graph, warnings, false)
-    };
+    let (mut graph, names, mut warnings, cache_hit) =
+        crate::cache::extract(root, &files, &config, cached)?;
     // The disk cache contains imports only. Compiler evidence is projected on
     // every run using its own source/project/toolchain fingerprints, so a warm
     // import cache cannot hide changed method bodies or recovered toolchains.
-    crate::semantic_calls::integrate_graph(root, &files, &config, &mut graph)?;
+    crate::semantic_calls::integrate_graph_named(root, &files, &config, &mut graph, Some(&names))?;
 
     // ---- Kap. 6 step 7a: the zoom, measured on the finished graph.
     if !is_declared(&sources, "modules") {
@@ -244,7 +242,8 @@ fn run_inner(
 
     // ---- Kap. 6 steps 8–10: analyse and report with the effective config.
     crate::config::validate_layer_targets(&config)?;
-    let (mut report, policy_warnings) = build_effective_report(root, &graph, &config, level)?;
+    let (mut report, policy_warnings) =
+        build_effective_report(root, (&graph, &names), &config, level)?;
     warnings.extend(policy_warnings);
 
     // ---- Kap. 5: the provenance of every tracked section.
@@ -265,27 +264,24 @@ fn run_inner(
         view,
         warnings,
         cache_hit,
+        source_names: names,
     })
 }
 
 /// Analyse with already effective policy values, preserving declared/derived
 /// layer origins. Shared with Git comparison, where derivation must stay frozen.
-pub(crate) fn build_effective_report(
+pub(crate) fn build_effective_report<'a>(
     root: &Path,
-    graph: &Graph,
+    graph: impl Into<pipeline::NamedGraph<'a>>,
     config: &Config,
     level: Level,
 ) -> Result<(Report, Vec<String>), ArchguardError> {
+    let named = graph.into();
+    let graph = named.graph;
     let mut report = pipeline::build_report(graph, config, level)?;
     let mut warnings = Vec::new();
     if !config.ownership_rules.is_empty() {
-        let files = crate::review_sources::collect_source_evidence(root, config, graph)?;
-        let ownership_sources = ReviewSources {
-            mapped_files: files.iter().filter(|file| file.path.is_some()).count() as u32,
-            total_files: files.len() as u32,
-            files,
-            ..ReviewSources::default()
-        };
+        let ownership_sources = crate::review_sources::collect_file_sources(root, config, named)?;
         let ownership = crate::ownership::analyze_ownership(
             root,
             graph,
@@ -1803,5 +1799,81 @@ mod cache_entry_tests {
             analyze_cached_inner(dir.path(), &Config::default(), Level::Module).expect("rebuild");
         assert!(!hit_c);
         assert_eq!(graph_c, graph_a, "rebuilt from sources, verdict intact");
+    }
+
+    #[test]
+    fn runs_carry_source_names_and_consumers_reuse_them() {
+        use crate::pipeline::{extractions, source_node_name};
+        // A declared package names the Java node apart from its path.
+        let dir = fixture(&[
+            (
+                "src/weird/place/Order.java",
+                "package shop;\npublic class Order {}\n",
+            ),
+            (
+                "src/a.ts",
+                "import { b } from \"./b\";\nexport const a = b;\n",
+            ),
+            ("src/b.ts", "export const b = 1;\n"),
+            ("src/notes.txt", "not a source\n"),
+        ]);
+        let loaded = LoadedConfig {
+            config: Config::default(),
+            sources: crate::config::all_default_sources(),
+        };
+        let cold = analyze_run_quiet(dir.path(), &loaded, Level::Module).expect("cold run");
+        assert!(!cold.cache_hit);
+        let files = pipeline::walk_files(dir.path(), &cold.config).expect("walk");
+        let roots = &cold.config.project.source_roots;
+        let extracted: pipeline::SourceNames = files
+            .iter()
+            .filter_map(|file| {
+                let stripped = strip_root(&file.rel_path, roots);
+                let name = source_node_name(file, &stripped, None, None).expect("name")?;
+                Some((file.rel_path.clone(), name))
+            })
+            .collect();
+        assert_eq!(cold.source_names, extracted);
+        assert_eq!(
+            cold.source_names["src/weird/place/Order.java"],
+            "shop/Order.java"
+        );
+
+        let before = extractions::count();
+        let warm = analyze_run_quiet(dir.path(), &loaded, Level::Module).expect("warm run");
+        assert!(warm.cache_hit);
+        assert_eq!(extractions::count(), before, "a cache hit extracts nothing");
+        assert_eq!(warm.source_names, cold.source_names);
+
+        let since = &warm.config.review.git_since;
+        let before = extractions::count();
+        let plain = crate::review_sources::collect_review_sources(
+            dir.path(),
+            &warm.config,
+            &warm.graph,
+            since,
+        )
+        .expect("plain");
+        assert_eq!(
+            extractions::count() - before,
+            3,
+            "without names every source is extracted"
+        );
+        let named_graph = (&warm.graph, &warm.source_names);
+        let before = extractions::count();
+        let named = crate::review_sources::collect_review_sources(
+            dir.path(),
+            &warm.config,
+            named_graph,
+            since,
+        )
+        .expect("named");
+        assert_eq!(
+            extractions::count(),
+            before,
+            "with names no source is extracted"
+        );
+        assert_eq!(named, plain);
+        assert_eq!(named.mapped_files, 3);
     }
 }

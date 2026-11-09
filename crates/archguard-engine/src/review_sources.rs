@@ -7,9 +7,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use archguard_core::{
-    ArchguardError, Config, GitEvidence, GitStatus, Graph, NodeKind, ReviewSources, SourceEvidence,
+    ArchguardError, Config, GitEvidence, GitStatus, NodeKind, ReviewSources, SourceEvidence,
 };
 use archguard_extract::{extractor_for, strip_root};
+
+use crate::pipeline::{NamedGraph, source_node_name};
 
 pub(crate) const MAX_COMMITS: usize = 10_000;
 pub(crate) const MAX_LOG_BYTES: u64 = 16 * 1024 * 1024;
@@ -27,19 +29,20 @@ pub(crate) struct GitHistory {
 }
 
 /// Collect source-backed review inputs for the current full hierarchical graph.
-pub fn collect_review_sources(
+/// Pass `(graph, names)` from the run that built it to skip re-extraction.
+pub fn collect_review_sources<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
     since: &str,
 ) -> Result<ReviewSources, ArchguardError> {
     collect_with_limits(root, config, graph, since, MAX_COMMITS, MAX_LOG_BYTES)
 }
 
-fn collect_with_limits(
+fn collect_with_limits<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
     since: &str,
     max_commits: usize,
     max_bytes: u64,
@@ -69,18 +72,34 @@ fn collect_with_limits(
     })
 }
 
-pub(crate) fn collect_source_evidence(
+/// [`ReviewSources`] with file evidence only, without Git history.
+pub(crate) fn collect_file_sources<'a>(
     root: &Path,
     config: &Config,
-    graph: &Graph,
+    graph: impl Into<NamedGraph<'a>>,
+) -> Result<ReviewSources, ArchguardError> {
+    let files = collect_source_evidence(root, config, graph)?;
+    Ok(ReviewSources {
+        mapped_files: files.iter().filter(|file| file.path.is_some()).count() as u32,
+        total_files: files.len() as u32,
+        files,
+        ..ReviewSources::default()
+    })
+}
+
+/// File evidence per file node; the run's names spare extracting every file again.
+pub(crate) fn collect_source_evidence<'a>(
+    root: &Path,
+    config: &Config,
+    graph: impl Into<NamedGraph<'a>>,
 ) -> Result<Vec<SourceEvidence>, ArchguardError> {
     let files = crate::pipeline::walk_files(root, config)?;
-    source_evidence_from_files(config, graph, &files)
+    source_evidence_from_files(config, graph.into(), &files)
 }
 
 fn source_evidence_from_files(
     config: &Config,
-    graph: &Graph,
+    NamedGraph { graph, names }: NamedGraph<'_>,
     files: &[archguard_extract::SourceFile],
 ) -> Result<Vec<SourceEvidence>, ArchguardError> {
     // Reuse the extraction pipeline's exact logical naming rule. A physical
@@ -92,13 +111,14 @@ fn source_evidence_from_files(
         if file.path.to_str().is_none() {
             continue;
         }
-        let Some(extractor) = extractor_for(file.lang) else {
+        if extractor_for(file.lang).is_none() {
             continue;
-        };
+        }
         let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = extractor.extract(&stripped, &content);
-        let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
+        let Some(name) = source_node_name(file, &stripped, names, Some(&content))? else {
+            continue;
+        };
         candidates
             .entry(name)
             .or_default()
@@ -267,7 +287,7 @@ fn parse_log(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{GitStatus, NodeKind};
+    use archguard_core::{GitStatus, Graph, NodeKind};
     use std::fs;
     use std::process::Command;
 
@@ -378,7 +398,7 @@ mod tests {
         // macOS rejects these filenames at creation time. Supply the walker's
         // path value directly and require rejection before any filesystem read.
         files[0].path = dir.path().join(name);
-        let result = source_evidence_from_files(&config, &graph, &files)
+        let result = source_evidence_from_files(&config, (&graph).into(), &files)
             .expect("an unrepresentable path remains unmapped without reading it");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, None);

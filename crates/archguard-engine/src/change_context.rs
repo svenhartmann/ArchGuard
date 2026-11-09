@@ -1,6 +1,6 @@
 //! Evidence-backed, versioned context for a proposed source change.
 use archguard_core::{ArchguardError, Config, Graph, NodeId, NodeKind};
-use archguard_extract::{extractor_for, strip_root};
+use archguard_extract::strip_root;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -10,7 +10,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path},
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,7 +56,7 @@ pub fn build_change_context(
     let run =
         crate::effective::analyze_run_quiet(&root, &declared, crate::pipeline::Level::Module)?;
     let calls = crate::semantic_calls::analyze_calls(&root, &run.config);
-    let source_nodes = source_nodes(&root, &run.config, &run.graph)?;
+    let source_nodes = source_nodes(&root, &run.config, &run.graph, Some(&run.source_names))?;
     let mut targets = options.targets.clone();
     let mut unresolved = vec![];
     if let Some(diff) = &diff {
@@ -217,6 +217,7 @@ fn source_nodes(
     root: &Path,
     config: &Config,
     graph: &Graph,
+    names: Option<&crate::pipeline::SourceNames>,
 ) -> Result<BTreeMap<String, Vec<NodeId>>, ArchguardError> {
     let mut nodes = BTreeMap::<&str, Vec<NodeId>>::new();
     for node in graph
@@ -238,13 +239,10 @@ fn source_nodes(
         let candidates = sources
             .entry(file.rel_path.clone())
             .or_insert_with(Vec::new);
-        let Some(extractor) = extractor_for(file.lang) else {
+        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
+        let Some(name) = crate::pipeline::source_node_name(&file, &stripped, names, None)? else {
             continue;
         };
-        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction =
-            extractor.extract(&stripped, &String::from_utf8_lossy(&fs::read(&file.path)?));
-        let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
         if let Some(ids) = nodes.get(name.as_str()) {
             candidates.extend(ids);
         }
@@ -377,7 +375,7 @@ fn nul_fields(bytes: &[u8]) -> Result<Vec<&str>, ArchguardError> {
 /// and output.
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
     const LIMIT: u64 = 4 * 1024 * 1024;
-    let output = tempfile::tempfile()?;
+    let output = tempfile::NamedTempFile::new()?;
     let mut command = Command::new("git");
     command
         .current_dir(root)
@@ -389,7 +387,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         ])
         .args(args)
         .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
+        .stdout(output.reopen()?)
         .stderr(Stdio::null())
         .env("GIT_OPTIONAL_LOCKS", "0");
     for key in [
@@ -403,42 +401,22 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         command.env_remove(key);
     }
     let mut child = command.spawn()?;
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.into());
-            }
-        }
-        let size = match output.metadata() {
-            Ok(metadata) => metadata.len(),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.into());
-            }
-        };
-        if started.elapsed() > Duration::from_secs(10) || size > LIMIT {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(invalid("Git context query exceeded its time/output bound."));
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    let bound = Duration::from_secs(10);
+    let status = match crate::go_calls::wait(&mut child, &[output.path()], bound, LIMIT) {
+        Ok(status) => status,
+        Err(crate::go_calls::Stop::Failed(error)) => return Err(error.into()),
+        Err(_) => return Err(invalid("Git context query exceeded its time/output bound.")),
     };
     if !status.success() {
         return Err(invalid(
             "Could not resolve Git base or list changed files in this project.",
         ));
     }
-    if output.metadata()?.len() > LIMIT {
+    if output.as_file().metadata()?.len() > LIMIT {
         return Err(invalid("Git context listing exceeds 4 MiB."));
     }
     use std::io::{Seek, SeekFrom};
-    let mut output = output;
+    let mut output = output.into_file();
     output.seek(SeekFrom::Start(0))?;
     let mut bytes = vec![];
     output.take(LIMIT + 1).read_to_end(&mut bytes)?;
@@ -684,7 +662,7 @@ mod tests {
         let mut duplicate = graph.nodes[0].clone();
         duplicate.id = NodeId(42);
         graph.nodes.push(duplicate);
-        let sources = source_nodes(root.path(), &Config::default(), &graph).unwrap();
+        let sources = source_nodes(root.path(), &Config::default(), &graph, None).unwrap();
         assert_eq!(
             sources.len(),
             2,
@@ -692,6 +670,20 @@ mod tests {
         );
         assert_eq!(sources["src/b.ts"], Vec::<NodeId>::new());
         assert_eq!(sources["src/a.ts"], vec![NodeId(0), NodeId(42)]);
+    }
+
+    #[test]
+    fn source_mapping_with_build_names_matches_a_fresh_extraction() {
+        let root = fixture();
+        let config = Config::default();
+        let files = crate::pipeline::walk_files(root.path(), &config).unwrap();
+        let (graph, names, _) =
+            crate::pipeline::build_graph_named(root.path(), &files, &config).unwrap();
+        let plain = source_nodes(root.path(), &config, &graph, None).unwrap();
+        let before = crate::pipeline::extractions::count();
+        let named = source_nodes(root.path(), &config, &graph, Some(&names)).unwrap();
+        assert_eq!(crate::pipeline::extractions::count(), before);
+        assert_eq!(named, plain);
     }
 
     #[test]

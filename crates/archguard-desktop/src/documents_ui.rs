@@ -174,9 +174,9 @@ fn analyze(
     let run = analyze_run_quiet(root, &loaded, Level::Module).map_err(|e| e.to_string())?;
     // Git evidence for review priorities; without it the churn component
     // is zero, as in the CLI.
-    let sources =
-        collect_review_sources(root, &run.config, &run.graph, &run.config.review.git_since)
-            .unwrap_or_default();
+    let named = (&run.graph, &run.source_names);
+    let sources = collect_review_sources(root, &run.config, named, &run.config.review.git_since)
+        .unwrap_or_default();
     // Read once per document; the Services tab reuses the same slot.
     let projects = match &*tab_support::topology(topology, root) {
         Ok(t) => documents::build_units(t),
