@@ -118,11 +118,7 @@ impl Span {
             parent,
             service: service.to_owned(),
             kind: kind(value).unwrap_or(0),
-            name: value
-                .get("name")
-                .and_then(Value::as_str)
-                .map(|n| bounded(n, MAX_NAME))
-                .unwrap_or_default(),
+            name: name(value),
             entry: entry(value),
             start,
             end,
@@ -133,6 +129,30 @@ impl Span {
             input,
             line,
         })
+    }
+}
+
+/// The span's name; an outgoing HTTP call named only by its method gets its
+/// target: host, port and path from `url.full` (never the query string), else
+/// `server.address`.
+fn name(value: &Value) -> String {
+    let raw = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let method = text(value, "http.request.method", 16).or_else(|| text(value, "http.method", 16));
+    let target = text(value, "url.full", usize::MAX)
+        .or_else(|| text(value, "http.url", usize::MAX))
+        .map(|url| {
+            let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+            rest.split(['?', '#']).next().unwrap_or_default().to_owned()
+        })
+        .or_else(|| text(value, "server.address", MAX_NAME));
+    match (kind(value), method, target) {
+        (Some(3), Some(m), Some(t)) if raw.is_empty() || raw == m => {
+            bounded(&format!("{m} {t}"), MAX_NAME)
+        }
+        _ => bounded(raw, MAX_NAME),
     }
 }
 

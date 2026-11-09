@@ -42,7 +42,7 @@ fn repetition(
     RuntimeFinding {
         kind: "n_plus_one".into(),
         service: s.service.clone(),
-        subject: s.key.clone(),
+        subject: s.text.clone().unwrap_or_else(|| s.key.clone()),
         value: count as f64,
         threshold: k as f64,
         call_site: site.cloned(),
@@ -105,7 +105,7 @@ fn slow_statements(p: &RuntimeProfile, c: &RuntimeConfig) -> Vec<RuntimeFinding>
         .map(|s| RuntimeFinding {
             kind: "slow_statement".into(),
             service: s.service.clone(),
-            subject: s.key.clone(),
+            subject: s.text.clone().unwrap_or_else(|| s.key.clone()),
             value: s.exec_ms.p95,
             threshold: c.slow_statement_ms,
             call_site: s.call_sites.first().cloned(),

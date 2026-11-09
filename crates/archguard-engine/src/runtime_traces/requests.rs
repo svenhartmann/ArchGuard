@@ -119,7 +119,10 @@ fn node(index: &Index, root: &Span, span: &Span, depth: u32) -> RuntimeSpan {
         kind: kind(span.kind).into(),
         name: span.name.clone(),
         error: span.error,
-        db: span.db.as_ref().map(|d| d.key.clone()),
+        db: span
+            .db
+            .as_ref()
+            .map(|d| d.text.clone().unwrap_or_else(|| d.key.clone())),
         function,
         file,
         line,

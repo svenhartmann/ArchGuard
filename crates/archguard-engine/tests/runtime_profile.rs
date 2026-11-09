@@ -342,3 +342,86 @@ fn requests_keep_their_spans_newest_first() {
     assert_eq!(web.db_calls, 0);
     assert_eq!(p.requests_total, 3);
 }
+
+/// Spans as a Java probe writes them: a statement hash next to the text, and
+/// an outgoing HTTP client span named only by its method.
+fn probe_line() -> String {
+    let attr = |k: &str, v: &str| serde_json::json!({"key":k,"value":{"stringValue":v}});
+    let span = |id: &str,
+                parent: Option<&str>,
+                kind: u8,
+                name: &str,
+                attrs: Vec<serde_json::Value>| {
+        let mut v = serde_json::json!({"traceId":"e".repeat(32),"spanId":id,"name":name,"kind":kind,
+            "startTimeUnixNano":"1000000000","endTimeUnixNano":"2000000000","attributes":attrs});
+        if let Some(p) = parent {
+            v["parentSpanId"] = p.into();
+        }
+        v
+    };
+    let spans = vec![
+        span(
+            "2000000000000001",
+            None,
+            2,
+            "GET /orders/{id}",
+            vec![
+                attr("http.request.method", "GET"),
+                attr("http.route", "/orders/{id}"),
+            ],
+        ),
+        span(
+            "2000000000000002",
+            Some("2000000000000001"),
+            3,
+            "SELECT shop",
+            vec![
+                attr("db.system", "h2"),
+                attr("db.statement", "select name from product where id=?"),
+                attr("archguard.db.statement_hash", "8acd6eab172e33dc"),
+            ],
+        ),
+        span(
+            "2000000000000003",
+            Some("2000000000000001"),
+            3,
+            "GET",
+            vec![
+                attr("http.request.method", "GET"),
+                attr(
+                    "url.full",
+                    "http://localhost:8080/carrier/quote?token=secret",
+                ),
+                attr("server.address", "localhost"),
+            ],
+        ),
+    ];
+    serde_json::json!({"resourceSpans":[{"resource":{"attributes":[attr("service.name","shop")]},
+        "scopeSpans":[{"spans":spans}]}]})
+    .to_string()
+}
+
+#[test]
+fn hashed_statements_show_their_text_and_http_calls_their_target() {
+    let dir = project(&[(".archguard/runtime/java.jsonl", &probe_line())]);
+    let config = dir.path().join("low.toml");
+    fs::write(&config, "[runtime]\nslow_statement_ms = 1\n").unwrap();
+    let p = runtime_profile(dir.path(), Some(&config)).unwrap();
+    assert_eq!(
+        p.statements[0].key, "8acd6eab172e33dc",
+        "the hash still groups"
+    );
+    let spans = &p.requests[0].spans;
+    assert_eq!(
+        spans[0].db.as_deref(),
+        Some("select name from product where id=?")
+    );
+    assert_eq!(spans[1].name, "GET localhost:8080/carrier/quote");
+    let slow = p
+        .findings
+        .iter()
+        .find(|f| f.kind == "slow_statement")
+        .unwrap();
+    assert_eq!(slow.subject, "select name from product where id=?");
+    assert!(!serde_json::to_string(&p).unwrap().contains("secret"));
+}
