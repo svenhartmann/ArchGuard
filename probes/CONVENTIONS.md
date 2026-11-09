@@ -44,7 +44,10 @@ Old attribute names are accepted next to the stable ones.
 
 ### Request spans (kind SERVER or CONSUMER)
 
-Each such span is one request. Its endpoint name is `http.request.method` (or
+Each such span is one request. So is a root span (no parent) of kind
+INTERNAL with `archguard.entry = true` (boolean): a CLI run, a tool call or
+a desktop action, which have no HTTP request; its endpoint name is its span
+name. Its endpoint name is `http.request.method` (or
 `http.method`) plus `http.route`, else `rpc.service/rpc.method`, else the span
 name. Status code ERROR counts as an error.
 
@@ -210,6 +213,7 @@ A change that makes older input read differently needs a new
   file formats, outgoing call names, span kind and the privacy list fixed
   after the first Java probe. The hash now wins over `db.query.summary`; no
   producer sent both before, so schema 1 stays.
+- 2026-11-09: marked INTERNAL root spans (`archguard.entry`) are requests.
 - 2026-11-09: method spans at application boundaries (controller, service,
   repository, component, method), recorded generically, with async
   durations to completion and nesting.

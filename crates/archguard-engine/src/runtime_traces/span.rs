@@ -172,8 +172,22 @@ fn kind(value: &Value) -> Option<u8> {
     }
 }
 
+/// A root INTERNAL span marked `archguard.entry = true`: a CLI run, an MCP
+/// tool call or a desktop action, which are requests without HTTP.
+fn marked_root(value: &Value) -> bool {
+    let root = value
+        .get("parentSpanId")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty);
+    let marked = attribute(value, "archguard.entry")
+        .and_then(|v| v.get("boolValue"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    root && marked && kind(value) == Some(1)
+}
+
 fn entry(value: &Value) -> Option<String> {
-    if !matches!(kind(value), Some(2 | 5)) {
+    if !matches!(kind(value), Some(2 | 5)) && !marked_root(value) {
         return None;
     }
     crate::trace_sequences::operation(|key| text(value, key, MAX_NAME)).or_else(|| {

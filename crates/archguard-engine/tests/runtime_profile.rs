@@ -425,3 +425,56 @@ fn hashed_statements_show_their_text_and_http_calls_their_target() {
     assert_eq!(slow.subject, "select name from product where id=?");
     assert!(!serde_json::to_string(&p).unwrap().contains("secret"));
 }
+
+/// A CLI run, an MCP tool call or a desktop action is no HTTP request: a
+/// root INTERNAL span marked `archguard.entry = true` counts as one, named by
+/// its span name. Unmarked root spans stay background work.
+#[test]
+fn marked_internal_root_spans_are_requests() {
+    let attr = |k: &str, v: serde_json::Value| serde_json::json!({"key":k,"value":v});
+    let span = |id: &str,
+                parent: Option<&str>,
+                kind: u8,
+                name: &str,
+                attrs: Vec<serde_json::Value>| {
+        let mut v = serde_json::json!({"traceId":"f".repeat(32),"spanId":id,"name":name,"kind":kind,
+            "startTimeUnixNano":"1000000000","endTimeUnixNano":"3000000000","attributes":attrs});
+        if let Some(p) = parent {
+            v["parentSpanId"] = p.into();
+        }
+        v
+    };
+    let spans = vec![
+        span(
+            "3000000000000001",
+            None,
+            1,
+            "archguard check",
+            vec![attr(
+                "archguard.entry",
+                serde_json::json!({"boolValue": true}),
+            )],
+        ),
+        span(
+            "3000000000000002",
+            Some("3000000000000001"),
+            1,
+            "pipeline.extract",
+            vec![attr(
+                "archguard.section.kind",
+                serde_json::json!({"stringValue":"method"}),
+            )],
+        ),
+        span("3000000000000003", None, 1, "background flush", vec![]),
+    ];
+    let line = serde_json::json!({"resourceSpans":[{"resource":{"attributes":[
+        attr("service.name", serde_json::json!({"stringValue":"archguard"}))]},
+        "scopeSpans":[{"spans":spans}]}]});
+    let dir = project(&[(".archguard/runtime/self.jsonl", &line.to_string())]);
+    let p = runtime_profile(dir.path(), None).unwrap();
+    let names: Vec<&str> = p.requests.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["archguard check"]);
+    assert_eq!(p.requests[0].duration_ms, 2000.0);
+    assert_eq!(p.requests[0].spans[0].name, "pipeline.extract");
+    assert_eq!(p.endpoints.len(), 1);
+}
