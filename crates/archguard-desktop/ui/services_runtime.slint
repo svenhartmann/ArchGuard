@@ -1,0 +1,170 @@
+// Services tab, "Runtime" view: the runtime profile from recorded OTLP
+// traces (ADR 0004; `archguard runtime`). Rust (src/services_ui/runtime.rs)
+// formats every number; this file holds the labels.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Badge, SectionHeading, EmptyState } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export struct SvcRtSite {
+    place: string,
+    calls: int,
+}
+
+export struct SvcRtFinding {
+    // 0 n_plus_one, 1 chatty_endpoint, 2 slow_statement.
+    kind: int,
+    service: string,
+    subject: string,
+    value: string,
+    threshold: string,
+    site: string,
+}
+
+export struct SvcRtEndpoint {
+    service: string,
+    name: string,
+    requests: int,
+    errors: int,
+    p50: string,
+    p95: string,
+    db-mean: string,
+    db-max: string,
+    db-time: string,
+}
+
+export struct SvcRtStatement {
+    service: string,
+    system: string,
+    text: string,
+    calls: int,
+    errors: int,
+    max-per-request: int,
+    mean: string,
+    max: string,
+    read: string,
+    sites: [SvcRtSite],
+}
+
+export struct SvcRuntime {
+    available: bool,
+    spans: int,
+    traces: int,
+    sampling: string,
+    complete: bool,
+    findings: [SvcRtFinding],
+    endpoints: [SvcRtEndpoint],
+    statements: [SvcRtStatement],
+    diagnostics: [string],
+}
+
+component Line inherits Text {
+    in property <bool> muted;
+    in property <bool> mono;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    font-family: mono ? Theme.mono-family : "";
+    wrap: word-wrap;
+}
+
+component Card inherits Rectangle {
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.panel;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 3px;
+        @children
+    }
+}
+
+component FindingCard inherits Card {
+    in property <SvcRtFinding> f;
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Badge {
+            variant: f.kind == 2 ? "warning" : "danger";
+            text: f.kind == 0 ? @tr("N+1 query") : f.kind == 1 ? @tr("Chatty endpoint") : @tr("Slow statement");
+        }
+        Line { text: f.service; muted: true; vertical-alignment: center; }
+    }
+    Line { text: f.subject; mono: true; }
+    Line {
+        muted: true;
+        text: f.kind == 0 ? @tr("{} calls from one call site within one request (threshold {}).", f.value, f.threshold)
+            : f.kind == 1 ? @tr("{} database calls per request at the 95th percentile (threshold {}).", f.value, f.threshold)
+            : @tr("{} ms at the 95th percentile (threshold {} ms), client-side time.", f.value, f.threshold);
+    }
+    if f.site != "": Line { text: @tr("Called from {}", f.site); mono: true; }
+}
+
+component EndpointRow inherits Card {
+    in property <SvcRtEndpoint> e;
+    Line { text: e.service + " · " + e.name; mono: true; }
+    Line {
+        muted: true;
+        text: @tr("{0} request" | "{0} requests" % e.requests, Fmt.int(e.requests))
+            + (e.errors > 0 ? " · " + @tr("{0} error" | "{0} errors" % e.errors, Fmt.int(e.errors)) : "")
+            + " · " + @tr("p50 {} ms, p95 {} ms", e.p50, e.p95)
+            + " · " + @tr("DB calls per request: mean {}, max {}", e.db-mean, e.db-max)
+            + " · " + @tr("DB time {} ms", e.db-time);
+    }
+}
+
+component StatementRow inherits Card {
+    in property <SvcRtStatement> s;
+    Line { text: s.service + (s.system != "" ? " · " + s.system : ""); muted: true; }
+    Line { text: s.text; mono: true; }
+    Line {
+        muted: true;
+        text: @tr("{0} call" | "{0} calls" % s.calls, Fmt.int(s.calls))
+            + (s.errors > 0 ? " · " + @tr("{0} error" | "{0} errors" % s.errors, Fmt.int(s.errors)) : "")
+            + " · " + @tr("at most {} per request", Fmt.int(s.max-per-request))
+            + " · " + @tr("mean {} ms, max {} ms", s.mean, s.max)
+            + (s.read != "" ? " · " + @tr("reading rows {} ms", s.read) : "");
+    }
+    for site in s.sites: Line {
+        text: @tr("Called from {} ({}×)", site.place, Fmt.int(site.calls));
+        mono: true;
+    }
+}
+
+export component RuntimeView inherits Rectangle {
+    in property <SvcRuntime> data;
+    property <bool> diagnostics-open;
+    if !data.available: EmptyState {
+        title: @tr("No recorded runtime");
+        reason: @tr("Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe, then reopen the project.");
+    }
+    if data.available: ScrollView {
+        content := VerticalLayout {
+            width: parent.visible-width;
+            padding: Theme.page-pad;
+            padding-top: 12px;
+            spacing: 6px;
+            Line {
+                text: @tr("{} spans in {} traces", Fmt.int(data.spans), Fmt.int(data.traces))
+                    + " · " + @tr("sampling {}", data.sampling == "" ? @tr("unknown") : data.sampling)
+                    + " · " + (data.complete ? @tr("complete input") : @tr("incomplete input, see diagnostics"));
+            }
+            Line {
+                muted: true;
+                text: @tr("A sample of recorded runs, not complete traffic: a pattern missing here is not proven absent. Durations are client-side (execution, network and pool wait). Query texts keep placeholders only.");
+            }
+            SectionHeading { label: @tr("Findings ({})", Fmt.int(data.findings.length)); }
+            if data.findings.length == 0: Line {
+                muted: true;
+                text: @tr("None at the [runtime] thresholds of archguard.toml (Settings → Performance).");
+            }
+            for f in data.findings: FindingCard { f: f; }
+            SectionHeading { label: @tr("Endpoints by DB time ({})", Fmt.int(data.endpoints.length)); }
+            for e in data.endpoints: EndpointRow { e: e; }
+            SectionHeading { label: @tr("Statements by DB time ({})", Fmt.int(data.statements.length)); }
+            for s in data.statements: StatementRow { s: s; }
+            if data.diagnostics.length > 0: SectionHeading { label: @tr("Diagnostics ({})", Fmt.int(data.diagnostics.length)); }
+            for d in data.diagnostics: Line { text: d; muted: true; }
+        }
+    }
+}

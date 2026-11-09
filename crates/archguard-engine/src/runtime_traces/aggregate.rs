@@ -33,7 +33,7 @@ impl<'a> Index<'a> {
             wrappers: HashSet::new(),
         };
         for span in spans.iter().filter(|s| s.db.is_some()) {
-            if let Some(p) = index.parent(span).filter(|p| spans[*p].db.is_some()) {
+            if let Some(p) = index.parent(span).filter(|p| wraps(&spans[*p], span)) {
                 index.wrappers.insert(p);
             }
         }
@@ -65,12 +65,22 @@ impl<'a> Index<'a> {
 
     /// The call site on the span itself or on the database spans wrapping it.
     fn site(&self, span: &'a Span) -> Option<Site> {
-        span.site.clone().or_else(|| {
-            self.ancestors(span)
-                .take_while(|p| self.spans[*p].db.is_some())
-                .find_map(|p| self.spans[p].site.clone())
-        })
+        let mut inner = span;
+        for p in self.ancestors(span) {
+            if inner.site.is_some() || !wraps(&self.spans[p], inner) {
+                break;
+            }
+            inner = &self.spans[p];
+        }
+        inner.site.clone()
     }
+}
+
+/// `parent` is a database span around `child` (an ORM span around the driver
+/// span): the child starts within the parent's time window. A finished span
+/// left as the ambient parent does not wrap later spans.
+fn wraps(parent: &Span, child: &Span) -> bool {
+    parent.db.is_some() && parent.start <= child.start && child.start <= parent.end
 }
 
 #[derive(Default)]
