@@ -100,9 +100,13 @@ fn files(root: &Path, dir: &Path) -> Vec<(PathBuf, bool)> {
     let own: Vec<PathBuf> = ignore::WalkBuilder::new(dir)
         .build()
         .flatten()
+        // The walk does not follow links: a symlink is no regular file here,
+        // so it can never lead out of the root.
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+        .filter(|e| e.metadata().is_ok_and(|m| m.len() <= MAX_BYTES))
         .map(|e| e.into_path())
-        .filter(|p| p.is_file() && source(p) && !p.to_string_lossy().contains("test"))
-        .filter(|p| p.metadata().is_ok_and(|m| m.len() <= MAX_BYTES))
+        // Only the part below the root names tests; the root's own name may not.
+        .filter(|p| source(p) && !below(root, p).contains("test"))
         .collect();
     let mut out: Vec<(PathBuf, bool)> = own.iter().cloned().map(|p| (p, true)).collect();
     for file in &own {
@@ -123,6 +127,14 @@ fn files(root: &Path, dir: &Path) -> Vec<(PathBuf, bool)> {
         }
     }
     out
+}
+
+/// `path` relative to `root`, as text.
+fn below(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn source(path: &Path) -> bool {
@@ -521,6 +533,32 @@ export function createHandler({call}) {
             keys: keys.into_iter().collect(),
             names: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn a_root_whose_name_contains_test_keeps_its_files_and_skips_test_dirs() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("latest-shop");
+        std::fs::create_dir_all(root.join("orders/test")).unwrap();
+        std::fs::write(root.join("orders/server.js"), "app.get('/x', h);").unwrap();
+        std::fs::write(root.join("orders/test/server.test.js"), "").unwrap();
+        let found: Vec<PathBuf> = files(&root, &root.join("orders"))
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(found, [root.join("orders/server.js")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_out_of_the_root_is_not_read() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.js"), "app.get('/leak', h);").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("orders");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.js"), dir.join("link.js")).unwrap();
+        assert!(files(root.path(), &dir).is_empty());
     }
 
     #[test]
