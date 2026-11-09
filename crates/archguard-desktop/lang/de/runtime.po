@@ -1,0 +1,162 @@
+msgid "Runtime"
+msgstr "Laufzeit"
+
+msgid "No recorded runtime"
+msgstr "Keine aufgezeichnete Laufzeit"
+
+msgid "Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe, then reopen the project."
+msgstr "Lege OTLP-JSON-Lines in .archguard/runtime/ ab (ein Export pro Zeile, siehe probes/CONVENTIONS.md) oder zeichne einen Lauf mit einer Sonde auf und öffne das Projekt dann erneut."
+
+msgid "{} spans in {} traces"
+msgstr "{} Spans in {} Traces"
+
+msgid "sampling {}"
+msgstr "Stichprobe {}"
+
+msgid "complete input"
+msgstr "Eingabe vollständig"
+
+msgid "incomplete input, see diagnostics"
+msgstr "Eingabe unvollständig, siehe Diagnosehinweise"
+
+msgid "A sample of recorded runs, not complete traffic: a pattern missing here is not proven absent. Durations are client-side (execution, network and pool wait). Query texts keep placeholders only."
+msgstr "Eine Stichprobe aufgezeichneter Läufe, nicht der vollständige Verkehr: Ein hier fehlendes Muster ist nicht als abwesend belegt. Dauern sind clientseitig gemessen (Ausführung, Netzwerk und Warten auf den Pool). Abfragetexte enthalten nur Platzhalter."
+
+msgid "Findings ({})"
+msgstr "Befunde ({})"
+
+msgid "None at the [runtime] thresholds of archguard.toml (Settings → Performance)."
+msgstr "Keine bei den [runtime]-Schwellen aus archguard.toml (Einstellungen → Performance)."
+
+msgid "Endpoints by DB time ({})"
+msgstr "Endpoints nach DB-Zeit ({})"
+
+msgid "Statements by DB time ({})"
+msgstr "Statements nach DB-Zeit ({})"
+
+msgid "Diagnostics ({})"
+msgstr "Diagnosehinweise ({})"
+
+msgid "N+1 query"
+msgstr "N+1-Abfrage"
+
+msgid "Chatty endpoint"
+msgstr "Gesprächiger Endpoint"
+
+msgid "Slow statement"
+msgstr "Langsames Statement"
+
+msgid "{} calls from one call site within one request (threshold {})."
+msgstr "{} Aufrufe von einer Code-Stelle innerhalb eines Requests (Schwelle {})."
+
+msgid "{} database calls per request at the 95th percentile (threshold {})."
+msgstr "{} DB-Aufrufe pro Request im 95. Perzentil (Schwelle {})."
+
+msgid "{} ms at the 95th percentile (threshold {} ms), client-side time."
+msgstr "{} ms im 95. Perzentil (Schwelle {} ms), clientseitig gemessen."
+
+msgid "Called from {}"
+msgstr "Aufgerufen aus {}"
+
+msgid "Called from {} ({}×)"
+msgstr "Aufgerufen aus {} ({}×)"
+
+msgid "{0} request"
+msgid_plural "{0} requests"
+msgstr[0] "{0} Request"
+msgstr[1] "{0} Requests"
+
+msgid "p50 {} ms, p95 {} ms"
+msgstr "p50 {} ms, p95 {} ms"
+
+msgid "DB calls per request: mean {}, max {}"
+msgstr "DB-Aufrufe pro Request: Mittel {}, max. {}"
+
+msgid "DB time {} ms"
+msgstr "DB-Zeit {} ms"
+
+msgid "{0} call"
+msgid_plural "{0} calls"
+msgstr[0] "{0} Aufruf"
+msgstr[1] "{0} Aufrufe"
+
+msgid "at most {} per request"
+msgstr "höchstens {} pro Request"
+
+msgid "mean {} ms, max {} ms"
+msgstr "Mittel {} ms, max. {} ms"
+
+msgid "reading rows {} ms"
+msgstr "Zeilen lesen {} ms"
+
+msgid "{0} error"
+msgid_plural "{0} errors"
+msgstr[0] "{0} Fehler"
+msgstr[1] "{0} Fehler"
+
+msgid "Reading the recorded runtime …"
+msgstr "Aufgezeichnete Laufzeit wird gelesen …"
+
+msgid "Requests ({})"
+msgstr "Requests ({})"
+
+msgid "Summary"
+msgstr "Übersicht"
+
+msgid "Summary ({0} finding)"
+msgid_plural "Summary ({0} findings)"
+msgstr[0] "Übersicht ({0} Befund)"
+msgstr[1] "Übersicht ({0} Befunde)"
+
+msgid "Live: on"
+msgstr "Live: an"
+
+msgid "Live: off"
+msgstr "Live: aus"
+
+msgid "No requests recorded yet"
+msgstr "Noch keine Requests aufgezeichnet"
+
+msgid "Send a request to the application; with Live on it appears here within about a second."
+msgstr "Sende einen Request an die Anwendung; mit Live an erscheint er hier nach etwa einer Sekunde."
+
+msgid "The newest {} of {} requests."
+msgstr "Die neuesten {} von {} Requests."
+
+msgid "{} ms"
+msgstr "{} ms"
+
+msgid "{0} DB call"
+msgid_plural "{0} DB calls"
+msgstr[0] "{0} DB-Aufruf"
+msgstr[1] "{0} DB-Aufrufe"
+
+msgid "N+1 ({}×)"
+msgstr "N+1 ({}×)"
+
+msgid "Error"
+msgstr "Fehler"
+
+msgid "Select a request."
+msgstr "Wähle einen Request aus."
+
+msgid "{} UTC · {} ms"
+msgstr "{} UTC · {} ms"
+
+msgid "({} ms)"
+msgstr "({} ms)"
+
+msgid "own code and waiting {} ms"
+msgstr "eigener Code und Wartezeit {} ms"
+
+msgid "Blue: database call · violet: outgoing call · grey: other · red: error or a statement repeated {} times or more from one call site (N+1)."
+msgstr "Blau: DB-Aufruf · Violett: ausgehender Aufruf · Grau: Sonstiges · Rot: Fehler oder ein Statement, das {}-mal oder öfter von einer Code-Stelle kam (N+1)."
+
+msgid "No spans below this request were recorded."
+msgstr "Unter diesem Request wurden keine Spans aufgezeichnet."
+
+msgid "More spans than shown; the CLI JSON has all counts."
+msgstr "Mehr Spans als angezeigt; die JSON-Ausgabe der CLI enthält alle Zahlen."
+
+msgid "Trace {}"
+msgstr "Trace {}"

@@ -23,8 +23,8 @@ use crate::settings_file;
 use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
-    architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, security_ui, services_ui,
-    start_ui, web,
+    architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, runtime_ui, security_ui,
+    services_ui, start_ui, web,
 };
 
 /// Register the callbacks of the document strip and of every tab.
@@ -36,6 +36,7 @@ pub fn wire(ui: &AppWindow) {
     architecture_ui::wire(ui);
     calls_ui::wire(ui);
     services_ui::wire(ui);
+    runtime_ui::wire(ui);
     quality_ui::wire(ui);
     security_ui::wire(ui);
     crate::export_ui::wire(ui);
@@ -334,6 +335,7 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     architecture_ui::show(ui, data);
     calls_ui::show(ui, data);
     services_ui::show(ui, data);
+    runtime_ui::show(ui, data);
     quality_ui::show(ui, data);
     security_ui::show(ui, data);
     // Graph, Matrix and File tabs: their instances for the layout.

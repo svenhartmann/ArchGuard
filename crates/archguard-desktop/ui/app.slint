@@ -11,6 +11,7 @@ import { StartView, StartData } from "start_view.slint";
 import { ArchitectureView, ArchitectureData } from "architecture_view.slint";
 import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
+import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
@@ -25,7 +26,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 // Data of the views that can be open several times: one per instance.
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
-export { StartData, ArchitectureData, CallsData, ServicesData, QualityData, SecurityData }
+export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }
@@ -314,7 +315,7 @@ export component AppWindow inherits Window {
             }
             Menu {
                 title: @tr("Open in new tab");
-                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "quality", "security"]: MenuItem {
+                for v in ["start", "architecture", "graph", "dsm", "calls", "services", "runtime", "quality", "security"]: MenuItem {
                     title: Views.label(v);
                     enabled: root.ready;
                     activated => { root.open-view-tab(v); }
@@ -473,6 +474,7 @@ export component AppWindow inherits Window {
                         ViewBarTab { view: "dsm"; active: root.tab == "dsm"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { view: "services"; active: root.tab == "services"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { view: "runtime"; active: root.tab == "runtime"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         Rectangle { width: 9px; Divider { } }
                         ViewBarTab { view: "quality"; active: root.tab == "quality"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         ViewBarTab { view: "security"; active: root.tab == "security"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
@@ -671,6 +673,9 @@ export component AppWindow inherits Window {
                     if p.view == "services": ServicesView {
                         vertical-stretch: 1;
                         open-web => { root.open-web("services"); }
+                    }
+                    if p.view == "runtime": RuntimeView {
+                        vertical-stretch: 1;
                     }
                     if p.view == "quality": QualityView {
                         vertical-stretch: 1;

@@ -67,7 +67,10 @@ pub fn schedule(ui: &AppWindow) {
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
     let hold = env::<u64>("ARCHGUARD_DESKTOP_HOLD");
-    let delay = hold.map_or(900, |s| s * 1000);
+    // `ARCHGUARD_DESKTOP_SNAPSHOT_MS=<ms>`: wait longer before the PNG, e.g.
+    // for the Runtime tab's live reload (it checks its input once a second).
+    let wait = env::<u64>("ARCHGUARD_DESKTOP_SNAPSHOT_MS").unwrap_or(900);
+    let delay = hold.map_or(wait, |s| s * 1000);
     slint::Timer::single_shot(std::time::Duration::from_millis(delay), move || {
         let Some(ui) = weak.upgrade() else { return };
         if hold.is_none() {

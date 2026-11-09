@@ -1,0 +1,254 @@
+// Runtime tab (ADR 0004): single requests of one application from
+// `.archguard/runtime/`, newest first and live, each with its timeline; and
+// the summary over all requests. Data and callbacks live in RuntimeData, set
+// from src/runtime_ui.rs, which formats every number.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Badge, EmptyState, SectionHeading } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { RuntimeSummary, RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite } from "runtime_summary.slint";
+
+export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite }
+
+export struct RtRequest {
+    // UTC time of day.
+    time: string,
+    service: string,
+    name: string,
+    duration: string,
+    db-calls: int,
+    // Most calls of one statement from one call site in this request.
+    repeated: int,
+    // `repeated` reached the N+1 threshold.
+    flagged: bool,
+    error: bool,
+    pressed: bool,
+}
+
+export struct RtSpanRow {
+    depth: int,
+    label: string,
+    site: string,
+    // Start and length as shares of the request's duration.
+    x: float,
+    w: float,
+    duration: string,
+    // 0 database call, 1 outgoing call, 2 other.
+    kind: int,
+    error: bool,
+    // Part of a repeated statement at or above the N+1 threshold.
+    repeated: bool,
+}
+
+export struct RtDetail {
+    has: bool,
+    title: string,
+    time: string,
+    duration: string,
+    db-calls: int,
+    db-time: string,
+    // Time not covered by the request's direct child spans.
+    own: string,
+    threshold: int,
+    trace: string,
+    truncated: bool,
+    spans: [RtSpanRow],
+}
+
+export struct RuntimeModel {
+    // 0 loading, 1 ready, 2 no runtime input.
+    state: int,
+    // 0 requests, 1 summary.
+    page: int,
+    live: bool,
+    requests-total: int,
+    requests: [RtRequest],
+    detail: RtDetail,
+    summary: RtSummary,
+}
+
+export global RuntimeData {
+    in-out property <RuntimeModel> model;
+    callback select-page(int);
+    callback select-request(int);
+    callback toggle-live();
+}
+
+component Small inherits Text {
+    in property <bool> muted;
+    in property <bool> mono;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    font-family: mono ? Theme.mono-family : "";
+    overflow: elide;
+    vertical-alignment: center;
+}
+
+component RequestRow inherits Rectangle {
+    in property <RtRequest> r;
+    callback clicked();
+    height: 44px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: r.pressed ? Theme.accent : touch.has-hover ? Theme.border : transparent;
+    background: r.pressed ? Theme.accent.with-alpha(0.08) : touch.has-hover ? Theme.panel-2 : transparent;
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            Small { text: r.time; muted: true; mono: true; horizontal-stretch: 0; }
+            Small { text: r.name; mono: true; horizontal-stretch: 1; }
+            Small { text: @tr("{} ms", r.duration); horizontal-stretch: 0; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Small { text: r.service; muted: true; horizontal-stretch: 0; }
+            Small { text: @tr("{0} DB call" | "{0} DB calls" % r.db-calls, Fmt.int(r.db-calls)); muted: true; horizontal-stretch: 1; }
+            if r.flagged: Badge { variant: "danger"; text: @tr("N+1 ({}×)", Fmt.int(r.repeated)); }
+            if r.error: Badge { variant: "danger"; text: @tr("Error"); }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SpanRow inherits Rectangle {
+    in property <RtSpanRow> s;
+    in property <length> label-w;
+    height: s.site != "" ? 38px : 24px;
+    HorizontalLayout {
+        spacing: 8px;
+        VerticalLayout {
+            width: root.label-w;
+            padding-left: s.depth * 14px - 14px;
+            alignment: center;
+            Small { text: s.label; mono: s.kind != 2; color: s.error || s.repeated ? Theme.danger : Theme.text; }
+            if s.site != "": Small { text: s.site; muted: true; mono: true; }
+        }
+        track := Rectangle {
+            horizontal-stretch: 1;
+            Rectangle {
+                x: min(root.s.x, 1.0) * track.width;
+                width: max(2px, min(root.s.w, 1.0 - root.s.x) * track.width);
+                height: 10px;
+                y: (track.height - self.height) / 2;
+                border-radius: 2px;
+                background: root.s.error || root.s.repeated ? Theme.danger
+                    : root.s.kind == 0 ? Theme.accent
+                    : root.s.kind == 1 ? Theme.outgoing : Theme.edge;
+            }
+        }
+        Small { text: @tr("{} ms", s.duration); width: 72px; horizontal-alignment: right; }
+    }
+}
+
+component Timeline inherits VerticalLayout {
+    in property <RtDetail> d;
+    padding: Theme.page-pad;
+    padding-top: 10px;
+    spacing: 6px;
+    if !d.has: Small { text: @tr("Select a request."); muted: true; }
+    if d.has: Text { text: d.title; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; font-family: Theme.mono-family; overflow: elide; }
+    if d.has: Small {
+        text: @tr("{} UTC · {} ms", d.time, d.duration)
+            + " · " + @tr("{0} DB call" | "{0} DB calls" % d.db-calls, Fmt.int(d.db-calls)) + " " + @tr("({} ms)", d.db-time)
+            + " · " + @tr("own code and waiting {} ms", d.own);
+        muted: true;
+    }
+    if d.has: Small {
+        text: @tr("Blue: database call · violet: outgoing call · grey: other · red: error or a statement repeated {} times or more from one call site (N+1).", Fmt.int(d.threshold));
+        muted: true;
+        wrap: word-wrap;
+        overflow: clip;
+    }
+    if d.has: Rectangle { height: 1px; background: Theme.border; }
+    if d.has: ScrollView {
+        vertical-stretch: 1;
+        rows := VerticalLayout {
+            width: parent.visible-width;
+            alignment: start;
+            spacing: 2px;
+            if d.spans.length == 0: Small { text: @tr("No spans below this request were recorded."); muted: true; }
+            for s in d.spans: SpanRow { s: s; label-w: rows.width * 0.42; }
+            if d.truncated: Small { text: @tr("More spans than shown; the CLI JSON has all counts."); muted: true; }
+            Small { text: @tr("Trace {}", d.trace); muted: true; mono: true; }
+        }
+    }
+}
+
+export component RuntimeView inherits Rectangle {
+    property <RuntimeModel> m: RuntimeData.model;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state == 0: Text {
+        text: @tr("Reading the recorded runtime …");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if m.state > 0: VerticalLayout {
+        HorizontalLayout {
+            padding-left: Theme.page-pad;
+            padding-right: Theme.page-pad;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            spacing: 8px;
+            alignment: start;
+            Button {
+                text: @tr("Requests ({})", Fmt.int(m.requests-total));
+                pressed-state: m.page == 0;
+                clicked => { RuntimeData.select-page(0); }
+            }
+            Button {
+                text: m.summary.findings.length > 0 ? @tr("Summary ({0} finding)" | "Summary ({0} findings)" % m.summary.findings.length, Fmt.int(m.summary.findings.length)) : @tr("Summary");
+                pressed-state: m.page == 1;
+                clicked => { RuntimeData.select-page(1); }
+            }
+            Button {
+                text: m.live ? @tr("Live: on") : @tr("Live: off");
+                pressed-state: m.live;
+                clicked => { RuntimeData.toggle-live(); }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        if m.state == 2 || (m.page == 0 && m.requests.length == 0): EmptyState {
+            vertical-stretch: 1;
+            title: m.state == 2 ? @tr("No recorded runtime") : @tr("No requests recorded yet");
+            reason: m.state == 2
+                ? @tr("Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe, then reopen the project.")
+                : @tr("Send a request to the application; with Live on it appears here within about a second.");
+        }
+        if m.state == 1 && m.page == 1: RuntimeSummary { vertical-stretch: 1; data: m.summary; }
+        if m.state == 1 && m.page == 0 && m.requests.length > 0: HorizontalLayout {
+            vertical-stretch: 1;
+            ScrollView {
+                width: min(440px, root.width * 0.4);
+                list := VerticalLayout {
+                    width: parent.visible-width;
+                    padding: 8px;
+                    spacing: 2px;
+                    for r[i] in m.requests: RequestRow {
+                        r: r;
+                        clicked => { RuntimeData.select-request(i); }
+                    }
+                    if m.requests.length < m.requests-total: Small {
+                        text: @tr("The newest {} of {} requests.", Fmt.int(m.requests.length), Fmt.int(m.requests-total));
+                        muted: true;
+                    }
+                }
+            }
+            Rectangle { width: 1px; background: Theme.border; }
+            Timeline { horizontal-stretch: 1; d: m.detail; }
+        }
+    }
+}

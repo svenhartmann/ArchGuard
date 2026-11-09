@@ -9,14 +9,11 @@ mod export;
 mod follow;
 mod layout;
 mod paths;
-mod runtime;
 mod state;
 mod sync;
 #[cfg(test)]
 mod tree_check;
 mod view;
-
-use std::sync::Arc;
 
 use slint::ComponentHandle;
 
@@ -38,7 +35,6 @@ fn build_from(topology: Topology) -> ServicesState {
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ServicesData>();
     let a = Actions::<ServicesState>::new(ui);
-    d.on_select_view(a.on(|s, _, i: i32| s.runtime_view = i == 1));
     d.on_select_kind(a.on(|s, _, i: i32| {
         s.kind = index(i).unwrap_or(0).min(KINDS.len() - 1);
         s.clear_focus();
@@ -117,11 +113,7 @@ impl TabState for ServicesState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
-        move || {
-            let mut state = build_from(tab_support::topology(&slot, &root));
-            state.runtime = archguard_engine::runtime_profile(&root, None).map(Arc::new);
-            state
-        }
+        move || build_from(tab_support::topology(&slot, &root))
     });
 }
 
@@ -129,8 +121,6 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
 pub fn push(ui: &AppWindow, s: &ServicesState) {
     let d = ui.global::<ServicesData>();
     let mut m = view::build(s, Texts::of(ui).t("Unmapped service"));
-    m.view = i32::from(s.runtime_view);
-    m.runtime = runtime::model(s.runtime.as_deref());
     sync::keep(&d.get_model(), &mut m);
     d.set_model(m);
 }
@@ -148,9 +138,8 @@ pub fn export_data(ui: &AppWindow) -> Option<(crate::export::Snapshot, crate::ex
     .flatten()
 }
 
-/// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`,
-/// `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` and `ARCHGUARD_DESKTOP_SVC_VIEW=runtime`
-/// set the view for snapshot runs.
+/// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`
+/// and `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` set the view for snapshot runs.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut ServicesState) {
     if let Some(k) = std::env::var("ARCHGUARD_DESKTOP_SVC_KIND")
@@ -168,7 +157,6 @@ fn snapshot_overrides(s: &mut ServicesState) {
         }
     }
     s.in_out = std::env::var("ARCHGUARD_DESKTOP_SVC_ROUTING").is_ok_and(|r| r == "inout");
-    s.runtime_view = std::env::var("ARCHGUARD_DESKTOP_SVC_VIEW").is_ok_and(|v| v == "runtime");
 }
 
 #[cfg(not(feature = "snapshot"))]

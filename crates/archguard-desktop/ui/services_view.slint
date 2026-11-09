@@ -8,9 +8,8 @@ import { Icons, Button, Disclosure, ZoomControls, HelpTip } from "widgets.slint"
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
-import { RuntimeView, SvcRuntime, SvcRtFinding, SvcRtEndpoint, SvcRtStatement, SvcRtSite } from "services_runtime.slint";
 
-export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcRuntime, SvcRtFinding, SvcRtEndpoint, SvcRtStatement, SvcRtSite }
+export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink }
 
 export struct SvcProject {
     path: string,
@@ -64,9 +63,6 @@ export struct ServicesModel {
     width: float,
     height: float,
     inspector: SvcInspector,
-    // 0 topology, 1 runtime profile (ADR 0004).
-    view: int,
-    runtime: SvcRuntime,
 }
 
 export global ServicesData {
@@ -74,7 +70,6 @@ export global ServicesData {
 
     // Group name of a service without project and Compose file.
 
-    callback select-view(int);
     callback select-kind(int);
     callback select-mode(int);
     callback select-routing(int);
@@ -307,139 +302,122 @@ export component ServicesView inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    if m.state > 0: VerticalLayout {
-        HorizontalLayout {
-            padding-left: Theme.page-pad;
-            padding-right: Theme.page-pad;
-            padding-top: 8px;
-            padding-bottom: 0px;
-            spacing: 8px;
-            alignment: start;
-            Button { text: @tr("Topology"); pressed-state: m.view == 0; clicked => { ServicesData.select-view(0); } }
-            Button {
-                text: m.runtime.findings.length > 0 ? @tr("Runtime ({0} finding)" | "Runtime ({0} findings)" % m.runtime.findings.length, Fmt.int(m.runtime.findings.length)) : @tr("Runtime");
-                pressed-state: m.view == 1;
-                clicked => { ServicesData.select-view(1); }
-            }
-        }
-        if m.view == 1: RuntimeView { vertical-stretch: 1; data: m.runtime; }
-        if m.view == 0: HorizontalLayout {
-            VerticalLayout {
-                horizontal-stretch: 1;
-                summary := ScrollView {
-                    height: min(desc.preferred-height, root.height * 0.35);
-                    // As wide as the visible area, so the summary wraps before
-                    // the edge and the scroll bar.
-                    desc := VerticalLayout {
-                        width: summary.visible-width;
-                        padding-left: Theme.page-pad;
-                        padding-right: Theme.page-pad;
-                        padding-top: 12px;
-                        padding-bottom: 6px;
-                        spacing: 4px;
-                        Note { text: root.status(); muted: false; }
-                        Details {
-                            text: @tr("Evidence");
-                            open <=> root.evidence-open;
-                            if root.evidence-open: Note { text: root.limitations(); }
-                        }
-                        if m.projects > 0: Details {
-                            text: @tr("{0} manifest project · applications, libraries and tools" | "{0} manifest projects · applications, libraries and tools" % m.projects, Fmt.int(m.projects));
-                            open <=> root.projects-open;
-                            if root.projects-open: Note {
-                                text: @tr("Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections.");
-                            }
-                            if root.projects-open: VerticalLayout {
-                                spacing: 3px;
-                                for p[i] in m.project-list: ProjectRow {
-                                    project: p;
-                                    clicked => { ServicesData.select-project(i); }
-                                }
-                            }
-                            if root.projects-open && m.more-projects: HorizontalLayout {
-                                alignment: start;
-                                Button { compact: true; text: @tr("Show more manifest projects"); clicked => { ServicesData.show-more-projects(); } }
-                            }
-                        }
-                        WebOnly { text: @tr("Project workspace"); open <=> root.workspace-open; open-web => { root.open-web(); } }
-                        WebOnly { text: @tr("Architecture pattern candidates"); open <=> root.patterns-open; open-web => { root.open-web(); } }
-                        WebOnly { text: @tr("API contracts and changes"); open <=> root.contracts-open; open-web => { root.open-web(); } }
-                        if m.diagnostics.length > 0: Details {
-                            text: @tr("Diagnostics");
-                            open <=> root.diagnostics-open;
-                            if root.diagnostics-open: Note { text: @tr("Diagnostic messages (original wording)"); }
-                            if root.diagnostics-open: VerticalLayout {
-                                for d in m.diagnostics: Note { text: d; }
-                            }
-                        }
-                        for c[i] in m.cycles: Rectangle {
-                            border-radius: 6px;
-                            background: cycle-touch.has-hover ? Theme.panel-2 : transparent;
-                            HorizontalLayout {
-                                padding: 5px;
-                                Text {
-                                    text: @tr("Cyclic group: {}", c.names);
-                                    color: Theme.cycle;
-                                    font-size: Theme.font-small;
-                                    wrap: word-wrap;
-                                }
-                            }
-                            cycle-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { ServicesData.select-cycle(i); }
-                            }
-                        }
-                        // The web's services-reference-help.
-                        HorizontalLayout {
-                            alignment: start;
-                            spacing: 6px;
-                            Note { text: @tr("Legend"); vertical-alignment: center; }
-                            HelpTip { tip: root.reference(); }
-                        }
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
-                // Without services there is nothing to filter or zoom.
-                if m.state == 1 && m.rows.length > 0: Toolbar {
-                    fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
-                }
-                if m.state == 1 && m.rows.length > 0: Rectangle { height: 1px; background: Theme.border; }
-                if m.state != 1 || m.rows.length == 0: HorizontalLayout {
+    if m.state > 0: HorizontalLayout {
+        VerticalLayout {
+            horizontal-stretch: 1;
+            summary := ScrollView {
+                height: min(desc.preferred-height, root.height * 0.35);
+                // As wide as the visible area, so the summary wraps before
+                // the edge and the scroll bar.
+                desc := VerticalLayout {
+                    width: summary.visible-width;
                     padding-left: Theme.page-pad;
                     padding-right: Theme.page-pad;
-                    height: 40px;
-                    Text {
-                        text: m.state == 2 ? m.error
-                            : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
-                            : @tr("No service declarations were found.");
-                        color: Theme.muted;
-                        font-size: Theme.font-small;
-                        vertical-alignment: center;
+                    padding-top: 12px;
+                    padding-bottom: 6px;
+                    spacing: 4px;
+                    Note { text: root.status(); muted: false; }
+                    Details {
+                        text: @tr("Evidence");
+                        open <=> root.evidence-open;
+                        if root.evidence-open: Note { text: root.limitations(); }
+                    }
+                    if m.projects > 0: Details {
+                        text: @tr("{0} manifest project · applications, libraries and tools" | "{0} manifest projects · applications, libraries and tools" % m.projects, Fmt.int(m.projects));
+                        open <=> root.projects-open;
+                        if root.projects-open: Note {
+                            text: @tr("Manifest inventory. Only identified applications become service nodes; shared names and technologies do not establish connections.");
+                        }
+                        if root.projects-open: VerticalLayout {
+                            spacing: 3px;
+                            for p[i] in m.project-list: ProjectRow {
+                                project: p;
+                                clicked => { ServicesData.select-project(i); }
+                            }
+                        }
+                        if root.projects-open && m.more-projects: HorizontalLayout {
+                            alignment: start;
+                            Button { compact: true; text: @tr("Show more manifest projects"); clicked => { ServicesData.show-more-projects(); } }
+                        }
+                    }
+                    WebOnly { text: @tr("Project workspace"); open <=> root.workspace-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("Architecture pattern candidates"); open <=> root.patterns-open; open-web => { root.open-web(); } }
+                    WebOnly { text: @tr("API contracts and changes"); open <=> root.contracts-open; open-web => { root.open-web(); } }
+                    if m.diagnostics.length > 0: Details {
+                        text: @tr("Diagnostics");
+                        open <=> root.diagnostics-open;
+                        if root.diagnostics-open: Note { text: @tr("Diagnostic messages (original wording)"); }
+                        if root.diagnostics-open: VerticalLayout {
+                            for d in m.diagnostics: Note { text: d; }
+                        }
+                    }
+                    for c[i] in m.cycles: Rectangle {
+                        border-radius: 6px;
+                        background: cycle-touch.has-hover ? Theme.panel-2 : transparent;
+                        HorizontalLayout {
+                            padding: 5px;
+                            Text {
+                                text: @tr("Cyclic group: {}", c.names);
+                                color: Theme.cycle;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                        cycle-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { ServicesData.select-cycle(i); }
+                        }
+                    }
+                    // The web's services-reference-help.
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 6px;
+                        Note { text: @tr("Legend"); vertical-alignment: center; }
+                        HelpTip { tip: root.reference(); }
                     }
                 }
-                tree := ServicesTree {
-                    vertical-stretch: 1;
-                    rows: m.rows;
-                    edges: m.edges;
-                    hierarchy: m.hierarchy;
-                    canvas-w: m.width;
-                    canvas-h: m.height;
-                    zoom: m.zoom;
-                    select-service(i) => { ServicesData.select-service(i); }
-                    select-edge(i) => { ServicesData.select-edge(i); }
-                    resized(w) => { ServicesData.resized(w); }
-                    zoom-by(f) => { ServicesData.zoom-by(f); }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            // Without services there is nothing to filter or zoom.
+            if m.state == 1 && m.rows.length > 0: Toolbar {
+                fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
+            }
+            if m.state == 1 && m.rows.length > 0: Rectangle { height: 1px; background: Theme.border; }
+            if m.state != 1 || m.rows.length == 0: HorizontalLayout {
+                padding-left: Theme.page-pad;
+                padding-right: Theme.page-pad;
+                height: 40px;
+                Text {
+                    text: m.state == 2 ? m.error
+                        : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
+                        : @tr("No service declarations were found.");
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    vertical-alignment: center;
                 }
             }
-            if m.inspector.mode > 0: ServicesInspector {
-                width: 360px;
-                data: m.inspector;
-                kind-text: ServicesData.kind-label(m.inspector.kind);
-                project-kind-text: ServicesData.project-kind(m.inspector.project-kind);
-                select-edge(i) => { ServicesData.select-edge(i); }
+            tree := ServicesTree {
+                vertical-stretch: 1;
+                rows: m.rows;
+                edges: m.edges;
+                hierarchy: m.hierarchy;
+                canvas-w: m.width;
+                canvas-h: m.height;
+                zoom: m.zoom;
                 select-service(i) => { ServicesData.select-service(i); }
-                close => { ServicesData.close-details(); }
+                select-edge(i) => { ServicesData.select-edge(i); }
+                resized(w) => { ServicesData.resized(w); }
+                zoom-by(f) => { ServicesData.zoom-by(f); }
             }
+        }
+        if m.inspector.mode > 0: ServicesInspector {
+            width: 360px;
+            data: m.inspector;
+            kind-text: ServicesData.kind-label(m.inspector.kind);
+            project-kind-text: ServicesData.project-kind(m.inspector.project-kind);
+            select-edge(i) => { ServicesData.select-edge(i); }
+            select-service(i) => { ServicesData.select-service(i); }
+            close => { ServicesData.close-details(); }
         }
     }
 

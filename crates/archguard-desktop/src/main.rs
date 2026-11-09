@@ -40,6 +40,7 @@ mod panes;
 mod panes_ui;
 mod platform;
 mod quality_ui;
+mod runtime_ui;
 mod rating;
 #[cfg(test)]
 mod security_check;

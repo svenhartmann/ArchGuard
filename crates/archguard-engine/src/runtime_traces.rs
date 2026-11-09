@@ -39,6 +39,7 @@ pub fn runtime_profile(root: &Path, config: Option<&Path>) -> Option<RuntimeProf
     aggregate::fill(&spans, &mut profile);
     let thresholds = thresholds(root, config, &mut profile);
     profile.findings = findings::findings(&profile, &thresholds);
+    profile.thresholds = thresholds;
     Some(profile)
 }
 

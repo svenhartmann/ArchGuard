@@ -47,10 +47,6 @@ pub struct ServicesState {
     pub(super) zoom: f32,
     /// Width of the tree viewport (the web's `treeAvailableWidth`).
     pub(super) viewport: f32,
-    /// Runtime profile from `.archguard/runtime` (ADR 0004), if recorded.
-    pub(super) runtime: Option<std::sync::Arc<archguard_engine::core::RuntimeProfile>>,
-    /// The "Runtime" view instead of the topology.
-    pub(super) runtime_view: bool,
 }
 
 pub fn build_from(topology: Topology) -> ServicesState {
@@ -79,8 +75,6 @@ pub fn build_from(topology: Topology) -> ServicesState {
         details_hidden: false,
         zoom: 1.0,
         viewport: 0.0,
-        runtime: None,
-        runtime_view: false,
     }
 }
 

@@ -21,6 +21,9 @@ pub struct RuntimeProfile {
     /// `MAX_REQUESTS` of `requests_total`.
     pub requests: Vec<RuntimeRequest>,
     pub requests_total: u64,
+    /// The `[runtime]` thresholds the findings used.
+    #[serde(default)]
+    pub thresholds: RuntimeConfig,
     /// Threshold findings (`[runtime]` in archguard.toml), most severe kinds first.
     pub findings: Vec<RuntimeFinding>,
     pub diagnostics: Vec<RuntimeDiagnostic>,

@@ -1,6 +1,6 @@
-//! The Services tab's "Runtime" view: the runtime profile (ADR 0004) as
-//! one [`SvcRuntime`] value. Numbers are formatted here, labels live in
-//! `ui/services_runtime.slint`.
+//! The Runtime tab's summary: the runtime profile (ADR 0004) over all
+//! requests as one [`RtSummary`] value. Numbers are formatted here, labels live in
+//! `ui/runtime_summary.slint`.
 
 use std::rc::Rc;
 
@@ -9,7 +9,7 @@ use archguard_engine::core::{
 };
 use slint::{ModelRc, SharedString, VecModel};
 
-use crate::ui::{SvcRtEndpoint, SvcRtFinding, SvcRtSite, SvcRtStatement, SvcRuntime};
+use crate::ui::{RtEndpoint, RtFinding, RtSite, RtStatement, RtSummary};
 
 /// Rows per list; the CLI (`archguard runtime --format json`) has all.
 const MAX_ROWS: usize = 50;
@@ -21,7 +21,7 @@ fn list<T: Clone + 'static>(rows: impl Iterator<Item = T>) -> ModelRc<T> {
 }
 
 /// `12.5`, `40`: one decimal only where it carries information.
-fn number(v: f64) -> SharedString {
+pub(super) fn number(v: f64) -> SharedString {
     if (v - v.round()).abs() < 0.05 {
         format!("{v:.0}").into()
     } else {
@@ -41,7 +41,7 @@ fn place(site: &RuntimeCallSite) -> String {
 }
 
 /// `Shop.Orders.OrderService.LoadLines` → `OrderService.LoadLines`.
-fn short_function(f: &str) -> String {
+pub(super) fn short_function(f: &str) -> String {
     let parts: Vec<&str> = f.rsplitn(3, '.').collect();
     match parts.as_slice() {
         [method, class, _] => format!("{class}.{method}"),
@@ -49,12 +49,12 @@ fn short_function(f: &str) -> String {
     }
 }
 
-fn file_name(path: &str) -> &str {
+pub(super) fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-fn finding(f: &RuntimeFinding) -> SvcRtFinding {
-    SvcRtFinding {
+fn finding(f: &RuntimeFinding) -> RtFinding {
+    RtFinding {
         kind: match f.kind.as_str() {
             "n_plus_one" => 0,
             "chatty_endpoint" => 1,
@@ -68,8 +68,8 @@ fn finding(f: &RuntimeFinding) -> SvcRtFinding {
     }
 }
 
-fn endpoint(e: &RuntimeEndpoint) -> SvcRtEndpoint {
-    SvcRtEndpoint {
+fn endpoint(e: &RuntimeEndpoint) -> RtEndpoint {
+    RtEndpoint {
         service: e.service.as_str().into(),
         name: e.name.as_str().into(),
         requests: i32::try_from(e.requests).unwrap_or(i32::MAX),
@@ -82,8 +82,8 @@ fn endpoint(e: &RuntimeEndpoint) -> SvcRtEndpoint {
     }
 }
 
-fn statement(s: &RuntimeStatement) -> SvcRtStatement {
-    SvcRtStatement {
+fn statement(s: &RuntimeStatement) -> RtStatement {
+    RtStatement {
         service: s.service.as_str().into(),
         system: s.db_system.as_deref().unwrap_or_default().into(),
         text: s.text.as_deref().unwrap_or(&s.key).into(),
@@ -93,7 +93,7 @@ fn statement(s: &RuntimeStatement) -> SvcRtStatement {
         mean: number(s.exec_ms.mean),
         max: number(s.exec_ms.max),
         read: s.read_ms_total.map(number).unwrap_or_default(),
-        sites: list(s.call_sites.iter().map(|c| SvcRtSite {
+        sites: list(s.call_sites.iter().map(|c| RtSite {
             place: place(c).into(),
             calls: i32::try_from(c.calls).unwrap_or(i32::MAX),
         })),
@@ -105,9 +105,9 @@ fn total_ms(s: &RuntimeStatement) -> f64 {
 }
 
 /// The view's model; `available` is false without recorded runtime input.
-pub fn model(profile: Option<&RuntimeProfile>) -> SvcRuntime {
+pub fn model(profile: Option<&RuntimeProfile>) -> RtSummary {
     let Some(p) = profile else {
-        return SvcRuntime::default();
+        return RtSummary::default();
     };
     let mut endpoints: Vec<_> = p.endpoints.iter().collect();
     endpoints.sort_by(|a, b| {
@@ -121,7 +121,7 @@ pub fn model(profile: Option<&RuntimeProfile>) -> SvcRuntime {
             .total_cmp(&total_ms(a))
             .then(b.calls.cmp(&a.calls))
     });
-    SvcRuntime {
+    RtSummary {
         available: true,
         spans: i32::try_from(p.spans).unwrap_or(i32::MAX),
         traces: i32::try_from(p.traces).unwrap_or(i32::MAX),

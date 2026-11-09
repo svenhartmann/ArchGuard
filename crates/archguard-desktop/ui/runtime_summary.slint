@@ -1,17 +1,17 @@
-// Services tab, "Runtime" view: the runtime profile from recorded OTLP
-// traces (ADR 0004; `archguard runtime`). Rust (src/services_ui/runtime.rs)
+// Runtime tab, "Summary": the runtime profile over all recorded requests
+// (ADR 0004; `archguard runtime`). Rust (src/runtime_ui/summary.rs)
 // formats every number; this file holds the labels.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Badge, SectionHeading, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 
-export struct SvcRtSite {
+export struct RtSite {
     place: string,
     calls: int,
 }
 
-export struct SvcRtFinding {
+export struct RtFinding {
     // 0 n_plus_one, 1 chatty_endpoint, 2 slow_statement.
     kind: int,
     service: string,
@@ -21,7 +21,7 @@ export struct SvcRtFinding {
     site: string,
 }
 
-export struct SvcRtEndpoint {
+export struct RtEndpoint {
     service: string,
     name: string,
     requests: int,
@@ -33,7 +33,7 @@ export struct SvcRtEndpoint {
     db-time: string,
 }
 
-export struct SvcRtStatement {
+export struct RtStatement {
     service: string,
     system: string,
     text: string,
@@ -43,18 +43,18 @@ export struct SvcRtStatement {
     mean: string,
     max: string,
     read: string,
-    sites: [SvcRtSite],
+    sites: [RtSite],
 }
 
-export struct SvcRuntime {
+export struct RtSummary {
     available: bool,
     spans: int,
     traces: int,
     sampling: string,
     complete: bool,
-    findings: [SvcRtFinding],
-    endpoints: [SvcRtEndpoint],
-    statements: [SvcRtStatement],
+    findings: [RtFinding],
+    endpoints: [RtEndpoint],
+    statements: [RtStatement],
     diagnostics: [string],
 }
 
@@ -80,7 +80,7 @@ component Card inherits Rectangle {
 }
 
 component FindingCard inherits Card {
-    in property <SvcRtFinding> f;
+    in property <RtFinding> f;
     HorizontalLayout {
         spacing: 8px;
         alignment: start;
@@ -101,7 +101,7 @@ component FindingCard inherits Card {
 }
 
 component EndpointRow inherits Card {
-    in property <SvcRtEndpoint> e;
+    in property <RtEndpoint> e;
     Line { text: e.service + " · " + e.name; mono: true; }
     Line {
         muted: true;
@@ -114,7 +114,7 @@ component EndpointRow inherits Card {
 }
 
 component StatementRow inherits Card {
-    in property <SvcRtStatement> s;
+    in property <RtStatement> s;
     Line { text: s.service + (s.system != "" ? " · " + s.system : ""); muted: true; }
     Line { text: s.text; mono: true; }
     Line {
@@ -131,8 +131,8 @@ component StatementRow inherits Card {
     }
 }
 
-export component RuntimeView inherits Rectangle {
-    in property <SvcRuntime> data;
+export component RuntimeSummary inherits Rectangle {
+    in property <RtSummary> data;
     property <bool> diagnostics-open;
     if !data.available: EmptyState {
         title: @tr("No recorded runtime");

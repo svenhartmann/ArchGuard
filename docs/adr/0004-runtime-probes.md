@@ -413,3 +413,8 @@ Consequences for the design:
   (`requests`, newest first, at most 200, with their span tree; wrappers
   folded), shown by `archguard runtime` and as MCP rows. The desktop tab
   follows.
+- **2026-11-09:** Step 2b, second part: desktop tab "Runtime" with the
+  request list (newest first, N+1 marked per request), the selected
+  request's timeline (database calls with call site, outgoing calls, own
+  code and waiting) and the summary moved from the Services tab; Live
+  re-reads `.archguard/runtime/` within about a second. Times are UTC.
