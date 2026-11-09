@@ -43,7 +43,19 @@ pub fn update(api: &str, target: &str, current: &str, check: bool) -> Result<Out
     })
 }
 
+/// The target whose archive a build for `target` installs. Releases ship
+/// Linux only as static musl binaries, which also run on glibc systems, so a
+/// `cargo install` build (`…-linux-gnu`) updates from those.
+fn archive_target(target: &str) -> String {
+    match target.strip_suffix("-linux-gnu") {
+        Some(arch) => format!("{arch}-linux-musl"),
+        None => target.to_string(),
+    }
+}
+
 fn verified_binary(release: &Release, target: &str) -> Result<Vec<u8>, String> {
+    let target = archive_target(target);
+    let target = target.as_str();
     let windows = target.contains("windows");
     let latest = release.version.as_str();
     let stem = format!("archguard-{latest}-{target}");
@@ -157,4 +169,29 @@ fn stage(path: &Path, binary: &[u8]) -> Result<(), String> {
             .map_err(|e| format!("cannot mark {} executable: {e}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_target;
+
+    #[test]
+    fn a_glibc_build_updates_from_the_static_musl_archive() {
+        assert_eq!(
+            archive_target("x86_64-unknown-linux-gnu"),
+            "x86_64-unknown-linux-musl"
+        );
+        assert_eq!(
+            archive_target("aarch64-unknown-linux-gnu"),
+            "aarch64-unknown-linux-musl"
+        );
+        assert_eq!(
+            archive_target("aarch64-apple-darwin"),
+            "aarch64-apple-darwin"
+        );
+        assert_eq!(
+            archive_target("x86_64-pc-windows-msvc"),
+            "x86_64-pc-windows-msvc"
+        );
+    }
 }
