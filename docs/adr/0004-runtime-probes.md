@@ -422,3 +422,8 @@ Consequences for the design:
   call-site spike ran on .NET 8 / EF Core 8 and is re-verified on 10 and 11
   while building the probe (runtime-async in .NET 11 may change async
   stacks).
+- **2026-11-09:** Probes built in `../hse-perf-java` (OTel Java agent
+  extension, commit 6401ac1) and `../hse-perf-net` (.NET 10 and 11, one line,
+  hosting startup or startup hook, commit 0d76e30). Their real output is in
+  `fixtures/runtime/shop-java.jsonl` and `shop-dotnet.jsonl`, checked by
+  `tests/runtime_probe_fixtures.rs`. Npgsql and SqlClient remain untested.
