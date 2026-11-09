@@ -17,12 +17,17 @@ type Entry = (String, CallAnalysis);
 type Kept = (Vec<PathBuf>, HashMap<PathBuf, Entry>);
 static MEMO: OnceLock<Mutex<Kept>> = OnceLock::new();
 
-/// Identity of what the analysis reads: configuration and source set
-/// (contents and Rust manifests). `None` when the sources cannot be listed.
+/// Identity of what the analysis reads: the source set (contents and Rust
+/// manifests), the settings the call scanners read (`project`, `semantic`)
+/// and whether project compiler tooling is trusted (ADR 0007). Layers,
+/// rules and module depth are not read, so the loaded and the derived
+/// configuration share one result. `None` when the sources cannot be listed.
 fn key(root: &Path, config: &Config) -> Option<String> {
     let sources = crate::cache::source_fingerprint(root, config).ok()?;
-    let config = serde_json::to_string(config).ok()?;
-    Some(format!("{sources}\n{config}"))
+    let project = serde_json::to_string(&config.project).ok()?;
+    let semantic = serde_json::to_string(&config.semantic).ok()?;
+    let trusted = crate::compiler_trust::trusted();
+    Some(format!("{sources}\n{project}\n{semantic}\n{trusted}"))
 }
 
 /// `compute` for `root`, or the kept result of an unchanged project.
@@ -93,6 +98,29 @@ mod tests {
         std::fs::write(dir.path().join("src/a.py"), "def f():\n    return 2\n").unwrap();
         cached(dir.path(), &config, compute);
         assert_eq!(runs.get(), 2, "a changed source runs the analysis again");
+    }
+
+    /// The pipeline passes the loaded configuration, the desktop tabs the
+    /// derived one (layers, depth): both describe the same call analysis.
+    #[test]
+    fn settings_the_analysis_does_not_read_share_one_result() {
+        let dir = project();
+        let loaded = Config::default();
+        let mut derived = loaded.clone();
+        derived.modules.depth += 1;
+        derived.derive_layers = !derived.derive_layers;
+        let runs = Cell::new(0);
+        let compute = || {
+            runs.set(runs.get() + 1);
+            analysis("complete")
+        };
+        cached(dir.path(), &loaded, compute);
+        cached(dir.path(), &derived, compute);
+        assert_eq!(runs.get(), 1);
+        let mut other = loaded.clone();
+        other.semantic.typescript.project = Some("tsconfig.app.json".into());
+        cached(dir.path(), &other, compute);
+        assert_eq!(runs.get(), 2, "semantic settings are part of the key");
     }
 
     #[test]

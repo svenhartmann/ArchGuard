@@ -456,3 +456,11 @@ Consequences for the design:
   language, the compiler-backed call scanners, the graph cache, report
   rendering and config loading. On this repository `archguard check .`
   took 0.94–0.98 s with and without the probe (3 runs each, warm cache).
+- **2026-11-09:** First self-analysis of the desktop app: opening this
+  repository took 40 s, 37.5 s in rust-analyzer (SCIP cached only in
+  memory) and three call analyses per open. Fixed: SCIP index cached in
+  the user cache directory, call analysis kept per root while sources,
+  `project`/`semantic` settings and compiler trust are unchanged. Measured
+  with the real app: first open 28.4 s, second 4.4 s; Start 1060 → 306 ms,
+  Architecture 2191 → 482 ms, Quality 1226 → 282 ms. Navigation and tab
+  actions are recorded too; the live reload no longer records itself.
