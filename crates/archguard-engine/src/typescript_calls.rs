@@ -1,7 +1,7 @@
 //! Installed TypeScript compiler API, with explicit source membership and no emit.
 //! The helper loads no project sources, plugins or package scripts. The compiler
 //! itself is JavaScript found through the analyzed repository, so it only runs
-//! after the operator opts in via [`TRUST_ENV`]; scanning alone executes nothing.
+//! after the operator opts in via `ARCHGUARD_TRUST_PROJECT_COMPILER`; scanning alone executes nothing.
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::{self, File};
@@ -20,8 +20,6 @@ use sha2::{Digest, Sha256};
 const HELPER: &str = include_str!("ArchguardCallScanner.cjs");
 const LIMIT: u64 = 64 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(45);
-/// Set to `1` outside the repository to run the compiler the repository names.
-const TRUST_ENV: &str = "ARCHGUARD_TRUST_PROJECT_COMPILER";
 static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
 
 #[derive(Clone, Deserialize)]
@@ -45,7 +43,7 @@ struct Input {
     files: usize,
     root: PathBuf,
     compiler: Option<PathBuf>,
-    /// A compiler exists but was not selected because [`TRUST_ENV`] is unset.
+    /// A compiler exists but was not selected because `ARCHGUARD_TRUST_PROJECT_COMPILER` is unset.
     blocked_compiler: bool,
 }
 
@@ -69,15 +67,10 @@ fn analyze(root: &Path, config: &Config, trusted: bool) -> CallAnalysis {
         };
     }
     if input.blocked_compiler {
-        return unavailable(
-            input.files,
-            format!(
-                "A TypeScript compiler was found through this repository but not loaded, because running it would execute repository code. Set {TRUST_ENV}=1 for repositories you trust."
-            ),
-        );
+        return unavailable(input.files, CallAnalyzer::TYPESCRIPT_BLOCKED.into());
     }
     if input.compiler.is_none() {
-        return unavailable(input.files, "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages.".into());
+        return unavailable(input.files, CallAnalyzer::TYPESCRIPT_MISSING.into());
     }
     let cache = CACHE.get_or_init(|| Mutex::new(None));
     if let Ok(guard) = cache.lock()

@@ -66,6 +66,7 @@ fn ui_labels(ui: &AppWindow) -> view::UiLabels {
             .t("External targets · no project package mapping")
             .into(),
         unresolved_group: texts.t("Unresolved targets · no package mapping").into(),
+        texts,
     }
 }
 

@@ -213,7 +213,7 @@ component Description inherits VerticalLayout {
                         font-size: Theme.font-small;
                         wrap: word-wrap;
                     }
-                    // The engine's own (English) text, folded.
+                    // The engine's messages (fixed notes translated), folded.
                     if a.diagnostics.length > 0: Disclosure {
                         text: @tr("Engine messages ({})", a.diagnostics.length);
                         open <=> card.raw;

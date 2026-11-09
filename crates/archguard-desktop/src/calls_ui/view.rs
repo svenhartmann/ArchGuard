@@ -10,6 +10,7 @@ use super::notes;
 use super::rankings;
 use super::state::{Mode, State};
 use super::tree::Kind;
+use crate::tab_support::Texts;
 use crate::ui::{
     CallsAnalyzer, CallsCycleRow, CallsModel, CallsRankRow, CallsRelationRow, CallsStep,
     CallsTreeRow,
@@ -23,6 +24,8 @@ pub struct UiLabels {
     pub default_package: SharedString,
     pub external_group: SharedString,
     pub unresolved_group: SharedString,
+    /// Translates the engine's fixed notes ([`notes::diagnostic`]).
+    pub texts: Texts,
 }
 
 /// Fill the whole model from the state.
@@ -37,7 +40,7 @@ pub fn fill(s: &State, ui: &UiLabels) -> CallsModel {
         ..Default::default()
     };
     fill_toolbar(&mut m, s, ui);
-    fill_coverage(&mut m, s);
+    fill_coverage(&mut m, s, &ui.texts);
     fill_tree(&mut m, s, ui);
     match s.mode {
         Mode::Connections => fill_relations(&mut m, s),
@@ -79,8 +82,9 @@ fn fill_toolbar(m: &mut CallsModel, s: &State, ui: &UiLabels) {
     m.internal = s.filter.internal;
 }
 
-fn fill_coverage(m: &mut CallsModel, s: &State) {
+fn fill_coverage(m: &mut CallsModel, s: &State, texts: &Texts) {
     let a = &s.idx.a;
+    let say = |d: &str| SharedString::from(notes::diagnostic(texts, d));
     let count = |r: &str| int(a.calls.iter().filter(|c| c.resolution == r).count());
     m.status = a.status.as_str().into();
     m.files = int(a.files);
@@ -90,12 +94,14 @@ fn fill_coverage(m: &mut CallsModel, s: &State) {
     m.unresolved = count("unresolved");
     m.java_release = i32::try_from(a.java_release).unwrap_or(0);
     m.unreported = a.analyzers.is_empty() && a.status != "not_applicable";
-    m.diagnostic_line = a.diagnostics.join(" ").into();
-    m.diagnostics = model(
-        notes::extra_diagnostics(a)
-            .into_iter()
-            .map(SharedString::from),
-    );
+    m.diagnostic_line = a
+        .diagnostics
+        .iter()
+        .map(|d| notes::diagnostic(texts, d))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .into();
+    m.diagnostics = model(notes::extra_diagnostics(a).iter().map(|d| say(d)));
     m.no_calls = a.calls.is_empty() && a.status != "not_applicable";
     m.analyzers = model(a.analyzers.iter().map(|x| CallsAnalyzer {
         note: notes::note(x) as i32,
@@ -105,7 +111,7 @@ fn fill_coverage(m: &mut CallsModel, s: &State) {
         files: int(x.files),
         version: x.version.clone().unwrap_or_default().into(),
         project: x.project.clone().unwrap_or_default().into(),
-        diagnostics: model(x.diagnostics.iter().map(|d| SharedString::from(d.as_str()))),
+        diagnostics: model(x.diagnostics.iter().map(|d| say(d))),
     }));
     m.analysis_open = s.analysis_open;
     let rels = &s.view.relations;
@@ -416,6 +422,7 @@ mod tests {
             default_package: "".into(),
             external_group: "".into(),
             unresolved_group: "".into(),
+            texts: Texts::default(),
         };
         let mut s = State::new(fixture::analysis());
         s.refresh();

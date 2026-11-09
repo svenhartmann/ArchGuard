@@ -30,7 +30,7 @@ use crate::rust_scip::CallSite;
 use crate::rust_types::{Parsed, Region, TraitSite, TypeSites};
 
 const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
-const LIMITATION: &str = "Declarations, complexity and Halstead per function come from syntax. Traits count as abstract; structs, enums and unions as concrete. Implemented traits (impl Trait for Type) and supertraits resolve from syntax within the crate; traits of std, core and alloc are external, other crates' traits, prelude names and blanket impls stay unresolved. Rust has no implementation inheritance: DIT/NOC are not applicable. Files with item macro invocations or syntax errors keep their types unknown, and macro bodies that are not expressions stay opaque.";
+const LIMITATION: &str = CallAnalyzer::RUST_SYNTAX;
 
 #[derive(Default)]
 struct Measure {
@@ -516,8 +516,8 @@ fn visibility_name(visibility: &Visibility) -> String {
     }
 }
 
-const UNTRUSTED: &str = "Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
-const RESOLVED: &str = "Calls, implemented traits, supertraits and type references in fields, signatures and impl bodies are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
+const UNTRUSTED: &str = CallAnalyzer::RUST_UNTRUSTED;
+const RESOLVED: &str = CallAnalyzer::RUST_RESOLVED;
 
 pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     let trusted = crate::compiler_trust::trusted();
