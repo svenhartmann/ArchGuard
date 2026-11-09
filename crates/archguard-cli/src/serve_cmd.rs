@@ -710,22 +710,43 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
                 }
             });
         }
-        for connection in listener.incoming() {
-            let stream = connection?;
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-            if let Err(mpsc::TrySendError::Full(mut stream)) = send.try_send(stream) {
-                let _ = respond(
-                    &mut stream,
-                    503,
-                    "text/plain",
-                    "The local viewer is busy; retry shortly",
-                );
-            }
-        }
+        dispatch(listener.incoming(), &send);
         drop(send);
         Ok(())
     })
+}
+
+/// Hand accepted connections to the HTTP workers. A failure belongs to one
+/// connection (ECONNABORTED, EMFILE, EINVAL on a socket the peer already
+/// reset) and never ends the server.
+fn dispatch(
+    incoming: impl Iterator<Item = io::Result<TcpStream>>,
+    send: &mpsc::SyncSender<TcpStream>,
+) {
+    for connection in incoming {
+        let stream = connection.and_then(|stream| {
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+            Ok(stream)
+        });
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("warning: skipped a connection: {error}");
+                // EMFILE repeats until a descriptor is free; do not spin.
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+        };
+        if let Err(mpsc::TrySendError::Full(mut stream)) = send.try_send(stream) {
+            let _ = respond(
+                &mut stream,
+                503,
+                "text/plain",
+                "The local viewer is busy; retry shortly",
+            );
+        }
+    }
 }
 
 fn handle(
@@ -1287,6 +1308,25 @@ fn respond_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_connection_does_not_stop_the_server() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (accepted, _) = listener.accept().unwrap();
+        // accept(2) fails for a single connection with ECONNABORTED or EMFILE.
+        let incoming = [
+            Err(io::Error::from(io::ErrorKind::ConnectionAborted)),
+            Ok(accepted),
+        ];
+        let (send, receive) = mpsc::sync_channel(1);
+        dispatch(incoming.into_iter(), &send);
+        let next = receive
+            .try_recv()
+            .expect("the next connection is still served");
+        assert_eq!(next.peer_addr().unwrap(), client.local_addr().unwrap());
+        assert_eq!(next.read_timeout().unwrap(), Some(Duration::from_secs(2)));
+    }
 
     #[test]
     fn fast_status_probes_respect_the_background_analysis_cooldown() {
