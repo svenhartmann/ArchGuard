@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
-use super::{blocks, markdown};
+use super::{blocks, markdown, sync};
 use crate::arc42_file::{self, Arc42Files, Target};
-use crate::tab_support::{self, Texts};
+use crate::tab_support::Texts;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 
 /// The project's arc42 text and the open chapter editor, if any.
@@ -109,8 +109,9 @@ impl Editor {
             .t("Diagram source · this diagram syntax is not supported in the viewer.")
             .to_string();
         let rows = blocks::ui_blocks(&markdown::parse(&body), &note);
-        ui.global::<ArchitectureData>()
-            .set_preview(tab_support::model(rows));
+        // Every keystroke: only the blocks that changed are set.
+        let d = ui.global::<ArchitectureData>();
+        d.set_preview(sync::keep_blocks(&d.get_preview(), rows));
     }
 
     /// Save the draft; the path written, or `None` while the editor stays

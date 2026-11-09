@@ -18,20 +18,18 @@ mod markdown;
 mod projection;
 mod sequence;
 mod state;
+mod sync;
 mod view;
 mod visual;
+mod window;
 
 use std::path::{Path, PathBuf};
 
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
-use crate::format::Locale;
-use crate::kpi;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
-use archguard_engine::core::Arc42Config;
-use archguard_engine::report::Arc42Document;
 use follow::navigation;
 use projection::Group;
 pub use state::ArchitectureState;
@@ -172,130 +170,12 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
     }
 }
 
-/// Show the state in the window.
+/// Show the state in the window, keeping the list models it shows.
 pub fn push(ui: &AppWindow, s: &ArchitectureState) {
+    let mut m = window::model(s, &Texts::of(ui));
     let d = ui.global::<ArchitectureData>();
-    let mut m = ArchitectureModel {
-        has_model: s.has_model,
-        saved: s.saved.as_str().into(),
-        ..Default::default()
-    };
-    m.map.kind = -1;
-    match &s.doc {
-        Err(e) => {
-            m.state = 2;
-            m.error = e.as_str().into();
-        }
-        Ok(doc) if doc.chapters.is_empty() => m.state = 2,
-        Ok(doc) => {
-            m.state = 1;
-            let drawn: Vec<_> = doc
-                .diagrams
-                .iter()
-                .filter(|d| d.chapter == s.chapter)
-                .cloned()
-                .collect();
-            let text = catalogue::strip(&s.editor.chapter(doc, s.chapter), &drawn, s.format);
-            view::fill_document(
-                &mut m,
-                doc,
-                view::Sources {
-                    chapter: &text,
-                    whole: &s.editor.preamble(doc),
-                },
-                s.chapter,
-                Texts::of(ui)
-                    .t("Diagram source · this diagram syntax is not supported in the viewer."),
-                derived(s, s.chapter).is_some(),
-            );
-            let texts = Texts::of(ui);
-            (m.language_note, m.chapter_note) = notes(&texts, m.chapter);
-            let mut view = None;
-            if let Some((kind, map)) = current(s, &labels(ui)) {
-                view = Some((kind, catalogue::view_id(kind, map.scope, &s.graph)));
-                m.map = view::map_model(
-                    &Texts::of(ui),
-                    &s.graph,
-                    &s.calls_status,
-                    s.maps[kind as usize].relations,
-                    kind,
-                    &map,
-                );
-            }
-            fill_figures(&mut m, s, doc, &texts, view);
-        }
-    }
-    m.figure_error = s.figure_error.as_str().into();
-    s.editor.fill(&mut m);
+    sync::keep(&d.get_model(), &mut m);
     d.set_model(m);
-}
-
-/// The catalogue diagrams: the open chapter's (its package map gets only
-/// a tick), or all of them in the diagram view.
-fn fill_figures(
-    m: &mut ArchitectureModel,
-    s: &ArchitectureState,
-    doc: &Arc42Document,
-    texts: &Texts,
-    view: Option<(Kind, String)>,
-) {
-    // The map draws its overview and the open level itself.
-    let map = view.as_ref().map(|(kind, _)| catalogue::map_id(*kind));
-    let open = view.as_ref().map(|(_, id)| id.as_str());
-    if s.catalogue {
-        m.catalogue = true;
-        m.chapter_title = texts.t("Diagrams").into();
-        m.map.kind = -1;
-        m.blocks = Default::default();
-        m.source = Default::default();
-    } else if let Some(id) = open {
-        let entry = doc.diagrams.iter().find(|d| d.id == id);
-        m.map_id = id.into();
-        m.map_optional = Arc42Config::level_of(id).is_some();
-        m.map_title = entry
-            .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
-            .into();
-        m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
-    }
-    let figures = doc
-        .diagrams
-        .iter()
-        .filter(|d| {
-            let drawn = Some(d.id.as_str()) == map || Some(d.id.as_str()) == open;
-            s.catalogue || (d.chapter == s.chapter && !drawn)
-        })
-        .map(|d| {
-            let chapter = if s.catalogue {
-                format!("{} {}", texts.t("Chapter"), d.chapter)
-            } else {
-                String::new()
-            };
-            figure::figure(d, s.format, chapter, texts)
-        });
-    m.figures = slint::ModelRc::new(slint::VecModel::from(figures.collect::<Vec<_>>()));
-}
-
-/// What the desktop says around the engine's German arc42 text: its
-/// language (in an English window) and, in chapter 10, the level its
-/// figures are counted on.
-fn notes(texts: &Texts, chapter: i32) -> (SharedString, SharedString) {
-    let language = if texts.locale() == Locale::En {
-        texts.t("Document language: German. The analysis engine writes the arc42 text in German.")
-    } else {
-        ""
-    };
-    let level = if chapter == 10 {
-        texts.f(
-            "{acd} and the cycle figures of this chapter are counted on modules (depth 2). {shown} is in the Graph tab; package cycles are in the chapter 5 diagram.",
-            &[
-                ("acd", texts.t(kpi::MODULE_ACD.label).to_string()),
-                ("shown", texts.t(kpi::SHOWN_ACD.label).to_string()),
-            ],
-        )
-    } else {
-        String::new()
-    };
-    (language.into(), level.into())
 }
 
 fn download(s: &mut ArchitectureState, all: bool) {
@@ -364,25 +244,6 @@ fn save(root: &Path, name: &str, content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The engine's arc42 is German: an English window says so, and
-    /// chapter 10 names the level of its ACD.
-    #[test]
-    fn arc42_chrome_names_language_and_level() {
-        let en = Texts::default();
-        let (language, level) = notes(&en, 10);
-        assert!(language.starts_with("Document language: German"));
-        assert!(
-            level.starts_with("ACD (module level) and the cycle figures"),
-            "{level}"
-        );
-        assert!(level.contains("ACD (shown level) is in the Graph tab"));
-        assert_eq!(notes(&en, 5).1, "");
-        let de = Texts::german();
-        let (language, level) = notes(&de, 10);
-        assert_eq!(language, "", "a German window needs no note");
-        assert!(level.starts_with("ACD (Modulebene)"), "{level}");
-    }
 
     /// The tab state for a small layered fixture: twelve chapters, the
     /// package map on chapter 5 and the cycle map on chapter 11, as the web
