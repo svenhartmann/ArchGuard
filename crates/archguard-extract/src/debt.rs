@@ -16,8 +16,9 @@ pub use archguard_core::{DebtMarker, MarkerKind};
 ///
 /// Documented heuristic (deliberately not a parser):
 /// * A line is treated as comment text from the first comment token
-///   (`//` or `/*` for C-like languages, `#` for Python) or, for
-///   C-like languages, when it starts (whitespace ignored) with `*` —
+///   (`//` or `/*` for C-like languages, `#` for Python, all three
+///   for PHP) or, for C-like languages and PHP, when it starts
+///   (whitespace ignored) with `*` —
 ///   a block-comment continuation line.
 /// * Markers match case-insensitively on word boundaries, so `TODOS`
 ///   is not a `TODO`.
@@ -25,10 +26,9 @@ pub use archguard_core::{DebtMarker, MarkerKind};
 ///   *string literal* that also opens a comment token can match. That
 ///   is accepted and pinned by a test; a full lexer is out of scope.
 pub fn scan_debt(rel_path: &str, content: &str, lang: Lang) -> Vec<DebtMarker> {
-    let c_like = !matches!(lang, Lang::Py);
     let mut markers = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        let Some(comment) = comment_text(line, c_like) else {
+        let Some(comment) = comment_text(line, lang) else {
             continue;
         };
         let upper = comment.to_ascii_uppercase();
@@ -65,24 +65,31 @@ pub fn scan_debt(rel_path: &str, content: &str, lang: Lang) -> Vec<DebtMarker> {
 }
 
 /// The comment text of a line, `None` when the line carries no comment.
-fn comment_text(line: &str, c_like: bool) -> Option<&str> {
+/// Python comments start with `#`, C-like ones with `//`, `/*` or `*`;
+/// PHP knows both, and the comment token that comes first wins.
+fn comment_text(line: &str, lang: Lang) -> Option<&str> {
     let trimmed = line.trim_start();
-    if c_like {
-        if let Some(rest) = trimmed.strip_prefix("/*") {
-            return Some(rest.trim_end_matches("*/"));
-        }
-        if trimmed.starts_with('*') {
-            return Some(trimmed.trim_start_matches('*').trim());
-        }
-        if let Some((_, rest)) = trimmed.split_once("//") {
-            return Some(rest);
-        }
-        None
-    } else {
-        // Python and PHP comment lines start with `#` (PHP also knows
-        // `//` and `/* */`; both spellings are accepted for PHP below).
-        trimmed.split_once('#').map(|(_, rest)| rest)
+    let hash = || trimmed.split_once('#').map(|(_, rest)| rest);
+    match lang {
+        Lang::Py => hash(),
+        // Both are suffixes of the line, so the longer one starts first.
+        Lang::Php => [c_comment(trimmed), hash()]
+            .into_iter()
+            .flatten()
+            .max_by_key(|rest| rest.len()),
+        _ => c_comment(trimmed),
     }
+}
+
+/// The comment text of a C-like line (`//`, `/* */`, `*` continuation).
+fn c_comment(trimmed: &str) -> Option<&str> {
+    if let Some(rest) = trimmed.strip_prefix("/*") {
+        return Some(rest.trim_end_matches("*/"));
+    }
+    if trimmed.starts_with('*') {
+        return Some(trimmed.trim_start_matches('*').trim());
+    }
+    trimmed.split_once("//").map(|(_, rest)| rest)
 }
 
 fn is_word_char(byte: u8) -> bool {
@@ -174,5 +181,19 @@ mod tests {
     fn signature_is_stable() {
         let f: fn(&str, &str, Lang) -> Vec<DebtMarker> = scan_debt;
         let _ = f;
+    }
+
+    #[test]
+    fn php_counts_hash_slash_and_block_comments() {
+        let php = "<?php\n# TODO: hash comment\n$a = 1; // FIXME slash\n/* HACK block */\n * xxx continued\n";
+        assert_eq!(
+            kinds(&scan_debt("a.php", php, Lang::Php)),
+            vec![
+                (MarkerKind::Todo, 2),
+                (MarkerKind::Fixme, 3),
+                (MarkerKind::Hack, 4),
+                (MarkerKind::Xxx, 5),
+            ]
+        );
     }
 }
