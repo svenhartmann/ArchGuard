@@ -17,8 +17,9 @@ markers. The markers do not depend on the language.
 ## Decision
 
 - `archguard_core::DocLang` (`En`, `De`) selects the language of all
-  generated arc42 text. It is passed to `arc42_document` and
-  `arc42_from_evidence` and travels in `Arc42Inputs`.
+  generated arc42 text. It is the run-time field `Arc42Config::lang`
+  (`#[serde(skip)]`: never read from or written to `archguard.toml`) and
+  travels in `Arc42Inputs`.
 - The desktop passes the language of its window. CLI and MCP have no
   window and use the default.
 - The default is English.
@@ -47,3 +48,10 @@ markers. The markers do not depend on the language.
   the user and keep their language; a new document gets the selected one.
 - CLI and MCP output changes from German to English.
 - New generated text needs both languages; tests pin one language each.
+
+## History
+
+- 2026-11-09: the language moved from an extra parameter of
+  `arc42_document` / `arc42_from_evidence` into `Arc42Config::lang`, so
+  the engine functions keep six parameters (compactness ceiling of the
+  pre-commit hook) and CLI and MCP calls stay unchanged.
