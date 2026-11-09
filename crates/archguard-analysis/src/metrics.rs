@@ -99,7 +99,7 @@ fn instability(fan_in: u32, fan_out: u32) -> f32 {
 
 /// Whether `id` names a node in the supplied view.
 fn is_node(graph: &Graph, id: NodeId) -> bool {
-    graph.nodes.iter().any(|node| node.id == id)
+    graph.node(id).is_some()
 }
 
 #[cfg(test)]

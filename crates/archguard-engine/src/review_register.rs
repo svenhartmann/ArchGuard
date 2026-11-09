@@ -169,12 +169,84 @@ pub fn iso_from_unix(secs: u64) -> String {
     )
 }
 
+/// Lock file that serializes load-modify-save of the register.
+const LOCK_REL_PATH: &str = ".archguard/reviews.lock";
+
+/// Take the exclusive register lock; it is released when the returned
+/// file drops. Like `write_project_file`, the lock file is opened below
+/// `.archguard` without following repository-controlled symlinks.
+fn lock_register(root: &Path) -> Result<std::fs::File, ArchguardError> {
+    let file = open_lock_file(root).map_err(|e| {
+        error(format!(
+            "opening {}: {e}",
+            root.join(LOCK_REL_PATH).display()
+        ))
+    })?;
+    file.lock()
+        .map_err(|e| error(format!("locking {LOCK_REL_PATH}: {e}")))?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn open_lock_file(root: &Path) -> std::io::Result<std::fs::File> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let dir = crate::project_files::safe::open_project_directory(root)?;
+    let name = Path::new(LOCK_REL_PATH)
+        .file_name()
+        .expect("lock path has a file name");
+    // macOS was seen to answer a concurrent O_CREAT of the same name
+    // with a transient ENOENT while the file exists; retry briefly.
+    let mut attempt = 0;
+    let fd = loop {
+        match openat(
+            &dir,
+            name,
+            OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_bits_retain(0o644),
+        ) {
+            Ok(fd) => break fd,
+            Err(rustix::io::Errno::NOENT) if attempt < 3 => attempt += 1,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    Ok(std::fs::File::from(fd))
+}
+
+#[cfg(not(unix))]
+fn open_lock_file(root: &Path) -> std::io::Result<std::fs::File> {
+    let dir = root.join(crate::project_files::PROJECT_DIR);
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    let path = root.join(LOCK_REL_PATH);
+    for checked in [&dir, &path] {
+        match std::fs::symlink_metadata(checked) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(std::io::Error::other("lock path is a symlink"));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+}
+
 /// Load, upsert the decision by id and persist; returns the register
-/// as stored.
+/// as stored. An exclusive lock on `.archguard/reviews.lock` keeps two
+/// concurrent writers (e.g. two MCP sessions) from losing an entry.
 pub fn upsert_decision(
     root: &Path,
     decision: ReviewDecision,
 ) -> Result<ReviewRegister, ArchguardError> {
+    let _lock = lock_register(root)?;
     let mut register = load_register(root)?;
     register.upsert(decision);
     save_register(root, &register)?;
@@ -257,6 +329,7 @@ pub(crate) fn replace_review_decisions(
     root: &Path,
     decisions: &[ReviewDecision],
 ) -> Result<(), ArchguardError> {
+    let _lock = lock_register(root)?;
     let mut register = load_register(root)?;
     register
         .decisions
@@ -306,6 +379,33 @@ mod tests {
             ts: "2026-10-30T09:00:00Z".to_string(),
             ..Default::default()
         }
+    }
+
+    /// Two MCP sessions recording different decisions at once: without
+    /// a lock both load the same register and the later save drops the
+    /// other session's entry.
+    #[test]
+    fn concurrent_upserts_keep_every_decision() {
+        const PER_THREAD: usize = 40;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        let workers: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|prefix| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    for i in 0..PER_THREAD {
+                        let id = format!("{prefix}-{i}");
+                        upsert_decision(&root, decision(&id, &id)).expect("upsert");
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("worker");
+        }
+        let register = load_register(&root).expect("load");
+        assert_eq!(register.decisions.len(), 2 * PER_THREAD);
     }
 
     #[test]

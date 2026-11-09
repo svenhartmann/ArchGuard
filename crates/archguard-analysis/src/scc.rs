@@ -1,6 +1,8 @@
 //! SCC detection (T12): the cyclic strongly connected components of a
-//! canonical [`Graph`], found with Tarjan's algorithm over a
-//! [`petgraph`] digraph.
+//! canonical [`Graph`], found with Kosaraju's algorithm over a
+//! [`petgraph`] digraph. Kosaraju, not Tarjan: petgraph's `tarjan_scc`
+//! recurses once per path link and overflows a 2 MiB thread stack on
+//! long dependency chains, its `kosaraju_scc` runs on explicit stacks.
 //!
 //! An [`Scc`] is reported only when it actually contains a cycle: more
 //! than one node, or a single node with a self-loop. The canonical
@@ -17,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_core::{Graph, NodeId};
-use petgraph::algo::tarjan_scc;
+use petgraph::algo::kosaraju_scc;
 use petgraph::prelude::{DiGraph, NodeIndex};
 
 /// A strongly connected component of the dependency graph that contains
@@ -38,7 +40,7 @@ pub struct Scc {
 /// Find every cyclic strongly connected component of `graph`.
 ///
 /// The graph is mirrored into a `petgraph` digraph and run through
-/// [`tarjan_scc`]; only components with more than one node or a
+/// [`kosaraju_scc`]; only components with more than one node or a
 /// self-loop survive. Edges pointing at node ids absent from
 /// `graph.nodes` cannot be resolved and are skipped. The result is
 /// fully deterministic: see the module docs.
@@ -57,7 +59,7 @@ pub fn find_sccs(graph: &Graph) -> Vec<Scc> {
     // (smallest member name, members sorted by name) — the pair the
     // final ordering and id assignment keys on.
     let mut components: Vec<(String, Vec<NodeId>)> = Vec::new();
-    for component in tarjan_scc(&pet) {
+    for component in kosaraju_scc(&pet) {
         let cyclic = component.len() > 1 || component.iter().any(|&i| pet.contains_edge(i, i));
         if !cyclic {
             continue;
@@ -264,5 +266,45 @@ mod tests {
             sccs[0].edges,
             vec![(NodeId(0), NodeId(1)), (NodeId(1), NodeId(0))]
         );
+    }
+
+    /// A 50 000-node dependency chain must not exhaust a 2 MiB thread
+    /// stack (the default for spawned and tokio worker threads):
+    /// petgraph's `tarjan_scc` recurses once per chain link.
+    #[test]
+    fn long_chain_fits_a_two_mib_stack() {
+        let n: u32 = 50_000;
+        let edge = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: None,
+        };
+        let mut edges: Vec<Edge> = (1..n).map(|i| edge(i - 1, i)).collect();
+        edges.push(edge(n - 1, n - 2));
+        let g = Graph {
+            review_kpis: None,
+            semantic: None,
+            schema_version: 1,
+            root: "/abs".to_string(),
+            nodes: (0..n)
+                .map(|i| Node {
+                    id: NodeId(i),
+                    name: format!("n{i:05}"),
+                    kind: NodeKind::File,
+                    parent: None,
+                    lang: None,
+                })
+                .collect(),
+            edges,
+        };
+        let sccs = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || find_sccs(&g))
+            .expect("test: spawn")
+            .join()
+            .expect("test: find_sccs must not overflow the stack");
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].node_ids, vec![NodeId(n - 2), NodeId(n - 1)]);
     }
 }

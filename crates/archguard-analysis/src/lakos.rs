@@ -49,7 +49,7 @@ pub fn lakos_metrics(graph: &Graph) -> (u64, f64, f64) {
         return (0, 0.0, 0.0);
     }
 
-    // Component id per node: cyclic SCCs from Tarjan first (in
+    // Component id per node: cyclic SCCs first (in
     // `find_sccs` order), then one singleton per remaining node.
     let mut comp_of: BTreeMap<u32, usize> = BTreeMap::new();
     let mut comp_size: Vec<u32> = Vec::new();
@@ -60,6 +60,9 @@ pub fn lakos_metrics(graph: &Graph) -> (u64, f64, f64) {
             comp_of.insert(node_id.0, id);
         }
     }
+    // Cyclic components hold ids `0..cyclic`; every later one is a
+    // singleton.
+    let cyclic = comp_size.len();
     for node in &graph.nodes {
         comp_of.entry(node.id.0).or_insert_with(|| {
             let id = comp_size.len();
@@ -80,51 +83,8 @@ pub fn lakos_metrics(graph: &Graph) -> (u64, f64, f64) {
         }
     }
 
-    // Kahn topological order over the components.
-    let mut in_degree = vec![0u32; comp_size.len()];
-    for succs in &successors {
-        for &s in succs {
-            in_degree[s] += 1;
-        }
-    }
-    let mut queue: VecDeque<usize> = (0..comp_size.len())
-        .filter(|&c| in_degree[c] == 0)
-        .collect();
-    let mut topo: Vec<usize> = Vec::with_capacity(comp_size.len());
-    while let Some(c) = queue.pop_front() {
-        topo.push(c);
-        for &s in &successors[c] {
-            in_degree[s] -= 1;
-            if in_degree[s] == 0 {
-                queue.push_back(s);
-            }
-        }
-    }
-    debug_assert_eq!(topo.len(), comp_size.len(), "condensation is a DAG");
-
-    // Memoized reachable sets, reverse topological order: every
-    // successor of `c` is already done when `c` is processed.
-    let mut reachable: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); comp_size.len()];
-    for &c in topo.iter().rev() {
-        let mut set = BTreeSet::new();
-        for &s in &successors[c] {
-            set.insert(s);
-            set.extend(reachable[s].iter().copied());
-        }
-        reachable[c] = set;
-    }
-
-    // Each member node of `c` reaches `c` itself plus every node of the
-    // components in `reachable[c]`.
-    let mut ccd: u64 = 0;
-    for c in 0..comp_size.len() {
-        let reached: u64 = comp_size[c] as u64
-            + reachable[c]
-                .iter()
-                .map(|&s| comp_size[s] as u64)
-                .sum::<u64>();
-        ccd += reached * comp_size[c] as u64;
-    }
+    let topo = topo_order(&successors);
+    let ccd = ccd_over(&successors, &topo, &comp_size, cyclic);
 
     let acd = ccd as f64 / n as f64;
     let nf = n as f64;
@@ -135,6 +95,92 @@ pub fn lakos_metrics(graph: &Graph) -> (u64, f64, f64) {
         0.0
     };
     (ccd, acd, nccd)
+}
+
+/// Number of predecessors of every component in the condensation DAG.
+fn in_degrees(successors: &[BTreeSet<usize>]) -> Vec<u32> {
+    let mut in_degree = vec![0u32; successors.len()];
+    for succs in successors {
+        for &s in succs {
+            in_degree[s] += 1;
+        }
+    }
+    in_degree
+}
+
+/// Kahn topological order over the components.
+fn topo_order(successors: &[BTreeSet<usize>]) -> Vec<usize> {
+    let mut in_degree = in_degrees(successors);
+    let mut queue: VecDeque<usize> = (0..successors.len())
+        .filter(|&c| in_degree[c] == 0)
+        .collect();
+    let mut topo: Vec<usize> = Vec::with_capacity(successors.len());
+    while let Some(c) = queue.pop_front() {
+        topo.push(c);
+        for &s in &successors[c] {
+            in_degree[s] -= 1;
+            if in_degree[s] == 0 {
+                queue.push_back(s);
+            }
+        }
+    }
+    debug_assert_eq!(topo.len(), successors.len(), "condensation is a DAG");
+    topo
+}
+
+/// CCD from memoized reachable sets, kept as bitsets (one bit per
+/// component) and built in reverse topological order: every successor
+/// of `c` is already done when `c` is processed. A union is a run of
+/// word ORs instead of a tree insert per member, which kept long chains
+/// quadratic in allocations (20 s for a 20k chain). A set is dropped
+/// once its last predecessor has merged it, so a chain holds only a few.
+fn ccd_over(
+    successors: &[BTreeSet<usize>],
+    topo: &[usize],
+    comp_size: &[u32],
+    cyclic: usize,
+) -> u64 {
+    let words = successors.len().div_ceil(64);
+    let mut pending = in_degrees(successors);
+    let mut reachable: Vec<Vec<u64>> = vec![Vec::new(); successors.len()];
+    let mut ccd: u64 = 0;
+    for &c in topo.iter().rev() {
+        let mut set = vec![0u64; words];
+        for &s in &successors[c] {
+            set[s / 64] |= 1 << (s % 64);
+            for (word, &other) in set.iter_mut().zip(&reachable[s]) {
+                *word |= other;
+            }
+            pending[s] -= 1;
+            if pending[s] == 0 {
+                reachable[s] = Vec::new();
+            }
+        }
+        let reached = comp_size[c] as u64 + reached_nodes(&set, comp_size, cyclic);
+        ccd += reached * comp_size[c] as u64;
+        if pending[c] > 0 {
+            reachable[c] = set;
+        }
+    }
+    ccd
+}
+
+/// Number of nodes in the components of `set`. Singletons weigh one
+/// node, so a popcount covers them; only the cyclic SCCs (ids
+/// `0..cyclic`) add their extra members.
+fn reached_nodes(set: &[u64], comp_size: &[u32], cyclic: usize) -> u64 {
+    let mut reached: u64 = set.iter().map(|w| u64::from(w.count_ones())).sum();
+    for (index, &word) in set.iter().enumerate().take(cyclic.div_ceil(64)) {
+        let mut bits = word;
+        while bits != 0 {
+            let s = index * 64 + bits.trailing_zeros() as usize;
+            if s < cyclic {
+                reached += comp_size[s] as u64 - 1;
+            }
+            bits &= bits - 1;
+        }
+    }
+    reached
 }
 
 #[cfg(test)]
@@ -262,5 +308,49 @@ mod tests {
         let (ccd, acd, _nccd) = lakos_metrics(&g);
         assert_eq!(ccd, 2);
         assert_eq!(acd, 1.0);
+    }
+
+    /// Scale (audit): a 20 000-node chain whose last two nodes form a
+    /// cycle. One `BTreeSet` of reachable components per component took
+    /// 20 s in release; bitsets finish well inside a second in debug.
+    #[test]
+    fn long_chain_scales() {
+        let n: u32 = 20_000;
+        let edge = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: None,
+        };
+        let mut edges: Vec<Edge> = (1..n).map(|i| edge(i - 1, i)).collect();
+        edges.push(edge(n - 1, n - 2));
+        let g = Graph {
+            review_kpis: None,
+            semantic: None,
+            schema_version: 1,
+            root: "/abs".to_string(),
+            nodes: (0..n)
+                .map(|i| Node {
+                    id: NodeId(i),
+                    name: format!("n{i:05}"),
+                    kind: NodeKind::File,
+                    parent: None,
+                    lang: None,
+                })
+                .collect(),
+            edges,
+        };
+
+        let started = std::time::Instant::now();
+        let (ccd, _acd, _nccd) = lakos_metrics(&g);
+        let elapsed = started.elapsed();
+
+        // Node i < n-2 reaches n - i nodes; both cycle members reach 2.
+        let n = u64::from(n);
+        assert_eq!(ccd, n * (n + 1) / 2 + 1);
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "lakos on a 20k chain took {elapsed:?}"
+        );
     }
 }

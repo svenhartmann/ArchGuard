@@ -1,6 +1,6 @@
-//! The storage contract: the [`GraphStore`] trait, its value types and the no-op store.
+//! The value types of the graph-DB mirror, shared by the `db` backend and
+//! its callers whether or not the `db` feature is built.
 
-use archguard_core::{ArchguardError, Graph, Report};
 use serde_json::Value as JsonValue;
 
 /// Result of a read-only openCypher query against the graph-DB mirror
@@ -42,49 +42,4 @@ pub struct SnapshotRecord {
     pub edges: i64,
     /// Stable cycle hashes joined by `\n` (empty string for none).
     pub cycle_hashes: String,
-}
-
-/// The graph-DB mirror behind a trait, so the backend stays exchangeable
-/// (Kap. 8.1): `sync` mirrors a [`Graph`] plus [`Report`] into the database,
-/// `query` runs a read-only openCypher statement.
-///
-/// `query` is read-only by contract; the CLI/MCP entry points additionally
-/// run the statement through the query guard (T33) before calling it.
-pub trait GraphStore {
-    /// Mirror `g` and `r` into the store. Implementations are idempotent:
-    /// a second `sync` with the same inputs yields the same state. `sync`
-    /// never touches the T41 `snapshot` table — the time series survives a
-    /// re-sync.
-    fn sync(&mut self, g: &Graph, r: &Report) -> Result<(), ArchguardError>;
-
-    /// Run a read-only openCypher `cypher` statement, returning at most
-    /// `limit` rows and flagging `truncated` if there were more. Callers
-    /// that only read must open the file backend via
-    /// `LadybugStore::open_for_query` (db feature, F04) so a query
-    /// creates no database, schema or files.
-    fn query(&self, cypher: &str, limit: usize) -> Result<QueryResult, ArchguardError>;
-
-    /// Upsert one [`SnapshotRecord`] into the `snapshot` table (T41), so
-    /// the trend time series becomes Cypher-queryable. The default is a
-    /// no-op: stores without a time series (like [`NullStore`]) keep
-    /// working, only the Ladybug backend persists.
-    fn record_snapshot(&mut self, _record: &SnapshotRecord) -> Result<(), ArchguardError> {
-        Ok(())
-    }
-}
-
-/// A [`GraphStore`] that keeps no state: `sync` does nothing, `query` always
-/// returns an empty [`QueryResult`]. Used by the slim build (no `db` feature)
-/// so callers do not need to branch on the feature themselves.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct NullStore;
-
-impl GraphStore for NullStore {
-    fn sync(&mut self, _g: &Graph, _r: &Report) -> Result<(), ArchguardError> {
-        Ok(())
-    }
-
-    fn query(&self, _cypher: &str, _limit: usize) -> Result<QueryResult, ArchguardError> {
-        Ok(QueryResult::default())
-    }
 }

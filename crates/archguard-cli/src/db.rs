@@ -24,7 +24,7 @@ use crate::args::Format;
 #[cfg(feature = "db")]
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
 #[cfg(feature = "db")]
-use archguard_engine::store::{GraphStore, LadybugStore, QueryResult, sanitize_query};
+use archguard_engine::store::{LadybugStore, QueryResult, sanitize_query};
 #[cfg(feature = "db")]
 use archguard_engine::{analyze_run, load_config, snapshot_record};
 #[cfg(feature = "db")]
@@ -52,7 +52,7 @@ pub(crate) fn dispatch(action: &DbAction, cli: &crate::args::Cli, root: &Path) -
 }
 
 /// `db sync`: the same effective pipeline as the other commands (see
-/// `run`), then an idempotent [`GraphStore::sync`] into `--db`.
+/// `run`), then an idempotent [`LadybugStore::sync`] into `--db`.
 #[cfg(feature = "db")]
 fn sync(cli: &crate::args::Cli, root: &Path, db_path: &Path) -> i32 {
     let loaded = match load_config(cli.config.as_deref(), root) {

@@ -14,7 +14,7 @@ use archguard_core::{
 use lbug::{Connection, Database, LogicalType, SystemConfig, Value};
 use serde_json::{Number, Value as JsonValue};
 
-use crate::api::{GraphStore, QueryResult, SnapshotRecord};
+use crate::api::{QueryResult, SnapshotRecord};
 
 /// Schema of Kap. 8.2, in creation order (node tables before their rel
 /// tables). `(table name, CREATE statement)`.
@@ -101,11 +101,11 @@ pub const QUERY_TIMEOUT_MS: u64 = 5_000;
 /// structures from a hostile database become a `…` marker.
 const MAX_JSON_DEPTH: usize = 16;
 
-/// A [`GraphStore`] mirroring graph and report into a LadybugDB database
+/// The graph-DB mirror: graph and report in a LadybugDB database
 /// file (Kap. 8.2 schema). Open an existing or new database with
 /// [`LadybugStore::open`]; `sync` clears all rows and bulk-inserts — the
 /// T41 `snapshot` table excepted —, `query` runs read-only openCypher and
-/// [`GraphStore::record_snapshot`] upserts one trend row.
+/// [`LadybugStore::record_snapshot`] upserts one trend row.
 pub struct LadybugStore {
     /// lbug's `Connection` borrows the `Database`, so only the `Database` is
     /// stored and a fresh `Connection` is created per operation.
@@ -222,9 +222,7 @@ impl LadybugStore {
         .map_err(db_error)?;
         Ok(())
     }
-}
 
-impl GraphStore for LadybugStore {
     /// Idempotent full refresh (Kap. 8.2): delete all rows of the mirror
     /// tables (the T41 `snapshot` table is deliberately not among them),
     /// then bulk-insert modules, `depends_on` edges (`ref_count` = the
@@ -237,8 +235,34 @@ impl GraphStore for LadybugStore {
     /// level; `lang` carries the file language. Findings may name modules
     /// that the graph does not contain (e.g. another zoom level): placeholder
     /// module rows are inserted so `involves` stays complete.
-    fn sync(&mut self, g: &Graph, r: &Report) -> Result<(), ArchguardError> {
+    ///
+    /// Runs in one transaction: an insert error (or an interrupted
+    /// process) leaves the previous mirror instead of an empty or
+    /// partial one.
+    pub fn sync(&mut self, g: &Graph, r: &Report) -> Result<(), ArchguardError> {
         let conn = Connection::new(&self.db).map_err(db_error)?;
+        conn.query("BEGIN TRANSACTION;").map_err(db_error)?;
+        match self.sync_rows(&conn, g, r) {
+            Ok(()) => {
+                conn.query("COMMIT;").map_err(db_error)?;
+                Ok(())
+            }
+            Err(err) => {
+                // The sync error is the one to report; a failed rollback
+                // is discarded with the connection's open transaction.
+                let _ = conn.query("ROLLBACK;");
+                Err(err)
+            }
+        }
+    }
+
+    /// The body of [`LadybugStore::sync`], inside its transaction.
+    fn sync_rows(
+        &self,
+        conn: &Connection<'_>,
+        g: &Graph,
+        r: &Report,
+    ) -> Result<(), ArchguardError> {
         for stmt in [
             "MATCH ()-[d:depends_on]->() DELETE d;",
             "MATCH ()-[i:involves]->() DELETE i;",
@@ -248,6 +272,19 @@ impl GraphStore for LadybugStore {
             conn.query(stmt).map_err(db_error)?;
         }
 
+        self.insert_modules(conn, g, r)?;
+        insert_edges(conn, g, r)?;
+        insert_findings(conn, r)
+    }
+
+    /// One `module` row per graph node, plus placeholder rows for modules
+    /// that findings name but the graph does not contain.
+    fn insert_modules(
+        &self,
+        conn: &Connection<'_>,
+        g: &Graph,
+        r: &Report,
+    ) -> Result<(), ArchguardError> {
         let module_stmt = "CREATE (m:module {name: $name, lang: $lang, layer: $layer, \
                            fan_in: $fan_in, fan_out: $fan_out, instability: $instability, \
                            in_cycle: $in_cycle});";
@@ -256,70 +293,12 @@ impl GraphStore for LadybugStore {
         let graph_names: HashSet<&str> = g.nodes.iter().map(|n| n.name.as_str()).collect();
         for node in &g.nodes {
             self.execute_module(
-                &conn,
+                conn,
                 &mut module_stmt,
                 &node.name,
                 node.lang.as_deref(),
                 r.metrics.get(&node.name),
             )?;
-        }
-
-        // An edge lies on a cycle exactly when both endpoints are in the same
-        // cycle finding (same SCC ⇒ a back-path exists).
-        let cycle_pairs = cyclic_edge_pairs(r);
-        let mut edge_stmt = conn
-            .prepare(
-                "MATCH (a:module {name: $from}), (b:module {name: $to}) \
-                 CREATE (a)-[:depends_on {ref_count: $ref_count, cyclic: $cyclic}]->(b);",
-            )
-            .map_err(db_error)?;
-        for edge in &g.edges {
-            let from = g.node_name(edge.from).ok_or_else(|| {
-                ArchguardError::Analysis(format!("edge references unknown node {:?}", edge.from))
-            })?;
-            let to = g.node_name(edge.to).ok_or_else(|| {
-                ArchguardError::Analysis(format!("edge references unknown node {:?}", edge.to))
-            })?;
-            let cyclic = {
-                let pair = if from <= to {
-                    (from.to_string(), to.to_string())
-                } else {
-                    (to.to_string(), from.to_string())
-                };
-                cycle_pairs.contains(&pair)
-            };
-            conn.execute(
-                &mut edge_stmt,
-                vec![
-                    ("from", Value::String(from.to_string())),
-                    ("to", Value::String(to.to_string())),
-                    ("ref_count", Value::Int64(edge.weight() as i64)),
-                    ("cyclic", Value::Bool(cyclic)),
-                ],
-            )
-            .map_err(db_error)?;
-        }
-
-        let mut finding_stmt = conn
-            .prepare(
-                "CREATE (f:finding {id: $id, kind: $kind, severity: $severity, \
-                 detail: $detail});",
-            )
-            .map_err(db_error)?;
-        for finding in &r.findings {
-            conn.execute(
-                &mut finding_stmt,
-                vec![
-                    ("id", Value::String(finding.id.clone())),
-                    ("kind", Value::String(kind_name(finding.kind).to_string())),
-                    (
-                        "severity",
-                        Value::String(severity_name(finding.severity).to_string()),
-                    ),
-                    ("detail", Value::String(finding_detail(finding))),
-                ],
-            )
-            .map_err(db_error)?;
         }
 
         // Modules named by findings but absent from the graph.
@@ -332,30 +311,100 @@ impl GraphStore for LadybugStore {
             }
         }
         for name in placeholders {
-            self.execute_module(&conn, &mut module_stmt, name, None, r.metrics.get(name))?;
+            self.execute_module(conn, &mut module_stmt, name, None, r.metrics.get(name))?;
         }
 
-        let mut involves_stmt = conn
-            .prepare(
-                "MATCH (f:finding {id: $id}), (m:module {name: $name}) \
-                 CREATE (f)-[:involves]->(m);",
-            )
-            .map_err(db_error)?;
-        for finding in &r.findings {
-            for name in &finding.nodes {
-                conn.execute(
-                    &mut involves_stmt,
-                    vec![
-                        ("id", Value::String(finding.id.clone())),
-                        ("name", Value::String(name.clone())),
-                    ],
-                )
-                .map_err(db_error)?;
-            }
-        }
         Ok(())
     }
+}
 
+/// `depends_on` rels between the mirrored modules.
+fn insert_edges(conn: &Connection<'_>, g: &Graph, r: &Report) -> Result<(), ArchguardError> {
+    // An edge lies on a cycle exactly when both endpoints are in the same
+    // cycle finding (same SCC ⇒ a back-path exists).
+    let cycle_pairs = cyclic_edge_pairs(r);
+    let mut edge_stmt = conn
+        .prepare(
+            "MATCH (a:module {name: $from}), (b:module {name: $to}) \
+             CREATE (a)-[:depends_on {ref_count: $ref_count, cyclic: $cyclic}]->(b);",
+        )
+        .map_err(db_error)?;
+    for edge in &g.edges {
+        let from = g.node_name(edge.from).ok_or_else(|| {
+            ArchguardError::Analysis(format!("edge references unknown node {:?}", edge.from))
+        })?;
+        let to = g.node_name(edge.to).ok_or_else(|| {
+            ArchguardError::Analysis(format!("edge references unknown node {:?}", edge.to))
+        })?;
+        let cyclic = {
+            let pair = if from <= to {
+                (from.to_string(), to.to_string())
+            } else {
+                (to.to_string(), from.to_string())
+            };
+            cycle_pairs.contains(&pair)
+        };
+        conn.execute(
+            &mut edge_stmt,
+            vec![
+                ("from", Value::String(from.to_string())),
+                ("to", Value::String(to.to_string())),
+                ("ref_count", Value::Int64(edge.weight() as i64)),
+                ("cyclic", Value::Bool(cyclic)),
+            ],
+        )
+        .map_err(db_error)?;
+    }
+
+    Ok(())
+}
+
+/// `finding` rows and their `involves` rels.
+fn insert_findings(conn: &Connection<'_>, r: &Report) -> Result<(), ArchguardError> {
+    let mut finding_stmt = conn
+        .prepare(
+            "CREATE (f:finding {id: $id, kind: $kind, severity: $severity, \
+             detail: $detail});",
+        )
+        .map_err(db_error)?;
+    for finding in &r.findings {
+        conn.execute(
+            &mut finding_stmt,
+            vec![
+                ("id", Value::String(finding.id.clone())),
+                ("kind", Value::String(kind_name(finding.kind).to_string())),
+                (
+                    "severity",
+                    Value::String(severity_name(finding.severity).to_string()),
+                ),
+                ("detail", Value::String(finding_detail(finding))),
+            ],
+        )
+        .map_err(db_error)?;
+    }
+
+    let mut involves_stmt = conn
+        .prepare(
+            "MATCH (f:finding {id: $id}), (m:module {name: $name}) \
+             CREATE (f)-[:involves]->(m);",
+        )
+        .map_err(db_error)?;
+    for finding in &r.findings {
+        for name in &finding.nodes {
+            conn.execute(
+                &mut involves_stmt,
+                vec![
+                    ("id", Value::String(finding.id.clone())),
+                    ("name", Value::String(name.clone())),
+                ],
+            )
+            .map_err(db_error)?;
+        }
+    }
+    Ok(())
+}
+
+impl LadybugStore {
     /// Runs `cypher` and returns at most `min(limit, MAX_QUERY_ROWS)`
     /// rows; `truncated` is set when more rows existed **or** the
     /// server-owned row budget was the binding cap (F05). Cells are
@@ -366,7 +415,11 @@ impl GraphStore for LadybugStore {
     /// leaves no spare row for the probe, so further existing rows stay
     /// unflagged — `truncated` reports the server budget, not the
     /// statement's own limit.
-    fn query(&self, cypher: &str, limit: usize) -> Result<QueryResult, ArchguardError> {
+    ///
+    /// Read-only by contract; callers that only read open the store with
+    /// [`LadybugStore::open_for_query`] (F04) so a query creates no
+    /// database, schema or files.
+    pub fn query(&self, cypher: &str, limit: usize) -> Result<QueryResult, ArchguardError> {
         // F05: caller `limit` can only lower the server-owned budget,
         // never raise it; zero stays zero. The enforced LIMIT still gets
         // one spare row so `truncated` can be detected below; i64::MAX
@@ -416,7 +469,7 @@ impl GraphStore for LadybugStore {
     /// with the same primary key, then create the new one — a plain
     /// replace, so re-recording an id is idempotent. `tag` stays NULL when
     /// absent. `sync` never touches this table.
-    fn record_snapshot(&mut self, record: &SnapshotRecord) -> Result<(), ArchguardError> {
+    pub fn record_snapshot(&mut self, record: &SnapshotRecord) -> Result<(), ArchguardError> {
         let conn = Connection::new(&self.db).map_err(db_error)?;
         let mut delete = conn
             .prepare("MATCH (s:snapshot {id: $id}) DELETE s;")
@@ -1204,6 +1257,36 @@ mod tests {
         assert_eq!(
             rows(&reopened, "MATCH (m:module) RETURN m.name ORDER BY m.name;"),
             first_modules
+        );
+    }
+
+    #[test]
+    fn failed_sync_keeps_the_previous_mirror() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = open_store(dir.path());
+        let (graph, report) = (sample_graph(), sample_report());
+        store.sync(&graph, &report).expect("first sync");
+        let modules = rows(&store, "MATCH (m:module) RETURN m.name ORDER BY m.name;");
+        let edges = rows(&store, "MATCH ()-[d:depends_on]->() RETURN d.ref_count;");
+
+        // An edge to an unknown node fails after the DELETEs and the
+        // module inserts already ran.
+        let mut broken = graph.clone();
+        broken.edges.push(Edge {
+            from: NodeId(0),
+            to: NodeId(999),
+            refs: Vec::new(),
+            count: Some(1),
+        });
+        assert!(store.sync(&broken, &report).is_err());
+
+        assert_eq!(
+            rows(&store, "MATCH (m:module) RETURN m.name ORDER BY m.name;"),
+            modules
+        );
+        assert_eq!(
+            rows(&store, "MATCH ()-[d:depends_on]->() RETURN d.ref_count;"),
+            edges
         );
     }
 
