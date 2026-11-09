@@ -220,6 +220,7 @@ pub struct HtmlPage {
     clippy::too_many_arguments,
     reason = "the renderer inputs plus the deferral threshold"
 )]
+#[tracing::instrument(skip_all)]
 pub fn to_html_page(
     g: &Graph,
     focus: Option<&str>,

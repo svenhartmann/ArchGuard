@@ -134,6 +134,7 @@ pub(crate) fn effective_run(
     run_inner(root, loaded, level, false)
 }
 
+#[tracing::instrument(skip_all)]
 fn run_inner(
     root: &Path,
     loaded: &LoadedConfig,
@@ -270,6 +271,7 @@ fn run_inner(
 
 /// Analyse with already effective policy values, preserving declared/derived
 /// layer origins. Shared with Git comparison, where derivation must stay frozen.
+#[tracing::instrument(skip_all)]
 pub(crate) fn build_effective_report<'a>(
     root: &Path,
     graph: impl Into<pipeline::NamedGraph<'a>>,
@@ -372,6 +374,7 @@ pub(crate) fn build_effective_report<'a>(
 /// are the distinct file extensions, sorted; a project without any
 /// scannable file yields `(["src"], ["auto"])`. Roots that would give two
 /// files the same stripped path are dropped in favour of `["."]`.
+#[tracing::instrument(skip_all)]
 pub fn derive_project_hints(root: &Path) -> Result<(Vec<String>, Vec<String>), ArchguardError> {
     let files = walk(root, &ProjectConfig::default().exclude)?;
 

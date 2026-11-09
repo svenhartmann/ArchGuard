@@ -519,6 +519,7 @@ fn visibility_name(visibility: &Visibility) -> String {
 const UNTRUSTED: &str = CallAnalyzer::RUST_UNTRUSTED;
 const RESOLVED: &str = CallAnalyzer::RUST_RESOLVED;
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn analyze_rust_calls(root: &Path, config: &Config) -> CallAnalysis {
     let trusted = crate::compiler_trust::trusted();
     let executable =
@@ -536,6 +537,7 @@ struct Collected {
     parsed: Parsed,
 }
 
+#[tracing::instrument(skip_all)]
 fn collect(
     root: &Path,
     config: &Config,

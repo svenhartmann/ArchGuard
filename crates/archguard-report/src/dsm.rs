@@ -89,6 +89,7 @@ fn is_cyclic(
 /// [`LEGEND`]. Every line ends with `\n`; an empty `order` yields just
 /// the legend (there are no columns to enumerate). See the module docs
 /// for the format.
+#[tracing::instrument(skip_all)]
 pub fn to_dsm_text(
     g_view: &Graph,
     order: &[NodeId],
@@ -155,6 +156,7 @@ pub fn to_dsm_text(
 /// only the non-zero cells sorted by row then column. Key order is
 /// fixed (built literally, not through a map). `pretty` selects the
 /// indented form, mirroring [`crate::to_json`].
+#[tracing::instrument(skip_all)]
 pub fn to_dsm_json(
     g_view: &Graph,
     order: &[NodeId],

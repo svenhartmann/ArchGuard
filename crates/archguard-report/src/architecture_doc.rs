@@ -9,6 +9,7 @@ use std::fmt::Write;
 /// Reproducible from the supplied inputs. The DSM is limited to 30 named
 /// nodes, finding sections to 50 items, and optional review rows to ten.
 /// Source/config text is escaped as data rather than executable Markdown/HTML.
+#[tracing::instrument(skip_all)]
 pub fn render_architecture_doc(
     view: &Graph,
     report: &Report,

@@ -74,6 +74,7 @@ mod rust_calls;
 mod rust_scip;
 mod rust_types;
 mod security;
+pub mod self_trace;
 // Declared here, not in their modules: a test file that imports its parent
 // back would close a file cycle.
 #[cfg(test)]

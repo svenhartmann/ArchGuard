@@ -54,6 +54,7 @@ const RISK_TOP: usize = 10;
 /// KPIs (visibility, debt, leaks, risk gaps) run on the full graph.
 /// `zones` stays `None` here: it needs compiler abstractness, which only
 /// callers that run the call analysis add via `review_zones`.
+#[tracing::instrument(skip_all)]
 pub fn compute_review_kpis(
     root: &Path,
     config: &Config,

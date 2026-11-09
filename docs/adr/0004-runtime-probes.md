@@ -439,3 +439,15 @@ Consequences for the design:
   show controller → service → repository → database calls with exact
   durations. Measured cost per instrumented call: about 2.5 µs (Java), about
   44–59 µs (.NET, mostly the stack walk for the caller). Fixtures updated.
+- **2026-11-09:** ArchGuard records its own runtime. With
+  `ARCHGUARD_PROBE=1`, `archguard_engine::self_trace` (a
+  `tracing-subscriber` layer) writes ArchGuard's spans as OTLP JSON Lines to
+  `<project>/.archguard/runtime/archguard/traces-<nnnn>.jsonl`
+  (`ARCHGUARD_PROBE_DIR` replaces the directory); without it no subscriber
+  is installed. Requests are marked entry spans: one per CLI command
+  (`archguard <command>`), MCP tool call (the tool name) and desktop tab
+  build or project analysis (`desktop: show <tab>`, `desktop: analyze
+  project`). Method spans cover the pipeline phases, extraction per
+  language, the compiler-backed call scanners, the graph cache, report
+  rendering and config loading. On this repository `archguard check .`
+  took 0.94–0.98 s with and without the probe (3 runs each, warm cache).

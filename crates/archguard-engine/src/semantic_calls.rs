@@ -70,6 +70,7 @@ pub(crate) fn integrate_graph_named(
 
 /// Detect source languages once and combine independently reported providers.
 /// Unavailable or partial providers remain explicit coverage gaps, not clean call graphs.
+#[tracing::instrument(skip_all)]
 pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
     let files = match crate::pipeline::walk_files(root, config) {
         Ok(files) => files,

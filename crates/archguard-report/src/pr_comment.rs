@@ -76,6 +76,7 @@ fn delta_f64(label: &str, base: f64, current: f64) -> String {
 /// Render the Markdown body of an architecture PR comment comparing
 /// `base` against `current`, annotated with the accepted risks from
 /// `register`. Deterministic output: every list is sorted.
+#[tracing::instrument(skip_all)]
 pub fn render_pr_comment(
     base: &ReviewReport,
     current: &ReviewReport,

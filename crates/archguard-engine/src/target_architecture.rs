@@ -133,6 +133,7 @@ pub fn analyze_target_architecture(
 ) -> Result<Option<TargetArchitectureReport>, ArchguardError> {
     evaluate(full, config).map(|result| result.map(|(report, _)| report))
 }
+#[tracing::instrument(skip_all)]
 pub(crate) fn check_target_architecture(
     full: &Graph,
     config: &Config,

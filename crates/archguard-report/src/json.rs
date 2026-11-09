@@ -11,6 +11,7 @@ use archguard_core::Report;
 /// `pretty` selects the indented form (2 spaces), otherwise the compact
 /// form. [`Report`] contains only plain data, so serialization cannot
 /// fail and never panics in practice.
+#[tracing::instrument(skip_all)]
 pub fn to_json(r: &Report, pretty: bool) -> String {
     let serialized = if pretty {
         serde_json::to_string_pretty(r)

@@ -52,6 +52,7 @@ struct Input {
 /// analysis. Results are reused only while source *contents* and paths match.
 /// Thus changes inside method bodies invalidate calls even if imports do not.
 /// The single cached project bounds memory and serves the live viewer's polls.
+#[tracing::instrument(skip_all)]
 pub fn analyze_java_calls(root: &Path, config: &Config) -> CallAnalysis {
     let input = match prepare(root, config) {
         Ok(input) => input,
@@ -417,6 +418,7 @@ fn process_time(files: usize) -> Duration {
     Duration::from_secs((files as u64 / 100).max(MIN_PROCESS_SECS))
 }
 
+#[tracing::instrument(skip_all)]
 fn run_helper(input: &Input, executable: &Path) -> Result<CallAnalysis, String> {
     let directory = WorkingDirectory::create().map_err(|e| e.to_string())?;
     let helper = directory.0.join("ArchguardCallScanner.java");

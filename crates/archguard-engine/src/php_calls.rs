@@ -15,6 +15,7 @@ use archguard_extract::{
 
 const LIMITATION: &str = archguard_core::CallAnalyzer::PHP_TOKENS;
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn analyze_php_calls(root: &Path, config: &Config) -> CallAnalysis {
     let scanned = RefCell::new(Vec::new());
     let mut report = crate::semantic_calls::token_calls::token_calls(

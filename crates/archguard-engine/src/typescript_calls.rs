@@ -47,6 +47,7 @@ struct Input {
     blocked_compiler: bool,
 }
 
+#[tracing::instrument(skip_all)]
 pub fn analyze_typescript_calls(root: &Path, config: &Config) -> CallAnalysis {
     analyze(root, config, crate::compiler_trust::trusted())
 }
@@ -350,6 +351,7 @@ fn node(root: &Path, scratch: &Path, script: &Path, manifest: &Path) -> std::pro
     command
 }
 
+#[tracing::instrument(skip_all)]
 fn run_helper(input: &Input) -> Result<HelperResult, String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     let script = directory.path().join("scanner.cjs");

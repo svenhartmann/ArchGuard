@@ -25,6 +25,10 @@ archguard-extract = { path = "../archguard-extract" }
 archguard-report = { path = "../archguard-report" }
 archguard-store = { path = "../archguard-store" }
 scip = "0.10.0"
+# Self-instrumentation (ADR 0004): spans at the pipeline phases, written as
+# OTLP JSON Lines only with ARCHGUARD_PROBE=1 (src/self_trace.rs).
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 protobuf = "=3.7.2"
 
 [target.'cfg(unix)'.dependencies]

@@ -58,6 +58,7 @@ pub fn validate_dependency_rules(rules: &[DependencyRule]) -> Result<(), Archgua
 
 /// Evaluate prohibitions against original file imports, never a collapsed view.
 /// Rule/pair identities are independent of input ordering and unrelated findings.
+#[tracing::instrument(skip_all)]
 pub fn check_dependency_rules(
     full: &Graph,
     rules: &[DependencyRule],
@@ -126,6 +127,7 @@ pub fn check_dependency_rules(
 
 /// Files without incoming static imports are review candidates. This opt-in
 /// policy does not prove that dynamic consumers or public API callers are absent.
+#[tracing::instrument(skip_all)]
 pub fn check_orphans(full: &Graph, config: &ReviewConfig) -> Result<Vec<Finding>, ArchguardError> {
     let severity = match config.orphans {
         OrphanPolicy::Off => return Ok(vec![]),

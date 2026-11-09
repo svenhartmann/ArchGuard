@@ -11,6 +11,7 @@ use archguard_core::{
 use crate::scc::Scc;
 
 /// Martin metrics for each visible node, including aggregated modules.
+#[tracing::instrument(skip_all)]
 pub fn compute_metrics(graph: &Graph, sccs: &[Scc]) -> BTreeMap<String, ModuleMetrics> {
     let in_cycle: BTreeSet<NodeId> = sccs
         .iter()
@@ -58,6 +59,7 @@ pub fn compute_metrics(graph: &Graph, sccs: &[Scc]) -> BTreeMap<String, ModuleMe
 /// findings, and `status` [`Status::Fail`] as soon as any finding has
 /// [`Severity::Error`], [`Status::Pass`] otherwise. The Lakos triple
 /// `ccd`/`acd`/`nccd` (Kap. 7) comes from [`crate::lakos::lakos_metrics`].
+#[tracing::instrument(skip_all)]
 pub fn summarize(graph: &Graph, sccs: &[Scc], findings: &[Finding]) -> Summary {
     let (ccd, acd, nccd) = crate::lakos::lakos_metrics(graph);
     Summary {

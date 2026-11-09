@@ -156,6 +156,7 @@ impl Arc42Document {
     }
 }
 
+#[tracing::instrument(skip_all)]
 pub fn render_arc42(input: Arc42Inputs<'_>) -> Arc42Document {
     let l = input.lang;
     let mut chapters: Vec<_> = l

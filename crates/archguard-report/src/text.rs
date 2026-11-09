@@ -21,6 +21,7 @@ use archguard_core::{Finding, FindingKind, HealthLevel, Report, ReviewKpis, Seve
 const MAX_MEMBERS: usize = 5;
 
 /// Render `r` as compact plain text. See the module docs for the format.
+#[tracing::instrument(skip_all)]
 pub fn to_text(r: &Report) -> String {
     let mut out = summary_line(r);
     out.push('\n');

@@ -13,6 +13,8 @@ petgraph = "0.8"
 globset = "0.4"
 # The baseline hashes cycle memberships with SHA-256 (Kap. 7, T17).
 sha2 = "0.10"
+# Spans for ArchGuard's self-instrumentation (ADR 0004); inert without a subscriber.
+tracing = "0.1.44"
 # `Baseline` is persisted as `.archguard/baseline.json` via serde (Kap. 9).
 serde = { version = "1", features = ["derive"] }
 

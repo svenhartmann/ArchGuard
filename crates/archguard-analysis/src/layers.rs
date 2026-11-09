@@ -47,6 +47,7 @@ const MAX_PAIRS_PER_FINDING: usize = 10;
 /// pair. See the module docs for the assignment rule, the severity
 /// mapping (Kap. 11) and the determinism guarantee. An empty `layers`
 /// slice leaves every node unconstrained and yields no findings.
+#[tracing::instrument(skip_all)]
 pub fn check_layers(graph: &Graph, layers: &[LayerConfig]) -> Result<Vec<Finding>, ArchguardError> {
     Ok(collect_violations(graph, layers)?
         .into_iter()

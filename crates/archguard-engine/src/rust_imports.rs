@@ -786,6 +786,7 @@ fn import_edges(
     edges
 }
 
+#[tracing::instrument(skip_all)]
 pub(super) fn edges(
     root: &Path,
     files: &[ScannedFile],

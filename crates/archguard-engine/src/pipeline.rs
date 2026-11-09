@@ -109,6 +109,7 @@ pub(crate) fn print_warnings(warnings: &[String]) {
 /// Kap. 6 step 3 alone: the walk with the configured exclude globs.
 /// Crate-internal so the graph cache (T23) can fingerprint exactly the
 /// file set [`build_graph`] would extract.
+#[tracing::instrument(skip_all)]
 pub(crate) fn walk_files(root: &Path, config: &Config) -> Result<Vec<SourceFile>, ArchguardError> {
     let mut files = walk(root, &config.project.exclude)?;
     let languages = &config.project.languages;
@@ -130,6 +131,7 @@ pub(crate) fn build_graph(
 }
 
 /// [`build_graph`] plus the [`SourceNames`] of the extracted files.
+#[tracing::instrument(skip_all)]
 pub(crate) fn build_graph_named(
     root: &Path,
     files: &[SourceFile],
@@ -204,28 +206,43 @@ pub(crate) fn build_graph_named(
 }
 
 /// Kap. 6 step 4: read and extract every file against its stripped path.
+/// One language after the other, each in its own span (`extract <lang>`);
+/// the result keeps the walk's file order.
 fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, ArchguardError> {
+    let languages: BTreeSet<&str> = files.iter().map(|file| lang_name(file.lang)).collect();
     let mut scanned = Vec::new();
-    for file in files {
-        let Some(extractor) = archguard_extract::extractor_for(file.lang) else {
-            continue; // a language walk accepted but no scanner registered
-        };
-        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
-        let stripped = archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
-        let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);
-        let node_name = file_node_name(&stripped, &extraction.declarations);
-        scanned.push(ScannedFile {
-            rel_path: file.rel_path.clone(),
-            stripped,
-            node_name,
-            lang: lang_name(file.lang),
-            extraction,
-        });
+    for language in languages {
+        let name = format!("extract {language}");
+        let _span = tracing::info_span!("extract", otel.name = name.as_str()).entered();
+        let of_language = files.iter().enumerate();
+        for (index, file) in of_language.filter(|(_, f)| lang_name(f.lang) == language) {
+            let Some(extractor) = archguard_extract::extractor_for(file.lang) else {
+                continue; // a language walk accepted but no scanner registered
+            };
+            let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
+            let stripped =
+                archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
+            let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);
+            let node_name = file_node_name(&stripped, &extraction.declarations);
+            let lang = lang_name(file.lang);
+            scanned.push((
+                index,
+                ScannedFile {
+                    rel_path: file.rel_path.clone(),
+                    stripped,
+                    node_name,
+                    lang,
+                    extraction,
+                },
+            ));
+        }
     }
-    Ok(scanned)
+    scanned.sort_by_key(|(index, _)| *index);
+    Ok(scanned.into_iter().map(|(_, file)| file).collect())
 }
 
 /// Kap. 6 step 5 for every non-Rust import: record its edge or warn.
+#[tracing::instrument(skip_all)]
 fn resolve_imports(
     scanned: &[ScannedFile],
     (indexes, go_packages, node_of): ImportContext<'_>,
@@ -282,6 +299,7 @@ fn resolve_imports(
 /// Kap. 6 steps 8–10 over a complete graph: default view, analyses
 /// (SCCs, cycles, cuts, layers, metrics) and the [`Report`]. Cheap
 /// enough to rerun on every cached run (T23).
+#[tracing::instrument(skip_all)]
 pub(crate) fn build_report(
     full: &Graph,
     config: &Config,
@@ -370,6 +388,7 @@ fn add_gates(findings: &mut Vec<Finding>, summary: &mut Summary, gates: Vec<Find
 /// Metric gates always use the configured module view; SCC size follows
 /// the file policy when enabled. Baselines only accept Cycle findings.
 /// `module_acd` is that view's Lakos ACD when the caller measured it.
+#[tracing::instrument(skip_all)]
 fn metric_findings(
     full: &Graph,
     config: &Config,
@@ -455,6 +474,7 @@ fn metric_findings(
     Ok(findings)
 }
 
+#[tracing::instrument(skip_all)]
 fn cycle_findings(
     view: &Graph,
     sccs: &[archguard_analysis::Scc],

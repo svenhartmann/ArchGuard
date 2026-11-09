@@ -44,6 +44,7 @@ pub struct Scc {
 /// self-loop survive. Edges pointing at node ids absent from
 /// `graph.nodes` cannot be resolved and are skipped. The result is
 /// fully deterministic: see the module docs.
+#[tracing::instrument(skip_all)]
 pub fn find_sccs(graph: &Graph) -> Vec<Scc> {
     let mut pet = DiGraph::<NodeId, ()>::new();
     let mut index_of: BTreeMap<u32, NodeIndex> = BTreeMap::new();

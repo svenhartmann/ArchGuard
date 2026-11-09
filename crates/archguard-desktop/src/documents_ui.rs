@@ -194,8 +194,10 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     let topology = Shared::<Topology>::new();
     documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
+    let name = "desktop: analyze project";
+    let work = tab_support::traced(&root.clone(), name, move || analyze(&root, &topology));
     std::thread::spawn(move || {
-        let result = guarded(|| analyze(&root, &topology));
+        let result = guarded(work);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 finished(&ui, id, result);

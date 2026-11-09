@@ -27,6 +27,7 @@ use crate::render::{escape_xml, focus_subset, nodes_in_cycles};
 /// `(from, to)` [`NodeId`] pairs of the edges inside SCCs, which mark the
 /// `in_cycle` node attribute. The output ends with a trailing newline and
 /// is deterministic for equal inputs.
+#[tracing::instrument(skip_all)]
 pub fn to_gexf(
     g: &Graph,
     focus: Option<&str>,

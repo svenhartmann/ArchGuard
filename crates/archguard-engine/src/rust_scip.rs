@@ -53,6 +53,7 @@ type Cached = ([u8; 32], ScipIndex);
 static CACHE: OnceLock<Mutex<Option<Cached>>> = OnceLock::new();
 
 /// The SCIP index of `root`, from cache while sources and manifests are unchanged.
+#[tracing::instrument(skip_all)]
 pub(crate) fn index(
     root: &Path,
     executable: &OsStr,

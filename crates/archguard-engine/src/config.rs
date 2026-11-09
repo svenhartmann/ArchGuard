@@ -173,6 +173,7 @@ pub struct LoadedConfig {
 /// `Declared`, an absent one is `Default` — `Config`'s own `Default`
 /// filling is irrelevant for that. Parse/type errors become
 /// [`ArchguardError::Config`] naming the file.
+#[tracing::instrument(skip_all)]
 pub fn load_config(
     explicit: Option<&Path>,
     project_root: &Path,

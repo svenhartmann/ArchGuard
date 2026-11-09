@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use archguard_engine::core::{CallAnalysis, Config, ServiceTopology};
+use archguard_engine::self_trace;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::context::Loaded;
@@ -222,6 +223,19 @@ pub(crate) fn catch<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     })
 }
 
+/// With `ARCHGUARD_PROBE=1` (ADR 0004), `work` is one request `name`,
+/// recorded into the `.archguard/runtime/` of the first project `root`
+/// this process traced.
+pub(crate) fn traced<T, W>(root: &Path, name: &str, work: W) -> impl FnOnce() -> T + Send + 'static
+where
+    W: FnOnce() -> T + Send + 'static,
+{
+    static PROBE: OnceLock<Option<self_trace::Probe>> = OnceLock::new();
+    PROBE.get_or_init(|| self_trace::start(root, "archguard-desktop"));
+    let span = self_trace::entry_span(name);
+    move || span.in_scope(work)
+}
+
 /// Show the active document's `T`, building it once per document.
 ///
 /// `prepare` runs on the UI thread only when building starts; it copies
@@ -244,7 +258,13 @@ where
         Start::Build(doc) => doc,
     };
     T::pending(ui, None);
-    let work = prepare();
+    let root = documents::with_store(|s| s.get(doc).map(|d| d.root.clone()));
+    let tab = std::any::type_name::<T>()
+        .split("::")
+        .nth(1)
+        .unwrap_or("tab");
+    let name = format!("desktop: show {}", tab.trim_end_matches("_ui"));
+    let work = traced(&root.unwrap_or_default(), &name, prepare());
     if snapshot_mode() {
         return install(ui, doc, catch(work));
     }

@@ -20,10 +20,11 @@ use std::process::ExitCode;
 use archguard_engine::analysis::{Baseline, cycle_hash};
 use archguard_engine::core::{Finding, FindingKind, Graph, ModuleMetrics, Report};
 use archguard_engine::report::{to_dot, to_gexf, to_graphml, to_json, to_mermaid, to_text};
+use archguard_engine::self_trace;
 use archguard_engine::{
     Level, LoadedConfig, analyze_run, default_config_string, effective_config_string, load_config,
 };
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use serde_json::{Value, json};
 
 mod args;
@@ -148,8 +149,26 @@ impl Command {
     }
 }
 
+/// With `ARCHGUARD_PROBE=1` the run records its own spans into the analyzed
+/// project's `.archguard/runtime/` (ADR 0004): the command is one request
+/// named `archguard <command>`; under `mcp` each tool call is one, and
+/// `serve` records no request of its own.
 fn main() -> ExitCode {
-    ExitCode::from(run(&Cli::parse()) as u8)
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+    let probe_root = match &cli.command {
+        Command::Mcp { root } => resolve_root(Some(root)),
+        command => resolve_root(command.path()),
+    };
+    let _probe = self_trace::start(&probe_root.unwrap_or_default(), "archguard");
+    let code = match cli.command {
+        Command::Mcp { .. } | Command::Serve { .. } => run(&cli),
+        _ => {
+            let command = matches.subcommand_name().unwrap_or_default();
+            self_trace::entry_span(&format!("archguard {command}")).in_scope(|| run(&cli))
+        }
+    };
+    ExitCode::from(code as u8)
 }
 
 /// The shared analysis run. The pipeline leaves zones unmeasured; only the
@@ -1199,6 +1218,7 @@ impl Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn measure_zones_is_an_opt_in_on_scan_and_check_only() {

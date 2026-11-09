@@ -164,10 +164,12 @@ fn file_stamp(path: &Path) -> FileStamp {
 /// non-directory `.archguard`) returns `Err` instead of following it;
 /// [`crate::effective::analyze_cached`] turns that into a warning, so analysis
 /// never depends on the cache being writable.
+#[tracing::instrument(skip_all)]
 pub fn save_graph(dir: &Path, graph: &Graph, fp: &str) -> Result<(), ArchguardError> {
     save_entry(dir, graph, &SourceNames::new(), fp, &[])
 }
 
+#[tracing::instrument(skip_all)]
 fn save_entry(
     dir: &Path,
     graph: &Graph,
@@ -189,10 +191,12 @@ fn save_entry(
 /// Load the cached graph iff the entry at `<dir>/.archguard/cache.json`
 /// is a regular file that parses and carries `fp`; `None` on any
 /// mismatch, missing file, symlink, non-file or parse error.
+#[tracing::instrument(skip_all)]
 pub fn load_graph_if_fresh(dir: &Path, fp: &str) -> Option<Graph> {
     load_entry(dir, fp).map(|entry| entry.graph)
 }
 
+#[tracing::instrument(skip_all)]
 fn load_entry(dir: &Path, fp: &str) -> Option<CacheEntry> {
     let raw = safe::load(dir)?;
     let entry: CacheEntry = serde_json::from_str(&raw).ok()?;
@@ -240,6 +244,7 @@ fn valid_graph(graph: &Graph) -> bool {
     })
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn extraction_fingerprint(
     root: &Path,
     files: &[SourceFile],

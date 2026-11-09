@@ -56,6 +56,7 @@ mod security_tools;
 mod semantic_tools;
 mod test_coverage_tools;
 mod tools;
+mod traced;
 mod workspace_tools;
 pub use change_context_tools::ChangeContextParams;
 pub use engineering_tools::{EngineeringParams, TestImpactParams};
@@ -1309,7 +1310,9 @@ pub fn run_stdio_server(root: PathBuf) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(async move {
-        let service = ArchguardTools::new(root).serve(stdio()).await?;
+        let service = traced::Traced(ArchguardTools::new(root))
+            .serve(stdio())
+            .await?;
         service.waiting().await?;
         Ok(())
     })

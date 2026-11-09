@@ -59,6 +59,7 @@ struct Sdk {
     version: String,
 }
 
+#[tracing::instrument(skip_all)]
 pub fn analyze_csharp_calls(root: &Path, config: &Config) -> CallAnalysis {
     let mut input = match prepare(root, config) {
         Ok(input) => input,
@@ -482,6 +483,7 @@ fn bounded(
     }
     Ok(bytes)
 }
+#[tracing::instrument(skip_all)]
 fn run_helper(input: &Input, sdk: &Sdk) -> Result<CallAnalysis, String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     let helper = directory.path().join("ArchguardCallScanner.cs");

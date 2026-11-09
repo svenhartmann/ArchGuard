@@ -17,6 +17,7 @@ mod resolve;
 
 const LIMITATION: &str = archguard_core::CallAnalyzer::KOTLIN_TOKENS;
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn analyze_kotlin_calls(root: &Path, config: &Config) -> CallAnalysis {
     let scanned = RefCell::new(Vec::new());
     let mut report = super::token_calls::token_calls(

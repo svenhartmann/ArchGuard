@@ -20,6 +20,7 @@ pub(crate) struct ProjectionSummary {
     pub added_edges: usize,
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn apply_semantic_dependencies(
     files: &[SourceFile],
     config: &Config,

@@ -49,6 +49,7 @@ pub struct DerivedLayers {
 /// towards the smaller depth. A graph without module levels has nothing
 /// to zoom into and returns `1`; an empty candidate range (`max == 0`)
 /// likewise returns `1`, keeping the result a valid depth either way.
+#[tracing::instrument(skip_all)]
 pub fn suggest_depth(g: &Graph, min: usize, max: usize) -> u32 {
     // Without a single module node every file already sits at the root
     // and every cut is the full file set — depth 1 is the only answer.
@@ -106,6 +107,7 @@ fn distance_to_range(count: usize, min: usize, max: usize) -> usize {
 /// names of all lower-rank layers (sorted), and every layer carries
 /// [`LayerOrigin::Derived`]. Node ids unknown to `view` (only reachable
 /// for malformed input) are skipped, mirroring [`crate::scc::find_sccs`].
+#[tracing::instrument(skip_all)]
 pub fn infer_layers(view: &Graph, sccs: &[Scc]) -> DerivedLayers {
     let (components, in_cycle) = condense(view, sccs);
 

@@ -84,6 +84,7 @@ fn unavailable(files: usize, message: String) -> CallAnalysis {
         ..Default::default()
     }
 }
+#[tracing::instrument(skip_all)]
 pub(crate) fn analyze_go_calls(root: &Path, config: &Config) -> CallAnalysis {
     let (files, fp) = match prepare(root, config) {
         Ok(v) => v,
@@ -209,6 +210,7 @@ pub(crate) fn execute(
     }
     fs::read(output.path()).map_err(|e| e.to_string())
 }
+#[tracing::instrument(skip_all)]
 fn run(files: &[serde_json::Value]) -> Result<CallAnalysis, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let source = dir.path().join("scanner.go");

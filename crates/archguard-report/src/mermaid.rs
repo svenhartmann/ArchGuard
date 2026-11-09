@@ -32,6 +32,7 @@ const CYCLE_STROKE_WIDTH: &str = "2px";
 /// `(from, to)` [`NodeId`] pairs of the edges inside SCCs and styles them
 /// red and bold. The output ends with a trailing newline and is
 /// deterministic for equal inputs.
+#[tracing::instrument(skip_all)]
 pub fn to_mermaid(
     g: &Graph,
     focus: Option<&str>,

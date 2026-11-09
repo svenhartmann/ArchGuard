@@ -34,6 +34,7 @@ struct HelperOutput {
     diagnostics: Vec<String>,
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn analyze_python_calls(root: &Path, config: &Config) -> CallAnalysis {
     analyze_with(root, config, &python_executable())
 }
@@ -44,6 +45,7 @@ fn python_executable() -> OsString {
         .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into())
 }
 
+#[tracing::instrument(skip_all)]
 fn analyze_with(root: &Path, config: &Config, python: &OsStr) -> CallAnalysis {
     let files = match crate::pipeline::walk_files(root, config) {
         Ok(files) => files,
