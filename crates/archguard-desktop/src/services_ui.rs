@@ -11,6 +11,8 @@ mod layout;
 mod paths;
 mod state;
 mod sync;
+#[cfg(test)]
+mod tree_check;
 mod view;
 
 use slint::ComponentHandle;

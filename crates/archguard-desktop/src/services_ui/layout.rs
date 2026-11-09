@@ -57,6 +57,8 @@ pub struct Layout {
     /// Row width and height, the relation axis and the canvas size.
     pub w: f32,
     pub h: f32,
+    /// Rows narrower than the web's minimum show bare counts.
+    pub compact: bool,
     pub relation_x: f32,
     pub width: f32,
     pub height: f32,
@@ -68,6 +70,11 @@ pub struct Layout {
 
 const LEFT: f32 = 24.0;
 const BASE_GUTTER: f32 = 194.0;
+/// Narrow pane: the smallest gutter and row; arcs reach at least
+/// `MIN_REACH` from the axis (in a wide pane they always do).
+const NARROW_GUTTER: f32 = 56.0;
+const NARROW_ROW: f32 = 160.0;
+const MIN_REACH: f32 = 28.0;
 
 /// Lay out `nodes` and `links` for a viewport `width` (0 = unknown).
 pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
@@ -159,6 +166,24 @@ fn preorder(children: &BTreeMap<Option<usize>, Vec<usize>>) -> Vec<(usize, usize
     out
 }
 
+/// Row width and gutter for a viewport `width`. From the web's minimum on
+/// as the web; below it (a split pane) the gutters shrink first, then the
+/// rows, so the tree fits the pane instead of scrolling sideways.
+fn widths(min_label: f32, width: f32) -> (f32, f32) {
+    let minimum = min_label + LEFT * 3.0 + BASE_GUTTER * 2.0;
+    if width > 0.0 && width < minimum {
+        let gutter = ((width - LEFT * 3.0 - min_label) / 2.0).max(NARROW_GUTTER);
+        let w = (width - LEFT * 3.0 - 2.0 * gutter).max(NARROW_ROW);
+        return (w, gutter);
+    }
+    let extra = (width - minimum).max(0.0);
+    let label_extra = (700.0 - min_label).max(0.0).min(extra * 0.4);
+    (
+        min_label + label_extra,
+        BASE_GUTTER + (extra - label_extra) / 2.0,
+    )
+}
+
 /// Row geometry, lanes and routes for the ordered rows.
 fn place(
     nodes: &[Node],
@@ -169,11 +194,7 @@ fn place(
 ) -> Layout {
     let max_depth = ordered.iter().map(|&(_, d)| d).max().unwrap_or(0) as f32;
     let min_label = 400f32.max(300.0 + max_depth * 18.0);
-    let minimum = min_label + LEFT * 3.0 + BASE_GUTTER * 2.0;
-    let extra = (width - minimum).max(0.0);
-    let label_extra = (700.0 - min_label).max(0.0).min(extra * 0.4);
-    let w = min_label + label_extra;
-    let gutter = BASE_GUTTER + (extra - label_extra) / 2.0;
+    let (w, gutter) = widths(min_label, width);
     let relation_x = LEFT + w + 24.0 + gutter;
     let rows: Vec<Row> = ordered
         .iter()
@@ -213,6 +234,7 @@ fn place(
         rows,
         w,
         h: 28.0,
+        compact: w < min_label,
         relation_x,
         width: relation_x + gutter + 24.0,
         height,
@@ -308,7 +330,8 @@ fn route(link: &Link, iv: &Interval, lanes: usize, axis: f32, gutter: f32) -> Ro
         0.0
     };
     let span = (iv.target_y - iv.source_y).abs();
-    let reach = ((48.0 + span.sqrt() * 5.0).min(166.0) + spread * 28.0) * (gutter / BASE_GUTTER);
+    let reach = (((48.0 + span.sqrt() * 5.0).min(166.0) + spread * 28.0) * (gutter / BASE_GUTTER))
+        .max(MIN_REACH);
     let p = |dx: f32, y: f32| Point {
         x: axis + sign * dx,
         y,

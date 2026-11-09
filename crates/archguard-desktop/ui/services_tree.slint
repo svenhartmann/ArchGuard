@@ -17,6 +17,8 @@ export struct SvcRow {
     indent: float,
     label-width: float,
     relation-x: float,
+    // Counts without their In/Out words, in a narrow pane.
+    compact: bool,
     selected: bool,
     in-cycle: bool,
     incoming: int,
@@ -93,10 +95,12 @@ component SvcRowView inherits Rectangle {
         overflow: elide;
         vertical-alignment: center;
     }
+    // In a narrow pane the counts keep only their colors (incoming blue,
+    // outgoing violet, as the arcs).
     if data.service >= 0: Text {
-        x: (data.w - 108) * scale * 1px;
+        x: (data.w - (data.compact ? 56 : 108)) * scale * 1px;
         height: parent.height;
-        text: @tr("In {}", Fmt.int(data.incoming));
+        text: data.compact ? Fmt.int(data.incoming) : @tr("In {}", Fmt.int(data.incoming));
         color: Theme.incoming;
         font-size: 11px * scale;
         vertical-alignment: center;
@@ -104,7 +108,7 @@ component SvcRowView inherits Rectangle {
     if data.service >= 0: Text {
         x: (data.w - 12) * scale * 1px - self.width;
         height: parent.height;
-        text: @tr("Out {}", Fmt.int(data.outgoing));
+        text: data.compact ? Fmt.int(data.outgoing) : @tr("Out {}", Fmt.int(data.outgoing));
         color: Theme.outgoing;
         font-size: 11px * scale;
         horizontal-alignment: right;
