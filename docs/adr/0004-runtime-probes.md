@@ -418,3 +418,7 @@ Consequences for the design:
   request's timeline (database calls with call site, outgoing calls, own
   code and waiting) and the summary moved from the Services tab; Live
   re-reads `.archguard/runtime/` within about a second. Times are UTC.
+- **2026-11-09:** Target platforms are .NET 10 and .NET 11 (user). The
+  call-site spike ran on .NET 8 / EF Core 8 and is re-verified on 10 and 11
+  while building the probe (runtime-async in .NET 11 may change async
+  stacks).
