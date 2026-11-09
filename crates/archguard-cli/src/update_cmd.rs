@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
 
-const TARGET: &str = env!("ARCHGUARD_TARGET");
+const TARGET: &str = release::TARGET;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn run(cli: &Cli, check: bool) -> i32 {
