@@ -35,6 +35,6 @@ pub use {
     error::{FieldError, SaveError},
     preview::{CheckSummary, Preview, PreviewRequest},
     provenance::{EntryState, FieldState, Provenance},
-    save::{bind, save_hook},
+    save::{bind, save_hook, write_atomic},
     value::FieldValue,
 };

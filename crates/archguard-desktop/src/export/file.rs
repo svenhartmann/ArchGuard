@@ -1,9 +1,10 @@
-//! Write an export to the chosen path in one step: a temporary file next
-//! to the target, synced, then renamed over it, so a failed or
-//! interrupted export never leaves half a file.
+//! Write an export to the chosen path in one step
+//! ([`crate::config_editor::write_atomic`]), so a failed or interrupted
+//! export never leaves half a file. Unlike the settings, an export never
+//! creates the folder: the save dialog chose an existing one.
 
 use std::fmt;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// Why `path` could not be written.
@@ -37,8 +38,7 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
         path: path.to_path_buf(),
         source,
     };
-    let name = path
-        .file_name()
+    path.file_name()
         .ok_or_else(|| fail(io::Error::new(io::ErrorKind::InvalidInput, "no file name")))?;
     let dir = path
         .parent()
@@ -48,30 +48,7 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
         let message = format!("the folder {} does not exist", dir.display());
         return Err(fail(io::Error::new(io::ErrorKind::NotFound, message)));
     }
-    let temp = dir.join(format!(
-        ".{}.{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let result = publish(&temp, path, bytes);
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result.map_err(fail)
-}
-
-fn publish(temp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp)?;
-    if let Ok(metadata) = std::fs::metadata(path) {
-        file.set_permissions(metadata.permissions())?;
-    }
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(temp, path)
+    crate::config_editor::write_atomic(path, bytes).map_err(fail)
 }
 
 #[cfg(test)]

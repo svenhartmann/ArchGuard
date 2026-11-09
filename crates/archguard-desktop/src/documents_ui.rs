@@ -48,6 +48,11 @@ pub fn wire(ui: &AppWindow) {
     ui.on_open_web(with_ui(ui, |ui, tab: SharedString| open_web(ui, &tab)));
     let strip = with_ui(ui, |ui, ()| push_strip(ui));
     documents::on_dirty_changed(move || strip(()));
+    // Notice 2 reads "Could not save the changes: …" (`ui/app.slint`).
+    settings_file::on_error(with_ui(ui, |ui, e: String| {
+        ui.set_notice_kind(2);
+        ui.set_notice(e.into());
+    }));
 }
 
 pub use crate::tab_support::with_ui;
