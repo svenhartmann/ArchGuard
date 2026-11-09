@@ -13,7 +13,7 @@ use archguard_extract::{
     scan_php_structure,
 };
 
-const LIMITATION: &str = "Token-based analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from namespaces, use imports, project classes, traits, $this, self, static (read as self) and parent; calls on other variables, dynamic names and $this inside closures stay unresolved; callables passed to call_user_func are not followed. Types are not resolved; abstractness is read from interface and abstract class declarations.";
+const LIMITATION: &str = archguard_core::CallAnalyzer::PHP_TOKENS;
 
 pub(crate) fn analyze_php_calls(root: &Path, config: &Config) -> CallAnalysis {
     let scanned = RefCell::new(Vec::new());

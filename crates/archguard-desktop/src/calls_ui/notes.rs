@@ -1,9 +1,11 @@
 //! What the window says about the coverage of each call analyzer: a kind
 //! the window translates into a lead sentence, keyed by the language,
 //! backend and status the engine reports. The engine's own text stays the
-//! detail behind it.
+//! detail behind it, with its fixed notes translated ([`diagnostic`]).
 
 use archguard_engine::core::{CallAnalysis, CallAnalyzer};
+
+use crate::tab_support::Texts;
 
 /// The lead sentence of an analyzer note (`CallsAnalyzer.note` in
 /// `ui/calls_data.slint`).
@@ -67,6 +69,19 @@ pub fn extra_diagnostics(a: &CallAnalysis) -> Vec<String> {
         .collect()
 }
 
+/// An engine diagnostic in the window's language: the analyzers' fixed
+/// notes (`CallAnalyzer::NOTES`, keys in `ui/texts.slint`) are
+/// translated, also after a "<language>: " prefix; any other text (file
+/// errors, counts, compiler output) stays as the engine wrote it.
+pub fn diagnostic(texts: &Texts, text: &str) -> String {
+    let note = |t: &str| CallAnalyzer::NOTES.contains(&t);
+    match text.split_once(": ") {
+        _ if note(text) => texts.t(text).to_string(),
+        Some((language, rest)) if note(rest) => format!("{language}: {}", texts.t(rest)),
+        _ => text.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +95,32 @@ mod tests {
             version: None,
             project: None,
             diagnostics: vec!["raw engine text".into()],
+        }
+    }
+
+    /// The analyzers' fixed coverage notes read in the window's
+    /// language, also behind the "<language>: " prefix of the
+    /// analysis-wide list; other engine text stays as it is.
+    #[test]
+    fn engine_notes_are_translated_and_other_text_stays() {
+        let de = Texts::german();
+        for text in CallAnalyzer::NOTES {
+            let german = diagnostic(&de, text);
+            assert_ne!(german, text, "no German for {text}");
+            assert_eq!(
+                diagnostic(&de, &format!("rust: {text}")),
+                format!("rust: {german}")
+            );
+        }
+        assert_eq!(
+            diagnostic(&de, CallAnalyzer::RUST_UNTRUSTED),
+            "Rust-Aufrufe und Typreferenzen bleiben unaufgelöst. ARCHGUARD_TRUST_PROJECT_COMPILER=1 außerhalb des Repositorys setzen, um sie mit rust-analyzer aufzulösen; Build-Skripte und Proc-Macros laufen nie."
+        );
+        for raw in [
+            "rust: bad.rs: expected `;`",
+            "12 project calls could not be mapped.",
+        ] {
+            assert_eq!(diagnostic(&de, raw), raw);
         }
     }
 

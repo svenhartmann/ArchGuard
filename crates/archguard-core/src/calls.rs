@@ -132,6 +132,32 @@ pub struct CallAnalyzer {
     pub diagnostics: Vec<String>,
 }
 
+/// The fixed coverage notes analyzers report among their diagnostics.
+/// Clients recognize them by their text (e.g. to translate them); other
+/// diagnostics (file errors, counts, compiler output) vary and stay as
+/// reported.
+impl CallAnalyzer {
+    pub const RUST_SYNTAX: &str = "Declarations, complexity and Halstead per function come from syntax. Traits count as abstract; structs, enums and unions as concrete. Implemented traits (impl Trait for Type) and supertraits resolve from syntax within the crate; traits of std, core and alloc are external, other crates' traits, prelude names and blanket impls stay unresolved. Rust has no implementation inheritance: DIT/NOC are not applicable. Files with item macro invocations or syntax errors keep their types unknown, and macro bodies that are not expressions stay opaque.";
+    pub const RUST_UNTRUSTED: &str = "Rust calls and type references stay unresolved. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 outside the repository to resolve them with rust-analyzer; build scripts and proc macros are never run.";
+    pub const RUST_RESOLVED: &str = "Calls, implemented traits, supertraits and type references in fields, signatures and impl bodies are resolved with rust-analyzer without build scripts or proc macros; code they generate and macro bodies that are not expressions stay unresolved.";
+    pub const PYTHON_SYNTAX: &str = "Syntax-only analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); calls on other values, rebound names and star imports stay unresolved. Types are not resolved; abstractness is read from ABC/Protocol bases and @abstractmethod.";
+    pub const PHP_TOKENS: &str = "Token-based analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from namespaces, use imports, project classes, traits, $this, self, static (read as self) and parent; calls on other variables, dynamic names and $this inside closures stay unresolved; callables passed to call_user_func are not followed. Types are not resolved; abstractness is read from interface and abstract class declarations.";
+    pub const KOTLIN_TOKENS: &str = "Token-based analysis: classes, objects, functions, complexity and Halstead counts. Call targets are resolved statically from the package, imports (aliases; star imports with a single candidate), Kotlin classes, objects, companion objects, top-level functions, this, super and the project class hierarchy; calls on variables, properties and call results, extension functions, every call inside lambdas, local and extension functions, and Java classes of the project stay unresolved; overloads are not told apart. Types are not resolved; abstractness is read from interface, abstract class and sealed declarations. Property accessors, constructors, init blocks and property initializers are not measured, and calls in them are not counted.";
+    pub const TYPESCRIPT_MISSING: &str = "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages.";
+    pub const TYPESCRIPT_BLOCKED: &str = "A TypeScript compiler was found through this repository but not loaded, because running it would execute repository code. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for repositories you trust.";
+    /// All of the notes above.
+    pub const NOTES: [&str; 8] = [
+        Self::RUST_SYNTAX,
+        Self::RUST_UNTRUSTED,
+        Self::RUST_RESOLVED,
+        Self::PYTHON_SYNTAX,
+        Self::PHP_TOKENS,
+        Self::KOTLIN_TOKENS,
+        Self::TYPESCRIPT_MISSING,
+        Self::TYPESCRIPT_BLOCKED,
+    ];
+}
+
 /// Coverage of compiler-resolved calls and inheritance projected into a graph.
 /// Type-use evidence includes resolved declaration types when the provider
 /// supplies semantic details; legacy reports have no such coverage. Counts refer to the
