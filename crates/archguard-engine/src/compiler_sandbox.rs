@@ -356,7 +356,13 @@ mod tests {
             "UDP arrives outside"
         );
         reach(true, &send);
-        assert!(udp.recv(&mut buf).is_err(), "no UDP from inside");
+        // Linux closes UDP with a network namespace; without unprivileged
+        // user namespaces Landlock alone leaves it open (ADR 0007).
+        #[cfg(target_os = "linux")]
+        let closed = linux::namespaces();
+        #[cfg(not(target_os = "linux"))]
+        let closed = true;
+        assert_eq!(udp.recv(&mut buf).is_err(), closed, "UDP from inside");
         let evil = d.project.path().join("evil");
         std::fs::copy("/bin/echo", &evil).unwrap();
         assert!(
@@ -392,6 +398,34 @@ mod tests {
             String::from_utf8_lossy(&ok.stderr)
         );
         assert!(!read(&d.secret.path().join("s.txt")).status.success());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_alone_confines_where_namespaces_are_off() {
+        let d = dirs();
+        assert!(available(), "Landlock is enough to count as confined");
+        let cat = Path::new("/bin/cat");
+        let read = |file: &Path| {
+            linux::command_with(
+                cat,
+                toolchain(cat),
+                d.project.path(),
+                d.scratch.path(),
+                false,
+            )
+            .arg(file)
+            .output()
+            .is_ok_and(|o| o.status.success())
+        };
+        assert!(
+            read(&d.project.path().join("p.txt")),
+            "the project is readable"
+        );
+        assert!(
+            !read(&d.secret.path().join("s.txt")),
+            "other directories are not"
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -4,7 +4,8 @@
 //! the scratch directory and `/dev/null`; TCP bind and connect: none.
 //! Landlock covers only TCP, so the child also moves into a new user and
 //! network namespace: no interface but a loopback that is down, so no UDP
-//! and no abstract Unix sockets of the host either.
+//! and no abstract Unix sockets of the host either. Where unprivileged user
+//! namespaces are off, Landlock alone confines it and a warning says so.
 
 use landlock::{
     ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset,
@@ -13,7 +14,7 @@ use landlock::{
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 const ABI_NEEDED: ABI = ABI::V4;
 
@@ -34,12 +35,19 @@ fn ruleset() -> Result<RulesetCreated, RulesetError> {
 
 pub(super) fn available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
+    *AVAILABLE.get_or_init(|| ruleset().is_ok())
+}
+
+/// Whether a child can get its own user and network namespace (not where
+/// unprivileged user namespaces are off); probed once.
+pub(super) fn namespaces() -> bool {
+    static NAMESPACES: OnceLock<bool> = OnceLock::new();
+    *NAMESPACES.get_or_init(|| {
         let mut probe = Command::new("/bin/sh");
         probe.args(["-c", ":"]);
         // SAFETY: as in `command`; `isolate` only calls unshare(2).
         unsafe { probe.pre_exec(isolate) };
-        ruleset().is_ok() && probe.status().is_ok_and(|s| s.success())
+        probe.status().is_ok_and(|s| s.success())
     })
 }
 
@@ -115,6 +123,25 @@ pub(super) fn command(
     project: &Path,
     scratch: &Path,
 ) -> Command {
+    let namespaces = namespaces();
+    if !namespaces {
+        static WARNED: Once = Once::new();
+        WARNED.call_once(|| eprintln!("warning: {NO_NAMESPACES}"));
+    }
+    command_with(program, tools, project, scratch, namespaces)
+}
+
+const NO_NAMESPACES: &str = "unprivileged user namespaces are off: project compiler \
+    tooling runs confined by Landlock only, so UDP and abstract Unix sockets stay open";
+
+/// [`command`], in its own namespaces where `namespaces` holds.
+pub(super) fn command_with(
+    program: &Path,
+    tools: Vec<PathBuf>,
+    project: &Path,
+    scratch: &Path,
+    namespaces: bool,
+) -> Command {
     let built = rules(tools, project, scratch).map_err(|e| e.to_string());
     let rules = Mutex::new(Some(built));
     let mut command = Command::new(program);
@@ -125,7 +152,9 @@ pub(super) fn command(
     // after which the child exits without exec.
     unsafe {
         command.pre_exec(move || {
-            isolate()?;
+            if namespaces {
+                isolate()?;
+            }
             let taken = rules.lock().ok().and_then(|mut r| r.take());
             match taken {
                 Some(Ok(set)) => set.restrict_self().map(drop).map_err(std::io::Error::other),
