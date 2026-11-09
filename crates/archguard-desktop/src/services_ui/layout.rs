@@ -203,6 +203,8 @@ fn place(
             node,
             indent: depth as f32 * 18.0,
             x: LEFT + w / 2.0,
+            // One pitch for all rows: the view derives its band of rows
+            // from it (ui/services_tree.slint).
             y: 38.0 + i as f32 * 30.0,
         })
         .collect();
