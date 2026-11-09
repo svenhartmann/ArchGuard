@@ -10,7 +10,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path},
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -375,7 +375,7 @@ fn nul_fields(bytes: &[u8]) -> Result<Vec<&str>, ArchguardError> {
 /// and output.
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
     const LIMIT: u64 = 4 * 1024 * 1024;
-    let output = tempfile::tempfile()?;
+    let output = tempfile::NamedTempFile::new()?;
     let mut command = Command::new("git");
     command
         .current_dir(root)
@@ -387,7 +387,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         ])
         .args(args)
         .stdin(Stdio::null())
-        .stdout(output.try_clone()?)
+        .stdout(output.reopen()?)
         .stderr(Stdio::null())
         .env("GIT_OPTIONAL_LOCKS", "0");
     for key in [
@@ -401,42 +401,22 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         command.env_remove(key);
     }
     let mut child = command.spawn()?;
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.into());
-            }
-        }
-        let size = match output.metadata() {
-            Ok(metadata) => metadata.len(),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.into());
-            }
-        };
-        if started.elapsed() > Duration::from_secs(10) || size > LIMIT {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(invalid("Git context query exceeded its time/output bound."));
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    let bound = Duration::from_secs(10);
+    let status = match crate::go_calls::wait(&mut child, &[output.path()], bound, LIMIT) {
+        Ok(status) => status,
+        Err(crate::go_calls::Stop::Failed(error)) => return Err(error.into()),
+        Err(_) => return Err(invalid("Git context query exceeded its time/output bound.")),
     };
     if !status.success() {
         return Err(invalid(
             "Could not resolve Git base or list changed files in this project.",
         ));
     }
-    if output.metadata()?.len() > LIMIT {
+    if output.as_file().metadata()?.len() > LIMIT {
         return Err(invalid("Git context listing exceeds 4 MiB."));
     }
     use std::io::{Seek, SeekFrom};
-    let mut output = output;
+    let mut output = output.into_file();
     output.seek(SeekFrom::Start(0))?;
     let mut bytes = vec![];
     output.take(LIMIT + 1).read_to_end(&mut bytes)?;
