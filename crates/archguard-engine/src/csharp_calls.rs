@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::{CsExtractor, Extractor, Lang, strip_root};
@@ -441,31 +441,17 @@ fn bounded(
     let mut child = command
         .spawn()
         .map_err(|e| format!("C# {phase} could not start: {e}"))?;
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.to_string());
-            }
-        }
-        if start.elapsed() > limits.time
-            || [&stdout, &stderr]
-                .iter()
-                .any(|path| fs::metadata(path).is_ok_and(|m| m.len() > limits.output))
-        {
-            let _ = child.kill();
-            let _ = child.wait();
+    let outputs = [stdout.as_path(), stderr.as_path()];
+    let status = match crate::go_calls::wait(&mut child, &outputs, limits.time, limits.output) {
+        Ok(status) => status,
+        Err(crate::go_calls::Stop::Failed(error)) => return Err(error.to_string()),
+        Err(_) => {
             return Err(format!(
                 "C# {phase} exceeded its {} second or {} MiB output limit; import analysis remains available",
                 limits.time.as_secs(),
                 limits.output >> 20
             ));
         }
-        std::thread::sleep(Duration::from_millis(20));
     };
     let mut bytes = Vec::new();
     File::open(&stdout)
