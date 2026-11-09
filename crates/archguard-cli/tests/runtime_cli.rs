@@ -81,3 +81,23 @@ fn runtime_without_input_says_where_it_looked() {
     let json: Value = serde_json::from_slice(&archguard(&dir, "json").stdout).unwrap();
     assert!(json.is_null());
 }
+
+#[test]
+fn runtime_text_shows_findings_at_configured_thresholds() {
+    let dir = project(true);
+    fs::write(
+        dir.path().join("low.toml"),
+        "[runtime]\nn_plus_one_min_calls = 3\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["runtime", "--config"])
+        .arg(dir.path().join("low.toml"))
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Findings (1):"), "{text}");
+    assert!(text.contains("n_plus_one · orders"), "{text}");
+    assert!(text.contains("OrderService.LoadLines"), "{text}");
+}

@@ -286,6 +286,18 @@ msgstr "Anzahl Re-Exporte, ab der eine Datei als Barrel gilt; mindestens 1."
 msgid "Share (0 to 1) of re-exporting lines from which a file counts as a barrel."
 msgstr "Anteil (0 bis 1) re-exportierender Zeilen, ab dem eine Datei als Barrel gilt."
 
+msgid "Thresholds of the runtime findings from recorded traces."
+msgstr "Schwellen der Laufzeit-Befunde aus aufgezeichneten Traces."
+
+msgid "Calls of one statement from one call site within one request that count as N+1; at least 2."
+msgstr "Aufrufe eines Statements von einer Code-Stelle innerhalb eines Requests, ab denen es als N+1 gilt; mindestens 2."
+
+msgid "Database calls per request (95th percentile) from which an endpoint counts as chatty."
+msgstr "DB-Aufrufe pro Request (95. Perzentil), ab denen ein Endpoint als gesprächig gilt."
+
+msgid "Execution time in ms (95th percentile) from which a statement counts as slow."
+msgstr "Ausführungszeit in ms (95. Perzentil), ab der ein Statement als langsam gilt."
+
 msgid "Explicit organization intent: goals, constraints, decisions, target model."
 msgstr "Ausdrückliche Absicht der Organisation: Ziele, Randbedingungen, Entscheidungen, Zielmodell."
 

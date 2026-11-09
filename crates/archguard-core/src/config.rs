@@ -8,6 +8,7 @@ use crate::diagrams::Arc42Config;
 use crate::performance::PerformanceConfig;
 use crate::review::ReviewConfig;
 use crate::rules::{DependencyRule, OwnershipRule};
+use crate::runtime::RuntimeConfig;
 use crate::settings::{LayerConfig, ModulesConfig, ProjectConfig, RulesConfig, StoreConfig};
 
 // ------------------------------------------------------- configuration (Kap. 11)
@@ -32,6 +33,8 @@ pub struct Config {
     pub rules: RulesConfig,
     pub review: ReviewConfig,
     pub performance: PerformanceConfig,
+    /// `[runtime]`: thresholds of the runtime findings (ADR 0004).
+    pub runtime: RuntimeConfig,
     pub architecture: ArchitectureConfig,
     pub semantic: SemanticConfig,
     pub store: StoreConfig,
@@ -51,6 +54,7 @@ impl Default for Config {
             rules: RulesConfig::default(),
             review: ReviewConfig::default(),
             performance: PerformanceConfig::default(),
+            runtime: RuntimeConfig::default(),
             architecture: ArchitectureConfig::default(),
             semantic: SemanticConfig::default(),
             store: StoreConfig::default(),

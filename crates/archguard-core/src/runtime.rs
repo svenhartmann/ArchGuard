@@ -17,6 +17,8 @@ pub struct RuntimeProfile {
     pub sampling: Vec<String>,
     pub endpoints: Vec<RuntimeEndpoint>,
     pub statements: Vec<RuntimeStatement>,
+    /// Threshold findings (`[runtime]` in archguard.toml), most severe kinds first.
+    pub findings: Vec<RuntimeFinding>,
     pub diagnostics: Vec<RuntimeDiagnostic>,
     /// False when input was skipped (unreadable lines, limits, refused files).
     pub complete: bool,
@@ -80,6 +82,8 @@ pub struct RuntimeCallSite {
     /// `archguard.callsite.source` (`stack`, `tag`, `none`) when a probe set it.
     pub source: Option<String>,
     pub calls: u64,
+    /// Most calls from this site within one request (or one trace outside requests).
+    pub max_calls_per_request: u64,
 }
 
 /// Where a value can be checked: input file, 1-based line, trace and span id.
@@ -96,4 +100,44 @@ pub struct RuntimeDiagnostic {
     pub file: String,
     pub line: Option<u32>,
     pub message: String,
+}
+
+/// `[runtime]` in archguard.toml: thresholds of the runtime findings. A
+/// finding fires when the observed value reaches the threshold. The defaults
+/// are starting values, not calibrated on measured projects.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RuntimeConfig {
+    /// `n_plus_one`: calls of one statement from one call site within one request.
+    pub n_plus_one_min_calls: u64,
+    /// `chatty_endpoint`: database calls per request at the 95th percentile.
+    pub chatty_endpoint_db_calls: f64,
+    /// `slow_statement`: client-side execution time at the 95th percentile, ms.
+    pub slow_statement_ms: f64,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            n_plus_one_min_calls: 5,
+            chatty_endpoint_db_calls: 20.0,
+            slow_statement_ms: 100.0,
+        }
+    }
+}
+
+/// A runtime value that reached its `[runtime]` threshold in the sample.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeFinding {
+    /// `n_plus_one`, `chatty_endpoint` or `slow_statement`.
+    pub kind: String,
+    pub service: String,
+    /// Statement key or endpoint name.
+    pub subject: String,
+    pub value: f64,
+    pub threshold: f64,
+    /// The issuing code for `n_plus_one`, when the span recorded it.
+    pub call_site: Option<RuntimeCallSite>,
+    pub message: String,
+    pub evidence: RuntimeEvidence,
 }

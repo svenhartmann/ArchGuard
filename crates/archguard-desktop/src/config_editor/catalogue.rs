@@ -390,6 +390,30 @@ pub const FIELDS: &[Field] = &[
         G::Performance,
         "Share (0 to 1) of re-exporting lines from which a file counts as a barrel.",
     ),
+    f(
+        "runtime",
+        K::Table,
+        G::Performance,
+        "Thresholds of the runtime findings from recorded traces.",
+    ),
+    f(
+        "runtime.n_plus_one_min_calls",
+        K::Int,
+        G::Performance,
+        "Calls of one statement from one call site within one request that count as N+1; at least 2.",
+    ),
+    f(
+        "runtime.chatty_endpoint_db_calls",
+        K::Float,
+        G::Performance,
+        "Database calls per request (95th percentile) from which an endpoint counts as chatty.",
+    ),
+    f(
+        "runtime.slow_statement_ms",
+        K::Float,
+        G::Performance,
+        "Execution time in ms (95th percentile) from which a statement counts as slow.",
+    ),
     // Architecture
     f(
         "architecture",

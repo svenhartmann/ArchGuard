@@ -198,14 +198,19 @@ name, so for Java the qualified class name selects the `CallClass` first.
 Fallback is `code.function.name` against method identities. Everything else
 stays `unmapped` and is counted, never guessed.
 
-**Analysis (archguard-analysis).** Findings with evidence pointers into the
-`.jsonl` files (file, line, trace and span id), thresholds in a new
-`[runtime]` section of `archguard.toml`:
+**Findings.** Computed with the profile (`runtime_traces/findings.rs`), with
+evidence pointers into the `.jsonl` files (file, line, trace and span id) and
+thresholds in a `[runtime]` section of `archguard.toml`. A finding fires when
+the value reaches the threshold. The defaults in parentheses are starting
+values, not calibrated on measured projects:
 
-- `n_plus_one`: the same statement hash from the same call site at least
-  *k* times within one trace
-- `chatty_endpoint`: DB calls per request above a threshold (p95)
-- `slow_statement`: execution or read time above a threshold
+- `n_plus_one`: the same statement from the same call site at least
+  `n_plus_one_min_calls` (5) times within one request; without recorded call
+  sites, per statement
+- `chatty_endpoint`: DB calls per request at p95 of at least
+  `chatty_endpoint_db_calls` (20)
+- `slow_statement`: execution time at p95 of at least `slow_statement_ms`
+  (100); read time is reported but not yet a finding
 - `runtime_hotspot`: a node with a high runtime share that also has a
   static finding (cycle membership, high complexity, hotspot)
 
@@ -287,3 +292,7 @@ Each step ends with tests; estimates are for one developer, not measurements.
   forward from step 2). Open from step 1: observed use in the datastore model.
 - **2026-11-09:** CLI `archguard runtime` and MCP tool `runtime_profile`
   (step 2 surfaces) implemented; findings (`n_plus_one`, ...) still open.
+- **2026-11-09:** Findings `n_plus_one`, `chatty_endpoint`, `slow_statement`
+  with `[runtime]` thresholds implemented in the engine instead of
+  archguard-analysis, because they read only the profile. `runtime_hotspot`
+  waits for the join to the call model (step 5).

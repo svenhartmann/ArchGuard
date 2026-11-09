@@ -42,8 +42,8 @@ mod review_session;
 mod rules;
 mod runtime;
 pub use runtime::{
-    RuntimeCallSite, RuntimeDiagnostic, RuntimeEndpoint, RuntimeEvidence, RuntimeProfile,
-    RuntimeStatement, RuntimeStats,
+    RuntimeCallSite, RuntimeConfig, RuntimeDiagnostic, RuntimeEndpoint, RuntimeEvidence,
+    RuntimeFinding, RuntimeProfile, RuntimeStatement, RuntimeStats,
 };
 mod services;
 mod staged;

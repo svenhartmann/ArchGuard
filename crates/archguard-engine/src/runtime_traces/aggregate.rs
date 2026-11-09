@@ -82,8 +82,19 @@ struct EndpointAcc {
     example: Option<usize>,
 }
 
-/// Call site identity (function, file, line) → (first recorded source, calls).
-type Sites = BTreeMap<(Option<String>, Option<String>, Option<u32>), (Option<String>, u64)>;
+/// A request: the entry span, or the trace for calls outside a request.
+type Request = (usize, String);
+
+/// Calls from one call site: first recorded source, total, per request.
+#[derive(Default)]
+struct SiteAcc {
+    source: Option<String>,
+    calls: u64,
+    per_request: HashMap<Request, u64>,
+}
+
+/// Call site identity (function, file, line) → its calls.
+type Sites = BTreeMap<(Option<String>, Option<String>, Option<u32>), SiteAcc>;
 
 #[derive(Default)]
 struct StatementAcc {
@@ -91,7 +102,7 @@ struct StatementAcc {
     durations: Vec<f64>,
     errors: u64,
     read: Option<f64>,
-    per_request: HashMap<(usize, String), u64>,
+    per_request: HashMap<Request, u64>,
     sites: Sites,
     example: Option<usize>,
 }
@@ -148,14 +159,15 @@ impl StatementAcc {
         }
         let request =
             entry.map_or_else(|| (usize::MAX, span.trace.clone()), |e| (e, String::new()));
-        *self.per_request.entry(request).or_default() += 1;
+        *self.per_request.entry(request.clone()).or_default() += 1;
         if let Some(site) = site {
             let slot = self
                 .sites
                 .entry((site.function, site.file, site.line))
                 .or_default();
-            slot.0 = slot.0.take().or(site.source);
-            slot.1 += 1;
+            slot.source = slot.source.take().or(site.source);
+            slot.calls += 1;
+            *slot.per_request.entry(request).or_default() += 1;
         }
         self.example.get_or_insert(i);
     }
@@ -247,15 +259,14 @@ fn statement(
     let mut call_sites: Vec<RuntimeCallSite> = acc
         .sites
         .into_iter()
-        .map(
-            |((function, file, line), (source, calls))| RuntimeCallSite {
-                function,
-                file,
-                line,
-                source,
-                calls,
-            },
-        )
+        .map(|((function, file, line), site)| RuntimeCallSite {
+            function,
+            file,
+            line,
+            source: site.source,
+            calls: site.calls,
+            max_calls_per_request: site.per_request.into_values().max().unwrap_or(0),
+        })
         .collect();
     call_sites.sort_by(|a, b| {
         b.calls

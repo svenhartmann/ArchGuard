@@ -20,7 +20,7 @@ const CONFIG_FILE_NAME: &str = "archguard.toml";
 
 /// The configuration keys whose provenance [`load_config`] records: the
 /// five sections of Kap. 11 plus the top-level `derive_layers` switch.
-const SECTION_KEYS: [&str; 13] = [
+const SECTION_KEYS: [&str; 14] = [
     "project",
     "modules",
     "layers",
@@ -29,6 +29,7 @@ const SECTION_KEYS: [&str; 13] = [
     "rules",
     "review",
     "performance",
+    "runtime",
     "architecture",
     "semantic",
     "store",
@@ -101,6 +102,11 @@ orphans = "off"             # opt-in candidates: off | info | warning | error
 # heavy_imports = ["pandas", "numpy", "tensorflow", "torch", "scipy", "@tensorflow/tfjs"]
 # min_barrel_exports = 10
 # min_barrel_ratio = 0.8
+
+# [runtime]                 # thresholds of `archguard runtime` findings (ADR 0004)
+# n_plus_one_min_calls = 5  # one statement from one call site within one request
+# chatty_endpoint_db_calls = 20.0 # DB calls per request, 95th percentile
+# slow_statement_ms = 100.0 # execution time, 95th percentile
 
 # [semantic.java]
 # release = 21              # otherwise: supported build metadata, then running JDK
@@ -349,28 +355,8 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     archguard_analysis::validate_dependency_rules(&config.dependency_rules)?;
     crate::target_architecture::validate(config)?;
     validate_review_since(&config.review.git_since)?;
-    if config.performance.min_barrel_exports == 0 {
-        return Err(invalid(
-            "performance.min_barrel_exports",
-            "must be greater than zero".into(),
-        ));
-    }
-    if !config.performance.min_barrel_ratio.is_finite()
-        || !(0.0..=1.0).contains(&config.performance.min_barrel_ratio)
-    {
-        return Err(invalid(
-            "performance.min_barrel_ratio",
-            "must be finite and between 0 and 1".into(),
-        ));
-    }
-    for (index, prefix) in config.performance.heavy_imports.iter().enumerate() {
-        if prefix.trim().is_empty() {
-            return Err(invalid(
-                &format!("performance.heavy_imports[{index}]"),
-                "module prefix must not be empty".into(),
-            ));
-        }
-    }
+    validate_performance(&config.performance)?;
+    validate_runtime(&config.runtime)?;
     let mut owner_directions = BTreeSet::new();
     for (index, rule) in config.ownership_rules.iter().enumerate() {
         if rule.from.trim().is_empty() || rule.to.trim().is_empty() {
@@ -500,6 +486,57 @@ fn config_error(path: &Path, err: &dyn std::fmt::Display) -> ArchguardError {
 
 /// Deliberately narrow date values: calendar dates or positive relative units.
 /// Dates are always passed as one `--since=...` argument, never as revisions.
+/// `[performance]`: positive barrel thresholds and nonempty module prefixes.
+fn validate_performance(
+    performance: &archguard_core::PerformanceConfig,
+) -> Result<(), ArchguardError> {
+    let invalid =
+        |field: &str, message: String| ArchguardError::Config(format!("{field}: {message}"));
+    if performance.min_barrel_exports == 0 {
+        return Err(invalid(
+            "performance.min_barrel_exports",
+            "must be greater than zero".into(),
+        ));
+    }
+    if !performance.min_barrel_ratio.is_finite()
+        || !(0.0..=1.0).contains(&performance.min_barrel_ratio)
+    {
+        return Err(invalid(
+            "performance.min_barrel_ratio",
+            "must be finite and between 0 and 1".into(),
+        ));
+    }
+    for (index, prefix) in performance.heavy_imports.iter().enumerate() {
+        if prefix.trim().is_empty() {
+            return Err(invalid(
+                &format!("performance.heavy_imports[{index}]"),
+                "module prefix must not be empty".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `[runtime]` thresholds: at least two calls for a repetition, positive finite limits.
+pub(crate) fn validate_runtime(
+    runtime: &archguard_core::RuntimeConfig,
+) -> Result<(), ArchguardError> {
+    let invalid =
+        |field: &str, message: &str| ArchguardError::Config(format!("runtime.{field}: {message}"));
+    if runtime.n_plus_one_min_calls < 2 {
+        return Err(invalid("n_plus_one_min_calls", "must be at least 2"));
+    }
+    for (field, value) in [
+        ("chatty_endpoint_db_calls", runtime.chatty_endpoint_db_calls),
+        ("slow_statement_ms", runtime.slow_statement_ms),
+    ] {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(invalid(field, "must be finite and greater than zero"));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_review_since(since: &str) -> Result<(), ArchguardError> {
     let relative = since.strip_suffix(".ago").unwrap_or(since);
     let valid_relative = relative.split_once('.').is_some_and(|(number, unit)| {

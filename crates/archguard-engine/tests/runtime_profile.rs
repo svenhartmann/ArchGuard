@@ -1,4 +1,4 @@
-//! ADR 0004 step 1: runtime profile from OTLP JSON Lines (`fixtures/runtime/shop.jsonl`).
+//! ADR 0004 steps 1-2: runtime profile and findings from OTLP JSON Lines (`fixtures/runtime/shop.jsonl`).
 use archguard_engine::{core::RuntimeProfile, runtime_profile};
 use std::fs;
 
@@ -16,7 +16,7 @@ fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
 
 fn shop() -> RuntimeProfile {
     let dir = project(&[(".archguard/runtime/run-1/traces-0.jsonl", SHOP)]);
-    runtime_profile(dir.path()).expect("runtime input present")
+    runtime_profile(dir.path(), None).expect("runtime input present")
 }
 
 fn endpoint<'a>(
@@ -42,7 +42,7 @@ fn statement<'a>(
 #[test]
 fn no_runtime_input_means_no_profile() {
     let dir = project(&[("src/main.rs", "fn main() {}")]);
-    assert!(runtime_profile(dir.path()).is_none());
+    assert!(runtime_profile(dir.path(), None).is_none());
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn literal_values_never_reach_the_profile() {
 fn legacy_single_document_is_read_too() {
     let first = SHOP.lines().next().unwrap();
     let dir = project(&[(".archguard/otel-traces.json", first)]);
-    let p = runtime_profile(dir.path()).unwrap();
+    let p = runtime_profile(dir.path(), None).unwrap();
     assert_eq!(p.inputs, vec![".archguard/otel-traces.json"]);
     assert_eq!(endpoint(&p, "orders").requests, 1);
     assert!(p.complete);
@@ -158,7 +158,93 @@ fn symlinked_inputs_are_not_followed() {
         runtime.join("link.jsonl"),
     )
     .unwrap();
-    let p = runtime_profile(dir.path()).unwrap();
+    let p = runtime_profile(dir.path(), None).unwrap();
     assert_eq!(p.spans, 0);
     assert!(p.diagnostics.iter().any(|d| d.file.ends_with("link.jsonl")));
+}
+
+const LOW_THRESHOLDS: &str =
+    "[runtime]\nn_plus_one_min_calls = 3\nchatty_endpoint_db_calls = 4\nslow_statement_ms = 20\n";
+
+fn findings(p: &RuntimeProfile) -> Vec<(&str, &str, &str, f64)> {
+    p.findings
+        .iter()
+        .map(|f| {
+            (
+                f.kind.as_str(),
+                f.service.as_str(),
+                f.subject.as_str(),
+                f.value,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn default_thresholds_find_nothing_in_the_small_fixture() {
+    assert!(shop().findings.is_empty(), "{:#?}", shop().findings);
+}
+
+#[test]
+fn findings_use_the_thresholds_from_archguard_toml() {
+    let dir = project(&[
+        (".archguard/runtime/run-1/traces-0.jsonl", SHOP),
+        ("archguard.toml", LOW_THRESHOLDS),
+    ]);
+    let p = runtime_profile(dir.path(), None).unwrap();
+    assert_eq!(
+        findings(&p),
+        vec![
+            (
+                "n_plus_one",
+                "orders",
+                "SELECT * FROM order_lines WHERE order_id = ?",
+                3.0
+            ),
+            ("chatty_endpoint", "orders", "GET /orders/{id}", 4.0),
+            (
+                "slow_statement",
+                "orders",
+                "DELETE FROM carts WHERE created < ? AND owner = ?",
+                20.0
+            ),
+        ]
+    );
+    let n1 = &p.findings[0];
+    let site = n1.call_site.as_ref().expect("the loop's call site");
+    assert_eq!(
+        site.function.as_deref(),
+        Some("Shop.Orders.OrderService.LoadLines")
+    );
+    assert_eq!(site.max_calls_per_request, 3);
+    assert_eq!(n1.threshold, 3.0);
+    assert!(n1.message.contains("one request"), "{}", n1.message);
+    assert!(!n1.evidence.file.is_empty());
+}
+
+#[test]
+fn an_explicit_config_path_wins() {
+    let dir = project(&[
+        (".archguard/runtime/run-1/traces-0.jsonl", SHOP),
+        ("other.toml", LOW_THRESHOLDS),
+    ]);
+    let p = runtime_profile(dir.path(), Some(&dir.path().join("other.toml"))).unwrap();
+    assert_eq!(p.findings.len(), 3);
+}
+
+#[test]
+fn an_invalid_config_falls_back_to_default_thresholds() {
+    let dir = project(&[
+        (".archguard/runtime/run-1/traces-0.jsonl", SHOP),
+        ("archguard.toml", "[runtime]\nslow_statement_ms = -1\n"),
+    ]);
+    let p = runtime_profile(dir.path(), None).unwrap();
+    assert!(p.findings.is_empty());
+    assert!(
+        p.diagnostics
+            .iter()
+            .any(|d| d.message.contains("default runtime thresholds")),
+        "{:#?}",
+        p.diagnostics
+    );
 }

@@ -14,7 +14,7 @@ pub(crate) fn run(cli: &Cli, root: &Path) -> i32 {
     if !matches!(cli.format, Format::Text | Format::Json) {
         return usage("runtime supports --format text|json");
     }
-    let profile = archguard_engine::runtime_profile(root);
+    let profile = archguard_engine::runtime_profile(root, cli.config.as_deref());
     if cli.quiet {
         return EXIT_OK;
     }
@@ -41,6 +41,7 @@ fn print_text(p: &RuntimeProfile) {
         "Runtime profile: {} spans in {} traces · sampling {sampling} · {state}",
         p.spans, p.traces
     );
+    print_findings(p);
     print_endpoints(p);
     print_statements(p);
     if !p.diagnostics.is_empty() {
@@ -54,6 +55,18 @@ fn print_text(p: &RuntimeProfile) {
         }
     }
     println!("\nNote: {}", p.note);
+}
+
+fn print_findings(p: &RuntimeProfile) {
+    println!("\nFindings ({}):", p.findings.len());
+    if p.findings.is_empty() {
+        println!("  none at the [runtime] thresholds (a sample cannot prove absence)");
+    }
+    for f in p.findings.iter().take(TOP) {
+        println!("  {} · {} · {}", f.kind, f.service, f.subject);
+        println!("    {}", f.message);
+    }
+    more(p.findings.len());
 }
 
 fn print_endpoints(p: &RuntimeProfile) {
