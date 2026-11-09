@@ -4,7 +4,7 @@
 //! addresses over HTTP and the datastores it is configured for.
 
 use archguard_core::{
-    Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind,
+    Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang, ElementKind, RelationKind,
     ServiceTopology,
 };
 
@@ -14,12 +14,12 @@ use crate::arc42_blocks::Arc42Context;
 type Outside = (String, ElementKind, String, RelationKind, usize);
 
 /// Programs, hosts and datastores around the system.
-fn outside(facts: &Arc42Context, services: &ServiceTopology) -> Vec<Outside> {
+fn outside(l: DocLang, facts: &Arc42Context, services: &ServiceTopology) -> Vec<Outside> {
     let programs = facts.programs.iter().map(|(n, f)| {
         (
             n.clone(),
             ElementKind::External,
-            "Programm".into(),
+            l.pick("Program", "Programm").into(),
             RelationKind::Runs,
             *f,
         )
@@ -35,7 +35,10 @@ fn outside(facts: &Arc42Context, services: &ServiceTopology) -> Vec<Outside> {
     });
     let stores = services.datastores.nodes.iter().map(|d| {
         let name = d.host.clone().unwrap_or_else(|| d.id.clone());
-        let engine = d.engine.clone().unwrap_or_else(|| "Datenbank".into());
+        let engine = d
+            .engine
+            .clone()
+            .unwrap_or_else(|| l.pick("Database", "Datenbank").into());
         (name, ElementKind::Database, engine, RelationKind::Data, 1)
     });
     programs.chain(hosts).chain(stores).collect()
@@ -51,19 +54,24 @@ fn entries(services: &ServiceTopology) -> Vec<&str> {
         .collect()
 }
 
-pub fn diagram(system: &str, facts: &Arc42Context, services: &ServiceTopology) -> Option<Diagram> {
-    let around = outside(facts, services);
+pub fn diagram(
+    l: DocLang,
+    system: &str,
+    facts: &Arc42Context,
+    services: &ServiceTopology,
+) -> Option<Diagram> {
+    let around = outside(l, facts, services);
     if around.is_empty() {
         return None;
     }
     let apps = entries(services).join(", ");
     let reach = if apps.is_empty() {
-        "nutzt".to_string()
+        l.pick("uses", "nutzt").to_string()
     } else {
-        format!("nutzt über {apps}")
+        format!("{} {apps}", l.pick("uses via", "nutzt über"))
     };
     let mut elements = vec![
-        element(0, "Nutzer", ElementKind::Person, None, None),
+        element(0, l.pick("User", "Nutzer"), ElementKind::Person, None, None),
         element(
             1,
             system,
@@ -81,17 +89,23 @@ pub fn diagram(system: &str, facts: &Arc42Context, services: &ServiceTopology) -
     Some(Diagram {
         id: "context".into(),
         chapter: 3,
-        title: "Kontext (aus dem Code abgeleitet)".into(),
+        title: l
+            .pick(
+                "Context (derived from the code)",
+                "Kontext (aus dem Code abgeleitet)",
+            )
+            .into(),
         kind: DiagramKind::Context,
-        note: NOTE.into(),
-        unit: "Dateien".into(),
+        note: l.pick(NOTE_EN, NOTE_DE).into(),
+        unit: l.pick("files", "Dateien").into(),
         elements,
         relations,
         shown: true,
     })
 }
 
-const NOTE: &str = "Quelle: Anwendungen aus den Manifesten (Einstiege der Nutzer), im Quelltext gestartete Programme (z. B. Command::new, subprocess, exec.Command, ProcessBuilder, Process.Start, spawn), angesprochene HTTP-Hosts (nur in Dateien mit HTTP-Client) und konfigurierte Datenbanken. Tests und fremder Code sind ausgenommen; Zahlen sind Dateien. Statisch: weder Vollständigkeit noch tatsächliche Nutzung ist belegt.";
+const NOTE_EN: &str = "Source: applications from the manifests (where users enter), programs started in the source (e.g. Command::new, subprocess, exec.Command, ProcessBuilder, Process.Start, spawn), HTTP hosts addressed (only in files with an HTTP client) and configured datastores. Tests and third-party code are left out; numbers are files. Static: neither completeness nor actual use is proven.";
+const NOTE_DE: &str = "Quelle: Anwendungen aus den Manifesten (Einstiege der Nutzer), im Quelltext gestartete Programme (z. B. Command::new, subprocess, exec.Command, ProcessBuilder, Process.Start, spawn), angesprochene HTTP-Hosts (nur in Dateien mit HTTP-Client) und konfigurierte Datenbanken. Tests und fremder Code sind ausgenommen; Zahlen sind Dateien. Statisch: weder Vollständigkeit noch tatsächliche Nutzung ist belegt.";
 
 fn element(
     i: usize,
@@ -126,6 +140,8 @@ fn relation(
         cycle: false,
         label,
         error: false,
+        caller: None,
+        reply: false,
     }
 }
 
@@ -146,7 +162,7 @@ mod tests {
             "dependencies":[],"cycles":[],"diagnostics":[],"complete":true
         }))
         .unwrap();
-        let d = diagram("shop", &facts, &services).unwrap();
+        let d = diagram(DocLang::De, "shop", &facts, &services).unwrap();
         assert_eq!((d.chapter, d.kind), (3, DiagramKind::Context));
         let names: Vec<&str> = d.elements.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["Nutzer", "shop", "git", "node", "api.github.com"]);
@@ -167,6 +183,7 @@ mod tests {
         assert!(m.contains("Rel(e0, e1, \"nutzt über shop-cli\""), "{m}");
         assert!(
             diagram(
+                DocLang::De,
                 "shop",
                 &Arc42Context::default(),
                 &ServiceTopology::default()

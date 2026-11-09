@@ -7,6 +7,7 @@ import { Fmt } from "format.slint";
 import { Button, Badge, Disclosure } from "widgets.slint";
 import { CallsData, CallsModel, CallsMethodGroup, CallsSuggestion, CallsDeclaration } from "calls_data.slint";
 import { CallsColumn, Muted } from "calls_parts.slint";
+import { FigureView } from "architecture_figure.slint";
 
 component Para inherits Text {
     color: Theme.text;
@@ -203,6 +204,8 @@ export component CallsDetail inherits CallsColumn {
             alignment: start;
             padding: 14px;
             spacing: 10px;
+            // The selected method's calls between classes, above its connections.
+            if m.sequence.id != "": FigureView { figure: m.sequence; preview: true; doc: false; }
             if !m.has-relation && m.declaration.kind == 0: Text {
                 text: @tr("Select a type/module connection to inspect its functions and methods and source call sites.");
                 color: Theme.text;

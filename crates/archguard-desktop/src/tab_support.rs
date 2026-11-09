@@ -385,6 +385,14 @@ impl Texts {
         Locale::from_code(self.t("en"))
     }
 
+    /// The arc42 document follows the window language (ADR 0008).
+    pub fn doc_lang(&self) -> archguard_engine::core::DocLang {
+        match self.locale() {
+            Locale::De => archguard_engine::core::DocLang::De,
+            _ => archguard_engine::core::DocLang::En,
+        }
+    }
+
     /// The German templates as the bundled translation has them: the
     /// keys of `ui/texts.slint` looked up in `lang/de/*.po` (tests, which
     /// have no window).

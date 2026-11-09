@@ -6,8 +6,8 @@
 //! branches or loops.
 
 use archguard_core::{
-    CallAnalysis, Diagram, DiagramElement, DiagramKind, DiagramRelation, Graph, MethodCall,
-    RelationKind,
+    CallAnalysis, Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang, Graph,
+    MethodCall, RelationKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,22 +22,22 @@ const DISPATCH_DEPTH: usize = 3;
 const MAX_MESSAGES: usize = 25;
 const MAX_DEPTH: usize = 6;
 
-pub fn diagrams(blocks: &Blocks<'_>, graph: &Graph, calls: &CallAnalysis) -> Vec<Diagram> {
+/// Block scenarios, each followed by the same scenario between classes
+/// when that shows more.
+pub fn diagrams(
+    l: DocLang,
+    blocks: &Blocks<'_>,
+    graph: &Graph,
+    calls: &CallAnalysis,
+) -> Vec<Diagram> {
     let boxes = blocks.class_blocks(graph, calls);
-    let mut out: BTreeMap<&str, Vec<&MethodCall>> = BTreeMap::new();
-    let mut called = BTreeSet::new();
-    for c in calls.calls.iter().filter(|c| c.resolution == "project") {
-        let Some(from) = c.from_method.as_deref() else {
-            continue;
-        };
-        out.entry(from).or_default().push(c);
-        if let Some(to) = c.to_method.as_deref() {
-            called.insert(to);
-        }
-    }
-    for list in out.values_mut() {
-        list.sort_by_key(|c| (c.line, c.column));
-    }
+    let (out, called) = outgoing(calls);
+    let (class_boxes, class_labels) = classes(calls);
+    let by_class = Walk {
+        out: &out,
+        boxes: &class_boxes,
+        calls,
+    };
     let walk = Walk {
         out: &out,
         boxes: &boxes,
@@ -61,8 +61,78 @@ pub fn diagrams(blocks: &Blocks<'_>, graph: &Graph, calls: &CallAnalysis) -> Vec
     scenarios
         .into_iter()
         .take(MAX_SCENARIOS)
-        .map(|(_, _, entry, messages)| diagram(&entry, &messages, &blocks.labels, calls))
+        .flat_map(|(_, _, entry, messages)| {
+            let block = diagram(l, &entry, &messages, &blocks.labels, calls, Level::Blocks);
+            let finer = by_class.from(entry.method);
+            let twin = (finer.len() > messages.len())
+                .then(|| diagram(l, &entry, &finer, &class_labels, calls, Level::Classes));
+            std::iter::once(block).chain(twin)
+        })
         .collect()
+}
+
+/// The scenario of `method` between classes (Calls view); `None` when it
+/// calls no other class.
+pub fn class_sequence(l: DocLang, calls: &CallAnalysis, method: &str) -> Option<Diagram> {
+    let (out, _) = outgoing(calls);
+    let (boxes, labels) = classes(calls);
+    let walk = Walk {
+        out: &out,
+        boxes: &boxes,
+        calls,
+    };
+    let messages = walk.from(method);
+    let entry = Entry {
+        method,
+        via: None,
+        main: false,
+    };
+    (!messages.is_empty()).then(|| diagram(l, &entry, &messages, &labels, calls, Level::Classes))
+}
+
+/// Resolved project calls per calling method in source order, and every
+/// called method.
+fn outgoing(calls: &CallAnalysis) -> (BTreeMap<&str, Vec<&MethodCall>>, BTreeSet<&str>) {
+    let mut out: BTreeMap<&str, Vec<&MethodCall>> = BTreeMap::new();
+    let mut called = BTreeSet::new();
+    for c in calls.calls.iter().filter(|c| c.resolution == "project") {
+        let Some(from) = c.from_method.as_deref() else {
+            continue;
+        };
+        out.entry(from).or_default().push(c);
+        if let Some(to) = c.to_method.as_deref() {
+            called.insert(to);
+        }
+    }
+    for list in out.values_mut() {
+        list.sort_by_key(|c| (c.line, c.column));
+    }
+    (out, called)
+}
+
+/// Every class its own participant, named after it; a file module
+/// (Python, JS) after its file.
+fn classes(calls: &CallAnalysis) -> (BTreeMap<&str, usize>, Vec<String>) {
+    let boxes = calls
+        .classes
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.as_str(), i));
+    let labels = calls.classes.iter().map(|c| {
+        if c.name == "(module)" {
+            c.file.rsplit('/').next().unwrap_or(&c.file).to_string()
+        } else {
+            c.name.clone()
+        }
+    });
+    (boxes.collect(), labels.collect())
+}
+
+/// What a scenario's participants are.
+#[derive(Clone, Copy, PartialEq)]
+enum Level {
+    Blocks,
+    Classes,
 }
 
 /// Where a scenario starts; `via` is the dispatcher that calls it.
@@ -144,6 +214,8 @@ struct Message {
     to: usize,
     target: String,
     count: usize,
+    /// The message (index) this call is made within.
+    caller: Option<usize>,
 }
 
 struct Walk<'a> {
@@ -156,7 +228,7 @@ impl Walk<'_> {
     fn from(&self, entry: &str) -> Vec<Message> {
         let mut messages = Vec::new();
         let mut seen = BTreeSet::from([entry.to_string()]);
-        self.visit(entry, 0, &mut seen, &mut messages);
+        self.visit(entry, 0, &mut seen, &mut messages, None);
         collapse(messages)
     }
 
@@ -166,11 +238,15 @@ impl Walk<'_> {
         depth: usize,
         seen: &mut BTreeSet<String>,
         messages: &mut Vec<Message>,
+        // The message that entered `method`'s block; calls inside a block
+        // keep it.
+        caller: Option<usize>,
     ) {
         for c in self.out.get(method).into_iter().flatten() {
             if messages.len() >= MAX_MESSAGES {
                 return;
             }
+            let mut inner = caller;
             let from = self.boxes.get(c.from_class.as_str());
             let to = c.to_class.as_deref().and_then(|t| self.boxes.get(t));
             if let (Some(&a), Some(&b)) = (from, to)
@@ -185,13 +261,15 @@ impl Walk<'_> {
                     to: b,
                     target,
                     count: 1,
+                    caller,
                 });
+                inner = Some(messages.len() - 1);
             }
             let Some(next) = c.to_method.as_deref() else {
                 continue;
             };
             if depth + 1 < MAX_DEPTH && seen.insert(next.to_string()) {
-                self.visit(next, depth + 1, seen, messages);
+                self.visit(next, depth + 1, seen, messages, inner);
             }
         }
     }
@@ -205,16 +283,25 @@ impl Walk<'_> {
     }
 }
 
-/// The same call between the same blocks once, with how often it occurs.
+/// The same call between the same blocks within the same caller once,
+/// with how often it occurs; callers renumbered to the kept messages.
 fn collapse(messages: Vec<Message>) -> Vec<Message> {
     let mut out: Vec<Message> = Vec::new();
-    for m in messages {
-        match out
-            .iter_mut()
-            .find(|o| (o.from, o.to, &o.target) == (m.from, m.to, &m.target))
-        {
-            Some(o) => o.count += 1,
-            None => out.push(m),
+    let mut kept: Vec<usize> = Vec::new();
+    for mut m in messages {
+        m.caller = m.caller.map(|c| kept[c]);
+        let same = |o: &Message| {
+            (o.from, o.to, &o.target, o.caller) == (m.from, m.to, &m.target, m.caller)
+        };
+        match out.iter().position(same) {
+            Some(i) => {
+                out[i].count += 1;
+                kept.push(i);
+            }
+            None => {
+                out.push(m);
+                kept.push(out.len() - 1);
+            }
         }
     }
     out
@@ -228,11 +315,14 @@ fn short(method: &str) -> &str {
 }
 
 fn diagram(
+    l: DocLang,
     entry: &Entry<'_>,
     messages: &[Message],
     labels: &[String],
     calls: &CallAnalysis,
+    level: Level,
 ) -> Diagram {
+    let classes = level == Level::Classes;
     let mut order: Vec<usize> = Vec::new();
     for m in messages {
         for b in [m.from, m.to] {
@@ -242,23 +332,35 @@ fn diagram(
         }
     }
     let name = |b: usize| {
-        labels
-            .get(b)
-            .cloned()
-            .unwrap_or_else(|| format!("Baustein {b}"))
+        labels.get(b).cloned().unwrap_or_else(|| {
+            let word = match classes {
+                true => l.pick("Class", "Klasse"),
+                false => l.pick("Building block", "Baustein"),
+            };
+            format!("{word} {b}")
+        })
     };
     let at = |b: usize| order.iter().position(|&x| x == b).unwrap_or(0);
     let entry_name = method_name(calls, entry.method);
     Diagram {
-        id: format!("runtime-scenario-{}", slug(entry.method)),
+        id: format!(
+            "runtime-scenario-{}{}",
+            if classes { "classes-" } else { "" },
+            slug(entry.method)
+        ),
         chapter: 6,
         title: format!(
-            "Szenario · {entry_name} · {} (statisch)",
-            order.first().map(|&b| name(b)).unwrap_or_default()
+            "{} · {entry_name} · {} ({})",
+            match classes {
+                true => l.pick("Class scenario", "Klassen-Szenario"),
+                false => l.pick("Scenario", "Szenario"),
+            },
+            order.first().map(|&b| name(b)).unwrap_or_default(),
+            l.pick("static", "statisch")
         ),
         kind: DiagramKind::Sequence,
-        note: note(entry, calls),
-        unit: "Aufrufstellen".into(),
+        note: note(l, entry, calls, level),
+        unit: l.pick("call sites", "Aufrufstellen").into(),
         elements: order
             .iter()
             .enumerate()
@@ -283,6 +385,8 @@ fn diagram(
                     format!("{}. {}", n + 1, m.target)
                 }),
                 error: false,
+                caller: m.caller,
+                reply: false,
             })
             .collect(),
         shown: true,
@@ -298,18 +402,39 @@ fn method_name(calls: &CallAnalysis, method: &str) -> String {
 }
 
 /// Where the scenario starts and what it does not show.
-fn note(entry: &Entry<'_>, calls: &CallAnalysis) -> String {
+fn note(l: DocLang, entry: &Entry<'_>, calls: &CallAnalysis, level: Level) -> String {
+    let between = match level {
+        Level::Classes => l.pick("classes", "Klassen"),
+        Level::Blocks => l.pick("building blocks", "Bausteinen"),
+    };
     let start = calls.methods.iter().find(|m| m.id == entry.method);
     let place = start
         .map(|m| format!(" ({}:{})", m.file, m.line))
         .unwrap_or_default();
     let via = entry
         .via
-        .map(|v| format!(", aufgerufen von {}", method_name(calls, v)))
+        .map(|v| {
+            format!(
+                "{} {}",
+                l.pick(", called by", ", aufgerufen von"),
+                method_name(calls, v)
+            )
+        })
         .unwrap_or_default();
-    format!(
-        "Abgeleitet aus aufgelösten Aufrufen ab {}{place}{via}, in Quelltext-Reihenfolge bis Tiefe {MAX_DEPTH}; gleiche Aufrufe zwischen denselben Bausteinen sind zusammengefasst. Statisch: keine gemessene Reihenfolge, keine Verzweigungen oder Schleifen; nur Aufrufe zwischen Bausteinen.",
-        method_name(calls, entry.method)
+    let text = l.pick(
+        "Derived from resolved calls from {}{}{}, in source order down to depth {}; equal calls between the same {} are merged. Static: no measured order, no branches or loops; only calls between {}.",
+        "Abgeleitet aus aufgelösten Aufrufen ab {}{}{}, in Quelltext-Reihenfolge bis Tiefe {}; gleiche Aufrufe zwischen denselben {} sind zusammengefasst. Statisch: keine gemessene Reihenfolge, keine Verzweigungen oder Schleifen; nur Aufrufe zwischen {}.",
+    );
+    crate::arc42_text::fill(
+        text,
+        &[
+            &method_name(calls, entry.method),
+            &place,
+            &via,
+            &MAX_DEPTH,
+            &between,
+            &between,
+        ],
     )
 }
 
@@ -381,9 +506,16 @@ mod tests {
         let graph = builder.build("test".into());
         let (config, services) = (Config::default(), ServiceTopology::default());
         let facts = Arc42Blocks::default();
-        let blocks = Blocks::new(&graph, &config, &services, &BTreeMap::new(), &facts);
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            archguard_core::DocLang::De,
+        );
         let calls = calls();
-        let all = diagrams(&blocks, &graph, &calls);
+        let all = diagrams(DocLang::De, &blocks, &graph, &calls);
         assert_eq!(all.len(), 1, "only main calls without being called");
         let d = &all[0];
         assert_eq!(
@@ -411,6 +543,59 @@ mod tests {
         assert!(super::super::render::mermaid(&init).contains(": 1. #lt;init#gt;\n"));
     }
 
+    /// A second class in block p1 that `helper` calls: invisible between
+    /// blocks, so the scenario gets a twin between classes.
+    #[test]
+    fn calls_inside_a_block_add_a_class_scenario() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        for i in 0..3 {
+            builder.ensure_path(&format!("org/demo/p{i}/S.java"), Some("java"));
+        }
+        let graph = builder.build("test".into());
+        let (config, services) = (Config::default(), ServiceTopology::default());
+        let facts = Arc42Blocks::default();
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            archguard_core::DocLang::De,
+        );
+        let mut calls = calls();
+        let mut class = calls.classes[1].clone();
+        (class.id, class.name) = ("C1b".into(), "C1b".into());
+        let mut method = calls.methods[1].clone();
+        (method.id, method.class_id, method.name) =
+            ("C1b#check()".into(), "C1b".into(), "check".into());
+        let mut call = calls.calls[0].clone();
+        (call.from_class, call.from_method) = ("C1".into(), Some("C1#helper()".into()));
+        (call.to_class, call.to_method) = (Some("C1b".into()), Some("C1b#check()".into()));
+        call.line = 10;
+        calls.classes.push(class);
+        calls.methods.push(method);
+        calls.calls.push(call);
+        let all = diagrams(DocLang::De, &blocks, &graph, &calls);
+        let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "runtime-scenario-c0-main",
+                "runtime-scenario-classes-c0-main"
+            ]
+        );
+        let twin = &all[1];
+        assert!(
+            twin.title.starts_with("Klassen-Szenario") && twin.note.contains("zwischen Klassen")
+        );
+        let labels: Vec<&str> = twin
+            .relations
+            .iter()
+            .filter_map(|r| r.label.as_deref())
+            .collect();
+        assert_eq!(labels, ["1. run", "2. load", "3. check", "4. save"]);
+    }
+
     #[test]
     fn a_dispatcher_splits_into_one_short_scenario_per_handler() {
         let mut builder = archguard_core::GraphBuilder::new();
@@ -420,7 +605,14 @@ mod tests {
         let graph = builder.build("test".into());
         let (config, services) = (Config::default(), ServiceTopology::default());
         let facts = Arc42Blocks::default();
-        let blocks = Blocks::new(&graph, &config, &services, &BTreeMap::new(), &facts);
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            archguard_core::DocLang::De,
+        );
         let class = |i: usize| {
             serde_json::json!({"id":format!("C{i}"),"name":format!("C{i}"),"package":format!("p{i}"),
             "file":format!("org/demo/p{i}/S.java"),"graph_node":format!("org/demo/p{i}/S.java"),"line":1,"kind":"class"})
@@ -443,7 +635,7 @@ mod tests {
                 call("C0#h2()","C2#b()",8),call("C0#h3()","C1#a()",9)],
             "diagnostics":[]}))
         .unwrap();
-        let all = diagrams(&blocks, &graph, &calls);
+        let all = diagrams(DocLang::De, &blocks, &graph, &calls);
         let titles: Vec<&str> = all.iter().map(|d| d.title.as_str()).collect();
         assert_eq!(titles.len(), 3, "{titles:?}");
         assert!(titles.iter().any(|t| t.contains("h1")) && titles.iter().any(|t| t.contains("h2")));
@@ -461,6 +653,30 @@ mod tests {
         assert!(
             h1.note.contains("main"),
             "the note names where the handler is called from"
+        );
+    }
+
+    #[test]
+    fn a_method_becomes_a_sequence_between_classes() {
+        let mut analysis = calls();
+        analysis.classes[2].name = "(module)".into();
+        let d =
+            class_sequence(DocLang::De, &analysis, "C0#main()").expect("main calls other classes");
+        let names: Vec<&str> = d.elements.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["C0", "C1", "S.java"], "a file module by its file");
+        let steps: Vec<_> = d
+            .relations
+            .iter()
+            .map(|r| (r.label.as_deref().unwrap_or(""), r.caller))
+            .collect();
+        assert_eq!(
+            steps,
+            [("1. run", None), ("2. load", Some(0)), ("3. save", Some(0))],
+            "helper stays inside C1, its call to C2 is made within run"
+        );
+        assert!(
+            class_sequence(DocLang::De, &calls(), "C2#save()").is_none(),
+            "calls nothing"
         );
     }
 }

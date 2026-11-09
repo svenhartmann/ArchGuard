@@ -135,7 +135,10 @@ fn a_long_text_is_not_drawn_past_the_field() {
     let buf = frame(&window);
     for (top, _) in FIELDS {
         assert!(ink(&buf, top, 40..90), "text drawn in the field at {top}");
-        assert!(!ink(&buf, top, 106..W), "text drawn past the field at {top}");
+        assert!(
+            !ink(&buf, top, 106..W),
+            "text drawn past the field at {top}"
+        );
     }
 }
 
@@ -147,10 +150,16 @@ fn typing_past_the_edge_keeps_the_caret_in_view() {
     let text = format!("M{}M", " ".repeat(60));
     for (top, start) in FIELDS {
         type_into(&window, top, "M");
-        assert!(ink(&frame(&window), top, start..start + 12), "the first letter at {top}");
+        assert!(
+            ink(&frame(&window), top, start..start + 12),
+            "the first letter at {top}"
+        );
         type_into(&window, top, &text[1..]);
         let buf = frame(&window);
-        assert!(!ink(&buf, top, start..start + 12), "the first letter scrolled away at {top}");
+        assert!(
+            !ink(&buf, top, start..start + 12),
+            "the first letter scrolled away at {top}"
+        );
         assert!(ink(&buf, top, 70..92), "the last letter is shown at {top}");
     }
 }
@@ -158,9 +167,15 @@ fn typing_past_the_edge_keeps_the_caret_in_view() {
 /// A right click into the field at `top` draws the menu beside the fields.
 fn right_click_opens_the_menu(top: usize) {
     let (window, _fields) = show("Money");
-    assert!(!beside(&frame(&window)), "nothing beside the fields at first");
+    assert!(
+        !beside(&frame(&window)),
+        "nothing beside the fields at first"
+    );
     click(&window, top, PointerEventButton::Right);
-    assert!(beside(&frame(&window)), "a menu opened from the field at {top}");
+    assert!(
+        beside(&frame(&window)),
+        "a menu opened from the field at {top}"
+    );
 }
 
 #[test]
@@ -178,7 +193,6 @@ fn a_right_click_opens_the_text_edit_menu() {
     right_click_opens_the_menu(80);
 }
 
-
 /// The placeholder starts at the text's start, as in a native field, not
 /// centred in the field.
 #[test]
@@ -189,7 +203,10 @@ fn the_placeholder_starts_where_the_text_does() {
         ROWS.flat_map(|y| xs.clone().map(move |x| (PLACEHOLDER + y) * W + x))
             .any(|i| buf[i].red > 60 && buf[i].green > 60)
     };
-    assert!(muted(10..16), "the placeholder's first letter at the text start");
+    assert!(
+        muted(10..16),
+        "the placeholder's first letter at the text start"
+    );
     assert!(!muted(70..90), "nothing at the field's end");
 }
 
@@ -221,8 +238,14 @@ fn clipboard() -> Option<String> {
 fn a_long_command_is_not_drawn_past_its_field() {
     let (window, _fields) = show("archguard security -- '/a/very/long/path/to/project'");
     let buf = frame(&window);
-    assert!(ink(&buf, COMMAND, 40..90), "the command is drawn in its field");
-    assert!(!ink(&buf, COMMAND, 106..W), "the command is drawn past its field");
+    assert!(
+        ink(&buf, COMMAND, 40..90),
+        "the command is drawn in its field"
+    );
+    assert!(
+        !ink(&buf, COMMAND, 106..W),
+        "the command is drawn past its field"
+    );
 }
 
 /// The command stays selectable: Select all and Copy from its menu put
@@ -258,4 +281,3 @@ fn a_read_only_field_copies_but_does_not_cut() {
     choose(&window, READ_ONLY, Item::Copy);
     assert_eq!(clipboard().as_deref(), Some("Money"));
 }
-

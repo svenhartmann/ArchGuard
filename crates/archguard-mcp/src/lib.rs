@@ -51,11 +51,11 @@ mod quality_tools;
 mod review_decision_tools;
 mod review_kpi_tools;
 mod review_tools;
+mod runtime_tools;
 mod security_tools;
 mod semantic_tools;
 mod test_coverage_tools;
 mod tools;
-mod runtime_tools;
 mod workspace_tools;
 pub use change_context_tools::ChangeContextParams;
 pub use engineering_tools::{EngineeringParams, TestImpactParams};
@@ -1403,7 +1403,7 @@ mod tests {
                 None => break,
             }
         }
-        assert!(text.contains("## 5. Bausteinsicht"));
+        assert!(text.contains("## 5. Building Block View"));
         assert!(text.contains("```mermaid"));
         assert!(!text.contains("## 6."));
         assert!(!dir.path().join("arc42.md").exists());

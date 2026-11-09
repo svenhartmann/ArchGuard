@@ -139,7 +139,9 @@ pub fn run(ui: &AppWindow, t: Target, node: Option<usize>, which: i32) {
             panes_ui::change(ui, |l| l.navigate("calls"));
             when_ready::<CallsState>(ui, move |ui| match &t.class_id {
                 Some(c) => calls_ui::focus_class(ui, c),
-                None => ui.global::<CallsData>().invoke_set_query(t.node.as_str().into()),
+                None => ui
+                    .global::<CallsData>()
+                    .invoke_set_query(t.node.as_str().into()),
             });
         }
         action::CLASS_METRICS | action::QUALITY_SCOPE => {

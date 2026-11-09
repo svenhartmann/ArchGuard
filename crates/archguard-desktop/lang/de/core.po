@@ -178,9 +178,6 @@ msgstr "Zurück"
 msgid "Next"
 msgstr "Weiter"
 
-msgid "Target packages {}–{} / {}"
-msgstr "Zielpakete {}–{} / {}"
-
 msgid "Dependencies in the tree"
 msgstr "Abhängigkeiten im Baum"
 

@@ -126,8 +126,15 @@ pub fn arc42_file_name(chapter: Option<u8>) -> String {
 
 /// The arc42 document as `archguard doc --arc42 --stdout [--chapter N]`
 /// prints it: the same engine call on the same analysis run.
-pub fn arc42(root: &Path, run: &AnalysisRun, chapter: Option<u8>) -> Result<String, String> {
-    archguard_engine::arc42_document(root, &run.config, &run.graph, &run.report)
+pub fn arc42(
+    root: &Path,
+    run: &AnalysisRun,
+    chapter: Option<u8>,
+    lang: archguard_engine::core::DocLang,
+) -> Result<String, String> {
+    let mut config = run.config.clone();
+    config.arc42.lang = lang;
+    archguard_engine::arc42_document(root, &config, &run.graph, &run.report)
         .map(|doc| doc.markdown(chapter))
         .map_err(|e| e.to_string())
 }
@@ -164,13 +171,13 @@ mod tests {
         let run =
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
-        let text = arc42(&root, &run, None).expect("arc42");
+        let text = arc42(&root, &run, None, Default::default()).expect("arc42");
         let cli = archguard_engine::arc42_document(&root, &run.config, &run.graph, &run.report)
-            .expect("document")
-            .markdown(None);
+        .expect("document")
+        .markdown(None);
         assert_eq!(text, cli);
         assert!(text.contains("arc42"), "{text}");
-        let chapter = arc42(&root, &run, Some(5)).expect("chapter 5");
+        let chapter = arc42(&root, &run, Some(5), Default::default()).expect("chapter 5");
         assert!(chapter.len() < text.len());
     }
 }

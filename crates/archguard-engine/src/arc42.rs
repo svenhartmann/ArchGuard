@@ -62,6 +62,7 @@ pub fn arc42_from_evidence(
         source_paths: &paths,
         blocks: &blocks,
         goals: &goals,
+        lang: config.arc42.lang,
     }))
 }
 

@@ -21,7 +21,7 @@ use crate::documents::with_store;
 use crate::export::{self, SecurityFilters, Snapshot, Theme, View};
 use crate::matrix_ui::MatrixState;
 use crate::panes::Tab;
-use crate::tab_support::{self, index, with_ui};
+use crate::tab_support::{self, Texts, index, with_ui};
 use crate::ui::AppWindow;
 use crate::{graph_ui, instances, panes_ui, quality_ui, security_ui, services_ui};
 pub use choice::Choice;
@@ -198,7 +198,10 @@ fn prepare(ui: &AppWindow, tab: &Tab, pane: usize, choice: Choice) -> Result<Pre
         Choice::Markdown => (Bytes::Now(data(ui, tab)?.1.markdown().into_bytes()), DONE),
         Choice::Json => (Bytes::Now(data(ui, tab)?.1.json().into_bytes()), DONE),
         Choice::Svg => (Bytes::Now(svg(ui, tab)?.into_bytes()), DONE),
-        Choice::Arc42 => (Bytes::Later(arc42_job(active_analysis()?)), DONE_ARC42),
+        Choice::Arc42 => (
+            Bytes::Later(arc42_job(active_analysis()?, Texts::of(ui).doc_lang())),
+            DONE_ARC42,
+        ),
         Choice::Png => (Bytes::Now(image(ui, pane)?), DONE_IMAGE),
     };
     Ok(Prepared {
@@ -278,9 +281,9 @@ fn active_analysis() -> Result<Arc<Analysis>, Failure> {
 
 /// The arc42 document of `analysis`, made by a worker: the engine's arc42
 /// analysis runs compiler-backed calls, services and coverage.
-fn arc42_job(analysis: Arc<Analysis>) -> Job {
+fn arc42_job(analysis: Arc<Analysis>, lang: archguard_engine::core::DocLang) -> Job {
     Box::new(move || {
-        export::arc42(&analysis.root, &analysis.run, None)
+        export::arc42(&analysis.root, &analysis.run, None, lang)
             .map(String::into_bytes)
             .map_err(Failure::Error)
     })
@@ -350,7 +353,7 @@ mod tests {
             run,
             sources: Default::default(),
         });
-        let job = arc42_job(analysis);
+        let job = arc42_job(analysis, Default::default());
         let caller = std::thread::current().id();
         let (bytes, worker) = std::thread::spawn(move || (job(), std::thread::current().id()))
             .join()

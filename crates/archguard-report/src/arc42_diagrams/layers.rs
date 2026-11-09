@@ -4,7 +4,8 @@
 //! the source may not depend on (`may_depend_on`) is red.
 
 use archguard_core::{
-    Config, Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind,
+    Config, Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang, ElementKind,
+    RelationKind,
 };
 use std::collections::BTreeMap;
 
@@ -13,7 +14,12 @@ use crate::arc42_blocks::{Arc42Blocks, Blocks};
 /// Blocks named in a layer's box before "…".
 const NAMED: usize = 4;
 
-pub fn diagram(blocks: &Blocks<'_>, config: &Config, facts: &Arc42Blocks) -> Option<Diagram> {
+pub fn diagram(
+    lang: DocLang,
+    blocks: &Blocks<'_>,
+    config: &Config,
+    facts: &Arc42Blocks,
+) -> Option<Diagram> {
     let of = blocks.block_layers(&facts.all_layers);
     let mut members: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
     for (i, layer) in of.iter().enumerate() {
@@ -40,7 +46,7 @@ pub fn diagram(blocks: &Blocks<'_>, config: &Config, facts: &Arc42Blocks) -> Opt
     };
     let elements = order
         .iter()
-        .map(|&l| element(at(l), &config.layers[l].name, &members[&l]))
+        .map(|&l| element(lang, at(l), &config.layers[l].name, &members[&l]))
         .collect();
     let relations = counts
         .into_iter()
@@ -52,29 +58,34 @@ pub fn diagram(blocks: &Blocks<'_>, config: &Config, facts: &Arc42Blocks) -> Opt
             cycle: !allowed(a, b),
             label: None,
             error: false,
+            caller: None,
+            reply: false,
         })
         .collect();
     Some(Diagram {
         id: "layers".into(),
         chapter: 4,
-        title: "Schichten".into(),
+        title: lang.pick("Layers", "Schichten").into(),
         kind: DiagramKind::Packages,
-        note: "Quelle: Schichten aus `layers` (deklariert oder abgeleitet) mit ihren Bausteinen; Pfeile: Quellverbindungen zwischen den Schichten. Rot: Verbindung in eine Schicht, von der die Quelle laut `may_depend_on` nicht abhängen darf.".into(),
-        unit: "Quellverbindungen".into(),
+        note: lang.pick(
+            "Source: layers from `layers` (declared or derived) with their building blocks; arrows: source connections between the layers. Red: a connection into a layer the source may not depend on according to `may_depend_on`.",
+            "Quelle: Schichten aus `layers` (deklariert oder abgeleitet) mit ihren Bausteinen; Pfeile: Quellverbindungen zwischen den Schichten. Rot: Verbindung in eine Schicht, von der die Quelle laut `may_depend_on` nicht abhängen darf.",
+        ).into(),
+        unit: lang.pick("source connections", "Quellverbindungen").into(),
         elements,
         relations,
         shown: true,
     })
 }
 
-fn element(i: usize, layer: &str, members: &[&str]) -> DiagramElement {
+fn element(lang: DocLang, i: usize, layer: &str, members: &[&str]) -> DiagramElement {
     let mut named: Vec<&str> = members.iter().take(NAMED).copied().collect();
     if members.len() > NAMED {
         named.push("…");
     }
     DiagramElement {
         id: format!("e{i}"),
-        name: format!("Schicht {layer}"),
+        name: format!("{} {layer}", lang.pick("Layer", "Schicht")),
         kind: ElementKind::Package,
         technology: None,
         detail: Some(format!(
@@ -133,8 +144,15 @@ mod tests {
             ..Default::default()
         };
         let services = ServiceTopology::default();
-        let blocks = Blocks::new(&graph, &config, &services, &BTreeMap::new(), &facts);
-        let d = diagram(&blocks, &config, &facts).unwrap();
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            archguard_core::DocLang::De,
+        );
+        let d = diagram(DocLang::De, &blocks, &config, &facts).unwrap();
         let names: Vec<&str> = d.elements.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
             names,

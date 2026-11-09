@@ -3,8 +3,8 @@
 //! readers show them when a package is opened.
 
 use archguard_core::{
-    Arc42Config, CallAnalysis, Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind,
-    Graph, Node, NodeId, NodeKind, RelationKind,
+    Arc42Config, CallAnalysis, Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang,
+    ElementKind, Graph, Node, NodeId, NodeKind, RelationKind,
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -19,11 +19,11 @@ pub fn diagrams(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     config
         .shown_diagrams
         .iter()
-        .filter_map(|id| level(input.source_graph, input.calls, id))
+        .filter_map(|id| level(input.lang, input.source_graph, input.calls, id))
         .collect()
 }
 
-fn level(graph: &Graph, calls: &CallAnalysis, id: &str) -> Option<Diagram> {
+fn level(l: DocLang, graph: &Graph, calls: &CallAnalysis, id: &str) -> Option<Diagram> {
     let (map, scope) = Arc42Config::level_of(id)?;
     let root = graph
         .nodes
@@ -32,22 +32,31 @@ fn level(graph: &Graph, calls: &CallAnalysis, id: &str) -> Option<Diagram> {
     let (chapter, title, note) = match map {
         "building-blocks" => (
             5,
-            "Paketübersicht",
-            "Quelle: Quellverbindungen zwischen den Paketen in",
+            l.pick("Package overview", "Paketübersicht"),
+            l.pick(
+                "Source: source connections between the packages in",
+                "Quelle: Quellverbindungen zwischen den Paketen in",
+            ),
         ),
         "runtime-calls" => (
             6,
-            "Statische Aufrufe",
-            "Quelle: compileraufgelöste Aufrufstellen zwischen den Paketen in",
+            l.pick("Static calls", "Statische Aufrufe"),
+            l.pick(
+                "Source: compiler-resolved call sites between the packages in",
+                "Quelle: compileraufgelöste Aufrufstellen zwischen den Paketen in",
+            ),
         ),
         "cycles" => (
             11,
-            "Zyklische Paketbeziehungen",
-            "Quelle: Zyklen zwischen den Paketen in",
+            l.pick("Cyclic package relations", "Zyklische Paketbeziehungen"),
+            l.pick(
+                "Source: cycles between the packages in",
+                "Quelle: Zyklen zwischen den Paketen in",
+            ),
         ),
         _ => return None,
     };
-    let boxes = Boxes::new(graph, root);
+    let boxes = Boxes::new(l, graph, root);
     let counts = if map == "runtime-calls" {
         boxes.calls(graph, calls)
     } else {
@@ -63,11 +72,17 @@ fn level(graph: &Graph, calls: &CallAnalysis, id: &str) -> Option<Diagram> {
         chapter,
         title: format!("{title} · {scope}"),
         kind: DiagramKind::Packages,
-        note: format!("{note} {scope}; Dateien direkt im Paket als eigener Kasten."),
+        note: format!(
+            "{note} {scope}; {}",
+            l.pick(
+                "files directly in the package as a box of their own.",
+                "Dateien direkt im Paket als eigener Kasten."
+            )
+        ),
         unit: if map == "runtime-calls" {
-            "Aufrufstellen"
+            l.pick("call sites", "Aufrufstellen")
         } else {
-            "Quellverbindungen"
+            l.pick("source connections", "Quellverbindungen")
         }
         .into(),
         elements: boxes.elements,
@@ -94,6 +109,8 @@ fn relation(a: usize, b: usize, kind: RelationKind, count: usize) -> DiagramRela
         cycle: false,
         label: None,
         error: false,
+        caller: None,
+        reply: false,
     }
 }
 
@@ -105,7 +122,7 @@ struct Boxes {
 }
 
 impl Boxes {
-    fn new(graph: &Graph, root: &Node) -> Self {
+    fn new(l: DocLang, graph: &Graph, root: &Node) -> Self {
         let by_id: HashMap<NodeId, &Node> = graph.nodes.iter().map(|n| (n.id, n)).collect();
         let mut children: Vec<&Node> = graph
             .nodes
@@ -135,7 +152,8 @@ impl Boxes {
             .map(|(i, n)| element(i, short(n), ElementKind::Package))
             .collect();
         if children.len() > shown {
-            let name = format!("Weitere {} Pakete", children.len() - shown);
+            let more = l.pick("{} more packages", "Weitere {} Pakete");
+            let name = crate::arc42_text::fill(more, &[&(children.len() - shown)]);
             elements.push(element(shown, name, ElementKind::Remainder));
         }
         let direct = elements.len();
@@ -153,7 +171,11 @@ impl Boxes {
         if owner.values().any(|&o| o == direct) {
             elements.push(element(
                 direct,
-                format!("{} / direkte Dateien", root.name),
+                format!(
+                    "{} / {}",
+                    root.name,
+                    l.pick("direct files", "direkte Dateien")
+                ),
                 ElementKind::Remainder,
             ));
         }

@@ -5,24 +5,34 @@
 
 use std::fmt::Write;
 
-use archguard_core::ServiceTopology;
+use archguard_core::{DocLang, ServiceTopology};
+
+use crate::arc42_text::fill;
 
 const LIMIT: usize = 40;
+
+/// The section heading, its source and the table head.
+const HEAD_EN: &str = "\n### Error handling between services\n\nSource: routes of the services in the source, statically recorded. “Catches” means: the handler contains catch, except, rescue, recover() or err != nil; without it, it passes on errors of its calls.\n\n| Service | Route | Response | Message | Catches | Source |\n| --- | --- | --- | --- | --- | --- |\n";
+const HEAD_DE: &str = "\n### Fehlerbehandlung zwischen Diensten\n\nQuelle: Routen der Dienste im Quelltext, statisch erfasst. „Fängt ab“ heißt: der Handler enthält catch, except, rescue, recover() oder err != nil; ohne das reicht er Fehler seiner Aufrufe weiter.\n\n| Dienst | Route | Antwort | Meldung | Fängt ab | Quelle |\n| --- | --- | --- | --- | --- | --- |\n";
 
 /// Closes chapter 8: the section and the question for what the source
 /// cannot show.
 pub(crate) fn add(
+    l: DocLang,
     markdown: &mut String,
     questions: &mut Vec<String>,
     t: &ServiceTopology,
     cell: fn(&str) -> String,
 ) {
-    markdown.push_str(&section(t, cell));
-    questions.push("Sicherheits-, Fehlerbehandlungs-, Persistenz-, Transaktions- und Observability-Konzepte anhand zusätzlicher Belege beschreiben.".into());
+    markdown.push_str(&section(l, t, cell));
+    questions.push(l.pick(
+        "Describe security, error handling, persistence, transaction and observability concepts from further evidence.",
+        "Sicherheits-, Fehlerbehandlungs-, Persistenz-, Transaktions- und Observability-Konzepte anhand zusätzlicher Belege beschreiben.",
+    ).into());
 }
 
 /// The section, or nothing when the source shows no routes.
-pub(crate) fn section(t: &ServiceTopology, cell: fn(&str) -> String) -> String {
+pub(crate) fn section(l: DocLang, t: &ServiceTopology, cell: fn(&str) -> String) -> String {
     if t.routes.is_empty() {
         return String::new();
     }
@@ -33,9 +43,7 @@ pub(crate) fn section(t: &ServiceTopology, cell: fn(&str) -> String) -> String {
             .map_or(id, |s| s.name.as_str())
             .to_string()
     };
-    let mut out = String::from(
-        "\n### Fehlerbehandlung zwischen Diensten\n\nQuelle: Routen der Dienste im Quelltext, statisch erfasst. „Fängt ab“ heißt: der Handler enthält catch, except, rescue, recover() oder err != nil; ohne das reicht er Fehler seiner Aufrufe weiter.\n\n| Dienst | Route | Antwort | Meldung | Fängt ab | Quelle |\n| --- | --- | --- | --- | --- | --- |\n",
-    );
+    let mut out = String::from(l.pick(HEAD_EN, HEAD_DE));
     let rows: Vec<String> = t
         .routes
         .iter()
@@ -52,7 +60,10 @@ pub(crate) fn section(t: &ServiceTopology, cell: fn(&str) -> String) -> String {
                     cell(&r.path),
                     f.status,
                     cell(&f.message),
-                    if r.catches { "ja" } else { "nein" },
+                    match r.catches {
+                        true => l.pick("yes", "ja"),
+                        false => l.pick("no", "nein"),
+                    },
                     cell(&r.file),
                     f.line
                 )
@@ -60,21 +71,41 @@ pub(crate) fn section(t: &ServiceTopology, cell: fn(&str) -> String) -> String {
         })
         .collect();
     if rows.is_empty() {
-        out.push_str("| – | – | – | Keine Fehlerantworten im Quelltext gefunden. | – | – |\n");
+        out.push_str(l.pick(
+            "| – | – | – | No error responses found in the source. | – | – |\n",
+            "| – | – | – | Keine Fehlerantworten im Quelltext gefunden. | – | – |\n",
+        ));
     }
     for row in rows.iter().take(LIMIT) {
         let _ = writeln!(out, "{row}");
     }
     if rows.len() > LIMIT {
-        let _ = writeln!(
-            out,
-            "\n{} weitere Fehlerantworten nicht gezeigt.",
-            rows.len() - LIMIT
+        let more = l.pick(
+            "{} more error responses not shown.",
+            "{} weitere Fehlerantworten nicht gezeigt.",
         );
+        let _ = writeln!(out, "\n{}", fill(more, &[&(rows.len() - LIMIT)]));
     }
-    out.push_str("\nTimeouts, Retries, Circuit Breaker und Fallbacks:\n\n");
+    out.push_str(&resilience(l, t, cell));
+    out
+}
+
+/// Timeouts, retries, circuit breakers and fallbacks, one line per place.
+fn resilience(l: DocLang, t: &ServiceTopology, cell: fn(&str) -> String) -> String {
+    let name = |id: &str| {
+        t.services
+            .iter()
+            .find(|s| s.id == id)
+            .map_or(id, |s| s.name.as_str())
+            .to_string()
+    };
+    let mut out = String::new();
+    out.push_str(l.pick(
+        "\nTimeouts, retries, circuit breakers and fallbacks:\n\n",
+        "\nTimeouts, Retries, Circuit Breaker und Fallbacks:\n\n",
+    ));
     if t.resilience.is_empty() {
-        out.push_str("Keine gefunden.\n");
+        out.push_str(l.pick("None found.\n", "Keine gefunden.\n"));
     }
     // One shared client serves many services: one line per place.
     let mut places: Vec<(&archguard_core::ServiceResilience, Vec<String>)> = Vec::new();
@@ -109,7 +140,11 @@ mod tests {
     #[test]
     fn failures_and_resilience_become_a_table_and_a_list() {
         let mut t = ServiceTopology::default();
-        assert_eq!(section(&t, |s| s.to_string()), "", "no routes, no section");
+        assert_eq!(
+            section(DocLang::De, &t, |s| s.to_string()),
+            "",
+            "no routes, no section"
+        );
         t.routes.push(ServiceRoute {
             service: "orders".into(),
             method: "POST".into(),
@@ -134,7 +169,7 @@ mod tests {
         let mut shared = t.resilience[0].clone();
         shared.service = "payments".into();
         t.resilience.push(shared);
-        let text = section(&t, |s| s.replace('|', "\\|"));
+        let text = section(DocLang::De, &t, |s| s.replace('|', "\\|"));
         assert!(
             text.contains("| orders | POST /checkout | 409 | a \\| b | nein | orders.js:7 |"),
             "{text}"

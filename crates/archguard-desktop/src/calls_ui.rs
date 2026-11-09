@@ -286,7 +286,8 @@ fn wire_evidence(ui: &AppWindow) {
 /// Snapshot runs can open a view: `ARCHGUARD_DESKTOP_CALLS_MODE` (0
 /// connections, 1 most calls, 2 cycles), `ARCHGUARD_DESKTOP_CALLS_RANK`
 /// (`<method 0|1>,<sort 0..4>`), `ARCHGUARD_DESKTOP_CALLS_CYCLE` (0 types,
-/// 1 methods), `ARCHGUARD_DESKTOP_CALLS_PACKAGE` (`*` for all) and
+/// 1 methods), `ARCHGUARD_DESKTOP_CALLS_PACKAGE` (`*` for all),
+/// `ARCHGUARD_DESKTOP_CALLS_METHOD=<method id>` (select it) and
 /// `ARCHGUARD_DESKTOP_CALLS_ANALYSIS=1` (open the analysis details).
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut CallsState) {
@@ -308,6 +309,9 @@ fn snapshot_overrides(s: &mut CallsState) {
     }
     if var("ARCHGUARD_DESKTOP_CALLS_CYCLE").as_deref() == Some("1") {
         actions::set_cycle_kind(s, ElementKind::Method);
+    }
+    if let Some(id) = var("ARCHGUARD_DESKTOP_CALLS_METHOD") {
+        actions::select_element(s, ElementKind::Method, &id);
     }
     s.analysis_open = var("ARCHGUARD_DESKTOP_CALLS_ANALYSIS").as_deref() == Some("1");
 }

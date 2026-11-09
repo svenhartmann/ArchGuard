@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use archguard_engine::core::{Arc42Config, CallAnalysis, Config, DiagramFormat, Graph, Report};
+use archguard_engine::core::{
+    Arc42Config, CallAnalysis, Config, DiagramFormat, DocLang, Graph, Report,
+};
 use archguard_engine::report::Arc42Document;
 
 use super::projection::{self, Labels, SourceModel};
@@ -53,7 +55,16 @@ pub(super) fn build_from(
     graph: Graph,
     report: &Report,
     calls: &CallAnalysis,
+    lang: DocLang,
 ) -> ArchitectureState {
+    // The document is written in the window's language (ADR 0008).
+    let config = &Config {
+        arc42: Arc42Config {
+            lang,
+            ..config.arc42.clone()
+        },
+        ..config.clone()
+    };
     let doc =
         archguard_engine::arc42_document(root, config, &graph, report).map_err(|e| e.to_string());
     let model = SourceModel::new(&graph);
@@ -196,6 +207,20 @@ fn toggle_level(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, sho
     s.shown = shown;
     s.config.arc42.shown_diagrams = s.shown.clone();
     s.config.arc42.hidden_diagrams = s.hidden.clone();
+    rewrite(s, ui);
+}
+
+/// After a language switch the document is written again in the window's
+/// language.
+pub(super) fn follow_language(s: &mut ArchitectureState, ui: &AppWindow, lang: DocLang) {
+    if s.config.arc42.lang != lang {
+        s.config.arc42.lang = lang;
+        rewrite(s, Some(ui));
+    }
+}
+
+/// Write the document again (off the UI thread unless snapshotting).
+fn rewrite(s: &mut ArchitectureState, ui: Option<&AppWindow>) {
     let (root, config, graph, report) = (
         s.root.clone(),
         s.config.clone(),

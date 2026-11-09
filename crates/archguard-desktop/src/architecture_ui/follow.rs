@@ -44,7 +44,9 @@ pub(super) fn follow(s: &mut ArchitectureState, labels: &Labels, nav: &Nav) {
 /// Whether `name` lies in the scope of map `kind` (the scope package
 /// itself or a node below it); `false` on the overview.
 fn in_scope(s: &ArchitectureState, kind: Kind, name: &str) -> bool {
-    let scope = s.maps[kind as usize].scope.and_then(|n| s.graph.nodes.get(n));
+    let scope = s.maps[kind as usize]
+        .scope
+        .and_then(|n| s.graph.nodes.get(n));
     scope.is_some_and(|dir| follow::within(name, &dir.name))
 }
 
@@ -127,7 +129,14 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let calls = archguard_engine::analyze_calls(&root, &run.config);
-        build_from(&root, &run.config, run.graph.clone(), &run.report, &calls)
+        build_from(
+            &root,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        )
     }
 
     fn labels() -> Labels {

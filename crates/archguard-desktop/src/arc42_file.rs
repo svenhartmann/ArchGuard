@@ -342,6 +342,7 @@ mod tests {
     fn doc(evidence: &str) -> Arc42Document {
         Arc42Document {
             schema_version: 1,
+            lang: archguard_engine::core::DocLang::De,
             scope: "shop".into(),
             notice: "Notice.\n",
             chapters: (1..=12)

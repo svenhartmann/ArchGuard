@@ -1,5 +1,6 @@
 // Data of the Calls tab: one CallsModel value, set from src/calls_ui.rs.
 import { Fmt } from "format.slint";
+import { ArcFigure } from "architecture_figure.slint";
 
 // kind: 0 language, 1 package, 2 type/module, 3 function/method, 4 group,
 // 5 external/unresolved connection. role: 0 none, 1 caller, 2 target, 3 both.
@@ -224,6 +225,8 @@ export struct CallsModel {
     sites-more: bool,
     suggestions: [CallsSuggestion],
     declaration: CallsDeclaration,
+    // The selected method's calls between classes; id "" when none.
+    sequence: ArcFigure,
 }
 
 export global CallsData {

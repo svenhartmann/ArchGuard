@@ -107,15 +107,24 @@ fn a_narrow_pane_shows_both_lanes_and_their_headings() {
     let buf = render(w);
     let [left, card, right] = lane_parts(&buf, w);
     // Ports keep their distance to the row card.
-    assert!(card.0 - (left.0 + left.1) / 2 >= PORT_GAP - 1, "{left:?} {card:?}");
-    assert!((right.0 + right.1) / 2 - card.1 >= PORT_GAP - 1, "{card:?} {right:?}");
+    assert!(
+        card.0 - (left.0 + left.1) / 2 >= PORT_GAP - 1,
+        "{left:?} {card:?}"
+    );
+    assert!(
+        (right.0 + right.1) / 2 - card.1 >= PORT_GAP - 1,
+        "{card:?} {right:?}"
+    );
     // The right lane's heading is drawn in that lane and ends before the edge.
     let buf = &buf;
     let heading: Vec<usize> = (0..28)
         .flat_map(|y| (right.0..w).filter(move |&x| ink(buf, w, x, y)))
         .collect();
     assert!(!heading.is_empty(), "right lane heading in view");
-    assert!(heading.iter().all(|&x| x < w - 2), "heading not cut at the edge");
+    assert!(
+        heading.iter().all(|&x| x < w - 2),
+        "heading not cut at the edge"
+    );
 }
 
 #[test]
@@ -124,8 +133,20 @@ fn a_wide_pane_keeps_the_full_lanes() {
     let buf = render(w);
     let [left, card, right] = lane_parts(&buf, w);
     let centre = |r: (usize, usize)| (r.0 + r.1) as f32 / 2.0;
-    assert!((centre(left) - 258.0).abs() <= 1.0, "left port at 258: {left:?}");
-    assert!((card.0 as f32 - 280.0).abs() <= 1.0, "tree from 280: {card:?}");
-    assert!((card.1 as f32 - 1000.0).abs() <= 1.0, "tree to 1000: {card:?}");
-    assert!((centre(right) - 1022.0).abs() <= 1.0, "right port at 1022: {right:?}");
+    assert!(
+        (centre(left) - 258.0).abs() <= 1.0,
+        "left port at 258: {left:?}"
+    );
+    assert!(
+        (card.0 as f32 - 280.0).abs() <= 1.0,
+        "tree from 280: {card:?}"
+    );
+    assert!(
+        (card.1 as f32 - 1000.0).abs() <= 1.0,
+        "tree to 1000: {card:?}"
+    );
+    assert!(
+        (centre(right) - 1022.0).abs() <= 1.0,
+        "right port at 1022: {right:?}"
+    );
 }

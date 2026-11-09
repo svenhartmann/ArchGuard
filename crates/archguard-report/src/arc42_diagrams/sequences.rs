@@ -2,12 +2,12 @@
 //! matched service-to-service spans in their measured order.
 
 use archguard_core::{
-    Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind,
+    Diagram, DiagramElement, DiagramKind, DiagramRelation, DocLang, ElementKind, RelationKind,
     ServiceDependencyKind, ServiceTopology, TraceSequence, TraceStep,
 };
 
-pub fn diagrams(t: &ServiceTopology) -> Vec<Diagram> {
-    t.traces.iter().map(|s| diagram(t, s)).collect()
+pub fn diagrams(l: DocLang, t: &ServiceTopology) -> Vec<Diagram> {
+    t.traces.iter().map(|s| diagram(l, t, s)).collect()
 }
 
 fn ms(us: u64) -> String {
@@ -45,7 +45,7 @@ fn element(t: &ServiceTopology, i: usize, id: &str) -> DiagramElement {
 }
 
 /// Step `n` (0-based) as a message between participant positions.
-fn message(n: usize, step: &TraceStep, at: impl Fn(&str) -> usize) -> DiagramRelation {
+fn message(l: DocLang, n: usize, step: &TraceStep, at: impl Fn(&str) -> usize) -> DiagramRelation {
     let (kind, word) = match step.kind {
         ServiceDependencyKind::GrpcCall => (RelationKind::Grpc, "gRPC"),
         ServiceDependencyKind::Event => (RelationKind::Event, "Event"),
@@ -56,7 +56,11 @@ fn message(n: usize, step: &TraceStep, at: impl Fn(&str) -> usize) -> DiagramRel
         .as_deref()
         .map(|o| format!(" {o}"))
         .unwrap_or_default();
-    let failed = if step.error { " · Fehler" } else { "" };
+    let failed = if step.error {
+        l.pick(" · error", " · Fehler")
+    } else {
+        ""
+    };
     DiagramRelation {
         from: format!("e{}", at(&step.from)),
         to: format!("e{}", at(&step.to)),
@@ -69,35 +73,53 @@ fn message(n: usize, step: &TraceStep, at: impl Fn(&str) -> usize) -> DiagramRel
             ms(step.duration_us)
         )),
         error: step.error,
+        caller: None,
+        reply: false,
     }
 }
 
-fn diagram(t: &ServiceTopology, s: &TraceSequence) -> Diagram {
+/// The latest earlier step into `steps[i]`'s sender that was still running
+/// when `steps[i]` started: the call it was made within.
+fn caller(steps: &[TraceStep], i: usize) -> Option<usize> {
+    let s = &steps[i];
+    (0..i).rev().find(|&j| {
+        let c = &steps[j];
+        c.to == s.from && c.offset_us <= s.offset_us && s.offset_us <= c.offset_us + c.duration_us
+    })
+}
+
+fn diagram(l: DocLang, t: &ServiceTopology, s: &TraceSequence) -> Diagram {
     let ids = participants(s);
     let at = |id: &str| ids.iter().position(|x| *x == id).unwrap_or(0);
     let relations = s
         .steps
         .iter()
         .enumerate()
-        .map(|(n, step)| message(n, step, at))
+        .map(|(n, step)| DiagramRelation {
+            caller: caller(&s.steps, n),
+            ..message(l, n, step, at)
+        })
         .collect();
     let short = &s.trace[..s.trace.len().min(8)];
     let first = s
         .steps
         .first()
         .and_then(|f| f.operation.as_deref())
-        .unwrap_or("Anfrage");
+        .unwrap_or(l.pick("Request", "Anfrage"));
+    let note = l.pick(
+        "Source: recorded OTLP trace in .archguard/otel-traces.json, start {} ns (Unix), duration {}. Order and duration are measured; shown are only matched client/server and producer/consumer pairs between services, no database or internal spans.",
+        "Quelle: aufgezeichneter OTLP-Trace in .archguard/otel-traces.json, Start {} ns (Unix), Dauer {}. Reihenfolge und Dauer sind gemessen; gezeigt sind nur zugeordnete Client/Server- und Producer/Consumer-Paare zwischen Diensten, keine Datenbank- oder internen Spans.",
+    );
     Diagram {
         id: format!("runtime-trace-{short}"),
         chapter: 6,
-        title: format!("Sequenz · {first} · Trace {short}"),
-        kind: DiagramKind::Sequence,
-        note: format!(
-            "Quelle: aufgezeichneter OTLP-Trace in .archguard/otel-traces.json, Start {} ns (Unix), Dauer {}. Reihenfolge und Dauer sind gemessen; gezeigt sind nur zugeordnete Client/Server- und Producer/Consumer-Paare zwischen Diensten, keine Datenbank- oder internen Spans.",
-            s.start_unix_ns,
-            ms(s.duration_us)
+        title: format!(
+            "{} · {first} · Trace {short}",
+            l.pick("Sequence", "Sequenz")
         ),
-        unit: "Aufrufe".into(),
+        kind: DiagramKind::Sequence,
+        note: crate::arc42_text::fill(note, &[&s.start_unix_ns, &ms(s.duration_us)]),
+        unit: l.pick("calls", "Aufrufe").into(),
         elements: ids
             .iter()
             .enumerate()
@@ -150,7 +172,7 @@ mod tests {
                 ),
             ],
         });
-        let d = &diagrams(&t)[0];
+        let d = &diagrams(DocLang::De, &t)[0];
         assert_eq!(
             (d.id.as_str(), d.chapter, d.kind),
             ("runtime-trace-abcdef01", 6, DiagramKind::Sequence)
@@ -162,6 +184,9 @@ mod tests {
             Some("1. HTTP GET /orders/{id} · 1.5 ms")
         );
         assert!(d.relations[1].error && d.relations[1].kind == RelationKind::Event);
+        // orders publishes while web's call to it still runs (0–1.5 ms).
+        let callers: Vec<_> = d.relations.iter().map(|r| r.caller).collect();
+        assert_eq!(callers, [None, Some(0)]);
         let m = super::super::render::mermaid(d);
         assert!(m.starts_with("sequenceDiagram\n"), "{m}");
         assert!(

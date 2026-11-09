@@ -9,7 +9,6 @@ use slint::SharedString;
 use super::state::{ArchitectureState, current, derived, labels_in};
 use super::visual::Kind;
 use super::{catalogue, figure, view};
-use crate::format::Locale;
 use crate::kpi;
 use crate::tab_support::Texts;
 use crate::ui::ArchitectureModel;
@@ -48,7 +47,7 @@ pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
                 texts.t("Diagram source · this diagram syntax is not supported in the viewer."),
                 derived(s, s.chapter).is_some(),
             );
-            (m.language_note, m.chapter_note) = notes(texts, m.chapter);
+            m.chapter_note = notes(texts, m.chapter);
             let mut view = None;
             if let Some((kind, map)) = current(s, &labels_in(texts)) {
                 view = Some((kind, catalogue::view_id(kind, map.scope, &s.graph)));
@@ -114,15 +113,9 @@ fn fill_figures(
     m.figures = slint::ModelRc::new(slint::VecModel::from(figures.collect::<Vec<_>>()));
 }
 
-/// What the desktop says around the engine's German arc42 text: its
-/// language (in an English window) and, in chapter 10, the level its
-/// figures are counted on.
-fn notes(texts: &Texts, chapter: i32) -> (SharedString, SharedString) {
-    let language = if texts.locale() == Locale::En {
-        texts.t("Document language: German. The analysis engine writes the arc42 text in German.")
-    } else {
-        ""
-    };
+/// What the desktop says around the engine's arc42 text: in chapter 10,
+/// the level its figures are counted on.
+fn notes(texts: &Texts, chapter: i32) -> SharedString {
     let level = if chapter == 10 {
         texts.f(
             "{acd} and the cycle figures of this chapter are counted on modules (depth 2). {shown} is in the Graph tab; package cycles are in the chapter 5 diagram.",
@@ -134,7 +127,7 @@ fn notes(texts: &Texts, chapter: i32) -> (SharedString, SharedString) {
     } else {
         String::new()
     };
-    (language.into(), level.into())
+    level.into()
 }
 
 #[cfg(test)]
@@ -148,22 +141,19 @@ mod tests {
     use super::*;
     use crate::ui::ArcBlock;
 
-    /// The engine's arc42 is German: an English window says so, and
-    /// chapter 10 names the level of its ACD.
+    /// Chapter 10 names the level of its ACD.
     #[test]
-    fn arc42_chrome_names_language_and_level() {
+    fn arc42_chrome_names_the_level() {
         let en = Texts::default();
-        let (language, level) = notes(&en, 10);
-        assert!(language.starts_with("Document language: German"));
+        let level = notes(&en, 10);
         assert!(
             level.starts_with("ACD (module level) and the cycle figures"),
             "{level}"
         );
         assert!(level.contains("ACD (shown level) is in the Graph tab"));
-        assert_eq!(notes(&en, 5).1, "");
+        assert_eq!(notes(&en, 5), "");
         let de = Texts::german();
-        let (language, level) = notes(&de, 10);
-        assert_eq!(language, "", "a German window needs no note");
+        let level = notes(&de, 10);
         assert!(level.starts_with("ACD (Modulebene)"), "{level}");
     }
 
@@ -178,7 +168,14 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let calls = archguard_engine::analyze_calls(&root, &run.config);
-        build_from(&root, &run.config, run.graph.clone(), &run.report, &calls)
+        build_from(
+            &root,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        )
     }
 
     fn built(s: &ArchitectureState) -> ArchitectureModel {

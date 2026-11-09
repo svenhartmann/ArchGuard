@@ -12,7 +12,7 @@ use super::state::{Mode, State};
 use super::tree::Kind;
 use crate::tab_support::Texts;
 use crate::ui::{
-    CallsAnalyzer, CallsCycleRow, CallsModel, CallsRankRow, CallsRelationRow, CallsStep,
+    ArcFigure, CallsAnalyzer, CallsCycleRow, CallsModel, CallsRankRow, CallsRelationRow, CallsStep,
     CallsTreeRow,
 };
 use archguard_engine::core::CallClass;
@@ -48,7 +48,17 @@ pub fn fill(s: &State, ui: &UiLabels) -> CallsModel {
         Mode::Cycles => fill_cycles(&mut m, s),
     }
     fill_evidence(&mut m, s);
+    m.sequence = sequence(s, &ui.texts);
     m
+}
+
+/// The selected method's calls between classes, as in arc42 chapter 6.
+fn sequence(s: &State, texts: &Texts) -> ArcFigure {
+    let method = s.element.as_ref().filter(|e| e.kind == ElementKind::Method);
+    method
+        .and_then(|e| archguard_engine::report::class_sequence(texts.doc_lang(), &s.idx.a, &e.id))
+        .map(|d| crate::architecture_ui::sequence::figure(&d, String::new(), String::new(), texts))
+        .unwrap_or_default()
 }
 
 fn fill_toolbar(m: &mut CallsModel, s: &State, ui: &UiLabels) {
@@ -433,5 +443,35 @@ mod tests {
         let row = m.tree.row_data(m.tree_focus as usize).expect("a row");
         assert!(row.pressed);
         assert_eq!(row.label, "Red");
+    }
+
+    /// A selected method shows its calls between classes as a sequence.
+    #[test]
+    fn a_selected_method_shows_its_sequence() {
+        use super::super::actions::select_element;
+        use slint::Model;
+        let labels = UiLabels {
+            all_languages: "".into(),
+            all_packages: "".into(),
+            default_package: "".into(),
+            external_group: "".into(),
+            unresolved_group: "".into(),
+            texts: Texts::default(),
+        };
+        let mut s = State::new(fixture::analysis());
+        select_element(&mut s, ElementKind::Method, "blue.Util#hint()");
+        s.refresh();
+        let m = fill(&s, &labels);
+        assert_eq!(m.sequence.id, "runtime-scenario-classes-blue-util-hint");
+        let names: Vec<_> = m
+            .sequence
+            .cards
+            .iter()
+            .map(|c| c.name1.to_string())
+            .collect();
+        assert_eq!(names, ["blue.Util", "green.Leaf"]);
+        select_element(&mut s, ElementKind::Class, "blue.Util");
+        s.refresh();
+        assert_eq!(fill(&s, &labels).sequence.id, "", "a class has no sequence");
     }
 }

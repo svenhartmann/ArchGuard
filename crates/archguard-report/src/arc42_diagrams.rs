@@ -9,11 +9,12 @@ mod flows;
 mod layers;
 mod render;
 mod scenarios;
+pub use scenarios::class_sequence;
 mod scoped;
 mod sequences;
 mod services;
 
-use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, ElementKind};
+use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, DocLang, ElementKind};
 
 use crate::arc42_blocks::{Arc42Inputs, Blocks};
 
@@ -54,6 +55,32 @@ pub fn section(d: &Diagram, format: DiagramFormat) -> String {
     )
 }
 
+/// Title and note of the package maps (ADR 0008).
+const OVERVIEW_EN: (&str, &str) = (
+    "Package overview",
+    "Source: complete source graph; packages as building blocks, at most nine boxes. Arrows: source connections from the using to the used side.",
+);
+const OVERVIEW_DE: (&str, &str) = (
+    "Paketübersicht",
+    "Quelle: vollständiger Quellgraph; Pakete als Bausteine, höchstens neun Kästen. Pfeile: Quellverbindungen von der nutzenden zur genutzten Seite.",
+);
+const CALLS_EN: (&str, &str) = (
+    "Static calls between building blocks",
+    "Source: compiler-resolved call sites. Statically recorded; no runtime order and no frequency at runtime.",
+);
+const CALLS_DE: (&str, &str) = (
+    "Statische Aufrufe zwischen Bausteinen",
+    "Quelle: compileraufgelöste Aufrufstellen. Statisch erfasst; keine Laufzeitreihenfolge und keine Häufigkeit zur Laufzeit.",
+);
+const CYCLES_EN: (&str, &str) = (
+    "Cyclic package relations",
+    "Source: source connections between the boxes of the package overview; only relations in cycles are shown.",
+);
+const CYCLES_DE: (&str, &str) = (
+    "Zyklische Paketbeziehungen",
+    "Quelle: Quellverbindungen zwischen den Kästen der Paketübersicht; gezeigt sind nur Beziehungen in Zyklen.",
+);
+
 /// All diagrams of the project, in chapter order.
 fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     let blocks = Blocks::new(
@@ -62,66 +89,70 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         input.services,
         input.source_paths,
         input.blocks,
+        input.lang,
     );
+    let l = input.lang;
     let mut out = Vec::new();
     let elements = blocks.elements();
     if !elements.is_empty() {
         let relations = blocks.relations();
         out.push(packages(
+            l,
             "building-blocks",
             5,
-            "Paketübersicht",
-            "Quelle: vollständiger Quellgraph; Pakete als Bausteine, höchstens neun Kästen. Pfeile: Quellverbindungen von der nutzenden zur genutzten Seite.",
+            l.pick(OVERVIEW_EN, OVERVIEW_DE),
             &elements,
             &relations,
         ));
         let calls = blocks.call_relations(input.source_graph, input.calls);
         if !calls.is_empty() {
             out.push(packages(
+                l,
                 "runtime-calls",
                 6,
-                "Statische Aufrufe zwischen Bausteinen",
-                "Quelle: compileraufgelöste Aufrufstellen. Statisch erfasst; keine Laufzeitreihenfolge und keine Häufigkeit zur Laufzeit.",
+                l.pick(CALLS_EN, CALLS_DE),
                 &elements,
                 &calls,
             ));
         }
         // Service flows describe a service system's runtime; method-level
         // scenarios only where there are none.
-        let flows = flows::diagrams(input.services);
+        let flows = flows::diagrams(l, input.services);
         if flows.is_empty() {
             out.extend(scenarios::diagrams(
+                l,
                 &blocks,
                 input.source_graph,
                 input.calls,
             ));
         }
         out.extend(flows);
-        out.extend(failures::diagrams(input.services));
-        out.extend(cycles(&elements, &relations));
-        out.extend(layers::diagram(&blocks, input.config, input.blocks));
+        out.extend(failures::diagrams(l, input.services));
+        out.extend(cycles(l, &elements, &relations));
+        out.extend(layers::diagram(l, &blocks, input.config, input.blocks));
     }
     let system = std::path::Path::new(&input.view.root)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("System");
     out.extend(context::diagram(
+        l,
         system,
         &input.blocks.context,
         input.services,
     ));
-    out.extend(services::diagrams(input.services));
-    out.extend(sequences::diagrams(input.services));
+    out.extend(services::diagrams(l, input.services));
+    out.extend(sequences::diagrams(l, input.services));
     out.extend(scoped::diagrams(input));
     out.sort_by_key(|d| d.chapter);
     out
 }
 
 fn packages(
+    l: DocLang,
     id: &str,
     chapter: u8,
-    title: &str,
-    note: &str,
+    (title, note): (&str, &str),
     elements: &[archguard_core::DiagramElement],
     relations: &[DiagramRelation],
 ) -> Diagram {
@@ -135,9 +166,9 @@ fn packages(
             .first()
             .is_some_and(|r| r.kind == archguard_core::RelationKind::Call)
         {
-            "Aufrufstellen".into()
+            l.pick("call sites", "Aufrufstellen").into()
         } else {
-            "Quellverbindungen".into()
+            l.pick("source connections", "Quellverbindungen").into()
         },
         elements: elements.to_vec(),
         relations: relations.to_vec(),
@@ -149,14 +180,15 @@ fn packages(
 
 /// Chapter 11: the boxes and relations that lie on a cycle.
 fn cycles(
+    l: DocLang,
     elements: &[archguard_core::DiagramElement],
     relations: &[DiagramRelation],
 ) -> Option<Diagram> {
     let mut d = packages(
+        l,
         "cycles",
         11,
-        "Zyklische Paketbeziehungen",
-        "Quelle: Quellverbindungen zwischen den Kästen der Paketübersicht; gezeigt sind nur Beziehungen in Zyklen.",
+        l.pick(CYCLES_EN, CYCLES_DE),
         elements,
         relations,
     );
@@ -212,6 +244,7 @@ mod tests {
                 source_paths: &BTreeMap::new(),
                 blocks: &Arc42Blocks::default(),
                 goals: &[],
+                lang: archguard_core::DocLang::De,
             },
         );
         (diagrams, chapters)
