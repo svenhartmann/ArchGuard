@@ -239,7 +239,7 @@ pub(crate) fn calls(input: &Arc42Inputs<'_>, md: &mut String, q: &mut Vec<String
                     cell(s.from_method.as_deref().unwrap_or(&s.from_class)),
                     cell(&s.target_label),
                     cell(&s.resolution),
-                    source(&input, &s.file, s.line)
+                    source(input, &s.file, s.line)
                 )
             })
             .collect(),
