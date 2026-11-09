@@ -95,7 +95,7 @@ fn source_evidence_from_files(
         let Some(extractor) = extractor_for(file.lang) else {
             continue;
         };
-        let content = fs::read_to_string(&file.path)?;
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = extractor.extract(&stripped, &content);
         let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);

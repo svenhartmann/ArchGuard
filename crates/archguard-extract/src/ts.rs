@@ -103,12 +103,15 @@ impl Extractor for TsExtractor {
         }
     }
 }
+/// The body of a `'…'` or `"…"` literal; `None` for anything else,
+/// including a lone quote, which has no closing one.
+fn quoted_body(text: &str) -> Option<&str> {
+    let quote = text.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+    text.strip_prefix(quote)?.strip_suffix(quote)
+}
+
 fn literal_spec(text: &str) -> Option<String> {
-    let quote = text.chars().next()?;
-    if !matches!(quote, '\'' | '"') || !text.ends_with(quote) {
-        return None;
-    }
-    let mut chars = text[1..text.len() - 1].chars();
+    let mut chars = quoted_body(text)?.chars();
     let mut result = String::new();
     while let Some(c) = chars.next() {
         if c != '\\' {
@@ -510,6 +513,11 @@ import f from \"./swallowed\";
             specs(&extract("import x from \"https://example.com/m.js\";\n")),
             ["https://example.com/m.js"]
         );
+    }
+
+    #[test]
+    fn a_lone_quote_after_from_yields_no_import_instead_of_panicking() {
+        assert!(extract("import x from '").imports.is_empty());
     }
 
     #[test]

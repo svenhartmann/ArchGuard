@@ -793,7 +793,8 @@ pub(super) fn edges(
     let mut sources = BTreeMap::new();
     let mut warnings = Vec::new();
     for file in files.iter().filter(|f| f.lang == "rs") {
-        let source = std::fs::read_to_string(root.join(&file.rel_path))?;
+        let source =
+            String::from_utf8_lossy(&std::fs::read(root.join(&file.rel_path))?).into_owned();
         match syn::parse_file(&source) {
             Ok(syntax) => {
                 sources.insert(file.rel_path.clone(), (source, syntax));

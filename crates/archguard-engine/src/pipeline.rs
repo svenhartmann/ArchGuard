@@ -126,7 +126,7 @@ pub(crate) fn build_graph(
         let Some(extractor) = extractor_for(file.lang) else {
             continue; // a language walk accepted but no scanner registered
         };
-        let content = fs::read_to_string(&file.path)?;
+        let content = String::from_utf8_lossy(&fs::read(&file.path)?).into_owned();
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = extractor.extract(&stripped, &content);
         let node_name = file_node_name(&stripped, &extraction.declarations);
