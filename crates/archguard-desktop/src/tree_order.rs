@@ -153,15 +153,17 @@ pub(crate) fn level_order(
 }
 
 /// Strongly connected components of a graph on the nodes `0..n`
-/// (petgraph's Tarjan), in reverse topological order. The one SCC helper
+/// (petgraph's Kosaraju), in reverse topological order. The one SCC helper
 /// of the crate: tree, matrix, architecture and calls use it as well.
+/// Kosaraju, not Tarjan: petgraph's `tarjan_scc` recurses once per chain
+/// link and overflows a worker thread's stack on long dependency chains.
 pub fn scc(n: usize, edges: impl IntoIterator<Item = (usize, usize)>) -> Vec<Vec<usize>> {
     let mut g = petgraph::graph::DiGraph::<(), ()>::with_capacity(n, 0);
     let ids: Vec<_> = (0..n).map(|_| g.add_node(())).collect();
     for (a, b) in edges {
         g.add_edge(ids[a], ids[b], ());
     }
-    petgraph::algo::tarjan_scc(&g)
+    petgraph::algo::kosaraju_scc(&g)
         .into_iter()
         .map(|c| c.into_iter().map(|v| v.index()).collect())
         .collect()
@@ -344,6 +346,35 @@ mod tests {
             (lo < olo && olo < hi && hi < ohi) || (olo < lo && lo < ohi && ohi < hi)
         };
         assert!(!cross(a, b), "{p:?}");
+    }
+
+    #[test]
+    fn a_long_dependency_chain_fits_a_worker_thread_stack() {
+        // 50k files in a chain with one back link: one SCC. A recursive SCC
+        // search needs one stack frame per link and overflows 2 MiB.
+        let n = 50_000;
+        let worker = std::thread::Builder::new().stack_size(2 * 1024 * 1024);
+        let sizes = worker
+            .spawn(move || {
+                let edges = (0..n - 1).map(|i| (i, i + 1)).chain([(n - 1, 0)]);
+                scc(n, edges).iter().map(Vec::len).collect::<Vec<_>>()
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(sizes, [n]);
+    }
+
+    #[test]
+    fn sccs_come_in_reverse_topological_order() {
+        // 0 → {1,2} cycle → 3: the sink comes first, the source last.
+        let order = scc(4, [(0, 1), (1, 2), (2, 1), (2, 3)]);
+        let mut middle = order[1].clone();
+        middle.sort_unstable();
+        assert_eq!(
+            (order[0].clone(), middle, order[2].clone()),
+            (vec![3], vec![1, 2], vec![0])
+        );
     }
 
     #[test]
