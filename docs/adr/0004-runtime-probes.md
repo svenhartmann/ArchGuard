@@ -427,3 +427,10 @@ Consequences for the design:
   hosting startup or startup hook, commit 0d76e30). Their real output is in
   `fixtures/runtime/shop-java.jsonl` and `shop-dotnet.jsonl`, checked by
   `tests/runtime_probe_fixtures.rs`. Npgsql and SqlClient remain untested.
+- **2026-11-09:** Own-code time comes first from method spans at application
+  boundaries, not from sampling (user). Recorded generically by both probes
+  without code changes: every call through an application service
+  interface (.NET DI) or Spring bean (Java) becomes a nested INTERNAL span
+  with exact duration up to async completion, nanosecond resolution and the
+  caller (CONVENTIONS.md, "Method spans"). The sampling profiler (spike 0b)
+  remains an addition for time inside a single method.

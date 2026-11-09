@@ -127,6 +127,43 @@ today the importer shows it as recorded.
 - Java: package directory and file name, `com/example/shop/OrderRepository.java`
   (stack frames carry only the file name; the package comes from the class).
 
+### Method spans (application boundaries)
+
+Probes record each call across an application boundary as a span of kind
+INTERNAL, so a request shows which controller, service and repository
+methods ran, how long each took and what they called. Boundaries are chosen
+generically, never per project:
+
+- .NET: services resolved from the DI container through an interface that
+  belongs to the application (configured namespace prefixes, default the
+  entry assembly's root namespace); controller actions; methods marked with
+  an opt-in attribute or matched by configured patterns.
+- Java: public methods of Spring beans (`@Controller`, `@RestController`,
+  `@Service`, `@Repository`, `@Component`) in the application packages;
+  methods matched by configured patterns.
+
+| Field / attribute | Use |
+| --- | --- |
+| span `name` | `<Type>.<Method>` (short type name) |
+| `code.function.name` | The declared method, as for call sites |
+| `code.file.path`, `code.line.number` | The call site in the calling method, when the stack has it |
+| `archguard.section.kind` | `controller`, `service`, `repository`, `component` or `method` |
+| `archguard.caller.function` | The calling method, compiler-generated names mapped back |
+
+Rules:
+
+- The span is a child of the span active at the call, so controller →
+  service → repository → database call forms one tree.
+- The duration ends when the method's work ends: for `Task`, `ValueTask`,
+  `CompletableFuture`, reactive or other async results, when that result
+  completes, not when the method returns it. A failed result sets status
+  ERROR and `exception.type`.
+- Durations keep nanosecond resolution, as all OTLP timestamps.
+- Getters, framework types and the probe itself are not boundaries.
+  Probes may stop recording method spans of a request after a configurable
+  number (default 500, the importer's limit per request) and then set
+  `archguard.sections.truncated = true` on the request span.
+
 ### Outgoing calls
 
 A CLIENT span named only by its HTTP method is shown as method and target:
@@ -173,6 +210,9 @@ A change that makes older input read differently needs a new
   file formats, outgoing call names, span kind and the privacy list fixed
   after the first Java probe. The hash now wins over `db.query.summary`; no
   producer sent both before, so schema 1 stays.
+- 2026-11-09: method spans at application boundaries (controller, service,
+  repository, component, method), recorded generically, with async
+  durations to completion and nesting.
 - 2026-11-09: after the first .NET probe: number literals and quoted
   identifiers in the normalization, absolute .NET paths cut below the
   project root, client identity, headers and exception text added to the
