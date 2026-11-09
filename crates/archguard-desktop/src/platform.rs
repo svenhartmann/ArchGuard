@@ -206,10 +206,10 @@ mod tests {
 
     /// The red channel of a "|" drawn in `family`, 80×80 pixels.
     fn draw_bar(family: &str) -> Vec<u8> {
+        use slint::ComponentHandle;
         use slint::platform::software_renderer::{
             MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
         };
-        use slint::ComponentHandle;
         let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
         window.set_size(slint::PhysicalSize::new(80, 80));
         slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");

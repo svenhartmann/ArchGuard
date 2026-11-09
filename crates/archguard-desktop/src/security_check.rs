@@ -30,8 +30,7 @@ const H: usize = 1000;
 const PANEL_X: usize = 20;
 /// Where the panel's texts start (page and panel padding).
 const TEXT_X: usize = 29;
-const DIAGNOSTIC: &str =
-    "crates/archguard-analysis/Cargo.toml: no package inventory reported by Trivy; dependency coverage is incomplete.";
+const DIAGNOSTIC: &str = "crates/archguard-analysis/Cargo.toml: no package inventory reported by Trivy; dependency coverage is incomplete.";
 
 struct Pixels(Rc<MinimalSoftwareWindow>);
 
@@ -48,7 +47,10 @@ fn rows<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 }
 
 fn line(text: &str) -> SecurityLine {
-    SecurityLine { text: text.into(), packages: -1 }
+    SecurityLine {
+        text: text.into(),
+        packages: -1,
+    }
 }
 
 /// A saved scan with wrapping facts and diagnostics, and enough findings
@@ -129,8 +131,8 @@ fn encloses_its_rows(buf: &[PremultipliedRgbaColor], top: usize) -> usize {
         .find(|(a, _)| *a == top)
         .expect("the panel");
     let bg = buf[(H / 2) * W + 4];
-    let ink = (bottom + 2..bottom + 14)
-        .find(|y| (TEXT_X..W - 20).any(|x| !same(&buf[y * W + x], &bg)));
+    let ink =
+        (bottom + 2..bottom + 14).find(|y| (TEXT_X..W - 20).any(|x| !same(&buf[y * W + x], &bg)));
     assert_eq!(ink, None, "text drawn below the panel's bottom at {bottom}");
     bottom
 }
@@ -154,7 +156,11 @@ fn the_open_scan_panel_encloses_its_last_row() {
 }
 
 fn kpi(value: &str, label: &str) -> KpiItem {
-    KpiItem { value: value.into(), label: label.into(), ..Default::default() }
+    KpiItem {
+        value: value.into(),
+        label: label.into(),
+        ..Default::default()
+    }
 }
 
 /// A stale scan with the real KPI labels and severity counts.

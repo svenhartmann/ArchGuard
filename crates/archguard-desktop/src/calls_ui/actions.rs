@@ -290,7 +290,10 @@ mod tests {
             n.kind == Kind::Class && n.id == "red.Red"
         });
         assert!(row.is_some(), "the class is a visible tree row");
-        assert!(!focus_class(&mut s, "no.Such"), "unknown classes are ignored");
+        assert!(
+            !focus_class(&mut s, "no.Such"),
+            "unknown classes are ignored"
+        );
         assert_eq!(s.filter.package.as_deref(), Some("red"));
     }
 
