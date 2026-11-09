@@ -90,9 +90,9 @@ pub use review_kpi::{
 pub use review_session::{DecisionKind, FindingRef, ReviewDecision, ReviewRegister};
 pub use rules::{DependencyRule, OwnershipRule};
 pub use services::{
-    Datastore, DatastoreUsage, Service, ServiceCycle, ServiceDatastores, ServiceDependency,
-    ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject, ServiceTopology,
-    RouteFailure, RouteStep, ServiceResilience, ServiceRoute, SharedDatastore, SharedDatastoreScope,
+    Datastore, DatastoreUsage, RouteFailure, RouteStep, Service, ServiceCycle, ServiceDatastores,
+    ServiceDependency, ServiceDependencyKind, ServiceDiagnostic, ServiceEvidence, ServiceProject,
+    ServiceResilience, ServiceRoute, ServiceTopology, SharedDatastore, SharedDatastoreScope,
     TraceSequence, TraceStep,
 };
 pub use settings::{
