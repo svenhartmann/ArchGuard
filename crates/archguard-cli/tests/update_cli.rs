@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
 
-const TARGET: &str = env!("ARCHGUARD_TARGET");
+const TARGET: &str = archguard_update::release::TARGET;
 const NEW_BINARY: &[u8] = b"#!/bin/sh\necho archguard-from-release\n";
 
 fn hex(data: &[u8]) -> String {
