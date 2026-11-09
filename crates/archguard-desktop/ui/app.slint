@@ -520,7 +520,7 @@ export component AppWindow inherits Window {
                     icon: Icons.info;
                     clicked => { about.show(); }
                     TipArea {
-                        tip: @tr("About ArchGuard · by Sven Hartmann");
+                        tip: @tr("About ArchGuard · Hartmann Software Engineering");
                         pin-on-click: false;
                         mouse-cursor: pointer;
                         activated => { about.show(); }
@@ -763,7 +763,11 @@ export component AppWindow inherits Window {
                 padding: 22px;
                 spacing: 10px;
                 Text { text: "ArchGuard Desktop"; color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; }
-                Text { text: @tr("Created by Sven Hartmann."); color: Theme.text; font-size: Theme.font-body; wrap: word-wrap; }
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "Hartmann Software Engineering"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-title; wrap: word-wrap; }
+                    Text { text: "Sven Hartmann"; color: Theme.text; font-size: Theme.font-body; wrap: word-wrap; }
+                }
                 Text { text: @tr("Native viewer. License: MIT OR Apache-2.0."); color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                 AboutSlint { }
             }

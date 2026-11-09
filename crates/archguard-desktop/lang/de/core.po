@@ -58,11 +58,8 @@ msgstr "Matrix"
 msgid "Modules"
 msgstr "Module"
 
-msgid "Created by Sven Hartmann."
-msgstr "Erstellt von Sven Hartmann."
-
-msgid "About ArchGuard · by Sven Hartmann"
-msgstr "Über ArchGuard · von Sven Hartmann"
+msgid "About ArchGuard · Hartmann Software Engineering"
+msgstr "Über ArchGuard · Hartmann Software Engineering"
 
 msgid "Native viewer. License: MIT OR Apache-2.0."
 msgstr "Native Oberfläche. Lizenz: MIT OR Apache-2.0."
