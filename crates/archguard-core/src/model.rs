@@ -109,12 +109,21 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// The node with this id, `None` if the id is unknown.
+    ///
+    /// O(1) for the dense ids `0..n` that [`GraphBuilder::build`](crate::graph::GraphBuilder::build)
+    /// and [`aggregate`](crate::view::aggregate) assign (node `i` sits at
+    /// index `i`); hand-built graphs with other ids fall back to a scan.
+    pub fn node(&self, id: NodeId) -> Option<&Node> {
+        self.nodes
+            .get(id.0 as usize)
+            .filter(|n| n.id == id)
+            .or_else(|| self.nodes.iter().find(|n| n.id == id))
+    }
+
     /// Name of the node with this id, `None` if the id is unknown.
     pub fn node_name(&self, id: NodeId) -> Option<&str> {
-        self.nodes
-            .iter()
-            .find(|n| n.id == id)
-            .map(|n| n.name.as_str())
+        self.node(id).map(|n| n.name.as_str())
     }
 
     /// All edges starting at `id`, in graph (stable) order.
@@ -141,21 +150,13 @@ impl Graph {
     pub fn ancestors_of(&self, id: NodeId) -> Vec<NodeId> {
         let mut ancestors = Vec::new();
         let mut seen = BTreeSet::new();
-        let mut current = self
-            .nodes
-            .iter()
-            .find(|n| n.id == id)
-            .and_then(|n| n.parent);
+        let mut current = self.node(id).and_then(|n| n.parent);
         while let Some(parent) = current {
             if !seen.insert(parent) {
                 break;
             }
             ancestors.push(parent);
-            current = self
-                .nodes
-                .iter()
-                .find(|n| n.id == parent)
-                .and_then(|n| n.parent);
+            current = self.node(parent).and_then(|n| n.parent);
         }
         ancestors
     }
@@ -340,4 +341,37 @@ pub enum ArchguardError {
     /// An analysis could not be completed.
     #[error("analysis error: {0}")]
     Analysis(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: u32, name: &str) -> Node {
+        Node {
+            id: NodeId(id),
+            name: name.to_string(),
+            kind: NodeKind::File,
+            parent: None,
+            lang: None,
+        }
+    }
+
+    #[test]
+    fn node_lookup_handles_dense_and_hand_built_ids() {
+        let graph = Graph {
+            schema_version: 1,
+            root: String::new(),
+            // Index 0 holds id 7, index 1 holds id 0: the dense fast path
+            // must not return the wrong node, the scan must find both.
+            nodes: vec![node(7, "seven"), node(0, "zero")],
+            edges: Vec::new(),
+            semantic: None,
+            review_kpis: None,
+        };
+        assert_eq!(graph.node_name(NodeId(7)), Some("seven"));
+        assert_eq!(graph.node_name(NodeId(0)), Some("zero"));
+        assert_eq!(graph.node(NodeId(1)), None);
+        assert_eq!(graph.node(NodeId(99)), None);
+    }
 }

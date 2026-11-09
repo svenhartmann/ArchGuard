@@ -72,10 +72,12 @@ impl Cut {
     /// modules above `d` that still have children stay hidden, matching
     /// the `modules.depth` default (Kap. 5.2).
     pub fn at_depth(g: &Graph, d: usize) -> Self {
+        // One pass over `parent` instead of a `children_of` scan per node.
+        let has_children: BTreeSet<NodeId> = g.nodes.iter().filter_map(|n| n.parent).collect();
         let mut nodes = BTreeSet::new();
         for node in &g.nodes {
             let depth = g.ancestors_of(node.id).len();
-            if depth == d || (depth < d && g.children_of(node.id).is_empty()) {
+            if depth == d || (depth < d && !has_children.contains(&node.id)) {
                 nodes.insert(node.id);
             }
         }
@@ -826,5 +828,50 @@ mod tests {
         assert_eq!(back, cut);
         assert_eq!(ids.len(), cut.len());
         assert!(!ids.is_empty() && ids.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// Scale (audit): 20 000 files in a 3-level tree. Node lookups by id
+    /// used to scan the node list, making `at_depth` and `aggregate`
+    /// quadratic (1.75 s and 5.35 s in release); with dense ids both
+    /// are linear and finish in milliseconds even in a debug build.
+    #[test]
+    fn at_depth_and_aggregate_scale_linearly() {
+        let mut builder = GraphBuilder::new();
+        let mut files = Vec::new();
+        for m in 0..50 {
+            for s in 0..20 {
+                for f in 0..20 {
+                    files.push(builder.ensure_path(&format!("m{m}/s{s}/f{f}.ts"), Some("ts")));
+                }
+            }
+        }
+        for pair in files.windows(2) {
+            builder
+                .edge(
+                    pair[1],
+                    pair[0],
+                    Ref {
+                        file: "x.ts".to_string(),
+                        line: 1,
+                        raw: "import".to_string(),
+                    },
+                )
+                .expect("test: valid edge");
+        }
+        let g = builder.build("/abs/scale".to_string());
+        assert_eq!(files.len(), 20_000);
+
+        let started = std::time::Instant::now();
+        let cut = Cut::at_depth(&g, 1);
+        let view = aggregate(&g, &cut);
+        let elapsed = started.elapsed();
+
+        assert_eq!(cut.len(), 50 * 20);
+        assert_eq!(view.nodes.len(), 50 * 20);
+        assert_eq!(view.edges.len(), 50 * 20 - 1);
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "at_depth + aggregate on 20k files took {elapsed:?}"
+        );
     }
 }
