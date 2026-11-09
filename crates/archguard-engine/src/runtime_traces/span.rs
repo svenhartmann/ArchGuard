@@ -191,8 +191,8 @@ fn db(value: &Value) -> Option<Db> {
         return None;
     }
     let normalized = raw.map(|q| bounded(&normalize_sql(&q), MAX_TEXT));
-    let key = text(value, "db.query.summary", MAX_NAME)
-        .or_else(|| text(value, "archguard.db.statement_hash", MAX_NAME))
+    let key = text(value, "archguard.db.statement_hash", MAX_NAME)
+        .or_else(|| text(value, "db.query.summary", MAX_NAME))
         .or_else(|| normalized.clone())
         .or_else(|| value.get("name")?.as_str().map(|n| bounded(n, MAX_NAME)))
         .unwrap_or_default();
@@ -302,16 +302,35 @@ mod tests {
     }
 
     #[test]
-    fn summary_wins_over_hash_and_text() {
+    /// CONVENTIONS.md: the probe's hash groups, so turning on
+    /// `db.query.summary` in an instrumentation does not regroup statements.
+    fn hash_wins_over_summary_and_text() {
         let span = json!({"attributes":[
             {"key":"db.query.text","value":{"stringValue":"SELECT 1"}},
             {"key":"archguard.db.statement_hash","value":{"stringValue":"h1"}},
             {"key":"db.query.summary","value":{"stringValue":"SELECT orders"}}]});
-        assert_eq!(db(&span).unwrap().key, "SELECT orders");
+        assert_eq!(db(&span).unwrap().key, "h1");
         let span = json!({"attributes":[
             {"key":"db.query.text","value":{"stringValue":"SELECT 1"}},
-            {"key":"archguard.db.statement_hash","value":{"stringValue":"h1"}}]});
-        assert_eq!(db(&span).unwrap().key, "h1");
+            {"key":"db.query.summary","value":{"stringValue":"SELECT orders"}}]});
+        assert_eq!(db(&span).unwrap().key, "SELECT orders");
+    }
+
+    /// The test vector in probes/CONVENTIONS.md: probes must produce the same.
+    #[test]
+    fn the_conventions_test_vector() {
+        use sha2::{Digest, Sha256};
+        let input = "SELECT *  FROM orders /* by id */ WHERE id = 42 AND status = 'it''s' AND tag = @p0 -- tag";
+        let normalized = normalize_sql(input);
+        assert_eq!(
+            normalized,
+            "SELECT * FROM orders WHERE id = ? AND status = ? AND tag = @p0"
+        );
+        let hash: String = Sha256::digest(normalized.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(&hash[..16], "5acbd1b5486068b4");
     }
 
     #[test]

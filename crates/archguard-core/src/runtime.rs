@@ -64,7 +64,7 @@ pub struct RuntimeStats {
 pub struct RuntimeStatement {
     pub service: String,
     pub db_system: Option<String>,
-    /// `db.query.summary`, else `archguard.db.statement_hash`, else the normalized text.
+    /// `archguard.db.statement_hash`, else `db.query.summary`, else the normalized text.
     pub key: String,
     /// Normalized query text (literals replaced by `?`), when recorded.
     pub text: Option<String>,
