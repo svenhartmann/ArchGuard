@@ -69,6 +69,7 @@ mod review_register;
 mod review_session;
 mod review_sources;
 mod risk_gap;
+mod runtime_traces;
 mod rust_calls;
 mod rust_scip;
 mod rust_types;
@@ -169,6 +170,7 @@ pub use review_session::{
 };
 pub use review_sources::collect_review_sources;
 pub use risk_gap::risk_coverage_gaps;
+pub use runtime_traces::runtime_profile;
 pub use security::{
     SecurityFinding, SecurityReport, SecurityScanOptions, SecurityTarget, read_security,
     scan_security, security_fingerprint,

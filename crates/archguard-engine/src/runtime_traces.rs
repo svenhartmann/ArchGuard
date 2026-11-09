@@ -1,0 +1,57 @@
+//! Runtime profile from local OTLP JSON Lines (ADR 0004): requests per endpoint,
+//! database calls per request and per statement, and the code that issued them.
+//! Reads files only; no collector, application or network is started.
+mod aggregate;
+mod input;
+mod span;
+
+use archguard_core::{RuntimeDiagnostic, RuntimeProfile};
+use std::{collections::HashSet, path::Path};
+
+const NOTE: &str = "Runtime numbers come from imported OTLP traces: a sample of the recorded runs, not complete traffic. Durations are client-side span durations (execution, network and pool wait). A pattern missing from the sample is not proven absent. Query texts keep placeholders; literal values are replaced by ?.";
+
+/// The runtime profile of the project at `root`, or `None` when it has no
+/// runtime input (`.archguard/runtime/**/*.jsonl`, `.archguard/otel-traces.json`).
+pub fn runtime_profile(root: &Path) -> Option<RuntimeProfile> {
+    let inputs = input::discover(root)?;
+    let mut reader = input::Reader::new();
+    for (i, file) in inputs.iter().enumerate() {
+        if reader.is_full() {
+            break;
+        }
+        reader.read(i, file);
+    }
+    let mut profile = RuntimeProfile {
+        schema_version: 1,
+        inputs: inputs.iter().map(|i| i.rel.clone()).collect(),
+        sampling: reader.sampling,
+        diagnostics: reader.diagnostics,
+        complete: reader.complete,
+        note: NOTE.into(),
+        ..RuntimeProfile::default()
+    };
+    let spans = dedupe(reader.spans, &mut profile);
+    aggregate::fill(&spans, &mut profile);
+    Some(profile)
+}
+
+/// Keeps the first copy of each (trace, span) pair, as repeated exports duplicate spans.
+fn dedupe(spans: Vec<span::Span>, profile: &mut RuntimeProfile) -> Vec<span::Span> {
+    let before = spans.len();
+    let mut seen = HashSet::new();
+    let unique: Vec<_> = spans
+        .into_iter()
+        .filter(|s| seen.insert((s.trace.clone(), s.id.clone())))
+        .collect();
+    if unique.len() < before {
+        profile.diagnostics.push(RuntimeDiagnostic {
+            file: String::new(),
+            line: None,
+            message: format!(
+                "{} duplicate spans (same trace and span id) ignored.",
+                before - unique.len()
+            ),
+        });
+    }
+    unique
+}
