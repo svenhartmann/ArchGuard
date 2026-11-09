@@ -362,7 +362,7 @@ links paths written in code and imports of local workspace crates.
 | Layer checks | Map nodes to layers by name globs (`globset`); an edge is allowed iff its target layer belongs to the source layer's `may_depend_on` (direct edges only, no transitivity needed). Severity follows provenance: declared ⇒ `Error`, derived ⇒ `Info` (promotion, Section 11) | Only direct edges are checked; inferred layers do not fail `check` |
 | **Layer inference** | SCC condensation → longest-path ranking on the condensed DAG (`rank = 1 + max(dependency ranks)`, sinks = 0). A name-affinity table (`core\|domain\|model\|entity\|shared` at the bottom, `app\|service\|usecase\|logic\|feature` in the middle, `api\|ui\|cli\|web\|controller\|http` at the top) names ranks. Modules **in** SCCs cannot be ranked: an informational "cycle prevents layering" finding replaces layer violations | Provides layers without configuration; a longest-path ranking is defined only on a DAG |
 | **Project inference** | Manifest inspection (`composer.json` PSR-4, `Cargo.toml`, `tsconfig.json`, `pyproject.toml`/`setup.py`, `pom.xml`) plus extension statistics over discovered files; declared values always win | Source roots and languages without a `[project]` section |
-| Baseline | Cycle hash = SHA-256 over sorted SCC node names; diff = new/removed hashes | Baseline cycles are tolerated; new cycle hashes fail `check` |
+| Baseline | Cycle hash = SHA-256 over sorted SCC node names; diff = new/removed hashes | The baseline only stops the cycle finding of a known cycle hash; new cycle hashes fail `check`. Metric gates such as `max_scc_size` stay active, so a known cycle still fails `check` until it is fixed |
 
 ---
 

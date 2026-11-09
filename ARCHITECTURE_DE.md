@@ -364,7 +364,7 @@ Workspace-Crates.
 | Layer-Check | Knoten → Layer via Glob auf den Namen (`globset`); Kante erlaubt ⇔ Ziel-Layer ∈ `may_depend_on` des Quell-Layers (transitiv nicht nötig, nur direkte Kanten); Severity nach Ursprung: deklariert ⇒ `Error`, abgeleitet ⇒ `Info` (Promotion, Kap. 11) | Nur direkte Kanten werden geprüft; abgeleitete Layer lassen `check` nicht fehlschlagen |
 | **Layer-Ableitung** | SCC-Kondensation → Longest-Path-Ranking auf dem kondensierten DAG (`rank = 1 + max(rank der Abhängigkeiten)`, Senken = 0); Namensaffinitäts-Tabelle (`core\|domain\|model\|entity\|shared` unten, `app\|service\|usecase\|logic\|feature` Mitte, `api\|ui\|cli\|web\|controller\|http` oben) benennt die Ränge; Module **in** SCCs sind nicht rankbar → Info-Finding „Zyklus verhindert Schichtung" statt Layer-Verletzung | Liefert Layer ohne Konfiguration; ein Longest-Path-Ranking ist nur auf einem DAG definiert |
 | **Projekt-Ableitung** | Manifest-Sniffing (`composer.json` PSR-4, `Cargo.toml`, `tsconfig.json`, `pyproject.toml`/`setup.py`, `pom.xml`) + Endungs-Statistik über die gewalkten Dateien; deklarierte Werte gewinnen immer | Source-Roots und Sprachen ohne `[project]`-Abschnitt |
-| Baseline | Zyklus-Hash = SHA-256 über sortierte Knotennamen der SCC; Diff = neue/entfernte Hashes | Zyklen der Baseline werden toleriert; neue Zyklus-Hashes lassen `check` fehlschlagen |
+| Baseline | Zyklus-Hash = SHA-256 über sortierte Knotennamen der SCC; Diff = neue/entfernte Hashes | Die Baseline unterdrückt nur das Zyklus-Finding bekannter Zyklus-Hashes; neue Zyklus-Hashes lassen `check` fehlschlagen. Metrik-Gates wie `max_scc_size` bleiben aktiv, ein bekannter Zyklus lässt `check` also weiter fehlschlagen, bis er behoben ist |
 
 ---
 
