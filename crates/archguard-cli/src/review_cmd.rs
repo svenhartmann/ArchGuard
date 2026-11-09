@@ -114,7 +114,7 @@ pub(crate) fn pr_comment(cli: &Cli, root: &Path, base: Option<&str>, out: Option
                 } else {
                     root.join(path)
                 };
-                if let Err(error) = write_pr_comment(&target, &markdown) {
+                if let Err(error) = write_pr_comment(root, &target, &markdown) {
                     return analysis_error(error);
                 }
                 if !cli.quiet {
@@ -131,11 +131,15 @@ pub(crate) fn pr_comment(cli: &Cli, root: &Path, base: Option<&str>, out: Option
     }
 }
 
-fn write_pr_comment(path: &Path, markdown: &str) -> Result<(), ArchguardError> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+/// Below `<root>/.archguard` no component may be a symlink (the default
+/// path); any other `--out` the user chose gets the document refusal.
+fn write_pr_comment(root: &Path, path: &Path, markdown: &str) -> Result<(), ArchguardError> {
+    match path.strip_prefix(root.join(".archguard")) {
+        Ok(relative) => {
+            archguard_engine::write_project_file(root, relative, markdown.as_bytes(), true)?;
+        }
+        Err(_) => crate::insights_cmd::write_document(path, markdown)?,
     }
-    std::fs::write(path, markdown)?;
     Ok(())
 }
 

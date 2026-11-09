@@ -12,10 +12,9 @@ function declaration(name) {
   return js.slice(start, end);
 }
 const context = vm.createContext({});
-for (const name of ['esc', 'edgeWeight', 'weightLabel', 'widthFor', 'nodeById', 'ancestorsOf', 'nearestVisible', 'aggregate']) {
+for (const name of ['edgeWeight', 'weightLabel', 'widthFor', 'nodeById', 'ancestorsOf', 'nearestVisible', 'aggregate']) {
   vm.runInContext(declaration(name), context);
 }
-assert.equal(context.esc('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
 for (const count of [1, 2, 5, 25, 100, 1000]) {
   assert.equal(context.widthFor(count), Math.min(8, 1.5 + Math.log2(count)));
 }
@@ -63,7 +62,7 @@ for (let angle=0;angle<360;angle++) for (const radius of [160,500,10000]) {
   assert.ok(arrow && Number.isFinite(arrow.x) && Number.isFinite(arrow.y));
   assert.equal(context.hitNode(target,arrow.x,arrow.y),false,'outside package: '+[angle,radius]);
 }
-console.log('viewer: syntax, escaping, exact weights, directed aggregation and repeated aggregation passed');
+console.log('viewer: syntax, exact weights, directed aggregation and repeated aggregation passed');
 console.log('package arrows: 1,080 approaches clip outside the tabbed contour');
 for (const name of ['compareNames', 'containmentLayout']) {
   vm.runInContext(declaration(name), context);

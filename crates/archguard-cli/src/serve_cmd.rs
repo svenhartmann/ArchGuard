@@ -447,6 +447,8 @@ struct RefreshState {
     jobs: VecDeque<(String, u64)>,
     ticket: u64,
     stopping: bool,
+    /// Projects of the last discovery, by a request or the worker.
+    projects: Option<Arc<archguard_engine::core::ServiceTopology>>,
 }
 
 /// One analysis worker publishes complete snapshots. HTTP handlers only clone
@@ -477,7 +479,12 @@ impl BackgroundPages {
                 // Revalidate manifests and every directory component after a
                 // queued request: a cached page never authorizes a new scope.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    refresh_project(&mut page, &root, config.as_deref(), depth, selected)
+                    let topology = archguard_engine::analyze_services(&root)
+                        .map_err(|e| e.to_string())?;
+                    // Requests validate project names against this list.
+                    worker.0.lock().expect("refresh state").projects =
+                        Some(Arc::new(topology.clone()));
+                    refresh_project(&mut page, &root, config.as_deref(), depth, selected, topology)
                 }));
                 let error = match result {
                     Ok(Ok(())) => None,
@@ -506,6 +513,29 @@ impl BackgroundPages {
             }
         })?;
         Ok(Self { shared })
+    }
+
+    /// The analysis scope of a selected project, or `None` if the repository
+    /// does not contain it. The viewer polls every 1-10 s, so a known project is checked against
+    /// the last discovery (the worker repeats it with every analysis). Only
+    /// a project missing from that list reruns discovery: it may be new.
+    fn project_scope(&self, root: &Path, selected: &str) -> Result<Option<Scope>, String> {
+        let cached = self
+            .shared
+            .0
+            .lock()
+            .expect("refresh state")
+            .projects
+            .clone();
+        if let Some(scope) =
+            cached.and_then(|topology| resolve_scope(root, Some(selected), &topology))
+        {
+            return Ok(Some(scope));
+        }
+        let topology =
+            Arc::new(archguard_engine::analyze_services(root).map_err(|e| e.to_string())?);
+        self.shared.0.lock().expect("refresh state").projects = Some(Arc::clone(&topology));
+        Ok(resolve_scope(root, Some(selected), &topology))
     }
 
     fn snapshot(&self, project: Option<&str>, wait: bool) -> io::Result<Page> {
@@ -634,8 +664,8 @@ fn refresh_project(
     config: Option<&Path>,
     depth: u32,
     selected: Option<&str>,
+    topology: archguard_engine::core::ServiceTopology,
 ) -> Result<(), String> {
-    let topology = archguard_engine::analyze_services(root).map_err(|error| error.to_string())?;
     if selected == Some(WORKSPACE_KEY) {
         let workspace = archguard_engine::analyze_workspace_with_topology(root, &topology)
             .map_err(|e| e.to_string())?;
@@ -710,10 +740,38 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
                 }
             });
         }
-        for connection in listener.incoming() {
-            let stream = connection?;
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        dispatch(listener.incoming(), &send);
+        drop(send);
+        Ok(())
+    })
+}
+
+/// Connection-level guards: what happens before a request reaches a route.
+mod guard {
+    use super::*;
+
+    /// Hand accepted connections to the HTTP workers. A failure belongs to one
+    /// connection (ECONNABORTED, EMFILE, EINVAL on a socket the peer already
+    /// reset) and never ends the server.
+    pub(super) fn dispatch(
+        incoming: impl Iterator<Item = io::Result<TcpStream>>,
+        send: &mpsc::SyncSender<TcpStream>,
+    ) {
+        for connection in incoming {
+            let stream = connection.and_then(|stream| {
+                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+                Ok(stream)
+            });
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("warning: skipped a connection: {error}");
+                    // EMFILE repeats until a descriptor is free; do not spin.
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+            };
             if let Err(mpsc::TrySendError::Full(mut stream)) = send.try_send(stream) {
                 let _ = respond(
                     &mut stream,
@@ -723,10 +781,41 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
                 );
             }
         }
-        drop(send);
-        Ok(())
-    })
+    }
+
+    /// Why a request must not reach any route, from its header lines.
+    pub(super) fn refusal<'a>(
+        lines: impl Iterator<Item = &'a str>,
+        allowed_hosts: &[String; 2],
+    ) -> Option<&'static str> {
+        let fields: Vec<_> = lines
+            .take_while(|line| !line.is_empty())
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name, value.trim()))
+            .collect();
+        let header = |wanted: &'static str| {
+            fields
+                .iter()
+                .filter(move |(name, _)| name.eq_ignore_ascii_case(wanted))
+                .map(|(_, value)| *value)
+        };
+        let allowed = |host: &str| allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host));
+        let hosts: Vec<_> = header("host").collect();
+        if hosts.len() != 1 || !allowed(hosts[0]) {
+            return Some("Use the local viewer URL printed by archguard");
+        }
+        // Every route may run an analysis or write below .archguard/, so another
+        // website must not trigger one (`<img src>`, fetch, form). Browsers mark
+        // such requests; the viewer's own, the desktop app's link and clients
+        // without these headers (curl) stay allowed.
+        let foreign_site =
+            header("sec-fetch-site").any(|site| site != "same-origin" && site != "none");
+        let foreign_origin =
+            header("origin").any(|origin| !origin.strip_prefix("http://").is_some_and(allowed));
+        (foreign_site || foreign_origin).then_some("Requests from other websites are refused")
+    }
 }
+use guard::{dispatch, refusal};
 
 fn handle(
     stream: &mut TcpStream,
@@ -764,23 +853,8 @@ fn handle(
     if request.len() != 3 || !matches!(request[2], "HTTP/1.0" | "HTTP/1.1") {
         return respond(stream, 400, "text/plain", "Invalid request");
     }
-    let hosts: Vec<_> = lines
-        .take_while(|line| !line.is_empty())
-        .filter_map(|line| line.split_once(':'))
-        .filter(|(name, _)| name.eq_ignore_ascii_case("host"))
-        .map(|(_, value)| value.trim())
-        .collect();
-    if hosts.len() != 1
-        || !allowed_hosts
-            .iter()
-            .any(|host| host.eq_ignore_ascii_case(hosts[0]))
-    {
-        return respond(
-            stream,
-            403,
-            "text/plain",
-            "Use the local viewer URL printed by archguard",
-        );
+    if let Some(reason) = refusal(lines, allowed_hosts) {
+        return respond(stream, 403, "text/plain", reason);
     }
     let (path, query) = request[1]
         .split_once('?')
@@ -792,7 +866,7 @@ fn handle(
         path,
         "/__archguard/compare" | "/__archguard/refs" | "/__archguard/diff"
     ) {
-        return handle_comparison(stream, path, query, root, config);
+        return handle_comparison(stream, path, query, (root, config), pages);
     }
     let payload_section = path.strip_prefix("/__archguard/payload/");
     if payload_section.is_none()
@@ -804,9 +878,9 @@ fn handle(
         Ok(selected) => selected,
         Err(()) => return respond(stream, 400, "text/plain", "Invalid project selection"),
     };
-    if selected.is_some() && selected.as_deref() != Some(WORKSPACE_KEY) {
-        let topology = match archguard_engine::analyze_services(root) {
-            Ok(topology) => topology,
+    if let Some(selected) = selected.as_deref().filter(|s| *s != WORKSPACE_KEY) {
+        let scope = match pages.project_scope(root, selected) {
+            Ok(scope) => scope,
             Err(error) => {
                 return respond(
                     stream,
@@ -816,7 +890,7 @@ fn handle(
                 );
             }
         };
-        if resolve_scope(root, selected.as_deref(), &topology).is_none() {
+        if scope.is_none() {
             return respond(
                 stream,
                 404,
@@ -873,8 +947,8 @@ fn handle_comparison(
     stream: &mut TcpStream,
     path: &str,
     query: Option<&str>,
-    root: &Path,
-    config: Option<&Path>,
+    (root, config): (&Path, Option<&Path>),
+    pages: &BackgroundPages,
 ) -> io::Result<()> {
     let mut values = std::collections::BTreeMap::new();
     if let Some(query) = query {
@@ -905,13 +979,11 @@ fn handle_comparison(
     }
     let scoped;
     let (root, config) = if let Some(selected) = selected {
-        let topology = match archguard_engine::analyze_services(root) {
-            Ok(topology) => topology,
-            Err(error) => {
-                return respond(stream, 422, "text/plain; charset=utf-8", &error.to_string());
-            }
+        let scope = match pages.project_scope(root, selected) {
+            Ok(scope) => scope,
+            Err(error) => return respond(stream, 422, "text/plain; charset=utf-8", &error),
         };
-        let Some(scope) = resolve_scope(root, Some(selected), &topology) else {
+        let Some(scope) = scope else {
             return respond(
                 stream,
                 404,
@@ -1143,13 +1215,37 @@ mod workspace_route_tests {
         )
         .unwrap();
         let mut page = Page::default();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         let initial = page.revision.clone();
         page.html = "cached marker".into();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(page.html.as_ref(), "cached marker");
         fs::write(&file,"services:\n  one:\n    image: one\n    environment:\n      TWO_URL: http://two:8080\n  two:\n    image: two\n").unwrap();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         assert_ne!(
             page.revision, initial,
             "deployment relation changes must invalidate the workspace HTML"
@@ -1266,7 +1362,6 @@ fn respond_parts(
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
-        415 => "Unsupported Media Type",
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
@@ -1287,6 +1382,53 @@ fn respond_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_selection_is_validated_without_discovery_per_request() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        for name in ["one", "two"] {
+            fs::create_dir(root.join(name)).unwrap();
+        }
+        let manifest = |name: &str| root.join(name).join("package.json");
+        fs::write(manifest("one"), r#"{"name":"one","version":"1"}"#).unwrap();
+        let pages = BackgroundPages {
+            shared: Arc::new((Mutex::new(RefreshState::default()), Condvar::new())),
+        };
+        assert!(pages.project_scope(&root, "one").unwrap().is_some());
+        // The viewer polls every 1-10 s. Discovery walks the repository, so
+        // requests validate against the list the last discovery found.
+        fs::remove_file(manifest("one")).unwrap();
+        assert!(
+            pages.project_scope(&root, "one").unwrap().is_some(),
+            "a request must not rerun project discovery"
+        );
+        // A project added on disk is not in the list yet; a miss rediscovers,
+        // and that discovery also drops the removed one.
+        fs::write(manifest("two"), r#"{"name":"two","version":"1"}"#).unwrap();
+        assert!(pages.project_scope(&root, "two").unwrap().is_some());
+        assert!(pages.project_scope(&root, "one").unwrap().is_none());
+        assert!(pages.project_scope(&root, "missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_failed_connection_does_not_stop_the_server() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (accepted, _) = listener.accept().unwrap();
+        // accept(2) fails for a single connection with ECONNABORTED or EMFILE.
+        let incoming = [
+            Err(io::Error::from(io::ErrorKind::ConnectionAborted)),
+            Ok(accepted),
+        ];
+        let (send, receive) = mpsc::sync_channel(1);
+        dispatch(incoming.into_iter(), &send);
+        let next = receive
+            .try_recv()
+            .expect("the next connection is still served");
+        assert_eq!(next.peer_addr().unwrap(), client.local_addr().unwrap());
+        assert_eq!(next.read_timeout().unwrap(), Some(Duration::from_secs(2)));
+    }
 
     #[test]
     fn fast_status_probes_respect_the_background_analysis_cooldown() {

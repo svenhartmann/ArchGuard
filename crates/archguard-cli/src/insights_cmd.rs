@@ -212,7 +212,7 @@ pub(crate) fn doc(
             Err(error) => analysis_error(error),
         };
     }
-    match std::fs::write(&target, document) {
+    match write_document(&target, &document) {
         Ok(()) => {
             if !cli.quiet {
                 println!("Architecture document written: {}", target.display());
@@ -220,6 +220,51 @@ pub(crate) fn doc(
             EXIT_OK
         }
         Err(error) => analysis_error(error),
+    }
+}
+
+/// Replace a generated document as a whole. A final symlink or other
+/// non-regular file is refused, as for arc42, so a committed
+/// `architecture.md -> ~/victim.txt` cannot redirect the write. The
+/// directory is the user's choice: `--out` may name any path.
+pub(crate) fn write_document(target: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::{ErrorKind, Write};
+    let existing = regular_or_missing(target)?;
+    let parent = target.parent().ok_or(ErrorKind::InvalidInput)?;
+    std::fs::create_dir_all(parent)?;
+    let temp = target.with_file_name(format!(".archguard-doc-{}.tmp", std::process::id()));
+    let result = (|| {
+        // create_new: the temporary name can never be a planted symlink.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        if let Some(m) = existing {
+            file.set_permissions(m.permissions())?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        // rename replaces the entry; it never writes through a link.
+        std::fs::rename(&temp, target)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// Metadata of a regular file, `None` if it does not exist; an error for a
+/// symlink or any other kind of entry.
+fn regular_or_missing(target: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
+    use std::io::{Error, ErrorKind};
+    match std::fs::symlink_metadata(target) {
+        Ok(m) if !m.is_file() || m.file_type().is_symlink() => Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} must be a regular file, not a symlink", target.display()),
+        )),
+        Ok(m) => Ok(Some(m)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
 }
 

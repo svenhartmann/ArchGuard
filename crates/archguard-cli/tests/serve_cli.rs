@@ -103,6 +103,27 @@ impl Server {
         (status, body.to_owned())
     }
 
+    /// Status of a GET carrying extra request headers, e.g. a browser's.
+    fn status_with(&self, path: &str, headers: &[(&str, &str)]) -> u16 {
+        let mut socket = TcpStream::connect(&self.address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let extra: String = headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect();
+        write!(
+            socket,
+            "GET {path} HTTP/1.1\r\nHost: {}\r\n{extra}Connection: close\r\n\r\n",
+            self.address
+        )
+        .unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        response.split_whitespace().nth(1).unwrap().parse().unwrap()
+    }
+
     fn post_json(&self, path: &str, body: &str) -> (u16, String) {
         let mut socket = TcpStream::connect(&self.address).unwrap();
         socket
@@ -660,6 +681,46 @@ fn serve_only_exposes_its_loopback_report_routes() {
             .0,
         403
     );
+}
+
+#[test]
+fn serve_refuses_requests_that_other_websites_trigger() {
+    let server = Server::start();
+    let port = server.address.rsplit_once(':').unwrap().1;
+    let own = format!("http://{}", server.address);
+    let localhost = format!("http://localhost:{port}");
+    // `<img src="http://127.0.0.1:…/__archguard/diff">` on any website runs an
+    // analysis and, with `?project=`, writes files below .archguard/.
+    for path in ["/__archguard/version", "/__archguard/diff", "/"] {
+        for (name, value) in [
+            ("Sec-Fetch-Site", "cross-site"),
+            ("Sec-Fetch-Site", "same-site"),
+            ("Origin", "https://attacker.example"),
+            ("Origin", "http://127.0.0.1:1"),
+            ("Origin", "null"),
+        ] {
+            assert_eq!(
+                server.status_with(path, &[(name, value)]),
+                403,
+                "{name}: {value} on {path}"
+            );
+        }
+    }
+    // The viewer's own fetches, a link opened from the desktop app or the
+    // address bar (`none`), and clients without these headers (curl).
+    for headers in [
+        &[][..],
+        &[("Sec-Fetch-Site", "same-origin")][..],
+        &[("Sec-Fetch-Site", "none")][..],
+        &[("Sec-Fetch-Site", "same-origin"), ("Origin", own.as_str())][..],
+        &[("Origin", localhost.as_str())][..],
+    ] {
+        assert_eq!(
+            server.status_with("/__archguard/version", headers),
+            200,
+            "{headers:?}"
+        );
+    }
 }
 
 #[test]
