@@ -9,7 +9,7 @@ use archguard_engine::{LoadedConfig, compare_to_ref, read_trend};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[expect(
     clippy::too_many_arguments,
     reason = "explicit check flags and shared run"
@@ -20,12 +20,12 @@ pub(crate) fn run(
     loaded: &LoadedConfig,
     graph: &archguard_engine::core::Graph,
     report: &Report,
-    baseline: Option<&Path>,
+    baseline: Option<Option<&Path>>,
     base: Option<&str>,
     acd_limit: Option<f64>,
 ) -> i32 {
-    if acd_limit.is_some_and(|n| !n.is_finite() || n < 0.0) {
-        return usage("--fail-on-acd-regression must be finite and nonnegative");
+    if let Some(code) = precondition_error(root, graph, acd_limit) {
+        return code;
     }
     let comparison = match base
         .map(|base| compare_to_ref(root, loaded, graph, report, base))
@@ -81,7 +81,45 @@ pub(crate) fn run(
     } else {
         Default::default()
     };
-    check(cli, baseline, &checked, comparison.as_ref(), &paths)
+    let baseline = baseline.map(|file| baseline_path(root, loaded, file));
+    check(
+        cli,
+        baseline.as_deref(),
+        &checked,
+        comparison.as_ref(),
+        &paths,
+    )
+}
+
+/// The baseline file: `file` as given (relative to the working directory),
+/// or `[rules].baseline` under the project `root` — the file MCP reads too.
+pub(crate) fn baseline_path(root: &Path, loaded: &LoadedConfig, file: Option<&Path>) -> PathBuf {
+    file.map_or_else(
+        || root.join(&loaded.config.rules.baseline),
+        Path::to_path_buf,
+    )
+}
+
+/// The exit code of a check that must not run: an invalid ACD limit
+/// (usage) or an analysis without any source file (error).
+fn precondition_error(
+    root: &Path,
+    graph: &archguard_engine::core::Graph,
+    acd_limit: Option<f64>,
+) -> Option<i32> {
+    if acd_limit.is_some_and(|n| !n.is_finite() || n < 0.0) {
+        return Some(usage(
+            "--fail-on-acd-regression must be finite and nonnegative",
+        ));
+    }
+    // Nothing analysed is no evidence of a clean architecture: a wrong path
+    // (e.g. the GitHub Action's `path:`) must not turn the gate green.
+    graph.nodes.is_empty().then(|| {
+        analysis_error(format!(
+            "no source files found under {}; check the path and [project] source_roots/languages",
+            root.display()
+        ))
+    })
 }
 
 /// How many per-violation evidence strings a gate finding samples at most.
@@ -200,7 +238,7 @@ fn gate_finding(id: String, nodes: Vec<String>, evidence: Vec<Ref>, message: Str
 /// Gate semantics: `check` fails (exit 1) as soon as one [`Finding`]
 /// has severity `Error` — the same rule that sets
 /// [`Report::summary`] to `Fail` (Kap. 5). With `--baseline <DATEI>`
-/// (default `.archguard/baseline.json`), **cycle** findings whose
+/// (default: [`baseline_path`]), **cycle** findings whose
 /// membership hash — Kap. 7's [`cycle_hash`] over the finding's sorted
 /// member names, the same identity [`Baseline`] stores — is present in
 /// the baseline are accepted and no longer fail the gate; every other
@@ -214,15 +252,7 @@ pub(crate) fn check(
     comparison: Option<&archguard_engine::Comparison>,
     source_paths: &BTreeMap<String, String>,
 ) -> i32 {
-    if matches!(
-        cli.format,
-        Format::Mermaid
-            | Format::Dot
-            | Format::Html
-            | Format::Graphml
-            | Format::Gexf
-            | Format::Table
-    ) {
+    if !matches!(cli.format, Format::Text | Format::Json | Format::Sarif) {
         return usage(format!(
             "invalid value '{}' for '--format': check supports text, json and sarif",
             cli.format_name()

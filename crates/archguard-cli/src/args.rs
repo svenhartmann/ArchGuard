@@ -4,10 +4,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-/// Default location of the baseline JSON of `baseline write|diff`
-/// (Kap. 9/11).
-pub(crate) const DEFAULT_BASELINE_OUT: &str = ".archguard/baseline.json";
-
 /// Default location of the graph-DB mirror of `db sync|query`
 /// (Kap. 8, T33).
 pub(crate) const DEFAULT_DB_PATH: &str = ".archguard/graph.db";
@@ -145,14 +141,10 @@ pub(crate) enum Command {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
         /// Accept the cycles recorded in this baseline; only NEW cycles
-        /// fail. Bare `--baseline` uses the default file.
-        #[arg(
-            long,
-            value_name = "DATEI",
-            num_args = 0..=1,
-            default_missing_value = DEFAULT_BASELINE_OUT
-        )]
-        baseline: Option<PathBuf>,
+        /// fail. Bare `--baseline` uses `[rules].baseline` under the
+        /// project root.
+        #[arg(long, value_name = "DATEI", num_args = 0..=1)]
+        baseline: Option<Option<PathBuf>>,
         /// Compare the working tree to this Git ref under the current policy.
         #[arg(long)]
         base: Option<String>,
@@ -656,17 +648,19 @@ pub(crate) enum BaselineAction {
         /// Project root (default: current directory).
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
-        /// Where to write the baseline JSON.
-        #[arg(value_name = "DATEI", default_value = DEFAULT_BASELINE_OUT)]
-        file: PathBuf,
+        /// Where to write the baseline JSON (default: `[rules].baseline`
+        /// under the project root).
+        #[arg(value_name = "DATEI")]
+        file: Option<PathBuf>,
     },
     /// Compare the current cycles against a baseline file (exit 1 on new cycles).
     Diff {
         /// Project root (default: current directory).
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
-        /// The baseline JSON to compare against.
-        #[arg(value_name = "DATEI", default_value = DEFAULT_BASELINE_OUT)]
-        file: PathBuf,
+        /// The baseline JSON to compare against (default: `[rules].baseline`
+        /// under the project root).
+        #[arg(value_name = "DATEI")]
+        file: Option<PathBuf>,
     },
 }
