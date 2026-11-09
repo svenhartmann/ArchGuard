@@ -85,8 +85,8 @@ mod rust_types_tests;
 mod security_tests;
 mod semantic_calls;
 mod semantic_graph;
-mod service_projects;
 mod service_flows;
+mod service_projects;
 mod services;
 mod snapshot;
 mod target_architecture;
@@ -205,7 +205,6 @@ pub use archguard_analysis as analysis;
 /// edges into the lower layers): lets `archguard-cli`/`archguard-mcp` name
 /// [`archguard_core`] types without a direct dependency.
 pub use archguard_core as core;
-pub use compiler_trust::trust_project_compiler;
 /// Facade for L3 consumers, mirroring [`core`] for the renderers.
 pub use archguard_report as report;
 /// Facade for L3 consumers, mirroring [`core`] for the graph-DB mirror
@@ -214,6 +213,7 @@ pub use archguard_report as report;
 /// [`archguard_store::LadybugStore`]) the CLI's `db sync|query` and the MCP's
 /// `graph_query` need (Kap. 8/9, T33).
 pub use archguard_store as store;
+pub use compiler_trust::trust_project_compiler;
 
 /// Placeholder kept from the crate skeleton; [`analyze`] is the real API.
 pub fn placeholder() -> &'static str {

@@ -595,7 +595,10 @@ impl<'a> Correlation<'a> {
             start: client.start,
             end: client.end,
             error: client.error || server.error,
-            operation: server.operation.clone().or_else(|| client.operation.clone()),
+            operation: server
+                .operation
+                .clone()
+                .or_else(|| client.operation.clone()),
         });
         self.observed.entry((from, to, kind)).or_default().add(
             client.end - client.start,
@@ -838,10 +841,19 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!({"key":"http.route","value":{"stringValue":"/orders/{id}"}}));
-        run(vec![resource("web", vec![client]), resource("orders", vec![server])], &mut r);
+        run(
+            vec![
+                resource("web", vec![client]),
+                resource("orders", vec![server]),
+            ],
+            &mut r,
+        );
         assert_eq!(r.traces.len(), 1);
         let step = &r.traces[0].steps[0];
-        assert_eq!((step.from.as_str(), step.to.as_str()), ("trace:web", "trace:orders"));
+        assert_eq!(
+            (step.from.as_str(), step.to.as_str()),
+            ("trace:web", "trace:orders")
+        );
         assert_eq!(step.operation.as_deref(), Some("GET /orders/{id}"));
         assert_eq!((step.offset_us, step.duration_us), (0, 10_000));
         assert!(!serde_json::to_string(&r).unwrap().contains("secret"));
