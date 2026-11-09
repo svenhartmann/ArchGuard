@@ -5,7 +5,7 @@ import { ScrollView } from "std-widgets.slint";
 import { TextEdit } from "fields.slint";
 import { Theme } from "theme.slint";
 import { Button, Disclosure, HelpTip, PageTitle } from "widgets.slint";
-import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
+import { ArcBlock, ArcBlockView, Fit } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
 
@@ -97,7 +97,7 @@ component ChapterEditor inherits VerticalLayout {
         font-size: Theme.font-small;
         wrap: word-wrap;
     }
-    if ArchitectureData.model.ask-location: Rectangle {
+    if ArchitectureData.model.ask-location: Fit { Rectangle {
         background: Theme.panel-2;
         border-radius: 8px;
         border-width: 1px;
@@ -112,20 +112,36 @@ component ChapterEditor inherits VerticalLayout {
                 font-weight: Theme.weight-strong;
                 wrap: word-wrap;
             }
-            HorizontalLayout {
+            if !root.narrow: HorizontalLayout {
                 spacing: 10px;
                 alignment: start;
                 Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
                 Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
                 Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
             }
+            // The first answer on a row of its own in a narrow pane.
+            if root.narrow: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: start;
+                    Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
+                    Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
+                }
+            }
         }
-    }
-    if ArchitectureData.model.edit-error != "": Text {
-        text: ArchitectureData.model.edit-error;
-        color: Theme.danger;
-        font-size: Theme.font-small;
-        wrap: word-wrap;
+    } }
+    if ArchitectureData.model.edit-error != "": Fit {
+        Text {
+            text: ArchitectureData.model.edit-error;
+            color: Theme.danger;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
     }
     if !root.narrow: HorizontalLayout {
         spacing: 18px;
@@ -167,6 +183,54 @@ component ChapterEditor inherits VerticalLayout {
         alignment: start;
         Button { primary: true; text: @tr("Save chapter"); clicked => { ArchitectureData.save-edit(); } }
         Button { text: @tr("Cancel"); clicked => { ArchitectureData.cancel-edit(); } }
+    }
+}
+
+// The chapter buttons below the title in a narrow pane. They flow into
+// further rows when the pane is too narrow for one (from the view's
+// width, never the content), as the Matrix toolbar does.
+component ChapterActions inherits Rectangle {
+    in property <bool> editing;
+    property <length> gap: 10px;
+    property <length> h: one.preferred-height;
+    property <length> w1: root.editing ? 0 : edit.preferred-width;
+    property <length> w2: one.preferred-width;
+    property <length> x2: root.editing ? 0 : self.fx(self.w1, self.w2);
+    property <int> r2: root.editing ? 0 : self.fr(self.w1, self.w2, 0);
+    property <length> w3: all.preferred-width;
+    property <length> x3: self.fx(self.x2 + self.w2, self.w3);
+    property <int> r3: self.fr(self.x2 + self.w2, self.w3, self.r2);
+    // An item of width `w` after one ending at `end` stays on its row
+    // when it fits, else starts the next row.
+    pure function fits(end: length, w: length) -> bool { return end + self.gap + w <= self.width; }
+    pure function fx(end: length, w: length) -> length { return self.fits(end, w) ? end + self.gap : 0; }
+    pure function fr(end: length, w: length, r: int) -> int { return self.fits(end, w) ? r : r + 1; }
+    pure function row-y(r: int) -> length { return r * (self.h + 8px); }
+    height: self.row-y(self.r3) + self.h;
+    edit := Button {
+        x: 0;
+        y: 0;
+        width: self.preferred-width;
+        visible: !root.editing;
+        compact: true;
+        text: @tr("Edit chapter");
+        clicked => { ArchitectureData.start-edit(); }
+    }
+    one := Button {
+        x: root.x2;
+        y: root.row-y(root.r2);
+        width: self.preferred-width;
+        compact: true;
+        text: @tr("Download chapter");
+        clicked => { ArchitectureData.download(false); }
+    }
+    all := Button {
+        x: root.x3;
+        y: root.row-y(root.r3);
+        width: self.preferred-width;
+        compact: true;
+        text: @tr("Download all chapters");
+        clicked => { ArchitectureData.download(true); }
     }
 }
 
@@ -264,13 +328,7 @@ export component ArchitectureView inherits Rectangle {
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
         }
-        if root.narrow: HorizontalLayout {
-            spacing: 10px;
-            alignment: start;
-            if !ArchitectureData.model.editing: Button { compact: true; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
-            Button { compact: true; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
-            Button { compact: true; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
-        }
+        if root.narrow: ChapterActions { editing: ArchitectureData.model.editing; }
         if ArchitectureData.model.file-error != "": Text {
             text: @tr("The project's arc42 text could not be read: {}", ArchitectureData.model.file-error);
             color: Theme.danger;
@@ -281,6 +339,7 @@ export component ArchitectureView inherits Rectangle {
             text: @tr("Saved {}", ArchitectureData.model.saved);
             color: Theme.muted;
             font-size: Theme.font-small;
+            wrap: word-wrap;
         }
         HorizontalLayout {
             spacing: root.narrow ? 10px : 22px;
@@ -330,19 +389,21 @@ export component ArchitectureView inherits Rectangle {
                             padding-bottom: 20px;
                             spacing: 0;
                             PageTitle { text: ArchitectureData.model.chapter-title; }
-                            if ArchitectureData.model.chapter-note != "": VerticalLayout {
-                                padding-top: 8px;
+                            if ArchitectureData.model.chapter-note != "": Fit {
+                                top: 8px;
                                 Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
                             if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
-                            if ArchitectureData.model.figure-error != "": Text {
-                                text: ArchitectureData.model.figure-error;
-                                color: Theme.danger;
-                                font-size: Theme.font-small;
-                                wrap: word-wrap;
+                            if ArchitectureData.model.figure-error != "": Fit {
+                                Text {
+                                    text: ArchitectureData.model.figure-error;
+                                    color: Theme.danger;
+                                    font-size: Theme.font-small;
+                                    wrap: word-wrap;
+                                }
                             }
-                            if ArchitectureData.model.catalogue: VerticalLayout {
+                            if ArchitectureData.model.catalogue: Fit {
                                 spacing: 14px;
                                 Text {
                                     text: @tr("Every diagram ArchGuard derives for this project, hidden ones included. The tick decides whether it is written into the documentation; the choice is kept in archguard.toml.");
@@ -352,25 +413,28 @@ export component ArchitectureView inherits Rectangle {
                                 }
                                 for f in ArchitectureData.model.figures: FigureView {
                                     figure: f;
+                                    compact: root.narrow;
                                     preview: true;
                                     toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
                                 }
                             }
                             // A hidden map is one line with its tick; a shown one has it in its header.
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: HorizontalLayout {
-                                padding-top: 8px;
-                                spacing: 12px;
-                                Text {
-                                    text: ArchitectureData.model.map-shown ? ArchitectureData.model.map-title : @tr("{}: not in the documentation.", ArchitectureData.model.map-title);
-                                    color: ArchitectureData.model.map-shown ? Theme.text : Theme.muted;
-                                    font-size: Theme.font-body;
-                                    vertical-alignment: center;
-                                    horizontal-stretch: 1;
-                                    wrap: word-wrap;
-                                }
-                                FigureSwitch {
-                                    value: ArchitectureData.model.map-shown;
-                                    toggled => { ArchitectureData.toggle-diagram(ArchitectureData.model.map-id, self.checked); }
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: Fit {
+                                top: 8px;
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Text {
+                                        text: ArchitectureData.model.map-shown ? ArchitectureData.model.map-title : @tr("{}: not in the documentation.", ArchitectureData.model.map-title);
+                                        color: ArchitectureData.model.map-shown ? Theme.text : Theme.muted;
+                                        font-size: Theme.font-body;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        wrap: word-wrap;
+                                    }
+                                    FigureSwitch {
+                                        value: ArchitectureData.model.map-shown;
+                                        toggled => { ArchitectureData.toggle-diagram(ArchitectureData.model.map-id, self.checked); }
+                                    }
                                 }
                             }
                             if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown || ArchitectureData.model.map-optional): VerticalLayout {
@@ -395,6 +459,7 @@ export component ArchitectureView inherits Rectangle {
                                 padding-bottom: 8px;
                                 for f in ArchitectureData.model.figures: FigureView {
                                     figure: f;
+                                    compact: root.narrow;
                                     toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
                                 }
                             }
@@ -406,17 +471,19 @@ export component ArchitectureView inherits Rectangle {
                             Rectangle { height: 1px; background: Theme.border; }
                             Rectangle { height: 10px; }
                             Disclosure { text: @tr("Markdown source"); open <=> root.source-open; }
-                            if root.source-open: Rectangle {
-                                background: Theme.panel-2;
-                                border-radius: 8px;
-                                VerticalLayout {
-                                    padding: 14px;
-                                    Text {
-                                        text: ArchitectureData.model.source;
-                                        color: Theme.text;
-                                        font-family: Theme.mono-family;
-                                        font-size: Theme.font-small;
-                                        wrap: word-wrap;
+                            if root.source-open: Fit {
+                                Rectangle {
+                                    background: Theme.panel-2;
+                                    border-radius: 8px;
+                                    VerticalLayout {
+                                        padding: 14px;
+                                        Text {
+                                            text: ArchitectureData.model.source;
+                                            color: Theme.text;
+                                            font-family: Theme.mono-family;
+                                            font-size: Theme.font-small;
+                                            wrap: word-wrap;
+                                        }
                                     }
                                 }
                             }
@@ -447,6 +514,7 @@ export component ArchitectureView inherits Rectangle {
                             color: Theme.muted;
                             font-size: Theme.font-small;
                             vertical-alignment: center;
+                            wrap: word-wrap;
                         }
                         HelpTip {
                             size: 18px;
@@ -454,15 +522,23 @@ export component ArchitectureView inherits Rectangle {
                             tip: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
                         }
                     }
-                    if ArchitectureData.model.has-model: HorizontalLayout {
-                        spacing: 10px;
-                        alignment: start;
-                        Text {
-                            text: @tr("Target architecture: the comparison with the declared model is not native yet.");
-                            color: Theme.muted;
-                            font-size: Theme.font-small;
-                            vertical-alignment: center;
+                    // The button below the wrapped text in a narrow pane.
+                    if ArchitectureData.model.has-model: Fit {
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: @tr("Target architecture: the comparison with the declared model is not native yet.");
+                                color: Theme.muted;
+                                font-size: Theme.font-small;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            if !root.narrow: Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
                         }
+                    }
+                    if ArchitectureData.model.has-model && root.narrow: HorizontalLayout {
+                        alignment: start;
                         Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
                     }
                 }

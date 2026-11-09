@@ -130,7 +130,10 @@ pub(super) fn derived(s: &ArchitectureState, chapter: u8) -> Option<Kind> {
 }
 
 pub(super) fn labels(ui: &AppWindow) -> Labels {
-    let texts = Texts::of(ui);
+    labels_in(&Texts::of(ui))
+}
+
+pub(super) fn labels_in(texts: &Texts) -> Labels {
     Labels {
         direct_root: texts.t("Files without a package").into(),
         direct: texts.t("direct files").into(),

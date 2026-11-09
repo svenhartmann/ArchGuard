@@ -5,6 +5,7 @@ import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
 import { Fmt } from "format.slint";
+import { Fit } from "architecture_blocks.slint";
 
 // The tick alone, for a diagram drawn elsewhere (the package maps).
 export component FigureSwitch inherits Switch {
@@ -294,10 +295,15 @@ export component ArcVisual inherits Rectangle {
     // sits in a scroll view).
     in property <bool> compact;
     property <bool> levels-on: map.kind == 0 && !root.compact;
-    property <length> box-width: root.width - 32px - (root.levels-on ? 216px : 0);
+    property <length> pad: root.compact ? 10px : 16px;
+    property <length> box-width: root.width - 2 * root.pad - (root.levels-on ? 216px : 0);
     property <float> fit-zoom: map.dw > 0 ? min(1, (box-width / 1px - 2) / map.dw) : 1;
     property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
     property <string> unit: map.kind == 1 ? @tr("recorded call sites") : @tr("source connections");
+    property <string> counts: @tr("{} · {} inside the shown groups", root.counted(root.map.total), Fmt.int(root.map.internal));
+    property <string> arrows: @tr("Arrows show the dependency direction; edge labels show recorded counts.");
+    property <string> action-label: root.map.selected-action == 1 ? @tr("Open level {}", Fmt.int(root.map.level + 1))
+        : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
     // A count with its unit in the plural form the count needs.
     pure function counted(n: int) -> string {
         return map.kind == 1 ? @tr("{0} recorded call site" | "{0} recorded call sites" % n, Fmt.int(n))
@@ -315,7 +321,7 @@ export component ArcVisual inherits Rectangle {
     border-color: Theme.border;
 
     HorizontalLayout {
-        padding: 16px;
+        padding: root.pad;
         spacing: 16px;
         if root.levels-on: HorizontalLayout {
             width: 200px;
@@ -349,7 +355,7 @@ export component ArcVisual inherits Rectangle {
             horizontal-stretch: 1;
             spacing: 10px;
             alignment: start;
-            if root.map.kind == 0: HorizontalLayout {
+            if root.map.kind == 0 && !root.compact: HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
                 for c[i] in root.map.crumbs: HorizontalLayout {
@@ -363,6 +369,14 @@ export component ArcVisual inherits Rectangle {
                     }
                 }
             }
+            // The crumbs one per row, their labels wrapped.
+            if root.map.kind == 0 && root.compact: VerticalLayout {
+                spacing: 1px;
+                for c in root.map.crumbs: LevelButton {
+                    item: c;
+                    clicked => { root.navigate(c.scope); }
+                }
+            }
             HorizontalLayout {
                 spacing: 12px;
                 Text {
@@ -374,7 +388,15 @@ export component ArcVisual inherits Rectangle {
                     horizontal-stretch: 1;
                     wrap: word-wrap;
                 }
-                if root.doc-id != "": FigureSwitch {
+                if root.doc-id != "" && !root.compact: FigureSwitch {
+                    value: root.doc-shown;
+                    toggled => { root.toggle-doc(root.doc-id, self.checked); }
+                }
+            }
+            // The tick below the title in a narrow pane.
+            if root.doc-id != "" && root.compact: HorizontalLayout {
+                alignment: start;
+                FigureSwitch {
                     value: root.doc-shown;
                     toggled => { root.toggle-doc(root.doc-id, self.checked); }
                 }
@@ -384,44 +406,76 @@ export component ArcVisual inherits Rectangle {
                 current-index: root.map.scope-index;
                 selected => { root.scope-selected(self.current-index); }
             }
-            HorizontalLayout {
+            if !root.compact: HorizontalLayout {
                 spacing: 14px;
                 alignment: start;
                 Text {
-                    text: @tr("{} · {} inside the shown groups", root.counted(root.map.total), Fmt.int(root.map.internal));
+                    text: root.counts;
                     color: Theme.muted;
                     font-size: Theme.font-small;
                     vertical-alignment: center;
                 }
                 StatInline { kpi: root.map.cycles; }
             }
-            if root.map.kind == 1: Text {
-                text: @tr("Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order.", root.map.calls-status);
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
+            // The counts wrapped, the cycles below them.
+            if root.compact: Fit {
+                spacing: 4px;
+                Text { text: root.counts; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: start;
+                    StatInline { kpi: root.map.cycles; }
+                }
             }
-            if root.map.cards.length == 0: Text {
-                text: @tr("No relationships of this kind are recorded in this scope.");
-                color: Theme.text;
-                font-size: Theme.font-body;
+            if root.map.kind == 1: Fit {
+                Text {
+                    text: @tr("Compiler status: {} · Only retained, resolved project calls with a source mapping. Call sites do not establish runtime order.", root.map.calls-status);
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
             }
-            if root.map.cards.length > 0: Text {
-                text: @tr("{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.", Fmt.int(root.map.lines.length), Fmt.int(root.map.lines.length));
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
+            if root.map.cards.length == 0: Fit {
+                Text {
+                    text: @tr("No relationships of this kind are recorded in this scope.");
+                    color: Theme.text;
+                    font-size: Theme.font-body;
+                    wrap: word-wrap;
+                }
             }
-            if root.map.cards.length > 0: HorizontalLayout {
+            if root.map.cards.length > 0: Fit {
+                Text {
+                    text: @tr("{} / {} bundled relationships shown. Select a package to highlight its relationships. Arrows: source → dependency. Red: package cycle.", Fmt.int(root.map.lines.length), Fmt.int(root.map.lines.length));
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+            }
+            if root.map.cards.length > 0 && !root.compact: HorizontalLayout {
                 spacing: 8px;
                 alignment: start;
                 Text {
-                    text: @tr("Arrows show the dependency direction; edge labels show recorded counts.");
+                    text: root.arrows;
                     color: Theme.muted;
                     font-size: Theme.font-small;
                     vertical-alignment: center;
                 }
                 Button { compact: true; text: "PlantUML ↓"; clicked => { root.plantuml(root.unit); } }
+                ZoomControls {
+                    zoom: root.zoom;
+                    zoom-out => { root.user-zoom = max(0.2, root.zoom * 0.8); }
+                    zoom-in => { root.user-zoom = min(5, root.zoom * 1.25); }
+                    reset => { root.user-zoom = 1; }
+                    fit => { root.user-zoom = 0; }
+                }
+            }
+            // The text wrapped, the export and the zoom on rows of their own.
+            if root.map.cards.length > 0 && root.compact: Fit {
+                spacing: 8px;
+                Text { text: root.arrows; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: start;
+                    Button { compact: true; text: "PlantUML ↓"; clicked => { root.plantuml(root.unit); } }
+                }
                 ZoomControls {
                     zoom: root.zoom;
                     zoom-out => { root.user-zoom = max(0.2, root.zoom * 0.8); }
@@ -456,15 +510,29 @@ export component ArcVisual inherits Rectangle {
                     }
                 }
             }
-            if root.map.selected-name != "": HorizontalLayout {
+            if root.map.selected-name != "" && !root.compact: HorizontalLayout {
                 spacing: 12px;
                 alignment: start;
                 Text { text: root.map.selected-name; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; }
                 if root.map.selected-path != "": Text { text: root.map.selected-path; color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
                 if root.map.selected-action != 0: Button {
                     compact: true;
-                    text: root.map.selected-action == 1 ? @tr("Open level {}", Fmt.int(root.map.level + 1)) : root.map.selected-action == 2 ? @tr("Open in graph") : @tr("Open package");
+                    text: root.action-label;
                     clicked => { root.action(); }
+                }
+            }
+            // One below the other, wrapped, in a narrow pane.
+            if root.map.selected-name != "" && root.compact: Fit {
+                spacing: 6px;
+                Text { text: root.map.selected-name; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                if root.map.selected-path != "": Text { text: root.map.selected-path; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
+                if root.map.selected-action != 0: HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        compact: true;
+                        text: root.action-label;
+                        clicked => { root.action(); }
+                    }
                 }
             }
             if root.map.cards.length > 0: VerticalLayout {
