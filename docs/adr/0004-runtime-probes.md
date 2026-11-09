@@ -151,15 +151,17 @@ so a stray reference in a release build has no effect.
 Both probes also allow the standard OTLP exporter to a local Collector with
 `fileexporter`, for teams that already run one. The file layout is the same.
 
-The probes live in this repository under `probes/dotnet/` and
-`probes/java/`, next to `probes/CONVENTIONS.md`, so the contract, both
-producers and the importer change in one commit.
+The probes live in their own private repositories next to this one,
+`../hse-perf-net` and `../hse-perf-java` (changed 2026-11-09, see History).
+The contract stays here: `probes/CONVENTIONS.md` and the golden fixtures
+under `fixtures/runtime/`. Each probe repository's CI runs its sample app
+and checks the output with `archguard runtime --format json`, so producers
+and importer cannot drift unnoticed.
 
-**The .NET probe is not published publicly** (no nuget.org). It is built
-from `probes/dotnet/` with `dotnet pack` into a local folder and consumed
-through a local package source (`nuget.config` pointing at that folder) or a
-private feed, or as a project reference. Whether the Java extension is
-published is open.
+**The probes are not published publicly** (no nuget.org, no Maven
+Central). The .NET probe is built with `dotnet pack` into a local folder and
+consumed through a local package source or a private feed, or as a project
+reference; the Java extension is a JAR from a private build.
 
 ### 4. Integration into ArchGuard
 
@@ -219,6 +221,38 @@ a runtime overlay (heat by DB time or executions) on the Graph and Calls
 tabs, database nodes in the Services tab; report section. The `performance`
 tool keeps its static meaning; its description points to `runtime_profile`.
 
+### 6. Single requests inside one application (2026-11-09)
+
+The main use is local: run one application with a probe, send a REST
+request, and see at once what that request did. Aggregates per endpoint are
+not enough for that. Decided with the user on 2026-11-09:
+
+- **Request list and timeline.** The profile keeps individual requests
+  (entry spans with their span tree), newest first, bounded in number. A
+  request shows total time, its database and HTTP calls with call site and
+  duration, the time of the application's own code, and the findings that
+  concern it.
+- **Own code by sampling profiler.** CPU samples taken while the request
+  runs are attributed to it and shown as the methods that used the time.
+  Candidates, to be decided by spike 0b:
+  1. Pyroscope span profiles (Grafana; `Pyroscope.OpenTelemetry` for .NET,
+     the OTel Java agent extension for Java): samples tagged with the span
+     id. Needs a Pyroscope server that ArchGuard reads, or a local ingest
+     endpoint in the probe; licence and macOS support to check. In .NET
+     only with manual OTel instrumentation, which the probe uses anyway.
+  2. OpenTelemetry Profiles signal: alpha since March 2026, still alpha in
+     September 2026; its eBPF profiler targets Linux. Not yet.
+  3. Own sampler in the probe (.NET EventPipe, Java JFR `ExecutionSample`),
+     attributing samples by thread to the active span. Full control; async
+     work hopping threads is the hard part.
+  Samples become a convention in `probes/CONVENTIONS.md` (stack per span,
+  sample interval, sampled thread time), never raw profiler files.
+- **Live.** The desktop app watches `.archguard/runtime/` and shows a new
+  request about one second after the probe wrote it. The view is a tab of
+  its own, "Runtime", not part of the Services tab: it is about one
+  application, not about connections between services. The aggregate view
+  built first in the Services tab moves there.
+
 **Honesty rules**, as in the existing trace import: every output names the
 sample window and sampling, the share of DB time that could be mapped to
 code, and that a sample proves neither complete traffic nor absence of a
@@ -246,6 +280,9 @@ Each step ends with tests; estimates are for one developer, not measurements.
 | 3 | .NET probe with EF package and sample app; golden fixtures | 1–2 weeks |
 | 4 | Java agent extension with sample app; golden fixtures | 1 week |
 | 5 | Join to the call model; `runtime_hotspot`; desktop overlay | 1–2 weeks |
+| 0b | Spike: sampling profiler attributed to requests, options 1 and 3 above, on .NET and Java, macOS and Linux | 3–5 days |
+| 2b | Requests in the profile (span tree per request, bounded); desktop tab "Runtime" with request list, timeline and live file watching; aggregate view moves there | 1–2 weeks |
+| 3b / 4b | Probe repositories `../hse-perf-net`, `../hse-perf-java` with the profiler chosen in 0b | with 3 / 4 |
 | 6 | Comparing two runs (before/after a refactoring), building on baseline diff | later |
 
 ## Spike results (step 0, 2026-11-09)
@@ -315,12 +352,13 @@ Consequences for the design:
   views, some with N+1 detection, but data leaves the machine, export formats
   are vendor-specific, and there is no join to source-level structure.
   Rejected as a dependency; their OTLP export remains usable input.
-- **Sampling profilers (dotnet-trace, async-profiler).** Answer a different
-  question (CPU inside a method) and complement, not replace, the probes.
-  Possible later input through the OTel profiles signal.
-- **Probes in separate repositories.** Independent release cycles, but the
-  contract, producers and importer could drift. Rejected for now; can be
-  split once the conventions are stable.
+- **Sampling profilers on their own (dotnet-trace, async-profiler).** Answer
+  where CPU time goes, but not per request. Since 2026-11-09 their samples
+  are attributed to requests (Section 6) instead of standing alone.
+- **Probes in this repository (`probes/dotnet`, `probes/java`).** The
+  first choice, replaced on 2026-11-09: the repository has a public remote,
+  and the probes must stay private; it also kept .NET and JDK out of the
+  Rust build.
 - **MiniProfiler (.NET).** Good per-request SQL counts in the browser, but
   .NET only and no standard export. Rejected.
 
@@ -356,3 +394,10 @@ Consequences for the design:
   and hands the call site to the driver span. SqlClient and the Java call
   site remain untested. Consequence 3 (time-window rule for wrapping DB
   spans) is implemented in the importer.
+- **2026-11-09:** Probes move to private repositories `../hse-perf-net` and
+  `../hse-perf-java`; the contract and fixtures stay here (Section 3).
+- **2026-11-09:** Decided with the user: single requests inside one
+  application with a timeline, own-code time from a sampling profiler
+  attributed to requests, live display in a desktop tab "Runtime"
+  (Section 6, steps 0b and 2b). The Services-tab view of branch
+  `feat/desktop-runtime-view` is the first part of that tab.
