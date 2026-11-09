@@ -447,6 +447,8 @@ struct RefreshState {
     jobs: VecDeque<(String, u64)>,
     ticket: u64,
     stopping: bool,
+    /// Projects of the last discovery, by a request or the worker.
+    projects: Option<Arc<archguard_engine::core::ServiceTopology>>,
 }
 
 /// One analysis worker publishes complete snapshots. HTTP handlers only clone
@@ -477,7 +479,12 @@ impl BackgroundPages {
                 // Revalidate manifests and every directory component after a
                 // queued request: a cached page never authorizes a new scope.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    refresh_project(&mut page, &root, config.as_deref(), depth, selected)
+                    let topology = archguard_engine::analyze_services(&root)
+                        .map_err(|e| e.to_string())?;
+                    // Requests validate project names against this list.
+                    worker.0.lock().expect("refresh state").projects =
+                        Some(Arc::new(topology.clone()));
+                    refresh_project(&mut page, &root, config.as_deref(), depth, selected, topology)
                 }));
                 let error = match result {
                     Ok(Ok(())) => None,
@@ -506,6 +513,29 @@ impl BackgroundPages {
             }
         })?;
         Ok(Self { shared })
+    }
+
+    /// The analysis scope of a selected project, or `None` if the repository
+    /// does not contain it. The viewer polls every 1-10 s, so a known project is checked against
+    /// the last discovery (the worker repeats it with every analysis). Only
+    /// a project missing from that list reruns discovery: it may be new.
+    fn project_scope(&self, root: &Path, selected: &str) -> Result<Option<Scope>, String> {
+        let cached = self
+            .shared
+            .0
+            .lock()
+            .expect("refresh state")
+            .projects
+            .clone();
+        if let Some(scope) =
+            cached.and_then(|topology| resolve_scope(root, Some(selected), &topology))
+        {
+            return Ok(Some(scope));
+        }
+        let topology =
+            Arc::new(archguard_engine::analyze_services(root).map_err(|e| e.to_string())?);
+        self.shared.0.lock().expect("refresh state").projects = Some(Arc::clone(&topology));
+        Ok(resolve_scope(root, Some(selected), &topology))
     }
 
     fn snapshot(&self, project: Option<&str>, wait: bool) -> io::Result<Page> {
@@ -634,8 +664,8 @@ fn refresh_project(
     config: Option<&Path>,
     depth: u32,
     selected: Option<&str>,
+    topology: archguard_engine::core::ServiceTopology,
 ) -> Result<(), String> {
-    let topology = archguard_engine::analyze_services(root).map_err(|error| error.to_string())?;
     if selected == Some(WORKSPACE_KEY) {
         let workspace = archguard_engine::analyze_workspace_with_topology(root, &topology)
             .map_err(|e| e.to_string())?;
@@ -836,7 +866,7 @@ fn handle(
         path,
         "/__archguard/compare" | "/__archguard/refs" | "/__archguard/diff"
     ) {
-        return handle_comparison(stream, path, query, root, config);
+        return handle_comparison(stream, path, query, (root, config), pages);
     }
     let payload_section = path.strip_prefix("/__archguard/payload/");
     if payload_section.is_none()
@@ -848,9 +878,9 @@ fn handle(
         Ok(selected) => selected,
         Err(()) => return respond(stream, 400, "text/plain", "Invalid project selection"),
     };
-    if selected.is_some() && selected.as_deref() != Some(WORKSPACE_KEY) {
-        let topology = match archguard_engine::analyze_services(root) {
-            Ok(topology) => topology,
+    if let Some(selected) = selected.as_deref().filter(|s| *s != WORKSPACE_KEY) {
+        let scope = match pages.project_scope(root, selected) {
+            Ok(scope) => scope,
             Err(error) => {
                 return respond(
                     stream,
@@ -860,7 +890,7 @@ fn handle(
                 );
             }
         };
-        if resolve_scope(root, selected.as_deref(), &topology).is_none() {
+        if scope.is_none() {
             return respond(
                 stream,
                 404,
@@ -917,8 +947,8 @@ fn handle_comparison(
     stream: &mut TcpStream,
     path: &str,
     query: Option<&str>,
-    root: &Path,
-    config: Option<&Path>,
+    (root, config): (&Path, Option<&Path>),
+    pages: &BackgroundPages,
 ) -> io::Result<()> {
     let mut values = std::collections::BTreeMap::new();
     if let Some(query) = query {
@@ -949,13 +979,11 @@ fn handle_comparison(
     }
     let scoped;
     let (root, config) = if let Some(selected) = selected {
-        let topology = match archguard_engine::analyze_services(root) {
-            Ok(topology) => topology,
-            Err(error) => {
-                return respond(stream, 422, "text/plain; charset=utf-8", &error.to_string());
-            }
+        let scope = match pages.project_scope(root, selected) {
+            Ok(scope) => scope,
+            Err(error) => return respond(stream, 422, "text/plain; charset=utf-8", &error),
         };
-        let Some(scope) = resolve_scope(root, Some(selected), &topology) else {
+        let Some(scope) = scope else {
             return respond(
                 stream,
                 404,
@@ -1187,13 +1215,37 @@ mod workspace_route_tests {
         )
         .unwrap();
         let mut page = Page::default();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         let initial = page.revision.clone();
         page.html = "cached marker".into();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(page.html.as_ref(), "cached marker");
         fs::write(&file,"services:\n  one:\n    image: one\n    environment:\n      TWO_URL: http://two:8080\n  two:\n    image: two\n").unwrap();
-        refresh_project(&mut page, dir.path(), None, 0, Some(WORKSPACE_KEY)).unwrap();
+        refresh_project(
+            &mut page,
+            dir.path(),
+            None,
+            0,
+            Some(WORKSPACE_KEY),
+            archguard_engine::analyze_services(dir.path()).unwrap(),
+        )
+        .unwrap();
         assert_ne!(
             page.revision, initial,
             "deployment relation changes must invalidate the workspace HTML"
@@ -1331,6 +1383,34 @@ fn respond_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_selection_is_validated_without_discovery_per_request() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        for name in ["one", "two"] {
+            fs::create_dir(root.join(name)).unwrap();
+        }
+        let manifest = |name: &str| root.join(name).join("package.json");
+        fs::write(manifest("one"), r#"{"name":"one","version":"1"}"#).unwrap();
+        let pages = BackgroundPages {
+            shared: Arc::new((Mutex::new(RefreshState::default()), Condvar::new())),
+        };
+        assert!(pages.project_scope(&root, "one").unwrap().is_some());
+        // The viewer polls every 1-10 s. Discovery walks the repository, so
+        // requests validate against the list the last discovery found.
+        fs::remove_file(manifest("one")).unwrap();
+        assert!(
+            pages.project_scope(&root, "one").unwrap().is_some(),
+            "a request must not rerun project discovery"
+        );
+        // A project added on disk is not in the list yet; a miss rediscovers,
+        // and that discovery also drops the removed one.
+        fs::write(manifest("two"), r#"{"name":"two","version":"1"}"#).unwrap();
+        assert!(pages.project_scope(&root, "two").unwrap().is_some());
+        assert!(pages.project_scope(&root, "one").unwrap().is_none());
+        assert!(pages.project_scope(&root, "missing").unwrap().is_none());
+    }
 
     #[test]
     fn a_failed_connection_does_not_stop_the_server() {
