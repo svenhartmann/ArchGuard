@@ -15,6 +15,7 @@ mod model;
 mod notes;
 mod rankings;
 mod state;
+mod sync;
 mod tree;
 mod view;
 
@@ -76,7 +77,9 @@ pub fn push(ui: &AppWindow, s: &CallsState) {
     let status = Status::of(&s.idx.a.status);
     m.status_slot = status.slot();
     m.status_label = status.line(&Texts::of(ui), "Analysis").into();
-    ui.global::<CallsData>().set_model(m);
+    let d = ui.global::<CallsData>();
+    sync::keep(&d.get_model(), &mut m);
+    d.set_model(m);
 }
 
 impl TabState for CallsState {
