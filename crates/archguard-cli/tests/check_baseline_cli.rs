@@ -1,6 +1,6 @@
 //! `archguard check --baseline` with the stock rules: a baselined cycle
 //! is accepted together with the SCC-size gate for the same members, a
-//! new cycle still fails.
+//! new cycle still fails; and `check` rejects formats it cannot render.
 
 use std::fs;
 use std::path::Path;
@@ -80,4 +80,17 @@ fn baselined_cycle_passes_with_the_default_scc_size_gate() {
     );
     let out = archguard(dir.path(), &["check", "--baseline"]);
     assert_eq!(out.status.code(), Some(1), "new cycle: {}", report(&out));
+}
+
+#[test]
+fn check_rejects_the_pr_comment_format() {
+    let dir = tempdir().expect("tempdir");
+    cyclic(dir.path());
+    let out = archguard(dir.path(), &["--format", "pr-comment", "check"]);
+    assert_eq!(out.status.code(), Some(2), "{}", report(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("check supports text, json and sarif"),
+        "{}",
+        report(&out)
+    );
 }

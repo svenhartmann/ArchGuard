@@ -237,15 +237,7 @@ pub(crate) fn check(
     comparison: Option<&archguard_engine::Comparison>,
     source_paths: &BTreeMap<String, String>,
 ) -> i32 {
-    if matches!(
-        cli.format,
-        Format::Mermaid
-            | Format::Dot
-            | Format::Html
-            | Format::Graphml
-            | Format::Gexf
-            | Format::Table
-    ) {
+    if !matches!(cli.format, Format::Text | Format::Json | Format::Sarif) {
         return usage(format!(
             "invalid value '{}' for '--format': check supports text, json and sarif",
             cli.format_name()
