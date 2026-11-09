@@ -105,3 +105,53 @@ fn pr_comment_without_base_is_a_usage_error() {
         .failure()
         .code(2);
 }
+
+/// `--out` and its default `.archguard/reports/pr-comment.md` must not
+/// follow a committed symlink to a file outside the project.
+#[cfg(unix)]
+#[test]
+fn pr_comment_out_refuses_to_write_through_a_symlink() {
+    let dir = fixture();
+    let outside = tempdir().expect("outside");
+    let victim = outside.path().join("victim.txt");
+    fs::write(&victim, "precious\n").expect("victim");
+    let run = |args: &[&str]| {
+        Command::cargo_bin("archguard")
+            .expect("binary")
+            .args([
+                "review",
+                "--format",
+                "pr-comment",
+                "--base",
+                "HEAD",
+                "--quiet",
+            ])
+            .args(args)
+            .current_dir(dir.path())
+            .assert()
+    };
+    // Default path, with the file itself a symlink ...
+    fs::create_dir_all(dir.path().join(".archguard/reports")).expect("reports");
+    let default = dir.path().join(".archguard/reports/pr-comment.md");
+    std::os::unix::fs::symlink(&victim, &default).expect("symlink");
+    run(&["--out"]).failure();
+    // ... or its directory: .archguard/reports -> outside.
+    fs::remove_file(&default).expect("remove");
+    fs::remove_dir(dir.path().join(".archguard/reports")).expect("rmdir");
+    std::os::unix::fs::symlink(outside.path(), dir.path().join(".archguard/reports"))
+        .expect("dir symlink");
+    run(&["--out"]).failure();
+    assert!(!outside.path().join("pr-comment.md").exists());
+    // An explicit --out that is a symlink.
+    std::os::unix::fs::symlink(&victim, dir.path().join("comment.md")).expect("symlink");
+    run(&["--out", "comment.md"]).failure();
+    assert_eq!(fs::read_to_string(&victim).expect("victim"), "precious\n");
+    // An explicit path outside the project stays allowed (documented).
+    let chosen = outside.path().join("chosen.md");
+    run(&["--out", chosen.to_str().expect("utf-8")]).success();
+    assert!(
+        fs::read_to_string(&chosen)
+            .expect("written")
+            .starts_with("## Architektur-Review")
+    );
+}

@@ -163,6 +163,64 @@ fn architecture_doc_check_detects_graph_drift_without_rewriting() {
     assert!(cli(&["doc", "--check"]).status.success());
 }
 
+/// A committed `architecture.md -> ~/victim.txt` must not let `doc`
+/// overwrite a file outside the project.
+#[cfg(unix)]
+#[test]
+fn architecture_doc_refuses_to_write_through_a_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.ts"), "export const a=1;\n").unwrap();
+    let victim = outside.path().join("victim.txt");
+    fs::write(&victim, "precious\n").unwrap();
+    std::os::unix::fs::symlink(&victim, root.join("architecture.md")).unwrap();
+    std::os::unix::fs::symlink(&victim, root.join("chosen.md")).unwrap();
+    for args in [&["doc"][..], &["doc", "--out", "chosen.md"][..]] {
+        let result = Command::new(env!("CARGO_BIN_EXE_archguard"))
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{args:?}");
+        assert_eq!(
+            fs::read_to_string(&victim).unwrap(),
+            "precious\n",
+            "{args:?}"
+        );
+    }
+    assert!(
+        fs::symlink_metadata(root.join("architecture.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    // A regular target is replaced as a whole, keeping no temporary file.
+    fs::remove_file(root.join("architecture.md")).unwrap();
+    fs::write(root.join("architecture.md"), "old\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .current_dir(root)
+        .arg("doc")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        fs::read_to_string(root.join("architecture.md"))
+            .unwrap()
+            .contains("ACD")
+    );
+    let leftovers: Vec<_> = fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
 /// The web viewer draws and ticks the catalogue (ADR 0006), so the report
 /// payload carries it next to the chapters.
 #[test]
