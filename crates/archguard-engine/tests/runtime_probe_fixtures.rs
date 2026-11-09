@@ -68,12 +68,15 @@ fn java_probe_output_finds_the_n_plus_one_at_its_line() {
     assert!(p.complete, "{:#?}", p.diagnostics);
     assert_eq!(p.sampling, vec!["always_on"]);
     let (function, file, line) = n_plus_one(&p);
-    assert_eq!(function, "com.example.shop.OrderRepository.findProduct");
+    assert_eq!(
+        function,
+        "com.example.shop.OrderRepository.findLinesOneByOne"
+    );
     assert!(
         file.ends_with("com/example/shop/OrderRepository.java"),
         "{file}"
     );
-    assert_eq!(line, 38);
+    assert_eq!(line, 40);
     // The endpoint ran more than once; the request with the most calls holds the N+1.
     let request = p
         .requests
@@ -97,9 +100,12 @@ fn dotnet_probe_output_finds_the_n_plus_one_at_its_line() {
     assert!(p.complete, "{:#?}", p.diagnostics);
     assert_eq!(p.sampling, vec!["always_on"]);
     let (function, file, line) = n_plus_one(&p);
-    assert_eq!(function, "Shop.Orders.OrderEndpoints.GetOrderSummary");
-    assert!(file == "Orders/OrderEndpoints.cs", "{file}");
-    assert_eq!(line, 36);
+    assert_eq!(
+        function,
+        "Shop.Data.OrderRepository.GetLinesWithProductsAsync"
+    );
+    assert!(file == "Data/OrderRepository.cs", "{file}");
+    assert_eq!(line, 31);
     // The endpoint ran more than once; the request with the most calls holds the N+1.
     let request = p
         .requests
@@ -128,4 +134,64 @@ fn outgoing_calls_name_their_target_without_query() {
         );
         assert!(!target.name.contains('?'), "{fixture}: {}", target.name);
     }
+}
+
+/// Method spans at application boundaries (CONVENTIONS.md): the N+1 request is
+/// a tree controller → service → repository → database calls.
+#[test]
+fn java_method_spans_nest_controller_service_repository_and_db() {
+    let p = profile("shop-java.jsonl");
+    let request = p
+        .requests
+        .iter()
+        .filter(|r| r.name.contains("n-plus-one"))
+        .max_by_key(|r| r.db_calls)
+        .unwrap();
+    let depth_of = |name: &str| {
+        request
+            .spans
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} in {:#?}", request.spans))
+            .depth
+    };
+    let controller = depth_of("OrderController.orderNPlusOne");
+    assert_eq!(depth_of("OrderService.summaryNPlusOne"), controller + 1);
+    let repository = depth_of("OrderRepository.findLinesOneByOne");
+    assert_eq!(repository, controller + 2);
+    let db_below_repository = request
+        .spans
+        .iter()
+        .filter(|s| s.db.is_some() && s.depth == repository + 1)
+        .count();
+    assert!(db_below_repository >= 6, "{db_below_repository}");
+}
+
+#[test]
+fn dotnet_method_spans_nest_controller_service_repository_and_db() {
+    let p = profile("shop-dotnet.jsonl");
+    let request = p
+        .requests
+        .iter()
+        .filter(|r| r.name.contains("summary"))
+        .max_by_key(|r| r.db_calls)
+        .unwrap();
+    let depth_of = |name: &str| {
+        request
+            .spans
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} in {:#?}", request.spans))
+            .depth
+    };
+    let controller = depth_of("OrdersController.GetSummary");
+    assert_eq!(depth_of("OrderService.GetSummaryAsync"), controller + 1);
+    let repository = depth_of("OrderRepository.GetLinesWithProductsAsync");
+    assert_eq!(repository, controller + 2);
+    let db_below_repository = request
+        .spans
+        .iter()
+        .filter(|s| s.db.is_some() && s.depth == repository + 1)
+        .count();
+    assert!(db_below_repository >= 7, "{db_below_repository}");
 }

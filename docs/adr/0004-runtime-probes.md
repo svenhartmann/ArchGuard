@@ -434,3 +434,8 @@ Consequences for the design:
   with exact duration up to async completion, nanosecond resolution and the
   caller (CONVENTIONS.md, "Method spans"). The sampling profiler (spike 0b)
   remains an addition for time inside a single method.
+- **2026-11-09:** Method spans implemented in both probes (hse-perf-java
+  e77a03c, hse-perf-net daf436f) and checked in the desktop tab: requests
+  show controller → service → repository → database calls with exact
+  durations. Measured cost per instrumented call: about 2.5 µs (Java), about
+  44–59 µs (.NET, mostly the stack walk for the caller). Fixtures updated.
