@@ -17,6 +17,8 @@ export struct SvcRow {
     indent: float,
     label-width: float,
     relation-x: float,
+    // Counts without their In/Out words, in a narrow pane.
+    compact: bool,
     selected: bool,
     in-cycle: bool,
     incoming: int,
@@ -93,10 +95,12 @@ component SvcRowView inherits Rectangle {
         overflow: elide;
         vertical-alignment: center;
     }
+    // In a narrow pane the counts keep only their colors (incoming blue,
+    // outgoing violet, as the arcs).
     if data.service >= 0: Text {
-        x: (data.w - 108) * scale * 1px;
+        x: (data.w - (data.compact ? 56 : 108)) * scale * 1px;
         height: parent.height;
-        text: @tr("In {}", Fmt.int(data.incoming));
+        text: data.compact ? Fmt.int(data.incoming) : @tr("In {}", Fmt.int(data.incoming));
         color: Theme.incoming;
         font-size: 11px * scale;
         vertical-alignment: center;
@@ -104,7 +108,7 @@ component SvcRowView inherits Rectangle {
     if data.service >= 0: Text {
         x: (data.w - 12) * scale * 1px - self.width;
         height: parent.height;
-        text: @tr("Out {}", Fmt.int(data.outgoing));
+        text: data.compact ? Fmt.int(data.outgoing) : @tr("Out {}", Fmt.int(data.outgoing));
         color: Theme.outgoing;
         font-size: 11px * scale;
         horizontal-alignment: right;
@@ -148,6 +152,10 @@ export component ServicesTree inherits Rectangle {
     // The visible band in canvas units, one screen height wider each way.
     property <float> band-top: (-flick.content-y - flick.height) / 1px / root.zoom;
     property <float> band-bottom: (-flick.content-y + 2 * flick.height) / 1px / root.zoom;
+    property <float> top-y: root.rows.length > 0 ? root.rows[0].y : 0;
+    property <float> pitch: root.rows.length > 1 ? root.rows[1].y - root.top-y : 30;
+    property <int> first-row: max(0, min(root.rows.length, floor((root.band-top - root.top-y) / root.pitch)));
+    property <int> band-rows: max(0, min(root.rows.length - root.first-row, ceil((root.band-bottom - root.band-top) / root.pitch) + 2));
     pure function shown(top: float, bottom: float) -> bool {
         return bottom >= root.band-top && top <= root.band-bottom;
     }
@@ -178,7 +186,7 @@ export component ServicesTree inherits Rectangle {
             stroke: Theme.border;
             stroke-width: 1.5px * root.zoom;
         }
-        // Only arcs and rows in or near the visible band exist; the
+        // Only arcs in or near the visible band exist; the
         // others are empty placeholders.
         for e in root.edges: Rectangle {
             if root.shown(e.top, e.bottom): Rectangle {
@@ -217,14 +225,15 @@ export component ServicesTree inherits Rectangle {
                 }
             }
         }
-        for r in root.rows: Rectangle {
-            if root.shown(r.y - r.h / 2, r.y + r.h / 2): SvcRowView {
-                data: r;
-                scale: root.zoom;
-                clicked => {
-                    if (r.service >= 0) {
-                        root.select-service(r.service);
-                    }
+        // Rows exist only for the band: the layout places them at one
+        // pitch (src/services_ui/layout.rs), so the band's first row
+        // follows from the scroll position.
+        for k in root.band-rows: SvcRowView {
+            data: root.rows[root.first-row + k];
+            scale: root.zoom;
+            clicked => {
+                if (self.data.service >= 0) {
+                    root.select-service(self.data.service);
                 }
             }
         }

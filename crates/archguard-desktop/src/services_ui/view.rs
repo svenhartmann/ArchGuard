@@ -369,7 +369,9 @@ fn tree(m: &mut ServicesModel, sc: &Scope, s: &ServicesState, unmapped: &str) {
             Item::Service(i) => i as i32,
             Item::Group => -1,
         };
-        let label_width = lay.w - r.indent - if service >= 0 { 145.0 } else { 36.0 };
+        // Icon and padding, plus the In/Out column (bare counts when compact).
+        let counts = if lay.compact { 90.0 } else { 145.0 };
+        let label_width = lay.w - r.indent - if service >= 0 { counts } else { 36.0 };
         SvcRow {
             name: shorten(&nodes[r.node].name, label_width).into(),
             context: service < 0,
@@ -381,6 +383,7 @@ fn tree(m: &mut ServicesModel, sc: &Scope, s: &ServicesState, unmapped: &str) {
             indent: r.indent,
             label_width,
             relation_x: lay.relation_x,
+            compact: lay.compact,
             selected: service >= 0 && sc.selected == Some(id),
             in_cycle: in_cycle(id),
             incoming: if service >= 0 {
@@ -752,6 +755,45 @@ mod tests {
         assert_eq!((m.shown, m.all), (7, 7));
         let line = m.edges.row_data(0).expect("edge").line;
         assert!(line.matches('M').count() > 3, "dashed: {line}");
+    }
+
+    /// In a split pane the rows and their arcs fit the viewport: no
+    /// count or arc is drawn beyond its right edge.
+    #[test]
+    fn the_tree_fits_a_narrow_pane() {
+        let mut s = shop();
+        s.viewport = 356.0;
+        let t = (*s.topology).as_ref().expect("topology");
+        let placed = place(&Scope::new(&s, t), &s, "");
+        let lay = &placed.lay;
+        assert!(lay.width <= 356.0, "canvas {} wide", lay.width);
+        for r in &placed.lay.routes {
+            for p in &r.points {
+                assert!(p.x >= 24.0 + lay.w, "{p:?} over the rows");
+                assert!(p.x <= lay.width, "{p:?} beyond the canvas");
+            }
+        }
+        let m = build(&s, "");
+        for r in rows(&m) {
+            assert!(r.compact, "{}: compact counts", r.name);
+            assert!(r.label_width >= 40.0, "{}: label {}", r.name, r.label_width);
+            assert!(
+                r.left + r.w < r.relation_x,
+                "{}: row left of the axis",
+                r.name
+            );
+        }
+    }
+
+    /// From the web's minimum width on, nothing changes.
+    #[test]
+    fn a_wide_pane_keeps_the_web_geometry() {
+        let mut s = shop();
+        s.viewport = 860.0;
+        let m = build(&s, "");
+        let r = rows(&m).remove(1);
+        assert!(!r.compact);
+        assert_eq!((r.w, r.relation_x), (400.0, 642.0));
     }
 
     #[test]
