@@ -4,28 +4,49 @@ import { Theme } from "theme.slint";
 import { Legend, TipArea, HelpTip } from "widgets.slint";
 import { StartData, StartTones } from "start_data.slint";
 
+export struct LegendItem {
+    text: string,
+    tip: string,
+    swatch: brush,
+    swatch-w: length,
+    outline: bool,
+}
+
+// Flow placement of the Start tab's control rows and legends: an item of
+// width `w` after one ending at `end` stays on its row when it fits the
+// width `avail`, else starts the next row at 0. An absent item (width 0)
+// takes no room. Rows are placed from the view's width, never the content's.
+export global Flow {
+    pure function start(end: length, gap: length) -> length { return end == 0 ? 0 : end + gap; }
+    public pure function fits(end: length, w: length, gap: length, avail: length) -> bool {
+        return w == 0 || start(end, gap) + w <= avail;
+    }
+    public pure function x(end: length, w: length, gap: length, avail: length) -> length {
+        return w == 0 ? end : fits(end, w, gap, avail) ? start(end, gap) : 0;
+    }
+    public pure function row(end: length, w: length, gap: length, avail: length, r: int) -> int {
+        return fits(end, w, gap, avail) ? r : r + 1;
+    }
+}
+
 // A legend item that explains itself.
 component TipLegend inherits Rectangle {
-    in property <string> text;
-    in property <string> tip;
-    in property <brush> swatch: Theme.accent;
-    in property <bool> outline;
-    in property <length> swatch-w: 10px;
+    in property <LegendItem> data;
     width: item.preferred-width + 10px;
     border-radius: Theme.radius-sm;
     background: area.has-hover || area.focused ? Theme.panel-2 : transparent;
     accessible-role: button;
-    accessible-label: root.text;
-    accessible-description: root.tip;
+    accessible-label: root.data.text;
+    accessible-description: root.data.tip;
     item := Legend {
         x: 5px;
         height: parent.height;
-        text: root.text;
-        swatch: root.swatch;
-        outline: root.outline;
-        swatch-w: root.swatch-w;
+        text: root.data.text;
+        swatch: root.data.swatch;
+        outline: root.data.outline;
+        swatch-w: root.data.swatch-w;
     }
-    area := TipArea { tip: root.tip; mouse-cursor: pointer; }
+    area := TipArea { tip: root.data.tip; mouse-cursor: pointer; }
 }
 
 export global StartHelp {
@@ -46,79 +67,96 @@ export global StartHelp {
     }
 }
 
-// The architecture World's legend for its lens and KPI.
-export component WorldLegend inherits HorizontalLayout {
-    in property <int> lens;
-    in property <int> kpi;
-    spacing: 4px;
-    if lens == 0: TipLegend {
-        text: @tr("Cycle / finding");
-        outline: true;
-        tip: @tr("Red outlines mark areas in a cycle or with recorded findings. Red arrows show cyclic dependencies at this level; opposite directions have separate curves. A package cycle does not mean every class participates, or that a file cycle exists.");
-    }
-    if lens == 0: TipLegend {
-        text: @tr("Classes / files");
-        swatch: Theme.accent;
-        tip: @tr("Blue surfaces represent classes or files, including inside cyclic packages. Their color is neutral: it does not rate their quality or claim they are free of findings.");
-    }
-    if lens == 1 && kpi == 0: TipLegend {
-        text: @tr("Low → high");
-        swatch-w: 56px;
-        swatch: Theme.rate-scale;
-        tip: @tr("Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange. Grouped surfaces use the largest recorded value. The scale is continuous, not a good/bad threshold.");
-    }
-    if lens == 1 && kpi > 0: TipLegend { text: @tr("Low"); swatch: Theme.rate-low; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
-    if lens == 1 && kpi > 0: TipLegend { text: @tr("Elevated"); swatch: Theme.rate-medium; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
-    if lens == 1 && kpi > 0: TipLegend { text: @tr("High"); swatch: Theme.rate-high; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
-    if lens == 1 && kpi == 4: TipLegend { text: @tr("Informational"); swatch: Theme.accent; tip: self.text + " · " + StartHelp.kpi-colors(kpi); }
-    if lens == 2: TipLegend {
-        text: @tr("Test gaps");
-        swatch: Theme.danger;
-        tip: @tr("The imported file coverage contains uncovered executable lines. Grouped surfaces are red if all members have usable coverage and at least one has a gap. This does not identify missing test cases.");
-    }
-    if lens == 2: TipLegend {
-        text: @tr("Covered");
-        swatch: Theme.success;
-        tip: @tr("All executable lines recorded in the imported file coverage are covered. This does not prove current, complete or passing tests; the report revision at import is unverified.");
-    }
-    if lens != 0: TipLegend {
-        text: @tr("Unknown");
-        swatch: Theme.muted;
-        tip: lens == 2 ? @tr("Coverage is missing, stale or cannot be mapped unambiguously. A grouped surface stays gray when any member lacks usable file coverage.")
-            : kpi == 0 ? @tr("No method complexity has been recorded for this surface. Gray does not mean low complexity.")
-            : @tr("No measurement for {} in the imported class metrics for this surface. Gray does not mean a low value; missing class data stays unknown.", StartTones.kpi-label(kpi));
-    }
-    if lens == 1: HelpTip {
-        y: (parent.height - self.height) / 2;
-        tip: StartHelp.kpi-colors(kpi);
+// Up to five legend items and a help button, as many per row as fit the
+// width the legend is given; `full-width` is its width on one row.
+component FlowLegend inherits Rectangle {
+    in property <[LegendItem]> items;
+    // The help button's text; none when empty.
+    in property <string> help;
+    in property <length> row-h: 32px;
+    property <length> gap: 4px;
+    preferred-width: self.full-width;
+    property <length> w0: root.items.length > 0 ? s0.width : 0;
+    property <length> w1: root.items.length > 1 ? s1.width : 0;
+    property <length> w2: root.items.length > 2 ? s2.width : 0;
+    property <length> w3: root.items.length > 3 ? s3.width : 0;
+    property <length> w4: root.items.length > 4 ? s4.width : 0;
+    property <length> w5: root.help != "" ? tip.width : 0;
+    property <length> x1: self.fx(self.w0, self.w1);
+    property <int> r1: self.fr(self.w0, self.w1, 0);
+    property <length> x2: self.fx(self.x1 + self.w1, self.w2);
+    property <int> r2: self.fr(self.x1 + self.w1, self.w2, self.r1);
+    property <length> x3: self.fx(self.x2 + self.w2, self.w3);
+    property <int> r3: self.fr(self.x2 + self.w2, self.w3, self.r2);
+    property <length> x4: self.fx(self.x3 + self.w3, self.w4);
+    property <int> r4: self.fr(self.x3 + self.w3, self.w4, self.r3);
+    property <length> x5: self.fx(self.x4 + self.w4, self.w5);
+    property <int> r5: self.fr(self.x4 + self.w4, self.w5, self.r4);
+    out property <length> full-width: self.w0 + self.w1 + self.w2 + self.w3 + self.w4 + self.w5
+        + self.gap * ((self.w1 > 0 ? 1 : 0) + (self.w2 > 0 ? 1 : 0) + (self.w3 > 0 ? 1 : 0) + (self.w4 > 0 ? 1 : 0) + (self.w5 > 0 ? 1 : 0));
+    pure function fx(end: length, w: length) -> length { return Flow.x(end, w, self.gap, self.width); }
+    pure function fr(end: length, w: length, r: int) -> int { return Flow.row(end, w, self.gap, self.width, r); }
+    pure function row-y(r: int) -> length { return r * self.row-h; }
+    height: (self.r5 + 1) * self.row-h;
+    s0 := TipLegend { visible: root.items.length > 0; x: 0; y: 0; height: root.row-h; data: root.items[0]; }
+    s1 := TipLegend { visible: root.items.length > 1; x: root.x1; y: root.row-y(root.r1); height: root.row-h; data: root.items[1]; }
+    s2 := TipLegend { visible: root.items.length > 2; x: root.x2; y: root.row-y(root.r2); height: root.row-h; data: root.items[2]; }
+    s3 := TipLegend { visible: root.items.length > 3; x: root.x3; y: root.row-y(root.r3); height: root.row-h; data: root.items[3]; }
+    s4 := TipLegend { visible: root.items.length > 4; x: root.x4; y: root.row-y(root.r4); height: root.row-h; data: root.items[4]; }
+    tip := HelpTip {
+        visible: root.help != "";
+        x: root.x5;
+        y: root.row-y(root.r5) + (root.row-h - self.height) / 2;
+        tip: root.help;
     }
 }
 
+global LegendItems {
+    public pure function item(text: string, tip: string, swatch: brush, swatch-w: length, outline: bool) -> LegendItem {
+        return { text: text, tip: tip, swatch: swatch, swatch-w: swatch-w, outline: outline };
+    }
+}
+
+// The architecture World's legend for its lens and KPI.
+export component WorldLegend inherits FlowLegend {
+    in property <int> lens;
+    in property <int> kpi;
+    property <LegendItem> unknown: LegendItems.item(@tr("Unknown"),
+        root.lens == 2 ? @tr("Coverage is missing, stale or cannot be mapped unambiguously. A grouped surface stays gray when any member lacks usable file coverage.")
+            : root.kpi == 0 ? @tr("No method complexity has been recorded for this surface. Gray does not mean low complexity.")
+            : @tr("No measurement for {} in the imported class metrics for this surface. Gray does not mean a low value; missing class data stays unknown.", StartTones.kpi-label(root.kpi)),
+        Theme.muted, 10px, false);
+    pure function rated(text: string, swatch: brush) -> LegendItem {
+        return LegendItems.item(text, text + " · " + StartHelp.kpi-colors(root.kpi), swatch, 10px, false);
+    }
+    help: root.lens == 1 ? StartHelp.kpi-colors(root.kpi) : "";
+    items: root.lens == 0 ? [
+            LegendItems.item(@tr("Cycle / finding"), @tr("Red outlines mark areas in a cycle or with recorded findings. Red arrows show cyclic dependencies at this level; opposite directions have separate curves. A package cycle does not mean every class participates, or that a file cycle exists."), Theme.accent, 10px, true),
+            LegendItems.item(@tr("Classes / files"), @tr("Blue surfaces represent classes or files, including inside cyclic packages. Their color is neutral: it does not rate their quality or claim they are free of findings."), Theme.accent, 10px, false),
+        ]
+        : root.lens == 2 ? [
+            LegendItems.item(@tr("Test gaps"), @tr("The imported file coverage contains uncovered executable lines. Grouped surfaces are red if all members have usable coverage and at least one has a gap. This does not identify missing test cases."), Theme.danger, 10px, false),
+            LegendItems.item(@tr("Covered"), @tr("All executable lines recorded in the imported file coverage are covered. This does not prove current, complete or passing tests; the report revision at import is unverified."), Theme.success, 10px, false),
+            root.unknown,
+        ]
+        : root.kpi == 0 ? [
+            LegendItems.item(@tr("Low → high"), @tr("Observed maximum cyclomatic method complexity, logarithmically colored from teal to orange. Grouped surfaces use the largest recorded value. The scale is continuous, not a good/bad threshold."), Theme.rate-scale, 56px, false),
+            root.unknown,
+        ]
+        : root.kpi == 4 ? [
+            root.rated(@tr("Low"), Theme.rate-low), root.rated(@tr("Elevated"), Theme.rate-medium), root.rated(@tr("High"), Theme.rate-high),
+            root.rated(@tr("Informational"), Theme.accent), root.unknown,
+        ]
+        : [root.rated(@tr("Low"), Theme.rate-low), root.rated(@tr("Elevated"), Theme.rate-medium), root.rated(@tr("High"), Theme.rate-high), root.unknown];
+}
+
 // The services World's arrows (`worldDraw`): tones and dashes.
-export component ServicesLegend inherits HorizontalLayout {
-    spacing: 4px;
-    TipLegend {
-        text: @tr("Cyclic");
-        swatch: StartTones.edge(0);
-        swatch-w: 16px;
-        tip: @tr("Red arrows are cyclic communication of one kind: following connections of that kind leads back to the service. Opposite directions have separate curves.");
-    }
-    TipLegend {
-        text: @tr("Into the selection");
-        swatch: StartTones.edge(1);
-        swatch-w: 16px;
-        tip: @tr("Accented arrows lead into the selected service.");
-    }
-    TipLegend {
-        text: @tr("Other connections");
-        swatch: StartTones.edge(2);
-        swatch-w: 16px;
-        tip: @tr("Green arrows are the other shown connections, from caller, producer or referencing service to its target.");
-    }
-    TipLegend {
-        text: @tr("Events");
-        swatch: @linear-gradient(90deg, Theme.muted 0%, Theme.muted 40%, transparent 40%, transparent 60%, Theme.muted 60%, Theme.muted 100%);
-        swatch-w: 16px;
-        tip: @tr("Dashed arrows are inferred event flows, from the producing to the consuming service.");
-    }
+export component ServicesLegend inherits FlowLegend {
+    items: [
+        LegendItems.item(@tr("Cyclic"), @tr("Red arrows are cyclic communication of one kind: following connections of that kind leads back to the service. Opposite directions have separate curves."), StartTones.edge(0), 16px, false),
+        LegendItems.item(@tr("Into the selection"), @tr("Accented arrows lead into the selected service."), StartTones.edge(1), 16px, false),
+        LegendItems.item(@tr("Other connections"), @tr("Green arrows are the other shown connections, from caller, producer or referencing service to its target."), StartTones.edge(2), 16px, false),
+        LegendItems.item(@tr("Events"), @tr("Dashed arrows are inferred event flows, from the producing to the consuming service."),
+            @linear-gradient(90deg, Theme.muted 0%, Theme.muted 40%, transparent 40%, transparent 60%, Theme.muted 60%, Theme.muted 100%), 16px, false),
+    ];
 }
