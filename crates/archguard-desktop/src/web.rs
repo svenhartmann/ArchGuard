@@ -2,11 +2,12 @@
 //! read the URL it prints and open the requested tab in the browser.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
+use std::thread::JoinHandle;
 
 /// A project's server: being started (by the call holding `token`), or
 /// running with its base URL.
@@ -108,22 +109,51 @@ fn kill(child: &mut Child) {
 }
 
 fn start(root: &Path) -> Result<(Child, String), String> {
-    let bin = binary();
-    let mut child = Command::new(&bin)
+    start_with(&binary(), root)
+}
+
+/// Start `bin serve root` and wait for its URL.
+fn start_with(bin: &Path, root: &Path) -> Result<(Child, String), String> {
+    let mut child = Command::new(bin)
         .arg("serve")
         .arg(root)
         .args(["--port", "0"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{}: {e}", bin.display()))?;
+    let stderr = child.stderr.take().map(tail);
     match first_url(&mut child) {
+        // The reader keeps draining stderr while the server runs.
         Ok(url) => Ok((child, url)),
         Err(e) => {
             kill(&mut child);
-            Err(e)
+            let said = stderr.and_then(|t| t.join().ok()).unwrap_or_default();
+            Err(if said.is_empty() {
+                e
+            } else {
+                format!("{e}\n{said}")
+            })
         }
     }
+}
+
+/// Bytes kept from the end of the server's stderr for the error.
+const STDERR_TAIL: usize = 4096;
+
+/// Read `stream` to its end on a thread; returns its last
+/// [`STDERR_TAIL`] bytes.
+fn tail(mut stream: impl Read + Send + 'static) -> JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n @ 1..) = stream.read(&mut buf) {
+            kept.extend_from_slice(&buf[..n]);
+            let excess = kept.len().saturating_sub(STDERR_TAIL);
+            kept.drain(..excess);
+        }
+        String::from_utf8_lossy(&kept).trim().to_string()
+    })
 }
 
 /// The URL the server prints first; keeps draining its output afterwards
@@ -198,6 +228,28 @@ mod tests {
         assert_eq!(route("dsm"), "#tab=dsm");
         assert_eq!(route("security"), "#tab=security");
         assert_eq!(route("unknown"), "#tab=graph");
+    }
+
+    /// A failed `archguard serve` says why: its stderr is in the error,
+    /// not only "printed no URL".
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_serve_reports_its_stderr() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("archguard-web-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("archguard");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\nhead -c 9000 /dev/zero | tr '\\0' x >&2\necho 'error: no archguard.toml in /p' >&2\nexit 2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let err = start_with(&bin, Path::new("/p")).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("printed no URL"), "{err}");
+        assert!(err.contains("error: no archguard.toml in /p"), "{err}");
+        assert!(err.len() < 4096 + 200, "bounded: {} bytes", err.len());
     }
 
     fn sleeper() -> Child {

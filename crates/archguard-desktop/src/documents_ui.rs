@@ -8,7 +8,7 @@
 //! that keep their state in [`documents`] only push it again then.
 
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use archguard_engine::{Level, analyze_run_quiet, collect_review_sources, load_config};
 use slint::{ComponentHandle, SharedString};
@@ -48,6 +48,11 @@ pub fn wire(ui: &AppWindow) {
     ui.on_open_web(with_ui(ui, |ui, tab: SharedString| open_web(ui, &tab)));
     let strip = with_ui(ui, |ui, ()| push_strip(ui));
     documents::on_dirty_changed(move || strip(()));
+    // Notice 2 reads "Could not save the changes: …" (`ui/app.slint`).
+    settings_file::on_error(with_ui(ui, |ui, e: String| {
+        ui.set_notice_kind(2);
+        ui.set_notice(e.into());
+    }));
 }
 
 pub use crate::tab_support::with_ui;
@@ -189,13 +194,19 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
     documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let result = analyze(&root, &topology);
+        let result = guarded(|| analyze(&root, &topology));
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 finished(&ui, id, result);
             }
         });
     });
+}
+
+/// Run a document's analysis on its worker thread. A panic becomes the
+/// document's error, so it leaves "Loading" either way.
+fn guarded<T>(analyze: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    tab_support::catch(analyze).and_then(|r| r)
 }
 
 fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>), String>) {
@@ -205,7 +216,7 @@ fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>
         };
         match result {
             Ok((analysis, projects)) => {
-                doc.analysis = Some(Rc::new(analysis));
+                doc.analysis = Some(Arc::new(analysis));
                 doc.projects = projects;
                 doc.status = Status::Ready;
             }
@@ -348,4 +359,23 @@ fn open_web(ui: &AppWindow, tab: &str) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A panicking analysis still ends in a result, so the document leaves
+    /// "Loading" and shows the panic as its error.
+    #[test]
+    fn a_panicking_analysis_becomes_the_error() {
+        let result: Result<(), String> = guarded(|| panic!("parser blew up"));
+        assert_eq!(result, Err("parser blew up".to_string()));
+    }
+
+    #[test]
+    fn an_analysis_error_stays_the_error() {
+        let result: Result<(), String> = guarded(|| Err("no config".into()));
+        assert_eq!(result, Err("no config".to_string()));
+    }
 }

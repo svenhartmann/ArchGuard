@@ -1,4 +1,4 @@
-use super::super::FieldValue;
+use super::super::{FieldValue, catalogue};
 use super::{editor_with, fixture};
 
 fn error(text: &str) -> (String, String) {
@@ -42,7 +42,7 @@ fn engine_checks_name_the_field() {
     editor.add_entry("layers").unwrap();
     let err = editor.validate().unwrap_err();
     assert_eq!(err.path, "layers[0].name");
-    assert_eq!(err.field().unwrap().path, "layers[].name");
+    assert_eq!(catalogue::resolve(&err.path).unwrap().path, "layers[].name");
     editor
         .set("layers[0].name", FieldValue::Text("core".into()))
         .unwrap();

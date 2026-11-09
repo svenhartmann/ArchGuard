@@ -11,14 +11,17 @@ mod choice;
 mod png;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::{ComponentHandle, SharedString};
 
+use crate::context::Analysis;
 use crate::documents::with_store;
 use crate::export::{self, SecurityFilters, Snapshot, Theme, View};
 use crate::matrix_ui::MatrixState;
 use crate::panes::Tab;
-use crate::tab_support::{index, with_ui};
+use crate::tab_support::{self, index, with_ui};
 use crate::ui::AppWindow;
 use crate::{graph_ui, instances, panes_ui, quality_ui, security_ui, services_ui};
 pub use choice::Choice;
@@ -44,8 +47,37 @@ enum Failure {
 /// What to write and how the notice reads.
 struct Prepared {
     name: String,
-    bytes: Vec<u8>,
+    bytes: Bytes,
     notice: i32,
+}
+
+/// Work that makes an export's bytes on a worker thread.
+type Job = Box<dyn FnOnce() -> Result<Vec<u8>, Failure> + Send>;
+
+/// An export's bytes: made on the UI thread from the view's state, or a
+/// [`Job`] for a worker (arc42, which runs the engine's analysis).
+enum Bytes {
+    Now(Vec<u8>),
+    Later(Job),
+}
+
+/// Set while an arc42 export runs on its worker thread.
+static ARC42_BUSY: AtomicBool = AtomicBool::new(false);
+
+/// The running arc42 export; dropping it frees the slot.
+struct Busy;
+
+impl Busy {
+    /// `None` while another arc42 export runs.
+    fn begin() -> Option<Busy> {
+        (!ARC42_BUSY.swap(true, Ordering::AcqRel)).then_some(Busy)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        ARC42_BUSY.store(false, Ordering::Release);
+    }
 }
 
 /// Register the menu and tab callbacks once at start-up.
@@ -65,11 +97,17 @@ pub fn wire(ui: &AppWindow) {
 }
 
 /// Export the focused pane's view as `format`, to `path` or where the
-/// save dialog says. Returns the written path.
+/// save dialog says. Returns the written path; `None` also while an arc42
+/// export still runs on its worker thread (snapshot runs make it in place).
 pub fn run(ui: &AppWindow, format: &str, path: Option<PathBuf>) -> Option<PathBuf> {
     let choice = Choice::parse(format)?;
     let layout = panes_ui::layout();
     let tab = layout.view(layout.focus)?.clone();
+    // One arc42 export at a time; a request meanwhile does nothing.
+    let busy = match choice {
+        Choice::Arc42 => Some(Busy::begin()?),
+        _ => None,
+    };
     let prepared = match prepare(ui, &tab, layout.focus, choice) {
         Ok(p) => p,
         Err(f) => {
@@ -78,10 +116,48 @@ pub fn run(ui: &AppWindow, format: &str, path: Option<PathBuf>) -> Option<PathBu
         }
     };
     let path = path.or_else(|| ask(ui, &prepared.name))?;
-    match export::write(&path, &prepared.bytes) {
+    let job = match prepared.bytes {
+        Bytes::Now(bytes) => return save(ui, path, prepared.notice, prepared.name, Ok(bytes)),
+        Bytes::Later(job) if tab_support::snapshot_mode() => {
+            let bytes = tab_support::catch(job).unwrap_or_else(|e| Err(Failure::Error(e)));
+            return save(ui, path, prepared.notice, prepared.name, bytes);
+        }
+        Bytes::Later(job) => job,
+    };
+    // The previous export's notice would read as this one's result.
+    ui.set_notice(SharedString::new());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let bytes = tab_support::catch(job).unwrap_or_else(|e| Err(Failure::Error(e)));
+        let _ = slint::invoke_from_event_loop(move || {
+            drop(busy);
+            if let Some(ui) = weak.upgrade() {
+                save(&ui, path, prepared.notice, prepared.name, bytes);
+            }
+        });
+    });
+    None
+}
+
+/// Write the made bytes to `path` and show the result.
+fn save(
+    ui: &AppWindow,
+    path: PathBuf,
+    kind: i32,
+    name: String,
+    bytes: Result<Vec<u8>, Failure>,
+) -> Option<PathBuf> {
+    let bytes = match bytes {
+        Ok(b) => b,
+        Err(f) => {
+            fail(ui, f);
+            return None;
+        }
+    };
+    match export::write(&path, &bytes) {
         Ok(()) => {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            notice(ui, prepared.notice, &name.unwrap_or(prepared.name));
+            let file = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            notice(ui, kind, &file.unwrap_or(name));
             Some(path)
         }
         Err(e) => {
@@ -119,11 +195,11 @@ fn prepare(ui: &AppWindow, tab: &Tab, pane: usize, choice: Choice) -> Result<Pre
     choice::check(&tab.kind, display(tab), choice).map_err(Failure::Hint)?;
     let name = choice::file_name(&tab.kind, choice);
     let (bytes, notice) = match choice {
-        Choice::Markdown => (data(ui, tab)?.1.markdown().into_bytes(), DONE),
-        Choice::Json => (data(ui, tab)?.1.json().into_bytes(), DONE),
-        Choice::Svg => (svg(ui, tab)?.into_bytes(), DONE),
-        Choice::Arc42 => (arc42()?.into_bytes(), DONE_ARC42),
-        Choice::Png => (image(ui, pane)?, DONE_IMAGE),
+        Choice::Markdown => (Bytes::Now(data(ui, tab)?.1.markdown().into_bytes()), DONE),
+        Choice::Json => (Bytes::Now(data(ui, tab)?.1.json().into_bytes()), DONE),
+        Choice::Svg => (Bytes::Now(svg(ui, tab)?.into_bytes()), DONE),
+        Choice::Arc42 => (Bytes::Later(arc42_job(active_analysis()?)), DONE_ARC42),
+        Choice::Png => (Bytes::Now(image(ui, pane)?), DONE_IMAGE),
     };
     Ok(Prepared {
         name,
@@ -196,10 +272,18 @@ fn svg(ui: &AppWindow, tab: &Tab) -> Result<String, Failure> {
     Ok(export::svg(&diagram, Theme::of(dark)))
 }
 
-/// The arc42 document of the active document's analysis.
-fn arc42() -> Result<String, Failure> {
-    let analysis = with_store(|s| s.active()?.analysis.clone()).ok_or(Failure::Loading)?;
-    export::arc42(&analysis.root, &analysis.run, None).map_err(Failure::Error)
+fn active_analysis() -> Result<Arc<Analysis>, Failure> {
+    with_store(|s| s.active()?.analysis.clone()).ok_or(Failure::Loading)
+}
+
+/// The arc42 document of `analysis`, made by a worker: the engine's arc42
+/// analysis runs compiler-backed calls, services and coverage.
+fn arc42_job(analysis: Arc<Analysis>) -> Job {
+    Box::new(move || {
+        export::arc42(&analysis.root, &analysis.run, None)
+            .map(String::into_bytes)
+            .map_err(Failure::Error)
+    })
 }
 
 /// Pane `pane` cropped from the rendered window.
@@ -243,4 +327,45 @@ fn ask(ui: &AppWindow, name: &str) -> Option<PathBuf> {
         dialog = dialog.set_directory(dir);
     }
     dialog.save_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::Analysis;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    /// The arc42 export runs the engine's full arc42 analysis; it is a job
+    /// a worker thread runs, not work on the UI thread.
+    #[test]
+    fn the_arc42_export_runs_on_a_worker_thread() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts-cyclic");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let analysis = Arc::new(Analysis {
+            root,
+            run,
+            sources: Default::default(),
+        });
+        let job = arc42_job(analysis);
+        let caller = std::thread::current().id();
+        let (bytes, worker) = std::thread::spawn(move || (job(), std::thread::current().id()))
+            .join()
+            .expect("worker");
+        assert_ne!(worker, caller);
+        let text = String::from_utf8(bytes.ok().expect("arc42")).unwrap();
+        assert!(text.contains("arc42"), "{text}");
+    }
+
+    /// A second arc42 export while one runs starts no second analysis.
+    #[test]
+    fn one_arc42_export_runs_at_a_time() {
+        let first = Busy::begin().expect("free");
+        assert!(Busy::begin().is_none(), "second export while one runs");
+        drop(first);
+        assert!(Busy::begin().is_some(), "free again after the first");
+    }
 }

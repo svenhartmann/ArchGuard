@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::DocumentMut;
 
+use crate::config_editor::write_atomic;
 use crate::settings::{self, Settings};
 
 pub const FILE: &str = "desktop.toml";
@@ -99,13 +100,7 @@ fn backup(path: &Path, error: &str) -> String {
 
 /// Write `settings` into `doc` and replace `path` atomically.
 pub fn save(path: &Path, doc: &mut DocumentMut, settings: &Settings) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let text = settings::render(doc, settings);
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    write_atomic(path, settings::render(doc, settings).as_bytes())
 }
 
 struct Current {
@@ -114,7 +109,11 @@ struct Current {
     settings: Settings,
 }
 
+/// Shows a failed write in the window ([`on_error`]).
+type ErrorHook = Box<dyn Fn(String)>;
+
 thread_local! {
+    static ON_ERROR: RefCell<Option<ErrorHook>> = RefCell::new(None);
     static CURRENT: RefCell<Current> = RefCell::new(Current {
         path: None,
         doc: DocumentMut::new(),
@@ -145,16 +144,23 @@ pub fn edit(f: impl FnOnce(&mut Settings)) {
     CURRENT.with_borrow_mut(|c| f(&mut c.settings));
 }
 
-/// Store the current settings; errors go to stderr, the app keeps running.
+/// Store the current settings. Errors go to stderr and to [`on_error`];
+/// the app keeps running.
 pub fn write() {
-    CURRENT.with_borrow_mut(|c| {
-        let Some(path) = c.path.clone() else {
-            return;
-        };
-        if let Err(e) = save(&path, &mut c.doc, &c.settings) {
-            eprintln!("archguard-desktop: cannot write {}: {e}", path.display());
-        }
+    let error = CURRENT.with_borrow_mut(|c| {
+        let path = c.path.clone()?;
+        let e = save(&path, &mut c.doc, &c.settings).err()?;
+        Some(format!("{}: {e}", path.display()))
     });
+    let Some(error) = error else { return };
+    eprintln!("archguard-desktop: cannot write {error}");
+    // Outside the borrow: the window may read the settings.
+    ON_ERROR.with_borrow(|f| f.as_ref().map(|f| f(error)));
+}
+
+/// Call `f` with the message of every failed [`write`].
+pub fn on_error(f: impl Fn(String) + 'static) {
+    ON_ERROR.set(Some(Box::new(f)));
 }
 
 /// [`edit`], then [`write`].
@@ -303,5 +309,56 @@ mod tests {
                 .expect("kept")
                 .contains("language = \"en\"")
         );
+    }
+
+    fn entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A save that cannot replace the file leaves no temporary file behind.
+    #[test]
+    fn a_failed_save_leaves_no_temporary_file() {
+        let dir = temp("failed-save");
+        let path = dir.join(FILE);
+        // A non-empty directory where the file should be: rename fails.
+        std::fs::create_dir_all(path.join("in-the-way")).expect("dir");
+        assert!(save(&path, &mut DocumentMut::new(), &Settings::default()).is_err());
+        assert_eq!(entries(&dir), [FILE]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_keeps_the_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("permissions");
+        let path = dir.join(FILE);
+        std::fs::write(&path, "").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        save(&path, &mut DocumentMut::new(), &Settings::default()).expect("written");
+        let mode = std::fs::metadata(&path).expect("meta").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// The window shows a failed write; stderr alone is invisible when the
+    /// app starts from Finder.
+    #[test]
+    fn a_failed_write_is_reported() {
+        let dir = temp("reported");
+        let path = dir.join(FILE);
+        std::fs::create_dir_all(path.join("in-the-way")).expect("dir");
+        init(Some(path.clone()));
+        let seen = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        on_error(move |e| sink.borrow_mut().push(e));
+        update(|s| s.language = "en".into());
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].contains(&path.display().to_string()), "{seen:?}");
+        init(None);
     }
 }

@@ -44,6 +44,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use archguard_engine::core::ServiceTopology;
 
@@ -74,7 +75,7 @@ pub struct Document {
     pub root: PathBuf,
     pub name: String,
     pub status: Status,
-    pub analysis: Option<Rc<Analysis>>,
+    pub analysis: Option<Arc<Analysis>>,
     pub projects: Vec<SubProject>,
     states: HashMap<TypeId, Rc<dyn Any>>,
     /// What is unsaved, in the order it was first marked; empty: clean.
@@ -217,7 +218,8 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)]
+    /// Snapshot hooks and tests; the window asks [`Document::is_dirty`].
+    #[cfg(any(test, feature = "snapshot"))]
     pub fn is_dirty(&self, id: DocId) -> bool {
         self.get(id).is_some_and(Document::is_dirty)
     }
@@ -364,7 +366,8 @@ pub fn mark_clean(doc: DocId) {
     dirty_changed();
 }
 
-#[allow(dead_code)]
+/// Snapshot hooks (`settings_view_ui`) and tests.
+#[cfg(any(test, feature = "snapshot"))]
 pub fn is_dirty(doc: DocId) -> bool {
     with_store(|s| s.is_dirty(doc))
 }

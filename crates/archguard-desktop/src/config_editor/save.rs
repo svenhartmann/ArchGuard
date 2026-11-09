@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -31,32 +31,44 @@ impl ConfigEditor {
         if on_disk != self.disk {
             return Err(SaveError::ChangedOnDisk);
         }
-        write_atomic(self.path(), &text)
+        write_atomic(self.path(), text.as_bytes())
             .map_err(|e| SaveError::Io(format!("{}: {e}", self.path().display())))?;
         self.disk = Some(text);
         Ok(self.path().to_path_buf())
     }
 }
 
-/// Replace `path` with `text` so readers see the old or the new file,
-/// never a part. Keeps the permissions of an existing file.
-pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+/// Replace `path` with `bytes` so readers see the old or the new file,
+/// never a part: a new temporary file in the same directory, synced, then
+/// renamed over it; removed again on failure. Keeps the permissions of an
+/// existing file and creates missing directories. Used for
+/// `archguard.toml`, `desktop.toml` and exports.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("no parent directory"))?;
     fs::create_dir_all(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let result = fs::write(&tmp, text).and_then(|()| {
-        if let Ok(metadata) = fs::metadata(path) {
-            fs::set_permissions(&tmp, metadata.permissions())?;
-        }
-        fs::rename(&tmp, path)
-    });
+    let result = publish(&tmp, path, bytes);
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+fn publish(tmp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)?;
+    if let Ok(metadata) = fs::metadata(path) {
+        file.set_permissions(metadata.permissions())?;
+    }
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(tmp, path)
 }
 
 /// Connect `editor` to document `doc`: every edit marks the document

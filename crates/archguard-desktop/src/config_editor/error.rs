@@ -2,8 +2,6 @@
 
 use std::fmt;
 
-use super::catalogue::{self, Field};
-
 /// A problem with one field: the concrete path the engine or the parser
 /// names (`layers[0].name`, `rules.foo`; empty when no field is known)
 /// and a readable message.
@@ -19,11 +17,6 @@ impl FieldError {
             path: path.into(),
             message: message.into(),
         }
-    }
-
-    /// The catalogue field the form shows this error at.
-    pub fn field(&self) -> Option<&'static Field> {
-        catalogue::resolve(&self.path)
     }
 }
 

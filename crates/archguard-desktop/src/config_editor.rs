@@ -11,8 +11,7 @@
 //! * [`ConfigEditor::save`] and [`bind`]: atomic save and the document's
 //!   dirty/save hooks.
 //!
-//! Not wired into the window yet; the Settings view will use it.
-#![allow(dead_code)]
+//! The Settings view (`settings_view_ui`) shows it.
 
 pub mod catalogue;
 mod defaults;
@@ -27,14 +26,14 @@ mod toml_path;
 mod validate;
 mod value;
 
-// The public API; unused until the Settings view is wired.
-#[allow(unused_imports)]
 pub use {
     catalogue::{FIELDS, Field, Group, Kind},
     document::ConfigEditor,
     error::{FieldError, SaveError},
-    preview::{CheckSummary, Preview, PreviewRequest},
     provenance::{EntryState, FieldState, Provenance},
-    save::{bind, save_hook},
+    save::{bind, write_atomic},
     value::FieldValue,
 };
+// The Settings view's tests build preview results.
+#[cfg(test)]
+pub use preview::{CheckSummary, Preview};
