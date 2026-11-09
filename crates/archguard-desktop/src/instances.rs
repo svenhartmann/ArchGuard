@@ -83,6 +83,7 @@ pub fn sync<T: Instance>(
     tree: &Tree,
     build: impl FnMut(&Tab, Option<usize>) -> Option<T>,
 ) -> Vec<u32> {
+    documents::derived::<Instances<T>>();
     let gone = reconcile(layout, kind, tree, build);
     documents::with_active_state(|m: &mut Instances<T>| {
         for p in 0..layout.panes.len() {

@@ -49,6 +49,27 @@ pub fn wire(ui: &AppWindow) {
     ui.on_open_web(with_ui(ui, |ui, tab: SharedString| open_web(ui, &tab)));
     let strip = with_ui(ui, |ui, ()| push_strip(ui));
     documents::on_dirty_changed(move || strip(()));
+    // The window opens without waiting for rust-analyzer. Once its run for
+    // a root is done, that root's documents are analysed again; the views
+    // keep showing the first analysis meanwhile.
+    let weak = ui.as_weak();
+    archguard_engine::index_rust_in_background(move |root| {
+        let (weak, root) = (weak.clone(), root.to_path_buf());
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let docs = with_store(|s| {
+                s.docs()
+                    .iter()
+                    .map(|d| (d.id, d.root.clone()))
+                    .collect::<Vec<_>>()
+            });
+            for (id, _) in docs.into_iter().filter(|(_, r)| *r == root) {
+                spawn_analysis(&ui, id, root.clone());
+            }
+        });
+    });
     // Notice 2 reads "Could not save the changes: …" (`ui/app.slint`).
     settings_file::on_error(with_ui(ui, |ui, e: String| {
         ui.set_notice_kind(2);
@@ -219,6 +240,9 @@ fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>
         };
         match result {
             Ok((analysis, projects)) => {
+                if doc.analysis.is_some() {
+                    doc.forget_derived();
+                }
                 doc.analysis = Some(Arc::new(analysis));
                 doc.projects = projects;
                 doc.status = Status::Ready;

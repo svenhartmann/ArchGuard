@@ -632,7 +632,7 @@ pub(crate) fn analyze_with(root: &Path, config: &Config, analyzer: Option<&OsStr
                 );
                 backend = "syn + rust-analyzer scip";
                 version = Some(index.version.clone());
-                notes.push(RESOLVED.into());
+                notes.extend(index.notes(RESOLVED));
                 Some(index)
             }
             Err(error) => {

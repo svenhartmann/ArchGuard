@@ -19,7 +19,8 @@ static MEMO: OnceLock<Mutex<Kept>> = OnceLock::new();
 
 /// Identity of what the analysis reads: the source set (contents and Rust
 /// manifests), the settings the call scanners read (`project`, `semantic`)
-/// and whether project compiler tooling is trusted (ADR 0007). Layers,
+/// whether project compiler tooling is trusted (ADR 0007) and how many
+/// background rust-analyzer runs finished for the root. Layers,
 /// rules and module depth are not read, so the loaded and the derived
 /// configuration share one result. `None` when the sources cannot be listed.
 fn key(root: &Path, config: &Config) -> Option<String> {
@@ -27,7 +28,8 @@ fn key(root: &Path, config: &Config) -> Option<String> {
     let project = serde_json::to_string(&config.project).ok()?;
     let semantic = serde_json::to_string(&config.semantic).ok()?;
     let trusted = crate::compiler_trust::trusted();
-    Some(format!("{sources}\n{project}\n{semantic}\n{trusted}"))
+    let index = crate::rust_scip::background::generation(root);
+    Some(format!("{sources}\n{project}\n{semantic}\n{trusted}\n{index}"))
 }
 
 /// `compute` for `root`, or the kept result of an unchanged project.

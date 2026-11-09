@@ -41,7 +41,7 @@
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -113,6 +113,12 @@ impl Document {
         let cell: Rc<dyn Any> = Rc::new(RefCell::new(state));
         self.states.insert(TypeId::of::<T>(), cell.clone());
         cell
+    }
+
+    /// Drop the states built from the analysis ([`derived`]): a newer
+    /// analysis arrived, and the views build them again when shown.
+    pub fn forget_derived(&mut self) {
+        DERIVED.with_borrow(|d| self.states.retain(|t, _| !d.contains(t)));
     }
 
     pub fn has_state<T: 'static>(&self) -> bool {
@@ -334,6 +340,17 @@ pub fn with_active_state_or<T: 'static, R>(
 }
 
 thread_local! {
+    static DERIVED: RefCell<HashSet<TypeId>> = RefCell::default();
+}
+
+/// Mark state type `T` as built from the document's analysis, so that
+/// [`Document::forget_derived`] drops it (views, package tree, call slots;
+/// not the layout or an editor with unsaved changes).
+pub fn derived<T: 'static>() {
+    DERIVED.with_borrow_mut(|d| d.insert(TypeId::of::<T>()));
+}
+
+thread_local! {
     static ON_DIRTY: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
@@ -475,6 +492,19 @@ mod tests {
         s.close(0);
         assert!(s.active().is_none());
         assert!(s.close(0).is_none());
+    }
+
+    #[test]
+    fn a_new_analysis_drops_only_derived_state() {
+        let mut s = store(&["/a"]);
+        let a = s.docs()[0].id;
+        derived::<u32>();
+        s.set_state(a, 1_u32);
+        s.set_state(a, "layout");
+        let doc = s.get_mut(a).unwrap();
+        doc.forget_derived();
+        assert!(!doc.has_state::<u32>(), "built from the analysis");
+        assert!(doc.has_state::<&str>(), "not derived: kept");
     }
 
     #[test]

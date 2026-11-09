@@ -4,12 +4,13 @@
 //! the repository is trusted, from the rust-analyzer SCIP index, which also
 //! supplies each type's references in fields, signatures and impl bodies.
 //! Rust has no implementation inheritance, so no inheritance depth is recorded.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::OnceLock;
 
-use archguard_core::{CallAnalysis, CallSupertypeSite, SemanticTypeUse};
+use archguard_core::{CallAnalysis, CallClass, CallSupertypeSite, SemanticTypeUse};
 
 use crate::pipeline::{CrateItems, ItemTarget};
-use crate::rust_scip::ScipIndex;
+use crate::rust_scip::{ScipIndex, line_at, line_starts};
 
 /// A trait path in an `impl Trait for Type` header or a supertrait bound.
 pub(crate) struct TraitSite {
@@ -48,38 +49,74 @@ pub(crate) struct TypeSites {
 pub(crate) struct Parsed {
     pub syntax: BTreeMap<String, (String, syn::File)>,
     pub stripped: BTreeMap<String, String>,
+    /// Line starts per walked path, built on the first [`Parsed::line`].
+    starts: OnceLock<HashMap<String, Vec<usize>>>,
 }
 impl Parsed {
+    /// The 1-based `line` of a source; line 0 reads as line 1.
     fn line(&self, rel_path: &str, line: u32) -> &str {
-        self.syntax
-            .get(rel_path)
-            .and_then(|(text, _)| text.lines().nth(line.saturating_sub(1) as usize))
-            .unwrap_or("")
+        let starts = self.starts.get_or_init(|| {
+            let texts = self.syntax.iter();
+            texts
+                .map(|(path, (text, _))| (path.clone(), line_starts(text)))
+                .collect()
+        });
+        match (self.syntax.get(rel_path), starts.get(rel_path)) {
+            (Some((text, _)), Some(starts)) => line_at(text, starts, line.max(1)),
+            _ => "",
+        }
+    }
+}
+
+/// Types a SCIP definition can name (not impls, modules or unknown
+/// markers), by file and last name segment.
+struct Classes<'a>(HashMap<(&'a str, &'a str), Vec<&'a CallClass>>);
+
+impl<'a> Classes<'a> {
+    fn new(report: &'a CallAnalysis) -> Self {
+        let mut map: HashMap<_, Vec<_>> = HashMap::new();
+        let named = report
+            .classes
+            .iter()
+            .filter(|class| !matches!(class.kind.as_str(), "impl" | "module" | "unknown"));
+        for class in named {
+            let name = class.name.rsplit("::").next().unwrap_or(&class.name);
+            map.entry((class.file.as_str(), name))
+                .or_default()
+                .push(class);
+        }
+        Classes(map)
     }
 }
 
 /// Set the supertypes of every class with a trait site: `scip` decides where
 /// it has a symbol for the trait, syntax everywhere else.
+#[tracing::instrument(skip_all)]
 pub(crate) fn supertypes(
     report: &mut CallAnalysis,
     parsed: &Parsed,
     sites: &[TraitSite],
     scip: Option<&ScipIndex>,
 ) {
-    let items = CrateItems::new(&parsed.syntax);
+    // Syntax resolution only for the sites SCIP leaves open.
+    let items = std::cell::OnceCell::new();
+    let classes = Classes::new(report);
     // Class → (target, evidence file, evidence line).
     let mut found = BTreeMap::<&str, BTreeSet<(String, String, u32)>>::new();
     for site in sites {
         let from_scip = scip.and_then(|index| {
             let text = parsed.line(&site.rel_path, site.line);
             let symbol = index.symbol_at(&site.rel_path, text, site.line, site.column)?;
-            match target(index, report, parsed, symbol)? {
+            match target(index, &classes, parsed, symbol)? {
                 Target::Class(id) => Some(id),
                 Target::External(label) => Some(format!("external:{label}")),
                 Target::Unmatched(_) => None,
             }
         });
         let target = from_scip.unwrap_or_else(|| {
+            let items = items.get_or_init(|| {
+                tracing::info_span!("crate_items").in_scope(|| CrateItems::new(&parsed.syntax))
+            });
             match items.resolve(&site.rel_path, &site.inline, &site.path) {
                 ItemTarget::Project { file, name } => {
                     format!("{}::{name}", parsed.stripped[&file])
@@ -132,7 +169,7 @@ fn type_label(symbol: &str) -> Option<String> {
 /// What a SCIP symbol names, if it is a type (struct, enum, union, trait or alias).
 fn target(
     index: &ScipIndex,
-    report: &CallAnalysis,
+    classes: &Classes<'_>,
     parsed: &Parsed,
     symbol: &str,
 ) -> Option<Target> {
@@ -142,15 +179,12 @@ fn target(
     };
     let file = parsed.stripped.get(document).unwrap_or(document);
     let name = label.rsplit("::").next().unwrap_or(&label);
-    let class = report
-        .classes
-        .iter()
-        .filter(|class| {
-            class.file == *file
-                && !matches!(class.kind.as_str(), "impl" | "module" | "unknown")
-                && class.name.rsplit("::").next() == Some(name)
-                && class.line <= line + 1
-        })
+    let class = classes
+        .0
+        .get(&(file.as_str(), name))
+        .into_iter()
+        .flatten()
+        .filter(|class| class.line <= line + 1)
         .max_by_key(|class| class.line);
     Some(match class {
         Some(class) => Target::Class(class.id.clone()),
@@ -159,12 +193,14 @@ fn target(
 }
 
 /// Type references inside each region, once per region owner, method, role and target.
+#[tracing::instrument(skip_all)]
 pub(crate) fn type_uses(
     index: &ScipIndex,
     report: &CallAnalysis,
     parsed: &Parsed,
     regions: &[Region],
 ) -> Vec<SemanticTypeUse> {
+    let classes = Classes::new(report);
     let mut seen = BTreeSet::new();
     let mut uses = Vec::new();
     for region in regions {
@@ -174,7 +210,7 @@ pub(crate) fn type_uses(
         };
         let (start, end) = (position(region.start), position(region.end));
         for (line, symbol) in index.symbols_between(&region.rel_path, start, end) {
-            let Some(target) = target(index, report, parsed, symbol) else {
+            let Some(target) = target(index, &classes, parsed, symbol) else {
                 continue;
             };
             let (resolution, to_class, label) = match target {

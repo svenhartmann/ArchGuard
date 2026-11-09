@@ -152,6 +152,7 @@ pub fn snapshot_mode() -> bool {
 /// The active document's package tree, built once for the Graph and Matrix
 /// tabs.
 pub fn tree(data: &Loaded) -> Rc<Tree> {
+    documents::derived::<Rc<Tree>>();
     let build = || Rc::new(Tree::from_graph(&data.run.graph));
     documents::with_active_state_or(build, |t: &mut Rc<Tree>| t.clone()).unwrap_or_else(build)
 }
@@ -187,6 +188,9 @@ fn start<T: 'static>() -> Start {
     let Some(doc) = documents::active_id() else {
         return Start::None;
     };
+    documents::derived::<T>();
+    documents::derived::<Pending<T>>();
+    documents::derived::<Queued<T>>();
     documents::set_state(
         doc,
         Pending::<T> {
@@ -305,6 +309,7 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// The active document's slot (UI thread); a fresh one without an
     /// active document.
     pub fn active() -> Self {
+        documents::derived::<Shared<T>>();
         documents::with_active_state_or(|| Shared(Arc::default()), |s: &mut Shared<T>| s.clone())
             .unwrap_or_else(|| Shared(Arc::default()))
     }
