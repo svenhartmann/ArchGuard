@@ -136,6 +136,8 @@ component Coverage inherits Muted {
 
 component Description inherits VerticalLayout {
     in property <bool> narrow;
+    // The analysis panel grows with its content up to this, then scrolls.
+    in property <length> max-panel: 190px;
     property <CallsModel> m: CallsData.model;
     property <string> counts: none || unavailable ? @tr("{} connections · {} call sites", Fmt.unknown, Fmt.unknown)
         : @tr("{} connections · {} call sites", Fmt.int(m.connections), Fmt.int(m.sites));
@@ -181,10 +183,12 @@ component Description inherits VerticalLayout {
         }
     }
     if root.narrow: Muted { font-size: Theme.font-small; text: root.counts; }
-    // Like the web's .calls-description (max-height 30%, scrolls).
+    // Like the web's .calls-description (a max-height, then scrolls).
     if m.analysis-open: ScrollView {
-        height: 190px;
-        VerticalLayout {
+        // The content's min-height is the height the ScrollView scrolls
+        // (Slint 1.18); + 4px for the Cupertino style's 2px viewport inset.
+        height: min(panel.min-height + 4px, root.max-panel);
+        panel := VerticalLayout {
             spacing: 6px;
             Muted { font-size: Theme.font-small; text: @tr("Source call sites → compiler-declared methods. Runtime dispatch can invoke implementations not shown here. Constructors are included; import connections are a separate analysis."); }
             Muted { font-size: Theme.font-small; text: @tr("Packages → types/modules → functions/methods in the matching call connections."); }
@@ -253,7 +257,8 @@ export component CallsView inherits Rectangle {
     }
     if CallsData.model.state == 1: VerticalLayout {
         Toolbar { vertical-stretch: 0; }
-        Description { vertical-stretch: 0; narrow: root.narrow; }
+        // Half the tab at most, so the columns below keep room.
+        Description { vertical-stretch: 0; narrow: root.narrow; max-panel: max(190px, root.height / 2); }
         if !root.narrow: HorizontalLayout {
             vertical-stretch: 1;
             padding-left: 12px;
