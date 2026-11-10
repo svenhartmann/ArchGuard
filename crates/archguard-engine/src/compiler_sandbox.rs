@@ -213,11 +213,20 @@ fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
     let system: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
     let tools = [system.clone(), toolchain(program, project)].concat();
     let (project, scratch) = (real(project), real(scratch));
+    // Cargo reads `.cargo/config(.toml)` in every directory above the project
+    // (a worktree finds its repository's) and fails when it may not.
+    let configs: String = project
+        .ancestors()
+        .skip(1)
+        .flat_map(|dir| [dir.join(".cargo/config"), dir.join(".cargo/config.toml")])
+        .filter(|file| file.is_file())
+        .map(|file| format!(" (literal \"{}\")", quote(&file)))
+        .collect();
     let readable = [tools.clone(), vec![project, scratch.clone()]].concat();
     format!(
         "(version 1)\n(deny default)\n(allow process-fork)\n(allow sysctl-read)\n(allow mach-lookup)\n\
          (allow signal (target same-sandbox))\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n\
-         (allow file-read* (literal \"/\"){})\n(allow file-write* (literal \"/dev/null\"){})\n\
+         (allow file-read* (literal \"/\"){}{configs})\n(allow file-write* (literal \"/dev/null\"){})\n\
          (allow process-exec{})\n",
         subpaths(&readable),
         subpaths(&[scratch]),
@@ -272,6 +281,29 @@ mod tests {
             !run(&d, "/bin/cat", &[s.to_str().unwrap()]),
             "other directories are not"
         );
+    }
+
+    /// A worktree inside a repository: cargo reads the repository's
+    /// `.cargo/config.toml` above the project, and nothing else there.
+    #[test]
+    fn cargo_configs_above_the_project_are_readable_and_nothing_else_there() {
+        let outer = tempfile::tempdir().unwrap();
+        std::fs::create_dir(outer.path().join(".cargo")).unwrap();
+        let config = outer.path().join(".cargo/config.toml");
+        std::fs::write(&config, "[env]\n").unwrap();
+        let other = outer.path().join("other.txt");
+        std::fs::write(&other, "private").unwrap();
+        let project = outer.path().join("worktree");
+        std::fs::create_dir(&project).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let cat = |file: &Path| {
+            command(OsStr::new("/bin/cat"), &project, scratch.path())
+                .arg(file)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        assert!(cat(&config), "cargo's configuration above the project");
+        assert!(!cat(&other), "other files above the project");
     }
 
     #[test]
