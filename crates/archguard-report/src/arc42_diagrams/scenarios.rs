@@ -58,9 +58,16 @@ pub fn diagrams(
         .filter(|(_, _, _, messages)| !messages.is_empty())
         .collect();
     scenarios.sort_by_key(|(reach, i, entry, _)| (!entry.main, std::cmp::Reverse(*reach), *i));
+    let project = |method: &str| {
+        let class = out.get(method)?.first()?.from_class.as_str();
+        blocks.project(*boxes.get(class)?)
+    };
+    let keep = pick(scenarios.iter().map(|(_, _, e, _)| project(e.method)));
     scenarios
         .into_iter()
-        .take(MAX_SCENARIOS)
+        .enumerate()
+        .filter(|(i, _)| keep.contains(i))
+        .map(|(_, s)| s)
         .flat_map(|(_, _, entry, messages)| {
             let block = diagram(l, &entry, &messages, &blocks.labels, calls, Level::Blocks);
             let finer = by_class.from(entry.method);
@@ -69,6 +76,24 @@ pub fn diagrams(
             std::iter::once(block).chain(twin)
         })
         .collect()
+}
+
+/// Up to [`MAX_SCENARIOS`] of the ranked scenarios: each project's best
+/// first, so no service of a monorepo goes without one, then by rank.
+fn pick<'p>(projects: impl Iterator<Item = Option<&'p str>>) -> BTreeSet<usize> {
+    let projects: Vec<_> = projects.collect();
+    let mut seen = BTreeSet::new();
+    let mut keep: BTreeSet<usize> = (0..projects.len())
+        .filter(|&i| seen.insert(projects[i]))
+        .take(MAX_SCENARIOS)
+        .collect();
+    for i in 0..projects.len() {
+        if keep.len() >= MAX_SCENARIOS {
+            break;
+        }
+        keep.insert(i);
+    }
+    keep
 }
 
 /// The scenario of `method` between classes (Calls view); `None` when it
@@ -95,7 +120,9 @@ pub fn class_sequence(l: DocLang, calls: &CallAnalysis, method: &str) -> Option<
 fn outgoing(calls: &CallAnalysis) -> (BTreeMap<&str, Vec<&MethodCall>>, BTreeSet<&str>) {
     let mut out: BTreeMap<&str, Vec<&MethodCall>> = BTreeMap::new();
     let mut called = BTreeSet::new();
-    for c in calls.calls.iter().filter(|c| c.resolution == "project") {
+    // Tests call production code but are no runtime entry.
+    let production = |c: &&MethodCall| c.resolution == "project" && !is_test_file(&c.file);
+    for c in calls.calls.iter().filter(production) {
         let Some(from) = c.from_method.as_deref() else {
             continue;
         };
@@ -201,6 +228,20 @@ fn dispatcher<'a>(
         level = next;
     }
     None
+}
+
+/// A test source by the common conventions: a `test`, `tests` or
+/// `__tests__` directory, or a `Test`/`_test`/`.test`/`.spec` file name.
+fn is_test_file(path: &str) -> bool {
+    let mut parts = path.split('/');
+    let name = parts.next_back().unwrap_or_default();
+    let stem = name.split('.').next().unwrap_or_default();
+    parts.any(|dir| matches!(dir, "test" | "tests" | "__tests__"))
+        || stem.ends_with("Test")
+        || stem.ends_with("Tests")
+        || stem.ends_with("_test")
+        || name.contains(".test.")
+        || name.contains(".spec.")
 }
 
 /// `main` in any language (`main`, `Main`, `__main__`).
@@ -541,6 +582,89 @@ mod tests {
         let mut init = d.clone();
         init.relations[0].label = Some("1. <init>".into());
         assert!(super::super::render::mermaid(&init).contains(": 1. #lt;init#gt;\n"));
+    }
+
+    /// Tests call production code but are no runtime entry: two tests of
+    /// `run` add no scenario (ElasticSearchIK showed one per test).
+    #[test]
+    fn tests_are_no_entry_points() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        for i in 0..3 {
+            builder.ensure_path(&format!("org/demo/p{i}/S.java"), Some("java"));
+        }
+        let graph = builder.build("test".into());
+        let (config, services) = (Config::default(), ServiceTopology::default());
+        let facts = Arc42Blocks::default();
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            DocLang::En,
+        );
+        let mut calls = calls();
+        for test in ["T#a()", "T#b()"] {
+            let mut c = calls.calls[0].clone();
+            c.from_class = "T".into();
+            c.from_method = Some(test.into());
+            c.file = "app/src/test/java/org/demo/STest.java".into();
+            calls.calls.push(c);
+        }
+        let all = diagrams(DocLang::En, &blocks, &graph, &calls);
+        let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["runtime-scenario-c0-main"]);
+    }
+
+    /// Seven wide entries of project A must not push project B's only
+    /// scenario out: every project shows at least one.
+    #[test]
+    fn every_project_gets_a_scenario() {
+        let mut builder = archguard_core::GraphBuilder::new();
+        for i in 0..3 {
+            builder.ensure_path(&format!("org/demo/p{i}/S.java"), Some("java"));
+        }
+        let graph = builder.build("test".into());
+        let project = |path: &str| {
+            serde_json::from_value::<archguard_core::ServiceProject>(serde_json::json!({
+                "id": path, "name": path, "path": path, "manifest": format!("{path}/pom.xml"),
+                "ecosystem": "maven", "kind": "application", "evidence": []
+            }))
+            .unwrap()
+        };
+        let services = ServiceTopology {
+            projects: vec![project("org/demo/p0"), project("org/demo/p2")],
+            ..Default::default()
+        };
+        let (config, facts) = (Config::default(), Arc42Blocks::default());
+        let blocks = Blocks::new(
+            &graph,
+            &config,
+            &services,
+            &BTreeMap::new(),
+            &facts,
+            DocLang::En,
+        );
+        let mut calls = calls();
+        // Project A (p0): seven more entries like main, each reaching p1 and p2.
+        for i in 0..7 {
+            let mut c = calls.calls[0].clone();
+            c.from_method = Some(format!("C0#r{i}()"));
+            calls.calls.push(c);
+        }
+        // Project B (p2): one entry reaching p1 only.
+        let mut cron = calls.calls[3].clone();
+        cron.from_class = "C2".into();
+        cron.from_method = Some("C2#cron()".into());
+        cron.to_method = Some("C1#helper()".into());
+        calls.calls.push(cron);
+        let all = diagrams(DocLang::En, &blocks, &graph, &calls);
+        let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
+        assert!(ids.contains(&"runtime-scenario-c2-cron"), "{ids:?}");
+        assert!(
+            ids.contains(&"runtime-scenario-c0-main"),
+            "main still first: {ids:?}"
+        );
     }
 
     /// A second class in block p1 that `helper` calls: invisible between

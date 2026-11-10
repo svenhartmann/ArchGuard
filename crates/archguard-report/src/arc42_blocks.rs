@@ -71,6 +71,8 @@ pub(crate) struct Blocks<'a> {
     pub files: Vec<usize>,
     layer_names: Vec<Option<&'a str>>,
     descriptions: Vec<Option<&'a str>>,
+    /// The manifest project id owning each block.
+    projects: Vec<Option<&'a str>>,
     pub order: Vec<usize>,
     /// Block -> diagram box; blocks after the eighth share the remainder box.
     display: BTreeMap<usize, usize>,
@@ -135,6 +137,7 @@ impl<'a> Blocks<'a> {
                         .map(|l| l.name.as_str())
                 })
                 .collect(),
+            projects: owners.iter().map(|o| o.map(|p| p.id.as_str())).collect(),
             descriptions: owners
                 .iter()
                 .map(|o| {
@@ -166,6 +169,11 @@ impl<'a> Blocks<'a> {
 
     pub fn describe(&self, i: usize) -> Option<&'a str> {
         self.descriptions[i]
+    }
+
+    /// The manifest project id owning block `i`.
+    pub fn project(&self, i: usize) -> Option<&'a str> {
+        self.projects.get(i).copied().flatten()
     }
 
     pub fn layer_name(&self, i: usize) -> Option<&'a str> {
