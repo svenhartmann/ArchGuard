@@ -11,7 +11,7 @@ use slint::platform::software_renderer::{
 use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
-    import { StartView, StartData } from "ui/start_view.slint";
+    import { StartView, StartData } from "../archguard-desktop-ui/ui/start_view.slint";
     export { StartData }
     export component Page inherits Window {
         StartView {}

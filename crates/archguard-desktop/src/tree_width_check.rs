@@ -12,8 +12,8 @@ use slint::platform::software_renderer::{
 use slint::{ComponentHandle, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
-    import { TreeView, TreeRow } from "ui/tree_view.slint";
-    import { Theme } from "ui/theme.slint";
+    import { TreeView, TreeRow } from "../archguard-desktop-ui/ui/tree_view.slint";
+    import { Theme } from "../archguard-desktop-ui/ui/theme.slint";
     export { TreeRow }
     export component Tree inherits Window {
         background: Theme.bg;

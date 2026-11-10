@@ -16,9 +16,9 @@ use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, PhysicalSize};
 
 slint::slint! {
-    import { SearchField } from "ui/widgets.slint";
-    import { LineEdit, TextEdit, CommandField } from "ui/fields.slint";
-    import { LineInput } from "ui/field_menu.slint";
+    import { SearchField } from "../archguard-desktop-ui/ui/widgets.slint";
+    import { LineEdit, TextEdit, CommandField } from "../archguard-desktop-ui/ui/fields.slint";
+    import { LineInput } from "../archguard-desktop-ui/ui/field_menu.slint";
     export component Fields inherits Window {
         width: 200px;
         height: 400px;

@@ -12,6 +12,7 @@ name = "archguard-desktop"
 path = "src/main.rs"
 
 [dependencies]
+archguard-desktop-ui = { path = "../archguard-desktop-ui" }
 archguard-engine = { path = "../archguard-engine" }
 archguard-update = { path = "../archguard-update" }
 petgraph = "0.8"
@@ -43,9 +44,6 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [dev-dependencies]
 # Parses exported SVG in tests.
 roxmltree = "0.21.1"
-
-[build-dependencies]
-slint-build = "1.18"
 
 [features]
 # `ARCHGUARD_DESKTOP_SNAPSHOT=<file.png>` renders the window to a PNG and

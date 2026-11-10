@@ -15,7 +15,7 @@ use slint::platform::{PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
-    import { SecurityView, SecurityData } from "ui/security_view.slint";
+    import { SecurityView, SecurityData } from "../archguard-desktop-ui/ui/security_view.slint";
     export { SecurityData }
     export component Page inherits Window {
         width: 300px;

@@ -13,7 +13,7 @@ use slint::platform::software_renderer::{
 use slint::{ComponentHandle, ModelRc, PhysicalSize, SharedString, StyledText, VecModel};
 
 slint::slint! {
-    import { ArchitectureView, ArchitectureData } from "ui/architecture_view.slint";
+    import { ArchitectureView, ArchitectureData } from "../archguard-desktop-ui/ui/architecture_view.slint";
     export { ArchitectureData }
     export component Page inherits Window {
         width: 380px;

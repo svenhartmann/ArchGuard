@@ -40,7 +40,7 @@ pub fn unbraced(text: &str) -> String {
 
 /// `(key, @tr text)` of every `ui/texts.slint` entry.
 fn template_entries() -> Vec<(String, String)> {
-    let slint = std::fs::read_to_string(crate_file("ui/texts.slint")).expect("texts.slint");
+    let slint = std::fs::read_to_string(crate_file("../archguard-desktop-ui/ui/texts.slint")).expect("texts.slint");
     slint
         .lines()
         .filter(|l| l.trim_start().starts_with("{ key:"))
@@ -61,7 +61,7 @@ pub fn template_keys() -> Vec<String> {
 /// msgid → msgstr of all German parts, without context entries.
 pub fn po_de() -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let dir = std::fs::read_dir(crate_file("lang/de")).expect("lang/de");
+    let dir = std::fs::read_dir(crate_file("../archguard-desktop-ui/lang/de")).expect("lang/de");
     for part in dir.flatten() {
         let text = std::fs::read_to_string(part.path()).expect("po part");
         let (mut context, mut id) = (false, None);
