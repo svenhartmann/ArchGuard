@@ -205,6 +205,33 @@ fn cycles_prints_nothing_on_acyclic_fixture() {
     assert!(!stdout(&out).contains("members:"), "unexpected cycle");
 }
 
+/// `cycles` shows only cycles; other findings (here a layer violation) must
+/// not turn its verdict into FAIL.
+#[test]
+fn cycles_verdict_counts_only_cycles() {
+    let dir = fixture(&[
+        (
+            "a/a.ts",
+            "import { b } from \"../b/b\";\nexport const a = b + 1;\n",
+        ),
+        ("b/b.ts", "export const b = 1;\n"),
+        (
+            "archguard.toml",
+            "derive_layers = false\n[project]\nsource_roots = []\n[[layers]]\nname = \"b\"\ncontains = [\"b\", \"b/**\"]\nmay_depend_on = []\n[[layers]]\nname = \"a\"\ncontains = [\"a\", \"a/**\"]\nmay_depend_on = []\n",
+        ),
+    ]);
+    assert_eq!(
+        code(&archguard(&dir, &["check"])),
+        1,
+        "the layer violation fails check"
+    );
+    let text = stdout(&archguard(&dir, &["cycles"]));
+    assert!(text.starts_with("PASS: no findings"), "{text}");
+    let json: Value =
+        serde_json::from_str(&stdout(&archguard(&dir, &["--format", "json", "cycles"]))).unwrap();
+    assert_eq!(json["summary"]["status"], "pass");
+}
+
 #[test]
 fn cycles_fail_on_found_exits_1_when_cycles_exist() {
     let dir = fixture(&CYCLIC);

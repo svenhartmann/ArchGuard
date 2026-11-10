@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use archguard_engine::analysis::{Baseline, cycle_hash};
-use archguard_engine::core::{Finding, FindingKind, Graph, ModuleMetrics, Report};
+use archguard_engine::core::{
+    Finding, FindingKind, Graph, ModuleMetrics, Report, Severity, Status,
+};
 use archguard_engine::report::{to_dot, to_gexf, to_graphml, to_json, to_mermaid, to_text};
 use archguard_engine::self_trace;
 use archguard_engine::{
@@ -1095,11 +1097,18 @@ fn write_json_file(path: &Path, json: &str) -> Result<(), std::io::Error> {
 /// A copy of `report` carrying exactly the given (already capped) cycle
 /// findings, so the archguard-report renderers produce a cycles-only view.
 fn cycle_report(report: &Report, shown: &[&Finding]) -> Report {
+    // The verdict of the cycles alone (all of them, also those past
+    // `--max-cycles`): other findings are not shown here.
+    let failing = cycle_findings(report).any(|f| f.severity == Severity::Error);
+    let status = if failing { Status::Fail } else { Status::Pass };
     Report {
         semantic: report.semantic.clone(),
         review_kpis: report.review_kpis.clone(),
         schema_version: report.schema_version,
-        summary: report.summary.clone(),
+        summary: archguard_engine::core::Summary {
+            status,
+            ..report.summary.clone()
+        },
         config: report.config.clone(),
         findings: shown.iter().map(|finding| (*finding).clone()).collect(),
         metrics: report.metrics.clone(),
