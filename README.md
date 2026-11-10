@@ -33,6 +33,8 @@ irm https://raw.githubusercontent.com/svenhartmann/ArchGuard/main/scripts/instal
 
 Both verify the archive against `SHA256SUMS`. `ARCHGUARD_VERSION` pins a version, `ARCHGUARD_INSTALL_DIR` changes the target. Update later with `archguard update`.
 
+The scripts also install the desktop app from the same release, checked against `SHA256SUMS-desktop`: `ArchGuard.app` in `~/Applications` on macOS (`ARCHGUARD_APP_DIR`), `archguard-desktop` (AppImage, x86_64 only) on Linux, `archguard-desktop.exe` on Windows. `ARCHGUARD_DESKTOP=0` skips it.
+
 Or build from the repository with a Rust toolchain:
 
 ```sh

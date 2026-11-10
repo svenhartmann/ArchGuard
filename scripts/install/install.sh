@@ -7,6 +7,8 @@
 #   ARCHGUARD_VERSION       version to install, e.g. 0.1.3 (default: latest release)
 #   ARCHGUARD_INSTALL_DIR   target directory (default: $HOME/.local/bin)
 #   ARCHGUARD_DOWNLOAD_URL  base URL with the release assets (default: GitHub release of that version)
+#   ARCHGUARD_DESKTOP       0 skips the desktop app (default: install it where a package exists)
+#   ARCHGUARD_APP_DIR       macOS only: where ArchGuard.app goes (default: $HOME/Applications)
 set -eu
 
 REPO="svenhartmann/ArchGuard"
@@ -44,6 +46,14 @@ latest_version() {
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1
 }
 
+# verify <file> <sums file>: the file's SHA-256 must match its line in the sums file.
+verify() {
+    name="$(basename "$1")"
+    expected="$(awk -v name="$name" '$2 == name { print $1 }' "$2")"
+    [ -n "$expected" ] || fail "no checksum for $name in $(basename "$2")"
+    [ "$(sha256 "$1")" = "$expected" ] || fail "checksum mismatch for $name"
+}
+
 sha256() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
     elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d ' ' -f 1
@@ -71,9 +81,7 @@ echo "Downloading ArchGuard $version for $target ..."
 fetch "$base/$archive" "$tmp/$archive" || fail "download failed: $base/$archive"
 fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || fail "download failed: $base/SHA256SUMS"
 
-expected="$(awk -v name="$archive" '$2 == name { print $1 }' "$tmp/SHA256SUMS")"
-[ -n "$expected" ] || fail "no checksum for $archive in SHA256SUMS"
-[ "$(sha256 "$tmp/$archive")" = "$expected" ] || fail "checksum mismatch for $archive"
+verify "$tmp/$archive" "$tmp/SHA256SUMS"
 
 mkdir "$tmp/x"
 if [ "$ext" = zip ]; then
@@ -91,6 +99,52 @@ chmod 755 "$INSTALL_DIR/.$binary.new"
 mv -f "$INSTALL_DIR/.$binary.new" "$INSTALL_DIR/$binary"
 
 echo "Installed $INSTALL_DIR/$binary"
+
+# Desktop app: unsigned packages from the same release, checked against SHA256SUMS-desktop.
+install_desktop() {
+    case "$target" in
+        *apple-darwin) package="ArchGuard-$version-$target.dmg" ;;
+        x86_64-unknown-linux-musl) package="ArchGuard-$version-x86_64-unknown-linux-gnu.AppImage" ;;
+        *windows*) package="ArchGuard-$version-$target.zip" ;;
+        *) echo "No desktop app for $target; skipped."; return 0 ;;
+    esac
+    if ! fetch "$base/$package" "$tmp/$package" 2>/dev/null || ! fetch "$base/SHA256SUMS-desktop" "$tmp/SHA256SUMS-desktop" 2>/dev/null; then
+        echo "No desktop app in release $version; skipped."
+        return 0
+    fi
+    verify "$tmp/$package" "$tmp/SHA256SUMS-desktop"
+    case "$package" in
+        *.dmg)
+            app_dir="${ARCHGUARD_APP_DIR:-$HOME/Applications}"
+            mnt="$tmp/mnt"
+            mkdir "$mnt"
+            hdiutil attach -nobrowse -readonly -quiet -mountpoint "$mnt" "$tmp/$package" || fail "could not mount $package"
+            [ -d "$mnt/ArchGuard.app" ] || { hdiutil detach -quiet "$mnt"; fail "$package does not contain ArchGuard.app"; }
+            mkdir -p "$app_dir"
+            rm -rf "$app_dir/.ArchGuard.app.new"
+            ditto "$mnt/ArchGuard.app" "$app_dir/.ArchGuard.app.new"
+            hdiutil detach -quiet "$mnt"
+            rm -rf "$app_dir/ArchGuard.app"
+            mv "$app_dir/.ArchGuard.app.new" "$app_dir/ArchGuard.app"
+            echo "Installed $app_dir/ArchGuard.app"
+            ;;
+        *.AppImage)
+            cp "$tmp/$package" "$INSTALL_DIR/.archguard-desktop.new"
+            chmod 755 "$INSTALL_DIR/.archguard-desktop.new"
+            mv -f "$INSTALL_DIR/.archguard-desktop.new" "$INSTALL_DIR/archguard-desktop"
+            echo "Installed $INSTALL_DIR/archguard-desktop (AppImage, needs glibc and FUSE)"
+            ;;
+        *.zip)
+            mkdir "$tmp/d"
+            unzip -q "$tmp/$package" -d "$tmp/d"
+            exe="$tmp/d/${package%.zip}/archguard-desktop.exe"
+            [ -f "$exe" ] || fail "$package does not contain archguard-desktop.exe"
+            cp "$exe" "$INSTALL_DIR/archguard-desktop.exe"
+            echo "Installed $INSTALL_DIR/archguard-desktop.exe"
+            ;;
+    esac
+}
+[ "${ARCHGUARD_DESKTOP:-1}" = 0 ] || install_desktop
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
     *) echo "Note: $INSTALL_DIR is not on your PATH. Add it, e.g.:"

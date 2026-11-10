@@ -6,6 +6,7 @@
 #   ARCHGUARD_VERSION       version to install, e.g. 0.1.3 (default: latest release)
 #   ARCHGUARD_INSTALL_DIR   target directory (default: %LOCALAPPDATA%\Programs\archguard)
 #   ARCHGUARD_DOWNLOAD_URL  base URL with the release assets (default: GitHub release of that version)
+#   ARCHGUARD_DESKTOP       0 skips the desktop app archguard-desktop.exe (default: install it)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -29,6 +30,13 @@ $ProgressPreference = 'SilentlyContinue'
 
     $stem = "archguard-$version-$target"
     $archive = "$stem.zip"
+    function Assert-Checksum($file, $sums) {
+        $name = Split-Path $file -Leaf
+        $line = Get-Content $sums | Where-Object { ($_ -split '\s+')[1] -eq $name } | Select-Object -First 1
+        if (-not $line) { throw "archguard install: no checksum for $name in $(Split-Path $sums -Leaf)" }
+        if ((Get-FileHash $file -Algorithm SHA256).Hash -ne ($line -split '\s+')[0]) { throw "archguard install: checksum mismatch for $name" }
+    }
+
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("archguard-" + [Guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
@@ -36,11 +44,7 @@ $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest "$base/$archive" -OutFile (Join-Path $tmp $archive) -UseBasicParsing
         Invoke-WebRequest "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS') -UseBasicParsing
 
-        $line = Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { ($_ -split '\s+')[1] -eq $archive } | Select-Object -First 1
-        if (-not $line) { throw "archguard install: no checksum for $archive in SHA256SUMS" }
-        $expected = ($line -split '\s+')[0]
-        $actual = (Get-FileHash (Join-Path $tmp $archive) -Algorithm SHA256).Hash
-        if ($actual -ne $expected) { throw "archguard install: checksum mismatch for $archive" }
+        Assert-Checksum (Join-Path $tmp $archive) (Join-Path $tmp 'SHA256SUMS')
 
         Expand-Archive (Join-Path $tmp $archive) -DestinationPath (Join-Path $tmp 'x')
         $binary = Join-Path $tmp "x\$stem\archguard.exe"
@@ -48,11 +52,29 @@ $ProgressPreference = 'SilentlyContinue'
 
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
         Copy-Item $binary (Join-Path $installDir 'archguard.exe') -Force
+        Write-Host "Installed $installDir\archguard.exe"
+
+        # Desktop app: unsigned ZIP from the same release, checked against SHA256SUMS-desktop.
+        if ($env:ARCHGUARD_DESKTOP -ne '0') {
+            $package = "ArchGuard-$version-$target.zip"
+            try {
+                Invoke-WebRequest "$base/$package" -OutFile (Join-Path $tmp $package) -UseBasicParsing
+                Invoke-WebRequest "$base/SHA256SUMS-desktop" -OutFile (Join-Path $tmp 'SHA256SUMS-desktop') -UseBasicParsing
+                $found = $true
+            } catch { $found = $false; Write-Host "No desktop app in release $version; skipped." }
+            if ($found) {
+                Assert-Checksum (Join-Path $tmp $package) (Join-Path $tmp 'SHA256SUMS-desktop')
+                Expand-Archive (Join-Path $tmp $package) -DestinationPath (Join-Path $tmp 'd')
+                $desktop = Join-Path $tmp ("d\" + $package.Substring(0, $package.Length - 4) + "\archguard-desktop.exe")
+                if (-not (Test-Path $desktop)) { throw "archguard install: $package does not contain archguard-desktop.exe" }
+                Copy-Item $desktop (Join-Path $installDir 'archguard-desktop.exe') -Force
+                Write-Host "Installed $installDir\archguard-desktop.exe"
+            }
+        }
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "Installed $installDir\archguard.exe"
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (-not (($userPath -split ';') -contains $installDir)) {
         [Environment]::SetEnvironmentVariable('Path', (@($userPath, $installDir) | Where-Object { $_ }) -join ';', 'User')
