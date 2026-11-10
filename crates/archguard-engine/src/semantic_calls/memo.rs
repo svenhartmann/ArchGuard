@@ -18,19 +18,20 @@ type Kept = (Vec<PathBuf>, HashMap<PathBuf, Entry>);
 static MEMO: OnceLock<Mutex<Kept>> = OnceLock::new();
 
 /// Identity of what the analysis reads: the source set (contents and Rust
-/// manifests), the settings the call scanners read (`project`, `semantic`)
+/// manifests), the build contexts of the compiler scanners (pom.xml,
+/// .csproj, tsconfig, go.mod), the settings the call scanners read (`project`, `semantic`)
 /// whether project compiler tooling is trusted (ADR 0007) and how many
 /// background rust-analyzer runs finished for the root. Layers,
 /// rules and module depth are not read, so the loaded and the derived
 /// configuration share one result. `None` when the sources cannot be listed.
-fn key(root: &Path, config: &Config) -> Option<String> {
+fn key(root: &Path, config: &Config, contexts: &str) -> Option<String> {
     let sources = crate::cache::source_fingerprint(root, config).ok()?;
     let project = serde_json::to_string(&config.project).ok()?;
     let semantic = serde_json::to_string(&config.semantic).ok()?;
     let trusted = crate::compiler_trust::trusted();
     let index = crate::rust_scip::background::generation(root);
     Some(format!(
-        "{sources}\n{project}\n{semantic}\n{trusted}\n{index}"
+        "{sources}\n{contexts}\n{project}\n{semantic}\n{trusted}\n{index}"
     ))
 }
 
@@ -38,9 +39,10 @@ fn key(root: &Path, config: &Config) -> Option<String> {
 pub(super) fn cached(
     root: &Path,
     config: &Config,
+    contexts: &str,
     compute: impl FnOnce() -> CallAnalysis,
 ) -> CallAnalysis {
-    let Some(key) = key(root, config) else {
+    let Some(key) = key(root, config, contexts) else {
         return compute();
     };
     let memo = MEMO.get_or_init(Mutex::default);
@@ -96,11 +98,11 @@ mod tests {
             runs.set(runs.get() + 1);
             analysis("complete")
         };
-        cached(dir.path(), &config, compute);
-        cached(dir.path(), &config, compute);
+        cached(dir.path(), &config, "", compute);
+        cached(dir.path(), &config, "", compute);
         assert_eq!(runs.get(), 1);
         std::fs::write(dir.path().join("src/a.py"), "def f():\n    return 2\n").unwrap();
-        cached(dir.path(), &config, compute);
+        cached(dir.path(), &config, "", compute);
         assert_eq!(runs.get(), 2, "a changed source runs the analysis again");
     }
 
@@ -118,12 +120,12 @@ mod tests {
             runs.set(runs.get() + 1);
             analysis("complete")
         };
-        cached(dir.path(), &loaded, compute);
-        cached(dir.path(), &derived, compute);
+        cached(dir.path(), &loaded, "", compute);
+        cached(dir.path(), &derived, "", compute);
         assert_eq!(runs.get(), 1);
         let mut other = loaded.clone();
         other.semantic.typescript.project = Some("tsconfig.app.json".into());
-        cached(dir.path(), &other, compute);
+        cached(dir.path(), &other, "", compute);
         assert_eq!(runs.get(), 2, "semantic settings are part of the key");
     }
 
@@ -136,8 +138,8 @@ mod tests {
             runs.set(runs.get() + 1);
             analysis("unavailable")
         };
-        cached(dir.path(), &config, compute);
-        cached(dir.path(), &config, compute);
+        cached(dir.path(), &config, "", compute);
+        cached(dir.path(), &config, "", compute);
         assert_eq!(runs.get(), 2);
     }
 }

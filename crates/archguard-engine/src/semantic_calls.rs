@@ -82,7 +82,15 @@ pub(crate) fn integrate_graph_named(
 /// Reuses the last result for `root` while configuration and sources are
 /// unchanged (`memo`).
 pub fn analyze_calls(root: &Path, config: &Config) -> CallAnalysis {
-    memo::cached(root, config, || compute_calls(root, config))
+    memo::cached(root, config, &contexts(root, config), || {
+        compute_calls(root, config)
+    })
+}
+
+/// The build contexts the compiler scanners read (pom.xml, .csproj,
+/// tsconfig, go.mod), as part of the kept analysis' key.
+fn contexts(root: &Path, config: &Config) -> String {
+    format!("{:?}", semantic_fingerprints(root, config))
 }
 
 #[tracing::instrument(skip_all)]
@@ -334,6 +342,41 @@ fn combine(reports: Vec<(&str, CallAnalysis)>) -> CallAnalysis {
 
 #[cfg(test)]
 mod tests {
+    /// The Java scanner reads the compiler release from pom.xml, which is no
+    /// source file: a changed build context runs the kept analysis again.
+    #[test]
+    fn a_changed_build_context_runs_the_kept_analysis_again() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src/main/java/p")).unwrap();
+        std::fs::write(
+            dir.path().join("src/main/java/p/A.java"),
+            "package p;\nclass A {}\n",
+        )
+        .unwrap();
+        let pom = |release: u32| {
+            format!(
+                "<project><properties><maven.compiler.release>{release}</maven.compiler.release></properties></project>"
+            )
+        };
+        std::fs::write(dir.path().join("pom.xml"), pom(8)).unwrap();
+        let config = Config::default();
+        let runs = std::cell::Cell::new(0);
+        let compute = || {
+            runs.set(runs.get() + 1);
+            CallAnalysis {
+                status: "complete".into(),
+                ..Default::default()
+            }
+        };
+        let run = || memo::cached(dir.path(), &config, &contexts(dir.path(), &config), compute);
+        run();
+        run();
+        assert_eq!(runs.get(), 1, "an unchanged project is analysed once");
+        std::fs::write(dir.path().join("pom.xml"), pom(11)).unwrap();
+        run();
+        assert_eq!(runs.get(), 2, "pom.xml is part of the key");
+    }
+
     use super::*;
     fn report(language: &str, status: &str) -> CallAnalysis {
         serde_json::from_value(serde_json::json!({
