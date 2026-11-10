@@ -208,7 +208,8 @@ function cliHelpGroups(){return [
     ['duplicates',t('Import CPD XML duplication groups or read the saved report. Does not invoke a duplicate scanner.','CPD-XML-Duplikatgruppen importieren oder den gespeicherten Bericht lesen. Startet keinen Duplikat-Scanner.')],
     ['quality',t('Import SARIF findings, read saved findings, or gate changed-code quality with --base and thresholds.','SARIF-Befunde importieren, gespeicherte Befunde lesen oder Qualität geänderten Codes mit --base und Grenzwerten prüfen.')],
     ['contracts',t('Import OpenAPI with --report and an exact --service ID; inspect saved contract comparisons.','OpenAPI mit --report und einer exakten --service-ID importieren; gespeicherte Vertragsvergleiche lesen.')],
-    ['security',t('Run Trivy dependency-advisory scanning and save .archguard/security.json. Requires Trivy.','Mit Trivy Abhängigkeiten auf Sicherheitsmeldungen prüfen und .archguard/security.json speichern. Benötigt Trivy.')]
+    ['security',t('Run Trivy dependency-advisory scanning and save .archguard/security.json. Requires Trivy.','Mit Trivy Abhängigkeiten auf Sicherheitsmeldungen prüfen und .archguard/security.json speichern. Benötigt Trivy.')],
+    ['runtime',t('Read the runtime profile from recorded OTLP traces in .archguard/runtime. Does not run or instrument the application.','Laufzeitprofil aus aufgezeichneten OTLP-Traces in .archguard/runtime lesen. Startet oder instrumentiert die Anwendung nicht.')]
   ]},
   {title:t('Architecture, services & documentation','Architektur, Services & Dokumentation'),commands:[
     ['architecture',t('Compare explicitly modeled components and allowed directions with actual imports.','Explizit modellierte Komponenten und erlaubte Richtungen mit tatsächlichen Imports vergleichen.')],
