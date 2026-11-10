@@ -36,7 +36,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, verified 2026-10-27
         with:
           toolchain: stable
-          components: rustfmt, clippy, rust-analyzer
+          # rust-src: rust-analyzer resolves std, core and alloc from the sources.
+          components: rustfmt, clippy, rust-analyzer, rust-src
 
       # Only main writes the cache; PRs restore it without filling the quota.
       # Save on failure too: the Kùzu C++ build alone takes ~12 minutes.
