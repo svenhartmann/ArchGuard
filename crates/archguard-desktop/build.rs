@@ -36,7 +36,12 @@ fn merge_translations(src: &Path, out: &Path) {
         }
         let dir = out.join(&code).join("LC_MESSAGES");
         fs::create_dir_all(&dir).expect("out dir is writable");
-        fs::write(dir.join("archguard-desktop.po"), merged).expect("po is writable");
+        let file = dir.join("archguard-desktop.po");
+        // Slint makes cargo watch this output: rewriting an unchanged file
+        // would rebuild the desktop crate on every `cargo build`.
+        if fs::read_to_string(&file).ok().as_deref() != Some(merged.as_str()) {
+            fs::write(file, merged).expect("po is writable");
+        }
     }
 }
 
