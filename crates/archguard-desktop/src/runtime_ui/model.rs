@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use archguard_engine::core::{RuntimeRequest, RuntimeSpan};
 use slint::{ModelRc, SharedString, VecModel};
 
-use super::summary::{file_name, number, short_function};
+use super::summary::{file_name, number, short_function, span_label};
 use crate::ui::{RtDetail, RtRequest, RtSpanRow};
 
 /// `HH:MM:SS.mmm` of a Unix time in nanoseconds, UTC.
@@ -101,9 +101,7 @@ fn place(s: &RuntimeSpan) -> (String, bool) {
         }
         // A method span without a recorded caller (one the framework called)
         // would only repeat its own name.
-        (true, None)
-            if s.function.as_deref().map(short_function).as_deref() == Some(s.name.as_str()) =>
-        {
+        (true, None) if s.function.as_deref().map(short_function) == Some(span_label(s)) => {
             (String::new(), false)
         }
         _ => (site(s), false),
@@ -122,7 +120,7 @@ fn span_row(s: &RuntimeSpan, total: f64, repeated: bool) -> RtSpanRow {
     };
     RtSpanRow {
         depth: i32::try_from(s.depth).unwrap_or(i32::MAX),
-        label: s.db.as_deref().unwrap_or(&s.name).into(),
+        label: span_label(s).into(),
         site: site.into(),
         called_from,
         self_time: number(s.self_ms),
@@ -271,5 +269,25 @@ mod tests {
             "no caller, no repeated name"
         );
         assert_eq!(row.site, "OrderService.LoadLines (OrderService.cs:31)");
+    }
+
+    #[test]
+    fn method_spans_are_labelled_by_class_without_package() {
+        let mut method = span(1, 0.0, 40.0, None, 9);
+        method.kind = "internal".into();
+        method.name = "Shop.Orders.OrdersController.GetSummary".into();
+        method.function = Some(method.name.clone());
+        let row = span_row(&method, 70.0, false);
+        assert_eq!(
+            (row.label.as_str(), row.site.as_str()),
+            ("OrdersController.GetSummary", "")
+        );
+        let mut endpoint = span(0, 0.0, 70.0, None, 1);
+        endpoint.kind = "server".into();
+        endpoint.name = "GET /v1.2/orders.json".into();
+        assert_eq!(
+            span_row(&endpoint, 70.0, false).label,
+            "GET /v1.2/orders.json"
+        );
     }
 }

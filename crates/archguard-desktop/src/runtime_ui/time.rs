@@ -6,7 +6,7 @@ use std::rc::Rc;
 use archguard_engine::core::{RuntimeProfile, RuntimeRequest};
 use slint::{ModelRc, VecModel};
 
-use super::summary::number;
+use super::summary::{number, short_function, span_label};
 use crate::ui::{RtBreakdown, RtFlame, RtHot, RtPart};
 
 /// The engine's categories in the order of `RtTime` in the Slint file.
@@ -68,7 +68,7 @@ pub fn hot(p: &RuntimeProfile) -> ModelRc<RtHot> {
         p.hot_methods
             .iter()
             .map(|m| RtHot {
-                name: m.name.as_str().into(),
+                name: short_function(&m.name).into(),
                 category: index(m.kind.as_deref().unwrap_or("other")),
                 calls: i32::try_from(m.calls).unwrap_or(i32::MAX),
                 self_ms: number(m.self_ms),
@@ -87,7 +87,7 @@ pub fn flame(r: &RuntimeRequest) -> (ModelRc<RtFlame>, i32) {
         .iter()
         .map(|s| RtFlame {
             depth: i32::try_from(s.depth).unwrap_or(i32::MAX),
-            label: s.db.as_deref().unwrap_or(&s.name).into(),
+            label: span_label(s).into(),
             x: share(s.offset_ms, total),
             w: share(s.duration_ms, total),
             category: index(&s.category),

@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use archguard_engine::core::{
-    RuntimeCallSite, RuntimeEndpoint, RuntimeFinding, RuntimeProfile, RuntimeStatement,
+    RuntimeCallSite, RuntimeEndpoint, RuntimeFinding, RuntimeProfile, RuntimeSpan, RuntimeStatement,
 };
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -46,6 +46,16 @@ pub(super) fn short_function(f: &str) -> String {
     match parts.as_slice() {
         [method, class, _] => format!("{class}.{method}"),
         _ => f.to_string(),
+    }
+}
+
+/// A span's caption: its statement, or for a method span class and method
+/// without the package; endpoint names stay as they are.
+pub(super) fn span_label(s: &RuntimeSpan) -> String {
+    match &s.db {
+        Some(db) => db.clone(),
+        None if s.kind == "internal" => short_function(&s.name),
+        None => s.name.clone(),
     }
 }
 
