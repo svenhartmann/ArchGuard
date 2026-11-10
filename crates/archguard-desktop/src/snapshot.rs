@@ -61,6 +61,7 @@ pub fn schedule(ui: &AppWindow) {
         ui.invoke_close_doc(i);
     }
     apply_view_hooks(ui);
+    sim_hook(ui);
     apply_shell_hooks(ui);
     export_hook(ui);
     let weak = ui.as_weak();
@@ -123,6 +124,23 @@ fn matrix_query_round_trip(ui: &AppWindow) {
             ui.invoke_navigate("dsm".into());
         }
     });
+}
+
+/// `ARCHGUARD_DESKTOP_SIM=<action>[:<arg>],…`: manual-simulation actions
+/// of the shown Graph in order (`graph_ui::simulation::act`), after the
+/// reveal hooks, e.g. `toggle,cut-out:1,confirm` (`cut-*` take a row,
+/// `move` a module name).
+fn sim_hook(ui: &AppWindow) {
+    let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_SIM") else {
+        return;
+    };
+    let Some(id) = shown("graph") else {
+        return;
+    };
+    for item in spec.split(',') {
+        let (action, arg) = item.split_once(':').unwrap_or((item, ""));
+        ui.invoke_graph_sim(id, action.trim().into(), arg.trim().into());
+    }
 }
 
 /// The id of a tab of `kind`, as the view bar would show it.

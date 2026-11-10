@@ -3,6 +3,7 @@
 //! share the document's package tree.
 
 mod data;
+pub mod simulation;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,6 +12,7 @@ use slint::{ComponentHandle, Model, SharedString, VecModel};
 
 use crate::deferred::{Coalesce, TYPING};
 use crate::documents::{self, with_store};
+use crate::context::Loaded;
 use crate::export::{Diagram, GraphInput};
 use crate::follow::{self, Nav};
 use crate::follow_ui;
@@ -19,6 +21,8 @@ use crate::panes::Layout;
 use crate::panes_ui;
 use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
+use crate::file_ui::FileState;
+use crate::matrix_ui::MatrixState;
 use crate::tree::{EdgeMode, Sort, Tree};
 use crate::ui::*;
 use crate::view_export;
@@ -165,6 +169,19 @@ pub fn wire(ui: &AppWindow) {
     }));
     ui.on_set_display(on(ui, |g, d: i32| g.display = d));
     ui.on_set_explorer_tab(on(ui, |g, t: i32| g.explorer_tab = t));
+    let w = ui.as_weak();
+    ui.on_graph_sim(move |id, action, arg| {
+        let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
+            return;
+        };
+        let proposed =
+            instances::with(id, |s: &mut Graph| simulation::proposal(&s.g, &action, &arg));
+        if simulation::act(&ui, &action, proposed.flatten()) {
+            resimulate(&ui);
+        } else {
+            panes_ui::sync(&ui);
+        }
+    });
     wire_search(ui);
 }
 
@@ -241,6 +258,7 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
     let data = analysis.loaded();
     let tree = tab_support::tree(&data);
     let run = data.run;
+    let groups = cycle_groups(&data);
     instances::sync(ui, layout, "graph", &tree, |tab, node| {
         let mut g = GraphState::with_review(
             tree.clone(),
@@ -251,17 +269,47 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         if let Some(n) = node {
             g.open(n);
         }
-        let cycles = g.cycles(&run.report.findings);
-        let cycles = cycles.into_iter().map(|c| CycleItem {
-            first_node: c.first_node as i32,
-            label: c.label.into(),
-            size: c.size as i32,
-        });
         Some(Graph {
-            cycles: cycles.collect(),
+            cycles: cycle_items(&g, &groups),
             g,
         })
     })
+}
+
+/// The cycle groups the Graphs list: the simulated graph's while there
+/// are simulated changes, else the report's findings.
+fn cycle_groups(data: &Loaded) -> Vec<Vec<String>> {
+    documents::with_active_state(|s: &mut simulation::Simulation| s.cycles.clone())
+        .flatten()
+        .unwrap_or_else(|| state::cycle_groups(&data.run.report.findings))
+}
+
+fn cycle_items(g: &GraphState, groups: &[Vec<String>]) -> Vec<CycleItem> {
+    let items = g.cycles(groups).into_iter().map(|c| CycleItem {
+        first_node: c.first_node as i32,
+        label: c.label.into(),
+        size: c.size as i32,
+    });
+    items.collect()
+}
+
+/// The simulated changes changed: build the package tree again, move every
+/// Graph onto it (keeping what is open and selected) and show it. Matrices
+/// and File views are built again.
+fn resimulate(ui: &AppWindow) {
+    documents::forget_active::<Rc<Tree>>();
+    documents::forget_active::<instances::Instances<MatrixState>>();
+    documents::forget_active::<instances::Instances<FileState>>();
+    if let Some(analysis) = with_store(|s| s.active()?.analysis.clone()) {
+        let data = analysis.loaded();
+        let tree = tab_support::tree(&data);
+        let groups = cycle_groups(&data);
+        instances::each(|s: &mut Graph| {
+            s.g.retree(tree.clone());
+            s.cycles = cycle_items(&s.g, &groups);
+        });
+    }
+    panes_ui::sync(ui);
 }
 
 /// Graph `id` as the export's input with its display settings, and its

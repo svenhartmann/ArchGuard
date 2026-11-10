@@ -150,10 +150,15 @@ pub fn snapshot_mode() -> bool {
 }
 
 /// The active document's package tree, built once for the Graph and Matrix
-/// tabs.
+/// tabs, with the document's simulated changes applied.
 pub fn tree(data: &Loaded) -> Rc<Tree> {
+    use crate::tree::simulation::Simulation;
     documents::derived::<Rc<Tree>>();
-    let build = || Rc::new(Tree::from_graph(&data.run.graph));
+    let (full, config) = (&data.run.graph, &data.run.config);
+    let build = || {
+        let simulated = documents::with_active_state(|s: &mut Simulation| s.apply(full, config));
+        Rc::new(Tree::from_graph(simulated.flatten().as_ref().unwrap_or(full)))
+    };
     documents::with_active_state_or(build, |t: &mut Rc<Tree>| t.clone()).unwrap_or_else(build)
 }
 

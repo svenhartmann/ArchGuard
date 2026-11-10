@@ -181,6 +181,8 @@ export component AppWindow inherits Window {
     callback open-row(int, int);
     callback open-node(int, int);
     callback reset-tree(int);
+    // A manual-simulation action of Graph `id` (simulation.slint).
+    callback graph-sim(int, string, string);
     callback search(string);
     // The header's search: reveal a hit in a Graph.
     callback reveal-hit(int);
@@ -712,6 +714,7 @@ export component AppWindow inherits Window {
                         set-display(d) => { root.set-display(p.id, d); }
                         set-explorer-tab(t) => { root.set-explorer-tab(p.id, t); }
                         node-tab(kind, n, side) => { root.node-tab(kind, n, side); }
+                        sim(a, b) => { root.graph-sim(p.id, a, b); }
                     }
                 }
             }

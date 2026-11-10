@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_engine::core::{Graph, NodeKind, Ref};
 
+pub mod simulation;
+
 /// Evidence sample per link, as `core::view::aggregate` caps it.
 const MAX_REFS: usize = 10;
 

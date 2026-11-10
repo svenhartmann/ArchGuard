@@ -10,6 +10,7 @@ import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
 import { NodeMenu } from "node_menu.slint";
 import { Fmt } from "format.slint";
+import { SimData, SimToggle, SimDetails, SimStrip } from "simulation.slint";
 
 export struct Crumb {
     node: int,
@@ -67,6 +68,8 @@ export struct GraphData {
     explorer-tab: int,
     cycles: [CycleItem],
     node-total: int,
+    // The document's manual simulation.
+    sim: SimData,
 }
 
 component ExplorerRow inherits Rectangle {
@@ -164,7 +167,10 @@ component NeighborRow inherits Rectangle {
     in property <Neighbor> item;
     in property <color> tone;
     in property <int> max-weight;
+    // While simulating: offer cutting this dependency.
+    in property <bool> cuttable;
     callback clicked;
+    callback cut;
     height: 34px;
     border-radius: 6px;
     background: touch.has-hover ? Theme.panel-2 : transparent;
@@ -177,7 +183,7 @@ component NeighborRow inherits Rectangle {
     }
     HorizontalLayout {
         padding-left: 8px;
-        padding-right: 8px;
+        padding-right: root.cuttable ? cut-button.width + 12px : 8px;
         spacing: 8px;
         Text { text: root.item.label; color: Theme.text; font-size: Theme.font-body; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
         Text { text: Fmt.int(root.item.weight); color: root.tone; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; }
@@ -185,6 +191,17 @@ component NeighborRow inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    // Right of the weight, above the row's own touch area, so it does not
+    // select. Hidden (no input) unless simulating.
+    cut-button := Button {
+        visible: root.cuttable;
+        width: self.preferred-width;
+        x: parent.width - self.width - 4px;
+        y: (parent.height - self.height) / 2;
+        text: @tr("Cut edge");
+        compact: true;
+        clicked => { root.cut(); }
     }
 }
 
@@ -227,6 +244,8 @@ export component GraphView inherits HorizontalLayout {
     callback set-explorer-tab(int);
     // kind ("file" or "graph"), tree node, side: a node in a new tab.
     callback node-tab(string, int, bool);
+    // A manual-simulation action and its argument (simulation.slint).
+    callback sim(string, string);
 
     // ------------------------------------------------- explorer
     if root.explorer-on: Rectangle {
@@ -416,6 +435,7 @@ export component GraphView inherits HorizontalLayout {
                 spacing: 6px;
                 Button { compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                 Button { compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
+                SimToggle { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
             }
             // The reference takes the rest of the last row.
             Text {
@@ -463,6 +483,7 @@ export component GraphView inherits HorizontalLayout {
                 total: root.data.dep-count;
             }
         }
+        SimStrip { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
     }
 
     // ------------------------------------------------- details
@@ -491,6 +512,7 @@ export component GraphView inherits HorizontalLayout {
                 Button { text: @tr("Open in new tab"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, false); } }
                 Button { text: @tr("Open to the side"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, true); } }
             }
+            if root.data.sim.on: SimDetails { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -501,7 +523,9 @@ export component GraphView inherits HorizontalLayout {
                         item: n;
                         tone: Theme.outgoing;
                         max-weight: root.data.outgoing.length > 0 ? root.data.outgoing[0].weight : 0;
+                        cuttable: root.data.sim.on;
                         clicked => { root.select-row(n.row); }
+                        cut => { root.sim("cut-out", n.row); }
                     }
                     Rectangle { height: 12px; }
                     Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
@@ -509,7 +533,9 @@ export component GraphView inherits HorizontalLayout {
                         item: n;
                         tone: Theme.incoming;
                         max-weight: root.data.incoming.length > 0 ? root.data.incoming[0].weight : 0;
+                        cuttable: root.data.sim.on;
                         clicked => { root.select-row(n.row); }
+                        cut => { root.sim("cut-in", n.row); }
                     }
                 }
             }

@@ -323,6 +323,16 @@ pub fn with_state<T: 'static, R>(doc: DocId, f: impl FnOnce(&mut T) -> R) -> Opt
     Some(run(cell, f))
 }
 
+/// Drop the active document's state of type `T`; the views build it again
+/// when shown.
+pub fn forget_active<T: 'static>() {
+    with_store(|s| {
+        if let Some(i) = s.active {
+            s.docs[i].states.remove(&TypeId::of::<T>());
+        }
+    });
+}
+
 /// As [`with_active_state`], building the state with `build` first if the
 /// active document has none. `None` only without an active document.
 pub fn with_active_state_or<T: 'static, R>(

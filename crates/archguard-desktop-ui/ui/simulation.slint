@@ -1,0 +1,146 @@
+// Manual simulation in the Graph view (src/graph_ui/simulation.rs), as
+// the web viewer's "Manual simulation", confirmation dialog and ops strip.
+// Every action reports `action(name, argument)`; the names are those
+// `graph_ui::simulation::act` handles.
+import { Theme } from "theme.slint";
+import { Button, Badge } from "widgets.slint";
+import { ComboBox } from "combo.slint";
+import { Fmt } from "format.slint";
+
+// One SimOp: kind 0 cut `a → b`, 1 move `a` under `b`, 2 merge `b` into `a`.
+export struct SimOpRow {
+    kind: int,
+    a: string,
+    b: string,
+}
+
+// The document's simulation as one Graph shows it.
+export struct SimData {
+    on: bool,
+    ops: [SimOpRow],
+    has-pending: bool,
+    pending: SimOpRow,
+    // Why the ops or the last proposal do not apply; "" none.
+    error: string,
+    has-delta: bool,
+    cycles-before: int,
+    cycles-after: int,
+    acd-before: string,
+    acd-after: string,
+    // Modules the selection can move under.
+    targets: [string],
+}
+
+export global SimText {
+    public pure function op(o: SimOpRow) -> string {
+        if o.kind == 0 { return @tr("Cut {} → {}", o.a, o.b); }
+        if o.kind == 1 { return @tr("Move {} under {}", o.a, o.b); }
+        return @tr("Merge {} into {}", o.b, o.a);
+    }
+}
+
+// Toolbar toggle with the number of confirmed changes.
+export component SimToggle inherits HorizontalLayout {
+    in property <SimData> sim;
+    callback action(string, string);
+    spacing: 6px;
+    Button {
+        compact: true;
+        text: @tr("Manual simulation");
+        pressed-state: root.sim.on;
+        clicked => { root.action("toggle", ""); }
+    }
+    if root.sim.ops.length > 0: Badge {
+        text: Fmt.int(root.sim.ops.length);
+        variant: "accent";
+        y: (parent.height - self.height) / 2;
+    }
+}
+
+// In the details panel while proposing: the confirmation of a proposed
+// change, and moving the selection under another module.
+export component SimDetails inherits VerticalLayout {
+    in property <SimData> sim;
+    callback action(string, string);
+    spacing: 8px;
+    if root.sim.has-pending: Rectangle {
+        background: Theme.accent.with-alpha(0.08);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.accent.with-alpha(0.5);
+        VerticalLayout {
+            padding: 10px;
+            spacing: 8px;
+            Text { text: SimText.op(root.sim.pending) + "?"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+            Text {
+                text: @tr("This changes only the simulated graph; source files remain unchanged.");
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Button { text: @tr("Apply"); primary: true; compact: true; clicked => { root.action("confirm", ""); } }
+                Button { text: @tr("Cancel"); compact: true; clicked => { root.action("cancel", ""); } }
+            }
+        }
+    }
+    if root.sim.targets.length > 0: VerticalLayout {
+        spacing: 6px;
+        Text { text: @tr("Move under module"); color: Theme.muted; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
+        target := ComboBox { model: root.sim.targets; }
+        HorizontalLayout {
+            alignment: start;
+            Button { text: @tr("Propose move"); compact: true; clicked => { root.action("move", target.current-value); } }
+        }
+    }
+}
+
+// Below the graph while there are changes or an error: what changed and
+// undo, clear, export.
+export component SimStrip inherits Rectangle {
+    in property <SimData> sim;
+    callback action(string, string);
+    height: root.sim.ops.length > 0 || root.sim.error != "" ? box.preferred-height : 0;
+    visible: self.height > 0;
+    background: Theme.panel;
+    Rectangle { y: 0; height: 1px; background: Theme.border; }
+    box := VerticalLayout {
+        padding: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 12px;
+            Text { text: @tr("Simulated changes"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; }
+            if root.sim.has-delta: Text {
+                text: @tr("Cycle groups {} → {} · ACD {} → {}", Fmt.int(root.sim.cycles-before), Fmt.int(root.sim.cycles-after), root.sim.acd-before, root.sim.acd-after);
+                color: root.sim.cycles-after < root.sim.cycles-before ? Theme.success : root.sim.cycles-after > root.sim.cycles-before ? Theme.cycle : Theme.muted;
+                font-size: Theme.font-small;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: @tr("Undo"); compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("undo", ""); } }
+            Button { text: @tr("Clear changes"); compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("clear", ""); } }
+            Button { text: @tr("Export changes"); primary: true; compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("export", ""); } }
+        }
+        if root.sim.error != "": Text {
+            text: @tr("Not applied: {}", root.sim.error);
+            color: Theme.danger;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+        // The last four; the export holds them all.
+        for o[i] in root.sim.ops: Text {
+            visible: i >= root.sim.ops.length - 4;
+            height: self.visible ? self.preferred-height : 0;
+            text: (i + 1) + ". " + SimText.op(o);
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            font-family: Theme.mono-family;
+            overflow: elide;
+        }
+    }
+}

@@ -1,0 +1,44 @@
+msgid "Cut {} → {}"
+msgstr "Kante {} → {} trennen"
+
+msgid "Move {} under {}"
+msgstr "{} unter {} verschieben"
+
+msgid "Merge {} into {}"
+msgstr "{} in {} zusammenführen"
+
+msgid "Manual simulation"
+msgstr "Manuelle Simulation"
+
+msgid "This changes only the simulated graph; source files remain unchanged."
+msgstr "Dies ändert nur den simulierten Graphen; Quelldateien bleiben unverändert."
+
+msgid "Apply"
+msgstr "Anwenden"
+
+msgid "Move under module"
+msgstr "Unter Modul verschieben"
+
+msgid "Propose move"
+msgstr "Verschiebung vorschlagen"
+
+msgid "Simulated changes"
+msgstr "Simulierte Änderungen"
+
+msgid "Cycle groups {} → {} · ACD {} → {}"
+msgstr "Zyklusgruppen {} → {} · ACD {} → {}"
+
+msgid "Undo"
+msgstr "Rückgängig"
+
+msgid "Clear changes"
+msgstr "Änderungen verwerfen"
+
+msgid "Export changes"
+msgstr "Änderungen exportieren"
+
+msgid "Not applied: {}"
+msgstr "Nicht angewendet: {}"
+
+msgid "Cut edge"
+msgstr "Trennen"

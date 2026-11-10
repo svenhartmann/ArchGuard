@@ -275,29 +275,49 @@ impl GraphState {
         )
     }
 
-    /// Cycle findings of the report, mapped onto tree nodes by name.
-    pub fn cycles(&self, findings: &[Finding]) -> Vec<CycleEntry> {
-        findings
+    /// Cycle groups (member names), mapped onto tree nodes by name.
+    pub fn cycles(&self, groups: &[Vec<String>]) -> Vec<CycleEntry> {
+        groups
             .iter()
-            .filter(|f| f.kind == FindingKind::Cycle)
-            .filter_map(|f| {
-                let first = f.nodes.first()?;
+            .filter_map(|nodes| {
+                let first = nodes.first()?;
                 let node = self.tree.nodes.iter().position(|n| &n.name == first)?;
-                let shown: Vec<&str> = f
-                    .nodes
+                let shown: Vec<&str> = nodes
                     .iter()
                     .take(3)
                     .map(|n| n.rsplit('/').next().unwrap_or(n))
                     .collect();
-                let more = if f.nodes.len() > 3 { " …" } else { "" };
+                let more = if nodes.len() > 3 { " …" } else { "" };
                 Some(CycleEntry {
                     first_node: node,
                     label: format!("{}{more}", shown.join(" ↔ ")),
-                    size: f.nodes.len(),
+                    size: nodes.len(),
                 })
             })
             .collect()
     }
+
+    /// Show `tree` instead (a simulation changed it), keeping open
+    /// packages, selection and scope by name where `tree` has them.
+    pub fn retree(&mut self, tree: Rc<Tree>) {
+        let name = |n: usize| self.tree.nodes[n].name.clone();
+        let find = |name: String| tree.nodes.iter().position(|t| t.name == name);
+        let open: Vec<String> = self.expanded.iter().map(|&n| name(n)).collect();
+        self.expanded = open.into_iter().filter_map(find).collect();
+        self.selected = self.selected.map(name).and_then(find);
+        self.scope = self.scope.map(name).and_then(find);
+        self.tree = tree;
+        self.refresh();
+    }
+}
+
+/// The member names of the report's cycle findings.
+pub fn cycle_groups(findings: &[Finding]) -> Vec<Vec<String>> {
+    findings
+        .iter()
+        .filter(|f| f.kind == FindingKind::Cycle)
+        .map(|f| f.nodes.clone())
+        .collect()
 }
 
 /// Nodes of `tree` whose name contains `query`, ignoring case; at most
@@ -461,6 +481,28 @@ mod tests {
         assert_eq!(s.selected, None);
     }
 
+    /// A simulated tree keeps what was open and selected, by name; a node
+    /// the new tree lacks is dropped.
+    #[test]
+    fn retree_keeps_open_packages_and_selection_by_name() {
+        let mut s = GraphState::new(tree());
+        s.open(1);
+        s.reveal(2);
+        // The same names, other order: indices change, names stay.
+        let mut g = s.tree.full.clone();
+        g.nodes.reverse();
+        s.retree(Rc::new(Tree::from_graph(&g)));
+        let name = |n: usize| s.tree.nodes[n].name.as_str();
+        let open: BTreeSet<&str> = s.expanded.iter().map(|&n| name(n)).collect();
+        assert_eq!(open, BTreeSet::from(["app", "app/ui"]));
+        assert_eq!(s.selected.map(name), Some("app/ui/view.rs"));
+        assert_eq!(s.scope.map(name), Some("app/ui"));
+        g.nodes.retain(|n| n.name != "app/ui/view.rs");
+        g.edges.clear();
+        s.retree(Rc::new(Tree::from_graph(&g)));
+        assert_eq!(s.selected, None);
+    }
+
     #[test]
     fn search_finds_by_path_and_names_the_parent() {
         let s = GraphState::new(tree());
@@ -538,7 +580,7 @@ mod tests {
             sampling: None,
             suggested_cuts: Vec::new(),
         };
-        let c = s.cycles(&[finding]);
+        let c = s.cycles(&cycle_groups(&[finding]));
         assert_eq!(c.len(), 1);
         assert_eq!((c[0].first_node, c[0].size), (0, 2));
         assert!(c[0].label.contains("app") && c[0].label.contains("core"));
