@@ -6,6 +6,7 @@ use archguard_report::{Arc42Blocks, Arc42Document, Arc42Inputs};
 use serde_json::{Value, json};
 use std::path::Path;
 
+#[tracing::instrument(skip_all)]
 pub fn arc42_from_evidence(
     graph: &Graph,
     config: &Config,
@@ -132,6 +133,7 @@ fn xml_text(text: &str, parent: &str, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[tracing::instrument(skip_all)]
 pub fn arc42_document(
     root: &Path,
     config: &Config,

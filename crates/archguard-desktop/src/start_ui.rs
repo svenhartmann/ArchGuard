@@ -89,6 +89,7 @@ impl Inputs {
     /// The tab state: the same engine calls as the CLI's report
     /// (`review_cmd.rs`). Slow; runs on a worker thread.
     fn build(self) -> StartState {
+        let _span = archguard_engine::self_trace::tracing::info_span!("build").entered();
         let Inputs {
             calls,
             root,

@@ -97,6 +97,7 @@ pub struct State {
 
 impl State {
     pub fn new(a: impl Into<std::sync::Arc<CallAnalysis>>) -> Self {
+        let _span = archguard_engine::self_trace::tracing::info_span!("new").entered();
         let idx = Index::new(a);
         // The busiest package, not the first: an empty first package
         // looks like a broken view.
@@ -302,6 +303,7 @@ impl State {
 
     /// Apply the web's rules after any change and derive the view.
     pub fn refresh(&mut self) {
+        let _span = archguard_engine::self_trace::tracing::info_span!("refresh").entered();
         self.normalize();
         let mut d = Derived::default();
         if self.mode == Mode::Cycles {

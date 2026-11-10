@@ -34,6 +34,7 @@ pub struct ArchitectureWorld {
 /// Class tiles use the observed maximum source-method cyclomatic complexity.
 /// Files without declarations remain present with unknown metrics. Coverage is
 /// file-scoped, never class coverage; stale, ambiguous and empty totals stay unknown.
+#[tracing::instrument(skip_all)]
 pub fn architecture_world(
     graph: &Graph,
     calls: &CallAnalysis,

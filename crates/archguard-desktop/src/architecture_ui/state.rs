@@ -57,6 +57,7 @@ pub(super) fn build_from(
     calls: &CallAnalysis,
     lang: DocLang,
 ) -> ArchitectureState {
+    let _span = archguard_engine::self_trace::tracing::info_span!("build_from").entered();
     // The document is written in the window's language (ADR 0008).
     let config = &Config {
         arc42: Arc42Config {

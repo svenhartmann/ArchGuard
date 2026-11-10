@@ -101,6 +101,7 @@ fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
 
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &StartState) {
+    let _span = archguard_engine::self_trace::tracing::info_span!("push").entered();
     let d = ui.global::<StartData>();
     let old = d.get_model();
     // The scene moves under the pointer; its next move shows the tooltip.

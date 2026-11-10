@@ -62,6 +62,7 @@ fn core(name: &str) -> bool {
 
 /// Reuses caller-supplied compiler and deployment observations. The graph must
 /// be the original file graph, not a display cut or a simulated graph.
+#[tracing::instrument(skip_all)]
 pub fn analyze_architecture_patterns(
     root: &Path,
     config: &Config,

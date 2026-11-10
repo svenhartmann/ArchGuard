@@ -34,6 +34,7 @@ pub struct Index {
 
 impl Index {
     pub fn new(a: impl Into<Arc<CallAnalysis>>) -> Self {
+        let _span = archguard_engine::self_trace::tracing::info_span!("new").entered();
         let a = a.into();
         let classes = a
             .classes

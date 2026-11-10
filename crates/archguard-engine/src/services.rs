@@ -54,6 +54,7 @@ struct ParsedService {
 /// env files and interpolation are reported as gaps rather than executed.
 /// Helm charts and Kustomize overlays are rendered only after the operator opts in
 /// with `ARCHGUARD_RENDER_MANIFESTS=1` (see `manifest_render`).
+#[tracing::instrument(skip_all)]
 pub fn analyze_services(root: &Path) -> Result<ServiceTopology, ArchguardError> {
     analyze_services_with(root, &manifest_render::Tools::from_env())
 }

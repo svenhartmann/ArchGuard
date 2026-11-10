@@ -71,6 +71,7 @@ fn row(node: String, touches: BTreeMap<String, u64>, complete: bool) -> Knowledg
     }
 }
 /// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+#[tracing::instrument(skip_all)]
 pub fn knowledge_metrics<'a>(
     root: &Path,
     config: &Config,

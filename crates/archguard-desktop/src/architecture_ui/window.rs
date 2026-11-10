@@ -15,6 +15,7 @@ use crate::ui::ArchitectureModel;
 
 /// The window model of the state.
 pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
+    let _span = archguard_engine::self_trace::tracing::info_span!("model").entered();
     let mut m = ArchitectureModel {
         has_model: s.has_model,
         saved: s.saved.as_str().into(),

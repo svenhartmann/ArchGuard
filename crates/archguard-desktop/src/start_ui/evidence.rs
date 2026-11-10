@@ -51,6 +51,7 @@ impl Evidence {
         calls: &CallAnalysis,
         world: ArchitectureWorld,
     ) -> Self {
+        let _span = archguard_engine::self_trace::tracing::info_span!("new").entered();
         let metrics = archguard_engine::code_metrics(calls);
         Evidence {
             kpis: rate_classes(&metrics.classes),

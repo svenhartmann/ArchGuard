@@ -274,6 +274,7 @@ pub fn security_fingerprint(root: &Path, config: &Config) -> Result<String, Arch
 }
 
 /// Read only the last explicit scan. This function never starts Trivy or network work.
+#[tracing::instrument(skip_all)]
 pub fn read_security(root: &Path, config: &Config) -> SecurityReport {
     let inputs = match collect_inputs(root, config) {
         Ok(inputs) => inputs,

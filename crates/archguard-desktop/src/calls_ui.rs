@@ -73,6 +73,7 @@ fn ui_labels(ui: &AppWindow) -> view::UiLabels {
 
 /// Show the state in the window.
 pub fn push(ui: &AppWindow, s: &CallsState) {
+    let _span = archguard_engine::self_trace::tracing::info_span!("push").entered();
     let mut m = view::fill(s, &ui_labels(ui));
     let status = Status::of(&s.idx.a.status);
     m.status_slot = status.slot();
