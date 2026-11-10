@@ -48,6 +48,9 @@ pub struct StartState {
     pub(super) ev: Evidence,
     /// The project root as the MCP requests of "AI context" name it.
     pub(super) root: String,
+    /// The analysis' effective source roots: module names of projects
+    /// start below them (ADR 0010).
+    pub(super) source_roots: Vec<String>,
     /// The services World, when the topology has one.
     pub(super) services: Option<ServicesWorld>,
     pub(super) mode: Mode,
@@ -90,6 +93,7 @@ pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> St
     let mut s = StartState {
         ev,
         root: String::new(),
+        source_roots: Vec::new(),
         // As the web, a repository opens on its services.
         mode: if services.is_some() {
             Mode::Services

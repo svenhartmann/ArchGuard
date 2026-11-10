@@ -45,7 +45,7 @@ pub(crate) const CACHE_DIR: &str = crate::project_files::PROJECT_DIR;
 /// The single cache entry inside [`CACHE_DIR`]: [`CacheEntry`] as JSON.
 pub(crate) const CACHE_FILE: &str = "cache.json";
 // Increment when extractor semantics or the cache contract change.
-const CACHE_SCHEMA: u32 = 8;
+const CACHE_SCHEMA: u32 = 9;
 
 /// On-disk shape of [`CACHE_FILE`]: graph and fingerprint are
 /// serialised as one unit and committed via one atomic replacement,
@@ -87,6 +87,9 @@ pub fn fingerprint(files: &[SourceFile]) -> String {
     let mut sources: Vec<_> = files.iter().collect();
     sources.sort_by_key(|file| &file.rel_path);
     for file in sources {
+        // A new or moved build manifest renames the project's files (ADR 0010).
+        hasher.update(file.project.as_bytes());
+        hasher.update(b"\0");
         match fs::read(&file.path) {
             Ok(bytes) => {
                 hasher.update([1]);
@@ -589,6 +592,7 @@ mod tests {
             path: dir.path().join(rel),
             rel_path: rel.to_string(),
             lang: Lang::Ts,
+            project: String::new(),
         };
         let forward = vec![source("x.ts"), source("y.ts")];
         let backward = vec![source("y.ts"), source("x.ts")];

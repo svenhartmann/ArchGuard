@@ -4,7 +4,7 @@ use std::path::Path;
 use archguard_core::{
     CallAnalysis, CallAnalyzer, CallClass, CallMethod, Config, SemanticDetails, SourceMethodMetrics,
 };
-use archguard_extract::{Lang, strip_root};
+use archguard_extract::{Lang, SourceFile, strip_root};
 
 /// What a token scanner finds in one file: classes, methods, metrics and
 /// diagnostics.
@@ -24,7 +24,7 @@ pub(crate) fn token_calls(
     root: &Path,
     config: &Config,
     (lang, language, limitation): (Lang, &str, &str),
-    scan: impl Fn(&str, &str) -> TokenScan,
+    scan: impl Fn(&SourceFile, &str, &str) -> TokenScan,
 ) -> CallAnalysis {
     const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
     let mut report = CallAnalysis {
@@ -49,7 +49,7 @@ pub(crate) fn token_calls(
                 .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()));
         match text {
             Ok(content) => {
-                let (classes, methods, found, diagnostics) = scan(&stripped, &content);
+                let (classes, methods, found, diagnostics) = scan(file, &stripped, &content);
                 report.classes.extend(classes);
                 report.methods.extend(methods);
                 report.diagnostics.extend(diagnostics);

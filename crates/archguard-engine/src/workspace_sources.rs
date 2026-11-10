@@ -970,6 +970,7 @@ impl NamedSource {
             path: file.path.clone(),
             rel_path: self.repo_path.clone(),
             lang: file.lang,
+            project: file.project.clone(),
         }
     }
 }
@@ -1167,7 +1168,7 @@ fn gather(
             };
             let stripped = strip_root(&file.rel_path, &input.config.project.source_roots);
             let extraction = extractor.extract(&stripped, source);
-            let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
+            let name = crate::pipeline::file_node_name(&file, &stripped, &extraction.declarations);
             input.named.push(NamedSource {
                 relative: file.rel_path.clone(),
                 stripped,

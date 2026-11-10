@@ -161,6 +161,12 @@ impl DeclMap {
             .insert(path.to_string());
     }
 
+    /// Whether a file declares `module_path` (a package or namespace),
+    /// not only a directory on disk.
+    pub fn is_declared(&self, module_path: &str) -> bool {
+        self.declared.contains(module_path)
+    }
+
     /// The unique file named `stem` inside the **declared** module
     /// `module_path`, `None` for directory-only modules, ambiguous stems and
     /// unknown modules. Dotted names in code use this stricter rule because

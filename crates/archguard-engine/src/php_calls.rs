@@ -22,10 +22,10 @@ pub(crate) fn analyze_php_calls(root: &Path, config: &Config) -> CallAnalysis {
         root,
         config,
         (Lang::Php, "php", LIMITATION),
-        |path, content| {
+        |file, path, content| {
             // The graph names a PHP file after its namespace, as the pipeline does.
             let declarations = PhpExtractor.extract(path, content).declarations;
-            let node = crate::pipeline::file_node_name(path, &declarations);
+            let node = crate::pipeline::file_node_name(file, path, &declarations);
             let found = scan_php_structure(path, &node, content);
             scanned.borrow_mut().push((path.to_string(), found.symbols));
             (

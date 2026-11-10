@@ -62,6 +62,21 @@ pub struct SourceFile {
     pub rel_path: String,
     /// Language detected from the file extension.
     pub lang: Lang,
+    /// `/`-joined `root`-relative directory of the nearest build manifest
+    /// above the file ([`is_manifest`]), `""` for none or the root itself.
+    /// Names files with a declared package apart per project in a monorepo.
+    pub project: String,
+}
+
+/// Build manifests of the languages that name files after a declared
+/// package or namespace (Java, Kotlin, C#, PHP).
+fn is_manifest(name: &str) -> bool {
+    matches!(
+        name,
+        "pom.xml" | "build.gradle" | "build.gradle.kts" | "composer.json"
+    ) || [".csproj", ".fsproj", ".vbproj"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
 }
 
 /// Collect every scannable source file under `root`.
@@ -76,6 +91,7 @@ pub struct SourceFile {
 pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, ArchguardError> {
     let excluded = build_excluder(excludes)?;
     let mut files = Vec::new();
+    let mut projects = std::collections::BTreeSet::new();
     for entry in WalkBuilder::new(root).require_git(false).build() {
         let entry = entry.map_err(|e| ArchguardError::Io(std::io::Error::other(e.to_string())))?;
         // Depth 0 is `root` itself; only plain files can be sources (entries
@@ -84,6 +100,10 @@ pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, Archgua
             continue;
         }
         let path = entry.path();
+        if entry.depth() > 1 && entry.file_name().to_str().is_some_and(is_manifest) {
+            let dir = relative_path(root, path.parent().unwrap_or(root));
+            projects.insert(dir);
+        }
         let Some(lang) = Lang::from_path(path) else {
             continue;
         };
@@ -95,10 +115,26 @@ pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, Archgua
             path: path.to_path_buf(),
             rel_path,
             lang,
+            project: String::new(),
         });
+    }
+    for file in &mut files {
+        file.project = nearest_project(&file.rel_path, &projects);
     }
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(files)
+}
+
+/// The deepest of `projects` that contains `rel_path`, `""` for none.
+fn nearest_project(rel_path: &str, projects: &std::collections::BTreeSet<String>) -> String {
+    let mut dir = rel_path;
+    while let Some((parent, _)) = dir.rsplit_once('/') {
+        if projects.contains(parent) {
+            return parent.to_string();
+        }
+        dir = parent;
+    }
+    String::new()
 }
 
 /// Compile the `exclude` patterns into a single matcher.

@@ -251,6 +251,7 @@ hierarchy source is **language-dependent** (Section 6.1):
 
 - **Physical** (directory tree): TypeScript/JS, Python and Rust use the directory path as the module.
 - **Logical** (package/namespace declaration): Java, C# and PHP use `package a.b;` or `namespace A.B;`, not the directory; in C#, namespace and directory may differ.
+  Below the repository root, the directory of the nearest build manifest (`pom.xml`, `build.gradle(.kts)`, `*.csproj`, `composer.json`) comes first: `functions/search/de/x/App.java`. Projects of a monorepo that share a package stay apart, and imports bind inside their own project first (ADR 0010).
 
 Node names are normalized module paths (`a/b/…`). Edges connect `file` nodes. If
 a symbolic import cannot be assigned to a file (for example `import a.b.*` or a

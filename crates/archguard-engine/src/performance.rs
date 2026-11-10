@@ -47,7 +47,7 @@ pub fn analyze_performance(
         };
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = extractor.extract(&stripped, &content);
-        let name = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
+        let name = crate::pipeline::file_node_name(&file, &stripped, &extraction.declarations);
         let Some(node) = by_name.get(name.as_str()) else {
             continue;
         };

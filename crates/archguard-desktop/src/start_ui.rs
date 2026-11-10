@@ -112,6 +112,7 @@ impl Inputs {
         state.glance = glance;
         state.files = coverage_detail::Files::new(&coverage, &review);
         state.root = root.display().to_string();
+        state.source_roots = config.project.source_roots.clone();
         state.restore(&memo);
         snapshot_overrides(&mut state);
         state
@@ -454,6 +455,42 @@ mod tests {
         })
         .build();
         (state, packages)
+    }
+
+    /// Zooming into a service of a monorepo whose projects share a Java
+    /// package opens that project's module, whatever source root the
+    /// analysis cut off (ADR 0010).
+    #[test]
+    fn entering_a_service_opens_its_project_module() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let class = "package de.x;\npublic class App {}\n";
+        for project in ["functions/a", "functions/b"] {
+            let java = dir.path().join(project).join("src/main/java/de/x");
+            std::fs::create_dir_all(&java).expect("dirs");
+            std::fs::write(
+                dir.path().join(project).join("pom.xml"),
+                "<project><artifactId>x</artifactId></project>",
+            )
+            .expect("pom");
+            std::fs::write(java.join("App.java"), class).expect("source");
+        }
+        let mut s = fixture_state_at(dir.path());
+        let island = {
+            let w = s.services.as_ref().expect("services world");
+            w.inventory
+                .iter()
+                .position(|i| i.path == "functions/a")
+                .expect("island")
+        };
+        s.enter_island(island);
+        let within = s.within.clone().expect("a module, not the whole overview");
+        assert!(within.ends_with('a'), "{within}");
+        assert!(
+            s.scope
+                .areas
+                .iter()
+                .all(|a| a.name.starts_with(&format!("{within}/")))
+        );
     }
 
     /// A project with several top-level packages: each is a package plate

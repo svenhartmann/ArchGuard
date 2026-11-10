@@ -7,6 +7,8 @@ pub(super) struct ScannedFile {
     pub(super) rel_path: String,
     /// Source-root-relative path (node naming, refs, DeclMap keys).
     pub(super) stripped: String,
+    /// Project directory in stripped terms (`project_prefix`), `""` for none.
+    pub(super) prefix: String,
     /// Name of the graph node representing this file.
     pub(super) node_name: String,
     /// Language id recorded on the file node.

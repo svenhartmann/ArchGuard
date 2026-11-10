@@ -205,7 +205,7 @@ fn prepare_sources(
         let content = fs::read_to_string(&file.path).map_err(|e| e.to_string())?;
         let stripped = strip_root(&file.rel_path, &config.project.source_roots);
         let extraction = JavaExtractor.extract(&stripped, &content);
-        let node = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
+        let node = crate::pipeline::file_node_name(file, &stripped, &extraction.declarations);
         let absolute = file.path.to_str().ok_or("Java source path is not UTF-8")?;
         for directory in file
             .path

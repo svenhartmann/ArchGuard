@@ -149,21 +149,7 @@ pub(crate) fn build_graph_named(
         .flat_map(|file| file.extraction.declarations.clone())
         .collect();
     declarations.extend(psr4_declarations(root, &scanned)?);
-    // A Java import cannot bind a C# file merely because its namespace matches.
-    // JavaScript and TypeScript intentionally share a module namespace.
-    let mut indexes = BTreeMap::new();
-    for family in scanned
-        .iter()
-        .map(|file| import_family(file.lang))
-        .collect::<BTreeSet<_>>()
-    {
-        let paths: Vec<_> = scanned
-            .iter()
-            .filter(|file| import_family(file.lang) == family)
-            .map(|file| file.stripped.clone())
-            .collect();
-        indexes.insert(family, ImportIndex::new(&paths, &declarations));
-    }
+    let indexes = Indexes::new(&scanned, &declarations);
 
     // ---- Kap. 6 step 6: one file node (plus ancestor modules) per file.
     let mut builder = GraphBuilder::new();
@@ -225,13 +211,15 @@ fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, Archg
             let stripped =
                 archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
             let extraction = source_names::extract(extractor.as_ref(), &stripped, &content);
-            let node_name = file_node_name(&stripped, &extraction.declarations);
+            let node_name = file_node_name(file, &stripped, &extraction.declarations);
+            let prefix = source_names::project_prefix(file, &stripped).to_string();
             let lang = lang_name(file.lang);
             scanned.push((
                 index,
                 ScannedFile {
                     rel_path: file.rel_path.clone(),
                     stripped,
+                    prefix,
                     node_name,
                     lang,
                     extraction,
@@ -256,7 +244,8 @@ fn resolve_imports(
         .filter(|file| file.lang != "rs")
         .flat_map(|file| file.extraction.imports.iter().map(move |raw| (file, raw)));
     for (file, raw_import) in imports {
-        let index = &indexes[import_family(file.lang)];
+        let family = import_family(file.lang);
+        let index = indexes.global(family);
         let resolved = if file.lang == "go" {
             match &raw_import.target {
                 TargetSpec::Symbol { path, .. } => go_packages
@@ -267,16 +256,11 @@ fn resolve_imports(
             }
         } else if file.lang == "py" {
             resolve_python(raw_import, &index.dirs, node_of, builder)
+        } else if Indexes::logical(family) {
+            indexes.resolve(raw_import, file, node_of, builder)
         } else {
-            resolve_target(
-                raw_import,
-                &index.declarations,
-                &index.stems,
-                &index.dirs,
-                node_of,
-                builder,
-                file.lang,
-            )
+            let same = |m: &str| Some(m.to_string());
+            resolve_target(raw_import, index, node_of, builder, file.lang, &same)
         };
         let Some(to) = resolved else {
             // A dotted name in code may be a member access, not a dependency.
@@ -547,10 +531,117 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
 /// Lookup tables [`resolve_imports`] reads: import indexes per family, Go
 /// package directories and the file node per stripped path.
 type ImportContext<'a> = (
-    &'a BTreeMap<&'a str, ImportIndex>,
+    &'a Indexes<'a>,
     &'a BTreeMap<String, BTreeSet<String>>,
     &'a HashMap<String, NodeId>,
 );
+
+/// The import indexes of one run (ADR 0010): per family, and for
+/// logical names also per project, so Java/Kotlin, C# and PHP imports
+/// bind inside the importing project first.
+pub(super) struct Indexes<'a> {
+    /// Per family (`None`: whole repository) and per project prefix.
+    by_scope: BTreeMap<(&'static str, Option<String>), ImportIndex>,
+    /// Declared module → prefixes of the projects declaring it.
+    declared_in: BTreeMap<&'a str, BTreeSet<&'a str>>,
+}
+
+impl<'a> Indexes<'a> {
+    /// A Java import cannot bind a C# file merely because its namespace
+    /// matches; JavaScript and TypeScript intentionally share one.
+    fn new(scanned: &'a [ScannedFile], declarations: &[Declaration]) -> Self {
+        let mut by_scope = BTreeMap::new();
+        let families: BTreeSet<&'static str> =
+            scanned.iter().map(|f| import_family(f.lang)).collect();
+        for family in families {
+            let of_family: Vec<_> = scanned
+                .iter()
+                .filter(|file| import_family(file.lang) == family)
+                .collect();
+            let mut scopes = vec![None];
+            if Self::logical(family) {
+                let prefixes: BTreeSet<_> = of_family.iter().map(|f| f.prefix.as_str()).collect();
+                scopes.extend(prefixes.into_iter().map(|p| Some(p.to_string())));
+            }
+            for scope in scopes {
+                let paths: Vec<_> = of_family
+                    .iter()
+                    .filter(|file| scope.as_ref().is_none_or(|prefix| &file.prefix == prefix))
+                    .map(|file| file.stripped.clone())
+                    .collect();
+                by_scope.insert((family, scope), ImportIndex::new(&paths, declarations));
+            }
+        }
+        let mut declared_in: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for file in scanned {
+            for declaration in &file.extraction.declarations {
+                declared_in
+                    .entry(declaration.module_path.as_str())
+                    .or_default()
+                    .insert(file.prefix.as_str());
+            }
+        }
+        Indexes {
+            by_scope,
+            declared_in,
+        }
+    }
+
+    /// The whole-repository index of a family.
+    fn global(&self, family: &'static str) -> &ImportIndex {
+        &self.by_scope[&(family, None)]
+    }
+
+    /// Resolve an import of a logical family: own project first, then the
+    /// whole repository.
+    fn resolve(
+        &self,
+        raw_import: &RawImport,
+        file: &ScannedFile,
+        node_of: &HashMap<String, NodeId>,
+        builder: &mut GraphBuilder,
+    ) -> Option<NodeId> {
+        let family = import_family(file.lang);
+        let own = &self.by_scope[&(family, Some(file.prefix.clone()))];
+        let global = self.global(family);
+        let local = |m: &str| {
+            Some(match own.declarations.is_declared(m) {
+                true => Self::under(&file.prefix, m),
+                false => m.to_string(),
+            })
+        };
+        let anywhere = |m: &str| {
+            if !global.declarations.is_declared(m) {
+                return Some(m.to_string());
+            }
+            // Declared by several projects: no single module to point at.
+            match self
+                .declared_in
+                .get(m)
+                .map(|p| p.iter().collect::<Vec<_>>())
+                .as_deref()
+            {
+                Some([prefix]) => Some(Self::under(prefix, m)),
+                _ => None,
+            }
+        };
+        resolve_target(raw_import, own, node_of, builder, file.lang, &local)
+            .or_else(|| resolve_target(raw_import, global, node_of, builder, file.lang, &anywhere))
+    }
+
+    /// Families whose files are named after a declared package or namespace.
+    fn logical(family: &str) -> bool {
+        matches!(family, "java" | "cs" | "php")
+    }
+
+    /// `module` below a project prefix.
+    fn under(prefix: &str, module: &str) -> String {
+        match prefix {
+            "" => module.to_string(),
+            prefix => format!("{prefix}/{module}"),
+        }
+    }
+}
 
 struct ImportIndex {
     declarations: DeclMap,
@@ -651,15 +742,17 @@ fn resolve_python(
 
 /// Resolve one raw import to the graph node its edge ends at, `None`
 /// when the target is external (the caller warns and drops the edge).
+/// `module_node` names the pseudo node of a symbolic module target, `None`
+/// to drop it.
 fn resolve_target(
     raw_import: &RawImport,
-    decl_map: &DeclMap,
-    stem_files: &BTreeMap<String, Vec<String>>,
-    known_dirs: &BTreeSet<String>,
+    index: &ImportIndex,
     node_of: &HashMap<String, NodeId>,
     builder: &mut GraphBuilder,
     lang: &str,
+    module_node: &dyn Fn(&str) -> Option<String>,
 ) -> Option<NodeId> {
+    let (decl_map, stem_files, known_dirs) = (&index.declarations, &index.stems, &index.dirs);
     match &raw_import.target {
         TargetSpec::Path(spec) => {
             let resolved = resolve_relative(&raw_import.source, spec)?;
@@ -682,7 +775,7 @@ fn resolve_target(
         }
         TargetSpec::Symbol { path, stem } => match decl_map.resolve_symbol(path, stem.as_deref()) {
             SymbolTarget::File(file) => node_of.get(&file).copied(),
-            SymbolTarget::Module(module) => Some(builder.ensure_pseudo(&module)),
+            SymbolTarget::Module(module) => module_node(&module).map(|m| builder.ensure_pseudo(&m)),
             SymbolTarget::External
                 if import_family(lang) == "java" || (lang == "cs" && stem.is_some()) =>
             {
@@ -805,26 +898,68 @@ mod tests {
         assert!(!deny_matches(DenyCycles::Off, Level::File));
     }
 
+    fn source(rel_path: &str, project: &str) -> SourceFile {
+        SourceFile {
+            path: rel_path.into(),
+            rel_path: rel_path.into(),
+            lang: archguard_extract::Lang::Java,
+            project: project.into(),
+        }
+    }
+
     #[test]
     fn file_node_name_uses_the_declaration_then_the_stripped_path() {
         let declaration = Declaration {
             module_path: "com/example".to_string(),
             file: "weird/place/Order.java".to_string(),
         };
+        let order = source("src/weird/place/Order.java", "");
+        let declared = std::slice::from_ref(&declaration);
         assert_eq!(
-            file_node_name("weird/place/Order.java", std::slice::from_ref(&declaration)),
+            file_node_name(&order, "weird/place/Order.java", declared),
             "com/example/Order.java"
         );
         // No declaration, or a root-namespace one: the stripped path wins.
+        let invoice = source("src/app/billing/invoice.ts", "");
         assert_eq!(
-            file_node_name("app/billing/invoice.ts", &[]),
+            file_node_name(&invoice, "app/billing/invoice.ts", &[]),
             "app/billing/invoice.ts"
         );
         let root_module = Declaration {
             module_path: String::new(),
             file: "script.php".to_string(),
         };
-        assert_eq!(file_node_name("script.php", &[root_module]), "script.php");
+        let script = source("script.php", "");
+        assert_eq!(
+            file_node_name(&script, "script.php", &[root_module]),
+            "script.php"
+        );
+    }
+
+    /// The project directory prefixes a declared module, spelled as the
+    /// stripped path spells it; a project at or above the source root adds nothing.
+    #[test]
+    fn file_node_name_hangs_a_declared_module_under_its_project() {
+        let declaration = Declaration {
+            module_path: "com/example".to_string(),
+            file: String::new(),
+        };
+        let declared = std::slice::from_ref(&declaration);
+        let nested = source("src/shop/billing/Order.java", "src/shop");
+        assert_eq!(
+            file_node_name(&nested, "shop/billing/Order.java", declared),
+            "shop/com/example/Order.java"
+        );
+        let at_root = source("src/Order.java", "src");
+        assert_eq!(
+            file_node_name(&at_root, "Order.java", declared),
+            "com/example/Order.java"
+        );
+        let unstripped = source("svc/a/Order.java", "svc/a");
+        assert_eq!(
+            file_node_name(&unstripped, "svc/a/Order.java", declared),
+            "svc/a/com/example/Order.java"
+        );
     }
 
     #[test]
@@ -943,6 +1078,148 @@ mod qualified_name_tests {
         ]);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(targets(&graph, "A/User.cs"), ["B/Repo.cs"]);
+    }
+}
+
+#[cfg(test)]
+mod monorepo_name_tests {
+    use super::*;
+
+    fn graph_of(files: &[(&str, &str)]) -> (Graph, Vec<String>) {
+        let d = tempfile::tempdir().unwrap();
+        for (rel, content) in files {
+            let path = d.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        let config = Config::default();
+        let files = walk_files(d.path(), &config).unwrap();
+        build_graph(d.path(), &files, &config).unwrap()
+    }
+
+    fn edges(graph: &Graph) -> Vec<(String, String)> {
+        let name = |id| graph.node_name(id).unwrap().to_string();
+        let mut out: Vec<_> = graph
+            .edges
+            .iter()
+            .map(|e| (name(e.from), name(e.to)))
+            .collect();
+        out.sort();
+        out
+    }
+
+    const APP: &str = "package de.x;\nimport de.x.common.Log;\npublic class App { Log l; }\n";
+    const LOG: &str = "package de.x.common;\npublic class Log {}\n";
+
+    /// Two Maven projects sharing a package stay two trees; same-named
+    /// classes stay two nodes and each import binds in its own project.
+    #[test]
+    fn projects_sharing_a_package_keep_their_own_nodes() {
+        let (graph, warnings) = graph_of(&[
+            ("functions/a/pom.xml", "<project/>"),
+            ("functions/a/src/main/java/de/x/App.java", APP),
+            ("functions/a/src/main/java/de/x/common/Log.java", LOG),
+            ("functions/b/pom.xml", "<project/>"),
+            ("functions/b/src/main/java/de/x/App.java", APP),
+            ("functions/b/src/main/java/de/x/common/Log.java", LOG),
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            edges(&graph),
+            [
+                (
+                    "functions/a/de/x/App.java".into(),
+                    "functions/a/de/x/common/Log.java".into()
+                ),
+                (
+                    "functions/b/de/x/App.java".into(),
+                    "functions/b/de/x/common/Log.java".into()
+                ),
+            ]
+        );
+        assert!(
+            graph.nodes.iter().all(|n| !n.name.starts_with("de")),
+            "no shared tree"
+        );
+    }
+
+    /// A project imports another one by class and by package wildcard.
+    #[test]
+    fn imports_across_projects_bind_the_declaring_project() {
+        let (graph, warnings) = graph_of(&[
+            ("lib/pom.xml", "<project/>"),
+            (
+                "lib/src/main/java/de/lib/Util.java",
+                "package de.lib;\npublic class Util {}\n",
+            ),
+            (
+                "lib/src/main/java/de/lib/More.java",
+                "package de.lib;\npublic class More {}\n",
+            ),
+            ("app/pom.xml", "<project/>"),
+            (
+                "app/src/main/java/de/app/Main.java",
+                "package de.app;\nimport de.lib.Util;\npublic class Main {}\n",
+            ),
+            (
+                "app/src/main/java/de/app/Star.java",
+                "package de.app;\nimport de.lib.*;\npublic class Star {}\n",
+            ),
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            edges(&graph),
+            [
+                ("app/de/app/Main.java".into(), "lib/de/lib/Util.java".into()),
+                ("app/de/app/Star.java".into(), "lib/de/lib/*".into()),
+            ]
+        );
+    }
+
+    /// C# projects are found by their `.csproj`, PHP ones by `composer.json`.
+    #[test]
+    fn csharp_and_php_projects_prefix_their_namespaces() {
+        let (graph, _) = graph_of(&[
+            ("svc/A/A.csproj", "<Project/>"),
+            ("svc/A/Log.cs", "namespace Shared;\npublic class Log {}\n"),
+            ("svc/B/B.csproj", "<Project/>"),
+            ("svc/B/Log.cs", "namespace Shared;\npublic class Log {}\n"),
+            ("web/composer.json", "{}"),
+            (
+                "web/src/Log.php",
+                "<?php\nnamespace Shared;\nclass Log {}\n",
+            ),
+        ]);
+        let mut files: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == archguard_core::NodeKind::File)
+            .map(|n| n.name.as_str())
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                "svc/A/Shared/Log.cs",
+                "svc/B/Shared/Log.cs",
+                "web/Shared/Log.php"
+            ]
+        );
+    }
+
+    /// A project at the repository root keeps today's names.
+    #[test]
+    fn a_root_project_keeps_package_names() {
+        let (graph, warnings) = graph_of(&[
+            ("pom.xml", "<project/>"),
+            ("src/main/java/de/x/App.java", APP),
+            ("src/main/java/de/x/common/Log.java", LOG),
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            edges(&graph),
+            [("de/x/App.java".into(), "de/x/common/Log.java".into())]
+        );
     }
 }
 

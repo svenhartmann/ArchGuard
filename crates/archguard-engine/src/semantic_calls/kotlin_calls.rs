@@ -24,10 +24,10 @@ pub(crate) fn analyze_kotlin_calls(root: &Path, config: &Config) -> CallAnalysis
         root,
         config,
         (Lang::Kotlin, "kotlin", LIMITATION),
-        |path, content| {
+        |file, path, content| {
             // The graph names a Kotlin file after its package, as the pipeline does.
             let declarations = KotlinExtractor.extract(path, content).declarations;
-            let node = crate::pipeline::file_node_name(path, &declarations);
+            let node = crate::pipeline::file_node_name(file, path, &declarations);
             let found = scan_kotlin_structure(path, &node, content);
             scanned.borrow_mut().push((path.to_string(), found.symbols));
             (

@@ -105,6 +105,8 @@ pub use api_contracts::{
     import_api_contract, read_api_contracts,
 };
 pub use arc42::{arc42_document, arc42_from_evidence};
+/// Source-root stripping, as module names spell project paths (ADR 0010).
+pub use archguard_extract::strip_root;
 pub use architecture::architecture_context;
 pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};

@@ -174,7 +174,7 @@ fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
             let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
             let stripped = strip_root(&file.rel_path, &config.project.source_roots);
             let extraction = CsExtractor.extract(&stripped, &content);
-            let node = crate::pipeline::file_node_name(&stripped, &extraction.declarations);
+            let node = crate::pipeline::file_node_name(&file, &stripped, &extraction.declarations);
             part(&mut hash, path.to_string_lossy().as_bytes());
             part(&mut hash, stripped.as_bytes());
             part(&mut hash, node.as_bytes());

@@ -247,6 +247,9 @@ mit `parent`-Zeigern (System → Module → Untermodule → Dateien). Die Hierar
 - **physisch** (Verzeichnisbaum): TypeScript/JS, Python, Rust — der Ordnerpfad ist das Modul;
 - **logisch** (Paket-/Namespace-Deklaration): Java, C#, PHP — maßgeblich ist `package a.b;`
   bzw. `namespace A.B;`, nicht der Ordner (bei C# können Namespace und Ordner voneinander abweichen).
+  Unterhalb der Repo-Wurzel steht das Verzeichnis des nächsten Build-Manifests (`pom.xml`, `build.gradle(.kts)`,
+  `*.csproj`, `composer.json`) davor: `functions/search/de/x/App.java`. So bleiben Projekte eines Monorepos mit
+  gleichem Paket getrennt, und Imports binden zuerst im eigenen Projekt (ADR 0010).
 
 Knotennamen sind normalisierte Modulpfade (`a/b/…`). Kanten verbinden `file`-Knoten; kann ein
 symbolischer Import keiner Datei zugeordnet werden (z. B. `import a.b.*` oder ein C#-Namespace

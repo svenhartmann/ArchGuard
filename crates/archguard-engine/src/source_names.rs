@@ -54,17 +54,34 @@ pub(super) fn names<'a>(files: impl Iterator<Item = (&'a str, &'a str)>) -> Sour
 /// The graph node name of a scanned file: its declared module path plus
 /// the file name when the file declares a module, else its stripped
 /// path (Kap. 6.1: logical hierarchies hang under their declaration,
-/// physical ones under their directory).
-pub(crate) fn file_node_name(stripped: &str, declarations: &[Declaration]) -> String {
+/// physical ones under their directory). A declared module hangs under
+/// the file's project directory (ADR 0010), so projects of a monorepo
+/// that share a package stay apart.
+pub(crate) fn file_node_name(
+    file: &SourceFile,
+    stripped: &str,
+    declarations: &[Declaration],
+) -> String {
     let file_name = stripped.rsplit('/').next().unwrap_or(stripped);
     match declarations
         .first()
         .map(|declaration| declaration.module_path.as_str())
         .filter(|module| !module.is_empty())
     {
-        Some(module) => format!("{module}/{file_name}"),
+        Some(module) => match project_prefix(file, stripped) {
+            "" => format!("{module}/{file_name}"),
+            prefix => format!("{prefix}/{module}/{file_name}"),
+        },
         None => stripped.to_string(),
     }
+}
+
+/// The file's project directory as the stripped paths spell it: without
+/// the source root `strip_root` cut off, `""` at or above that root.
+pub(crate) fn project_prefix<'a>(file: &'a SourceFile, stripped: &str) -> &'a str {
+    let cut = file.rel_path.len().saturating_sub(stripped.len());
+    let root = &file.rel_path[..cut];
+    file.project.strip_prefix(root).unwrap_or("")
 }
 
 /// The graph node name of one walked file, `None` without a registered
@@ -91,7 +108,11 @@ pub(crate) fn source_node_name(
         }
     };
     let extraction = extract(extractor.as_ref(), stripped, content);
-    Ok(Some(file_node_name(stripped, &extraction.declarations)))
+    Ok(Some(file_node_name(
+        file,
+        stripped,
+        &extraction.declarations,
+    )))
 }
 
 /// One extractor pass; tests count the passes to prove the names are reused.

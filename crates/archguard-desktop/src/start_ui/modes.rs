@@ -103,6 +103,8 @@ impl StartState {
                 .iter()
                 .any(|n| n.name == name && n.kind == archguard_engine::core::NodeKind::Module)
         };
+        // The graph names a project's module as its stripped path.
+        let source = archguard_engine::strip_root(&source, &self.source_roots);
         self.within = Some(source).filter(|p| module(p));
         self.set_mode(Mode::Architecture);
         self.entered = true;
