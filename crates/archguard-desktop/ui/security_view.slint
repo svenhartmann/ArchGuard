@@ -76,7 +76,8 @@ component Fact inherits Text {
     text: label + ": " + (value != "" ? value : @tr("Security" => "Not reported"));
     color: Theme.text;
     font-size: Theme.font-body;
-    wrap: word-wrap;
+    // Timestamps are one long word; word-wrap would widen the narrow page.
+    wrap: char-wrap;
 }
 
 // #security-coverage: a closed <details> with scanner facts and the command.

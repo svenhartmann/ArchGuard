@@ -152,6 +152,8 @@ export component StartView inherits Rectangle {
                     font-size: Theme.font-page;
                     font-weight: Theme.weight-title;
                     vertical-alignment: center;
+                    // Wider fonts (Linux) would push the help button past the card.
+                    wrap: word-wrap;
                 }
                 // The web's repository overview and a project's World.
                 if m.services.available: LensButton { text: @tr("Services"); active: root.services; clicked => { StartData.set-mode(1); } }

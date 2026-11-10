@@ -72,7 +72,7 @@ fn model() -> SecurityModel {
         database_updated_at: "2026-10-27T13:12:49.474279883Z".into(),
         command: "archguard security -- '/a/very/long/path/to/project'".into(),
         targets: rows(vec![line("Cargo.lock")]),
-        diagnostics: rows(vec![line(DIAGNOSTIC); 10]),
+        diagnostics: rows(vec![line(DIAGNOSTIC); 5]),
         findings: rows(vec![finding; 10]),
         ..Default::default()
     }

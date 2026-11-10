@@ -408,11 +408,14 @@ export component ArchitectureView inherits Rectangle {
                                     font-size: Theme.font-small;
                                     wrap: word-wrap;
                                 }
-                                for f in ArchitectureData.model.figures: FigureView {
-                                    figure: f;
-                                    compact: root.narrow;
-                                    preview: true;
-                                    toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                // `Fit`: a repeated figure's wrapped title counts all its lines.
+                                for f in ArchitectureData.model.figures: Fit {
+                                    FigureView {
+                                        figure: f;
+                                        compact: root.narrow;
+                                        preview: true;
+                                        toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                    }
                                 }
                             }
                             // A hidden map is one line with its tick; a shown one has it in its header.
@@ -454,10 +457,12 @@ export component ArchitectureView inherits Rectangle {
                             if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
                                 spacing: 14px;
                                 padding-bottom: 8px;
-                                for f in ArchitectureData.model.figures: FigureView {
-                                    figure: f;
-                                    compact: root.narrow;
-                                    toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                for f in ArchitectureData.model.figures: Fit {
+                                    FigureView {
+                                        figure: f;
+                                        compact: root.narrow;
+                                        toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                    }
                                 }
                             }
                             if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
