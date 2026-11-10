@@ -17,7 +17,7 @@ serde_json = "1"
 # checksum, independent of this pin) unless LBUG_BUILD_FROM_SOURCE is set;
 # /.cargo/config.toml sets it, so the native library is built from the C++
 # sources inside this pinned crate.
-lbug = { version = "=0.22.1", optional = true }
+lbug = { version = "=0.22.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3.27.0"
