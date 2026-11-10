@@ -190,7 +190,9 @@ def windows(binary, out, work):
     source.write_text(wxs(msi_version(release.version()), str(checked_binary(binary).resolve())), encoding='utf-8')
     out.mkdir(parents=True, exist_ok=True)
     msi = out / packages('x86_64-pc-windows-msvc')[0]
-    run('wix', 'build', '-arch', 'x64', '-o', msi, source)
+    # Built in work/ so WiX's .wixpdb next to it never reaches the release set.
+    run('wix', 'build', '-arch', 'x64', '-o', work / msi.name, source)
+    shutil.move(work / msi.name, msi)
     return [msi, windows_zip(binary, out)]
 
 

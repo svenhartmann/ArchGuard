@@ -124,6 +124,19 @@ class LayoutTests(unittest.TestCase):
                              {prefix + n for n in ('archguard-desktop.exe', 'README.md', 'LICENSE-MIT', 'LICENSE-APACHE')})
             self.assertEqual(bundle.read(prefix + 'archguard-desktop.exe'), self.binary.read_bytes())
 
+    def test_windows_keeps_wix_side_files_out_of_the_package_directory(self):
+        def fake_wix(*command, env=None):
+            msi = Path(command[command.index('-o') + 1])
+            msi.write_bytes(b'msi fixture')
+            msi.with_suffix('.wixpdb').write_bytes(b'debug symbols')  # real WiX writes this next to -o
+        original, desktop.run = desktop.run, fake_wix
+        self.addCleanup(setattr, desktop, 'run', original)
+        work = self.root / 'work'
+        work.mkdir()
+        out = self.root / 'dist'
+        desktop.windows(self.binary, out, work)
+        self.assertEqual({p.name for p in out.iterdir()}, set(desktop.packages('x86_64-pc-windows-msvc')))
+
     def test_empty_binary_is_rejected(self):
         self.binary.write_bytes(b'')
         with self.assertRaises(ValueError):
