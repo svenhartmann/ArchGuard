@@ -44,6 +44,11 @@ pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Comman
     }
     let program = resolve(program);
     let mut command = confined(&program, project, scratch);
+    // archguard-confine needs the whole environment to create its
+    // AppContainer profile; it narrows it to `--env` for the program.
+    if cfg!(windows) {
+        return command;
+    }
     command.env_clear();
     for name in ENVIRONMENT {
         if let Some(value) = std::env::var_os(name) {
@@ -94,6 +99,9 @@ fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
             .filter(|d| d.is_dir())
         {
             command.arg("--run").arg(dir);
+        }
+        for name in ENVIRONMENT {
+            command.arg("--env").arg(name);
         }
         command
             .arg("--read")
@@ -542,6 +550,28 @@ mod windows_tests {
             .args(["/c", line])
             .output()
             .unwrap()
+    }
+
+    #[test]
+    fn confined_tooling_gets_only_the_allowed_environment() {
+        let d = dirs();
+        assert!(
+            std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+            "cargo sets it"
+        );
+        let out = cmd(&d, "set");
+        let text = String::from_utf8_lossy(&out.stdout).to_ascii_uppercase();
+        let names: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            names.contains(&"PATH") && names.contains(&"SYSTEMROOT"),
+            "{names:?} {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!names.contains(&"CARGO_MANIFEST_DIR"), "{names:?}");
     }
 
     #[test]

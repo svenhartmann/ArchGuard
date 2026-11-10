@@ -76,17 +76,24 @@ mod windows {
 
     struct Plan {
         grants: Vec<(OsString, u32)>,
+        /// The environment variables the program keeps; all others go.
+        keep: Vec<OsString>,
         program: Vec<OsString>,
     }
 
     fn parse(args: &[OsString]) -> Result<Plan, String> {
         let mut grants = Vec::new();
+        let mut keep = Vec::new();
         let mut rest = args.iter();
         while let Some(flag) = rest.next() {
             let rights = match flag.to_str() {
                 Some("--run") => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                 Some("--read") => FILE_GENERIC_READ,
                 Some("--write") => FILE_ALL_ACCESS & !FILE_EXECUTE,
+                Some("--env") => {
+                    keep.push(rest.next().ok_or("a variable name must follow")?.clone());
+                    continue;
+                }
                 Some("--") => break,
                 _ => return Err(format!("unknown argument {}", flag.to_string_lossy())),
             };
@@ -97,7 +104,11 @@ mod windows {
         if program.is_empty() {
             return Err("no program after --".into());
         }
-        Ok(Plan { grants, program })
+        Ok(Plan {
+            grants,
+            keep,
+            program,
+        })
     }
 
     pub fn run(args: &[OsString]) -> Result<i32, String> {
@@ -105,6 +116,15 @@ mod windows {
         let sid = container_sid()?;
         for (dir, rights) in &plan.grants {
             grant(dir, sid, *rights)?;
+        }
+        // The program inherits this environment: only the kept variables.
+        for (name, _) in std::env::vars_os() {
+            // `=C:` and the like hold the current directory per drive.
+            let hidden = name.to_string_lossy().contains('=');
+            if !hidden && !plan.keep.iter().any(|k| k.eq_ignore_ascii_case(&name)) {
+                // SAFETY: the launcher is single-threaded.
+                unsafe { std::env::remove_var(&name) };
+            }
         }
         launch(sid, &plan.program)
     }
