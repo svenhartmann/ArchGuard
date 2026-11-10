@@ -471,7 +471,10 @@ mod tests {
             .map(|c| c.name1.to_string())
             .collect();
         // Heads above and below the lifelines.
-        assert_eq!(names, ["blue.Util", "green.Leaf", "blue.Util", "green.Leaf"]);
+        assert_eq!(
+            names,
+            ["blue.Util", "green.Leaf", "blue.Util", "green.Leaf"]
+        );
         select_element(&mut s, ElementKind::Class, "blue.Util");
         s.refresh();
         assert_eq!(fill(&s, &labels).sequence.id, "", "a class has no sequence");
