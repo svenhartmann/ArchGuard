@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
 
-const TARGET: &str = archguard_update::release::TARGET;
 const NEW_BINARY: &[u8] = b"#!/bin/sh\necho archguard-from-release\n";
 
 fn hex(data: &[u8]) -> String {
@@ -22,9 +21,10 @@ fn hex(data: &[u8]) -> String {
 
 /// A release archive laid out like `scripts/release/release_artifacts.py` packs it.
 fn archive(version: &str) -> (String, Vec<u8>) {
-    let stem = format!("archguard-{version}-{TARGET}");
+    let target = archguard_update::binary::archive_target(archguard_update::release::TARGET);
+    let stem = format!("archguard-{version}-{target}");
     let info = format!(
-        "{{\"version\": \"{version}\", \"target\": \"{TARGET}\", \"binary_sha256\": \"{}\"}}\n",
+        "{{\"version\": \"{version}\", \"target\": \"{target}\", \"binary_sha256\": \"{}\"}}\n",
         hex(NEW_BINARY)
     );
     let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(

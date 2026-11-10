@@ -46,7 +46,7 @@ pub fn update(api: &str, target: &str, current: &str, check: bool) -> Result<Out
 /// The target whose archive a build for `target` installs. Releases ship
 /// Linux only as static musl binaries, which also run on glibc systems, so a
 /// `cargo install` build (`…-linux-gnu`) updates from those.
-fn archive_target(target: &str) -> String {
+pub fn archive_target(target: &str) -> String {
     match target.strip_suffix("-linux-gnu") {
         Some(arch) => format!("{arch}-linux-musl"),
         None => target.to_string(),
