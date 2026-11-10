@@ -14,7 +14,9 @@ use slint::ComponentHandle;
 
 use crate::panes_ui;
 use crate::timing;
-use crate::ui::{AppWindow, QualityData, SecurityData, ServicesData, StartData};
+use crate::ui::{
+    AppWindow, ArchitectureData, CallsData, QualityData, SecurityData, ServicesData, StartData,
+};
 
 type Act = Rc<dyn Fn(&AppWindow, usize)>;
 
@@ -49,7 +51,27 @@ fn steps() -> Vec<Step> {
     let mut all = graph_steps();
     all.extend(view_steps());
     all.extend(service_steps());
+    all.extend(document_steps());
     all
+}
+
+/// Architecture and Calls: the actions of the arc42 and call views.
+fn document_steps() -> Vec<Step> {
+    vec![
+        Step {
+            name: "architecture chapter",
+            setup: |ui| ui.invoke_navigate("architecture".into()),
+            act: Rc::new(|ui, i| {
+                ui.global::<ArchitectureData>()
+                    .invoke_select_chapter(1 + (i % 12) as i32)
+            }),
+        },
+        Step {
+            name: "calls tree select",
+            setup: |ui| ui.invoke_navigate("calls".into()),
+            act: Rc::new(|ui, i| ui.global::<CallsData>().invoke_tree_select((i % 8) as i32)),
+        },
+    ]
 }
 
 fn graph_steps() -> Vec<Step> {
