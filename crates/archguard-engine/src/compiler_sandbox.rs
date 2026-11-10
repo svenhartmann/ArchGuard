@@ -94,9 +94,13 @@ fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
     {
         let launcher = launcher().unwrap_or_default();
         let mut command = Command::new(launcher);
+        // Windows' own directories already admit AppContainers (ALL
+        // APPLICATION PACKAGES) and refuse new permission entries.
+        let system = std::env::var_os("SystemRoot").map(|s| real(Path::new(&s)));
         for dir in toolchain(program, project)
             .into_iter()
             .filter(|d| d.is_dir())
+            .filter(|d| !system.as_ref().is_some_and(|s| d.starts_with(s)))
         {
             command.arg("--run").arg(dir);
         }
