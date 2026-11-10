@@ -131,11 +131,15 @@ impl Server {
             .unwrap();
         write!(
             socket,
-            "POST {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
             self.address,
             body.len()
         )
         .unwrap();
+        // The body arrives after the headers, as on a real network: the server
+        // must not reset the connection over a body it never reads.
+        std::thread::sleep(Duration::from_millis(100));
+        socket.write_all(body.as_bytes()).unwrap();
         let mut response = String::new();
         socket.read_to_string(&mut response).unwrap();
         let (headers, body) = response.split_once("\r\n\r\n").expect("HTTP response");

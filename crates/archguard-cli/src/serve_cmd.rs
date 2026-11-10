@@ -737,6 +737,11 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
                     let next = receive.lock().expect("request queue").recv();
                     let Ok(mut stream) = next else { break };
                     let _ = handle(&mut stream, allowed_hosts, pages, root, config);
+                    // Closing with an unread request body makes Linux send a
+                    // reset that discards the response; drain it first (bounded
+                    // by the read timeout).
+                    let _ = stream.shutdown(std::net::Shutdown::Write);
+                    let _ = io::copy(&mut (&stream).take(1 << 20), &mut io::sink());
                 }
             });
         }
