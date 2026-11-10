@@ -219,6 +219,55 @@ impl Default for CSharpSemanticConfig {
     }
 }
 
+impl CallAnalysis {
+    /// Rewrite every class, method and field identity of a report, so reports
+    /// of several providers or compiler scopes can share one id space.
+    pub fn reidentify(&mut self, identity: &dyn Fn(&str) -> String) {
+        for class in &mut self.classes {
+            class.id = identity(&class.id);
+            class.supertypes = class.supertypes.iter().map(|id| identity(id)).collect();
+            for site in class.supertype_sites.iter_mut().flatten() {
+                site.target = identity(&site.target);
+            }
+        }
+        for method in &mut self.methods {
+            method.id = identity(&method.id);
+            method.class_id = identity(&method.class_id);
+        }
+        for call in &mut self.calls {
+            call.from_class = identity(&call.from_class);
+            call.from_method = call.from_method.as_deref().map(identity);
+            call.to_class = call.to_class.as_deref().map(identity);
+            call.to_method = call.to_method.as_deref().map(identity);
+        }
+        let Some(details) = &mut self.details else {
+            return;
+        };
+        for used in &mut details.type_uses {
+            used.from_class = identity(&used.from_class);
+            used.from_method = used.from_method.as_deref().map(identity);
+            used.to_class = used.to_class.as_deref().map(identity);
+        }
+        for state in &mut details.class_states {
+            state.class_id = identity(&state.class_id);
+            for field in &mut state.fields {
+                field.id = identity(&field.id);
+            }
+            for access in &mut state.accesses {
+                access.method = identity(&access.method);
+                access.field = identity(&access.field);
+            }
+        }
+        for metric in &mut details.method_metrics {
+            metric.method_id = identity(&metric.method_id);
+        }
+        for parent in &mut details.inheritance {
+            parent.class_id = identity(&parent.class_id);
+            parent.base_class = parent.base_class.as_deref().map(identity);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

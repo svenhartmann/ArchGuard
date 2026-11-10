@@ -261,52 +261,14 @@ fn combine(reports: Vec<(&str, CallAnalysis)>) -> CallAnalysis {
         };
         for class in &mut report.classes {
             class.language.get_or_insert_with(|| language.into());
-            class.id = identity(&class.id);
-            class.supertypes = class.supertypes.iter().map(|id| identity(id)).collect();
-            if let Some(sites) = &mut class.supertype_sites {
-                for site in sites {
-                    site.target = identity(&site.target);
-                }
-            }
         }
-        for method in &mut report.methods {
-            method.id = identity(&method.id);
-            method.class_id = identity(&method.class_id);
-        }
-        for call in &mut report.calls {
-            call.from_class = identity(&call.from_class);
-            call.from_method = call.from_method.as_deref().map(identity);
-            call.to_class = call.to_class.as_deref().map(identity);
-            call.to_method = call.to_method.as_deref().map(identity);
-        }
-        if let Some(mut details) = report.details {
-            for used in &mut details.type_uses {
-                used.from_class = identity(&used.from_class);
-                used.from_method = used.from_method.as_deref().map(identity);
-                used.to_class = used.to_class.as_deref().map(identity);
-            }
-            for state in &mut details.class_states {
-                state.class_id = identity(&state.class_id);
-                for field in &mut state.fields {
-                    field.id = identity(&field.id);
-                }
-                for access in &mut state.accesses {
-                    access.method = identity(&access.method);
-                    access.field = identity(&access.field);
-                }
-            }
+        report.reidentify(&identity);
+        if let Some(details) = report.details {
             let combined = result.details.get_or_insert_with(Default::default);
             combined.enumeration_complete = Some(
                 combined.enumeration_complete.unwrap_or(true)
                     && details.enumeration_complete == Some(true),
             );
-            for metric in &mut details.method_metrics {
-                metric.method_id = identity(&metric.method_id);
-            }
-            for parent in &mut details.inheritance {
-                parent.class_id = identity(&parent.class_id);
-                parent.base_class = parent.base_class.as_deref().map(identity);
-            }
             combined.method_metrics.extend(details.method_metrics);
             combined.inheritance.extend(details.inheritance);
             combined.type_uses.extend(details.type_uses);

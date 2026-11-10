@@ -54,22 +54,23 @@ struct Input {
 /// The single cached project bounds memory and serves the live viewer's polls.
 #[tracing::instrument(skip_all)]
 pub fn analyze_java_calls(root: &Path, config: &Config) -> CallAnalysis {
-    let input = match prepare(root, config) {
-        Ok(input) => input,
+    let scopes = match prepare_scopes(root, config) {
+        Ok(scopes) => scopes,
         Err(error) => {
             return unavailable(0, format!("Java call sources could not be read: {error}"));
         }
     };
-    if input.files == 0 {
+    let files = scopes.iter().map(|(_, input)| input.files).sum();
+    if files == 0 {
         return CallAnalysis::default();
     }
+    let fingerprint = scopes_fingerprint(&scopes);
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    cached_result(cache, input.fingerprint, || {
-        let analysis = run_helper(&input, Path::new("java"))
-            .unwrap_or_else(|error| unavailable(input.files, error));
-        match prepare(root, config) {
-            Ok(current) if current.fingerprint == input.fingerprint => analysis,
-            _ => unavailable(input.files,
+    cached_result(cache, fingerprint, || {
+        let analysis = analyze_scopes(&scopes);
+        match prepare_scopes(root, config) {
+            Ok(current) if scopes_fingerprint(&current) == fingerprint => analysis,
+            _ => unavailable(files,
                 "Java sources changed during analysis; the next refresh will analyze the new contents.".into()),
         }
     })
@@ -109,7 +110,76 @@ pub(crate) fn analyze_java_workspace_calls(
 /// Content fingerprint used by the live viewer before reusing a rendered page.
 /// Includes compiler settings, build descriptors and explicit reference files.
 pub fn java_calls_fingerprint(root: &Path, config: &Config) -> Result<[u8; 32], String> {
-    prepare(root, config).map(|input| input.fingerprint)
+    prepare_scopes(root, config).map(|scopes| scopes_fingerprint(&scopes))
+}
+
+/// One scope's own fingerprint, or a digest over all scopes.
+fn scopes_fingerprint(scopes: &[(String, Input)]) -> [u8; 32] {
+    if let [(_, input)] = scopes {
+        return input.fingerprint;
+    }
+    let mut hash = Sha256::new();
+    for (project, input) in scopes {
+        hash_part(&mut hash, project.as_bytes());
+        hash_part(&mut hash, &input.fingerprint);
+    }
+    hash.finalize().into()
+}
+
+/// One compiler run per scope. Several scopes are projects whose classes
+/// share names; their identities get the project directory as a prefix.
+fn analyze_scopes(scopes: &[(String, Input)]) -> CallAnalysis {
+    let run = |input: &Input| {
+        run_helper(input, Path::new("java")).unwrap_or_else(|error| unavailable(input.files, error))
+    };
+    if let [(_, input)] = scopes {
+        return run(input);
+    }
+    let mut result = CallAnalysis::default();
+    let mut statuses = Vec::new();
+    for (project, input) in scopes {
+        let mut part = run(input);
+        part.reidentify(&|id| format!("{project}::{id}"));
+        statuses.push(part.status.clone());
+        absorb(&mut result, project, part);
+    }
+    result.status = if statuses.iter().all(|s| s == "ready") {
+        "ready".into()
+    } else if statuses.iter().any(|s| s == "ready" || s == "partial") {
+        "partial".into()
+    } else {
+        statuses.swap_remove(0)
+    };
+    result
+}
+
+/// Append one scope's report to the merged one.
+fn absorb(result: &mut CallAnalysis, project: &str, part: CallAnalysis) {
+    result.files += part.files;
+    result.java_release = result.java_release.max(part.java_release);
+    result.analyzers.extend(part.analyzers);
+    result.classes.extend(part.classes);
+    result.methods.extend(part.methods);
+    result.calls.extend(part.calls);
+    let diagnostics = part.diagnostics.into_iter();
+    result
+        .diagnostics
+        .extend(diagnostics.map(|d| format!("{project}: {d}")));
+    let Some(details) = part.details else { return };
+    let merged = result
+        .details
+        .get_or_insert_with(|| archguard_core::SemanticDetails {
+            definition: details.definition.clone(),
+            enumeration_complete: Some(true),
+            ..Default::default()
+        });
+    merged.enumeration_complete = Some(
+        merged.enumeration_complete == Some(true) && details.enumeration_complete == Some(true),
+    );
+    merged.type_uses.extend(details.type_uses);
+    merged.class_states.extend(details.class_states);
+    merged.method_metrics.extend(details.method_metrics);
+    merged.inheritance.extend(details.inheritance);
 }
 
 fn cached_result(
@@ -156,6 +226,62 @@ fn hash_part(hash: &mut Sha256, value: &[u8]) {
     hash.update(value);
 }
 
+/// The compiler inputs: one for all sources, or one per project when
+/// projects declare the same class, which javac rejects as a duplicate
+/// class in one compilation (ADR 0010).
+fn prepare_scopes(root: &Path, config: &Config) -> Result<Vec<(String, Input)>, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let files = crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())?;
+    let Some(projects) = shared_class_projects(&files, config) else {
+        return Ok(vec![(
+            String::new(),
+            prepare_sources(&root, config, &files)?,
+        )]);
+    };
+    let mut scopes = Vec::new();
+    for project in projects {
+        let own: Vec<_> = files
+            .iter()
+            .filter(|f| f.project == project)
+            .cloned()
+            .collect();
+        scopes.push((project.clone(), prepare_sources(&root, config, &own)?));
+    }
+    Ok(scopes)
+}
+
+/// The projects of the Java sources when two of them declare a class of
+/// the same qualified name, else `None`.
+/// shortcut: such projects compile apart, so calls between them are not
+/// resolved; upgrade to per-project classpaths once a repository needs both.
+fn shared_class_projects(
+    files: &[archguard_extract::SourceFile],
+    config: &Config,
+) -> Option<BTreeSet<String>> {
+    let mut owners: std::collections::BTreeMap<String, BTreeSet<&str>> = Default::default();
+    for file in files.iter().filter(|f| f.lang == Lang::Java) {
+        let Ok(content) = fs::read_to_string(&file.path) else {
+            continue;
+        };
+        let stripped = strip_root(&file.rel_path, &config.project.source_roots);
+        let declarations = JavaExtractor.extract(&stripped, &content).declarations;
+        let package = declarations.first().map_or("", |d| d.module_path.as_str());
+        let name = file.rel_path.rsplit('/').next().unwrap_or_default();
+        owners
+            .entry(format!("{package}/{name}"))
+            .or_default()
+            .insert(&file.project);
+    }
+    owners.values().any(|projects| projects.len() > 1).then(|| {
+        files
+            .iter()
+            .filter(|f| f.lang == Lang::Java)
+            .map(|f| f.project.clone())
+            .collect()
+    })
+}
+
+#[cfg(test)]
 fn prepare(root: &Path, config: &Config) -> Result<Input, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let files = crate::pipeline::walk_files(&root, config).map_err(|e| e.to_string())?;
@@ -518,6 +644,61 @@ mod tests {
             analyze_java_calls(root.path(), &Config::default()).status,
             "not_applicable"
         );
+    }
+
+    /// Two projects declare the same class: each project's calls reach its
+    /// own copy, and the copies keep apart identities (ADR 0010).
+    #[test]
+    fn projects_sharing_a_class_name_call_their_own_copy() {
+        let root = tempfile::tempdir().unwrap();
+        for project in ["functions/a", "functions/b"] {
+            let java = root.path().join(project).join("src/main/java/de/x");
+            fs::create_dir_all(java.join("common")).unwrap();
+            fs::write(root.path().join(project).join("pom.xml"), "<project/>").unwrap();
+            fs::write(
+                java.join("App.java"),
+                "package de.x;\nimport de.x.common.Log;\npublic class App { void run() { Log.write(); } }\n",
+            )
+            .unwrap();
+            fs::write(
+                java.join("common/Log.java"),
+                "package de.x.common;\npublic class Log { public static void write() {} }\n",
+            )
+            .unwrap();
+        }
+        let result = analyze_java_calls(root.path(), &Config::default());
+        assert_eq!(result.status, "ready", "{:?}", result.diagnostics);
+        let node = |id: &str| {
+            let class = result.classes.iter().find(|c| c.id == id);
+            class.map(|c| c.graph_node.clone()).unwrap_or_default()
+        };
+        let mut edges: Vec<(String, String)> = result
+            .calls
+            .iter()
+            .filter(|c| c.to_method.as_deref().is_some_and(|m| m.contains("write")))
+            .map(|c| {
+                (
+                    node(&c.from_class),
+                    node(c.to_class.as_deref().unwrap_or("")),
+                )
+            })
+            .collect();
+        edges.sort();
+        assert_eq!(
+            edges,
+            [
+                (
+                    "functions/a/de/x/App.java".into(),
+                    "functions/a/de/x/common/Log.java".into()
+                ),
+                (
+                    "functions/b/de/x/App.java".into(),
+                    "functions/b/de/x/common/Log.java".into()
+                ),
+            ]
+        );
+        let ids: BTreeSet<&str> = result.classes.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), result.classes.len(), "one identity per class");
     }
 
     #[test]
