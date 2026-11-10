@@ -69,7 +69,7 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(desktop.packages('aarch64-apple-darwin'), (f'ArchGuard-{v}-aarch64-apple-darwin.dmg',))
         self.assertEqual(desktop.packages('x86_64-apple-darwin'), (f'ArchGuard-{v}-x86_64-apple-darwin.dmg',))
         self.assertEqual(desktop.packages('x86_64-pc-windows-msvc'),
-                         (f'ArchGuard-{v}-x86_64-pc-windows-msvc.msi', f'ArchGuard-{v}-x86_64-pc-windows-msvc.zip'))
+                         (f'ArchGuard-{v}-x86_64-pc-windows-msvc.msi', f'ArchGuard-{v}-x86_64-pc-windows-msvc-portable.zip'))
         self.assertEqual(desktop.packages('x86_64-unknown-linux-gnu'), (f'ArchGuard-{v}-x86_64-unknown-linux-gnu.AppImage',))
 
     def test_unknown_or_musl_target_is_rejected(self):
@@ -77,8 +77,9 @@ class NamingTests(unittest.TestCase):
             desktop.packages('x86_64-unknown-linux-musl')
 
     def test_names_never_collide_with_cli_assets(self):
-        cli = {release.filename(t) for t in release.TARGETS} | {'SHA256SUMS'}
-        names = {n for t in desktop.TARGETS for n in desktop.packages(t)} | {desktop.SUMS}
+        # GitHub release asset names are case-insensitive.
+        cli = {release.filename(t).lower() for t in release.TARGETS} | {'sha256sums'}
+        names = {n.lower() for t in desktop.TARGETS for n in desktop.packages(t)} | {desktop.SUMS.lower()}
         self.assertFalse(cli & names)
         self.assertFalse(cli & {n + '.sha256' for n in names})
 

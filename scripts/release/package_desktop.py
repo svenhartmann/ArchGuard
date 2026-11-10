@@ -27,7 +27,8 @@ SUMS = 'SHA256SUMS-desktop'
 KINDS = {
     'aarch64-apple-darwin': ('.dmg',),
     'x86_64-apple-darwin': ('.dmg',),
-    'x86_64-pc-windows-msvc': ('.msi', '.zip'),
+    # GitHub asset names ignore case, so the zip must not match the CLI archive's name.
+    'x86_64-pc-windows-msvc': ('.msi', '-portable.zip'),
     'x86_64-unknown-linux-gnu': ('.AppImage',),
 }
 TARGETS = tuple(KINDS)

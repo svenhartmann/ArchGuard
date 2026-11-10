@@ -83,7 +83,7 @@ The same workflow packages the native desktop app (`crates/archguard-desktop`):
 | --- | --- | --- | --- |
 | macOS Apple Silicon | `aarch64-apple-darwin` | macOS 15 ARM64 | `ArchGuard-<version>-aarch64-apple-darwin.dmg` |
 | macOS Intel | `x86_64-apple-darwin` | macOS 15 Intel | `ArchGuard-<version>-x86_64-apple-darwin.dmg` |
-| Windows x64 | `x86_64-pc-windows-msvc` | Windows 2025 | `.msi` installer and a plain `.zip` |
+| Windows x64 | `x86_64-pc-windows-msvc` | Windows 2025 | `.msi` installer and a plain `-portable.zip` |
 | Linux x64 | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 x64 | `.AppImage` |
 
 `scripts/release/package_desktop.py` builds the packages; its unit tests cover
