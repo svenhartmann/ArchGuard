@@ -1,6 +1,7 @@
 //! Resolve source-root-stripped import references to unambiguous physical files.
 use archguard_core::{ArchguardError, Config};
 use std::{collections::BTreeMap, path::Path};
+#[tracing::instrument(skip_all)]
 pub fn source_reference_paths(
     root: &Path,
     config: &Config,

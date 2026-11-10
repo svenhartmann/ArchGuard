@@ -355,6 +355,7 @@ impl Calls {
 
     /// Blocking: runs the analysis, or waits for the worker running it.
     pub fn get(&self) -> Arc<CallAnalysis> {
+        let _span = archguard_engine::self_trace::tracing::info_span!("get").entered();
         self.slot
             .get_or_init(|| Arc::new(archguard_engine::analyze_calls(&self.root, &self.config)))
             .clone()

@@ -66,6 +66,7 @@ impl Inputs {
         sources: &ReviewSources,
         calls: &CallAnalysis,
     ) -> Self {
+        let _span = archguard_engine::self_trace::tracing::info_span!("compute").entered();
         let options = archguard_engine::CoChangeOptions {
             since: config.review.git_since.clone(),
             ..Default::default()

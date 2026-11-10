@@ -30,6 +30,7 @@ pub struct UiLabels {
 
 /// Fill the whole model from the state.
 pub fn fill(s: &State, ui: &UiLabels) -> CallsModel {
+    let _span = archguard_engine::self_trace::tracing::info_span!("fill").entered();
     let mut m = CallsModel {
         state: 1,
         mode: match s.mode {

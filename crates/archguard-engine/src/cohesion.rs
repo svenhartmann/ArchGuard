@@ -43,6 +43,7 @@ pub struct CohesionBoundary {
 
 /// Packages contain their immediate real source-file nodes. Nested packages are
 /// separate scopes. No inferred semantic connection or automatic move is emitted.
+#[tracing::instrument(skip_all)]
 pub fn analyze_cohesion(
     graph: &Graph,
     co_change: Option<&crate::co_change::CoChangeReport>,

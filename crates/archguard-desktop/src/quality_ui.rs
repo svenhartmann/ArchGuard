@@ -230,6 +230,7 @@ pub fn export(ui: &AppWindow) -> Option<crate::export::Snapshot> {
 /// The page in the models the view shows, changed in place: a keystroke
 /// in a search field redraws only the cards that changed.
 pub fn push(ui: &AppWindow, s: &mut QualityState) {
+    let _span = archguard_engine::self_trace::tracing::info_span!("push").entered();
     let page = s.page();
     let old = ui.global::<QualityData>().get_model();
     let mut m = page_model(&s.lang, page, &old);
@@ -239,6 +240,7 @@ pub fn push(ui: &AppWindow, s: &mut QualityState) {
 }
 
 fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
+    let _span = archguard_engine::self_trace::tracing::info_span!("page_model").entered();
     QualityModel {
         loading: p.loading,
         section: p.section as i32,

@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 /// One assessment per declared goal, in file order.
+#[tracing::instrument(skip_all)]
 pub fn quality_goal_assessment(
     root: &Path,
     config: &Config,

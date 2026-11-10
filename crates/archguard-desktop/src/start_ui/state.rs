@@ -86,6 +86,7 @@ pub struct StartState {
 }
 
 pub(super) fn from_evidence(ev: Evidence, services: Option<ServicesWorld>) -> StartState {
+    let _span = archguard_engine::self_trace::tracing::info_span!("from_evidence").entered();
     let mut s = StartState {
         ev,
         root: String::new(),

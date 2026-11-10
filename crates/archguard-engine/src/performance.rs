@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
+#[tracing::instrument(skip_all)]
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_performance(
     root: &Path,

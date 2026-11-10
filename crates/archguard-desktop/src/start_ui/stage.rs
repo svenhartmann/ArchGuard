@@ -58,6 +58,7 @@ pub(super) fn fill_scene<P: Fn(&Cell) -> Paint, F: Fn(usize) -> bool>(
     v: &View,
     look: Look<P, F>,
 ) {
+    let _span = archguard_engine::self_trace::tracing::info_span!("fill_scene").entered();
     m.scene_key = scene_key(s).into();
     if old.scene_key == m.scene_key {
         m.faces = old.faces.clone();

@@ -84,6 +84,7 @@ fn no_inheritance(class: &archguard_core::CallClass) -> bool {
     matches!(class.language.as_deref(), Some("go" | "rust"))
 }
 
+#[tracing::instrument(skip_all)]
 pub fn code_metrics(calls: &CallAnalysis) -> CodeMetricsReport {
     let class_nodes: BTreeMap<_, _> = calls.classes.iter().map(|c| (&c.id, c)).collect();
     let details = calls

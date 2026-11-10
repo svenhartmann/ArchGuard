@@ -174,6 +174,7 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
 
 /// Show the state in the window, keeping the list models it shows.
 pub fn push(ui: &AppWindow, s: &ArchitectureState) {
+    let _span = archguard_engine::self_trace::tracing::info_span!("push").entered();
     let mut m = window::model(s, &Texts::of(ui));
     let d = ui.global::<ArchitectureData>();
     sync::keep(&d.get_model(), &mut m);

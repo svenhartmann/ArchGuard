@@ -79,6 +79,7 @@ pub struct CoChangeReport {
 
 /// Report review candidates, not proof of missing abstractions or runtime coupling.
 /// Pass `(graph, names)` from the run that built `graph` to skip re-extraction.
+#[tracing::instrument(skip_all)]
 pub fn co_change<'a>(
     root: &Path,
     config: &Config,

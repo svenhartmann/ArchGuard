@@ -51,6 +51,7 @@ impl Inputs {
     /// The report the CLI's `review_cmd.rs` builds for the viewer; `None`
     /// when the analysis fails (the profile then says not measured).
     pub fn measure(&self, calls: &CallAnalysis) -> Option<(Graph, PerformanceReport)> {
+        let _span = archguard_engine::self_trace::tracing::info_span!("measure").entered();
         let ids = archguard_engine::analysis::match_review_entry_points(
             &self.graph,
             &self.sources,

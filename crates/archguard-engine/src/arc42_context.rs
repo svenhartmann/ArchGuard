@@ -87,6 +87,7 @@ fn skipped(path: &str) -> bool {
         .any(|t| p.rsplit('/').next().is_some_and(|f| f.contains(t)))
 }
 
+#[tracing::instrument(skip_all)]
 pub(crate) fn scan(root: &Path) -> Arc42Context {
     let mut programs: BTreeMap<String, usize> = BTreeMap::new();
     let mut hosts: BTreeMap<String, usize> = BTreeMap::new();

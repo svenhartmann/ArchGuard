@@ -149,6 +149,7 @@ impl QualityState {
 
     /// Render the page; may fix the selection (as the web does on render).
     pub fn page(&mut self) -> Page {
+        let _span = archguard_engine::self_trace::tracing::info_span!("page").entered();
         let Some(inputs) = self.inputs.take() else {
             return Page {
                 loading: true,
