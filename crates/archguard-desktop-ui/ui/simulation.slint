@@ -5,6 +5,7 @@
 import { Theme } from "theme.slint";
 import { Button, Badge } from "widgets.slint";
 import { ComboBox } from "combo.slint";
+import { LineEdit } from "fields.slint";
 import { Fmt } from "format.slint";
 
 // One SimOp: kind 0 cut `a → b`, 1 move `a` under `b`, 2 merge `b` into `a`.
@@ -12,6 +13,13 @@ export struct SimOpRow {
     kind: int,
     a: string,
     b: string,
+}
+
+// A saved scenario; `stale`: made on another analysis.
+export struct ScenarioRow {
+    name: string,
+    ops: int,
+    stale: bool,
 }
 
 // The document's simulation as one Graph shows it.
@@ -29,6 +37,19 @@ export struct SimData {
     acd-after: string,
     // Modules the selection can move under.
     targets: [string],
+    // The Scenarios panel (.archguard/scenarios).
+    scenarios-open: bool,
+    scenarios: [ScenarioRow],
+    // Waiting for confirmation: 0 none, 1 load, 2 delete, 3 replace.
+    ask-kind: int,
+    ask-name: string,
+    ask-count: int,
+    ask-current: int,
+    ask-stale: bool,
+    // Last outcome: 0 none, 1 saved, 2 loaded, 3 deleted, 4 failed (text:
+    // the name, or the reason).
+    status-kind: int,
+    status-text: string,
 }
 
 // A cut that breaks sampled cycles of the selected cycle group.
@@ -59,6 +80,12 @@ export component SimToggle inherits HorizontalLayout {
         pressed-state: root.sim.on;
         clicked => { root.action("toggle", ""); }
     }
+    Button {
+        compact: true;
+        text: @tr("Scenarios");
+        pressed-state: root.sim.scenarios-open;
+        clicked => { root.action("scenarios", ""); }
+    }
     if root.sim.ops.length > 0: Badge {
         text: Fmt.int(root.sim.ops.length);
         variant: "accent";
@@ -83,12 +110,90 @@ export component SimDetails inherits VerticalLayout {
     }
 }
 
+// Named sets of changes in .archguard/scenarios, in the web viewer's
+// format: save the current changes, load, delete, import a file.
+component ScenarioPanel inherits VerticalLayout {
+    in property <SimData> sim;
+    callback action(string, string);
+    pure function ask-text() -> string {
+        if root.sim.ask-kind == 1 {
+            return @tr("Load “{}” with {} changes and replace {} current changes?", root.sim.ask-name, Fmt.int(root.sim.ask-count), Fmt.int(root.sim.ask-current))
+                + (root.sim.ask-stale ? " " + @tr("It was made on another analysis; its changes were checked against the current graph.") : "");
+        }
+        if root.sim.ask-kind == 2 { return @tr("Delete the saved scenario “{}”? The current changes are kept.", root.sim.ask-name); }
+        return @tr("Replace the saved scenario “{}” with the current {} changes?", root.sim.ask-name, Fmt.int(root.sim.ask-count));
+    }
+    pure function status() -> string {
+        if root.sim.status-kind == 1 { return @tr("Saved “{}” in .archguard/scenarios.", root.sim.status-text); }
+        if root.sim.status-kind == 2 { return @tr("Loaded “{}” as simulated changes; source files were not edited.", root.sim.status-text); }
+        if root.sim.status-kind == 3 { return @tr("Deleted “{}”.", root.sim.status-text); }
+        if root.sim.status-kind == 4 { return @tr("Scenario action failed: {}", root.sim.status-text); }
+        return "";
+    }
+    spacing: 6px;
+    padding-top: 4px;
+    Rectangle { height: 1px; background: Theme.border; }
+    HorizontalLayout {
+        spacing: 8px;
+        Text { text: @tr("Scenarios"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; }
+        Text { text: ".archguard/scenarios"; color: Theme.muted; font-size: Theme.font-small; font-family: Theme.mono-family; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        Button { text: @tr("Import…"); compact: true; clicked => { root.action("scenario-import", ""); } }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        name := LineEdit { placeholder-text: @tr("Scenario name"); }
+        Button {
+            text: @tr("Save current changes");
+            compact: true;
+            enabled: root.sim.ops.length > 0 && name.text != "";
+            clicked => { root.action("scenario-save", name.text); }
+        }
+    }
+    if root.sim.scenarios.length == 0: Text {
+        text: @tr("No saved scenarios yet.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+    }
+    for sc[i] in root.sim.scenarios: HorizontalLayout {
+        spacing: 8px;
+        Text { text: sc.name; color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        if sc.stale: Badge { text: @tr("other analysis"); variant: "warning"; y: (parent.height - self.height) / 2; }
+        Text { text: @tr("{0} change" | "{0} changes" % sc.ops, Fmt.int(sc.ops)); color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
+        Button { text: @tr("Load"); compact: true; clicked => { root.action("scenario-load", i); } }
+        Button { text: @tr("Delete"); compact: true; clicked => { root.action("scenario-delete", i); } }
+    }
+    if root.sim.ask-kind > 0: Rectangle {
+        background: Theme.accent.with-alpha(0.08);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.accent.with-alpha(0.5);
+        VerticalLayout {
+            padding: 10px;
+            spacing: 8px;
+            Text { text: root.ask-text(); color: Theme.text; font-size: Theme.font-body; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Button { text: @tr("Confirm"); primary: true; compact: true; clicked => { root.action("scenario-confirm", ""); } }
+                Button { text: @tr("Cancel"); compact: true; clicked => { root.action("scenario-cancel", ""); } }
+            }
+        }
+    }
+    if root.sim.status-kind > 0: Text {
+        text: root.status();
+        color: root.sim.status-kind == 4 ? Theme.danger : Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+}
+
 // Below the graph while there are changes or an error: what changed and
 // undo, clear, export.
 export component SimStrip inherits Rectangle {
     in property <SimData> sim;
     callback action(string, string);
-    height: root.sim.ops.length > 0 || root.sim.error != "" || root.sim.has-pending ? box.preferred-height : 0;
+    height: root.sim.ops.length > 0 || root.sim.error != "" || root.sim.has-pending || root.sim.scenarios-open ? box.preferred-height : 0;
     visible: self.height > 0;
     background: Theme.panel;
     Rectangle { y: 0; height: 1px; background: Theme.border; }
@@ -141,6 +246,7 @@ export component SimStrip inherits Rectangle {
             font-size: Theme.font-small;
             wrap: word-wrap;
         }
+        if root.sim.scenarios-open: ScenarioPanel { sim: root.sim; action(a, b) => { root.action(a, b); } }
         // The last four; the export holds them all.
         for o[i] in root.sim.ops: Text {
             visible: i >= root.sim.ops.length - 4;
@@ -173,7 +279,7 @@ export component CycleCuts inherits VerticalLayout {
         padding-bottom: 6px;
         Text { text: c.from + " → " + c.to; color: Theme.text; font-size: Theme.font-small; font-family: Theme.mono-family; wrap: word-wrap; }
         Text {
-            text: @tr("Breaks {} of {} sampled cycles · {} references", Fmt.int(c.broken), Fmt.int(c.sampled), Fmt.int(c.refs));
+            text: @tr("Breaks {} of {} sampled cycles", Fmt.int(c.broken), Fmt.int(c.sampled)) + " · " + @tr("{0} reference" | "{0} references" % c.refs, Fmt.int(c.refs));
             color: Theme.muted;
             font-size: Theme.font-caption;
             wrap: word-wrap;

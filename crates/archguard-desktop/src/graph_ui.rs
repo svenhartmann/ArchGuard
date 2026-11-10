@@ -245,7 +245,7 @@ pub fn wire(ui: &AppWindow) {
         }
         let proposed =
             instances::with(id, |s: &mut Graph| simulation::proposal(&s.g, &action, &arg));
-        if simulation::act(&ui, &action, proposed.flatten()) {
+        if simulation::act(&ui, &action, &arg, proposed.flatten()) {
             resimulate(&ui);
         } else {
             panes_ui::sync(&ui);

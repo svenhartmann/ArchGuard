@@ -2,7 +2,10 @@
 //! selection, the actions of simulation.slint and what a Graph shows of the
 //! document's [`Simulation`] (`crate::tree::simulation`).
 
+use std::path::Path;
+
 use archguard_engine::analysis::SimOp;
+use archguard_engine::core::Graph;
 use slint::SharedString;
 
 use crate::documents::{self, with_store};
@@ -11,8 +14,9 @@ use crate::model_sync::sync_rows;
 use crate::panes_ui;
 use crate::state::GraphState;
 use crate::tree::Tree;
+use crate::tree::scenario::{Ask, Scenarios, Status};
 pub use crate::tree::simulation::Simulation;
-use crate::ui::{AppWindow, SimData, SimOpRow};
+use crate::ui::{AppWindow, ScenarioRow, SimData, SimOpRow};
 
 /// What Graph `g` proposes for `action` (`cut-out`/`cut-in` with the
 /// neighbour's row, `move` with the target module), from its selection.
@@ -48,10 +52,10 @@ pub fn proposal(g: &GraphState, action: &str, arg: &str) -> Option<SimOp> {
     }
 }
 
-/// Do `action` (simulation.slint) on the active document's simulation;
-/// `proposed` is the Graph's [`proposal`] for it. `true` when the
-/// confirmed changes changed and the tree must be built again.
-pub fn act(ui: &AppWindow, action: &str, proposed: Option<SimOp>) -> bool {
+/// Do `action` with `arg` (simulation.slint) on the active document's
+/// simulation; `proposed` is the Graph's [`proposal`] for it. `true` when
+/// the confirmed changes changed and the tree must be built again.
+pub fn act(ui: &AppWindow, action: &str, arg: &str, proposed: Option<SimOp>) -> bool {
     let Some(analysis) = with_store(|s| s.active()?.analysis.clone()) else {
         return false;
     };
@@ -60,6 +64,12 @@ pub fn act(ui: &AppWindow, action: &str, proposed: Option<SimOp>) -> bool {
         return false;
     }
     let full = &analysis.run.graph;
+    if action.starts_with("scenario") {
+        let Some(root) = with_store(|s| s.active().map(|d| d.root.clone())) else {
+            return false;
+        };
+        return scenario(action, arg, &root, full);
+    }
     let changed = documents::with_active_state_or(Simulation::default, |s| match action {
         "toggle" => {
             s.on = !s.on;
@@ -86,6 +96,62 @@ pub fn act(ui: &AppWindow, action: &str, proposed: Option<SimOp>) -> bool {
         _ => false,
     });
     changed == Some(true)
+}
+
+/// A Scenarios panel action; `true` when a scenario was loaded.
+fn scenario(action: &str, arg: &str, root: &Path, full: &Graph) -> bool {
+    let current =
+        documents::with_active_state_or(Simulation::default, |s| s.ops.clone()).unwrap_or_default();
+    // Outside the panel's state: the dialog runs its own event loop.
+    let import = (action == "scenario-import")
+        .then(|| {
+            rfd::FileDialog::new()
+                .add_filter("JSON", &["json"])
+                .set_directory(root)
+                .pick_file()
+        })
+        .flatten();
+    let index = arg.parse::<usize>().ok();
+    let loaded = documents::with_active_state_or(Scenarios::default, |p| {
+        match action {
+            "scenarios" => {
+                p.open = !p.open;
+                if p.open {
+                    p.refresh(root, full);
+                }
+            }
+            "scenario-save" => p.save(root, arg, full, &current),
+            "scenario-load" => {
+                if let Some(path) = index.and_then(|i| p.saved.get(i)).map(|s| s.path.clone()) {
+                    p.load(&path, full, current.len());
+                }
+            }
+            "scenario-import" => {
+                if let Some(path) = &import {
+                    p.load(path, full, current.len());
+                }
+            }
+            "scenario-delete" => {
+                if let Some(i) = index {
+                    p.delete(i);
+                }
+            }
+            "scenario-confirm" => return p.confirm(root, full),
+            "scenario-cancel" => p.ask = None,
+            _ => {}
+        }
+        None
+    })
+    .flatten();
+    let Some(ops) = loaded else {
+        return false;
+    };
+    documents::with_active_state_or(Simulation::default, |s| {
+        s.ops = ops;
+        s.on = true;
+        s.pending = None;
+    });
+    true
 }
 
 /// Save the ops where the user chooses; a failure shows as the error.
@@ -162,6 +228,48 @@ pub fn data(g: &GraphState, locale: Locale, old: &SimData) -> SimData {
             acd_before: d.map_or(String::new(), |d| locale.dec(d.acd_before, 2)).into(),
             acd_after: d.map_or(String::new(), |d| locale.dec(d.acd_after, 2)).into(),
             targets: sync_rows(&old.targets, targets.into_iter().map(SharedString::from)),
+            ..scenario_data(old)
+        }
+    })
+    .unwrap_or_default()
+}
+
+/// The Scenarios panel's part of [`SimData`].
+fn scenario_data(old: &SimData) -> SimData {
+    documents::with_active_state(|p: &mut Scenarios| {
+        let rows = p.saved.iter().map(|s| ScenarioRow {
+            name: s.name.as_str().into(),
+            ops: s.ops as i32,
+            stale: s.stale,
+        });
+        let (ask_kind, ask_name, ask_count, ask_current, ask_stale) = match &p.ask {
+            None => (0, String::new(), 0, 0, false),
+            Some(Ask::Load {
+                scenario,
+                current,
+                stale,
+            }) => (1, scenario.name.clone(), scenario.ops.len(), *current, *stale),
+            Some(Ask::Delete(s)) => (2, s.name.clone(), s.ops, 0, false),
+            Some(Ask::Replace(s)) => (3, s.name.clone(), s.ops.len(), 0, false),
+        };
+        let (status_kind, status_text) = match &p.status {
+            None => (0, ""),
+            Some(Status::Saved(t)) => (1, t.as_str()),
+            Some(Status::Loaded(t)) => (2, t.as_str()),
+            Some(Status::Deleted(t)) => (3, t.as_str()),
+            Some(Status::Failed(t)) => (4, t.as_str()),
+        };
+        SimData {
+            scenarios_open: p.open,
+            scenarios: sync_rows(&old.scenarios, rows),
+            ask_kind,
+            ask_name: ask_name.into(),
+            ask_count: ask_count as i32,
+            ask_current: ask_current as i32,
+            ask_stale,
+            status_kind,
+            status_text: status_text.into(),
+            ..Default::default()
         }
     })
     .unwrap_or_default()

@@ -49,8 +49,69 @@ msgstr "Diesen Zyklus auflösen"
 msgid "No cut breaks a sampled cycle of this group."
 msgstr "Keine Trennung bricht einen gefundenen Zyklus dieser Gruppe."
 
-msgid "Breaks {} of {} sampled cycles · {} references"
-msgstr "Bricht {} von {} gefundenen Zyklen · {} Belege"
+msgid "Breaks {} of {} sampled cycles"
+msgstr "Bricht {} von {} gefundenen Zyklen"
+
+msgid "{0} reference"
+msgid_plural "{0} references"
+msgstr[0] "{0} Beleg"
+msgstr[1] "{0} Belege"
 
 msgid "A sample of cycles, not an exhaustive search. A cut still needs a source change, e.g. an interface on the depended-upon side."
 msgstr "Eine Stichprobe von Zyklen, keine vollständige Suche. Eine Trennung braucht noch eine Änderung im Quellcode, etwa eine Schnittstelle auf der Seite, von der abgehangen wird."
+
+msgid "Scenarios"
+msgstr "Szenarien"
+
+msgid "Import…"
+msgstr "Importieren …"
+
+msgid "Scenario name"
+msgstr "Name des Szenarios"
+
+msgid "Save current changes"
+msgstr "Aktuelle Änderungen speichern"
+
+msgid "No saved scenarios yet."
+msgstr "Noch keine gespeicherten Szenarien."
+
+msgid "other analysis"
+msgstr "andere Analyse"
+
+msgid "{0} change"
+msgid_plural "{0} changes"
+msgstr[0] "{0} Änderung"
+msgstr[1] "{0} Änderungen"
+
+msgid "Load"
+msgstr "Laden"
+
+msgid "Delete"
+msgstr "Löschen"
+
+msgid "Confirm"
+msgstr "Bestätigen"
+
+msgid "Load “{}” with {} changes and replace {} current changes?"
+msgstr "„{}“ mit {} Änderungen laden und {} aktuelle Änderungen ersetzen?"
+
+msgid "It was made on another analysis; its changes were checked against the current graph."
+msgstr "Es stammt aus einer anderen Analyse; seine Änderungen wurden am aktuellen Graphen geprüft."
+
+msgid "Delete the saved scenario “{}”? The current changes are kept."
+msgstr "Gespeichertes Szenario „{}“ löschen? Die aktuellen Änderungen bleiben erhalten."
+
+msgid "Replace the saved scenario “{}” with the current {} changes?"
+msgstr "Gespeichertes Szenario „{}“ durch die aktuellen {} Änderungen ersetzen?"
+
+msgid "Saved “{}” in .archguard/scenarios."
+msgstr "„{}“ in .archguard/scenarios gespeichert."
+
+msgid "Loaded “{}” as simulated changes; source files were not edited."
+msgstr "„{}“ als simulierte Änderungen geladen; Quelldateien wurden nicht bearbeitet."
+
+msgid "Deleted “{}”."
+msgstr "„{}“ gelöscht."
+
+msgid "Scenario action failed: {}"
+msgstr "Szenarioaktion fehlgeschlagen: {}"

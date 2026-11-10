@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_engine::core::{Graph, NodeKind, Ref};
 
+pub mod scenario;
 pub mod simulation;
 
 /// Evidence sample per link, as `core::view::aggregate` caps it.

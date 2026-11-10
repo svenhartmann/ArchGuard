@@ -84,3 +84,12 @@ it through `archguard-engine`.
   sets by affected files, evidence and plan export) is not ported; the
   confirmation moved from the details panel to the ops strip so it shows
   without a selection.
+- 2026-11-10: Step 3 (scenarios) implemented: Graph toolbar "Scenarios"
+  opens a panel in the ops strip that saves the current changes as
+  `.archguard/scenarios/<name>.json`, lists, loads and deletes them, and
+  imports a scenario file from elsewhere. Saving under a used name,
+  loading and deleting ask first. Files use the web viewer's
+  `archguard-refactoring-scenario/v1` format and fingerprint (checked
+  against the web algorithm). Its scope holds the top-level nodes after
+  the changes, since the desktop keeps no zoom level of its own; there is
+  no description field yet (saved empty).
