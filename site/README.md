@@ -1,6 +1,6 @@
 # GitHub Pages site
 
-A static English introduction to ArchGuard with actual viewer screenshots, three
+A static English introduction to ArchGuard with actual desktop app screenshots, five
 reproducible examples, language prerequisites and CLI/MCP entry points. No npm
 packages, external fonts, analytics or third-party runtime scripts are needed.
 
@@ -36,52 +36,28 @@ local reports, source checkouts, absolute machine paths or these maintenance scr
 Workflow reference: [GitHub's custom Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 Actions are pinned to verified commit IDs.
 
-## Update screenshots
+## Update screenshots and video
 
-All gallery images are real captures at **1440 × 960** with the viewer set to
-English. `media/capture-views.cjs` captures them reproducibly. It needs an
-installed Chromium/Chrome (`CHROME`), Puppeteer Core (`PUPPETEER_MODULE`) and
-running viewers for Commons Collections and Microsoft eShop at the pinned
-revisions from the walkthroughs under `examples/`:
-
-```sh
-archguard serve examples/checkouts/commons-collections --port 8816 --depth 4 \
-  --config examples/commons-collections.toml
-archguard serve examples/checkouts/eshop --port 8818
-node site/media/capture-views.cjs http://127.0.0.1:8816 http://127.0.0.1:8818 site/assets
-```
-
-- `assets/world.png` (hero): Commons Collections, Start tab, Problems lens.
-- `assets/world-complexity.png`, `world-cbo.png`, `world-wmc.png`, `world-lcom4.png`:
-  Start tab, Explore lens with that metric selected.
-- `assets/world-package.png`: Explore lens, Complexity, inside the `map` package.
-- `assets/graph.png`, `matrix.png`, `calls.png`, `quality.png`: Commons Collections,
-  Graph, Matrix, Calls and Quality tabs.
-- `assets/eshop-world.png`: eShop, Start tab, deployment
-  `aspire:src/eShop.AppHost/AppHost.cs`, inferred event flow, Cycles.
-- `assets/eshop-services.png`: eShop, Services tab, inferred event flow, Cycles only,
-  details of the first event connection with its source evidence.
-- `assets/services.png` (Service Shop example page only): Services tab, API
-  configuration relations; captured manually.
-
-The script fails when the eShop cycle or its source evidence is missing. Review
-the images before committing: keep partial-evidence indicators visible and update
-`about.html` with the capture date and scope.
-
-## Update the flow video
-
-`assets/flow.mp4` is a silent, roughly 30-second recording of one path through
-Commons Collections: World View, Explore lens with CBO, the `map` package, its
-dependencies in the graph, Calls, Quality and the export menu. A drawn pointer
-marks each step because headless capture has no system cursor. With the
-Commons Collections viewer from above running and `ffmpeg` on `PATH`:
+Every screenshot and the flow video come from the ArchGuard desktop app, rendered
+headless at 2960 × 1840 pixels (1480 × 920 points) with English labels.
+`media/capture-app.sh` recreates all of them. It needs `ffmpeg`, the pinned checkouts
+from the walkthroughs under `examples/` (Commons Collections and Kafka with their
+example configuration copied into the checkout), and an app built with the snapshot
+feature; without it a real window opens:
 
 ```sh
-node site/media/record-flow.cjs http://127.0.0.1:8816 /tmp/flow.webm
-ffmpeg -i /tmp/flow.webm -an -vf fps=30 -c:v libx264 -preset slow -crf 30 \
-  -pix_fmt yuv420p -movflags +faststart site/assets/flow.mp4
-ffmpeg -ss 6.2 -i site/assets/flow.mp4 -frames:v 1 -q:v 3 site/assets/flow-poster.jpg
+cargo build --release -p archguard-desktop --features snapshot
+site/media/capture-app.sh target/release/archguard-desktop
 ```
+
+The script lists what each image shows. Review the images before committing: keep
+partial-evidence indicators visible, check that the values named in `index.html`
+and `site.js` still match, and update `about.html` with the capture date and scope.
+
+`assets/flow.mp4` is silent and about 26 seconds long: one full turn of the World View
+(72 captures, 5° apart), then CBO, the `map` package, Graph, Calls, Quality and arc42
+with short fades. It contains no simulated clicks. `assets/flow-poster.jpg` is its
+first turn frame.
 
 The page loads the video only on demand, plays it while it is visible and
 leaves it paused for visitors who ask for reduced motion.

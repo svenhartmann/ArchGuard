@@ -6,6 +6,7 @@
 - Apache Commons Collections: real open-source project for package/class analysis; see below.
 - [Jellyfin](jellyfin.md): real C# media server with 1,767 analyzed source files, namespace hierarchy and three cyclic groups at the initial depth.
 - [Apache Kafka](kafka.md): larger example with 3,369 production Java files, independently checked file cycles and a rotatable architecture landscape.
+- [OpenTelemetry Demo](opentelemetry-demo.md): polyglot shop with 20 Compose containers, source-backed gRPC/HTTP calls from Go and a configuration cycle through the telemetry collector.
 
 ## Apache Commons Collections
 

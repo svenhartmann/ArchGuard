@@ -13,20 +13,20 @@ ausgeschlossen. Die Analyse führt keinen Kafka-Build und keinen Kafka-Code aus.
 
 ## Gemessener Stand
 
-Auswertung vom 30.10.2026 mit ArchGuard auf dem obigen Commit:
+Auswertung vom 10.11.2026 mit ArchGuard 0.3.1 auf dem obigen Commit:
 
 | Messung | Ergebnis |
 | --- | ---: |
 | Java-Produktionsdateien | 3.369 |
-| Gerichtete Abhängigkeiten | 16.108 |
-| Gegen Quellzeilen geprüfte Importbelege | 15.430 |
-| Zyklische Gruppen auf Dateiebene | 46 |
-| Dateien in der größten zyklischen Gruppe | 172 |
+| Gerichtete Abhängigkeiten | 16.321 |
+| Gegen Quellzeilen geprüfte Importbelege | 16.164 |
+| Zyklische Gruppen auf Dateiebene | 48 |
+| Dateien in der größten zyklischen Gruppe | 175 |
 | Einträge in der Landschaft | 5.222 |
 | Davon Klassen/Typen | 5.154 |
 | Einträge mit erfasster Methodenkomplexität | 4.479 |
 
-Die 46 Gruppen wurden zusätzlich mit einem unabhängigen Algorithmus nachgerechnet.
+Die 48 Gruppen wurden zusätzlich mit einem unabhängigen Algorithmus nachgerechnet.
 Eine Gruppe enthält einen oder mehrere mögliche Rundwege; die Gruppenzahl ist
 keine Zählung aller einzelnen Zyklen. Paketzyklen hängen von der gewählten Ebene ab.
 

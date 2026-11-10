@@ -10,6 +10,8 @@
   Quelldateien, Namespace-Hierarchie und drei zyklischen Gruppen auf der Starttiefe.
 - [Apache Kafka](kafka_DE.md): größerer Testfall mit 3.369 Java-Produktionsdateien,
   unabhängig geprüften Dateizyklen und drehbarer Architekturlandschaft.
+- [OpenTelemetry Demo](opentelemetry-demo_DE.md): mehrsprachiger Shop mit 20 Compose-Containern,
+  quellbelegten gRPC-/HTTP-Aufrufen aus Go und einem Konfigurationszyklus über den Telemetrie-Collector.
 
 ## Apache Commons Collections
 

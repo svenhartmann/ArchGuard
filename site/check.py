@@ -45,6 +45,6 @@ for path, document in documents.items():
         if parsed.fragment and target in documents:
             assert unquote(parsed.fragment) in documents[target].ids, f'{path}: missing fragment {link}'
         checked += 1
-for name in ('world', 'world-complexity', 'world-cbo', 'world-wmc', 'world-lcom4', 'world-package', 'graph', 'matrix', 'calls', 'quality', 'eshop-world', 'eshop-services', 'services'):
+for name in ('world', 'world-complexity', 'world-cbo', 'world-wmc', 'world-lcom4', 'world-package', 'graph', 'matrix', 'calls', 'quality', 'eshop-world', 'eshop-services', 'services', 'otel-grpc', 'otel-cycle', 'kafka-world', 'arc42', 'arc42-context'):
     assert (root / 'assets' / f'{name}.png').is_file(), f'Missing gallery screenshot: {name}'
 print(f'Validated {len(documents)} HTML pages and {checked} local links/assets.')

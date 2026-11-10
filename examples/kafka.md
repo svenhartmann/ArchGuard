@@ -13,20 +13,20 @@ excluded. Analysis neither builds Kafka nor executes its code.
 
 ## Recorded measurements
 
-ArchGuard analysis on 2026-10-30 using the commit above:
+Analysis on 2026-11-10 with ArchGuard 0.3.1 and the commit above:
 
 | Measurement | Result |
 | --- | ---: |
 | Production Java files | 3,369 |
-| Directed dependencies | 16,108 |
-| Import references checked against source lines | 15,430 |
-| Cyclic groups at file level | 46 |
-| Files in the largest cyclic group | 172 |
+| Directed dependencies | 16,321 |
+| Import references checked against source lines | 16,164 |
+| Cyclic groups at file level | 48 |
+| Files in the largest cyclic group | 175 |
 | Landscape entries | 5,222 |
 | Of these, classes/types | 5,154 |
 | Entries with measured method complexity | 4,479 |
 
-The 46 groups were also verified with an independent algorithm. A group contains
+The 48 groups were also verified with an independent algorithm. A group contains
 one or more possible cycles; the group count does not count every individual
 cycle. Package cycles depend on the selected level.
 
