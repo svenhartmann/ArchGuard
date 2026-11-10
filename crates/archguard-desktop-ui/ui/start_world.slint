@@ -71,8 +71,9 @@ component Pin inherits Rectangle {
     }
 }
 
-// A pin that found no place clear of other pins and of the blocks: a dot
-// on its area, the pin shows while the pointer rests on it.
+// A pin that found no place clear of other pins and of the blocks: an
+// invisible spot on its area; the dot and the pin show while the pointer
+// rests on it (dozens of always-on dots hid the World's surfaces).
 component PinDot inherits Rectangle {
     in property <StartPin> pin;
     in property <int> kpi;
@@ -83,11 +84,11 @@ component PinDot inherits Rectangle {
     width: 14px;
     height: 14px;
     border-radius: 7px;
-    background: Theme.panel;
+    background: t.has-hover ? Theme.panel : transparent;
     border-width: 2px;
-    border-color: pin.cyclic || pin.findings > 0 ? Theme.cycle : Theme.accent;
+    border-color: !t.has-hover ? transparent : pin.cyclic || pin.findings > 0 ? Theme.cycle : Theme.accent;
     drop-shadow-blur: 4px;
-    drop-shadow-color: Theme.shadow;
+    drop-shadow-color: t.has-hover ? Theme.shadow : transparent;
     t := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
