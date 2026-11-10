@@ -23,6 +23,8 @@ pub struct Arc42Blocks {
     pub context: Arc42Context,
     /// Manifest project id -> its declared description.
     pub descriptions: BTreeMap<String, String>,
+    /// The project's recorded runtime (ADR 0004), for chapter 6.
+    pub runtime: Option<archguard_core::RuntimeProfile>,
 }
 
 /// Programs the source starts and hosts it addresses over HTTP, with the
@@ -228,7 +230,8 @@ impl<'a> Blocks<'a> {
             })
             .collect();
         if self.more > 0 && !out.is_empty() {
-            let name = format!("Weitere {} Pakete", self.more);
+            let more = self.lang.pick("{} more packages", "Weitere {} Pakete");
+            let name = crate::arc42_text::fill(more, &[&self.more]);
             out.push(element(BOXES - 1, name, ElementKind::Remainder));
         }
         out

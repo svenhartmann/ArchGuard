@@ -33,6 +33,9 @@ fn kind_of(k: ServiceDependencyKind) -> RelationKind {
     }
 }
 
+/// The trace file the engine reads service links from (`service_traces`).
+const TRACES: &str = ".archguard/otel-traces.json";
+
 /// Collects elements by service or datastore id, in first-use order.
 struct Builder<'a> {
     l: DocLang,
@@ -266,7 +269,11 @@ fn communication(l: DocLang, t: &ServiceTopology) -> Option<Diagram> {
     if b.relations.is_empty() {
         return None;
     }
-    Some(b.finish(
+    let traced = t
+        .dependencies
+        .iter()
+        .any(|d| d.evidence.iter().any(|e| e.file == TRACES));
+    let mut d = b.finish(
         "runtime-services".into(),
         6,
         format!(
@@ -278,7 +285,18 @@ fn communication(l: DocLang, t: &ServiceTopology) -> Option<Diagram> {
             "Source: HTTP, gRPC and event connections configured or found in the code, and datastore use. Statically recorded; no measured communication and no order.",
             "Quelle: konfigurierte und im Code erkannte HTTP-, gRPC- und Event-Verbindungen sowie Datenbanknutzung. Statisch erfasst; keine gemessene Kommunikation und keine Reihenfolge.",
         ),
-    ))
+    );
+    if traced {
+        // Counts then mix configuration and trace evidence.
+        d.unit = l.pick("evidence", "Belege").into();
+        d.note = l
+            .pick(
+                "Source: HTTP, gRPC and event connections configured, found in the code or seen in recorded traces (.archguard/otel-traces.json), and datastore use. No order; the sequences below show it.",
+                "Quelle: konfigurierte, im Code erkannte oder in aufgezeichneten Traces (.archguard/otel-traces.json) gesehene HTTP-, gRPC- und Event-Verbindungen sowie Datenbanknutzung. Keine Reihenfolge; die zeigen die Sequenzen.",
+            )
+            .into();
+    }
+    Some(d)
 }
 
 #[cfg(test)]
@@ -365,6 +383,30 @@ mod tests {
             .map(|r| r.kind)
             .collect();
         assert_eq!(to_db, [RelationKind::Startup, RelationKind::Data]);
+    }
+
+    #[test]
+    fn links_seen_in_traces_are_not_called_configuration_evidence() {
+        let mut t = topology();
+        t.dependencies[1]
+            .evidence
+            .push(archguard_core::ServiceEvidence {
+                file: TRACES.into(),
+                pointer: "/resourceSpans/0".into(),
+                line: None,
+                description: "recorded call".into(),
+            });
+        let all = diagrams(DocLang::En, &t);
+        let c = all.iter().find(|d| d.id == "runtime-services").unwrap();
+        assert_eq!(c.unit, "evidence");
+        assert!(c.note.contains("recorded traces"), "{}", c.note);
+        assert!(!super::super::render::mermaid(c).contains("configuration evidence"));
+        let static_only = diagrams(DocLang::En, &topology());
+        let c = static_only
+            .iter()
+            .find(|d| d.id == "runtime-services")
+            .unwrap();
+        assert_eq!(c.unit, "configuration evidence");
     }
 
     #[test]

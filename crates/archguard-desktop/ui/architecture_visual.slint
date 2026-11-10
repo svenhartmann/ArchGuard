@@ -55,6 +55,8 @@ export struct ArcLine {
     cycle: bool,
     dim: bool,
     strong: bool,
+    // Label size in px before zoom; 0: the default 9.
+    size: float,
 }
 
 // A box around the cards of one group (deployment node, layer).
@@ -160,7 +162,7 @@ export component Diagram inherits Rectangle {
         y: l.ly * root.zoom * 1px - self.height;
         text: l.text != "" ? l.text : Fmt.int(l.count);
         color: l.cycle ? Theme.cycle : Theme.muted;
-        font-size: 9px * root.zoom;
+        font-size: (l.size > 0 ? l.size : 9) * root.zoom * 1px;
         opacity: l.dim ? 0.25 : 1;
     }
     for c in root.cards: Rectangle {

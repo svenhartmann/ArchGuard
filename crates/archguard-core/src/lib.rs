@@ -19,7 +19,7 @@ mod config;
 mod diagrams;
 pub use diagrams::{
     Arc42Config, Diagram, DiagramElement, DiagramFormat, DiagramKind, DiagramRelation, DocLang,
-    ElementKind, RelationKind,
+    ElementKind, RelationKind, SequenceStep, sequence_steps,
 };
 mod evaluation;
 pub use evaluation::{

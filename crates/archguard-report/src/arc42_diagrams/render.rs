@@ -3,16 +3,18 @@
 //! C4-PlantUML standard library (as the web viewer's export).
 
 use archguard_core::{
-    Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind,
+    Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind, SequenceStep,
+    sequence_steps,
 };
 use std::fmt::Write;
 
 /// German units: the unit is written in the document's language (ADR
 /// 0008), so it also tells the language of the relation labels.
-const GERMAN_UNITS: [&str; 5] = [
+const GERMAN_UNITS: [&str; 6] = [
     "Quellverbindungen",
     "Aufrufstellen",
     "Konfigurationsbelege",
+    "Belege",
     "Dateien",
     "Aufrufe",
 ];
@@ -39,6 +41,7 @@ pub fn counted(n: usize, unit: &str) -> String {
         "Quellverbindungen" => "Quellverbindung",
         "Aufrufstellen" => "Aufrufstelle",
         "Konfigurationsbelege" => "Konfigurationsbeleg",
+        "Belege" => "Beleg",
         "Dateien" => "Datei",
         "Aufrufe" => "Aufruf",
         "source connections" => "source connection",
@@ -244,7 +247,9 @@ fn c4_element(e: &DiagramElement, unit: &str) -> String {
 }
 
 /// A sequence diagram: participants in first-use order, then one message
-/// per relation. Events are asynchronous, errors are marked.
+/// per relation, a dashed return once the calls made within it are done,
+/// and the callee active (`+`/`-`) in between. Events are asynchronous,
+/// errors are marked; a call to oneself returns without a drawn line.
 fn sequence(d: &Diagram, plantuml: bool) -> String {
     let mut out = if plantuml {
         format!("@startuml\ntitle {}\n", d.title)
@@ -252,39 +257,71 @@ fn sequence(d: &Diagram, plantuml: bool) -> String {
         format!("sequenceDiagram\n  title {}\n", d.title.replace(':', " "))
     };
     for e in &d.elements {
+        let name = match &e.group {
+            Some(space) => format!("{space}.{}", e.name),
+            None => e.name.clone(),
+        };
         let _ = if plantuml {
-            writeln!(out, "participant {} as {}", arg(&e.name), e.id)
+            writeln!(out, "participant {} as {}", arg(&name), e.id)
         } else {
-            writeln!(out, "  participant {} as {}", e.id, entity(&e.name))
+            writeln!(out, "  participant {} as {}", e.id, entity(&name))
         };
     }
-    for r in &d.relations {
-        let text = r.label.clone().unwrap_or_else(|| label(r, &d.unit));
-        let event = r.kind == RelationKind::Event;
-        let arrow = match (plantuml, event, r.error) {
-            (true, _, true) => "-[#d33]>",
-            (true, true, _) => "->>",
-            (true, false, _) => "->",
-            (false, _, true) => "-x",
-            (false, true, _) => "-)",
-            (false, false, _) => "->>",
+    let back = if GERMAN_UNITS.contains(&d.unit.as_str()) {
+        "zurück"
+    } else {
+        "return"
+    };
+    for step in sequence_steps(&d.relations) {
+        let line = match step {
+            SequenceStep::Call(i) => Some(message(d, &d.relations[i], plantuml)),
+            SequenceStep::Return(i) => answer(&d.relations[i], plantuml, back),
         };
-        let _ = if plantuml {
-            writeln!(out, "{} {arrow} {} : {}", r.from, r.to, text)
-        } else {
-            writeln!(
-                out,
-                "  {}{arrow}{}: {}",
-                r.from,
-                r.to,
-                text.replace([':', ';', '#'], " ")
-                    .replace('<', "#lt;")
-                    .replace('>', "#gt;")
-            )
-        };
+        if let Some(line) = line {
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
     if plantuml {
         out.push_str("@enduml\n");
     }
     out
+}
+
+/// The dashed return of `r` that ends its callee's activation; none for a
+/// call to oneself.
+fn answer(r: &DiagramRelation, plantuml: bool, back: &str) -> Option<String> {
+    (r.from != r.to).then(|| {
+        if plantuml {
+            format!("{} --> {} -- : {back}", r.to, r.from)
+        } else {
+            format!("  {}-->>-{}: {back}", r.to, r.from)
+        }
+    })
+}
+
+/// One call line; a call that gets a drawn return activates its callee.
+fn message(d: &Diagram, r: &DiagramRelation, plantuml: bool) -> String {
+    let text = r.label.clone().unwrap_or_else(|| label(r, &d.unit));
+    let event = r.kind == RelationKind::Event;
+    let active = !event && !r.reply && r.from != r.to;
+    let arrow = match (plantuml, event, r.error) {
+        (true, _, true) => "-[#d33]>",
+        (true, true, _) => "->>",
+        (true, false, _) => "->",
+        (false, _, true) => "-x",
+        (false, true, _) => "-)",
+        (false, false, _) => "->>",
+    };
+    if plantuml {
+        let on = if active { " ++" } else { "" };
+        format!("{} {arrow} {}{on} : {}", r.from, r.to, text)
+    } else {
+        let on = if active { "+" } else { "" };
+        let text = text
+            .replace([':', ';', '#'], " ")
+            .replace('<', "#lt;")
+            .replace('>', "#gt;");
+        format!("  {}{arrow}{on}{}: {text}", r.from, r.to)
+    }
 }

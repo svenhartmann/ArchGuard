@@ -1,7 +1,7 @@
 //! arc42 chapters 1 to 9 (without 5, see `package_markdown`), one
 //! function per chapter or section, in the document's language (ADR 0008).
 
-use archguard_core::{DocLang, ServiceDependencyKind};
+use archguard_core::{CallAnalyzer, DocLang, ServiceDependencyKind};
 use serde_json::Value;
 use std::fmt::Write;
 
@@ -207,6 +207,7 @@ pub(crate) fn calls(input: &Arc42Inputs<'_>, md: &mut String, q: &mut Vec<String
     let l = input.lang;
     let t = |en: &'static str, de: &'static str| l.pick(en, de);
     let Arc42Inputs { calls, .. } = input;
+    recorded_cases(input, md);
     let text = t(
         "### Static call evidence\n\nCompiler status: **{}**. {} call sites recorded. This is no runtime trace and no execution order.\n",
         "### Statische Aufrufbelege\n\nCompilerstatus: **{}**. {} erfasste Aufrufstellen. Dies ist kein Laufzeittrace und keine Ausführungsreihenfolge.\n",
@@ -222,6 +223,24 @@ pub(crate) fn calls(input: &Arc42Inputs<'_>, md: &mut String, q: &mut Vec<String
             ]
         )
     );
+    let blocked = [
+        CallAnalyzer::RUST_UNTRUSTED,
+        CallAnalyzer::TYPESCRIPT_BLOCKED,
+    ];
+    if calls
+        .analyzers
+        .iter()
+        .any(|a| a.diagnostics.iter().any(|d| blocked.contains(&d.as_str())))
+    {
+        let _ = writeln!(
+            md,
+            "{}\n",
+            t(
+                "Calls stay unresolved because ArchGuard does not run the project's compiler unless you trust the project (ARCHGUARD_TRUST_PROJECT_COMPILER=1; the desktop app does so unless trust_project_compiler = false).",
+                "Aufrufe bleiben unaufgelöst, weil ArchGuard den Compiler des Projekts nur startet, wenn du dem Projekt vertraust (ARCHGUARD_TRUST_PROJECT_COMPILER=1; die Desktop-App tut das, solange trust_project_compiler = false nicht gesetzt ist).",
+            )
+        );
+    }
     let mut sites: Vec<_> = calls.calls.iter().collect();
     sites.sort_by_key(|s| (&s.file, s.line, s.column, &s.target_label));
     table(
@@ -253,6 +272,51 @@ pub(crate) fn calls(input: &Arc42Inputs<'_>, md: &mut String, q: &mut Vec<String
         )
         .into(),
     );
+}
+
+/// Chapter 6: the use cases of the recorded runtime (ADR 0004), most total time first.
+fn recorded_cases(input: &Arc42Inputs<'_>, md: &mut String) {
+    let Some(p) = &input.blocks.runtime else {
+        return;
+    };
+    let l = input.lang;
+    let mut cases: Vec<_> = p.endpoints.iter().collect();
+    cases.sort_by(|a, b| {
+        let total = |e: &archguard_core::RuntimeEndpoint| e.requests as f64 * e.duration_ms.mean;
+        total(b).total_cmp(&total(a))
+    });
+    let _ = writeln!(
+        md,
+        "{}",
+        l.pick(
+            "### Recorded use cases\n\nSource: recorded OTLP traces, a sample of real runs, not complete traffic. Times in ms.\n",
+            "### Aufgezeichnete Anwendungsfälle\n\nQuelle: aufgezeichnete OTLP-Traces, eine Stichprobe echter Läufe, nicht der vollständige Verkehr. Zeiten in ms.\n",
+        )
+    );
+    table(
+        md,
+        l.pick(
+            "| Use case | Service | Runs | Median | p95 | Errors |\n| --- | --- | ---: | ---: | ---: | ---: |",
+            "| Anwendungsfall | Dienst | Läufe | Median | p95 | Fehler |\n| --- | --- | ---: | ---: | ---: | ---: |",
+        ),
+        cases
+            .iter()
+            .take(LIMIT)
+            .map(|e| {
+                format!(
+                    "| {} | {} | {} | {:.1} | {:.1} | {} |",
+                    cell(&e.name),
+                    cell(&e.service),
+                    e.requests,
+                    e.duration_ms.p50,
+                    e.duration_ms.p95,
+                    e.errors
+                )
+            })
+            .collect(),
+        l.pick("No recorded use cases.", "Keine aufgezeichneten Anwendungsfälle."),
+    );
+    note(l, md, cases.len());
 }
 
 /// Chapter 7: deployment configuration read.

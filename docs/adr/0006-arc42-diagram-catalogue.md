@@ -48,6 +48,7 @@ What exists:
    | `runtime-calls` | 6 | package map | static call sites |
    | `runtime-services` | 6 | C4 container | configured and detected HTTP, gRPC, event links, datastore use |
    | `runtime-trace-<n>` | 6 | sequence | one recorded trace (OTLP), real order |
+   | `runtime-recorded-<n>` | 6 | sequence | typical request of a recorded use case (ADR 0004 profile), module calls |
    | `deployment-<file>` | 7 | C4 deployment | one Compose or manifest file: containers, datastores, relations |
    | `cycles` | 11 | package map | cyclic package relations |
 
@@ -298,3 +299,15 @@ What exists:
   an external sender. The red way back of an error scenario ends at the
   consumer: the publisher does not learn of it; errors raised by a
   consumer itself get no scenario and stay in the chapter 8 table.
+- 2026-11-09: Recorded use cases. When `.archguard/runtime` holds traces
+  (ADR 0004), chapter 6 gets a table of all use cases (entry span names)
+  with runs, median, p95 and errors, and for the four with the most total
+  time a sequence `runtime-recorded-<first 8 hex of the trace id>`: the
+  kept request closest to the median duration, participants are the
+  modules of its method spans (`crate.module` of `code.function.name`),
+  messages its calls in measured order. Calls under 1 % of the request
+  time or deeper than four levels are left out, repeated calls in a row
+  are counted (`×n`), at most 30 messages, and a use case with fewer than
+  three calls gets no diagram. Mermaid and PlantUML now draw the dashed
+  return of every call (shared `archguard_core::sequence_steps`, as in the
+  desktop); a call to oneself returns without a line.

@@ -185,8 +185,8 @@ msgstr "Datenbank"
 msgid "External container"
 msgstr "Externer Container"
 
-msgid "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence."
-msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Grün: Datenbanknutzung · Grau: Startreihenfolge · Hellgrau: konfigurierter Verweis. Zahlen sind Konfigurationsbelege."
+msgid "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are evidence: configuration, code or recorded traces."
+msgstr "Blau: HTTP · Cyan: gRPC · Violett: Events · Grün: Datenbanknutzung · Grau: Startreihenfolge · Hellgrau: konfigurierter Verweis. Zahlen sind Belege: Konfiguration, Code oder aufgezeichnete Traces."
 
 msgid "In documentation"
 msgstr "In Dokumentation"

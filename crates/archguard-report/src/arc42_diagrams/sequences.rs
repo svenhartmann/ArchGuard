@@ -190,10 +190,11 @@ mod tests {
         let m = super::super::render::mermaid(d);
         assert!(m.starts_with("sequenceDiagram\n"), "{m}");
         assert!(
-            m.contains("  e0->>e1: 1. HTTP GET /orders/{id} · 1.5 ms\n"),
+            m.contains("  e0->>+e1: 1. HTTP GET /orders/{id} · 1.5 ms\n"),
             "{m}"
         );
         assert!(m.contains("  e1-xe2:"), "{m}");
+        assert!(m.contains("  e1-->>-e0: zurück\n"), "{m}");
         let p = super::super::render::plantuml(d);
         assert!(p.contains("e1 -[#d33]> e2 : 2. Event"), "{p}");
     }

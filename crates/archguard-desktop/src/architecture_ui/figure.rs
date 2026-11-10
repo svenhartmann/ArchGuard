@@ -66,8 +66,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
             lx: route.label.0,
             ly: route.label.1,
             cycle: r.cycle,
-            dim: false,
-            strong: false,
+            ..Default::default()
         })
         .collect();
     ArcFigure {
@@ -106,7 +105,7 @@ fn legend(kind: DiagramKind, texts: &Texts) -> &str {
 
 const CONTEXT_LEGEND: &str = "Grey: programs the code starts · blue: hosts it addresses over HTTP · green: datastores. Counts are source files.";
 
-const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are configuration evidence.";
+const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · green: datastore use · grey: startup order · light grey: configured reference. Counts are evidence: configuration, code or recorded traces.";
 
 /// The label of a C4 relation; package maps show their count.
 fn line_text(kind: RelationKind, texts: &Texts) -> &str {

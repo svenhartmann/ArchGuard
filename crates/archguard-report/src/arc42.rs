@@ -233,12 +233,24 @@ mod tests {
             "dependencies":[],"cycles":[],"diagnostics":[],"complete":true
         }))
         .unwrap();
+        let calls = CallAnalysis {
+            analyzers: vec![archguard_core::CallAnalyzer {
+                language: "rust".into(),
+                backend: "syn".into(),
+                status: "partial".into(),
+                files: 1,
+                version: None,
+                project: None,
+                diagnostics: vec![archguard_core::CallAnalyzer::RUST_UNTRUSTED.into()],
+            }],
+            ..Default::default()
+        };
         let doc = render_arc42(Arc42Inputs {
             source_graph: &graph,
             view: &graph,
             report: &report,
             config: &Config::default(),
-            calls: &CallAnalysis::default(),
+            calls: &calls,
             services: &services,
             insights: &serde_json::json!({}),
             source_paths: &BTreeMap::new(),
@@ -247,6 +259,13 @@ mod tests {
             lang: DocLang::default(),
         });
         assert_eq!(doc.chapters[5].title, "Runtime View");
+        assert!(
+            doc.chapters[5]
+                .markdown
+                .contains("trust the project (ARCHGUARD_TRUST_PROJECT_COMPILER=1"),
+            "untrusted calls say why they are missing: {}",
+            doc.chapters[5].markdown
+        );
         let text = doc.markdown(None);
         assert!(
             text.starts_with("# arc42 – Architecture Documentation"),

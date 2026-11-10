@@ -43,6 +43,7 @@ pub fn arc42_from_evidence(
             .iter()
             .filter_map(|p| Some((p.id.clone(), manifest_description(root, &p.manifest)?)))
             .collect(),
+        runtime: crate::runtime_traces::runtime_profile(root, None),
     };
     let goals = crate::quality_goals::quality_goal_assessment(
         root,

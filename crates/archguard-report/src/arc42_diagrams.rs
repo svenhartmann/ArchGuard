@@ -7,6 +7,7 @@ mod cyclic;
 mod failures;
 mod flows;
 mod layers;
+mod recorded;
 mod render;
 mod scenarios;
 pub use scenarios::class_sequence;
@@ -143,6 +144,9 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     ));
     out.extend(services::diagrams(l, input.services));
     out.extend(sequences::diagrams(l, input.services));
+    if let Some(runtime) = &input.blocks.runtime {
+        out.extend(recorded::diagrams(l, runtime));
+    }
     out.extend(scoped::diagrams(input));
     out.sort_by_key(|d| d.chapter);
     out
