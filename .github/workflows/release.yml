@@ -110,7 +110,7 @@ jobs:
     name: Desktop / ${{ matrix.target }}
     needs: prepare
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
