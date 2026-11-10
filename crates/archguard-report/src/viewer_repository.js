@@ -168,6 +168,8 @@ function repositoryWorldProjects(){
     projects=projects.filter(p=>scoped.has(p.id));
   }
   const deployed=new Set((serviceModel()?.services||[]).filter(s=>s.id.startsWith('aspire:')||s.id.startsWith('spring:')||s.compose_file).flatMap(s=>[s.id,s.project]));
+  // Function apps deploy themselves through their build plugin.
+  for(const p of serviceProjects())if(p.runtime==='azure-functions')deployed.add(p.id);
   return repositoryWorldState.allProjects||!projects.some(p=>deployed.has(p.id))?projects:projects.filter(p=>p.external||deployed.has(p.id));
 }
 function repositoryEvidenceSource(edge,proof){return proof.file==='.archguard/otel-traces.json'&&proof.pointer?.startsWith('/resourceSpans/')?'observed':['http_call','grpc_call','event'].includes(edge.kind)?'code':'configuration';}

@@ -222,9 +222,16 @@ pub fn shown(
         let scoped = ids(t.services.iter().filter(|s| deployment_scope(s) == d));
         islands.retain(|&i| scoped.contains(inventory[i].id.as_str()));
     }
-    let deployed = ids(t.services.iter().filter(|s| {
+    let mut deployed = ids(t.services.iter().filter(|s| {
         s.id.starts_with("aspire:") || s.id.starts_with("spring:") || !s.compose_file.is_empty()
     }));
+    // Function apps deploy themselves through their build plugin.
+    deployed.extend(
+        t.projects
+            .iter()
+            .filter(|p| p.runtime.as_deref() == Some("azure-functions"))
+            .map(|p| p.id.as_str()),
+    );
     let any = islands
         .iter()
         .any(|&i| deployed.contains(inventory[i].id.as_str()));
@@ -286,6 +293,30 @@ pub mod tests {
             complete: true,
             ..Default::default()
         }
+    }
+
+    /// Azure Functions deploy themselves: a local Compose stack beside
+    /// them does not hide them (ElasticSearchIK); a plain library does.
+    #[test]
+    fn function_apps_count_as_deployed() {
+        let mut function = project("functions/search", "application");
+        function.runtime = Some("azure-functions".into());
+        let t = topology(
+            vec![function, project("libs/util", "library")],
+            vec![service(
+                "local/docker-compose.yml::elasticsearch",
+                None,
+                "local/docker-compose.yml",
+            )],
+        );
+        let inv = inventory(&t);
+        let paths: Vec<&str> = shown(&t, &inv, None, false)
+            .iter()
+            .map(|&i| inv[i].path.as_str())
+            .collect();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths.contains(&"functions/search"), "{paths:?}");
+        assert!(!paths.contains(&"libs/util"), "{paths:?}");
     }
 
     /// Workspaces and unsafe paths are no islands; a project with two
