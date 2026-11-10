@@ -225,16 +225,17 @@ pub fn shown(
     let mut deployed = ids(t.services.iter().filter(|s| {
         s.id.starts_with("aspire:") || s.id.starts_with("spring:") || !s.compose_file.is_empty()
     }));
-    // Function apps deploy themselves through their build plugin.
+    let any = islands
+        .iter()
+        .any(|&i| deployed.contains(inventory[i].id.as_str()));
+    // Function apps deploy themselves through their build plugin: kept
+    // beside a deployment, but they filter nothing on their own.
     deployed.extend(
         t.projects
             .iter()
             .filter(|p| p.runtime.as_deref() == Some("azure-functions"))
             .map(|p| p.id.as_str()),
     );
-    let any = islands
-        .iter()
-        .any(|&i| deployed.contains(inventory[i].id.as_str()));
     if !all_projects && any {
         islands.retain(|&i| inventory[i].external || deployed.contains(inventory[i].id.as_str()));
     }
@@ -317,6 +318,9 @@ pub mod tests {
         assert_eq!(paths.len(), 2, "{paths:?}");
         assert!(paths.contains(&"functions/search"), "{paths:?}");
         assert!(!paths.contains(&"libs/util"), "{paths:?}");
+        // Without a Compose stack function apps filter nothing on their own.
+        let alone = topology(t.projects.clone(), Vec::new());
+        assert_eq!(shown(&alone, &inventory(&alone), None, false).len(), 2);
     }
 
     /// Workspaces and unsafe paths are no islands; a project with two
