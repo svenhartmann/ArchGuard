@@ -163,7 +163,7 @@ def main():
             assert "result" in initialized, initialized
             send({"method": "notifications/initialized"})
             names = {item["name"] for item in rpc("tools/list", {})["result"]["tools"]}
-            assert len(names) == (47 if args.db else 46), names
+            assert len(names) == (49 if args.db else 48), names
             assert {"workspace_context", "review_context", "architecture_patterns", "architecture_findings", "architecture_finding"} <= names, names
             assert {"hotspots", "co_change", "ownership", "performance", "compare",
                     "architecture_context", "architecture_document", "service_topology", "semantic_model", "security_findings", "test_coverage", "quality_findings",
