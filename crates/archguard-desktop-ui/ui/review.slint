@@ -1,0 +1,201 @@
+// Explorer → Review and the review part of the Graph details panel
+// (src/graph_ui/review.rs), as the web viewer's review panel.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Badge } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// A reason of the review score: kind 1 cyclic group (a nodes, +b), 2
+// coupling (a in, b out, +c), 3 dependents (a, +b), 4 Git touches ×
+// coupling (a × b, +c), 5 no incoming dependencies; 0 `text` as given.
+export struct ReasonItem {
+    kind: int,
+    a: int,
+    b: int,
+    c: int,
+    text: string,
+}
+
+// A ranked row; priority 1 high, 2 medium, 3 low; orphan 0 none, 1
+// isolated, 2 unreferenced.
+export struct ReviewItem {
+    row: int,
+    rank: int,
+    name: string,
+    priority: int,
+    score: int,
+    reason: ReasonItem,
+    orphan: int,
+}
+
+export struct ReviewData {
+    available: bool,
+    nodes: int,
+    high: int,
+    git-available: bool,
+    git-since: string,
+    git-commits: int,
+    git-incomplete: bool,
+    git-message: string,
+    orphans-only: bool,
+    items: [ReviewItem],
+    // Rows beyond `items`.
+    more: int,
+    // The selected row's review.
+    has-selected: bool,
+    selected-priority: int,
+    selected-score: int,
+    selected-orphan: int,
+    selected-entry: bool,
+    selected-reasons: [ReasonItem],
+}
+
+export global ReviewText {
+    public pure function reason(r: ReasonItem) -> string {
+        if r.kind == 1 { return @tr("Cyclic group: {} nodes (+{})", Fmt.int(r.a), Fmt.int(r.b)); }
+        if r.kind == 2 { return @tr("Direct coupling: {} incoming + {} outgoing (+{})", Fmt.int(r.a), Fmt.int(r.b), Fmt.int(r.c)); }
+        if r.kind == 3 { return @tr("Transitive dependents: {} (+{})", Fmt.int(r.a), Fmt.int(r.b)); }
+        if r.kind == 4 { return @tr("Git change touches × coupling: {} × {} (+{})", Fmt.int(r.a), Fmt.int(r.b), Fmt.int(r.c)); }
+        if r.kind == 5 { return @tr("No incoming dependencies in this scope; check entry points and dynamic consumers before removing code."); }
+        return r.text;
+    }
+    public pure function priority(p: int, score: int) -> string {
+        if p == 1 { return @tr("High review priority · {}/100", score); }
+        if p == 2 { return @tr("Medium review priority · {}/100", score); }
+        return @tr("Low review priority · {}/100", score);
+    }
+    public pure function orphan(o: int) -> string {
+        if o == 1 { return @tr("Isolated candidate · verify consumers"); }
+        return @tr("Unreferenced candidate · verify consumers");
+    }
+}
+
+component ReviewRow inherits Rectangle {
+    in property <ReviewItem> item;
+    in property <bool> selected;
+    callback clicked;
+    height: box.preferred-height;
+    border-radius: 6px;
+    background: root.selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    box := VerticalLayout {
+        padding: 6px;
+        padding-left: 8px;
+        // Clear of the list's scroll bar.
+        padding-right: 14px;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: "#" + root.item.rank + " " + root.item.name; color: Theme.text; font-size: Theme.font-body; overflow: elide; horizontal-stretch: 1; }
+            if root.item.priority < 3: Badge {
+                text: root.item.priority == 1 ? "P1" : "P2";
+                variant: root.item.priority == 1 ? "p1" : "p2";
+            }
+        }
+        Text { text: ReviewText.priority(root.item.priority, root.item.score); color: Theme.muted; font-size: Theme.font-caption; }
+        Text {
+            text: root.item.reason.kind == 0 && root.item.reason.text == "" ? @tr("No scored structural signals.") : ReviewText.reason(root.item.reason);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
+        if root.item.orphan > 0: Text { text: ReviewText.orphan(root.item.orphan); color: Theme.warning; font-size: Theme.font-caption; wrap: word-wrap; }
+    }
+}
+
+// Explorer → Review: the visible rows ranked by review priority.
+export component ReviewList inherits VerticalLayout {
+    in property <ReviewData> data;
+    in property <int> selected-row;
+    in property <bool> simulated;
+    callback select-row(int);
+    callback action(string, string);
+    spacing: 8px;
+    if !root.data.available: Text {
+        text: @tr("No review for this view.");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        wrap: word-wrap;
+    }
+    if root.data.available: Text {
+        text: @tr("{} nodes in view · {} high priority. Scores are a review order, not defect probabilities.", Fmt.int(root.data.nodes), Fmt.int(root.data.high))
+            + (root.simulated ? " " + @tr("Simulated structure.") : "");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if root.data.available: Text {
+        text: root.data.git-available
+            ? @tr("Git window: {} · {} commits scanned", root.data.git-since, Fmt.int(root.data.git-commits))
+                + (root.data.git-incomplete ? " · " + @tr("incomplete history: change counts and scores are lower bounds.") : "")
+            : @tr("Git unavailable: {}. Priorities use structural evidence.", root.data.git-message);
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if root.data.available: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: @tr("Orphan candidates only");
+            compact: true;
+            pressed-state: root.data.orphans-only;
+            clicked => { root.action("review-orphans", ""); }
+        }
+    }
+    if root.data.available && root.data.items.length == 0: Text {
+        text: root.data.orphans-only ? @tr("No orphan candidates in this view.") : @tr("No review candidates in this view.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    ListView {
+        vertical-stretch: 1;
+        for r in root.data.items: ReviewRow {
+            item: r;
+            selected: r.row == root.selected-row;
+            clicked => { root.select-row(r.row); }
+        }
+    }
+    if root.data.more > 0: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: @tr("Show next 20 ({} remaining)", Fmt.int(root.data.more));
+            compact: true;
+            clicked => { root.action("review-more", ""); }
+        }
+    }
+}
+
+// The details panel: why the selected row ranks where it does.
+export component ReviewDetails inherits VerticalLayout {
+    in property <ReviewData> data;
+    spacing: 4px;
+    Text { text: ReviewText.priority(root.data.selected-priority, root.data.selected-score); color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
+    for r in root.data.selected-reasons: Text {
+        text: "· " + ReviewText.reason(r);
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+    if root.data.selected-reasons.length == 0: Text {
+        text: @tr("No priority signals in this scope. This does not establish absence of defects.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+    if root.data.selected-entry: Text {
+        text: @tr("Contains a configured entry point; excluded from orphan candidates.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+    if root.data.selected-orphan > 0: Text {
+        text: ReviewText.orphan(root.data.selected-orphan);
+        color: Theme.warning;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+}

@@ -6,9 +6,12 @@ use std::rc::Rc;
 
 use archguard_engine::core::{Finding, FindingKind};
 
-use archguard_engine::core::{ReviewPriority, ReviewSources};
+use archguard_engine::core::{ReviewPriority, ReviewReport, ReviewSources};
 
 use crate::tree::{EdgeMode, Lane, Sort, Tree, TreeView};
+
+/// Rows Explorer → Review shows at first and adds per "Show next".
+pub const REVIEW_PAGE: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hit {
@@ -45,6 +48,12 @@ pub struct GraphState {
     pub sort: Sort,
     /// Review priority per visible row; `None` for low priority.
     pub priorities: Vec<Option<ReviewPriority>>,
+    /// The review of the visible rows (`None` if it failed); its node ids
+    /// are row indices.
+    pub review: Option<ReviewReport>,
+    /// Explorer → Review: only orphan candidates, and how many rows.
+    pub review_orphans: bool,
+    pub review_limit: usize,
     /// The package the Graph was last opened on (double-click, crumb);
     /// names its tab.
     pub scope: Option<usize>,
@@ -75,43 +84,45 @@ impl GraphState {
             mode: EdgeMode::All,
             sort: Sort::Connections,
             priorities: Vec::new(),
+            review: None,
+            review_orphans: false,
+            review_limit: REVIEW_PAGE,
             scope: None,
             display: 0,
             explorer_tab: 0,
             review_sources,
             entry_points,
         };
-        s.priorities = s.review();
+        s.update_review();
         s
     }
 
-    /// Review priorities of the visible rows, computed on the current view
-    /// as the web viewer does (`analyze_review`, mirrored in
-    /// `viewer_review.js`). Low priorities and errors show no badge.
-    fn review(&self) -> Vec<Option<ReviewPriority>> {
+    /// Review the visible rows as the web viewer does (`analyze_review`,
+    /// mirrored in `viewer_review.js`), and their priorities. Low
+    /// priorities and errors show no badge.
+    fn update_review(&mut self) {
         let view = self.view.as_graph(&self.tree);
-        let Ok(report) = archguard_engine::analysis::analyze_review(
+        self.review = archguard_engine::analysis::analyze_review(
             &self.tree.full,
             &view,
             &self.review_sources,
             &self.entry_points,
-        ) else {
-            return vec![None; self.view.rows.len()];
-        };
+        )
+        .ok();
         let mut out = vec![None; self.view.rows.len()];
-        for m in report.nodes {
+        for m in self.review.iter().flat_map(|r| &r.nodes) {
             if let Some(slot) = out.get_mut(m.node_id.0 as usize)
                 && m.priority != ReviewPriority::Low
             {
                 *slot = Some(m.priority);
             }
         }
-        out
+        self.priorities = out;
     }
 
     fn refresh(&mut self) {
         self.view = self.tree.view_sorted(&self.expanded, self.sort);
-        self.priorities = self.review();
+        self.update_review();
         if let Some(node) = self.selected
             && self.selected_row_of(node).is_none()
         {

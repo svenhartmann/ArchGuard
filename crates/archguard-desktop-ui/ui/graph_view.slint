@@ -11,6 +11,7 @@ import { DepsView, DepCard } from "deps_view.slint";
 import { NodeMenu } from "node_menu.slint";
 import { Fmt } from "format.slint";
 import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
+import { ReviewData, ReviewList, ReviewDetails } from "review.slint";
 
 export struct Crumb {
     node: int,
@@ -73,6 +74,8 @@ export struct GraphData {
     // The cycle chosen in the explorer (-1 none) and the cuts that break it.
     cycle: int,
     cuts: [CutItem],
+    // Explorer → Review and the selected row's review.
+    review: ReviewData,
 }
 
 component ExplorerRow inherits Rectangle {
@@ -248,8 +251,8 @@ export component GraphView inherits HorizontalLayout {
     callback set-explorer-tab(int);
     // kind ("file" or "graph"), tree node, side: a node in a new tab.
     callback node-tab(string, int, bool);
-    // A manual-simulation action and its argument (simulation.slint).
-    callback sim(string, string);
+    // A Graph action and its argument: simulation.slint, cycles, review.
+    callback action(string, string);
 
     // ------------------------------------------------- explorer
     if root.explorer-on: Rectangle {
@@ -309,25 +312,21 @@ export component GraphView inherits HorizontalLayout {
                     chosen: i == root.data.cycle;
                     clicked => {
                         root.reveal(c.first-node);
-                        root.sim("cycle", i);
+                        root.action("cycle", i);
                     }
                 }
             }
             if root.data.explorer-tab == 1 && root.data.cycle >= 0: CycleCuts {
                 cuts: root.data.cuts;
-                action(a, b) => { root.sim(a, b); }
+                action(a, b) => { root.action(a, b); }
             }
-            if root.data.explorer-tab == 2: VerticalLayout {
+            if root.data.explorer-tab == 2: ReviewList {
                 vertical-stretch: 1;
-                alignment: start;
-                spacing: 10px;
-                Text {
-                    text: @tr("Review priorities are not native yet.");
-                    color: Theme.muted;
-                    font-size: Theme.font-body;
-                    wrap: word-wrap;
-                }
-                Button { text: @tr("Open in web viewer"); icon: Icons.external; compact: true; clicked => { root.open-web(); } }
+                data: root.data.review;
+                selected-row: root.data.selected-row;
+                simulated: root.data.sim.ops.length > 0;
+                select-row(r) => { root.select-row(r); }
+                action(a, b) => { root.action(a, b); }
             }
         }
     }
@@ -447,7 +446,7 @@ export component GraphView inherits HorizontalLayout {
                 spacing: 6px;
                 Button { compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                 Button { compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
-                SimToggle { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
+                SimToggle { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
             }
             // The reference takes the rest of the last row.
             Text {
@@ -495,7 +494,7 @@ export component GraphView inherits HorizontalLayout {
                 total: root.data.dep-count;
             }
         }
-        SimStrip { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
+        SimStrip { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
     }
 
     // ------------------------------------------------- details
@@ -524,12 +523,14 @@ export component GraphView inherits HorizontalLayout {
                 Button { text: @tr("Open in new tab"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, false); } }
                 Button { text: @tr("Open to the side"); compact: true; clicked => { root.node-tab("file", root.data.selected-node, true); } }
             }
-            if root.data.sim.on: SimDetails { sim: root.data.sim; action(a, b) => { root.sim(a, b); } }
+            if root.data.sim.on: SimDetails { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     alignment: start;
                     spacing: 2px;
+                    if root.data.review.has-selected: ReviewDetails { data: root.data.review; }
+                    if root.data.review.has-selected: Rectangle { height: 12px; }
                     Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                     for n in root.data.outgoing: NeighborRow {
                         item: n;
@@ -537,7 +538,7 @@ export component GraphView inherits HorizontalLayout {
                         max-weight: root.data.outgoing.length > 0 ? root.data.outgoing[0].weight : 0;
                         cuttable: root.data.sim.on;
                         clicked => { root.select-row(n.row); }
-                        cut => { root.sim("cut-out", n.row); }
+                        cut => { root.action("cut-out", n.row); }
                     }
                     Rectangle { height: 12px; }
                     Text { text: @tr("Used by ({})", Fmt.int(root.data.incoming.length)); color: Theme.incoming; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
@@ -547,7 +548,7 @@ export component GraphView inherits HorizontalLayout {
                         max-weight: root.data.incoming.length > 0 ? root.data.incoming[0].weight : 0;
                         cuttable: root.data.sim.on;
                         clicked => { root.select-row(n.row); }
-                        cut => { root.sim("cut-in", n.row); }
+                        cut => { root.action("cut-in", n.row); }
                     }
                 }
             }

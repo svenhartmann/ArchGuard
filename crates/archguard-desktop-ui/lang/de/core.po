@@ -79,9 +79,6 @@ msgstr "Qualität"
 msgid "Reference: {}"
 msgstr "Referenz: {}"
 
-msgid "Review priorities are not native yet."
-msgstr "Prüfprioritäten gibt es noch nicht nativ."
-
 msgid "Review"
 msgstr "Prüfung"
 

@@ -3,6 +3,7 @@
 //! share the document's package tree.
 
 mod data;
+mod review;
 pub mod simulation;
 
 use std::cell::RefCell;
@@ -230,10 +231,15 @@ pub fn wire(ui: &AppWindow) {
     ui.on_set_display(on(ui, |g, d: i32| g.display = d));
     ui.on_set_explorer_tab(on(ui, |g, t: i32| g.explorer_tab = t));
     let w = ui.as_weak();
-    ui.on_graph_sim(move |id, action, arg| {
+    ui.on_graph_action(move |id, action, arg| {
         let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
             return;
         };
+        if let Some(f) = review_action(&action) {
+            let layout = panes_ui::layout();
+            instances::update(&ui, &layout, id, |s: &mut Graph| f(&mut s.g));
+            return;
+        }
         if action == "cycle" {
             let depth = with_store(|s| Some(s.active()?.analysis.as_ref()?.run.config.modules.depth));
             let (Ok(i), Some(depth)) = (arg.parse::<usize>(), depth) else {
@@ -340,6 +346,18 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         }
         Some(Graph::new(g, &groups))
     })
+}
+
+/// Explorer → Review's own actions.
+fn review_action(action: &str) -> Option<fn(&mut GraphState)> {
+    match action {
+        "review-orphans" => Some(|g| {
+            g.review_orphans = !g.review_orphans;
+            g.review_limit = state::REVIEW_PAGE;
+        }),
+        "review-more" => Some(|g| g.review_limit += state::REVIEW_PAGE),
+        _ => None,
+    }
 }
 
 /// The cycle groups the Graphs list: the simulated graph's while there
