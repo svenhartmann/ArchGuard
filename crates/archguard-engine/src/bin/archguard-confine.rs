@@ -113,6 +113,7 @@ mod windows {
 
     pub fn run(args: &[OsString]) -> Result<i32, String> {
         let plan = parse(args)?;
+        startable(&plan)?;
         let sid = container_sid()?;
         for (dir, rights) in &plan.grants {
             grant(dir, sid, *rights)?;
@@ -129,19 +130,54 @@ mod windows {
         launch(sid, &plan.program)
     }
 
+    /// CreateProcessW opens the program with this launcher's rights, not the
+    /// container's: only programs from a `--run` directory or Windows' own
+    /// directories start, so none from the project does.
+    fn startable(plan: &Plan) -> Result<(), String> {
+        let program = std::fs::canonicalize(&plan.program[0])
+            .map_err(|e| format!("{}: {e}", plan.program[0].to_string_lossy()))?;
+        let run = plan
+            .grants
+            .iter()
+            .filter(|(_, rights)| rights & FILE_EXECUTE != 0)
+            .map(|(dir, _)| dir.clone());
+        let allowed = run
+            .chain(std::env::var_os("SystemRoot"))
+            .filter_map(|dir| std::fs::canonicalize(dir).ok())
+            .any(|dir| program.starts_with(dir));
+        if allowed {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} is outside the directories programs may start from",
+                program.display()
+            ))
+        }
+    }
+
     fn container_sid() -> Result<PSID, String> {
         let name = wide(OsStr::new(CONTAINER));
         let mut sid: PSID = null_mut();
-        // SAFETY: valid NUL-terminated strings; `sid` receives an owned SID.
-        let created = unsafe {
-            CreateAppContainerProfile(
-                name.as_ptr(),
-                name.as_ptr(),
-                name.as_ptr(),
-                null(),
-                0,
-                &mut sid,
-            )
+        let mut attempt = 0;
+        // Parallel launchers creating the profile at once fail transiently
+        // (E_UNEXPECTED); the profile exists once one of them succeeded.
+        let created = loop {
+            // SAFETY: valid NUL-terminated strings; `sid` receives an owned SID.
+            let created = unsafe {
+                CreateAppContainerProfile(
+                    name.as_ptr(),
+                    name.as_ptr(),
+                    name.as_ptr(),
+                    null(),
+                    0,
+                    &mut sid,
+                )
+            };
+            if created == 0 || created == ALREADY_EXISTS || attempt == 4 {
+                break created;
+            }
+            attempt += 1;
+            std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
         };
         if created == 0 {
             return Ok(sid);

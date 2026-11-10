@@ -550,7 +550,9 @@ mod windows_tests {
     }
 
     fn cmd(d: &Dirs, line: &str) -> std::process::Output {
+        // As the real callers do: the test's own directory is not readable inside.
         command(OsStr::new(CMD), d.project.path(), d.scratch.path())
+            .current_dir(d.scratch.path())
             .args(["/c", line])
             .output()
             .unwrap()
