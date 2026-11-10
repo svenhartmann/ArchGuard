@@ -75,5 +75,12 @@ it through `archguard-engine`.
 
 ## History
 
-- 2026-11-10: Steps 1 (simulation) implemented; 2 (cycle planner) and 3
-  (scenarios) to follow.
+- 2026-11-10: Step 1 (simulation) implemented.
+- 2026-11-10: Step 2 (cycle planner) implemented: Explorer → Cycles lists
+  up to five single-edge cuts of the chosen group (`suggest_cuts` on the
+  shown graph at `modules.depth`, with sampled cycles broken and
+  references); "Preview" turns simulation on and proposes the cut. The
+  web viewer's multi-edge plan search (`cycle_planner.js`: cheapest edge
+  sets by affected files, evidence and plan export) is not ported; the
+  confirmation moved from the details panel to the ops strip so it shows
+  without a selection.

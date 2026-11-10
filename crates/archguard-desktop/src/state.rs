@@ -20,6 +20,8 @@ pub struct Hit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CycleEntry {
     pub first_node: usize,
+    /// Member names, as the group was given.
+    pub members: Vec<String>,
     pub label: String,
     pub size: usize,
 }
@@ -290,6 +292,7 @@ impl GraphState {
                 let more = if nodes.len() > 3 { " …" } else { "" };
                 Some(CycleEntry {
                     first_node: node,
+                    members: nodes.clone(),
                     label: format!("{}{more}", shown.join(" ↔ ")),
                     size: nodes.len(),
                 })

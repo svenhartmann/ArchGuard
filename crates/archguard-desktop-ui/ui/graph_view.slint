@@ -10,7 +10,7 @@ import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
 import { NodeMenu } from "node_menu.slint";
 import { Fmt } from "format.slint";
-import { SimData, SimToggle, SimDetails, SimStrip } from "simulation.slint";
+import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
 
 export struct Crumb {
     node: int,
@@ -70,6 +70,9 @@ export struct GraphData {
     node-total: int,
     // The document's manual simulation.
     sim: SimData,
+    // The cycle chosen in the explorer (-1 none) and the cuts that break it.
+    cycle: int,
+    cuts: [CutItem],
 }
 
 component ExplorerRow inherits Rectangle {
@@ -146,10 +149,11 @@ component PlainRow inherits Rectangle {
     in property <string> label;
     in property <string> detail;
     in property <color> tone: Theme.text;
+    in property <bool> chosen;
     callback clicked;
     height: 40px;
     border-radius: 6px;
-    background: touch.has-hover ? Theme.panel-2 : transparent;
+    background: root.chosen ? root.tone.with-alpha(0.1) : touch.has-hover ? Theme.panel-2 : transparent;
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -298,12 +302,20 @@ export component GraphView inherits HorizontalLayout {
             }
             if root.data.explorer-tab == 1 && root.data.cycles.length > 0: ListView {
                 vertical-stretch: 1;
-                for c in root.data.cycles: PlainRow {
+                for c[i] in root.data.cycles: PlainRow {
                     label: c.label;
                     detail: @tr("{} modules", Fmt.int(c.size));
                     tone: Theme.cycle;
-                    clicked => { root.reveal(c.first-node); }
+                    chosen: i == root.data.cycle;
+                    clicked => {
+                        root.reveal(c.first-node);
+                        root.sim("cycle", i);
+                    }
                 }
+            }
+            if root.data.explorer-tab == 1 && root.data.cycle >= 0: CycleCuts {
+                cuts: root.data.cuts;
+                action(a, b) => { root.sim(a, b); }
             }
             if root.data.explorer-tab == 2: VerticalLayout {
                 vertical-stretch: 1;

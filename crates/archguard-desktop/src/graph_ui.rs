@@ -23,6 +23,7 @@ use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
 use crate::file_ui::FileState;
 use crate::matrix_ui::MatrixState;
+use crate::tree::simulation::cut_hints;
 use crate::tree::{EdgeMode, Sort, Tree};
 use crate::ui::*;
 use crate::view_export;
@@ -32,6 +33,60 @@ use crate::view_export;
 pub struct Graph {
     pub g: GraphState,
     cycles: Vec<CycleItem>,
+    /// Member names of each listed cycle.
+    members: Vec<Vec<String>>,
+    /// The cycle chosen in the explorer and the cuts that break it.
+    cycle: Option<usize>,
+    cuts: Vec<CutItem>,
+}
+
+impl Graph {
+    fn new(g: GraphState, groups: &[Vec<String>]) -> Self {
+        let mut s = Graph {
+            g,
+            cycles: Vec::new(),
+            members: Vec::new(),
+            cycle: None,
+            cuts: Vec::new(),
+        };
+        s.set_cycles(groups);
+        s
+    }
+
+    /// List `groups` as the cycles; drops the chosen one.
+    fn set_cycles(&mut self, groups: &[Vec<String>]) {
+        let entries = self.g.cycles(groups);
+        self.members = entries.iter().map(|c| c.members.clone()).collect();
+        self.cycles = entries
+            .into_iter()
+            .map(|c| CycleItem {
+                first_node: c.first_node as i32,
+                label: c.label.into(),
+                size: c.size as i32,
+            })
+            .collect();
+        self.cycle = None;
+        self.cuts.clear();
+    }
+
+    /// Choose listed cycle `i` and find the cuts that break it in the
+    /// shown graph aggregated to `depth`.
+    fn choose_cycle(&mut self, i: usize, depth: usize) {
+        let Some(members) = self.members.get(i) else {
+            return;
+        };
+        self.cuts = cut_hints(&self.g.tree.full, depth, members)
+            .into_iter()
+            .map(|h| CutItem {
+                from: h.from.into(),
+                to: h.to.into(),
+                broken: h.broken as i32,
+                sampled: h.sampled as i32,
+                refs: h.refs.min(i32::MAX as u64) as i32,
+            })
+            .collect();
+        self.cycle = Some(i);
+    }
 }
 
 thread_local! {
@@ -45,7 +100,12 @@ thread_local! {
 impl Instance for Graph {
     fn show(&mut self, ui: &AppWindow, pane: usize, id: u32) {
         let old = PANES.with(|m| m.row_data(pane)).unwrap_or_default();
-        let row = data::graph_data(ui, &self.g, &self.cycles, id, &old);
+        let cycles = data::Cycles {
+            list: &self.cycles,
+            chosen: self.cycle,
+            cuts: &self.cuts,
+        };
+        let row = data::graph_data(ui, &self.g, cycles, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
@@ -174,6 +234,15 @@ pub fn wire(ui: &AppWindow) {
         let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
             return;
         };
+        if action == "cycle" {
+            let depth = with_store(|s| Some(s.active()?.analysis.as_ref()?.run.config.modules.depth));
+            let (Ok(i), Some(depth)) = (arg.parse::<usize>(), depth) else {
+                return;
+            };
+            let layout = panes_ui::layout();
+            instances::update(&ui, &layout, id, |s: &mut Graph| s.choose_cycle(i, depth as usize));
+            return;
+        }
         let proposed =
             instances::with(id, |s: &mut Graph| simulation::proposal(&s.g, &action, &arg));
         if simulation::act(&ui, &action, proposed.flatten()) {
@@ -269,10 +338,7 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         if let Some(n) = node {
             g.open(n);
         }
-        Some(Graph {
-            cycles: cycle_items(&g, &groups),
-            g,
-        })
+        Some(Graph::new(g, &groups))
     })
 }
 
@@ -282,15 +348,6 @@ fn cycle_groups(data: &Loaded) -> Vec<Vec<String>> {
     documents::with_active_state(|s: &mut simulation::Simulation| s.cycles.clone())
         .flatten()
         .unwrap_or_else(|| state::cycle_groups(&data.run.report.findings))
-}
-
-fn cycle_items(g: &GraphState, groups: &[Vec<String>]) -> Vec<CycleItem> {
-    let items = g.cycles(groups).into_iter().map(|c| CycleItem {
-        first_node: c.first_node as i32,
-        label: c.label.into(),
-        size: c.size as i32,
-    });
-    items.collect()
 }
 
 /// The simulated changes changed: build the package tree again, move every
@@ -306,7 +363,7 @@ fn resimulate(ui: &AppWindow) {
         let groups = cycle_groups(&data);
         instances::each(|s: &mut Graph| {
             s.g.retree(tree.clone());
-            s.cycles = cycle_items(&s.g, &groups);
+            s.set_cycles(&groups);
         });
     }
     panes_ui::sync(ui);

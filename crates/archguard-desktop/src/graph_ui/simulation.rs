@@ -18,6 +18,14 @@ use crate::ui::{AppWindow, SimData, SimOpRow};
 /// neighbour's row, `move` with the target module), from its selection.
 pub fn proposal(g: &GraphState, action: &str, arg: &str) -> Option<SimOp> {
     let name = |n: usize| g.tree.nodes[n].name.clone();
+    // A cut from the cycle planner: `from` and `to` by name, no selection.
+    if action == "plan" {
+        let (from, to) = arg.split_once('\n')?;
+        return Some(SimOp::CutEdge {
+            from: from.into(),
+            to: to.into(),
+        });
+    }
     let selected = name(g.selected?);
     let other = || {
         let row = arg.parse::<usize>().ok()?;
@@ -59,6 +67,12 @@ pub fn act(ui: &AppWindow, action: &str, proposed: Option<SimOp>) -> bool {
             false
         }
         "cut-out" | "cut-in" | "move" => {
+            s.pending = proposed;
+            false
+        }
+        // The planner's "Preview" turns proposing on, as the web viewer's.
+        "plan" => {
+            s.on = true;
             s.pending = proposed;
             false
         }
@@ -164,6 +178,11 @@ mod tests {
     fn proposals_come_from_the_selection() {
         let mut g = GraphState::new(Tree::from_graph(&graph()));
         assert_eq!(proposal(&g, "cut-out", "1"), None, "nothing selected");
+        assert_eq!(
+            proposal(&g, "plan", "core\napp"),
+            Some(cut("core", "app")),
+            "the planner needs no selection"
+        );
         g.select_row(Some(0));
         let names: Vec<&str> = g.view.rows.iter().map(|r| g.tree.nodes[r.node].name.as_str()).collect();
         assert_eq!(names, ["app", "core"]);
@@ -178,6 +197,7 @@ mod tests {
             })
         );
         assert_eq!(proposal(&g, "move", ""), None);
+        assert_eq!(proposal(&g, "plan", "core\napp"), Some(cut("core", "app")));
     }
 
     #[test]

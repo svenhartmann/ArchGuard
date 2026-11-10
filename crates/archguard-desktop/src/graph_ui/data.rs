@@ -32,10 +32,17 @@ const DEPENDENCIES: i32 = 2;
 /// Everything the Graph view of tab `id` shows of `g`, in the models of
 /// `old` (what its pane showed before), changed in place. The links,
 /// network and dependency list are computed only for their display.
+/// Cycles: the listed cycles, the chosen one and the cuts that break it.
+pub struct Cycles<'a> {
+    pub list: &'a [CycleItem],
+    pub chosen: Option<usize>,
+    pub cuts: &'a [CutItem],
+}
+
 pub fn graph_data(
     ui: &AppWindow,
     g: &GraphState,
-    cycles: &[CycleItem],
+    cycles: Cycles,
     id: u32,
     old: &GraphData,
 ) -> GraphData {
@@ -91,7 +98,9 @@ pub fn graph_data(
         sort_by_deps: g.sort == Sort::Connections,
         display: g.display,
         explorer_tab: g.explorer_tab,
-        cycles: sync_rows(&old.cycles, cycles.iter().cloned()),
+        cycles: sync_rows(&old.cycles, cycles.list.iter().cloned()),
+        cycle: cycles.chosen.map_or(-1, |c| c as i32),
+        cuts: sync_rows(&old.cuts, cycles.cuts.iter().cloned()),
         node_total: g.tree.nodes.len() as i32,
         sim: super::simulation::data(g, texts.locale(), &old.sim),
     }

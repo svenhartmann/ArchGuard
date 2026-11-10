@@ -31,6 +31,15 @@ export struct SimData {
     targets: [string],
 }
 
+// A cut that breaks sampled cycles of the selected cycle group.
+export struct CutItem {
+    from: string,
+    to: string,
+    broken: int,
+    sampled: int,
+    refs: int,
+}
+
 export global SimText {
     public pure function op(o: SimOpRow) -> string {
         if o.kind == 0 { return @tr("Cut {} → {}", o.a, o.b); }
@@ -57,35 +66,12 @@ export component SimToggle inherits HorizontalLayout {
     }
 }
 
-// In the details panel while proposing: the confirmation of a proposed
-// change, and moving the selection under another module.
+// In the details panel while proposing: moving the selection under
+// another module.
 export component SimDetails inherits VerticalLayout {
     in property <SimData> sim;
     callback action(string, string);
     spacing: 8px;
-    if root.sim.has-pending: Rectangle {
-        background: Theme.accent.with-alpha(0.08);
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: Theme.accent.with-alpha(0.5);
-        VerticalLayout {
-            padding: 10px;
-            spacing: 8px;
-            Text { text: SimText.op(root.sim.pending) + "?"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
-            Text {
-                text: @tr("This changes only the simulated graph; source files remain unchanged.");
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
-            }
-            HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
-                Button { text: @tr("Apply"); primary: true; compact: true; clicked => { root.action("confirm", ""); } }
-                Button { text: @tr("Cancel"); compact: true; clicked => { root.action("cancel", ""); } }
-            }
-        }
-    }
     if root.sim.targets.length > 0: VerticalLayout {
         spacing: 6px;
         Text { text: @tr("Move under module"); color: Theme.muted; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
@@ -102,7 +88,7 @@ export component SimDetails inherits VerticalLayout {
 export component SimStrip inherits Rectangle {
     in property <SimData> sim;
     callback action(string, string);
-    height: root.sim.ops.length > 0 || root.sim.error != "" ? box.preferred-height : 0;
+    height: root.sim.ops.length > 0 || root.sim.error != "" || root.sim.has-pending ? box.preferred-height : 0;
     visible: self.height > 0;
     background: Theme.panel;
     Rectangle { y: 0; height: 1px; background: Theme.border; }
@@ -126,6 +112,29 @@ export component SimStrip inherits Rectangle {
             Button { text: @tr("Clear changes"); compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("clear", ""); } }
             Button { text: @tr("Export changes"); primary: true; compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("export", ""); } }
         }
+        if root.sim.has-pending: Rectangle {
+            background: Theme.accent.with-alpha(0.08);
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.accent.with-alpha(0.5);
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+                Text { text: SimText.op(root.sim.pending) + "?"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                Text {
+                    text: @tr("This changes only the simulated graph; source files remain unchanged.");
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    Button { text: @tr("Apply"); primary: true; compact: true; clicked => { root.action("confirm", ""); } }
+                    Button { text: @tr("Cancel"); compact: true; clicked => { root.action("cancel", ""); } }
+                }
+            }
+        }
         if root.sim.error != "": Text {
             text: @tr("Not applied: {}", root.sim.error);
             color: Theme.danger;
@@ -142,5 +151,42 @@ export component SimStrip inherits Rectangle {
             font-family: Theme.mono-family;
             overflow: elide;
         }
+    }
+}
+
+// Explorer → Cycles, below the list: the best cuts for the selected cycle
+// group; "Preview" proposes one as a simulated change.
+export component CycleCuts inherits VerticalLayout {
+    in property <[CutItem]> cuts;
+    callback action(string, string);
+    spacing: 6px;
+    Text { text: @tr("Resolve this cycle"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; }
+    if root.cuts.length == 0: Text {
+        text: @tr("No cut breaks a sampled cycle of this group.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    // Path, figures and button stacked: the explorer is narrow.
+    for c in root.cuts: VerticalLayout {
+        spacing: 2px;
+        padding-bottom: 6px;
+        Text { text: c.from + " → " + c.to; color: Theme.text; font-size: Theme.font-small; font-family: Theme.mono-family; wrap: word-wrap; }
+        Text {
+            text: @tr("Breaks {} of {} sampled cycles · {} references", Fmt.int(c.broken), Fmt.int(c.sampled), Fmt.int(c.refs));
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: start;
+            Button { text: @tr("Preview"); compact: true; clicked => { root.action("plan", c.from + "\n" + c.to); } }
+        }
+    }
+    Text {
+        text: @tr("A sample of cycles, not an exhaustive search. A cut still needs a source change, e.g. an interface on the depended-upon side.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
     }
 }

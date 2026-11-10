@@ -129,7 +129,7 @@ fn matrix_query_round_trip(ui: &AppWindow) {
 /// `ARCHGUARD_DESKTOP_SIM=<action>[:<arg>],…`: manual-simulation actions
 /// of the shown Graph in order (`graph_ui::simulation::act`), after the
 /// reveal hooks, e.g. `toggle,cut-out:1,confirm` (`cut-*` take a row,
-/// `move` a module name).
+/// `move` a module name, `cycle` a listed cycle's index).
 fn sim_hook(ui: &AppWindow) {
     let Ok(spec) = std::env::var("ARCHGUARD_DESKTOP_SIM") else {
         return;
@@ -139,7 +139,12 @@ fn sim_hook(ui: &AppWindow) {
     };
     for item in spec.split(',') {
         let (action, arg) = item.split_once(':').unwrap_or((item, ""));
-        ui.invoke_graph_sim(id, action.trim().into(), arg.trim().into());
+        // `explorer:<tab>` switches the explorer (1: Cycles); `plan` takes
+        // `from>to`.
+        match action.trim() {
+            "explorer" => ui.invoke_set_explorer_tab(id, arg.trim().parse().unwrap_or(0)),
+            a => ui.invoke_graph_sim(id, a.into(), arg.trim().replace('>', "\n").into()),
+        }
     }
 }
 

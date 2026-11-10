@@ -42,3 +42,15 @@ msgstr "Nicht angewendet: {}"
 
 msgid "Cut edge"
 msgstr "Trennen"
+
+msgid "Resolve this cycle"
+msgstr "Diesen Zyklus auflösen"
+
+msgid "No cut breaks a sampled cycle of this group."
+msgstr "Keine Trennung bricht einen gefundenen Zyklus dieser Gruppe."
+
+msgid "Breaks {} of {} sampled cycles · {} references"
+msgstr "Bricht {} von {} gefundenen Zyklen · {} Belege"
+
+msgid "A sample of cycles, not an exhaustive search. A cut still needs a source change, e.g. an interface on the depended-upon side."
+msgstr "Eine Stichprobe von Zyklen, keine vollständige Suche. Eine Trennung braucht noch eine Änderung im Quellcode, etwa eine Schnittstelle auf der Seite, von der abgehangen wird."

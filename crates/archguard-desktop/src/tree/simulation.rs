@@ -7,7 +7,9 @@
 //! nodes by name, so a newer analysis gets them applied again. Ops that no
 //! longer apply leave the original graph shown and say why.
 
-use archguard_engine::analysis::{SimDelta, SimOp, apply_ops, find_sccs, simulate};
+use archguard_engine::analysis::{
+    SimDelta, SimOp, apply_ops, find_sccs, sample_cycles, simulate, suggest_cuts,
+};
 use archguard_engine::core::{Config, Cut, Graph, NodeId, aggregate};
 
 #[derive(Default)]
@@ -75,6 +77,64 @@ impl Simulation {
     pub fn export(&self) -> String {
         serde_json::to_string_pretty(&self.ops).expect("SimOps serialize")
     }
+}
+
+/// A dependency whose cut breaks sampled cycles of a group, as the web
+/// viewer's "Resolve a cycle" offers it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CutHint {
+    pub from: String,
+    pub to: String,
+    /// Sampled cycles that run through it, of `sampled`.
+    pub broken: usize,
+    pub sampled: usize,
+    /// Dependency references behind it (the cost of the cut).
+    pub refs: u64,
+}
+
+/// The best cuts for the cycle group `members` of `g` aggregated to
+/// `depth`, best first (`suggest_cuts` with the pipeline's limits). Empty
+/// when `g` has no such group.
+pub fn cut_hints(g: &Graph, depth: usize, members: &[String]) -> Vec<CutHint> {
+    // The limits of the pipeline's cycle findings (engine `pipeline.rs`).
+    const MAX_CYCLES: usize = 100;
+    const MAX_LEN: usize = 20;
+    const MAX_CUTS: usize = 5;
+    let view = aggregate(g, &Cut::at_depth(g, depth));
+    let name = |id: &NodeId| view.nodes.iter().find(|n| n.id == *id).map(|n| n.name.as_str());
+    let mut wanted: Vec<&str> = members.iter().map(String::as_str).collect();
+    wanted.sort_unstable();
+    let sccs = find_sccs(&view);
+    let Some(scc) = sccs.iter().find(|s| {
+        let mut names: Vec<&str> = s.node_ids.iter().filter_map(name).collect();
+        names.sort_unstable();
+        names == wanted
+    }) else {
+        return Vec::new();
+    };
+    let cycles = sample_cycles(&view, scc, MAX_CYCLES, MAX_LEN);
+    let named: Vec<Vec<&str>> = cycles.iter().map(|c| c.iter().filter_map(name).collect()).collect();
+    let runs_through = |c: &Vec<&str>, from: &str, to: &str| {
+        (0..c.len()).any(|i| c[i] == from && c[(i + 1) % c.len()] == to)
+    };
+    suggest_cuts(&view, scc, &cycles, MAX_CUTS)
+        .into_iter()
+        .map(|cut| {
+            let refs = view
+                .edges
+                .iter()
+                .filter(|e| name(&e.from) == Some(&cut.from) && name(&e.to) == Some(&cut.to))
+                .map(|e| e.weight())
+                .sum();
+            CutHint {
+                broken: named.iter().filter(|c| runs_through(c, &cut.from, &cut.to)).count(),
+                sampled: cycles.len(),
+                refs,
+                from: cut.from,
+                to: cut.to,
+            }
+        })
+        .collect()
 }
 
 /// Cyclic groups of `g` aggregated to `depth`, members by name.
@@ -173,6 +233,21 @@ pub(crate) mod tests {
         assert!(s.apply(&graph(), &Config::default()).is_none());
         assert_eq!(s.ops.len(), 1);
         assert!(s.error.is_some());
+    }
+
+    /// app ↔ core has two edges; cutting either breaks the one cycle.
+    #[test]
+    fn cut_hints_break_the_selected_group() {
+        let g = graph();
+        let members = ["app".to_string(), "core".to_string()];
+        let hints = cut_hints(&g, 0, &members);
+        assert_eq!(hints.len(), 2, "{hints:?}");
+        for h in &hints {
+            assert_eq!((h.broken, h.sampled, h.refs), (1, 1, 1), "{h:?}");
+        }
+        let ends: Vec<(&str, &str)> = hints.iter().map(|h| (h.from.as_str(), h.to.as_str())).collect();
+        assert!(ends.contains(&("app", "core")) && ends.contains(&("core", "app")));
+        assert!(cut_hints(&g, 0, &["app".to_string()]).is_empty(), "no such group");
     }
 
     /// The export is the frozen SimOp JSON the CLI and web viewer read.
