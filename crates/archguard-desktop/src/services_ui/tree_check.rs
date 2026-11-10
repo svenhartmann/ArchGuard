@@ -13,8 +13,8 @@ use slint::platform::software_renderer::{
 use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, VecModel};
 
 slint::slint! {
-    import { ServicesTree, SvcRow } from "ui/services_tree.slint";
-    import { ServicesView, ServicesData, ServicesModel } from "ui/services_view.slint";
+    import { ServicesTree, SvcRow } from "../archguard-desktop-ui/ui/services_tree.slint";
+    import { ServicesView, ServicesData, ServicesModel } from "../archguard-desktop-ui/ui/services_view.slint";
     export { SvcRow, ServicesData, ServicesModel }
     export component Tree inherits Window {
         in property <[SvcRow]> rows;

@@ -331,6 +331,7 @@ dependencies = [
 name = "archguard-desktop"
 version = "0.2.1"
 dependencies = [
+ "archguard-desktop-ui",
  "archguard-engine",
  "archguard-update",
  "objc2 0.6.5",
@@ -343,10 +344,17 @@ dependencies = [
  "serde",
  "serde_json",
  "slint",
- "slint-build",
  "tempfile",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "archguard-desktop-ui"
+version = "0.2.1"
+dependencies = [
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

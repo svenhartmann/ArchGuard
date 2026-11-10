@@ -2,9 +2,9 @@
 //!
 //! Translations live in parts, one per tab (`lang/<lang>/*.po`, entries
 //! only, no header), so tabs can be built independently. They are merged
-//! into the single file per language that Slint expects
-//! (`<out>/lang/<lang>/LC_MESSAGES/archguard-desktop.po`). A msgid must
-//! appear in one part only.
+//! into the single file per language that Slint expects, named after this
+//! crate (`<out>/lang/<lang>/LC_MESSAGES/archguard-desktop-ui.po`). A msgid
+//! must appear in one part only.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,7 +36,7 @@ fn merge_translations(src: &Path, out: &Path) {
         }
         let dir = out.join(&code).join("LC_MESSAGES");
         fs::create_dir_all(&dir).expect("out dir is writable");
-        let file = dir.join("archguard-desktop.po");
+        let file = dir.join("archguard-desktop-ui.po");
         // Slint makes cargo watch this output: rewriting an unchanged file
         // would rebuild the desktop crate on every `cargo build`.
         if fs::read_to_string(&file).ok().as_deref() != Some(merged.as_str()) {
