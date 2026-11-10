@@ -13,14 +13,16 @@ import sys
 PREFIX = "archguard-"
 ALLOWED = {
     "core": set(),
+    "update": set(),
+    "desktop-ui": set(),
     "extract": {"core"},
     "analysis": {"core"},
     "report": {"core"},
     "store": {"core"},
     "engine": {"core", "extract", "analysis", "report", "store"},
     "mcp": {"engine"},
-    "cli": {"engine", "mcp"},
-    "desktop": {"engine"},
+    "cli": {"engine", "mcp", "update"},
+    "desktop": {"engine", "update", "desktop-ui"},
 }
 
 

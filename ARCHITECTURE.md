@@ -84,14 +84,19 @@ graph TD
         REP["archguard-report"]
         STO["archguard-store"]
     end
-    subgraph L0["Layer 0 — Dependency sink"]
+    subgraph L0["Layer 0 — Dependency sinks"]
         CORE["archguard-core"]
+        UPD["archguard-update"]
+        DUI["archguard-desktop-ui"]
     end
 
     CLI --> MCP
     CLI --> ENG
+    CLI --> UPD
     MCP --> ENG
     DESK --> ENG
+    DESK --> UPD
+    DESK --> DUI
     ENG --> EXT
     ENG --> ANA
     ENG --> REP
@@ -104,7 +109,7 @@ graph TD
 ```
 
 Every edge leads from a higher to a lower layer. Layer 1 has no internal edges.
-The thirteen edges are the complete allowlist in `scripts/checks/check_architecture.py`
+The sixteen edges are the complete allowlist in `scripts/checks/check_architecture.py`
 (Section 12). `archguard-mcp` is a library; the `archguard` binary starts the MCP
 server through the `archguard mcp` subcommand.
 
@@ -589,7 +594,7 @@ commented-out suggestions.
 
 ## 12. Safeguards for ArchGuard's architecture
 
-1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the nine workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Thirteen edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
+1. **Cargo metadata allowlist:** `scripts/checks/check_architecture.py` checks the eleven workspace crates and every manifest dependency against Section 3.2, including build, dev, optional and target-specific entries. Sixteen edges are currently allowed and present. Cargo alone does not prevent forbidden acyclic layer edges.
 2. **Dependency sink:** shared types live in `archguard-core`. L1 crates (`extract`, `analysis`, `report`, `store`) have no dependencies on one another; a type needed by several L1 crates belongs in `archguard-core`.
 3. **CI source scan:** `archguard check .` additionally runs with ArchGuard's own `archguard.toml`. It resolves imports between the workspace crates, but only those used in scanned non-test source; the manifest allowlist also covers declared build, dev, optional and target-specific dependencies, so the scan does not replace it.
 

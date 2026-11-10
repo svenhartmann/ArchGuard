@@ -17,7 +17,7 @@ def metadata():
 
 class ArchitectureTests(unittest.TestCase):
     def test_real_allowlist_is_nonempty(self):
-        self.assertEqual(verify(metadata()), 13)
+        self.assertEqual(verify(metadata()), 16)
 
     def test_forbidden_edges_of_every_kind_even_inactive_or_renamed(self):
         for kind in [None, "build", "dev"]:
