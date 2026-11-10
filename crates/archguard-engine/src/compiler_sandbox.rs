@@ -549,6 +549,8 @@ mod windows_tests {
         d
     }
 
+    /// `line` holds no quotes: Rust escapes them as `\"`, which cmd.exe
+    /// does not read (temporary paths have no spaces).
     fn cmd(d: &Dirs, line: &str) -> std::process::Output {
         // As the real callers do: the test's own directory is not readable inside.
         command(OsStr::new(CMD), d.project.path(), d.scratch.path())
@@ -589,7 +591,7 @@ mod windows_tests {
         );
         let p = cmd(
             &d,
-            &format!("type \"{}\"", d.project.path().join("p.txt").display()),
+            &format!("type {}", d.project.path().join("p.txt").display()),
         );
         assert_eq!(
             String::from_utf8_lossy(&p.stdout).trim(),
@@ -599,7 +601,7 @@ mod windows_tests {
         );
         let s = cmd(
             &d,
-            &format!("type \"{}\"", d.secret.path().join("s.txt").display()),
+            &format!("type {}", d.secret.path().join("s.txt").display()),
         );
         assert!(!String::from_utf8_lossy(&s.stdout).contains("secret"));
     }
@@ -609,11 +611,11 @@ mod windows_tests {
         let d = dirs();
         cmd(
             &d,
-            &format!("echo x> \"{}\"", d.scratch.path().join("o").display()),
+            &format!("echo x> {}", d.scratch.path().join("o").display()),
         );
         assert!(d.scratch.path().join("o").exists());
         for target in [d.secret.path(), d.project.path()] {
-            cmd(&d, &format!("echo x> \"{}\"", target.join("o").display()));
+            cmd(&d, &format!("echo x> {}", target.join("o").display()));
             assert!(!target.join("o").exists(), "{}", target.display());
         }
     }
