@@ -154,7 +154,8 @@ enum Target {
 /// `crate::path::Name` of a SCIP type symbol. rust-analyzer writes
 /// `<scheme> <manager> <crate> <version> <target>/path/Name#`, for example
 /// `rust-analyzer cargo core <url> lib/fmt/Debug#`; the target namespace
-/// (`lib`) is not part of the Rust path.
+/// (`lib`) is not part of the Rust path. rust-analyzer 1.99 writes no
+/// namespace (`fmt/Debug#`).
 fn type_label(symbol: &str) -> Option<String> {
     let mut parts = symbol.splitn(5, ' ');
     let package = parts.nth(2)?;
@@ -162,7 +163,7 @@ fn type_label(symbol: &str) -> Option<String> {
     if path.contains(['#', '(', '[', '!', '.']) {
         return None;
     }
-    let path = path.split_once('/').map_or(path, |(_, inner)| inner);
+    let path = path.strip_prefix("lib/").unwrap_or(path);
     Some(format!("{package}::{}", path.replace('/', "::")))
 }
 
@@ -247,4 +248,23 @@ pub(crate) fn type_uses(
         }
     }
     uses
+}
+
+#[cfg(test)]
+mod tests {
+    use super::type_label;
+
+    #[test]
+    fn type_labels_read_both_rust_analyzer_symbol_forms() {
+        let url = "https://github.com/rust-lang/rust/library/core";
+        // Newer rust-analyzer writes the target namespace, 1.99 does not.
+        for path in ["lib/fmt/Debug#", "fmt/Debug#"] {
+            let symbol = format!("rust-analyzer cargo core {url} {path}");
+            assert_eq!(
+                type_label(&symbol).as_deref(),
+                Some("core::fmt::Debug"),
+                "{path}"
+            );
+        }
+    }
 }
