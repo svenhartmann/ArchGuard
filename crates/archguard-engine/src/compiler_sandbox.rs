@@ -78,7 +78,13 @@ const ENVIRONMENT: [&str; 16] = [
 
 fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
     #[cfg(target_os = "linux")]
-    return linux::command(program, toolchain(program, project), project, scratch);
+    return linux::command(
+        program,
+        toolchain(program, project),
+        cargo_configs(project),
+        project,
+        scratch,
+    );
     #[cfg(windows)]
     {
         let launcher = launcher().unwrap_or_default();
@@ -205,6 +211,18 @@ fn quote(path: &Path) -> String {
         .replace('"', "\\\"")
 }
 
+/// Cargo reads `.cargo/config(.toml)` in every directory above the project
+/// (a worktree finds its repository's) and fails when it may not.
+#[cfg(not(windows))]
+fn cargo_configs(project: &Path) -> Vec<PathBuf> {
+    real(project)
+        .ancestors()
+        .skip(1)
+        .flat_map(|dir| [dir.join(".cargo/config"), dir.join(".cargo/config.toml")])
+        .filter(|file| file.is_file())
+        .collect()
+}
+
 #[cfg(not(any(target_os = "linux", windows)))]
 /// Deny everything, then allow: reading the system, the toolchain and the
 /// project; writing the scratch directory; starting system and toolchain
@@ -213,14 +231,9 @@ fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
     let system: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
     let tools = [system.clone(), toolchain(program, project)].concat();
     let (project, scratch) = (real(project), real(scratch));
-    // Cargo reads `.cargo/config(.toml)` in every directory above the project
-    // (a worktree finds its repository's) and fails when it may not.
-    let configs: String = project
-        .ancestors()
-        .skip(1)
-        .flat_map(|dir| [dir.join(".cargo/config"), dir.join(".cargo/config.toml")])
-        .filter(|file| file.is_file())
-        .map(|file| format!(" (literal \"{}\")", quote(&file)))
+    let configs: String = cargo_configs(&project)
+        .iter()
+        .map(|file| format!(" (literal \"{}\")", quote(file)))
         .collect();
     let readable = [tools.clone(), vec![project, scratch.clone()]].concat();
     format!(
@@ -458,6 +471,7 @@ mod tests {
             linux::command_with(
                 cat,
                 toolchain(cat, d.project.path()),
+                Vec::new(),
                 d.project.path(),
                 d.scratch.path(),
                 false,

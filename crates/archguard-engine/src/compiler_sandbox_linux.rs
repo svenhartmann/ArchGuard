@@ -80,6 +80,7 @@ fn existing(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
 
 fn rules(
     tools: Vec<PathBuf>,
+    files: Vec<PathBuf>,
     project: &Path,
     scratch: &Path,
 ) -> Result<RulesetCreated, RulesetError> {
@@ -91,6 +92,7 @@ fn rules(
         .into_iter()
         .map(|p| (p, run))
         .chain([(project.to_path_buf(), read)])
+        .chain(files.into_iter().map(|p| (p, AccessFs::ReadFile.into())))
         // rustup's proxies find themselves through /proc/self/exe. Landlock
         // also forbids ptrace on processes outside the domain, so another
         // process' /proc/<pid>/environ stays closed.
@@ -120,6 +122,7 @@ fn rules(
 pub(super) fn command(
     program: &Path,
     tools: Vec<PathBuf>,
+    files: Vec<PathBuf>,
     project: &Path,
     scratch: &Path,
 ) -> Command {
@@ -128,7 +131,7 @@ pub(super) fn command(
         static WARNED: Once = Once::new();
         WARNED.call_once(|| eprintln!("warning: {NO_NAMESPACES}"));
     }
-    command_with(program, tools, project, scratch, namespaces)
+    command_with(program, tools, files, project, scratch, namespaces)
 }
 
 const NO_NAMESPACES: &str = "unprivileged user namespaces are off: project compiler \
@@ -138,11 +141,12 @@ const NO_NAMESPACES: &str = "unprivileged user namespaces are off: project compi
 pub(super) fn command_with(
     program: &Path,
     tools: Vec<PathBuf>,
+    files: Vec<PathBuf>,
     project: &Path,
     scratch: &Path,
     namespaces: bool,
 ) -> Command {
-    let built = rules(tools, project, scratch).map_err(|e| e.to_string());
+    let built = rules(tools, files, project, scratch).map_err(|e| e.to_string());
     let rules = Mutex::new(Some(built));
     let mut command = Command::new(program);
     // SAFETY: the closure runs in the child between fork and exec. It calls
