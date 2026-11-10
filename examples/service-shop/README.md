@@ -98,6 +98,13 @@ notifications. Restarting resets all data. The demo has no authentication,
 persistence, idempotency or compensation for distributed steps: a failure after
 reservation can leave reserved inventory without a completed order.
 
+To record real request traces, run `node examples/service-shop/scripts/record-traces.js`.
+It starts the shop with `SHOP_TRACE_DIR` set, sends a product lookup, a checkout
+and two failing checkouts (409 out of stock, 404 unknown product), and writes the
+OTLP spans to `examples/service-shop/.archguard/otel-traces.json`;
+`archguard doc examples/service-shop --arc42 --chapter 6` then draws one sequence per trace. The file is not checked in because it adds measured
+edges and a `browser` caller to the analysis; delete it to return to the static view.
+
 ## Optional Docker Compose setup
 
 The shared Dockerfile uses `additional_contexts`, requiring Compose 2.17+ and a

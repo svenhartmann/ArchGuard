@@ -106,6 +106,13 @@ keine Authentifizierung, dauerhafte Speicherung, Idempotenz oder Kompensation
 verteilter Teilschritte: Ein Fehler nach der Reservierung kann reservierten
 Bestand ohne abgeschlossene Bestellung hinterlassen.
 
+Echte Request-Traces zeichnet `node examples/service-shop/scripts/record-traces.js` auf.
+Das Skript startet den Shop mit gesetztem `SHOP_TRACE_DIR`, ruft Produkte ab, bestellt
+einmal erfolgreich und zweimal fehlerhaft (409 kein Bestand, 404 unbekanntes Produkt)
+und schreibt die OTLP-Spans nach `examples/service-shop/.archguard/otel-traces.json`;
+`archguard doc examples/service-shop --arc42 --chapter 6` zeichnet daraus je Trace eine Sequenz. Die Datei ist nicht eingecheckt, weil sie der
+Analyse gemessene Kanten und einen `browser`-Aufrufer hinzufügt; Löschen stellt die statische Sicht wieder her.
+
 ## Optional mit Docker Compose
 
 Für das gemeinsame Dockerfile wird `additional_contexts` genutzt; dafür werden

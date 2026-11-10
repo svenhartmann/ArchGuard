@@ -7,7 +7,8 @@ import {createClient,createServer,HttpError} from './runtime/http.js';
 const root=fileURLToPath(new URL('.',import.meta.url));
 
 export async function startShop(topology,{port=8890}={}){
-  if(!topology.complete)throw new Error('The demo requires complete Compose endpoint analysis.');
+  // Recorded traces always mark the topology partial; only Compose gaps block the demo.
+  if(!topology.complete&&topology.diagnostics.some(d=>d.file!=='.archguard/otel-traces.json'))throw new Error('The demo requires complete Compose endpoint analysis.');
   const services=topology.services.filter(service=>service.build_context);
   const servers=[],urls=new Map(),handlers=new Map();
   const close=async()=>{
@@ -21,7 +22,7 @@ export async function startShop(topology,{port=8890}={}){
         const handler=handlers.get(service.id);
         if(!handler)throw new HttpError(503,'Demo is starting');
         return handler(request);
-      });
+      },service.name);
       await new Promise((resolve,reject)=>{
         server.once('error',reject);
         server.listen(service.name==='gateway'?port:0,'127.0.0.1',()=>{server.off('error',reject);resolve();});
@@ -46,11 +47,14 @@ export async function startShop(topology,{port=8890}={}){
   }catch(error){await close();throw error;}
 }
 
+export function loadTopology(){
+  const binary=process.env.ARCHGUARD_BIN||path.resolve(root,'../../target/debug/archguard');
+  return JSON.parse(execFileSync(binary,['services',root,'--format','json'],{encoding:'utf8'}));
+}
+
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
   try{
-    const binary=process.env.ARCHGUARD_BIN||path.resolve(root,'../../target/debug/archguard');
-    const topology=JSON.parse(execFileSync(binary,['services',root,'--format','json'],{encoding:'utf8'}));
-    const shop=await startShop(topology,{port:Number(process.env.PORT||8890)});
+    const shop=await startShop(loadTopology(),{port:Number(process.env.PORT||8890)});
     console.log('Shop demo: '+shop.gateway+' — ten local APIs; mock payments, notifications and in-memory data.');
     console.log('GET /products · GET /availability?sku=coffee · POST /checkout');
     for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>shop.close().then(()=>process.exit(0)));
