@@ -40,7 +40,8 @@ pub fn unbraced(text: &str) -> String {
 
 /// `(key, @tr text)` of every `ui/texts.slint` entry.
 fn template_entries() -> Vec<(String, String)> {
-    let slint = std::fs::read_to_string(crate_file("../archguard-desktop-ui/ui/texts.slint")).expect("texts.slint");
+    let slint = std::fs::read_to_string(crate_file("../archguard-desktop-ui/ui/texts.slint"))
+        .expect("texts.slint");
     slint
         .lines()
         .filter(|l| l.trim_start().starts_with("{ key:"))

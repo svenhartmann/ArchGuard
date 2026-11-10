@@ -149,7 +149,8 @@ mod tests {
 
     #[test]
     fn views_take_font_sizes_and_weights_from_the_theme() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../archguard-desktop-ui/ui");
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../archguard-desktop-ui/ui");
         let mut found = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
