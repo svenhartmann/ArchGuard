@@ -78,12 +78,15 @@ const ENVIRONMENT: [&str; 16] = [
 
 fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
     #[cfg(target_os = "linux")]
-    return linux::command(program, toolchain(program), project, scratch);
+    return linux::command(program, toolchain(program, project), project, scratch);
     #[cfg(windows)]
     {
         let launcher = launcher().unwrap_or_default();
         let mut command = Command::new(launcher);
-        for dir in toolchain(program).into_iter().filter(|d| d.is_dir()) {
+        for dir in toolchain(program, project)
+            .into_iter()
+            .filter(|d| d.is_dir())
+        {
             command.arg("--run").arg(dir);
         }
         command
@@ -132,12 +135,17 @@ fn real(path: &Path) -> PathBuf {
 }
 
 /// Directories the toolchain of `program` lives in: rustup, cargo and the
-/// installation `program` comes from (`…/bin/node` → `…`).
-fn toolchain(program: &Path) -> Vec<PathBuf> {
+/// installation `program` comes from (`…/bin/node` → `…`). Never a directory
+/// that holds the project or lies in it: programs from the repository must not start.
+fn toolchain(program: &Path, project: &Path) -> Vec<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
+    let project = real(project);
     toolchain_for(program, home.as_deref())
+        .into_iter()
+        .filter(|d| !project.starts_with(d) && !d.starts_with(&project))
+        .collect()
 }
 
 fn toolchain_for(program: &Path, home: Option<&Path>) -> Vec<PathBuf> {
@@ -203,7 +211,7 @@ fn quote(path: &Path) -> String {
 /// programs. No network rule is allowed, so there is none.
 fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
     let system: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
-    let tools = [system.clone(), toolchain(program)].concat();
+    let tools = [system.clone(), toolchain(program, project)].concat();
     let (project, scratch) = (real(project), real(scratch));
     let readable = [tools.clone(), vec![project, scratch.clone()]].concat();
     format!(
@@ -363,10 +371,18 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         let closed = true;
         assert_eq!(udp.recv(&mut buf).is_err(), closed, "UDP from inside");
+        // A script, not a copied system binary: newer macOS kills copied
+        // platform binaries by code signing, which would pass for the wrong reason.
         let evil = d.project.path().join("evil");
-        std::fs::copy("/bin/echo", &evil).unwrap();
+        std::fs::write(&evil, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&evil, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
         assert!(
-            !run(&d, evil.to_str().unwrap(), &["hi"]),
+            Command::new(&evil).status().unwrap().success(),
+            "the program starts outside the sandbox"
+        );
+        assert!(
+            !run(&d, evil.to_str().unwrap(), &[]),
             "programs from the project do not start"
         );
     }
@@ -409,7 +425,7 @@ mod tests {
         let read = |file: &Path| {
             linux::command_with(
                 cat,
-                toolchain(cat),
+                toolchain(cat, d.project.path()),
                 d.project.path(),
                 d.scratch.path(),
                 false,
