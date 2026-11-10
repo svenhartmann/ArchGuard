@@ -339,8 +339,21 @@ fn prepare(root: &Path, config: &Config, trusted: bool) -> Result<Input, String>
 }
 /// Node running the helper, confined to the project and `scratch`
 /// (ADR 0007), without inherited Node options.
-fn node(root: &Path, scratch: &Path, script: &Path, manifest: &Path) -> std::process::Command {
-    let mut command = crate::compiler_sandbox::command(OsStr::new("node"), root, scratch);
+/// The compiler's package (`…/typescript`) is readable too: it may be
+/// configured outside the project or found in a directory above it.
+fn node(
+    root: &Path,
+    scratch: &Path,
+    script: &Path,
+    manifest: &Path,
+    compiler: Option<&Path>,
+) -> std::process::Command {
+    let package: Vec<PathBuf> = compiler
+        .and_then(|c| c.parent()?.parent())
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    let mut command = crate::compiler_sandbox::reading(OsStr::new("node"), root, scratch, &package);
     command
         .arg("--max-old-space-size=512")
         .arg(script)
@@ -364,12 +377,18 @@ fn run_helper(input: &Input) -> Result<HelperResult, String> {
         serde_json::to_vec(&input.manifest).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let mut child = node(&input.root, directory.path(), &script, &manifest)
-        .stdin(Stdio::null())
-        .stdout(File::create(&output).map_err(|e| e.to_string())?)
-        .stderr(File::create(&errors).map_err(|e| e.to_string())?)
-        .spawn()
-        .map_err(|e| format!("TypeScript analysis requires Node.js on PATH: {e}"))?;
+    let mut child = node(
+        &input.root,
+        directory.path(),
+        &script,
+        &manifest,
+        input.compiler.as_deref(),
+    )
+    .stdin(Stdio::null())
+    .stdout(File::create(&output).map_err(|e| e.to_string())?)
+    .stderr(File::create(&errors).map_err(|e| e.to_string())?)
+    .spawn()
+    .map_err(|e| format!("TypeScript analysis requires Node.js on PATH: {e}"))?;
     let status = match crate::go_calls::wait(&mut child, &[&output, &errors], TIMEOUT, LIMIT) {
         Ok(status) => status,
         Err(crate::go_calls::Stop::Failed(error)) => return Err(error.to_string()),

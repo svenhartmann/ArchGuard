@@ -39,11 +39,22 @@ fn launcher() -> Option<PathBuf> {
 /// `program` as a command that runs confined to `project` (read) and
 /// `scratch` (read and write), where [`available`]; elsewhere as is.
 pub(crate) fn command(program: &OsStr, project: &Path, scratch: &Path) -> Command {
+    reading(program, project, scratch, &[])
+}
+
+/// [`command`] that may also read `read` (directories or files), such as a
+/// compiler installed outside the project.
+pub(crate) fn reading(
+    program: &OsStr,
+    project: &Path,
+    scratch: &Path,
+    read: &[PathBuf],
+) -> Command {
     if !available() {
         return Command::new(program);
     }
     let program = resolve(program);
-    let mut command = confined(&program, project, scratch);
+    let mut command = confined(&program, project, scratch, read);
     // archguard-confine needs the whole environment to create its
     // AppContainer profile; it narrows it to `--env` for the program.
     if cfg!(windows) {
@@ -81,12 +92,16 @@ const ENVIRONMENT: [&str; 16] = [
     "ComSpec",
 ];
 
-fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
+fn confined(program: &Path, project: &Path, scratch: &Path, read: &[PathBuf]) -> Command {
     #[cfg(target_os = "linux")]
     return linux::command(
         program,
         toolchain(program, project),
-        cargo_configs(project),
+        [
+            cargo_configs(project),
+            read.iter().map(|p| real(p)).collect(),
+        ]
+        .concat(),
         project,
         scratch,
     );
@@ -107,6 +122,9 @@ fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
         for name in ENVIRONMENT {
             command.arg("--env").arg(name);
         }
+        for dir in read {
+            command.arg("--read").arg(real(dir));
+        }
         command
             .arg("--read")
             .arg(project)
@@ -121,7 +139,7 @@ fn confined(program: &Path, project: &Path, scratch: &Path) -> Command {
         let mut command = Command::new(SANDBOX_EXEC);
         command
             .arg("-p")
-            .arg(profile(program, project, scratch))
+            .arg(profile(program, project, scratch, read))
             .arg(program);
         command
     }
@@ -239,7 +257,7 @@ fn cargo_configs(project: &Path) -> Vec<PathBuf> {
 /// Deny everything, then allow: reading the system, the toolchain and the
 /// project; writing the scratch directory; starting system and toolchain
 /// programs. No network rule is allowed, so there is none.
-fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
+fn profile(program: &Path, project: &Path, scratch: &Path, read: &[PathBuf]) -> String {
     let system: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
     let tools = [system.clone(), toolchain(program, project)].concat();
     let (project, scratch) = (real(project), real(scratch));
@@ -247,7 +265,8 @@ fn profile(program: &Path, project: &Path, scratch: &Path) -> String {
         .iter()
         .map(|file| format!(" (literal \"{}\")", quote(file)))
         .collect();
-    let readable = [tools.clone(), vec![project, scratch.clone()]].concat();
+    let extra = read.iter().map(|p| real(p)).collect();
+    let readable = [tools.clone(), vec![project, scratch.clone()], extra].concat();
     format!(
         "(version 1)\n(deny default)\n(allow process-fork)\n(allow sysctl-read)\n(allow mach-lookup)\n\
          (allow signal (target same-sandbox))\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n\
@@ -329,6 +348,31 @@ mod tests {
         };
         assert!(cat(&config), "cargo's configuration above the project");
         assert!(!cat(&other), "other files above the project");
+    }
+
+    /// A compiler outside the project (a configured TypeScript package) is
+    /// readable; what lies beside it is not.
+    #[test]
+    fn extra_read_directories_are_readable_and_nothing_beside_them() {
+        let d = dirs();
+        let outer = tempfile::tempdir().unwrap();
+        let package = outer.path().join("typescript");
+        std::fs::create_dir(&package).unwrap();
+        std::fs::write(package.join("typescript.js"), "tsc").unwrap();
+        std::fs::write(outer.path().join("other.txt"), "private").unwrap();
+        let cat = |file: &Path| {
+            reading(
+                OsStr::new("/bin/cat"),
+                d.project.path(),
+                d.scratch.path(),
+                std::slice::from_ref(&package),
+            )
+            .arg(file)
+            .output()
+            .is_ok_and(|o| o.status.success())
+        };
+        assert!(cat(&package.join("typescript.js")), "the extra directory");
+        assert!(!cat(&outer.path().join("other.txt")), "beside it");
     }
 
     #[test]
