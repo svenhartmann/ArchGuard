@@ -283,15 +283,18 @@ function arc42SourceModel(){
   const nodes=new Map(data.nodes.map(n=>[String(n.id),n])),byName=new Map(data.nodes.map(n=>[n.name,String(n.id)])),children=new Map(),ancestors=new Map(),files=new Map();
   for(const n of data.nodes){const parent=n.parent==null?null:String(n.parent);if(!children.has(parent))children.set(parent,[]);children.get(parent).push(n);}
   for(const n of data.nodes){const chain=[],seen=new Set();let current=n;while(current&&!seen.has(String(current.id))){seen.add(String(current.id));chain.push(String(current.id));current=nodes.get(String(current.parent));}ancestors.set(String(n.id),chain);if(n.kind==='file')for(const id of chain){if(!files.has(id))files.set(id,[]);files.get(id).push(String(n.id));}}
-  const overview=[];
-  for(let root of children.get(null)||[]){
-    if(root.kind!=='module')continue;
-    while((children.get(String(root.id))||[]).length===1&&(children.get(String(root.id))||[])[0].kind==='module')root=children.get(String(root.id))[0];
-    const kids=children.get(String(root.id))||[],packages=kids.filter(n=>n.kind==='module');
+  const overview=[],wrapped=new Map(),roots=(children.get(null)||[]).filter(n=>n.kind==='module');
+  const inner=root=>{while((children.get(String(root.id))||[]).length===1&&(children.get(String(root.id))||[])[0].kind==='module')root=children.get(String(root.id))[0];return root;};
+  // A monorepo (two or more roots wrapping a declared package chain, not just a source root such as src; ADR 0010):
+  // its top-level directories are the level-1 blocks.
+  const packageChain=root=>inner(root).name.slice(root.name.length+1).split('/').some(s=>s&&!arc42SourceRoots.has(s.toLowerCase()));
+  if(roots.filter(packageChain).length>=2)for(const root of roots){overview.push(root);wrapped.set(String(root.id),String(inner(root).id));}
+  else for(const first of roots){
+    const root=inner(first),kids=children.get(String(root.id))||[],packages=kids.filter(n=>n.kind==='module');
     overview.push(...(packages.length?packages:[root]));
     if(packages.length&&kids.some(n=>n.kind==='file'))overview.push(root);
   }
-  arc42GraphCache={nodes,byName,children,ancestors,files,overview,callEdges:null};return arc42GraphCache;
+  arc42GraphCache={nodes,byName,children,ancestors,files,overview,wrapped,callEdges:null};return arc42GraphCache;
 }
 function arc42CallEdges(){
   const model=arc42SourceModel();if(model.callEdges)return model.callEdges;
@@ -303,9 +306,10 @@ function arc42CallEdges(){
 }
 function arc42PackageProjection(scope=null,kind='dependencies'){
   const model=arc42SourceModel();scope=scope==null?null:String(scope);
-  const candidates=scope==null?model.overview:(model.children.get(scope)||[]).filter(n=>n.kind==='module');
+  const inside=scope==null?null:model.wrapped.get(scope)??scope;
+  const candidates=scope==null?model.overview:(model.children.get(inside)||[]).filter(n=>n.kind==='module');
   const short=arc42ShortNames(candidates.map(n=>n.name)),allNodes=candidates.map(n=>({id:String(n.id),name:n.name,label:short.get(n.name),files:0,members:[String(n.id)],kind:'package',drill:String(n.id)})),ids=new Set(allNodes.map(n=>n.id));
-  const direct=(scope==null?model.children.get(null):model.children.get(scope))||[],scopeName=scope==null?null:model.nodes.get(scope).name,files=t('direct files','direkte Dateien');
+  const direct=(scope==null?model.children.get(null):model.children.get(inside))||[],scopeName=scope==null?null:model.nodes.get(scope).name,files=t('direct files','direkte Dateien');
   if(direct.some(n=>n.kind==='file')){allNodes.push({id:'direct',name:scope==null?t('Files without a package','Dateien ohne Paket'):scopeName+' / '+files,label:scope==null?undefined:arc42ShortNames([scopeName]).get(scopeName)+' / '+files,files:0,members:['direct'],kind:'files'});ids.add('direct');}
   const owner=new Map(),counts=new Map();
   for(const n of data.nodes){const id=String(n.id),chain=model.ancestors.get(id)||[];if(scope!=null&&!chain.includes(scope))continue;
@@ -369,7 +373,7 @@ function arc42Graph(parent,model,{title,onNode,selected=null,all=false}={}){
 function arc42BuildingLevels(scope){
   const source=arc42SourceModel(),entries=new Map();
   for(const node of source.overview)entries.set(String(node.id),{node,level:2,parent:null});
-  for(const node of source.overview)for(const child of source.children.get(String(node.id))||[])if(child.kind==='module'&&!entries.has(String(child.id)))entries.set(String(child.id),{node:child,level:3,parent:String(node.id)});
+  for(const node of source.overview)for(const child of source.children.get(source.wrapped.get(String(node.id))??String(node.id))||[])if(child.kind==='module'&&!entries.has(String(child.id)))entries.set(String(child.id),{node:child,level:3,parent:String(node.id)});
   let id=scope==null?null:String(scope);if(id!=null&&!entries.has(id))id=(source.ancestors.get(id)||[]).find(ancestor=>entries.has(ancestor))??null;
   const entry=entries.get(id),path=[];if(entry?.parent)path.push(entries.get(entry.parent));if(entry)path.push(entry);
   return {entries,scope:id,level:entry?.level||1,path};

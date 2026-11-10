@@ -71,3 +71,21 @@ correctly. When the desktop app zoomed into one service, it found no module
 - In the services view (desktop and web), projects with the runtime
   `azure-functions` count as deployed. Before this change, a local Compose
   stack beside them hid them unless "All projects" was on.
+
+## History
+
+- **2026-11-10:** Same root cause in the call layer and the runtime view.
+  - javac rejects two classes with the same qualified name in one compilation
+    and bound every call to one copy. Java call analysis now compiles each
+    project apart when projects share class names, and prefixes class ids
+    with the project directory. Calls between such projects are then not
+    resolved (`shortcut:` in `java_calls.rs`).
+  - `source_reference_paths` also maps logical node names to their files, so
+    building blocks find their manifest project.
+  - Runtime scenarios no longer start at test methods, and every project gets
+    at least one before the rest fill up by reach.
+  - The arc42 building-block levels of a monorepo (two or more top-level
+    directories wrapping a declared package chain, not just `src`) show those
+    directories at level 1; below one, the wrapper chain is skipped.
+  - Function apps no longer filter the services view on their own; they are
+    only kept beside a Compose, Aspire or Spring deployment.

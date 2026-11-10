@@ -203,6 +203,7 @@ jobs:
           node scripts/viewer/test_viewer_arc42_catalogue.js
           node scripts/viewer/test_viewer_arc42_diagrams.js
           node scripts/viewer/test_viewer_arc42_levels.js
+          node scripts/viewer/test_viewer_arc42_monorepo.js
           node scripts/viewer/test_viewer_arc42_names.js
           node scripts/viewer/test_viewer_arc42_standard.js
           node scripts/viewer/test_viewer_class_cohesion.js

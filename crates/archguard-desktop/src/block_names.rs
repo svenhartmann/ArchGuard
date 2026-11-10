@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// Maven/Gradle), `main` and `java` (Maven/Gradle `src/main/java`), `lib`
 /// (Ruby, Dart, Elixir), `source`/`sources` (C/C++, SwiftPM). Compared
 /// without case.
-const SOURCE_ROOTS: [&str; 6] = ["src", "lib", "main", "java", "source", "sources"];
+pub(crate) const SOURCE_ROOTS: [&str; 6] = ["src", "lib", "main", "java", "source", "sources"];
 
 /// One label per name, in input order; equal names get equal labels.
 pub fn short_names(names: &[&str]) -> Vec<String> {

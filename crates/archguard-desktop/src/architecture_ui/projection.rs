@@ -17,6 +17,9 @@ pub struct SourceModel {
     ancestors: Vec<Vec<usize>>,
     /// Level-2 building blocks of the project overview.
     pub overview: Vec<usize>,
+    /// Monorepo overview block -> the end of its package wrapper chain,
+    /// whose packages its level shows (ADR 0010).
+    wrapped: HashMap<usize, usize>,
 }
 
 impl SourceModel {
@@ -48,6 +51,7 @@ impl SourceModel {
             children,
             ancestors,
             overview: Vec::new(),
+            wrapped: HashMap::new(),
         };
         model.overview = model.overview_blocks(graph);
         model
@@ -65,21 +69,39 @@ impl SourceModel {
             .collect()
     }
 
+    /// The end of the single-package wrapper chain below `root`.
+    fn inner(&self, graph: &Graph, mut root: usize) -> usize {
+        while let [only] = self.kids(Some(root)) {
+            if graph.nodes[*only].kind != NodeKind::Module {
+                break;
+            }
+            root = *only;
+        }
+        root
+    }
+
     /// Root packages with single-package wrappers skipped; a root with
-    /// packages and direct files is listed after its packages.
-    fn overview_blocks(&self, graph: &Graph) -> Vec<usize> {
+    /// packages and direct files is listed after its packages. A monorepo
+    /// (two or more roots wrapping a declared package chain, not just a
+    /// source root such as `src`) lists its top-level directories instead.
+    fn overview_blocks(&mut self, graph: &Graph) -> Vec<usize> {
+        let roots = self.modules(graph, None);
+        let package_chain = |root: usize| {
+            let chain = &graph.nodes[self.inner(graph, root)].name;
+            let below = chain
+                .get(graph.nodes[root].name.len() + 1..)
+                .unwrap_or_default();
+            below
+                .split('/')
+                .any(|s| !s.is_empty() && !names::SOURCE_ROOTS.contains(&s.to_lowercase().as_str()))
+        };
+        if roots.iter().filter(|&&r| package_chain(r)).count() >= 2 {
+            self.wrapped = roots.iter().map(|&r| (r, self.inner(graph, r))).collect();
+            return roots;
+        }
         let mut out = Vec::new();
-        for &first in self.kids(None) {
-            if graph.nodes[first].kind != NodeKind::Module {
-                continue;
-            }
-            let mut root = first;
-            while let [only] = self.kids(Some(root)) {
-                if graph.nodes[*only].kind != NodeKind::Module {
-                    break;
-                }
-                root = *only;
-            }
+        for first in roots {
+            let root = self.inner(graph, first);
             let packages = self.modules(graph, Some(root));
             let files = self
                 .kids(Some(root))
@@ -95,6 +117,12 @@ impl SourceModel {
             }
         }
         out
+    }
+
+    /// The node whose children a scope shows: past a monorepo block's
+    /// wrapper chain.
+    fn inside(&self, scope: usize) -> usize {
+        self.wrapped.get(&scope).copied().unwrap_or(scope)
     }
 
     pub fn position(&self, id: NodeId) -> Option<usize> {
@@ -244,11 +272,11 @@ pub fn project(
 ) -> Projection {
     let candidates = match scope {
         None => model.overview.clone(),
-        Some(s) => model.modules(graph, Some(s)),
+        Some(s) => model.modules(graph, Some(model.inside(s))),
     };
     let mut nodes = package_nodes(graph, &candidates);
     let has_direct = model
-        .kids(scope)
+        .kids(scope.map(|s| model.inside(s)))
         .iter()
         .any(|&k| graph.nodes[k].kind == NodeKind::File);
     if has_direct {
@@ -450,7 +478,7 @@ pub fn levels(model: &SourceModel, graph: &Graph, scope: Option<usize>) -> Level
         })
         .collect();
     for &parent in &model.overview {
-        for child in model.modules(graph, Some(parent)) {
+        for child in model.modules(graph, Some(model.inside(parent))) {
             if !entries.iter().any(|e| e.node == child) {
                 entries.push(Entry {
                     node: child,
@@ -536,6 +564,77 @@ mod tests {
             .iter()
             .map(|n| (n.name.clone(), n.files, n.cycle))
             .collect()
+    }
+
+    /// svc-a and svc-b wrap the same package chain de/x (ADR 0010), tools
+    /// is a plain directory; svc-a/de/x/{client,model}.
+    fn monorepo() -> Graph {
+        let mut nodes = Vec::new();
+        let mut add = |name: &str, kind, parent: Option<u32>| {
+            let id = nodes.len() as u32;
+            nodes.push(Node {
+                id: NodeId(id),
+                name: name.into(),
+                kind,
+                parent: parent.map(NodeId),
+                lang: None,
+            });
+            id
+        };
+        for service in ["svc-a", "svc-b"] {
+            let root = add(service, NodeKind::Module, None);
+            let de = add(&format!("{service}/de"), NodeKind::Module, Some(root));
+            let x = add(&format!("{service}/de/x"), NodeKind::Module, Some(de));
+            for package in ["client", "model"] {
+                let p = add(
+                    &format!("{service}/de/x/{package}"),
+                    NodeKind::Module,
+                    Some(x),
+                );
+                add(
+                    &format!("{service}/de/x/{package}/C.java"),
+                    NodeKind::File,
+                    Some(p),
+                );
+            }
+        }
+        let tools = add("tools", NodeKind::Module, None);
+        for package in ["one", "two"] {
+            let p = add(&format!("tools/{package}"), NodeKind::Module, Some(tools));
+            add(&format!("tools/{package}/a.py"), NodeKind::File, Some(p));
+        }
+        Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes,
+            edges: Vec::new(),
+            semantic: None,
+            review_kpis: None,
+        }
+    }
+
+    /// Level 1 of a monorepo: its top-level directories; below a service
+    /// the wrapper chain is skipped (the same case as
+    /// scripts/viewer/test_viewer_arc42_monorepo.js).
+    #[test]
+    fn a_monorepo_shows_its_services_first() {
+        let g = monorepo();
+        let m = SourceModel::new(&g);
+        let name = |i: &usize| g.nodes[*i].name.as_str();
+        assert_eq!(
+            m.overview.iter().map(name).collect::<Vec<_>>(),
+            ["svc-a", "svc-b", "tools"]
+        );
+        let a = project(&m, &g, Some(0), &[], &labels());
+        let mut shown: Vec<&str> = a.nodes.iter().map(|n| n.label.as_str()).collect();
+        shown.sort();
+        assert_eq!(shown, ["client", "model"]);
+        let l = levels(&m, &g, Some(0));
+        let deep = l
+            .entries
+            .iter()
+            .find(|e| name(&e.node) == "svc-a/de/x/client");
+        assert_eq!(deep.map(|e| e.level), Some(3));
     }
 
     #[test]
