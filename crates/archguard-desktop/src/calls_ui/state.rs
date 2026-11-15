@@ -3,6 +3,7 @@
 //! handlers in viewer.js and viewer_call_*.js).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use archguard_engine::core::CallAnalysis;
 
@@ -32,7 +33,7 @@ pub struct Derived {
     /// Active connections after the element filter (the list).
     pub relations: Vec<Relation>,
     pub selected: Option<Relation>,
-    pub tree: CallTree,
+    pub tree: Arc<CallTree>,
     pub visible: Vec<usize>,
     pub shown: HashSet<usize>,
     pub rankings: Rankings,
@@ -93,7 +94,13 @@ pub struct State {
     evidence_relation: Option<String>,
     pub analysis_open: bool,
     pub view: Derived,
+    /// The base connections and their tree, see [`State::base`].
+    base: Option<(BaseKey, Arc<Vec<Relation>>, Arc<CallTree>)>,
 }
+
+/// Inputs of the base besides `idx` (fixed): cycle kind and group in
+/// Cycles mode (else `None`), filter scope, labels.
+type BaseKey = (Option<(ElementKind, Option<String>)>, String, Labels);
 
 impl State {
     pub fn new(a: impl Into<std::sync::Arc<CallAnalysis>>) -> Self {
@@ -134,6 +141,7 @@ impl State {
             evidence_relation: None,
             analysis_open: false,
             view: Derived::default(),
+            base: None,
         };
         s.refresh();
         s
@@ -181,19 +189,33 @@ impl State {
             self.site_limit = PAGE;
             self.tree_limit = TREE_PAGE;
         }
-        d.cycle_relations = d
-            .group
-            .map(|g| cycles::relations(&groups[g], &self.idx, &self.labels))
-            .unwrap_or_default();
     }
 
-    /// The connections ignoring the element filter.
-    pub fn base(&self, d: &Derived) -> Vec<Relation> {
-        if self.mode == Mode::Cycles {
-            d.cycle_relations.clone()
+    /// The connections ignoring the element filter and their tree, built
+    /// again only when an input ([`BaseKey`]) changed.
+    fn base(&mut self, d: &Derived) -> (Arc<Vec<Relation>>, Arc<CallTree>) {
+        let cycle_mode = self.mode == Mode::Cycles;
+        let key = (
+            cycle_mode.then(|| (self.cycle_kind, self.cycle_group.clone())),
+            self.filter.scope(),
+            self.labels.clone(),
+        );
+        if let Some((k, base, tree)) = &self.base
+            && *k == key
+        {
+            return (base.clone(), tree.clone());
+        }
+        let base = Arc::new(if cycle_mode {
+            let groups = self.cycles.groups(self.cycle_kind);
+            d.group
+                .map(|g| cycles::relations(&groups[g], &self.idx, &self.labels))
+                .unwrap_or_default()
         } else {
             model::relations(&self.idx, &self.filter, &self.labels)
-        }
+        });
+        let tree = Arc::new(tree::build(&base, &self.idx, &self.labels));
+        self.base = Some((key, base.clone(), tree.clone()));
+        (base, tree)
     }
 
     fn select(&mut self, d: &mut Derived, base: &[Relation]) {
@@ -238,14 +260,14 @@ impl State {
         }
     }
 
-    fn prepare_tree(&mut self, d: &mut Derived, base: &[Relation]) {
+    fn prepare_tree(&mut self, d: &mut Derived, tree: Arc<CallTree>) {
         let scope = self.filter.scope();
         if scope != self.tree_scope {
             self.tree_scope = scope;
             self.tree_limit = TREE_PAGE;
             self.tree_relation = None;
         }
-        d.tree = tree::build(base, &self.idx, &self.labels);
+        d.tree = tree;
         let key = d.selected.as_ref().map(|r| r.key.clone());
         if let Some(sel) = &d.selected
             && self.tree_relation != key
@@ -309,9 +331,12 @@ impl State {
         if self.mode == Mode::Cycles {
             self.prepare_cycles(&mut d);
         }
-        let base = self.base(&d);
+        let (base, tree) = self.base(&d);
+        if self.mode == Mode::Cycles {
+            d.cycle_relations = base.to_vec();
+        }
         self.select(&mut d, &base);
-        self.prepare_tree(&mut d, &base);
+        self.prepare_tree(&mut d, tree);
         if self.mode == Mode::Rankings {
             self.prepare_rankings(&mut d, &base);
         }
@@ -366,6 +391,43 @@ mod tests {
         let s = State::new(a);
         assert_eq!(s.filter.package, None);
         assert!(s.view.relations.is_empty());
+    }
+
+    /// A callback that changes no input reuses the base and its tree; a
+    /// changed filter, labels or cycle group builds them again, equal to
+    /// a fresh build.
+    #[test]
+    fn the_cached_base_equals_a_fresh_build() {
+        let fresh = |s: &State| {
+            let base = model::relations(&s.idx, &s.filter, &s.labels);
+            let keys: Vec<String> = (tree::build(&base, &s.idx, &s.labels).nodes)
+                .into_iter()
+                .map(|n| n.key)
+                .collect();
+            (base, keys)
+        };
+        let cached = |s: &State| {
+            let keys: Vec<String> = s.view.tree.nodes.iter().map(|n| n.key.clone()).collect();
+            (s.base.as_ref().unwrap().1.to_vec(), keys)
+        };
+        let mut s = State::new(fixture::analysis());
+        let tree = s.view.tree.clone();
+        s.tree_limit += 1;
+        s.refresh();
+        assert!(Arc::ptr_eq(&tree, &s.view.tree), "reused");
+        s.filter.package = None;
+        s.refresh();
+        assert!(!Arc::ptr_eq(&tree, &s.view.tree), "rebuilt");
+        assert_eq!(cached(&s), fresh(&s));
+        s.labels.unresolved_target = "Unbekanntes Ziel".into();
+        s.refresh();
+        assert_eq!(cached(&s), fresh(&s));
+        s.mode = Mode::Cycles;
+        s.refresh();
+        let g = s.group().expect("the fixture has a cycle");
+        let want = cycles::relations(g, &s.idx, &s.labels);
+        assert_eq!(s.base.as_ref().unwrap().1.as_slice(), want.as_slice());
+        assert_eq!(s.view.cycle_relations, want);
     }
 
     #[test]
