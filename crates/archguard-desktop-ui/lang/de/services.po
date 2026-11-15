@@ -232,3 +232,6 @@ msgstr "{} / {} Dienstbeziehungen angezeigt"
 
 msgid "{} manifest project roots without workspace aggregators, {} local Compose build contexts; at least two establish a monorepo."
 msgstr "{} Manifest-Projektwurzeln ohne Workspace-Aggregatoren, {} lokale Compose-Build-Kontexte; ab zwei liegt ein Monorepo vor."
+
+msgid "The direction is relative to the selected service. Select a service in the diagram to show its incoming, outgoing or both relations."
+msgstr "Die Richtung bezieht sich auf den ausgewählten Dienst. Wähle im Diagramm einen Dienst, um seine eingehenden, ausgehenden oder beide Beziehungen zu zeigen."
