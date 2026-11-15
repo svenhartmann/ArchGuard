@@ -319,9 +319,9 @@ impl Relation {
     }
 }
 
-/// `JSON.stringify` of a string.
 /// `text` with the selected package's prefix dropped from every name
 /// that starts with it (`org.x.Bag` → `Bag`, also inside signatures).
+/// File names and paths stay whole (`shop.py`, `shop/shop.py`).
 pub fn relative(text: &str, package: Option<&str>) -> String {
     let Some(p) = package.filter(|p| !p.is_empty()) else {
         return text.to_string();
@@ -332,12 +332,20 @@ pub fn relative(text: &str, package: Option<&str>) -> String {
     while let Some(at) = text[i..].find(&prefix) {
         let start = i + at;
         out.push_str(&text[i..start]);
-        // Only where a name starts, not inside `x.org.x.Bag`.
+        // Only where a name starts, not inside `x.org.x.Bag` or a path.
         let inside = text[..start]
             .chars()
             .next_back()
-            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$'));
-        if inside {
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '/' | '\\'));
+        let end = text[start..]
+            .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '-')))
+            .map_or(text.len(), |n| start + n);
+        // A file name such as `auth.service.ts`; extensions are lowercase,
+        // so a class `org.x.Go` still counts as a name.
+        let ext = text[start..end].rsplit('.').next().unwrap_or("");
+        let file = ext.chars().all(|c| c.is_ascii_lowercase())
+            && crate::rating::language(ext) != "unknown";
+        if inside || file {
             out.push_str(&prefix);
         }
         i = start + prefix.len();
@@ -346,6 +354,7 @@ pub fn relative(text: &str, package: Option<&str>) -> String {
     out
 }
 
+/// `JSON.stringify` of a string.
 pub fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -734,5 +743,22 @@ mod tests {
         );
         assert_eq!(relative("org.apache.c4.Bag", None), "org.apache.c4.Bag");
         assert_eq!(relative("Bag", Some("")), "Bag");
+    }
+
+    /// Script modules are named by file; a package that is a directory
+    /// must not cut a file name or path (`shop.py` → `py`).
+    #[test]
+    fn file_names_stay_whole_under_a_directory_package() {
+        let shop = Some("shop");
+        assert_eq!(relative("shop.py", shop), "shop.py");
+        assert_eq!(relative("shop/shop.py", shop), "shop/shop.py");
+        assert_eq!(relative("shop.py → shop.cart.Cart", shop), "shop.py → cart.Cart");
+        let auth = Some("auth");
+        assert_eq!(relative("auth.service.ts", auth), "auth.service.ts");
+        assert_eq!(
+            relative("src/auth/auth.service.ts::login", auth),
+            "src/auth/auth.service.ts::login"
+        );
+        assert_eq!(relative("org.x.Bag", Some("org/x")), "Bag");
     }
 }
