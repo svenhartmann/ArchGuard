@@ -185,7 +185,8 @@ fn pins(
     let anchors = (0..w.shown.len())
         .map(|a| center(&s.layout, v, a, 0.0))
         .collect();
-    place_pins(m, old, (&s.layout, w.shown.len()), v, rows, anchors);
+    let plan = (&s.layout, w.shown.len(), usize::MAX);
+    place_pins(m, old, plan, v, rows, anchors);
 }
 
 /// The connections, one row per tone, and the flow curves.

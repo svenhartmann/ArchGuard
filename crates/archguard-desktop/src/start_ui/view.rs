@@ -4,6 +4,7 @@
 use slint::{ComponentHandle, SharedString};
 
 use super::details;
+use super::evidence::Scope;
 use super::kpis;
 use super::layout::Cell;
 use super::overlay::{center, place_pins};
@@ -171,6 +172,9 @@ fn fill_outline(m: &mut StartModel, s: &StartState, v: &View) {
     }
 }
 
+/// Pins the Problems lens labels in full; the others wait as dots.
+const PROBLEM_PINS: usize = 5;
+
 /// Highest cell value per area (`areaMax`).
 fn area_max(s: &StartState) -> Vec<Option<f64>> {
     let mut max = vec![None; s.scope.areas.len()];
@@ -184,13 +188,14 @@ fn area_max(s: &StartState) -> Vec<Option<f64>> {
 }
 
 /// Pins in the web's order: in Explore by highest value, else cycles and
-/// findings first, then by size.
-fn pinned(s: &StartState, max: &[Option<f64>]) -> Vec<usize> {
-    let areas = &s.scope.areas;
+/// findings first; among those the hubs of a cycle (most partners), then
+/// most findings, then by size.
+fn pinned(scope: &Scope, lens: Lens, max: &[Option<f64>]) -> Vec<usize> {
+    let areas = &scope.areas;
     let mut order: Vec<usize> = (0..areas.len())
         .filter(|&a| !areas[a].entities.is_empty())
         .collect();
-    if s.lens == Lens::Explore {
+    if lens == Lens::Explore {
         order.sort_by(|&a, &b| {
             let v = |i: usize| max[i].unwrap_or(-1.0);
             v(b).total_cmp(&v(a))
@@ -198,13 +203,38 @@ fn pinned(s: &StartState, max: &[Option<f64>]) -> Vec<usize> {
         });
     } else {
         let flagged = |i: usize| areas[i].cyclic || !areas[i].findings.is_empty();
+        let partners: Vec<usize> = (0..areas.len())
+            .map(|a| cycle_partners(scope, a).len())
+            .collect();
         order.sort_by(|&a, &b| {
             flagged(b)
                 .cmp(&flagged(a))
+                .then(partners[b].cmp(&partners[a]))
+                .then(areas[b].findings.len().cmp(&areas[a].findings.len()))
                 .then(areas[b].entities.len().cmp(&areas[a].entities.len()))
+                .then_with(|| areas[a].name.cmp(&areas[b].name))
         });
     }
     order
+}
+
+/// Areas `area` shares cyclic connections with, strongest first.
+fn cycle_partners(scope: &Scope, area: usize) -> Vec<usize> {
+    let mut weight: Vec<(usize, u64)> = Vec::new();
+    for c in scope.connections.iter().filter(|c| c.cyclic) {
+        let other = match (c.from == area, c.to == area) {
+            (true, false) => c.to,
+            (false, true) => c.from,
+            _ => continue,
+        };
+        let refs = c.references.unwrap_or(0);
+        match weight.iter_mut().find(|(a, _)| *a == other) {
+            Some((_, w)) => *w += refs,
+            None => weight.push((other, refs)),
+        }
+    }
+    weight.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    weight.into_iter().map(|(a, _)| a).collect()
 }
 
 /// The pin's maximum as `start_world.slint` writes it (English, for the
@@ -224,9 +254,20 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
         .filter(|_| s.lens == Lens::Explore)
         .map(|v| l.num(v, 2))
         .unwrap_or_default();
+    // The strongest partner and how many more: what tells cyclic pins apart.
+    let partners = cycle_partners(&s.scope, area);
+    let short = |a: usize| {
+        let n = &s.scope.areas[a].name;
+        n.rsplit('/').next().unwrap_or(n).to_string()
+    };
+    let partner = partners.first().map(|&p| short(p)).unwrap_or_default();
     let mut marks = Vec::new();
     if a.cyclic {
-        marks.push("Package cycle".to_string());
+        marks.push(match partners.len() {
+            0 => "Package cycle".to_string(),
+            1 => format!("Cycle with {partner}"),
+            n => format!("Cycle with {partner} +{}", n - 1),
+        });
     }
     if !a.findings.is_empty() {
         marks.push(format!("{} findings", a.findings.len()));
@@ -247,6 +288,8 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
         cyclic: a.cyclic,
         findings: a.findings.len() as i32,
         max: max.into(),
+        partner: partner.into(),
+        partners: partners.len() as i32,
         w: pins::width(&name, &sub, a.module) as f32,
         ..Default::default()
     };
@@ -258,21 +301,29 @@ fn pin_row(l: Locale, s: &StartState, area: usize, max: Option<f64>) -> (StartPi
 fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, l: Locale) {
     let center = |area: usize, z: f64| center(&s.layout, v, area, z);
     let max = area_max(s);
-    let order = pinned(s, &max);
+    let order = pinned(&s.scope, s.lens, &max);
     let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(l, s, a, max[a]).0).collect();
     let anchors: Vec<(f64, f64)> = order.iter().map(|&a| center(a, 0.0)).collect();
-    place_pins(m, old, (&s.layout, s.scope.areas.len()), v, rows, anchors);
+    // Problems: a few distinct places to start; the rest show on hover.
+    let shown = if s.lens == Lens::Problems {
+        PROBLEM_PINS
+    } else {
+        usize::MAX
+    };
+    let plan = (&s.layout, s.scope.areas.len(), shown);
+    place_pins(m, old, plan, v, rows, anchors);
     if s.lens == Lens::Problems {
-        let (mut curves, mut heads) = (String::new(), String::new());
+        // The selected area's cycle edges at full strength, the rest muted.
+        let hot = s.selection.as_ref().map(|sel| sel.area);
+        let mut paths: [(String, String); 2] = Default::default();
         for c in s.scope.connections.iter().filter(|c| c.cyclic).take(60) {
-            super::arrows::arrow(
-                center(c.from, 0.2),
-                center(c.to, 0.2),
-                &mut curves,
-                &mut heads,
-            );
+            let (curves, heads) =
+                &mut paths[usize::from(hot.is_some_and(|a| a == c.from || a == c.to))];
+            super::arrows::arrow(center(c.from, 0.2), center(c.to, 0.2), curves, heads);
         }
+        let [(curves, heads), (hot_curves, hot_heads)] = paths;
         (m.arrows, m.heads) = (curves.into(), heads.into());
+        (m.arrows_hot, m.heads_hot) = (hot_curves.into(), hot_heads.into());
     }
 }
 
@@ -340,7 +391,66 @@ fn fill_coverage(m: &mut StartModel, s: &StartState) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::evidence::{Area, Connection};
     use super::*;
+
+    fn area(name: &str, cyclic: bool, findings: usize, entities: usize) -> Area {
+        Area {
+            name: name.into(),
+            module: false,
+            cyclic,
+            findings: (0..findings).collect(),
+            entities: (0..entities).collect(),
+        }
+    }
+
+    fn link(from: usize, to: usize, cyclic: bool, references: Option<u64>) -> Connection {
+        Connection {
+            from,
+            to,
+            cyclic,
+            references,
+        }
+    }
+
+    /// a, b and c form one cycle with b as its hub; d is clean but large.
+    fn tangle() -> Scope {
+        Scope {
+            areas: vec![
+                area("a", true, 2, 3),
+                area("b", true, 2, 1),
+                area("c", true, 2, 5),
+                area("d", false, 0, 9),
+            ],
+            connections: vec![
+                link(0, 1, true, Some(2)),
+                link(1, 0, true, Some(1)),
+                link(1, 2, true, Some(7)),
+                link(2, 1, true, None),
+                link(3, 0, false, Some(40)),
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// Problems pins lead with the area most cycle partners meet in: the
+    /// place to start untangling, not the largest package.
+    #[test]
+    fn problem_pins_lead_with_the_hub_of_a_cycle() {
+        assert_eq!(
+            pinned(&tangle(), Lens::Problems, &[None; 4]),
+            vec![1, 2, 0, 3]
+        );
+    }
+
+    /// A pin names its strongest cycle partner (most references) first.
+    #[test]
+    fn cycle_partners_run_strongest_first() {
+        let s = tangle();
+        assert_eq!(cycle_partners(&s, 1), vec![2, 0]);
+        assert_eq!(cycle_partners(&s, 0), vec![1]);
+        assert!(cycle_partners(&s, 3).is_empty());
+    }
 
     /// The width estimate names the shown KPI, as the pin does.
     #[test]
