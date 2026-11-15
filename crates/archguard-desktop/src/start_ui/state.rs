@@ -272,14 +272,19 @@ impl StartState {
             })
     }
 
-    /// Enter in the search: select the first match by area name.
+    /// Enter in the search: select the first match by area name; on the
+    /// services World by island path (its cells' areas are islands).
     pub(super) fn accept_search(&mut self) {
+        let name = |i: usize| -> &str {
+            let area = self.layout.cells[i].area;
+            match (&self.services, self.mode) {
+                (Some(w), Mode::Services) => &w.island(area).path,
+                _ => &self.scope.areas[area].name,
+            }
+        };
         let first = (0..self.layout.cells.len())
             .filter(|&i| self.matches(&self.layout.cells[i]))
-            .min_by(|&a, &b| {
-                let name = |i: usize| &self.scope.areas[self.layout.cells[i].area].name;
-                name(a).cmp(name(b))
-            });
+            .min_by(|&a, &b| name(a).cmp(name(b)));
         match (first, self.mode) {
             (Some(i), Mode::Services) => {
                 let area = self.layout.cells[i].area;
