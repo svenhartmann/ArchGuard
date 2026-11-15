@@ -122,11 +122,15 @@ fn start_live(ui: &AppWindow) {
     });
 }
 
-/// Re-read the active document's profile when its input changed.
+/// Re-read the active document's profile when its input changed and a pane
+/// shows the tab; a change while hidden is read once the tab shows again.
 fn tick(ui: &AppWindow) {
     let Some(doc) = documents::active_id() else {
         return;
     };
+    if !runtime_shown(&crate::panes_ui::layout()) {
+        return;
+    }
     let root = documents::with_state(doc, |s: &mut RuntimeState| {
         if !s.live || s.reloading || stamp(&s.root) == s.stamp {
             return None;
@@ -140,24 +144,51 @@ fn tick(ui: &AppWindow) {
     std::thread::spawn(move || {
         // Untraced: reading its own recording would record itself and
         // change the file it watches, so it would reload every second.
-        let profile = archguard_engine::self_trace::untraced(|| {
-            archguard_engine::runtime_profile(&root, None)
+        let (new, profile) = reload(&root, || {
+            archguard_engine::self_trace::untraced(|| {
+                archguard_engine::runtime_profile(&root, None)
+            })
         });
-        let new = stamp(&root);
         let _ = slint::invoke_from_event_loop(move || arrive(&weak, doc, profile, new));
     });
 }
 
-fn arrive(weak: &slint::Weak<AppWindow>, doc: DocId, profile: Option<RuntimeProfile>, new: Stamp) {
+fn arrive(
+    weak: &slint::Weak<AppWindow>,
+    doc: DocId,
+    profile: Result<Option<RuntimeProfile>, String>,
+    new: Stamp,
+) {
     let shown = documents::active_id() == Some(doc);
     documents::with_state(doc, |s: &mut RuntimeState| {
-        s.profile = profile.map(Arc::new);
-        s.stamp = new;
-        s.reloading = false;
+        land(s, profile, new);
         if let (true, Some(ui)) = (shown, weak.upgrade()) {
             push(&ui, s);
         }
     });
+}
+
+/// The stamp before `read` runs, so files that change while it reads count
+/// as new on the next tick, and what `read` returned or why it panicked.
+fn reload(
+    root: &Path,
+    read: impl FnOnce() -> Option<RuntimeProfile>,
+) -> (Stamp, Result<Option<RuntimeProfile>, String>) {
+    let new = stamp(root);
+    (new, tab_support::catch(read))
+}
+
+/// A failed reload keeps the last profile; the next change tries again.
+fn land(s: &mut RuntimeState, profile: Result<Option<RuntimeProfile>, String>, new: Stamp) {
+    if let Ok(profile) = profile {
+        s.profile = profile.map(Arc::new);
+    }
+    s.stamp = new;
+    s.reloading = false;
+}
+
+fn runtime_shown(l: &crate::panes::Layout) -> bool {
+    (0..l.panes.len()).any(|p| l.view(p).is_some_and(|t| t.kind == "runtime"))
 }
 
 impl TabState for RuntimeState {
@@ -267,6 +298,45 @@ mod tests {
         assert_eq!((before.files, before.bytes), (1, 3));
         std::fs::write(&file, "{}\n{}\n").unwrap();
         assert_ne!(stamp(dir.path()), before);
+    }
+
+    #[test]
+    fn a_reload_stamps_before_it_reads_so_appends_meanwhile_show_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = dir.path().join(".archguard/runtime/run-1");
+        std::fs::create_dir_all(&run).unwrap();
+        let file = run.join("traces-0.jsonl");
+        std::fs::write(&file, "{}\n").unwrap();
+        let (new, _) = reload(dir.path(), || {
+            std::fs::write(&file, "{}\n{}\n").unwrap();
+            None
+        });
+        assert_ne!(new, stamp(dir.path()), "the next tick reloads the append");
+    }
+
+    #[test]
+    fn a_panicking_reload_keeps_the_profile_and_stays_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let (new, profile) = reload(dir.path(), || panic!("reader failed"));
+        assert!(profile.is_err());
+        let old = Arc::new(RuntimeProfile::default());
+        let mut s = build_from(dir.path().to_path_buf());
+        s.profile = Some(old.clone());
+        s.reloading = true;
+        land(&mut s, profile, new);
+        assert!(!s.reloading, "the next change reloads again");
+        assert_eq!(s.stamp, new);
+        assert!(Arc::ptr_eq(s.profile.as_ref().unwrap(), &old));
+    }
+
+    #[test]
+    fn live_reload_runs_only_while_a_pane_shows_the_runtime_view() {
+        use crate::panes::Layout;
+        assert!(!runtime_shown(&Layout::single("graph")));
+        assert!(runtime_shown(&Layout::single("runtime")));
+        let mut l = Layout::single("graph");
+        l.split_right(Some("runtime"), None);
+        assert!(runtime_shown(&l));
     }
 
     #[test]
