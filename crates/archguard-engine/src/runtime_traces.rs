@@ -21,11 +21,11 @@ const NOTE: &str = "Runtime numbers come from imported OTLP traces: a sample of 
 pub fn runtime_profile(root: &Path, config: Option<&Path>) -> Option<RuntimeProfile> {
     let inputs = input::discover(root)?;
     let mut reader = input::Reader::new();
-    for (i, file) in inputs.iter().enumerate() {
+    for i in input::read_order(&inputs) {
         if reader.is_full() {
             break;
         }
-        reader.read(i, file);
+        reader.read(i, &inputs[i]);
     }
     let mut profile = RuntimeProfile {
         schema_version: 1,

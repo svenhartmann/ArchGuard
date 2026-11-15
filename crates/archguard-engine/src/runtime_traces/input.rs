@@ -36,7 +36,7 @@ pub(super) struct Reader {
     full: bool,
 }
 
-/// Input files in read order; `None` when the project has no runtime input at all.
+/// Input files in path order; `None` when the project has no runtime input at all.
 pub(super) fn discover(root: &Path) -> Option<Vec<Input>> {
     let mut inputs = Vec::new();
     let legacy = root.join(LEGACY);
@@ -55,6 +55,19 @@ pub(super) fn discover(root: &Path) -> Option<Vec<Input>> {
         }
     }
     (!inputs.is_empty()).then_some(inputs)
+}
+
+/// Indexes into `inputs` in read order: refused ones (no spans, only a
+/// diagnostic) first, then newest change first and, at equal times, the last
+/// path first, so the span limit drops the oldest recordings, not new requests.
+pub(super) fn read_order(inputs: &[Input]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..inputs.len()).collect();
+    order.sort_by_cached_key(|&i| {
+        let path = inputs[i].path.as_ref();
+        let modified = path.and_then(|p| fs::symlink_metadata(p).ok()?.modified().ok());
+        std::cmp::Reverse((path.is_none(), modified, i))
+    });
+    order
 }
 
 fn no_symlink(root: &Path, dir: &Path) -> bool {
@@ -241,7 +254,7 @@ impl Reader {
             self.diagnose(
                 &input.rel,
                 None,
-                format!("span limit of {MAX_SPANS} reached; remaining input not read"),
+                format!("span limit of {MAX_SPANS} reached; older input not read"),
             );
         }
     }
@@ -295,4 +308,43 @@ fn open(path: &Path) -> io::Result<fs::File> {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "symlink"));
     }
     fs::File::open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn the_newest_input_is_read_first_so_the_span_limit_drops_the_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let files = [
+            ("a-app/traces-0001.jsonl", 3),
+            ("b-app/traces-0001.jsonl", 1),
+            ("b-app/traces-0002.jsonl", 2),
+            ("b-app/traces-0003.jsonl", 2),
+        ];
+        for (name, secs) in files {
+            let path = dir.path().join(RUNTIME).join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = fs::File::create(&path).unwrap();
+            file.set_modified(t0 + Duration::from_secs(secs)).unwrap();
+        }
+        let inputs = discover(dir.path()).unwrap();
+        let order: Vec<&str> = read_order(&inputs)
+            .into_iter()
+            .map(|i| inputs[i].rel.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ".archguard/runtime/a-app/traces-0001.jsonl",
+                ".archguard/runtime/b-app/traces-0003.jsonl",
+                ".archguard/runtime/b-app/traces-0002.jsonl",
+                ".archguard/runtime/b-app/traces-0001.jsonl",
+            ],
+            "newest change first; equal times by path, highest number first"
+        );
+    }
 }
