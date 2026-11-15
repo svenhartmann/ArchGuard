@@ -97,6 +97,10 @@ pub fn language(file: &str) -> &'static str {
         "cs" => "csharp",
         "ts" | "tsx" => "typescript",
         "js" | "jsx" | "mjs" | "cjs" => "javascript",
+        "rs" => "rust",
+        "php" => "php",
+        "kt" | "kts" => "kotlin",
+        "py" => "python",
         _ => "unknown",
     }
 }
@@ -220,7 +224,7 @@ pub(crate) mod tests {
 
     #[test]
     fn unknown_language_and_small_cohorts_stay_neutral() {
-        let mut rows = vec![class("rust:a.rs::A", "a.rs", Some(11), None)];
+        let mut rows = vec![class("zig:a.zig::A", "a.zig", Some(11), None)];
         rows.extend(java(&[3, 4]));
         let cohorts = Cohorts::new(&rows);
         assert_eq!(cohorts.assess(&rows[0], "wmc").state, Rating::Small);
@@ -273,8 +277,14 @@ pub(crate) mod tests {
     #[test]
     fn languages_come_from_the_extension() {
         assert_eq!(language("src/A.TSX"), "typescript");
-        assert_eq!(language("lib.rs"), "unknown");
         assert_eq!(language("a/B.cs"), "csharp");
+        // Languages the engine measures classes for get their own cohort.
+        assert_eq!(language("lib.rs"), "rust");
+        assert_eq!(language("src/A.php"), "php");
+        assert_eq!(language("A.kt"), "kotlin");
+        assert_eq!(language("build.gradle.kts"), "kotlin");
+        assert_eq!(language("a/b.py"), "python");
+        assert_eq!(language("main.zig"), "unknown");
     }
 
     #[test]
