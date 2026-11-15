@@ -55,6 +55,28 @@ pub fn find(root: &Path) -> Option<Target> {
     None
 }
 
+/// Whether [`find`] returns `path` once it exists: an `arc42.md` in a
+/// searched folder, and no other arc42 text in the project.
+pub fn finds(root: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let named = rel
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().to_lowercase() == "arc42.md");
+    let dirs: Vec<String> = rel
+        .parent()
+        .into_iter()
+        .flat_map(Path::iter)
+        .map(|d| d.to_string_lossy().to_lowercase())
+        .collect();
+    // An `arc42/` folder is found as itself, unless it is the file's own.
+    let searched = dirs.iter().enumerate().all(|(i, d)| {
+        !d.starts_with('.') && !SKIP.contains(&d.as_str()) && (d != "arc42" || i + 1 == dirs.len())
+    });
+    named && searched && dirs.len() <= DEPTH && find(root).is_none()
+}
+
 /// One folder level of the search.
 #[derive(Default)]
 struct Level {
@@ -177,7 +199,8 @@ impl Arc42Files {
 
     /// Write chapter `n` with the edited Markdown; returns the file
     /// written. The generated blocks are refreshed, so edits inside them
-    /// do not survive; a broken block marker refuses the save.
+    /// do not survive; a broken block marker or a file changed on disk
+    /// since it was read refuses the save.
     pub fn save_chapter(
         &mut self,
         doc: &Arc42Document,
@@ -190,6 +213,23 @@ impl Arc42Files {
             edited.push('\n');
         }
         let (path, old) = self.file_of(n);
+        let on_disk = read(&path)?;
+        if on_disk != old {
+            // Load the new text, so saving again writes the chapter into it.
+            match (&self.target, on_disk) {
+                (Target::File(_), text) => self.whole = text,
+                (Target::Folder(_), Some(text)) => {
+                    self.chapters.insert(n, (path.clone(), text));
+                }
+                (Target::Folder(_), None) => {
+                    self.chapters.remove(&n);
+                }
+            }
+            return Err(format!(
+                "{} changed on disk since it was read; its new text is loaded, save again to write this chapter into it",
+                path.display()
+            ));
+        }
         let text = self.compose(doc, n, old.as_deref(), edited);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -283,7 +323,9 @@ fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
 fn heading_number(line: &str) -> Option<u8> {
     let rest = line.strip_prefix("## ")?;
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    if digits == 0 || !rest[digits..].starts_with('.') {
+    // `## 5.1 Whitebox` is a section of chapter 5, not its heading.
+    let after = rest[digits..].strip_prefix('.')?;
+    if digits == 0 || !(after.is_empty() || after.starts_with([' ', '\t', '\r', '\n'])) {
         return None;
     }
     rest[..digits].parse().ok()
@@ -335,11 +377,11 @@ fn put_section(text: &str, n: u8, chapter: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use archguard_engine::report::Arc42Chapter;
 
-    fn doc(evidence: &str) -> Arc42Document {
+    pub(crate) fn doc(evidence: &str) -> Arc42Document {
         Arc42Document {
             schema_version: 1,
             lang: archguard_engine::core::DocLang::De,
@@ -544,6 +586,88 @@ mod tests {
         assert!(written.starts_with("## 9. Title") && written.contains("New 9"));
         assert!(written.ends_with("Entscheidung A.\n"));
         assert!(!written.contains("## 10."));
+    }
+
+    #[test]
+    fn a_numbered_subsection_is_not_a_chapter_heading() {
+        let text = "## 5. Bausteine\n\n## 5.1 Whitebox\n\nw\n\n## 6.\n";
+        assert_eq!(heading_number("## 5.1 Whitebox"), None);
+        assert_eq!(heading_number("## 5.\n"), Some(5));
+        assert_eq!(section(text, 5), Some(0..text.find("## 6.").unwrap()));
+        assert_eq!(headings(text).count(), 2);
+    }
+
+    #[test]
+    fn a_file_changed_on_disk_refuses_the_save_and_keeps_the_change() {
+        let d = dir();
+        let path = d.path().join("arc42.md");
+        std::fs::write(&path, doc("Old").markdown(None)).unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        let new = doc("New");
+        let edited = files.chapter(&new, 5) + "Mein Kapitel 5.\n";
+        // Someone else edits chapter 9 meanwhile (git pull, an editor).
+        let theirs = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("Old 9", "Old 9 und Text von außen");
+        std::fs::write(&path, &theirs).unwrap();
+        assert!(files.save_chapter(&new, 5, &edited).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            theirs,
+            "not written"
+        );
+        // The new text is loaded: saving again keeps the other change.
+        files.save_chapter(&new, 5, &edited).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("Text von außen") && text.contains("Mein Kapitel 5."));
+    }
+
+    #[test]
+    fn a_chapter_file_changed_on_disk_refuses_the_save() {
+        let d = dir();
+        let folder = d.path().join("arc42");
+        std::fs::create_dir(&folder).unwrap();
+        let mut files = Arc42Files::load(Target::Folder(folder.clone())).unwrap();
+        let new = doc("New");
+        std::fs::write(folder.join("arc42-09.md"), "## 9. Von außen\n").unwrap();
+        assert!(files.save_chapter(&new, 9, "## 9. Meins\n").is_err());
+        assert_eq!(
+            std::fs::read_to_string(folder.join("arc42-09.md")).unwrap(),
+            "## 9. Von außen\n"
+        );
+    }
+
+    #[test]
+    fn finds_tells_whether_a_chosen_file_is_found_next_time() {
+        let d = dir();
+        let root = d.path();
+        assert!(finds(root, &root.join("arc42.md")));
+        assert!(finds(root, &root.join("docs/ARC42.md")));
+        assert!(finds(root, &root.join("docs/arc42/arc42.md")));
+        assert!(
+            finds(root, &root.join("a/b/c/d/arc42.md")),
+            "four levels deep"
+        );
+        assert!(!finds(root, &root.join("a/b/c/d/e/arc42.md")), "too deep");
+        assert!(
+            !finds(root, &root.join("docs/architecture.md")),
+            "other name"
+        );
+        assert!(
+            !finds(root, &root.join(".github/arc42.md")),
+            "hidden folder"
+        );
+        assert!(!finds(root, &root.join("build/arc42.md")), "build folder");
+        assert!(
+            !finds(root, &root.join("arc42/sub/arc42.md")),
+            "the folder wins"
+        );
+        assert!(!finds(root, Path::new("/elsewhere/arc42.md")), "outside");
+        std::fs::create_dir_all(root.join("docs/arc42")).unwrap();
+        assert!(
+            !finds(root, &root.join("arc42.md")),
+            "other arc42 text is found"
+        );
     }
 
     #[test]

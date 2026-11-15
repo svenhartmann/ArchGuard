@@ -8,35 +8,44 @@ use slint::{ComponentHandle, SharedString};
 
 use super::{blocks, markdown, sync};
 use crate::arc42_file::{self, Arc42Files, Target};
+use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 
 /// The project's arc42 text and the open chapter editor, if any.
 pub struct Editor {
+    /// The document whose open editor ([`Open`]) this shows; `show` sets
+    /// it, as the state is built on a worker that does not know it.
+    pub(super) doc: DocId,
     root: PathBuf,
     /// `None` until the user chose where to create it.
     files: Option<Arc42Files>,
     /// Why the project's arc42 text could not be read.
     files_error: String,
-    open: Option<Open>,
 }
 
-/// An open chapter editor.
+/// An open chapter editor. Kept per document as its own state, not in the
+/// derived `ArchitectureState`: a new analysis rebuilds that without
+/// dropping the draft, and another document's editor never shows here.
 struct Open {
     chapter: u8,
     /// No arc42 text in the project yet: the user is asked where to put it.
     ask_location: bool,
     error: String,
+    /// The edited Markdown.
+    draft: String,
+    /// The chapter as the editor opened it: an equal draft is unsaved nothing.
+    original: String,
 }
 
 impl Editor {
     /// Find and read the project's arc42 text.
-    pub fn new(root: &Path) -> Self {
+    pub fn new(doc: DocId, root: &Path) -> Self {
         let mut editor = Editor {
+            doc,
             root: root.to_path_buf(),
             files: None,
             files_error: String::new(),
-            open: None,
         };
         if let Some(target) = arc42_file::find(root) {
             match Arc42Files::load(target) {
@@ -47,8 +56,12 @@ impl Editor {
         editor
     }
 
+    fn with_open<R: Default>(&self, f: impl FnOnce(&mut Option<Open>) -> R) -> R {
+        documents::with_state(self.doc, f).unwrap_or_default()
+    }
+
     pub fn is_open(&self) -> bool {
-        self.open.is_some()
+        self.with_open(|o| o.is_some())
     }
 
     /// The chapter as the reader and the editor show it: the project's
@@ -68,43 +81,88 @@ impl Editor {
     }
 
     pub fn fill(&self, m: &mut ArchitectureModel) {
-        // The file the open chapter is saved to; the editor shows it.
-        m.file = match (&self.files, &self.open) {
-            (Some(f), Some(e)) => {
-                let path = f.path_of(e.chapter);
-                let shown = path.strip_prefix(&self.root).unwrap_or(&path);
-                shown.display().to_string().into()
+        self.with_open(|open| {
+            // The file the open chapter is saved to; the editor shows it.
+            m.file = match (&self.files, &*open) {
+                (Some(f), Some(e)) => {
+                    let path = f.path_of(e.chapter);
+                    let shown = path.strip_prefix(&self.root).unwrap_or(&path);
+                    shown.display().to_string().into()
+                }
+                _ => SharedString::new(),
+            };
+            m.file_error = self.files_error.as_str().into();
+            if let Some(e) = open {
+                m.editing = true;
+                m.ask_location = e.ask_location;
+                m.edit_error = e.error.as_str().into();
             }
-            _ => SharedString::new(),
-        };
-        m.file_error = self.files_error.as_str().into();
-        if let Some(e) = &self.open {
-            m.editing = true;
-            m.ask_location = e.ask_location;
-            m.edit_error = e.error.as_str().into();
-        }
+        });
     }
 
-    pub fn start(&mut self, ui: &AppWindow, doc: &Arc42Document, chapter: u8) {
+    pub fn start(&mut self, doc: &Arc42Document, chapter: u8) {
         let text = self.chapter(doc, chapter);
-        self.open = Some(Open {
+        let open = Open {
             chapter,
             ask_location: false,
             error: String::new(),
-        });
-        ui.global::<ArchitectureData>()
-            .set_draft(text.as_str().into());
-        self.preview(ui, &text);
+            draft: text.clone(),
+            original: text,
+        };
+        documents::set_state(self.doc, Some(open));
     }
 
-    pub fn cancel(&mut self) {
-        self.open = None;
+    /// Show this document's draft in the window's one editor.
+    pub fn show(&self, ui: &AppWindow) {
+        let Some(draft) = self.with_open(|o| o.as_ref().map(|e| e.draft.clone())) else {
+            return;
+        };
+        let d = ui.global::<ArchitectureData>();
+        if d.get_draft() != draft.as_str() {
+            d.set_draft(draft.as_str().into());
+        }
+        self.preview(ui, &draft);
+    }
+
+    /// Keep the edited text; the document is unsaved while it differs.
+    pub fn edit(&self, text: &str) {
+        let changed = self.with_open(|o| {
+            o.as_mut().map(|e| {
+                e.draft = text.to_string();
+                (e.chapter, e.draft != e.original)
+            })
+        });
+        if let Some((chapter, dirty)) = changed {
+            self.mark(chapter, dirty);
+        }
+    }
+
+    pub fn cancel(&self) {
+        if let Some(e) = self.with_open(Option::take) {
+            self.mark(e.chapter, false);
+        }
+    }
+
+    /// Mark the document dirty, or clean when nothing else of it is.
+    fn mark(&self, chapter: u8, dirty: bool) {
+        let what = format!("arc42 chapter {chapter}");
+        if dirty {
+            documents::mark_dirty(self.doc, &what);
+        } else if documents::with_store(|s| s.get(self.doc).is_some_and(|d| d.unsaved() == what)) {
+            documents::mark_clean(self.doc);
+        }
+    }
+
+    fn set_error(&self, error: String) {
+        self.with_open(|o| o.as_mut().map(|e| e.error = error));
     }
 
     /// Show the draft as the reader would.
     pub fn preview(&self, ui: &AppWindow, text: &str) {
-        let Some(e) = &self.open else { return };
-        let body = blocks::chapter_body(text, e.chapter, false);
+        let Some(chapter) = self.with_open(|o| o.as_ref().map(|e| e.chapter)) else {
+            return;
+        };
+        let body = blocks::chapter_body(text, chapter, false);
         let note = Texts::of(ui)
             .t("Diagram source · this diagram syntax is not supported in the viewer.")
             .to_string();
@@ -116,21 +174,21 @@ impl Editor {
 
     /// Save the draft; the path written, or `None` while the editor stays
     /// open (an error, or the question where to create the file).
-    pub fn save(&mut self, ui: &AppWindow, doc: &Arc42Document) -> Option<String> {
-        let edit = self.open.as_mut()?;
+    pub fn save(&mut self, doc: &Arc42Document) -> Option<String> {
+        let (chapter, draft) =
+            self.with_open(|o| o.as_ref().map(|e| (e.chapter, e.draft.clone())))?;
         let Some(files) = &mut self.files else {
-            edit.ask_location = true;
+            self.with_open(|o| o.as_mut().map(|e| e.ask_location = true));
             return None;
         };
-        let draft = ui.global::<ArchitectureData>().get_draft();
-        match files.save_chapter(doc, edit.chapter, &draft) {
+        match files.save_chapter(doc, chapter, &draft) {
             Ok(path) => {
                 self.files_error.clear();
-                self.open = None;
+                self.cancel();
                 Some(path.display().to_string())
             }
             Err(e) => {
-                edit.error = e;
+                self.set_error(e);
                 None
             }
         }
@@ -140,40 +198,41 @@ impl Editor {
     /// project folder (as `archguard doc --arc42`), 1 another file in the
     /// project, else cancel. Saves into the chosen file.
     pub fn choose(&mut self, ui: &AppWindow, doc: &Arc42Document, choice: i32) -> Option<String> {
-        let edit = self.open.as_mut()?;
-        edit.ask_location = false;
+        self.with_open(|o| o.as_mut().map(|e| e.ask_location = false))?;
         let path = match choice {
             0 => self.root.join("arc42.md"),
             1 => ask_path(ui, &self.root)?,
             _ => return None,
         };
-        if !path.starts_with(&self.root) {
-            edit.error = Texts::of(ui)
-                .t("Choose a place inside the project folder, so the app finds the file next time.")
-                .to_string();
+        if !arc42_file::finds(&self.root, &path) {
+            self.set_error(
+                Texts::of(ui)
+                    .t("Choose a place inside the project folder, so the app finds the file next time.")
+                    .to_string(),
+            );
             return None;
         }
         match Arc42Files::load(Target::File(path)) {
             Ok(f) => self.files = Some(f),
             Err(e) => {
-                edit.error = e;
+                self.set_error(e);
                 return None;
             }
         }
-        self.save(ui, doc)
+        self.save(doc)
     }
 
     /// `ARCHGUARD_DESKTOP_ARC_EDIT=1` opens the chapter editor, `=save`
     /// also saves it (asking where, in a project without arc42 text).
     #[cfg(feature = "snapshot")]
-    pub fn snapshot(&mut self, ui: &AppWindow, doc: &Arc42Document, chapter: u8) -> Option<String> {
+    pub fn snapshot(&mut self, doc: &Arc42Document, chapter: u8) -> Option<String> {
         let mode = std::env::var("ARCHGUARD_DESKTOP_ARC_EDIT").ok()?;
-        self.start(ui, doc, chapter);
-        (mode == "save").then(|| self.save(ui, doc)).flatten()
+        self.start(doc, chapter);
+        (mode == "save").then(|| self.save(doc)).flatten()
     }
 
     #[cfg(not(feature = "snapshot"))]
-    pub fn snapshot(&mut self, _: &AppWindow, _: &Arc42Document, _: u8) -> Option<String> {
+    pub fn snapshot(&mut self, _: &Arc42Document, _: u8) -> Option<String> {
         None
     }
 }
@@ -189,4 +248,62 @@ fn ask_path(ui: &AppWindow, root: &Path) -> Option<PathBuf> {
         .add_filter("Markdown", &["md"])
         .set_directory(root)
         .save_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::arc42_file::tests::doc;
+
+    /// A project with an `arc42.md`, open as a document.
+    fn project() -> (tempfile::TempDir, DocId) {
+        let d = tempfile::tempdir().expect("temp dir");
+        std::fs::write(d.path().join("arc42.md"), doc("Old").markdown(None)).unwrap();
+        let (id, _) = documents::with_store(|s| s.open(d.path()));
+        (d, id)
+    }
+
+    #[test]
+    fn each_document_keeps_its_own_draft() {
+        let ((a_dir, a), (b_dir, b)) = (project(), project());
+        let new = doc("Old");
+        let mut in_a = Editor::new(a, a_dir.path());
+        in_a.start(&new, 5);
+        in_a.edit("## 5. Title\n\nText von A.\n");
+        // The other document opens an editor meanwhile.
+        let mut in_b = Editor::new(b, b_dir.path());
+        in_b.start(&new, 3);
+        in_b.edit("## 3. Title\n\nText von B.\n");
+        let path = a_dir.path().join("arc42.md");
+        assert_eq!(in_a.save(&new), Some(path.display().to_string()));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("Text von A.") && !text.contains("Text von B."));
+        assert!(!in_a.is_open() && in_b.is_open());
+    }
+
+    #[test]
+    fn an_open_draft_survives_a_new_analysis_and_marks_the_document_dirty() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        let original = editor.chapter(&new, 5);
+        editor.edit(&(original.clone() + "Neu.\n"));
+        assert!(documents::is_dirty(a), "the close and quit prompt asks");
+        editor.edit(&original);
+        assert!(!documents::is_dirty(a), "back to the file: nothing unsaved");
+        editor.edit(&(original + "Neu.\n"));
+        // A new analysis drops the derived state; its editor is built again.
+        documents::with_store(|s| s.get_mut(a).map(documents::Document::forget_derived));
+        let mut rebuilt = Editor::new(a, dir.path());
+        assert!(rebuilt.is_open());
+        documents::mark_dirty(a, "Layer rules");
+        assert!(rebuilt.save(&new).is_some());
+        let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
+        assert!(text.contains("Neu.\n"));
+        assert!(
+            documents::is_dirty(a),
+            "the other unsaved change stays marked"
+        );
+    }
 }
