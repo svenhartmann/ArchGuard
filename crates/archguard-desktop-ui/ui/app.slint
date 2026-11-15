@@ -208,6 +208,16 @@ export component AppWindow inherits Window {
         return @tr("Could not save the changes: {}", root.notice);
     }
 
+    // Why a view has nothing to show for the active document ("" when it
+    // has data or is still loading): the view bar dims its tab.
+    pure function empty-reason(view: string) -> string {
+        if view == "security" && SecurityData.model.status == "not_scanned" { return @tr("Not scanned: no dependency scan exists for this project."); }
+        if view == "runtime" && RuntimeData.model.state == 2 { return @tr("No runtime recordings for this project."); }
+        if view == "services" && (ServicesData.model.state >= 2 || (ServicesData.model.state == 1
+                && ServicesData.model.services + ServicesData.model.applications + ServicesData.model.containers == 0)) { return @tr("No services found in this project."); }
+        return "";
+    }
+
     property <int> fit-tick;
     public function fit-views() {
         fit-tick += 1;
@@ -392,22 +402,32 @@ export component AppWindow inherits Window {
             // The header's width decides how much it shows (never its
             // content, so no width -> content -> layout loop): level 0 all
             // labels, 1 icon-only buttons and the build-unit count, 2 also
-            // without the project title (the document tab shows it) and the
-            // theme and About buttons (the View and Help menus have them).
-            property <bool> graph: root.focused-view == "graph";
+            // without the project title (the document tab shows it) and
+            // with the web viewer, theme and About in a "more" menu. The
+            // Graph's two toggles count in every view, so a button's label
+            // does not change with the view.
+            // The view bar at a tab padding, from its bold labels (not from
+            // `tabs`, whose padding follows the level): 9 tabs, 2 dividers.
+            pure function bar(pad: length) -> length {
+                return m-labels.preferred-width + 9 * pad + 8px + 10 * 2px + 2 * 9px;
+            }
             property <length> gap: 14px;
-            property <length> fixed: 28px + logo.preferred-width + tabs.preferred-width + 5 * self.gap;
-            property <length> chip-full: root.sub-projects.length > 0 ? m-chip.min-width + self.gap : 0;
-            property <length> chip-count: root.sub-projects.length > 0 ? m-count.min-width + self.gap : 0;
-            property <length> full: self.fixed + min(title.preferred-width, 180px) + self.chip-full + 200px
-                + m-web.min-width + (self.graph ? m-explorer.min-width + m-details.min-width + 2 * self.gap : 0)
-                + 2 * (Theme.control-h + self.gap);
-            property <length> icons: self.fixed + min(title.preferred-width, 180px) + self.chip-count + 160px
-                + Theme.control-h + (self.graph ? 4 : 2) * (Theme.control-h + self.gap);
-            // Level 2 in the Graph: the window is never narrower.
-            out property <length> tight: 28px + logo.preferred-width + tabs.preferred-width + self.chip-count + 120px
-                + 3 * Theme.control-h + 6 * self.gap;
+            property <length> button: Theme.control-h + self.gap;
+            property <length> chip: root.sub-projects.length > 0 ? m-count.min-width + self.gap : 0;
+            property <length> chip-text: root.sub-projects.length > 0 ? m-chip.min-width - m-count.min-width : 0;
+            // Logo, view bar, split, the Graph's toggles, the count chip,
+            // title, search and the buttons at the right.
+            property <length> full: 28px + logo.preferred-width + self.bar(24px) + 3 * self.button + self.chip
+                + 3 * self.gap + min(title.preferred-width, 180px) + self.gap + self.chip-text
+                + 200px + m-web.min-width + self.gap + 2 * self.button;
+            property <length> icons: 28px + logo.preferred-width + self.bar(24px) + 3 * self.button + self.chip
+                + 3 * self.gap + min(title.preferred-width, 180px) + self.gap + 160px + 3 * self.button;
+            // Level 2 (tabs padded less, gaps of 8px, split in the menu):
+            // the window is never narrower.
+            out property <length> tight: 28px + logo.preferred-width + self.bar(12px) + 3 * (Theme.control-h + 8px)
+                + (root.sub-projects.length > 0 ? m-count.min-width + 8px : 0) + 3 * 8px + 100px;
             property <int> level: self.width >= self.full ? 0 : self.width >= self.icons ? 1 : 2;
+            out property <length> tab-pad: self.level == 2 ? 12px : 24px;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
             // Off-screen copies that measure the full-width controls.
             Rectangle {
@@ -417,8 +437,12 @@ export component AppWindow inherits Window {
                 m-chip := Button { compact: true; icon: Icons.package; text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length)); }
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
                 m-web := Button { text: @tr("Web viewer"); icon: Icons.external; }
-                m-explorer := Button { text: @tr("Explorer"); icon: Icons.panel-left; }
-                m-details := Button { text: @tr("Details"); icon: Icons.panel-right; }
+                m-labels := Text {
+                    text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
+                        + Views.label("services") + Views.label("runtime") + Views.label("quality") + Views.label("security");
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-strong;
+                }
             }
             // Placed with an explicit size, so the header's own size never
             // depends on what the level shows.
@@ -429,7 +453,7 @@ export component AppWindow inherits Window {
                 height: header.height;
                 padding-left: 16px;
                 padding-right: 12px;
-                spacing: header.gap;
+                spacing: header.level == 2 ? 8px : header.gap;
                 logo := Text {
                     text: "AG";
                     color: Theme.accent;
@@ -452,6 +476,7 @@ export component AppWindow inherits Window {
                     compact: true;
                     icon: Icons.package;
                     text: header.level == 0 ? m-chip.text : m-count.text;
+                    tip: header.level == 0 ? "" : m-chip.text;
                     pressed-state: root.projects-open;
                     clicked => { root.projects-open = !root.projects-open; }
                 }
@@ -467,51 +492,60 @@ export component AppWindow inherits Window {
                         padding: 4px;
                         spacing: 2px;
                         alignment: start;
-                        ViewBarTab { view: "start"; active: root.tab == "start"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "architecture"; active: root.tab == "architecture"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "start"; active: root.tab == "start"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "architecture"; active: root.tab == "architecture"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         Rectangle { width: 9px; Divider { } }
-                        ViewBarTab { view: "graph"; active: root.tab == "graph"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "dsm"; active: root.tab == "dsm"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "services"; active: root.tab == "services"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "runtime"; active: root.tab == "runtime"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "graph"; active: root.tab == "graph"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "dsm"; active: root.tab == "dsm"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "calls"; active: root.tab == "calls"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "services"; active: root.tab == "services"; empty-reason: root.empty-reason("services"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "runtime"; active: root.tab == "runtime"; empty-reason: root.empty-reason("runtime"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                         Rectangle { width: 9px; Divider { } }
-                        ViewBarTab { view: "quality"; active: root.tab == "quality"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
-                        ViewBarTab { view: "security"; active: root.tab == "security"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "quality"; active: root.tab == "quality"; navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
+                        ViewBarTab { pad: header.tab-pad; view: "security"; active: root.tab == "security"; empty-reason: root.empty-reason("security"); navigate(v) => { root.navigate(v); } open-tab(v) => { root.open-view-tab(v); } open-side(v) => { root.split-view(v); } }
                     }
+                }
+                // Split the window; once split, each pane's strip closes it.
+                if header.level < 2 && root.panes.length < 2: Button {
+                    y: (parent.height - self.height) / 2;
+                    icon: Icons.split;
+                    tip: @tr("Split right");
+                    clicked => { root.split-right(); }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 SearchField {
-                    width: header.level == 0 ? 200px : header.level == 1 ? 160px : 120px;
+                    width: header.level == 0 ? 200px : header.level == 1 ? 160px : 100px;
                     y: (parent.height - self.height) / 2;
                     placeholder: @tr("Search modules");
                     edited(t) => { root.search(t); root.show-explorer = true; }
                     accepted(t) => { if (root.hits.length > 0) { root.reveal-hit(root.hits[0].node); } }
                 }
-                Button {
+                if header.level < 2: Button {
                     y: (parent.height - self.height) / 2;
                     text: header.level == 0 ? m-web.text : "";
+                    tip: @tr("Open in web viewer");
                     icon: Icons.external;
                     clicked => { root.open-web(root.tab); }
                 }
                 // Explorer and details belong to the Graph view.
-                if header.graph: Button {
+                if root.focused-view == "graph": Button {
                     y: (parent.height - self.height) / 2;
-                    text: header.level == 0 ? m-explorer.text : "";
-                    icon: Icons.panel-left;
+                    icon: Icons.tree;
+                    tip: @tr("Show or hide the explorer");
                     pressed-state: root.show-explorer;
                     clicked => { root.show-explorer = !root.show-explorer; }
                 }
-                if header.graph: Button {
+                if root.focused-view == "graph": Button {
                     y: (parent.height - self.height) / 2;
-                    text: header.level == 0 ? m-details.text : "";
-                    icon: Icons.panel-right;
+                    icon: Icons.details;
+                    tip: @tr("Show or hide the details");
                     pressed-state: root.show-details;
                     clicked => { root.show-details = !root.show-details; }
                 }
                 if header.level < 2: Button {
                     y: (parent.height - self.height) / 2;
                     icon: Theme.dark ? Icons.sun : Icons.moon;
+                    tip: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                     clicked => {
                         root.set-dark(!Theme.dark);
                         root.choose-theme(Theme.dark);
@@ -520,12 +554,39 @@ export component AppWindow inherits Window {
                 if header.level < 2: Button {
                     y: (parent.height - self.height) / 2;
                     icon: Icons.info;
+                    tip: @tr("About ArchGuard · Hartmann Software Engineering");
                     clicked => { about.show(); }
-                    TipArea {
-                        tip: @tr("About ArchGuard · Hartmann Software Engineering");
-                        pin-on-click: false;
-                        mouse-cursor: pointer;
-                        activated => { about.show(); }
+                }
+                // Level 2: what no longer fits, in a menu.
+                if header.level == 2: more := ContextMenuArea {
+                    width: Theme.control-h;
+                    Menu {
+                        MenuItem {
+                            title: @tr("Split right");
+                            enabled: root.panes.length < 2;
+                            activated => { root.split-right(); }
+                        }
+                        MenuItem {
+                            title: @tr("Open in web viewer");
+                            activated => { root.open-web(root.tab); }
+                        }
+                        MenuItem {
+                            title: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
+                            activated => {
+                                root.set-dark(!Theme.dark);
+                                root.choose-theme(Theme.dark);
+                            }
+                        }
+                        MenuItem {
+                            title: @tr("About ArchGuard");
+                            activated => { about.show(); }
+                        }
+                    }
+                    Button {
+                        y: (parent.height - self.height) / 2;
+                        icon: Icons.more;
+                        tip: @tr("More");
+                        clicked => { more.show({ x: 0, y: (parent.height + self.height) / 2 }); }
                     }
                 }
             }
@@ -605,9 +666,9 @@ export component AppWindow inherits Window {
                 // A click on a pane's background focuses it.
                 TouchArea { clicked => { root.focus-pane(i); } }
                 VerticalLayout {
-                    // Always shown, so the view does not jump down when a
-                    // second tab or pane opens.
-                    PaneStrip {
+                    // Only with a second tab or pane: a single tab would
+                    // repeat the view bar (the header has the split button).
+                    if root.panes.length > 1 || p.tabs.length > 1: PaneStrip {
                         pane: p;
                         split: root.panes.length > 1;
                         show-follow: root.panes.length > 1 && i == 1;
@@ -617,7 +678,6 @@ export component AppWindow inherits Window {
                         select(j) => { root.select-view-tab(i, j); }
                         close(j) => { root.close-view-tab(i, j); }
                         close-pane => { root.close-pane(i); }
-                        split-right => { root.split-right(); }
                         export(j, format) => { root.export-tab(i, j, format); }
                     }
                     if p.view == "dsm": MatrixView {
@@ -735,7 +795,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    if root.projects-open: ProjectsMenu {
+    if root.projects-open && root.sub-projects.length > 0: ProjectsMenu {
         items: root.sub-projects;
         menu-x: 60px;
         menu-y: 38px + 50px;

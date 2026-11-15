@@ -48,7 +48,7 @@ msgstr "Keine Einstellung passt zur Suche."
 
 msgctxt "Settings"
 msgid "Not included: baseline acceptance and the review key-figure gates that archguard check adds."
-msgstr "Nicht enthalten: Baseline-Akzeptanz und die Kennzahl-Gates aus [review], die archguard check ergänzt."
+msgstr "Nicht enthalten: Baseline-Akzeptanz und die Kennzahl-Schwellen aus [review], die archguard check ergänzt."
 
 msgctxt "Settings"
 msgid "Not saved: the file changed on disk since it was loaded."
@@ -230,7 +230,7 @@ msgid "Exact CODEOWNERS token of the forbidden target."
 msgstr "Exaktes CODEOWNERS-Token des verbotenen Ziels."
 
 msgid "Cycle policy and quality gates."
-msgstr "Zyklusregel und Qualitäts-Gates."
+msgstr "Zyklusregel und Qualitätsschwellen."
 
 msgid "Forbid cycles between modules, even between files, or allow them."
 msgstr "Zyklen zwischen Modulen verbieten, sogar zwischen Dateien, oder erlauben."
@@ -242,13 +242,13 @@ msgid "Path of the baseline file with accepted cycles."
 msgstr "Pfad der Baseline-Datei mit akzeptierten Zyklen."
 
 msgid "Gate for the average component dependency of the module view; 0 disables it."
-msgstr "Gate für die durchschnittliche Komponentenabhängigkeit der Modulansicht; 0 schaltet es ab."
+msgstr "Schwelle für die durchschnittliche Komponentenabhängigkeit der Modulansicht; 0 schaltet sie ab."
 
 msgid "Gate for the instability (0 to 1) of bottom-layer modules; 0 disables it."
-msgstr "Gate für die Instabilität (0 bis 1) der Module der untersten Schicht; 0 schaltet es ab."
+msgstr "Schwelle für die Instabilität (0 bis 1) der Module der untersten Schicht; 0 schaltet sie ab."
 
 msgid "Review settings and key-figure gates."
-msgstr "Prüfeinstellungen und Kennzahl-Gates."
+msgstr "Prüfeinstellungen und Kennzahl-Schwellen."
 
 msgid "History window for change counts: a date (2026-01-31) or e.g. 180.days."
 msgstr "Zeitfenster der Historie für Änderungszahlen: ein Datum (2026-01-31) oder z. B. 180.days."
@@ -257,19 +257,19 @@ msgid "Globs of entry files that are never orphan candidates."
 msgstr "Globs der Einstiegsdateien, die nie als verwaist gelten."
 
 msgid "Opt-in file-level orphan gate; a candidate is not proof of dead code."
-msgstr "Optionales Gate für verwaiste Dateien; ein Kandidat belegt keinen toten Code."
+msgstr "Optionale Schwelle für verwaiste Dateien; ein Kandidat belegt keinen toten Code."
 
 msgid "Weights of the health index parts (name = weight); unlisted parts weigh 1."
 msgstr "Gewichte der Teile des Gesundheitsindex (Name = Gewicht); nicht genannte Teile wiegen 1."
 
 msgid "Gate: maximum number of stable-dependencies violations; absent = off."
-msgstr "Gate: höchste Zahl von Verstößen gegen stabile Abhängigkeiten; fehlt = aus."
+msgstr "Schwelle: höchste Zahl von Verstößen gegen stabile Abhängigkeiten; fehlt = aus."
 
 msgid "Gate: maximum share (0 to 1) of modules in cycles; absent = off."
-msgstr "Gate: höchster Anteil (0 bis 1) von Modulen in Zyklen; fehlt = aus."
+msgstr "Schwelle: höchster Anteil (0 bis 1) von Modulen in Zyklen; fehlt = aus."
 
 msgid "Gate: maximum propagation cost (0 to 1) of a cycle group; absent = off."
-msgstr "Gate: höchste Ausbreitungskosten (0 bis 1) einer Zyklusgruppe; fehlt = aus."
+msgstr "Schwelle: höchste Ausbreitungskosten (0 bis 1) einer Zyklusgruppe; fehlt = aus."
 
 msgid "Accept-risk review decisions must link an ADR."
 msgstr "Prüfentscheidungen mit akzeptiertem Risiko müssen auf eine ADR verweisen."
@@ -290,13 +290,13 @@ msgid "Thresholds of the runtime findings from recorded traces."
 msgstr "Schwellen der Laufzeit-Befunde aus aufgezeichneten Traces."
 
 msgid "Calls of one statement from one call site within one request that count as N+1; at least 2."
-msgstr "Aufrufe eines Statements von einer Code-Stelle innerhalb eines Requests, ab denen es als N+1 gilt; mindestens 2."
+msgstr "Aufrufe einer Anweisung von einer Code-Stelle innerhalb einer Anfrage, ab denen sie als N+1 gilt; mindestens 2."
 
 msgid "Database calls per request (95th percentile) from which an endpoint counts as chatty."
-msgstr "DB-Aufrufe pro Request (95. Perzentil), ab denen ein Endpoint als gesprächig gilt."
+msgstr "DB-Aufrufe pro Anfrage (95. Perzentil), ab denen ein Endpunkt als gesprächig gilt."
 
 msgid "Execution time in ms (95th percentile) from which a statement counts as slow."
-msgstr "Ausführungszeit in ms (95. Perzentil), ab der ein Statement als langsam gilt."
+msgstr "Ausführungszeit in ms (95. Perzentil), ab der eine Anweisung als langsam gilt."
 
 msgid "Explicit organization intent: goals, constraints, decisions, target model."
 msgstr "Ausdrückliche Absicht der Organisation: Ziele, Randbedingungen, Entscheidungen, Zielmodell."
@@ -404,7 +404,7 @@ msgid "Java compiler settings."
 msgstr "Einstellungen des Java-Compilers."
 
 msgid "Java release (at least 6); otherwise build metadata, then the running JDK."
-msgstr "Java-Release (mindestens 6); sonst Build-Metadaten, dann das laufende JDK."
+msgstr "Java-Version (mindestens 6); sonst Build-Metadaten, dann das laufende JDK."
 
 msgid "Existing jars or class directories, relative to the project root."
 msgstr "Vorhandene JARs oder Klassenverzeichnisse, relativ zum Projektstamm."
@@ -453,3 +453,291 @@ msgstr "IDs der Diagramme, die im Dokument fehlen; alle anderen werden gezeigt."
 
 msgid "Package map levels put into the document, as map@package."
 msgstr "Ebenen der Paketkarte, die ins Dokument kommen, als karte@paket."
+
+msgctxt "Settings"
+msgid "Source directories"
+msgstr "Quellverzeichnisse"
+
+msgctxt "Settings"
+msgid "Excluded paths"
+msgstr "Ausgeschlossene Pfade"
+
+msgctxt "Settings"
+msgid "Languages"
+msgstr "Sprachen"
+
+msgctxt "Settings"
+msgid "Module depth"
+msgstr "Modultiefe"
+
+msgctxt "Settings"
+msgid "Derive layers"
+msgstr "Schichten ableiten"
+
+msgctxt "Settings"
+msgid "Declared layers"
+msgstr "Deklarierte Schichten"
+
+msgctxt "Settings"
+msgid "Name"
+msgstr "Name"
+
+msgctxt "Settings"
+msgid "Contained modules"
+msgstr "Enthaltene Module"
+
+msgctxt "Settings"
+msgid "May depend on"
+msgstr "Darf abhängen von"
+
+msgctxt "Settings"
+msgid "Forbidden dependencies"
+msgstr "Verbotene Abhängigkeiten"
+
+msgctxt "Settings"
+msgid "From"
+msgstr "Von"
+
+msgctxt "Settings"
+msgid "To"
+msgstr "Nach"
+
+msgctxt "Settings"
+msgid "Severity"
+msgstr "Schweregrad"
+
+msgctxt "Settings"
+msgid "Message"
+msgstr "Meldung"
+
+msgctxt "Settings"
+msgid "Forbidden owner dependencies"
+msgstr "Verbotene Abhängigkeiten zwischen Zuständigen"
+
+msgctxt "Settings"
+msgid "Forbidden cycles"
+msgstr "Verbotene Zyklen"
+
+msgctxt "Settings"
+msgid "Largest cycle group"
+msgstr "Größte Zyklusgruppe"
+
+msgctxt "Settings"
+msgid "Baseline file"
+msgstr "Baseline-Datei"
+
+msgctxt "Settings"
+msgid "Maximum ACD"
+msgstr "Höchste ACD"
+
+msgctxt "Settings"
+msgid "Maximum instability of the bottom layer"
+msgstr "Höchste Instabilität der untersten Schicht"
+
+msgctxt "Settings"
+msgid "History window"
+msgstr "Zeitfenster der Historie"
+
+msgctxt "Settings"
+msgid "Entry points"
+msgstr "Einstiegspunkte"
+
+msgctxt "Settings"
+msgid "Orphan files"
+msgstr "Verwaiste Dateien"
+
+msgctxt "Settings"
+msgid "Health index weights"
+msgstr "Gewichte des Gesundheitsindex"
+
+msgctxt "Settings"
+msgid "Maximum SDP violations"
+msgstr "Höchstzahl SDP-Verstöße"
+
+msgctxt "Settings"
+msgid "Maximum tangledness"
+msgstr "Höchste Verflechtung"
+
+msgctxt "Settings"
+msgid "Maximum propagation cost"
+msgstr "Höchste Ausbreitungskosten"
+
+msgctxt "Settings"
+msgid "ADR required to accept a risk"
+msgstr "ADR nötig, um ein Risiko zu akzeptieren"
+
+msgctxt "Settings"
+msgid "Heavy imports"
+msgstr "Schwere Importe"
+
+msgctxt "Settings"
+msgid "Minimum re-exports of a barrel"
+msgstr "Mindestzahl Re-Exporte einer Barrel-Datei"
+
+msgctxt "Settings"
+msgid "Minimum re-export share of a barrel"
+msgstr "Mindestanteil Re-Exporte einer Barrel-Datei"
+
+msgctxt "Settings"
+msgid "Minimum calls for N+1"
+msgstr "Mindestaufrufe für N+1"
+
+msgctxt "Settings"
+msgid "Database calls of a chatty endpoint"
+msgstr "Datenbankaufrufe eines gesprächigen Endpunkts"
+
+msgctxt "Settings"
+msgid "Slow statement (ms)"
+msgstr "Langsame Anweisung (ms)"
+
+msgctxt "Settings"
+msgid "Quality goals"
+msgstr "Qualitätsziele"
+
+msgctxt "Settings"
+msgid "Priority"
+msgstr "Priorität"
+
+msgctxt "Settings"
+msgid "Rationale"
+msgstr "Begründung"
+
+msgctxt "Settings"
+msgid "Quality attribute"
+msgstr "Qualitätsmerkmal"
+
+msgctxt "Settings"
+msgid "Scope"
+msgstr "Geltungsbereich"
+
+msgctxt "Settings"
+msgid "Quality scenario"
+msgstr "Qualitätsszenario"
+
+msgctxt "Settings"
+msgid "Constraints"
+msgstr "Randbedingungen"
+
+msgctxt "Settings"
+msgid "Decisions"
+msgstr "Entscheidungen"
+
+msgctxt "Settings"
+msgid "ID"
+msgstr "ID"
+
+msgctxt "Settings"
+msgid "Title"
+msgstr "Titel"
+
+msgctxt "Settings"
+msgid "Status"
+msgstr "Status"
+
+msgctxt "Settings"
+msgid "Chosen option"
+msgstr "Gewählte Option"
+
+msgctxt "Settings"
+msgid "Alternatives"
+msgstr "Alternativen"
+
+msgctxt "Settings"
+msgid "Accepted trade-offs"
+msgstr "Akzeptierte Nachteile"
+
+msgctxt "Settings"
+msgid "Links"
+msgstr "Verweise"
+
+msgctxt "Settings"
+msgid "Target architecture"
+msgstr "Zielarchitektur"
+
+msgctxt "Settings"
+msgid "Every module in a component"
+msgstr "Jedes Modul in einer Komponente"
+
+msgctxt "Settings"
+msgid "Components"
+msgstr "Komponenten"
+
+msgctxt "Settings"
+msgid "Included modules"
+msgstr "Zugeordnete Module"
+
+msgctxt "Settings"
+msgid "Public modules"
+msgstr "Öffentliche Module"
+
+msgctxt "Settings"
+msgid "Maximum incoming components"
+msgstr "Höchstzahl eingehender Komponenten"
+
+msgctxt "Settings"
+msgid "Maximum outgoing components"
+msgstr "Höchstzahl ausgehender Komponenten"
+
+msgctxt "Settings"
+msgid "Allowed dependencies"
+msgstr "Erlaubte Abhängigkeiten"
+
+msgctxt "Settings"
+msgid "AsyncAPI documents"
+msgstr "AsyncAPI-Dokumente"
+
+msgctxt "Settings"
+msgid "Java"
+msgstr "Java"
+
+msgctxt "Settings"
+msgid "Java release"
+msgstr "Java-Version"
+
+msgctxt "Settings"
+msgid "Class path"
+msgstr "Klassenpfad"
+
+msgctxt "Settings"
+msgid "C#"
+msgstr "C#"
+
+msgctxt "Settings"
+msgid "Project file"
+msgstr "Projektdatei"
+
+msgctxt "Settings"
+msgid "Build configuration"
+msgstr "Build-Konfiguration"
+
+msgctxt "Settings"
+msgid "Target framework"
+msgstr "Ziel-Framework"
+
+msgctxt "Settings"
+msgid "TypeScript"
+msgstr "TypeScript"
+
+msgctxt "Settings"
+msgid "TypeScript compiler"
+msgstr "TypeScript-Compiler"
+
+msgctxt "Settings"
+msgid "Database file"
+msgstr "Datenbankdatei"
+
+msgctxt "Settings"
+msgid "Refresh on every check"
+msgstr "Bei jeder Prüfung aktualisieren"
+
+msgctxt "Settings"
+msgid "Diagram format"
+msgstr "Diagrammformat"
+
+msgctxt "Settings"
+msgid "Hidden diagrams"
+msgstr "Ausgeblendete Diagramme"
+
+msgctxt "Settings"
+msgid "Package map levels"
+msgstr "Ebenen der Paketkarte"
