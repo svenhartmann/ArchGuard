@@ -304,7 +304,7 @@ fn fill_overlay(m: &mut StartModel, old: &StartModel, s: &StartState, v: &View, 
     let order = pinned(&s.scope, s.lens, &max);
     let rows: Vec<StartPin> = order.iter().map(|&a| pin_row(l, s, a, max[a]).0).collect();
     let anchors: Vec<(f64, f64)> = order.iter().map(|&a| center(a, 0.0)).collect();
-    // Problems: a few distinct places to start; the rest show on hover.
+    // Problems: a few distinct places to start; the rest wait as dots.
     let shown = if s.lens == Lens::Problems {
         PROBLEM_PINS
     } else {

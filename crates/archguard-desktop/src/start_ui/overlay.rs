@@ -112,6 +112,7 @@ pub fn place_pins(
         match spot {
             Spot::Off => continue,
             Spot::Collapsed => pin.collapsed = true,
+            Spot::Waiting => (pin.collapsed, pin.waiting) = (true, true),
             Spot::Shown(r) => {
                 let (fx, fy) = r.nearest((ax, ay));
                 let _ = write!(leaders, "M {fx:.1} {fy:.1} L {ax:.1} {ay:.1} ");
