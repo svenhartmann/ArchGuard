@@ -81,89 +81,35 @@ pub fn layout(nodes: &[Node], links: &[Link], width: f32) -> Layout {
     if nodes.is_empty() {
         return Layout::default();
     }
-    let cmp = |a: &usize, b: &usize| compare(nodes, *a, *b);
-    let mut children: BTreeMap<Option<usize>, Vec<usize>> = BTreeMap::new();
-    for (i, n) in nodes.iter().enumerate() {
-        children.entry(n.parent).or_default().push(i);
+    let mut sorted: Vec<usize> = (0..nodes.len()).collect();
+    sorted.sort_by(|&a, &b| compare(nodes, a, b));
+    let rank: BTreeMap<usize, usize> = sorted.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+    let mut children = crate::tree_order::Children::new();
+    for &n in &sorted {
+        children.entry(nodes[n].parent).or_default().push(n);
     }
-    for siblings in children.values_mut() {
-        siblings.sort_by(cmp);
-    }
+    let parent: BTreeMap<usize, usize> = (nodes.iter().enumerate())
+        .filter_map(|(i, n)| Some((i, n.parent?)))
+        .collect();
     let mut deps: Vec<usize> = (0..links.len()).collect();
     deps.sort_by(|&a, &b| links[a].key.cmp(&links[b].key));
-    let grouped = group_edges(nodes, links, &deps);
-    for (parent, siblings) in children.iter_mut() {
-        let pairs = grouped.get(parent).map(Vec::as_slice).unwrap_or(&[]);
-        let mut sorted = siblings.clone();
-        sorted.sort_by(|&a, &b| compare(nodes, a, b));
-        let rank: BTreeMap<usize, usize> =
-            sorted.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-        *siblings = crate::tree_order::level_order(&sorted, pairs, &rank);
-    }
-    let ordered = preorder(&children);
+    let pairs: Vec<(usize, usize)> = deps.iter().map(|&d| (links[d].from, links[d].to)).collect();
+    crate::tree_order::construction_order(&mut children, &pairs, &rank, &parent);
+    // Parents precede their children in preorder.
+    let mut depth = vec![0; nodes.len()];
+    let ordered: Vec<(usize, usize)> = crate::tree_order::preorder(&children)
+        .into_iter()
+        .map(|n| {
+            depth[n] = nodes[n].parent.map_or(0, |p| depth[p] + 1);
+            (n, depth[n])
+        })
+        .collect();
     place(nodes, links, &deps, &ordered, width)
 }
 
 /// The web's `compareId` for nodes of one kind: name, then id.
 fn compare(nodes: &[Node], a: usize, b: usize) -> Ordering {
     (nodes[a].name.as_str(), nodes[a].id.as_str()).cmp(&(nodes[b].name.as_str(), &nodes[b].id))
-}
-
-/// Path from the outermost ancestor down to `n`.
-fn ancestry(nodes: &[Node], n: usize) -> Vec<usize> {
-    let mut out = vec![n];
-    let mut cur = n;
-    while let Some(p) = nodes[cur].parent {
-        if out.contains(&p) {
-            break;
-        }
-        out.push(p);
-        cur = p;
-    }
-    out.reverse();
-    out
-}
-
-/// Each link orders the two branches below its lowest common ancestor.
-fn group_edges(
-    nodes: &[Node],
-    links: &[Link],
-    deps: &[usize],
-) -> BTreeMap<Option<usize>, Vec<(usize, usize)>> {
-    let mut out: BTreeMap<Option<usize>, Vec<(usize, usize)>> = BTreeMap::new();
-    for &d in deps {
-        let (from, to) = (links[d].from, links[d].to);
-        let (pf, pt) = (ancestry(nodes, from), ancestry(nodes, to));
-        let i = pf.iter().zip(&pt).take_while(|(a, b)| a == b).count();
-        let (key, a, b) = if from == to {
-            (nodes[from].parent, from, from)
-        } else if i == pf.len() || i == pt.len() {
-            continue;
-        } else {
-            (if i > 0 { Some(pf[i - 1]) } else { None }, pf[i], pt[i])
-        };
-        out.entry(key).or_default().push((a, b));
-    }
-    out
-}
-
-/// Depth-first order of the forest with each node's depth.
-fn preorder(children: &BTreeMap<Option<usize>, Vec<usize>>) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let mut pending: Vec<(usize, usize)> = children
-        .get(&None)
-        .map(|c| c.iter().rev().map(|&n| (n, 0)).collect())
-        .unwrap_or_default();
-    while let Some((n, depth)) = pending.pop() {
-        if out.iter().any(|&(m, _)| m == n) {
-            continue;
-        }
-        out.push((n, depth));
-        if let Some(c) = children.get(&Some(n)) {
-            pending.extend(c.iter().rev().map(|&m| (m, depth + 1)));
-        }
-    }
-    out
 }
 
 /// Row width and gutter for a viewport `width`. From the web's minimum on
