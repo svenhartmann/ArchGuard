@@ -236,6 +236,13 @@ pub fn push(ui: &AppWindow, s: &mut QualityState) {
     let mut m = page_model(&s.lang, page, &old);
     m.query = s.view.query.as_str().into();
     m.target_query = s.view.target_query.as_str().into();
+    if let Some(code) = s.inputs.as_ref().map(|i| &i.code) {
+        let classes = matches!(s.view.section, Section::Heatmap | Section::Classes);
+        if classes && code.status != "ready" {
+            m.status_reason = heatmap::gaps(&s.lang, &code.classes).into();
+        }
+        m.noc_unmeasured = heatmap::unmeasured(&code.classes, "noc");
+    }
     ui.global::<QualityData>().set_model(m);
 }
 
