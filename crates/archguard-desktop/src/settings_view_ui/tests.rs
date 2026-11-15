@@ -563,3 +563,19 @@ fn list_rows_carry_their_line_count() {
     let empty = item(&items, "architecture.asyncapi");
     assert_eq!((empty.text.as_str(), empty.lines), ("", 1));
 }
+
+/// Clearing a list writes an empty list: for `public`, absent means
+/// "all" and empty means "none". Reset still removes it.
+#[test]
+fn clearing_a_list_writes_an_empty_list() {
+    let text = "[architecture.model]\nname = \"m\"\n\n[[architecture.model.components]]\nname = \"core\"\ninclude = [\"core/**\"]\npublic = [\"core/api/**\"]\n";
+    let (dir, _, mut s) = project(text);
+    s.edit("architecture.model.components[0].public", "");
+    s.save();
+    let saved = fs::read_to_string(config_file(dir.path())).unwrap();
+    assert!(saved.contains("public = []"), "{saved}{}", s.save_error);
+    s.reset("architecture.model.components[0].public");
+    s.save();
+    let saved = fs::read_to_string(config_file(dir.path())).unwrap();
+    assert!(!saved.contains("public"), "{saved}{}", s.save_error);
+}
