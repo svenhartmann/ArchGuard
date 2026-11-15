@@ -320,6 +320,32 @@ impl Relation {
 }
 
 /// `JSON.stringify` of a string.
+/// `text` with the selected package's prefix dropped from every name
+/// that starts with it (`org.x.Bag` → `Bag`, also inside signatures).
+pub fn relative(text: &str, package: Option<&str>) -> String {
+    let Some(p) = package.filter(|p| !p.is_empty()) else {
+        return text.to_string();
+    };
+    let prefix = format!("{}.", p.replace('/', "."));
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while let Some(at) = text[i..].find(&prefix) {
+        let start = i + at;
+        out.push_str(&text[i..start]);
+        // Only where a name starts, not inside `x.org.x.Bag`.
+        let inside = text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '$'));
+        if inside {
+            out.push_str(&prefix);
+        }
+        i = start + prefix.len();
+    }
+    out.push_str(&text[i..]);
+    out
+}
+
 pub fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -684,5 +710,29 @@ mod tests {
     #[test]
     fn json_matches_stringify() {
         assert_eq!(json_list(["a\"b", "c\\"]), r#"["a\"b","c\\"]"#);
+    }
+
+    /// Names inside the selected package drop its prefix, also in
+    /// parameter lists; other packages and look-alikes stay whole.
+    #[test]
+    fn names_read_relative_to_the_selected_package() {
+        let p = Some("org/apache/c4");
+        assert_eq!(
+            relative(
+                "org.apache.c4.BagUtils → org.apache.c4.bag.CollectionBag",
+                p
+            ),
+            "BagUtils → bag.CollectionBag"
+        );
+        assert_eq!(
+            relative("collectionBag(org.apache.c4.Bag, java.util.List)", p),
+            "collectionBag(Bag, java.util.List)"
+        );
+        assert_eq!(
+            relative("x.org.apache.c4.Bag · org.apache.c4x.Y", p),
+            "x.org.apache.c4.Bag · org.apache.c4x.Y"
+        );
+        assert_eq!(relative("org.apache.c4.Bag", None), "org.apache.c4.Bag");
+        assert_eq!(relative("Bag", Some("")), "Bag");
     }
 }

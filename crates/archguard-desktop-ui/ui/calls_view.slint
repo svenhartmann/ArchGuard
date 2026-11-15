@@ -167,6 +167,16 @@ component Description inherits VerticalLayout {
         }
         if unavailable && m.diagnostic-line != "": HelpTip { tip: m.diagnostic-line; size: 18px; }
         if !none && !unavailable: StatusLine { status: m.status-slot; label: m.status-label; }
+        // Why, in one line; "Analysis" below has the details.
+        if !none && !unavailable && m.status-reason != "": Muted {
+            font-size: Theme.font-small;
+            text: m.status-reason;
+            wrap: no-wrap;
+            overflow: elide;
+            vertical-alignment: center;
+            min-width: 60px;
+            horizontal-stretch: 1;
+        }
         Disclosure {
             text: @tr("Analysis");
             tint: Theme.text;

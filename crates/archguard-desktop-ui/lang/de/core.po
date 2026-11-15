@@ -193,6 +193,15 @@ msgstr "Zeilen {}–{} / {}"
 msgid "Tree / source"
 msgstr "Baum / Quelle"
 
+msgid "C1, C2, …: file cycle groups"
+msgstr "C1, C2, …: Datei-Zyklusgruppen"
+
+msgid "Grey: within the same package"
+msgstr "Grau: innerhalb desselben Pakets"
+
+msgid "Within the same package: dependencies between its own files"
+msgstr "Innerhalb desselben Pakets: Abhängigkeiten zwischen seinen eigenen Dateien"
+
 msgid "direct files"
 msgstr "direkte Dateien"
 

@@ -27,12 +27,16 @@ export struct CallsRelationRow {
     methods: int,
     // 0 project, 1 external, 2 unresolved.
     resolution: int,
+    // Both ends relative to the selected package; `tip`: fully qualified.
     full: string,
+    tip: string,
     selected: bool,
 }
 
 export struct CallsRankRow {
+    // Relative to the selected package; `tip`: fully qualified.
     label: string,
+    tip: string,
     incoming: int,
     outgoing: int,
     total: int,
@@ -48,6 +52,7 @@ export struct CallsRankRow {
 export struct CallsCycleRow {
     number: int,
     preview: string,
+    tip: string,
     members: int,
     edges: int,
     sites: int,
@@ -61,8 +66,10 @@ export struct CallsStep {
     pressed: bool,
 }
 
+// role: 0 none, 1 caller, 2 target, 3 both (a self-call).
 export struct CallsMetric {
     label: string,
+    role: int,
     measured: bool,
     cyclomatic: int,
     nesting: int,
@@ -144,6 +151,8 @@ export struct CallsModel {
     // `Status::slot` and "Analysis: …" of the call analysis.
     status-slot: int,
     status-label: string,
+    // The short reason of a partial or unavailable analysis (one line).
+    status-reason: string,
     // Toolbar.
     languages: [string],
     language-index: int,
@@ -218,7 +227,10 @@ export struct CallsModel {
     edges-more: bool,
     // Evidence of the selected connection.
     has-relation: bool,
+    // Relative to the selected package; `evidence-full` fully qualified
+    // (empty when the same).
     evidence-title: string,
+    evidence-full: string,
     evidence-sites: int,
     evidence-resolution: int,
     groups: [CallsMethodGroup],
