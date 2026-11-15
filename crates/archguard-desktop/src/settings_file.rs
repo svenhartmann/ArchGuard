@@ -124,6 +124,8 @@ thread_local! {
 /// Load the app's settings from `path` (`None`: keep them in memory only).
 /// Returns the notice of [`Loaded`].
 pub fn init(path: Option<PathBuf>) -> Option<String> {
+    // A symlinked file stays a link: writes rename over its target.
+    let path = path.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
     let loaded = path.as_deref().map(load);
     CURRENT.with_borrow_mut(|c| {
         c.path = path;
@@ -149,6 +151,7 @@ pub fn edit(f: impl FnOnce(&mut Settings)) {
 pub fn write() {
     let error = CURRENT.with_borrow_mut(|c| {
         let path = c.path.clone()?;
+        merge_others(&path, &c.doc, &mut c.settings);
         let e = save(&path, &mut c.doc, &c.settings).err()?;
         Some(format!("{}: {e}", path.display()))
     });
@@ -156,6 +159,32 @@ pub fn write() {
     eprintln!("archguard-desktop: cannot write {error}");
     // Outside the borrow: the window may read the settings.
     ON_ERROR.with_borrow(|f| f.as_ref().map(|f| f(error)));
+}
+
+/// Add the recent projects and project views another app instance wrote
+/// to `path` since `doc` (this instance's last read or write) to
+/// `settings`, after this instance's own. Entries `doc` already has stay
+/// as `settings` has them, so this instance's removals stick.
+fn merge_others(path: &Path, doc: &DocumentMut, settings: &mut Settings) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let (Ok((_, disk)), Ok((_, base))) =
+        (settings::parse(&text), settings::parse(&doc.to_string()))
+    else {
+        return;
+    };
+    for root in disk.recent {
+        if !base.recent.contains(&root) && !settings.recent.contains(&root) {
+            settings.recent.push(root);
+        }
+    }
+    settings.recent.truncate(settings::RECENT_MAX);
+    for (key, view) in disk.projects {
+        if !base.projects.contains_key(&key) {
+            settings.projects.entry(key).or_insert(view);
+        }
+    }
 }
 
 /// Call `f` with the message of every failed [`write`].
@@ -267,7 +296,7 @@ mod tests {
         s.add_recent(Path::new("/w/shop"));
         save(&path, &mut DocumentMut::new(), &s).expect("written");
         assert_eq!(load(&path).settings, s);
-        assert!(!dir.join("desktop.toml.tmp").exists());
+        assert_eq!(entries(&dir), [FILE], "no temporary file left");
     }
 
     #[test]
@@ -342,6 +371,66 @@ mod tests {
         save(&path, &mut DocumentMut::new(), &Settings::default()).expect("written");
         let mode = std::fs::metadata(&path).expect("meta").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// A second instance started earlier keeps the recent projects and
+    /// project views another instance wrote since; what this instance
+    /// removed itself stays removed.
+    #[test]
+    fn a_write_keeps_what_another_instance_added() {
+        let dir = temp("two-instances");
+        let path = dir.join(FILE);
+        std::fs::write(&path, "# mine\nrecent = [\"/w/old\"]\n").expect("write");
+        init(Some(path.clone()));
+        // Instance A, started later, opens /w/a.
+        let mut a = load(&path);
+        a.settings.add_recent(Path::new("/w/a"));
+        a.settings
+            .set_project(Path::new("/w/a"), Default::default());
+        save(&path, &mut a.doc, &a.settings).expect("written");
+        // This instance changes the theme and drops /w/old.
+        update(|s| {
+            s.theme = Theme::Dark;
+            s.recent.retain(|p| p != Path::new("/w/old"));
+        });
+        let back = load(&path).settings;
+        assert_eq!(back.theme, Theme::Dark);
+        assert_eq!(back.recent, [PathBuf::from("/w/a")]);
+        assert!(back.project(Path::new("/w/a")).is_some(), "{back:?}");
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read")
+                .starts_with("# mine")
+        );
+        // Clearing the list after the merge sticks.
+        update(|s| s.recent.clear());
+        assert!(load(&path).settings.recent.is_empty());
+        init(None);
+    }
+
+    /// A symlinked settings file stays a link; the write goes to its target.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_file_stays_a_link() {
+        let dir = temp("symlink");
+        let real = dir.join("real.toml");
+        std::fs::write(&real, "").expect("write");
+        let link = dir.join(FILE);
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        init(Some(link.clone()));
+        update(|s| s.language = "de".into());
+        init(None);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .expect("meta")
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(&real)
+                .expect("read")
+                .contains("language = \"de\"")
+        );
     }
 
     /// The window shows a failed write; stderr alone is invisible when the

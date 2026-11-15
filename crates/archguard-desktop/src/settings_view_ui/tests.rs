@@ -336,6 +336,35 @@ fn save_and_a_file_changed_on_disk() {
     );
 }
 
+/// Overwrite over a file that no longer parses (conflict markers from a
+/// rebase) keeps the form and its edits and names the problem; once the
+/// file parses again, Overwrite writes the edits.
+#[test]
+fn overwrite_keeps_the_edits_when_the_file_does_not_parse() {
+    let (dir, doc, mut s) = project("[rules]\nmax_acd = 3.5\n");
+    s.edit("rules.max_acd", "4");
+    let file = config_file(dir.path());
+    let conflict = "<<<<<<< HEAD\n[rules]\nmax_acd = 1.0\n=======\n>>>>>>> theirs\n";
+    fs::write(&file, conflict).unwrap();
+    s.save();
+    assert!(s.changed_on_disk, "{}", s.save_error);
+    s.overwrite();
+    assert!(s.editor.is_ok(), "the form stays");
+    assert!(s.save_error.contains("archguard.toml"), "{}", s.save_error);
+    assert!(documents::is_dirty(doc));
+    assert_eq!(s.edited(), [Group::Rules]);
+    let items = in_group(&mut s, Group::Rules);
+    assert_eq!(item(&items, "rules.max_acd").text, "4");
+    assert_eq!(fs::read_to_string(&file).unwrap(), conflict);
+    fs::write(&file, "[rules]\nmax_acd = 1.0\n").unwrap();
+    s.overwrite();
+    assert!(!s.changed_on_disk && s.save_error.is_empty());
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "[rules]\nmax_acd = 4.0\n"
+    );
+}
+
 /// Revert reads the file again and drops drafts and edits.
 #[test]
 fn revert_drops_every_edit() {

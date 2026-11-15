@@ -108,3 +108,17 @@ fn bind_marks_the_document_dirty_and_saves_through_it() {
         .unwrap();
     assert!(!documents::is_dirty(doc), "back to the saved text");
 }
+
+/// A `.archguard` that links outside the project is refused even before
+/// `archguard.toml` exists, so Save never creates the file in the link
+/// target.
+#[cfg(unix)]
+#[test]
+fn a_linked_config_dir_without_a_file_is_refused() {
+    let dir = fixture("");
+    let outside = fixture("");
+    std::os::unix::fs::symlink(outside.path(), dir.path().join(".archguard")).unwrap();
+    let error = ConfigEditor::load(dir.path()).err().expect("refused");
+    assert!(error.contains("symlink"), "{error}");
+    assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}

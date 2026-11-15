@@ -184,24 +184,30 @@ impl ConfigEditor {
 /// The file the engine would read, and its text if it exists.
 fn locate(root: &Path) -> Result<(PathBuf, Option<String>), String> {
     let canonical = root.join(DEFAULT_CONFIG_PATH);
+    let linked = |path: &Path| {
+        format!(
+            "{}: a discovered configuration must not be a symlink",
+            path.display()
+        )
+    };
+    let linked_dir = canonical
+        .parent()
+        .is_some_and(|dir| fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()));
     for path in [canonical.clone(), root.join(LEGACY_PATH)] {
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        let linked_dir = path == canonical
-            && path.parent().is_some_and(|dir| {
-                fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink())
-            });
-        if metadata.file_type().is_symlink() || linked_dir {
-            return Err(format!(
-                "{}: a discovered configuration must not be a symlink",
-                path.display()
-            ));
+        if metadata.file_type().is_symlink() || (path == canonical && linked_dir) {
+            return Err(linked(&path));
         }
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         return Ok((path, Some(text)));
+    }
+    // Saving would create the file in the link target.
+    if linked_dir {
+        return Err(linked(&canonical));
     }
     Ok((canonical, None))
 }
