@@ -281,8 +281,8 @@ impl QualityState {
         match v.section {
             Section::Heatmap => {
                 let rows = self.heat_rows(inputs, scope);
-                let total = rows.len();
-                (total, Vec::new(), rows.into_iter().take(n).collect())
+                let page = rows.iter().take(n).map(|r| self.heat_row(r)).collect();
+                (rows.len(), Vec::new(), page)
             }
             Section::Classes => list!(rows::classes(&inputs.code.classes, scope, q), |r| {
                 cards::class(lang, names, r)
@@ -346,23 +346,29 @@ impl QualityState {
         (rows.len(), cards, Vec::new())
     }
 
-    fn heat_rows(&self, inputs: &Inputs, scope: &Scope) -> Vec<HeatRow> {
+    /// The listed heatmap classes, filtered and sorted; cheap, unformatted.
+    fn heat_rows<'a>(
+        &self,
+        inputs: &'a Inputs,
+        scope: &Scope,
+    ) -> Vec<&'a archguard_engine::ClassMetrics> {
         let found = rows::classes(&inputs.code.classes, scope, &self.view.query);
         heatmap::rows(&self.cohorts, found, self.view.filter, self.view.sort)
-            .into_iter()
-            .map(|row| HeatRow {
-                class_id: row.class_id.clone(),
-                label: row
-                    .class_id
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(&row.class_id)
-                    .to_string(),
-                file: row.file.clone(),
-                selected: self.view.selected.as_deref() == Some(row.class_id.as_str()),
-                cells: (0..METRICS.len()).map(|i| self.heat_cell(row, i)).collect(),
-            })
-            .collect()
+    }
+
+    fn heat_row(&self, row: &archguard_engine::ClassMetrics) -> HeatRow {
+        HeatRow {
+            class_id: row.class_id.clone(),
+            label: row
+                .class_id
+                .rsplit('.')
+                .next()
+                .unwrap_or(&row.class_id)
+                .to_string(),
+            file: row.file.clone(),
+            selected: self.view.selected.as_deref() == Some(row.class_id.as_str()),
+            cells: (0..METRICS.len()).map(|i| self.heat_cell(row, i)).collect(),
+        }
     }
 
     fn heat_cell(&self, row: &archguard_engine::ClassMetrics, i: usize) -> HeatCell {
