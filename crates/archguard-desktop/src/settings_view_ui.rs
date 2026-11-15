@@ -129,7 +129,7 @@ fn type_into(path: SharedString, text: SharedString) {
 }
 
 /// Apply typed text that waits for its pause.
-fn flush_typing() {
+pub(crate) fn flush_typing() {
     if let Some((typed, _)) = FIELD_TEXT.with_borrow(Clone::clone) {
         typed.flush();
     }

@@ -122,6 +122,8 @@ fn request(ui: &AppWindow, request: Request) {
     if FLOW.with_borrow(Option::is_some) {
         return;
     }
+    // Typing in Settings within the debounce counts as unsaved.
+    crate::settings_view_ui::flush_typing();
     let docs: Vec<_> = with_store(|s| s.docs().iter().map(|d| (d.id, d.is_dirty())).collect());
     let flow = Flow::new(request, &docs);
     let next = flow.next();
@@ -182,14 +184,10 @@ fn run(ui: &AppWindow, request: Request) {
     match request {
         Request::Close(id) => {
             if let Some(i) = with_store(|s| s.index_of(id)) {
-                documents_ui::close(ui, i);
+                documents_ui::close(ui, Some(i));
             }
         }
-        Request::CloseAll => {
-            while with_store(|s| !s.docs().is_empty()) {
-                documents_ui::close(ui, 0);
-            }
-        }
+        Request::CloseAll => documents_ui::close(ui, None),
         Request::Quit => {
             remember_window(ui);
             let _ = slint::quit_event_loop();
@@ -202,8 +200,14 @@ fn remember_window(ui: &AppWindow) {
     documents_ui::save_view(ui);
     let window = ui.window();
     let size = window.size().to_logical(window.scale_factor());
-    let size = (size.width.round() as u32, size.height.round() as u32);
-    settings_file::update(|s| s.window = Some(size));
+    if let Some(size) = saved_size(window.is_fullscreen(), size) {
+        settings_file::update(|s| s.window = Some(size));
+    }
+}
+
+/// The window size to keep; none in fullscreen, which shows the screen's.
+fn saved_size(fullscreen: bool, size: slint::LogicalSize) -> Option<(u32, u32)> {
+    (!fullscreen).then_some((size.width.round() as u32, size.height.round() as u32))
 }
 
 fn show_notice(ui: &AppWindow, kind: i32, text: &str) {
@@ -325,5 +329,13 @@ mod tests {
         assert_eq!(pick_language(None, "en", system), "en");
         assert_eq!(pick_language(Some(String::new()), "", system), "de");
         assert_eq!(pick_language(None, "", || "fr_FR".into()), "en");
+    }
+
+    /// Quitting in fullscreen keeps the last windowed size.
+    #[test]
+    fn a_fullscreen_window_keeps_its_saved_size() {
+        let size = slint::LogicalSize::new(1200.4, 800.6);
+        assert_eq!(saved_size(false, size), Some((1200, 801)));
+        assert_eq!(saved_size(true, size), None);
     }
 }

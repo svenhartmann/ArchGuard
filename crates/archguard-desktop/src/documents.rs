@@ -78,6 +78,9 @@ pub struct Document {
     pub analysis: Option<Arc<Analysis>>,
     pub projects: Vec<SubProject>,
     states: HashMap<TypeId, Rc<dyn Any>>,
+    /// Counts [`Document::forget_derived`]: a worker's result for an older
+    /// analysis is dropped ([`generation`]).
+    generation: u64,
     /// What is unsaved, in the order it was first marked; empty: clean.
     unsaved: Vec<String>,
     save_hook: Option<SaveHook>,
@@ -100,6 +103,7 @@ impl Document {
             analysis: None,
             projects: Vec::new(),
             states: HashMap::new(),
+            generation: 0,
             unsaved: Vec::new(),
             save_hook: None,
         }
@@ -119,6 +123,7 @@ impl Document {
     /// analysis arrived, and the views build them again when shown.
     pub fn forget_derived(&mut self) {
         DERIVED.with_borrow(|d| self.states.retain(|t, _| !d.contains(t)));
+        self.generation += 1;
     }
 
     pub fn has_state<T: 'static>(&self) -> bool {
@@ -259,8 +264,7 @@ fn run<T: 'static, R>(cell: Rc<dyn Any>, f: impl FnOnce(&mut T) -> R) -> R {
 /// are built on their own, i.e. manifest projects and local Compose build
 /// contexts, one per path, without the root itself. Empty unless the
 /// topology shows more than one project or a monorepo. The header chip,
-/// its menu and the Services tab all count this list
-/// (`kpi::BUILD_UNITS`).
+/// its menu and the Services tab all count this list.
 pub fn build_units(topology: &ServiceTopology) -> Vec<SubProject> {
     let mut out: Vec<SubProject> = Vec::new();
     let mut add = |name: &str, kind: &str, path: &str| {
@@ -303,6 +307,12 @@ thread_local! {
 /// from `f`.
 pub fn with_store<R>(f: impl FnOnce(&mut Store) -> R) -> R {
     STORE.with_borrow_mut(f)
+}
+
+/// How often document `doc` dropped its derived state; 0 once closed.
+/// Capture it when a worker starts and compare when its result arrives.
+pub fn generation(doc: DocId) -> u64 {
+    with_store(|s| s.get(doc).map_or(0, |d| d.generation))
 }
 
 /// The active document's id, if any.
@@ -515,6 +525,7 @@ mod tests {
         doc.forget_derived();
         assert!(!doc.has_state::<u32>(), "built from the analysis");
         assert!(doc.has_state::<&str>(), "not derived: kept");
+        assert_eq!(doc.generation, 1, "results of older workers are dropped");
     }
 
     #[test]

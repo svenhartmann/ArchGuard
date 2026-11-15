@@ -207,8 +207,12 @@ fn start<T: 'static>() -> Start {
 }
 
 /// Store a worker's result for `doc`: the state, or the failure message in
-/// its pending marker. Returns whether `doc` is active.
-fn finish<T: 'static>(doc: DocId, result: Result<T, String>) -> bool {
+/// its pending marker. Returns whether `doc` is active. A result built
+/// from an older analysis (`generation`) is dropped: a newer build runs.
+fn finish<T: 'static>(doc: DocId, generation: u64, result: Result<T, String>) -> bool {
+    if documents::generation(doc) != generation {
+        return false;
+    }
     match result {
         Ok(mut state) => {
             let queued = documents::with_state(doc, |q: &mut Queued<T>| std::mem::take(&mut q.0));
@@ -262,30 +266,31 @@ where
         Start::Build(doc) => doc,
     };
     T::pending(ui, None);
+    let generation = documents::generation(doc);
     let root = documents::with_store(|s| s.get(doc).map(|d| d.root.clone()));
     let name = format!("desktop: show {}", trace::tab_name::<T>());
     let work = traced(&root.unwrap_or_default(), &name, prepare());
     if snapshot_mode() {
-        return install(ui, doc, catch(work));
+        return install(ui, doc, generation, catch(work));
     }
     let weak = ui.as_weak();
     std::thread::spawn(move || {
         let result = catch(work);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                install(&ui, doc, result);
+                install(&ui, doc, generation, result);
             }
         });
     });
 }
 
-fn install<T: TabState>(ui: &AppWindow, doc: DocId, result: Result<T, String>) {
+fn install<T: TabState>(ui: &AppWindow, doc: DocId, generation: u64, result: Result<T, String>) {
     let result = result.map(|mut s| {
         s.arrive(ui);
         s
     });
     let error = result.as_ref().err().cloned();
-    if !finish(doc, result) {
+    if !finish(doc, generation, result) {
         return;
     }
     match error {
@@ -490,8 +495,11 @@ mod tests {
         assert_eq!(start::<Demo>(), Start::Build(b));
         documents::with_store(|s| s.activate(0));
         assert_eq!(start::<Demo>(), Start::Build(a));
-        assert!(!finish(b, Ok(Demo(2))), "b is not active");
-        assert!(finish(a, Ok(Demo(1))));
+        assert!(
+            !finish(b, documents::generation(b), Ok(Demo(2))),
+            "b is not active"
+        );
+        assert!(finish(a, documents::generation(a), Ok(Demo(1))));
         assert_eq!(start::<Demo>(), Start::Ready);
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(1));
         documents::with_store(|s| s.activate(1));
@@ -508,13 +516,33 @@ mod tests {
         assert!(!run_or_queue(|d: &mut Demo| d.0 *= 2), "kept");
         documents::with_store(|s| s.activate(0));
         assert_eq!(start::<Demo>(), Start::Build(a));
-        assert!(finish(a, Ok(Demo(1))));
+        assert!(finish(a, documents::generation(a), Ok(Demo(1))));
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(1));
         documents::with_store(|s| s.activate(1));
-        assert!(finish(b, Ok(Demo(1))));
+        assert!(finish(b, documents::generation(b), Ok(Demo(1))));
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(22));
         assert!(run_or_queue(|d: &mut Demo| d.0 += 1), "the state is there");
         assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(23));
+    }
+
+    /// A new analysis starts a second build while the first still runs:
+    /// the first one's result, finishing last, neither replaces the new
+    /// state nor takes the changes queued for it.
+    #[test]
+    fn a_build_from_an_older_analysis_is_dropped() {
+        let (_, b) = two_documents();
+        assert_eq!(start::<Demo>(), Start::Build(b));
+        let old = documents::generation(b);
+        documents::with_store(|s| s.get_mut(b).unwrap().forget_derived());
+        assert_eq!(start::<Demo>(), Start::Build(b), "built again");
+        let new = documents::generation(b);
+        assert!(!run_or_queue(|d: &mut Demo| d.0 += 10), "kept");
+        assert!(!finish(b, old, Ok(Demo(1))), "old result dropped");
+        assert_eq!(start::<Demo>(), Start::Pending(None), "still building");
+        assert!(finish(b, new, Ok(Demo(2))));
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(12));
+        assert!(!finish::<Demo>(b, old, Err("old failure".into())));
+        assert_eq!(documents::with_active_state(|d: &mut Demo| d.0), Some(12));
     }
 
     /// A panicking build leaves an error, not a document pending forever,
@@ -528,7 +556,7 @@ mod tests {
             result.as_ref().err().map(String::as_str),
             Some("no call analysis")
         );
-        assert!(finish(b, result));
+        assert!(finish(b, documents::generation(b), result));
         let failed = Start::Pending(Some("no call analysis".into()));
         assert_eq!(start::<Demo>(), failed);
         assert_eq!(start::<Demo>(), failed);

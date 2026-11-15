@@ -85,6 +85,7 @@ pub fn index(i: i32) -> usize {
 
 /// Open `root` as the active document; analyse it if it is new.
 pub fn open(ui: &AppWindow, root: PathBuf) {
+    crate::settings_view_ui::flush_typing();
     let root = root.canonicalize().unwrap_or(root);
     save_view(ui);
     let (id, new) = with_store(|s| s.open(&root));
@@ -141,6 +142,8 @@ pub fn push_recent(ui: &AppWindow) {
 
 /// Show the document at tab `index`.
 pub fn activate(ui: &AppWindow, index: usize) {
+    // Settings text typed for the document shown so far goes to it.
+    crate::settings_view_ui::flush_typing();
     save_view(ui);
     if with_store(|s| s.activate(index)) {
         record_session();
@@ -148,17 +151,22 @@ pub fn activate(ui: &AppWindow, index: usize) {
     }
 }
 
-/// Close the document at tab `index` without asking; `shell_ui` asks
-/// about unsaved changes first.
-pub fn close(ui: &AppWindow, index: usize) {
+/// Close the document at tab `index`, or every document (`None`), without
+/// asking; `shell_ui` asks about unsaved changes first. The window shows
+/// the next document once, not each one closed on the way.
+pub fn close(ui: &AppWindow, index: Option<usize>) {
     save_view(ui);
-    let Some(doc) = with_store(|s| s.close(index)) else {
+    let docs: Vec<_> = with_store(|s| match index {
+        Some(i) => s.close(i).into_iter().collect(),
+        None => std::iter::from_fn(|| s.close(0)).collect(),
+    });
+    if docs.is_empty() {
         return;
-    };
-    let root = doc.root.clone();
-    // Drop the document's state before the window shows the next one.
-    drop(doc);
-    std::thread::spawn(move || web::stop(&root));
+    }
+    let roots: Vec<PathBuf> = docs.iter().map(|d| d.root.clone()).collect();
+    // Drop the documents' state before the window shows the next one.
+    drop(docs);
+    std::thread::spawn(move || roots.iter().for_each(|r| web::stop(r)));
     record_session();
     refresh(ui);
 }
@@ -375,14 +383,15 @@ fn open_web(ui: &AppWindow, tab: &str) {
         return;
     };
     ui.set_web_status(SharedString::from("… archguard serve"));
-    let (w, tab) = (ui.as_weak(), tab.to_string());
+    let (w, tab, doc) = (ui.as_weak(), tab.to_string(), documents::active_id());
     std::thread::spawn(move || {
         let msg = match web::open(&root, &tab) {
             Ok(url) => url,
             Err(e) => format!("archguard serve: {e}"),
         };
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = w.upgrade() {
+            // Not for a document the user switched to meanwhile.
+            if let Some(ui) = w.upgrade().filter(|_| documents::active_id() == doc) {
                 ui.set_web_status(msg.into());
             }
         });
