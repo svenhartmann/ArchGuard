@@ -489,3 +489,12 @@ msgstr "Kein installierter TypeScript-Compiler gefunden. TypeScript im Projekt i
 
 msgid "A TypeScript compiler was found through this repository but not loaded, because running it would execute repository code. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for repositories you trust."
 msgstr "Ein TypeScript-Compiler wurde über dieses Repository gefunden, aber nicht geladen, weil er Code aus dem Repository ausführen würde. Für vertrauenswürdige Repositorys ARCHGUARD_TRUST_PROJECT_COMPILER=1 setzen."
+
+msgid "Caller: {}"
+msgstr "Aufrufer: {}"
+
+msgid "Target: {}"
+msgstr "Ziel: {}"
+
+msgid "Caller and target: {}"
+msgstr "Aufrufer und Ziel: {}"

@@ -1,6 +1,7 @@
 // Small building blocks of the Calls tab (the web's .explorer-row,
 // .badge, <details> and the column frames).
 import { Theme } from "theme.slint";
+import { TipArea } from "widgets.slint";
 
 // A column of the tab (.calls-outline / .calls-master / .calls-detail).
 export component CallsColumn inherits Rectangle {
@@ -20,14 +21,18 @@ export component Muted inherits Text {
 // A clickable card row (.explorer-row.call-relation).
 export component Card inherits Rectangle {
     in property <bool> selected;
+    // Hover text, e.g. the fully qualified names; empty: none.
+    in property <string> tip;
     callback clicked();
     border-radius: 8px;
     border-width: 1px;
     border-color: selected ? Theme.accent : Theme.border;
     background: touch.has-hover ? Theme.panel-2 : Theme.panel;
-    touch := TouchArea {
+    touch := TipArea {
+        tip: root.tip;
+        pin-on-click: false;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        activated => { root.clicked(); }
     }
     if selected: Rectangle {
         x: 0;

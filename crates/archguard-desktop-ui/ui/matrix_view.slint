@@ -30,6 +30,8 @@ export struct MatrixRowItem {
     badges: string,
     // One entry per column.
     cells: [string],
+    // The column the row belongs to (its diagonal cell); -1: none.
+    own-col: int,
 }
 
 // One Matrix instance as Rust shows it (src/matrix_ui.rs); app.slint
@@ -134,6 +136,7 @@ export component MatrixView inherits Rectangle {
     property <length> cols-w: columns.length * col-w + Theme.scrollbar-w;
     property <length> row-h: compact ? 24px : 30px;
     property <int> hover-row: -1;
+    property <string> cycle-legend: @tr("C1, C2, …: file cycle groups");
     property <int> hover-col: -1;
 
     // Full path of the hovered row label or column head, shown after a
@@ -292,14 +295,26 @@ export component MatrixView inherits Rectangle {
             }
         }
 
-        Pager {
+        HorizontalLayout {
             height: Theme.control-h-sm;
-            alignment: start;
-            text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
-            can-prev: root.row-start > 0;
-            can-next: root.row-start + root.rows.length < root.row-total;
-            prev => { root.page(-1); }
-            next => { root.page(1); }
+            spacing: 16px;
+            Pager {
+                alignment: start;
+                text: @tr("Rows {}–{} / {}", Fmt.int(root.rows.length > 0 ? root.row-start + 1 : 0), Fmt.int(root.row-start + root.rows.length), Fmt.int(root.row-total));
+                can-prev: root.row-start > 0;
+                can-next: root.row-start + root.rows.length < root.row-total;
+                prev => { root.page(-1); }
+                next => { root.page(1); }
+            }
+            // What the row badges and the muted diagonal mean.
+            Text {
+                text: (root.cycle-options.length > 1 ? root.cycle-legend + " · " : "") + @tr("Grey: within the same package");
+                color: Theme.muted;
+                font-size: Theme.font-caption;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
         }
 
         // Header row.
@@ -363,6 +378,7 @@ export component MatrixView inherits Rectangle {
             content-width: max(self.visible-width, root.label-w + root.cols-w);
             VerticalLayout {
                 alignment: start;
+                padding-bottom: Theme.scrollbar-w;
                 for r[i] in root.rows: Rectangle {
                     height: root.row-h;
                     background: r.package ? Theme.panel-2 : transparent;
@@ -371,18 +387,22 @@ export component MatrixView inherits Rectangle {
                         height: 1px;
                         background: Theme.border.with-alpha(0.55);
                     }
-                        for value[j] in r.cells: Rectangle {
+                        for value[j] in r.cells: cell := Rectangle {
                             x: root.label-w + j * root.col-w;
                             width: root.col-w;
                             background: root.hover-col == j || root.hover-row == i ? Theme.accent.with-alpha(0.05) : transparent;
+                            // The diagonal: dependencies inside the row's own package, muted.
+                            property <bool> own: j == r.own-col;
                             if value != "": Rectangle {
                                 width: max(30px, label.preferred-width + 14px);
                                 height: root.row-h - 8px;
                                 border-radius: 4px;
-                                background: area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18);
+                                background: cell.own
+                                    ? (area.has-hover ? Theme.muted.with-alpha(0.30) : Theme.muted.with-alpha(0.14))
+                                    : (area.has-hover ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.18));
                                 label := Text {
                                     text: value;
-                                    color: Theme.accent;
+                                    color: cell.own ? Theme.muted : Theme.accent;
                                     font-size: Theme.font-caption;
                                     font-weight: Theme.weight-strong;
                                     horizontal-alignment: center;
@@ -399,6 +419,7 @@ export component MatrixView inherits Rectangle {
                                         root.hover-row = i;
                                         root.hover-col = j;
                                     }
+                                    root.hover-tip(self.has-hover && cell.own && value != "", @tr("Within the same package: dependencies between its own files"), self.absolute-position.x, self.absolute-position.y + self.height);
                                 }
                             }
                         }
@@ -456,6 +477,11 @@ export component MatrixView inherits Rectangle {
                                     font-size: Theme.font-micro;
                                     font-weight: Theme.weight-strong;
                                     vertical-alignment: center;
+                                    TouchArea {
+                                        changed has-hover => {
+                                            root.hover-tip(self.has-hover, root.cycle-legend, self.absolute-position.x, self.absolute-position.y + self.height);
+                                        }
+                                    }
                                 }
                             }
                         }

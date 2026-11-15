@@ -2,6 +2,7 @@
 //! call sites and candidates, or the selected declaration. Also the value
 //! helpers the other columns use.
 
+use archguard_engine::core::MethodCall;
 use slint::{ModelRc, SharedString, VecModel};
 
 use super::evidence::{self, Proposal};
@@ -30,6 +31,11 @@ pub fn resolution_index(r: &str) -> i32 {
     }
 }
 
+/// `text` relative to the selected package ([`super::model::relative`]).
+pub fn rel(s: &State, text: &str) -> String {
+    super::model::relative(text, s.filter.package.as_deref())
+}
+
 pub fn ends(s: &State, r: &Relation) -> (String, String) {
     let l = &s.labels;
     let from = s.idx.class_label(Some(&r.from), l);
@@ -40,35 +46,49 @@ pub fn ends(s: &State, r: &Relation) -> (String, String) {
     (from, to)
 }
 
-fn metric(s: &State, id: &str) -> Option<CallsMetric> {
+/// `role`: 0 none, 1 caller, 2 target, 3 both (`CallsMetric.role`).
+fn metric(s: &State, id: &str, role: i32) -> Option<CallsMetric> {
     let method = s.idx.method(Some(id))?;
     let c = rankings::complexity(method);
     Some(CallsMetric {
-        label: s.idx.method_label(Some(id), &s.labels).into(),
+        label: rel(s, &s.idx.qualified(ElementKind::Method, id, &s.labels)).into(),
+        role,
         measured: c.is_some(),
         cyclomatic: c.map_or(0, |c| c.cyclomatic as i32),
         nesting: c.map_or(0, |c| c.max_nesting as i32),
     })
 }
 
+/// Caller and target of a method pair; a self-call is one line.
+fn metrics(s: &State, first: &MethodCall) -> Vec<CallsMetric> {
+    let (from, to) = (first.from_method.as_deref(), first.to_method.as_deref());
+    if from.is_some() && from == to {
+        return from.and_then(|id| metric(s, id, 3)).into_iter().collect();
+    }
+    let caller = from.and_then(|id| metric(s, id, 1));
+    caller
+        .into_iter()
+        .chain(to.and_then(|id| metric(s, id, 2)))
+        .collect()
+}
+
 fn method_group(s: &State, g: &evidence::MethodGroup, open: bool) -> CallsMethodGroup {
     let (idx, l) = (&s.idx, &s.labels);
     let first = &idx.a.calls[g.calls[0]];
-    let mut ids: Vec<&str> = first.from_method.as_deref().into_iter().collect();
-    if let Some(to) = first.to_method.as_deref().filter(|t| !ids.contains(t)) {
-        ids.push(to);
-    }
     CallsMethodGroup {
-        title: format!(
-            "{} → {}",
-            idx.method_label(first.from_method.as_deref(), l),
-            idx.target_label(first, false, l)
+        title: rel(
+            s,
+            &format!(
+                "{} → {}",
+                idx.method_label(first.from_method.as_deref(), l),
+                idx.target_label(first, false, l)
+            ),
         )
         .into(),
         shown: int(g.calls.len()),
         total: int(g.total),
         open,
-        metrics: model(ids.into_iter().filter_map(|id| metric(s, id))),
+        metrics: model(metrics(s, first)),
         sites: model(g.calls.iter().map(|&i| {
             let c = &idx.a.calls[i];
             CallsSite {
@@ -76,7 +96,7 @@ fn method_group(s: &State, g: &evidence::MethodGroup, open: bool) -> CallsMethod
                 dispatch: c.dispatch.as_str().into(),
                 resolution: resolution_index(&c.resolution),
                 declared: if c.to_method.is_some() {
-                    idx.target_label(c, true, l).into()
+                    rel(s, &idx.target_label(c, true, l)).into()
                 } else {
                     SharedString::new()
                 },
@@ -86,16 +106,16 @@ fn method_group(s: &State, g: &evidence::MethodGroup, open: bool) -> CallsMethod
     }
 }
 
-fn suggestion(x: &evidence::Suggestion, open: bool) -> CallsSuggestion {
+fn suggestion(s: &State, x: &evidence::Suggestion, open: bool) -> CallsSuggestion {
     CallsSuggestion {
         kind: match x.kind {
             Proposal::Interface => 0,
             Proposal::Adapter => 1,
             Proposal::Move => 2,
         },
-        source: x.source.as_str().into(),
-        target: x.target.as_str().into(),
-        methods: x.methods.as_str().into(),
+        source: rel(s, &x.source).into(),
+        target: rel(s, &x.target).into(),
+        methods: rel(s, &x.methods).into(),
         cycle_size: int(x.cycle_size),
         target_calls: int(x.target_calls),
         outgoing: int(x.outgoing),
@@ -107,7 +127,7 @@ fn suggestion(x: &evidence::Suggestion, open: bool) -> CallsSuggestion {
             .evidence
             .iter()
             .take(5)
-            .cloned()
+            .map(|e| rel(s, e))
             .collect::<Vec<_>>()
             .join(" · ")
             .into(),
@@ -123,7 +143,11 @@ pub fn fill_evidence(m: &mut CallsModel, s: &State) {
     };
     let (from, to) = ends(s, r);
     m.has_relation = true;
-    m.evidence_title = format!("{from} → {to}").into();
+    let title = format!("{from} → {to}");
+    m.evidence_title = rel(s, &title).into();
+    if m.evidence_title != title.as_str() {
+        m.evidence_full = title.into();
+    }
     m.evidence_sites = int(r.calls.len());
     m.evidence_resolution = resolution_index(&r.resolution);
     let groups = evidence::method_groups(r, &s.idx, s.site_limit);
@@ -136,7 +160,7 @@ pub fn fill_evidence(m: &mut CallsModel, s: &State) {
     m.suggestions = model(
         list.iter()
             .enumerate()
-            .map(|(i, x)| suggestion(x, s.open_suggestions.contains(&i))),
+            .map(|(i, x)| suggestion(s, x, s.open_suggestions.contains(&i))),
     );
 }
 
@@ -150,16 +174,16 @@ fn declaration(s: &State) -> CallsDeclaration {
                 return d;
             };
             d.kind = 2;
-            d.title = rankings::label(idx, true, &el.id, l).into();
+            d.title = rel(s, &rankings::label(idx, true, &el.id, l)).into();
             d.location = format!("{}:{}", m.file, m.line).into();
-            d.metric = metric(s, &el.id).unwrap_or_default();
+            d.metric = metric(s, &el.id, 0).unwrap_or_default();
         }
         ElementKind::Class => {
             let Some(c) = idx.class(Some(&el.id)) else {
                 return d;
             };
             d.kind = 1;
-            d.title = super::model::class_name(c).into();
+            d.title = rel(s, &super::model::class_name(c)).into();
             d.location = format!("{}:{}", c.file, c.line).into();
             cohesion(&mut d, s, &c.id);
         }
@@ -198,4 +222,44 @@ fn cohesion(d: &mut CallsDeclaration, s: &State, class: &str) {
             ids: model(known.iter().map(|(_, id)| SharedString::from(id.as_str()))),
         }
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::model::fixture;
+    use super::*;
+
+    fn rows(m: &[CallsMetric]) -> Vec<(i32, String)> {
+        m.iter().map(|x| (x.role, x.label.to_string())).collect()
+    }
+
+    /// Caller and target with the same signature in different classes
+    /// read apart by role and owner; a self-call shows one line.
+    #[test]
+    fn caller_and_target_metrics_name_their_role() {
+        let mut a = fixture::analysis();
+        a.methods.push(fixture::method("red.Red", "name()", 1));
+        a.calls.push(fixture::call(
+            "blue.Blue#name()",
+            Some("red.Red#name()"),
+            "project",
+            30,
+        ));
+        let mut s = State::new(a);
+        // All packages: full names.
+        s.filter.package = None;
+        assert_eq!(
+            rows(&metrics(&s, &s.idx.a.calls[6])),
+            [(1, "blue.Blue#name()".into()), (2, "red.Red#name()".into())]
+        );
+        assert_eq!(
+            rows(&metrics(&s, &s.idx.a.calls[5])),
+            [(3, "blue.Blue#name()".into())]
+        );
+        s.filter.package = Some("blue".into());
+        assert_eq!(
+            rows(&metrics(&s, &s.idx.a.calls[6])),
+            [(1, "Blue#name()".into()), (2, "red.Red#name()".into())]
+        );
+    }
 }
