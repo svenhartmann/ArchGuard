@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use slint::SharedString;
 
-use super::evidence_view::{ends, fill_evidence, int, model, resolution_index};
+use super::evidence_view::{ends, fill_evidence, int, model, rel, resolution_index};
 use super::model::{ElementKind, file_module, language_label};
 use super::notes;
 use super::rankings;
@@ -113,6 +113,7 @@ fn fill_coverage(m: &mut CallsModel, s: &State, texts: &Texts) {
         .join(" ")
         .into();
     m.diagnostics = model(notes::extra_diagnostics(a).iter().map(|d| say(d)));
+    m.status_reason = status_reason(a, texts).into();
     m.no_calls = a.calls.is_empty() && a.status != "not_applicable";
     m.analyzers = model(a.analyzers.iter().map(|x| CallsAnalyzer {
         note: notes::note(x) as i32,
@@ -130,6 +131,24 @@ fn fill_coverage(m: &mut CallsModel, s: &State, texts: &Texts) {
     m.sites = int(rels.iter().map(|r| r.calls.len()).sum());
 }
 
+/// The first engine message of an incomplete analysis: of the first
+/// analyzer that is not ready, else the analysis-wide one.
+fn status_reason(a: &archguard_engine::core::CallAnalysis, texts: &Texts) -> String {
+    if a.status != "partial" {
+        return String::new();
+    }
+    let not_ready = a
+        .analyzers
+        .iter()
+        .filter(|x| x.status != "ready" && x.status != "not_applicable");
+    not_ready
+        .flat_map(|x| x.diagnostics.first())
+        .chain(a.diagnostics.first())
+        .next()
+        .map(|d| notes::diagnostic(texts, d))
+        .unwrap_or_default()
+}
+
 fn tree_label(s: &State, kind: Kind, n: &super::tree::Node, ui: &UiLabels) -> SharedString {
     let label = n.label.clone().unwrap_or_default();
     match kind {
@@ -137,6 +156,7 @@ fn tree_label(s: &State, kind: Kind, n: &super::tree::Node, ui: &UiLabels) -> Sh
         Kind::Group if n.id == "external" => ui.external_group.clone(),
         Kind::Group => ui.unresolved_group.clone(),
         Kind::Package if label.is_empty() => ui.default_package.clone(),
+        Kind::Method => rel(s, &label).into(),
         _ => label.into(),
     }
 }
@@ -261,7 +281,8 @@ fn fill_relations(m: &mut CallsModel, s: &State) {
             sites: int(r.calls.len()),
             methods: int(r.target_methods(&s.idx.a)),
             resolution: resolution_index(&r.resolution),
-            full: format!("{from} → {to}").into(),
+            full: rel(s, &format!("{from} → {to}")).into(),
+            tip: format!("{from} → {to}").into(),
             selected: Some(r.key.as_str()) == selected,
         }
     }));
@@ -289,8 +310,10 @@ fn fill_rankings(m: &mut CallsModel, s: &State) {
         let metric = method.and_then(rankings::complexity);
         let cls = idx.class(Some(method.map_or(r.id.as_str(), |m| m.class_id.as_str())));
         let language = cls.map(|c| idx.language(c)).filter(|x| !x.is_empty());
+        let label = rankings::label(idx, s.rank_method, &r.id, l);
         CallsRankRow {
-            label: rankings::label(idx, s.rank_method, &r.id, l).into(),
+            label: rel(s, &label).into(),
+            tip: label.into(),
             incoming: int(r.incoming),
             outgoing: int(r.outgoing),
             total: int(r.total),
@@ -351,7 +374,8 @@ fn fill_cycles(m: &mut CallsModel, s: &State) {
         }
         CallsCycleRow {
             number: int(pos + 1),
-            preview: preview.into(),
+            preview: rel(s, &preview).into(),
+            tip: preview.into(),
             members: int(g.members.len()),
             edges: int(g.edges.len()),
             sites: int(g.call_sites),
@@ -364,7 +388,7 @@ fn fill_cycles(m: &mut CallsModel, s: &State) {
 /// The selected group: path, members and internal connections.
 fn fill_group(m: &mut CallsModel, s: &State) {
     let (v, idx, l, kind) = (&s.view, &s.idx, &s.labels, s.cycle_kind);
-    let label = |id: &str| idx.qualified(kind, id, l);
+    let label = |id: &str| rel(s, &idx.qualified(kind, id, l));
     let Some(g) = s.group() else { return };
     m.has_group = true;
     m.group_members = int(g.members.len());
@@ -421,6 +445,21 @@ mod tests {
         module.file = "api/http.py".into();
         assert_eq!(short("http.py".into(), Some(&module)), "http.py");
         assert_eq!(short("x.Unknown".into(), None), "Unknown");
+    }
+
+    /// A partial analysis names its first engine message next to the
+    /// status; a ready one names nothing.
+    #[test]
+    fn a_partial_analysis_says_why_in_one_line() {
+        let texts = Texts::default();
+        let mut a = fixture::analysis();
+        assert_eq!(status_reason(&a, &texts), "");
+        a.status = "partial".into();
+        a.diagnostics = vec!["java: global".into()];
+        assert_eq!(status_reason(&a, &texts), "java: global");
+        a.analyzers[0].status = "partial".into();
+        a.analyzers[0].diagnostics = vec!["3 files failed".into(), "more".into()];
+        assert_eq!(status_reason(&a, &texts), "3 files failed");
     }
 
     /// The tree scrolls to the focused element's row (`tree-focus`).

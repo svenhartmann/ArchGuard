@@ -91,11 +91,12 @@ pub fn center(layout: &Layout, v: &View, area: usize, z: f64) -> (f64, f64) {
 }
 
 /// Place the pin `rows` at their `anchors`, clear of the blocks of the
-/// `plan` (its layout and number of areas) and of each other.
+/// `plan` (its layout, number of areas and how many pins show in full;
+/// the rest collapse to dots) and of each other.
 pub fn place_pins(
     m: &mut StartModel,
     old: &StartModel,
-    plan: (&Layout, usize),
+    plan: (&Layout, usize, usize),
     v: &View,
     rows: Vec<StartPin>,
     anchors: Vec<(f64, f64)>,
@@ -103,7 +104,7 @@ pub fn place_pins(
     let (cells, areas) = blocks(plan.0, plan.1, v);
     let cover = pins::Cover::new(&cells, (v.w, v.h));
     let wants = wants(old, &rows, &anchors, &areas);
-    let placed = pins::place(&wants, (v.w, v.h), controls(v.w, v.h), &cover);
+    let placed = pins::place(&wants, (v.w, v.h), controls(v.w, v.h), &cover, plan.2);
     let mut leaders = String::new();
     let mut shown = Vec::new();
     for ((mut pin, spot), (ax, ay)) in rows.into_iter().zip(placed).zip(anchors) {

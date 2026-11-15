@@ -51,6 +51,8 @@ pub struct Matrix {
     pub cells: BTreeMap<usize, BTreeMap<usize, Cell>>,
     /// Nodes that belong to a column (the rows the matrix can show).
     pub included: BTreeSet<usize>,
+    /// Node → the column it belongs to (the diagonal cell of its row).
+    pub owner: BTreeMap<usize, usize>,
     pub files: usize,
     pub total: u64,
     pub total_exact: bool,
@@ -113,23 +115,24 @@ impl Matrix {
             cells: BTreeMap::new(),
             files: included.iter().filter(|&&n| tree.nodes[n].file).count(),
             included,
+            owner,
             total: 0,
             total_exact: true,
             cycles: Vec::new(),
             badges: BTreeMap::new(),
         };
-        m.fill_cells(tree, &owner);
+        m.fill_cells(tree);
         m.find_cycles(tree);
         m
     }
 
-    fn fill_cells(&mut self, tree: &Tree, owner: &BTreeMap<usize, usize>) {
+    fn fill_cells(&mut self, tree: &Tree) {
         let mut outside = None;
         for (from, to, e) in tree.edges() {
             if !self.included.contains(&from) {
                 continue;
             }
-            let col = match owner.get(&to) {
+            let col = match self.owner.get(&to) {
                 Some(&c) => c,
                 None => *outside.get_or_insert_with(|| {
                     self.columns.push(Column {
@@ -420,6 +423,18 @@ pub(crate) mod tests {
         );
         assert_eq!((m.files, m.total), (5, 8));
         assert!(m.total_exact);
+    }
+
+    /// The diagonal: the column a row belongs to (its own package or the
+    /// direct-files bucket); rows above the columns have none.
+    #[test]
+    fn rows_know_their_own_column() {
+        let t = tree();
+        let m = Matrix::build(&t, None, "proj");
+        assert_eq!(m.owner.get(&1), Some(&1), "lib/src");
+        assert_eq!(m.owner.get(&6), Some(&0), "app/ui/v.rs in app/ui");
+        assert_eq!(m.owner.get(&8), Some(&2), "top.rs in the direct bucket");
+        assert_eq!(m.owner.get(&4), None, "app holds two columns");
     }
 
     #[test]

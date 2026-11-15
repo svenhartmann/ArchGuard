@@ -394,6 +394,7 @@ fn row_items(m: &MatrixState, rows: &[MatrixRow], locale: Locale) -> Vec<MatrixR
                 in_cycle_path: path.contains(&r.node),
                 marked: m.marked == Some(r.node),
                 badges: badges(mx, r.node).into(),
+                own_col: mx.owner.get(&r.node).map_or(-1, |&c| c as i32),
                 cells: model((0..mx.columns.len()).map(|c| {
                     cells
                         .and_then(|row| row.get(&c))

@@ -53,8 +53,8 @@ export global SecurityData {
 // securityStatusText: what the scan status means for the findings.
 component StatusText inherits StatusLine {
     in property <string> code;
-    detail: code == "not_scanned" ? @tr("Security" => "Run the CLI command to create a dependency scan.")
-        : code == "partial" ? @tr("Security" => "Findings do not cover all dependencies.")
+    // not_scanned: `NotScanned` below says what is missing.
+    detail: code == "partial" ? @tr("Security" => "Findings do not cover all dependencies.")
         : code == "stale" ? @tr("Security" => "Dependency inputs have changed; run a fresh scan.")
         : code == "error" ? @tr("Security" => "Dependency coverage is unknown.")
         : "";
@@ -63,7 +63,7 @@ component StatusText inherits StatusLine {
 component EmptyText inherits EmptyState {
     in property <int> kind;
     reason: kind == 1 ? @tr("Security" => "No findings match these filters.")
-        : kind == 2 ? @tr("Security" => "Not scanned. No security conclusion is available.")
+        // 2, not scanned: `NotScanned` replaces the list.
         : kind == 3 ? @tr("Security" => "Scan failed. The absence of findings does not establish dependency safety.")
         : kind == 4 ? @tr("Security" => "No packages were scanned. The absence of findings does not establish dependency safety.")
         : kind == 5 ? @tr("Security" => "No vulnerabilities reported for the scanned package versions in this snapshot.")
@@ -186,6 +186,32 @@ component Controls inherits HorizontalLayout {
     }
 }
 
+// No saved scan: what is missing, the command that creates it and where
+// the tab reads it; the cards, chips and filters stay hidden until then.
+component NotScanned inherits VerticalLayout {
+    in property <string> command;
+    property <string> copied;
+    spacing: 4px;
+    EmptyState {
+        title: @tr("Security" => "No dependency scan yet");
+        reason: @tr("Security" => "This tab reads .archguard/security.json in the project folder, and that file does not exist yet. Run this command in a terminal (it needs Trivy), then reopen the project:");
+        padding-bottom: 4px;
+    }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 10px;
+        command := CommandField { command: root.command; }
+        Button {
+            text: @tr("Security" => "Copy scan command");
+            clicked => {
+                command.copy-all();
+                root.copied = @tr("Security" => "Copied.");
+            }
+        }
+    }
+    if root.copied != "": Text { text: root.copied; color: Theme.muted; font-size: Theme.font-small; horizontal-alignment: center; }
+}
+
 export component SecurityView inherits Rectangle {
     callback open-web();
     property <SecurityModel> model: SecurityData.model;
@@ -216,85 +242,92 @@ export component SecurityView inherits Rectangle {
             spacing: 0;
             Rectangle { height: 14px; }
             StatusText { code: root.model.status; status: root.model.status-slot; label: root.model.status-label; }
-            Rectangle { height: 16px; }
-            if !root.narrow: HorizontalLayout {
-                spacing: 8px;
-                StatCard { kpi: root.model.metrics[0]; }
-                StatCard { kpi: root.model.metrics[1]; }
-                StatCard { kpi: root.model.metrics[2]; }
-                StatCard { kpi: root.model.metrics[3]; }
+            if root.model.status == "not_scanned": VerticalLayout {
+                padding-top: 24px;
+                NotScanned { command: root.model.command; }
             }
-            if root.narrow: VerticalLayout {
-                spacing: 8px;
-                HorizontalLayout {
+            if root.model.status != "not_scanned": VerticalLayout {
+                spacing: 0;
+                Rectangle { height: 16px; }
+                if !root.narrow: HorizontalLayout {
                     spacing: 8px;
                     StatCard { kpi: root.model.metrics[0]; }
                     StatCard { kpi: root.model.metrics[1]; }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
                     StatCard { kpi: root.model.metrics[2]; }
                     StatCard { kpi: root.model.metrics[3]; }
                 }
-            }
-            Rectangle { height: 8px; }
-            if !root.narrow: HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
-                SeverityChip { key: "critical"; value: root.model.severities[0]; }
-                SeverityChip { key: "high"; value: root.model.severities[1]; }
-                SeverityChip { key: "medium"; value: root.model.severities[2]; }
-                SeverityChip { key: "low"; value: root.model.severities[3]; }
-                SeverityChip { key: "unknown"; value: root.model.severities[4]; }
-            }
-            if root.narrow: VerticalLayout {
-                spacing: 6px;
-                HorizontalLayout {
+                if root.narrow: VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        StatCard { kpi: root.model.metrics[0]; }
+                        StatCard { kpi: root.model.metrics[1]; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        StatCard { kpi: root.model.metrics[2]; }
+                        StatCard { kpi: root.model.metrics[3]; }
+                    }
+                }
+                Rectangle { height: 8px; }
+                if !root.narrow: HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
                     SeverityChip { key: "critical"; value: root.model.severities[0]; }
                     SeverityChip { key: "high"; value: root.model.severities[1]; }
                     SeverityChip { key: "medium"; value: root.model.severities[2]; }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: start;
                     SeverityChip { key: "low"; value: root.model.severities[3]; }
                     SeverityChip { key: "unknown"; value: root.model.severities[4]; }
                 }
-            }
-            Rectangle { height: 16px; }
-            Coverage { model: root.model; }
-            Rectangle { height: 16px; }
-            Controls { model: root.model; }
-            Rectangle { height: 8px; }
-            Text {
-                text: @tr("Security" => "{} / {} matching findings shown · {} in snapshot", Fmt.int(root.model.shown), Fmt.int(root.model.matching), Fmt.int(root.model.total));
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                wrap: word-wrap;
-            }
-            Rectangle { height: 12px; }
-            for f in root.model.findings: VerticalLayout {
-                padding-bottom: 8px;
-                SecurityCard {
-                    item: f;
-                    narrow: root.narrow;
-                    open-url(u) => { SecurityData.open-url(u); }
+                if root.narrow: VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        SeverityChip { key: "critical"; value: root.model.severities[0]; }
+                        SeverityChip { key: "high"; value: root.model.severities[1]; }
+                        SeverityChip { key: "medium"; value: root.model.severities[2]; }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        SeverityChip { key: "low"; value: root.model.severities[3]; }
+                        SeverityChip { key: "unknown"; value: root.model.severities[4]; }
+                    }
                 }
-            }
-            if root.model.empty != 0: VerticalLayout {
-                padding-top: 20px;
-                padding-bottom: 20px;
-                padding-left: 4px;
-                padding-right: 4px;
-                EmptyText { kind: root.model.empty; }
-            }
-            if root.model.more: HorizontalLayout {
-                alignment: start;
-                Button {
-                    text: @tr("Security" => "Load more findings");
-                    clicked => { SecurityData.load-more(); }
+                Rectangle { height: 16px; }
+                Coverage { model: root.model; }
+                Rectangle { height: 16px; }
+                Controls { model: root.model; }
+                Rectangle { height: 8px; }
+                Text {
+                    text: @tr("Security" => "{} / {} matching findings shown · {} in snapshot", Fmt.int(root.model.shown), Fmt.int(root.model.matching), Fmt.int(root.model.total));
+                    color: Theme.muted;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 12px; }
+                for f in root.model.findings: VerticalLayout {
+                    padding-bottom: 8px;
+                    SecurityCard {
+                        item: f;
+                        narrow: root.narrow;
+                        open-url(u) => { SecurityData.open-url(u); }
+                    }
+                }
+                if root.model.empty != 0: VerticalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 20px;
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    EmptyText { kind: root.model.empty; }
+                }
+                if root.model.more: HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: @tr("Security" => "Load more findings");
+                        clicked => { SecurityData.load-more(); }
+                    }
                 }
             }
         }

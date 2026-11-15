@@ -23,10 +23,12 @@ slint::slint! {
 }
 
 const H: usize = 400;
-/// A row below the zoom controls, which cover the first rows' left lane.
-const ROW: i32 = 4;
+/// The zoom controls' strip above the canvas (`zoom-strip`).
+const STRIP: usize = 40;
+/// The first row: the zoom controls sit above it, not on its left lane.
+const ROW: i32 = 0;
 /// Centre line of that row (`TreeGeo`: top 34, row height 30, card 26).
-const ROW_Y: usize = 34 + 30 * ROW as usize + 13;
+const ROW_Y: usize = STRIP + 34 + 30 * ROW as usize + 13;
 /// Port centres are 22 from the tree's edges; a port is 12 wide.
 const PORT_GAP: usize = 22;
 
@@ -118,7 +120,7 @@ fn a_narrow_pane_shows_both_lanes_and_their_headings() {
     // The right lane's heading is drawn in that lane and ends before the edge.
     let buf = &buf;
     let heading: Vec<usize> = (0..28)
-        .flat_map(|y| (right.0..w).filter(move |&x| ink(buf, w, x, y)))
+        .flat_map(|y| (right.0..w).filter(move |&x| ink(buf, w, x, STRIP + y)))
         .collect();
     assert!(!heading.is_empty(), "right lane heading in view");
     assert!(

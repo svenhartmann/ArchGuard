@@ -1,4 +1,4 @@
-// "Architecture at a glance" below the World (`renderStartKpis` in
+// "Key figures" below the World (`renderStartKpis` in
 // viewer_development.js, `renderDashKpis`, `renderDashHealth`). Values
 // and geometry come from src/start_ui/kpis.rs; texts are templates here.
 import { Theme } from "theme.slint";
@@ -11,6 +11,15 @@ export global StartKpiTexts {
         return k == 0 ? @tr("Architecture score · /100") : k == 1 ? @tr("Propagation cost (top cycle)")
             : k == 2 ? @tr("SDP violations") : k == 3 ? @tr("Tangledness") : k == 4 ? @tr("Hub Gini")
             : k == 5 ? @tr("Debt markers") : k == 6 ? @tr("Leaks") : @tr("Risk coverage gaps");
+    }
+
+    // What the KPI measures, one short line on the card.
+    public pure function what(k: int) -> string {
+        return k == 0 ? @tr("Overall rating; higher is better") : k == 1 ? @tr("Share of the system the top cycle reaches")
+            : k == 2 ? @tr("Stable modules depending on less stable ones") : k == 3 ? @tr("Share of nodes inside cycles")
+            : k == 4 ? @tr("Concentration of incoming dependencies: 0 even, 1 one hub")
+            : k == 5 ? @tr("TODO/FIXME/HACK/XXX in the sources") : k == 6 ? @tr("Access to internals a module does not export")
+            : @tr("Hotspots without test coverage");
     }
 
     public pure function value(c: StartKpiCard) -> string {
@@ -43,9 +52,10 @@ export global StartKpiTexts {
             : @tr("Hotspot {} with {} uncovered — the gap stays null when coverage is unknown.", c.a, c.b == "" ? @tr("not measured") : c.b);
     }
 
-    // The health Ampel (StartKpiCard.level).
+    // The health Ampel (StartKpiCard.level) as a rating; its colour
+    // is level-color.
     public pure function level(l: int) -> string {
-        return l == 1 ? @tr("Green") : l == 2 ? @tr("Yellow") : l == 3 ? @tr("Red") : "";
+        return l == 1 ? @tr("Good") : l == 2 ? @tr("Fair") : l == 3 ? @tr("Poor") : "";
     }
 
     public pure function level-color(l: int) -> color {
@@ -66,9 +76,9 @@ component KpiCard inherits Rectangle {
     background: health ? Theme.accent.with-alpha(0.14) : link && tip.has-hover ? Theme.accent.with-alpha(0.08) : Theme.panel-2;
     clip: true;
     VerticalLayout {
-        padding: 16px;
-        padding-right: root.health ? 96px : 16px;
-        spacing: 6px;
+        padding: 14px;
+        padding-right: root.health ? 80px : 14px;
+        spacing: 3px;
         alignment: start;
         Text {
             text: StartKpiTexts.value(root.card);
@@ -84,6 +94,12 @@ component KpiCard inherits Rectangle {
             font-weight: Theme.weight-strong;
             wrap: word-wrap;
         }
+        Text {
+            text: StartKpiTexts.what(root.card.kind);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
         if StartKpiTexts.sub(root.card) != "": Text {
             text: StartKpiTexts.sub(root.card);
             color: Theme.muted;
@@ -94,10 +110,10 @@ component KpiCard inherits Rectangle {
     }
     // The score ring (the web's conic `--score-angle`).
     if root.health: Rectangle {
-        x: parent.width - self.width - 16px;
-        y: 16px;
-        width: 64px;
-        height: 64px;
+        x: parent.width - self.width - 14px;
+        y: 14px;
+        width: 56px;
+        height: 56px;
         Path {
             width: 100%;
             height: 100%;
@@ -120,8 +136,9 @@ component KpiCard inherits Rectangle {
         }
         Text {
             text: StartKpiTexts.level(root.card.level);
-            color: Theme.muted;
+            color: Theme.text;
             font-size: Theme.font-caption;
+            font-weight: Theme.weight-strong;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -361,8 +378,8 @@ export component StartKpis inherits VerticalLayout {
     // Four columns, two below 1000 px (the web's media query).
     property <int> columns: self.width < 1000px ? 2 : 4;
     property <length> gap: 12px;
-    property <length> card-w: (self.width - 48px - (columns - 1) * gap) / columns;
-    property <length> card-h: 148px;
+    property <length> grid-w: self.width - 48px;
+    property <length> card-h: 124px;
     property <int> rows: ceil(g.cards.length / columns);
     padding: 24px;
     spacing: 14px;
@@ -370,7 +387,7 @@ export component StartKpis inherits VerticalLayout {
         spacing: 16px;
         VerticalLayout {
             spacing: 4px;
-            Text { text: @tr("Architecture at a glance"); color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; }
+            Text { text: @tr("Key figures"); color: Theme.text; font-size: Theme.font-page; font-weight: Theme.weight-title; }
             Text {
                 text: g.project + " · " + @tr("Project analysis · independent of the World scope");
                 color: Theme.muted;
@@ -396,10 +413,14 @@ export component StartKpis inherits VerticalLayout {
     }
     if g.measured: Rectangle {
         height: root.rows * root.card-h + max(0, root.rows - 1) * root.gap;
+        // The last row's cards widen to fill it: no hole after them.
         for c[i] in g.cards: KpiCard {
-            x: mod(i, root.columns) * (root.card-w + root.gap);
-            y: floor(i / root.columns) * (root.card-h + root.gap);
-            width: root.card-w;
+            property <int> line: floor(i / root.columns);
+            property <int> in-row: min(root.columns, root.g.cards.length - self.line * root.columns);
+            property <length> w: (root.grid-w - (self.in-row - 1) * root.gap) / self.in-row;
+            x: mod(i, root.columns) * (self.w + root.gap);
+            y: self.line * (root.card-h + root.gap);
+            width: self.w;
             height: root.card-h;
             card: c;
             ring: root.g.ring;

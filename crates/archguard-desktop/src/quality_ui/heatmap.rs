@@ -74,6 +74,38 @@ pub fn rows<'a>(
     keyed.into_iter().map(|(r, _)| r).collect()
 }
 
+/// Measured and applicable classes of metric `key`.
+fn coverage(classes: &[ClassMetrics], key: &str) -> (usize, usize) {
+    let applicable = classes.iter().filter(|r| !not_applicable(r, key));
+    let (mut measured, mut total) = (0, 0);
+    for r in applicable {
+        total += 1;
+        measured += usize::from(value(r, key).is_some());
+    }
+    (measured, total)
+}
+
+/// The class metrics measured for fewer classes than they apply to, as
+/// "NOC 0 / 601 · LCOM4 515 / 601": why an analysis is partial.
+pub fn gaps(lang: &crate::tab_support::Texts, classes: &[ClassMetrics]) -> String {
+    METRICS
+        .iter()
+        .filter_map(|k| {
+            let (measured, total) = coverage(classes, k);
+            (measured < total).then(|| {
+                let ratio = lang.locale().ratio(measured as i64, total as i64);
+                format!("{} {ratio}", k.to_uppercase())
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Metric `key` applies to some class but was measured for none.
+pub fn unmeasured(classes: &[ClassMetrics], key: &str) -> bool {
+    matches!(coverage(classes, key), (0, 1..))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     pub use crate::rating::tests::{class, count};
@@ -129,5 +161,22 @@ pub(crate) mod tests {
         assert_eq!(ids(Filter::Low), ["C0", "C1", "C2"]);
         assert_eq!(ids(Filter::Unknown), ["C9"]);
         assert_eq!(ids(Filter::All).len(), 7);
+    }
+
+    /// A partial analysis names the class metrics it measured for fewer
+    /// classes than apply; "not applicable" does not count as missing.
+    #[test]
+    fn gaps_list_metrics_measured_for_fewer_classes() {
+        let mut rows = java(&[1, 2, 3]);
+        rows[0].noc = count(None, "partial");
+        rows[1].noc = count(None, "partial");
+        rows[2].noc = count(None, "not_applicable");
+        rows[0].lcom4 = None;
+        let en = crate::tab_support::Texts::default();
+        assert_eq!(gaps(&en, &rows), "NOC 0 / 2 · LCOM4 2 / 3");
+        assert!(unmeasured(&rows, "noc"));
+        assert!(!unmeasured(&rows, "lcom4"));
+        assert!(!unmeasured(&[], "noc"), "no classes: nothing to say");
+        assert_eq!(gaps(&en, &java(&[1, 2])), "");
     }
 }

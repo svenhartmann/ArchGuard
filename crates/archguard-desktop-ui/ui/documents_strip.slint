@@ -115,6 +115,7 @@ export component DocumentStrip inherits Rectangle {
             y: (parent.height - self.height) / 2;
             compact: true;
             icon: Icons.plus;
+            tip: @tr("Open project…");
             clicked => { root.add(); }
         }
     }

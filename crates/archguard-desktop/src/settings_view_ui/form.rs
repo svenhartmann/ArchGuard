@@ -103,13 +103,15 @@ impl SettingsState {
         let typed = draft.filter(|_| widget == 1 || widget == 2 || widget >= 4);
         let read_only = s.provenance == Provenance::Derived;
         let (options, option) = choices(s);
+        let text = typed.map_or(s.text.as_str(), |d| d.raw.as_str());
         SettingsItem {
             kind: FIELD,
             path: s.path.as_str().into(),
             label: last_segment(&s.path).into(),
             description: self.texts.t(s.field.description).into(),
             widget,
-            text: typed.map_or(s.text.as_str(), |d| d.raw.as_str()).into(),
+            text: text.into(),
+            lines: text.lines().count().max(1) as i32,
             checked: s.value == Some(FieldValue::Bool(true)),
             options,
             option,

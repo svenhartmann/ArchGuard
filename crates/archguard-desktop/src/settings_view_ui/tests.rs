@@ -513,3 +513,53 @@ fn a_preview_result_maps_to_the_panel() {
     assert_eq!((v.state, v.error.as_str()), (3, "rules.x: bad"));
     assert_eq!(preview_panel::view(&PreviewStatus::Idle).state, 0);
 }
+
+/// Every key the form shows as a label (`max_acd`, `semantic.java`) has a
+/// readable label in `FieldLabels` (settings_parts.slint) with a German
+/// translation in settings_view.po.
+#[test]
+fn every_shown_key_has_a_readable_german_label() {
+    use crate::config_editor::Kind;
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../archguard-desktop-ui");
+    let slint = fs::read_to_string(dir.join("ui/settings_parts.slint")).unwrap();
+    let po = fs::read_to_string(dir.join("lang/de/settings_view.po")).unwrap();
+    let labels: std::collections::HashMap<&str, &str> = slint
+        .lines()
+        .filter_map(|l| {
+            let (_, rest) = l.split_once("if key == \"")?;
+            let (key, rest) = rest.split_once('"')?;
+            let (_, rest) = rest.split_once("@tr(\"Settings\" => \"")?;
+            Some((key, rest.split_once('"')?.0))
+        })
+        .collect();
+    let keys = FIELDS.iter().filter_map(|f| match f.kind {
+        Kind::Table if f.path.contains('.') => Some(f.path),
+        Kind::Table => None,
+        _ => f.path.rsplit('.').next(),
+    });
+    let mut missing = Vec::new();
+    for key in keys {
+        match labels.get(key) {
+            None => missing.push(format!("{key}: no label")),
+            Some(label) => {
+                let entry = format!("msgctxt \"Settings\"\nmsgid \"{label}\"\nmsgstr \"");
+                if !po.contains(&entry) {
+                    missing.push(format!("{key}: no German for {label:?}"));
+                }
+            }
+        }
+    }
+    assert!(missing.is_empty(), "{missing:#?}");
+}
+
+/// A list or map value's text area is as high as its lines, one at least.
+#[test]
+fn list_rows_carry_their_line_count() {
+    let (_dir, _, mut s) = project("[project]\nexclude = [\"a\", \"b\", \"c\"]\nlanguages = [\"auto\"]\n");
+    let items = in_group(&mut s, Group::Project);
+    assert_eq!(item(&items, "project.exclude").lines, 3);
+    assert_eq!(item(&items, "project.languages").lines, 1);
+    let items = in_group(&mut s, Group::Architecture);
+    let empty = item(&items, "architecture.asyncapi");
+    assert_eq!((empty.text.as_str(), empty.lines), ("", 1));
+}

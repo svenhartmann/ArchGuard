@@ -99,9 +99,10 @@ impl Frame {
 
     /// Pixels per unit at zoom 1: a fixed enclosing radius keeps the scale
     /// stable through a full turn.
+    /// The room kept for pins and controls shrinks on a short canvas.
     pub fn base(&self, w: f64, h: f64) -> f64 {
-        let a = (w - 60.0) / (self.radius * SQRT_2 * 1.72);
-        let b = (h - 150.0) / (self.radius * SQRT_2 * 0.88 + self.max_z);
+        let a = (w - 60f64.min(w * 0.1)) / (self.radius * SQRT_2 * 1.72);
+        let b = (h - 150f64.min(h * 0.4)) / (self.radius * SQRT_2 * 0.88 + self.max_z);
         a.min(b).max(1e-3)
     }
 
@@ -491,6 +492,16 @@ mod tests {
         let vb = view.viewbox();
         assert!(close(view.to_unit((0.0, 0.0)), (vb[0], vb[1])));
         assert!((vb[2] * view.scale() - 1000.0).abs() < 1e-9);
+    }
+
+    /// A short stage keeps most of its height for the plan: the room for
+    /// pins and controls shrinks with it instead of eating the World.
+    #[test]
+    fn a_short_canvas_still_fits_a_usable_plan() {
+        let l = plan(vec![cell(0, 0, 0)]);
+        let f = Frame::of(&l).unwrap();
+        let depth = SQRT_2 * SQRT_2 * 0.88 + l.cells[0].z;
+        assert!(f.base(1000.0, 250.0) >= 250.0 * 0.6 / depth - 1e-9);
     }
 
     /// At 0° the +x and +y sides face the viewer; a neighbour of the same

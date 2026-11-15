@@ -60,7 +60,10 @@ component MethodGroup inherits Rectangle {
                 padding-left: 10px;
                 padding-right: 10px;
                 Muted {
-                    text: metric.label + " · " + CallsData.metric-text(metric);
+                    text: (metric.role == 1 ? @tr("Caller: {}", metric.label)
+                        : metric.role == 2 ? @tr("Target: {}", metric.label)
+                        : metric.role == 3 ? @tr("Caller and target: {}", metric.label)
+                        : metric.label) + " · " + CallsData.metric-text(metric);
                     font-size: Theme.font-small;
                 }
             }
@@ -68,7 +71,7 @@ component MethodGroup inherits Rectangle {
                 padding: 10px;
                 spacing: 6px;
                 Rectangle { height: 1px; background: Theme.border; }
-                Mono { text: site.location; }
+                Mono { text: site.location; wrap: char-wrap; }
                 HorizontalLayout {
                     alignment: start;
                     Badge { text: CallsData.dispatch-label(site.dispatch) + " · " + CallsData.resolution-label(site.resolution); }
@@ -199,8 +202,11 @@ component Declaration inherits VerticalLayout {
 
 export component CallsDetail inherits CallsColumn {
     property <CallsModel> m: CallsData.model;
-    ScrollView {
+    // Never wider than the column: titles and rows wrap instead.
+    scroll := ScrollView {
+        content-width: self.visible-width;
         VerticalLayout {
+            width: scroll.visible-width;
             alignment: start;
             padding: 14px;
             spacing: 10px;
@@ -224,6 +230,7 @@ export component CallsDetail inherits CallsColumn {
                     font-weight: Theme.weight-title;
                     wrap: word-wrap;
                 }
+                if m.evidence-full != "": Mono { text: m.evidence-full; color: Theme.muted; font-size: Theme.font-caption; wrap: char-wrap; }
                 Muted {
                     font-size: Theme.font-small;
                     text: @tr("{} call sites · ", Fmt.int(m.evidence-sites))

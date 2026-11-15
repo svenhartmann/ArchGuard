@@ -17,7 +17,9 @@ component Pin inherits Rectangle {
     pure function join(a: string, b: string) -> string {
         return a == "" ? b : b == "" ? a : a + " · " + b;
     }
-    property <string> marks: join(join(pin.cyclic ? @tr("Package cycle") : "",
+    property <string> cycle: !pin.cyclic ? "" : pin.partners == 0 ? @tr("Package cycle")
+        : pin.partners == 1 ? @tr("Cycle with {}", pin.partner) : @tr("Cycle with {} +{}", pin.partner, pin.partners - 1);
+    property <string> marks: join(join(cycle,
             pin.findings > 0 ? @tr("{0} finding" | "{0} findings" % pin.findings, Fmt.int(pin.findings)) : ""),
         pin.max == "" ? "" : kpi > 0 ? @tr("{} max. {}", StartTones.kpi-label(kpi), pin.max) : @tr("max {}", pin.max));
     x: at-x;
@@ -262,16 +264,29 @@ export component StartStage inherits Rectangle {
         stroke: Theme.text;
         stroke-width: 2px;
     }
+    // Cycle arrows stay muted so the surfaces read through them; those of
+    // the selected area are drawn at full strength.
     if StartData.model.arrows != "": PixelPath {
         commands: StartData.model.arrows;
         stroke: Theme.cycle;
-        stroke-width: 1.7px;
-        opacity: 0.85;
+        stroke-width: 1px;
+        opacity: StartData.model.arrows-hot != "" ? 0.18 : 0.4;
     }
     if StartData.model.heads != "": PixelPath {
         commands: StartData.model.heads;
         fill: Theme.cycle;
-        opacity: 0.85;
+        opacity: StartData.model.arrows-hot != "" ? 0.18 : 0.4;
+    }
+    if StartData.model.arrows-hot != "": PixelPath {
+        commands: StartData.model.arrows-hot;
+        stroke: Theme.cycle;
+        stroke-width: 2px;
+        opacity: 0.95;
+    }
+    if StartData.model.heads-hot != "": PixelPath {
+        commands: StartData.model.heads-hot;
+        fill: Theme.cycle;
+        opacity: 0.95;
     }
     // The services World's connections, one path per tone (`worldDraw`).
     for e in StartData.model.services.edges: PixelPath {

@@ -13,6 +13,7 @@ component Connections inherits VerticalLayout {
     spacing: 8px;
     for r[i] in m.relations: Card {
         selected: r.selected;
+        tip: r.tip;
         clicked => { CallsData.select-relation(i); }
         HorizontalLayout {
             spacing: 8px;
@@ -30,7 +31,8 @@ component Connections inherits VerticalLayout {
         Muted {
             text: @tr("{} call sites · {} target methods · {}", Fmt.int(r.sites), Fmt.int(r.methods), CallsData.resolution-label(r.resolution));
         }
-        Muted { text: r.full; }
+        // Ends outside the selected package; the tooltip has full names.
+        if r.full != r.title: Muted { text: r.full; }
     }
     // No call site at all: say why and what to install or run.
     if m.no-calls: VerticalLayout {
@@ -134,6 +136,7 @@ component Rankings inherits VerticalLayout {
     }
     for r[i] in m.ranks: Card {
         selected: r.pressed;
+        tip: r.tip;
         clicked => { CallsData.rank-select(i); }
         Text {
             text: (i + 1) + ". " + r.label;
@@ -230,6 +233,7 @@ component Cycles inherits VerticalLayout {
     }
     for g in m.cycle-rows: Card {
         selected: g.selected;
+        tip: g.tip;
         clicked => { CallsData.cycle-select(g.number - 1); }
         Text {
             text: g.number + ". ↻ " + g.preview;
@@ -331,9 +335,11 @@ export component CallsOverview inherits CallsColumn {
                 clicked => { CallsData.set-mode(2); }
             }
         }
-        ScrollView {
+        list := ScrollView {
             vertical-stretch: 1;
+            content-width: self.visible-width;
             VerticalLayout {
+                width: list.visible-width;
                 alignment: start;
                 padding-right: 4px;
                 padding-bottom: 8px;
