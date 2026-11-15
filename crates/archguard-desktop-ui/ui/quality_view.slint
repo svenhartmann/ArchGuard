@@ -23,6 +23,11 @@ export struct QualityModel {
     status-detail: string,
     // Section notes behind the status line's "?", as one tooltip text.
     help: string,
+    // A partial class analysis: the metrics measured for fewer classes,
+    // "NOC 0 / 601 · LCOM4 515 / 601"; empty otherwise.
+    status-reason: string,
+    // No class has a NOC value: its "—" means not measured, not zero.
+    noc-unmeasured: bool,
     heatmap: bool,
     filter: int,
     sort: int,
@@ -108,6 +113,7 @@ export component QualityView inherits Rectangle {
     // A split pane: the search moves below view and scope.
     property <bool> narrow: root.width < 620px;
     property <bool> picker;
+    property <string> noc-note: @tr("Not measured in this analysis: NOC needs a complete call and inheritance analysis, and this one is partial. “—” means not measured, not zero.");
 
     VerticalLayout {
         padding-left: Theme.page-pad;
@@ -242,11 +248,26 @@ export component QualityView inherits Rectangle {
             font-size: Theme.font-body;
         }
 
-        if !root.m.loading: HorizontalLayout {
-            alignment: start;
-            spacing: 10px;
-            StatusLine { status: root.m.status-slot; label: root.m.status; detail: root.m.status-detail; }
-            HelpTip { size: 24px; y: (parent.height - self.height) / 2; tip: root.m.help; }
+        if !root.m.loading: VerticalLayout {
+            spacing: 2px;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 10px;
+                StatusLine {
+                    status: root.m.status-slot;
+                    label: root.m.status;
+                    // The counts are one page; say where the rest are.
+                    detail: root.m.status-detail + (root.m.more ? " · " + @tr("shown in pages of 20; “Show next 20” at the end of the list loads more") : "");
+                }
+                HelpTip { size: 24px; y: (parent.height - self.height) / 2; tip: root.m.help; }
+            }
+            // Why the analysis is partial, without opening the "?".
+            if root.m.status-reason != "": Text {
+                text: @tr("Not measured for every class: {}", root.m.status-reason);
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                overflow: elide;
+            }
         }
 
         scroll := ScrollView {
@@ -360,7 +381,7 @@ export component QualityView inherits Rectangle {
                                 y: (parent.height - self.height) / 2;
                             }
                         }
-                        TipArea { tip: root.m.heat-help[j]; }
+                        TipArea { tip: root.m.heat-help[j] + (j == 3 && root.m.noc-unmeasured ? "\n\n" + root.noc-note : ""); }
                     }
                     for row[r] in root.m.heat: Rectangle {
                         y: 36px + r * 47px;
@@ -398,7 +419,7 @@ export component QualityView inherits Rectangle {
                             rating: cell.state;
                             text: cell.text;
                             TipArea {
-                                tip: cell.tip;
+                                tip: cell.tip + (j == 3 && root.m.noc-unmeasured ? "\n\n" + root.noc-note : "");
                                 pin-on-click: false;
                                 mouse-cursor: pointer;
                                 activated => { QualityData.select-class(row.class-id); }

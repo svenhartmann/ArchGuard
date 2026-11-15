@@ -47,10 +47,10 @@ msgid "Slow statement"
 msgstr "Langsames Statement"
 
 msgid "{} calls from one call site within one request (threshold {})."
-msgstr "{} Aufrufe von einer Code-Stelle innerhalb eines Requests (Schwelle {})."
+msgstr "{} Aufrufe von einer Code-Stelle innerhalb einer Anfrage (Schwelle {})."
 
 msgid "{} database calls per request at the 95th percentile (threshold {})."
-msgstr "{} DB-Aufrufe pro Request im 95. Perzentil (Schwelle {})."
+msgstr "{} DB-Aufrufe pro Anfrage im 95. Perzentil (Schwelle {})."
 
 msgid "{} ms at the 95th percentile (threshold {} ms), client-side time."
 msgstr "{} ms im 95. Perzentil (Schwelle {} ms), clientseitig gemessen."
@@ -63,14 +63,14 @@ msgstr "Aufgerufen aus {} ({}×)"
 
 msgid "{0} request"
 msgid_plural "{0} requests"
-msgstr[0] "{0} Request"
-msgstr[1] "{0} Requests"
+msgstr[0] "{0} Anfrage"
+msgstr[1] "{0} Anfragen"
 
 msgid "p50 {} ms, p95 {} ms"
 msgstr "p50 {} ms, p95 {} ms"
 
 msgid "DB calls per request: mean {}, max {}"
-msgstr "DB-Aufrufe pro Request: Mittel {}, max. {}"
+msgstr "DB-Aufrufe pro Anfrage: Mittel {}, max. {}"
 
 msgid "DB time {} ms"
 msgstr "DB-Zeit {} ms"
@@ -81,7 +81,7 @@ msgstr[0] "{0} Aufruf"
 msgstr[1] "{0} Aufrufe"
 
 msgid "at most {} per request"
-msgstr "höchstens {} pro Request"
+msgstr "höchstens {} pro Anfrage"
 
 msgid "mean {} ms, max {} ms"
 msgstr "Mittel {} ms, max. {} ms"
@@ -98,7 +98,7 @@ msgid "Reading the recorded runtime …"
 msgstr "Aufgezeichnete Laufzeit wird gelesen …"
 
 msgid "Requests ({})"
-msgstr "Requests ({})"
+msgstr "Anfragen ({})"
 
 msgid "Summary"
 msgstr "Übersicht"
@@ -115,13 +115,13 @@ msgid "Live: off"
 msgstr "Live: aus"
 
 msgid "No requests recorded yet"
-msgstr "Noch keine Requests aufgezeichnet"
+msgstr "Noch keine Anfragen aufgezeichnet"
 
 msgid "Send a request to the application; with Live on it appears here within about a second."
-msgstr "Sende einen Request an die Anwendung; mit Live an erscheint er hier nach etwa einer Sekunde."
+msgstr "Sende eine Anfrage an die Anwendung; mit Live an erscheint sie hier nach etwa einer Sekunde."
 
 msgid "The newest {} of {} requests."
-msgstr "Die neuesten {} von {} Requests."
+msgstr "Die neuesten {} von {} Anfragen."
 
 msgid "{} ms"
 msgstr "{} ms"
@@ -138,7 +138,7 @@ msgid "Error"
 msgstr "Fehler"
 
 msgid "Select a request."
-msgstr "Wähle einen Request aus."
+msgstr "Wähle eine Anfrage aus."
 
 msgid "{} UTC · {} ms"
 msgstr "{} UTC · {} ms"
@@ -153,7 +153,7 @@ msgid "Blue: database call · violet: outgoing call · grey: other · red: error
 msgstr "Blau: DB-Aufruf · Violett: ausgehender Aufruf · Grau: Sonstiges · Rot: Fehler oder ein Statement, das {}-mal oder öfter von einer Code-Stelle kam (N+1)."
 
 msgid "No spans below this request were recorded."
-msgstr "Unter diesem Request wurden keine Spans aufgezeichnet."
+msgstr "Unter dieser Anfrage wurden keine Spans aufgezeichnet."
 
 msgid "More spans than shown; the CLI JSON has all counts."
 msgstr "Mehr Spans als angezeigt; die JSON-Ausgabe der CLI enthält alle Zahlen."
@@ -196,8 +196,8 @@ msgstr "Nicht durch Spans erfasst"
 
 msgid "Ø {1} ms over {0} request"
 msgid_plural "Ø {1} ms over {0} requests"
-msgstr[0] "Ø {1} ms über {0} Request"
-msgstr[1] "Ø {1} ms über {0} Requests"
+msgstr[0] "Ø {1} ms über {0} Anfrage"
+msgstr[1] "Ø {1} ms über {0} Anfragen"
 
 msgid "Endpoints ({})"
 msgstr "Endpoints ({})"
@@ -209,9 +209,15 @@ msgid "No method spans recorded; probes record them at application boundaries."
 msgstr "Keine Methoden-Spans aufgezeichnet; die Sonden erfassen sie an den Grenzen der Anwendung."
 
 msgid "Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."
-msgstr "Mittlere Zeit pro Request nach Kategorie: die Eigenzeit jedes Spans (Dauer minus seiner Kinder), daher ergeben die Teile zusammen den Request. Berechnet aus den aufbewahrten Requests."
+msgstr "Mittlere Zeit pro Anfrage nach Kategorie: die Eigenzeit jedes Spans (Dauer minus seiner Kinder), daher ergeben die Teile zusammen die Anfrage. Berechnet aus den aufbewahrten Anfragen."
 
 msgid "self {1} ms · total {2} ms · {0} call"
 msgid_plural "self {1} ms · total {2} ms · {0} calls"
 msgstr[0] "eigen {1} ms · gesamt {2} ms · {0} Aufruf"
 msgstr[1] "eigen {1} ms · gesamt {2} ms · {0} Aufrufe"
+
+msgid "Waiting for data in .archguard/runtime/"
+msgstr "Wartet auf Daten in .archguard/runtime/"
+
+msgid "Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe. With Live on they appear here within about a second."
+msgstr "Lege OTLP-JSON-Lines in .archguard/runtime/ ab (ein Export pro Zeile, siehe probes/CONVENTIONS.md) oder zeichne einen Lauf mit einer Sonde auf. Mit Live an erscheinen sie hier nach etwa einer Sekunde."

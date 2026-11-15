@@ -221,25 +221,34 @@ export component RuntimeView inherits Rectangle {
             padding-bottom: 8px;
             spacing: 8px;
             alignment: start;
-            Button {
-                text: @tr("Requests ({})", Fmt.int(m.requests-total));
-                pressed-state: m.page == 0;
-                clicked => { RuntimeData.select-page(0); }
-            }
-            Button {
-                text: m.summary.findings.length > 0 ? @tr("Summary ({0} finding)" | "Summary ({0} findings)" % m.summary.findings.length, Fmt.int(m.summary.findings.length)) : @tr("Summary");
-                pressed-state: m.page == 1;
-                clicked => { RuntimeData.select-page(1); }
-            }
-            Button {
-                text: @tr("Time");
-                pressed-state: m.page == 2;
-                clicked => { RuntimeData.select-page(2); }
+            // Without input the pages have nothing to show.
+            if m.state == 1: HorizontalLayout {
+                spacing: 8px;
+                Button {
+                    text: @tr("Requests ({})", Fmt.int(m.requests-total));
+                    pressed-state: m.page == 0;
+                    clicked => { RuntimeData.select-page(0); }
+                }
+                Button {
+                    text: m.summary.findings.length > 0 ? @tr("Summary ({0} finding)" | "Summary ({0} findings)" % m.summary.findings.length, Fmt.int(m.summary.findings.length)) : @tr("Summary");
+                    pressed-state: m.page == 1;
+                    clicked => { RuntimeData.select-page(1); }
+                }
+                Button {
+                    text: @tr("Time");
+                    pressed-state: m.page == 2;
+                    clicked => { RuntimeData.select-page(2); }
+                }
             }
             Button {
                 text: m.live ? @tr("Live: on") : @tr("Live: off");
                 pressed-state: m.live;
                 clicked => { RuntimeData.toggle-live(); }
+            }
+            // Live re-reads the folder each second, also while it is empty.
+            if m.state == 2 && m.live: Small {
+                text: @tr("Waiting for data in .archguard/runtime/");
+                muted: true;
             }
         }
         Rectangle { height: 1px; background: Theme.border; }
@@ -247,7 +256,9 @@ export component RuntimeView inherits Rectangle {
             vertical-stretch: 1;
             title: m.state == 2 ? @tr("No recorded runtime") : @tr("No requests recorded yet");
             reason: m.state == 2
-                ? @tr("Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe, then reopen the project.")
+                ? (m.live
+                    ? @tr("Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe. With Live on they appear here within about a second.")
+                    : @tr("Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe, then reopen the project."))
                 : @tr("Send a request to the application; with Live on it appears here within about a second.");
         }
         if m.state == 1 && m.page == 1: RuntimeSummary { vertical-stretch: 1; data: m.summary; }
