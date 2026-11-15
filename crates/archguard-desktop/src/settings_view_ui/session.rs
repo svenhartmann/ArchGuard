@@ -189,6 +189,12 @@ impl SettingsState {
             e.set_text(&text).map_err(|e| e.to_string())?;
             Ok(e)
         });
+        // E.g. conflict markers: keep the form and its edits, name the
+        // problem; Overwrite works again once the file parses.
+        if let Err(e) = loaded {
+            self.save_error = e;
+            return;
+        }
         let baseline = std::mem::take(&mut self.baseline);
         self.install(loaded);
         // The edits are still unsaved against the file as it was.
