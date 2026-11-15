@@ -4,7 +4,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
-import { Icons, Button, Disclosure, ZoomControls, HelpTip } from "widgets.slint";
+import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
@@ -234,6 +234,12 @@ component Toolbar inherits Rectangle {
             current-index: m.mode;
             selected => { ServicesData.select-mode(self.current-index); }
         }
+        // Why the box is disabled without a selection.
+        HelpTip {
+            size: 18px;
+            y: (parent.height - self.height) / 2;
+            tip: @tr("The direction is relative to the selected service. Select a service in the diagram to show its incoming, outgoing or both relations.");
+        }
     }
     cycles := Button {
         x: root.pad + root.x3;
@@ -281,6 +287,7 @@ component Toolbar inherits Rectangle {
 export component ServicesView inherits Rectangle {
     callback open-web();
     property <ServicesModel> m: ServicesData.model;
+    property <bool> details-open;
     property <bool> evidence-open;
     property <bool> projects-open;
     property <bool> workspace-open;
@@ -316,7 +323,32 @@ export component ServicesView inherits Rectangle {
                     padding-top: 12px;
                     padding-bottom: 6px;
                     spacing: 4px;
-                    Note { text: root.status(); muted: false; }
+                    if m.state != 1: Note { text: root.status(); muted: false; }
+                    // Key numbers on one line, the whole status line in its
+                    // tooltip and the sections in one expander, so the
+                    // diagram starts near the top.
+                    if m.state == 1: HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: root.short-status();
+                            color: Theme.text;
+                            font-size: Theme.font-small;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            TipArea { tip: root.status(); }
+                        }
+                        // The web's services-reference-help.
+                        Note { text: @tr("Legend"); vertical-alignment: center; }
+                        HelpTip { size: 18px; y: (parent.height - self.height) / 2; tip: root.reference(); }
+                        Disclosure {
+                            width: self.preferred-width;
+                            text: @tr("Details");
+                            open <=> root.details-open;
+                        }
+                    }
+                    if m.state != 1 || root.details-open: VerticalLayout {
+                    spacing: 4px;
                     Details {
                         text: @tr("Evidence");
                         open <=> root.evidence-open;
@@ -368,12 +400,6 @@ export component ServicesView inherits Rectangle {
                             clicked => { ServicesData.select-cycle(i); }
                         }
                     }
-                    // The web's services-reference-help.
-                    HorizontalLayout {
-                        alignment: start;
-                        spacing: 6px;
-                        Note { text: @tr("Legend"); vertical-alignment: center; }
-                        HelpTip { tip: root.reference(); }
                     }
                 }
             }
@@ -440,6 +466,19 @@ export component ServicesView inherits Rectangle {
             + @tr("{0} cycle group" | "{0} cycle groups" % m.cycles.length, Fmt.int(m.cycles.length)) + " · "
             + (m.monorepo ? @tr("Monorepo detected") : @tr("Monorepo not established")) + ": "
             + @tr("{} manifest project roots without workspace aggregators, {} local Compose build contexts; at least two establish a monorepo.", Fmt.int(m.reason-projects), Fmt.int(m.reason-contexts))
+            + (m.complete ? "" : @tr(" · Analysis incomplete – missing connections do not establish isolation"));
+    }
+
+    // The key numbers of the status line.
+    function short-status() -> string {
+        return (m.projects > 0
+                ? @tr("{0} application" | "{0} applications" % m.applications, Fmt.int(m.applications)) + " · "
+                    + @tr("{0} container" | "{0} containers" % m.containers, Fmt.int(m.containers))
+                : @tr("{0} service" | "{0} services" % m.services, Fmt.int(m.services)) + " · "
+                    + @tr("{0} Compose file" | "{0} Compose files" % m.compose-files, Fmt.int(m.compose-files)))
+            + " · " + @tr("{} / {} service relations shown", Fmt.int(m.shown), Fmt.int(m.all))
+            + " · " + @tr("{0} cycle group" | "{0} cycle groups" % m.cycles.length, Fmt.int(m.cycles.length))
+            + (m.monorepo ? " · " + @tr("Monorepo detected") : "")
             + (m.complete ? "" : @tr(" · Analysis incomplete – missing connections do not establish isolation"));
     }
 

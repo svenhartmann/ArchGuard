@@ -14,8 +14,8 @@ use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, VecM
 
 slint::slint! {
     import { ServicesTree, SvcRow } from "../archguard-desktop-ui/ui/services_tree.slint";
-    import { ServicesView, ServicesData, ServicesModel } from "../archguard-desktop-ui/ui/services_view.slint";
-    export { SvcRow, ServicesData, ServicesModel }
+    import { ServicesView, ServicesData, ServicesModel, SvcCycle } from "../archguard-desktop-ui/ui/services_view.slint";
+    export { SvcRow, ServicesData, ServicesModel, SvcCycle }
     export component Tree inherits Window {
         in property <[SvcRow]> rows;
         in property <float> canvas-h;
@@ -196,4 +196,38 @@ fn the_toolbar_fits_a_narrow_pane() {
         .flat_map(|y| (PW - 12..PW).map(move |x| (x, y)))
         .find(|&(x, y)| !same(buf[y * PW + x]));
     assert_eq!(ink, None, "a control drawn into the right padding");
+}
+
+/// A project with every section: the summary stays one line and the
+/// sections wait in one collapsed expander, so the toolbar and the
+/// diagram start near the top.
+#[test]
+fn the_summary_leaves_the_height_to_the_diagram() {
+    let window = window(PW, PH);
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let diagnostics: Vec<slint::SharedString> =
+        (0..3).map(|i| format!("diagnostic {i}").into()).collect();
+    page.global::<ServicesData>().set_model(ServicesModel {
+        state: 1,
+        projects: 12,
+        applications: 6,
+        containers: 5,
+        build_units: 12,
+        diagnostics: ModelRc::new(VecModel::from(diagnostics)),
+        cycles: ModelRc::new(VecModel::from(vec![
+            SvcCycle { names: "a, b".into() },
+            SvcCycle { names: "c, d".into() },
+        ])),
+        rows: ModelRc::new(VecModel::from((0..4).map(row).collect::<Vec<_>>())),
+        width: 360.0,
+        height: 200.0,
+        zoom: 1.0,
+        ..Default::default()
+    });
+    let buf = frame(&window, PW, PH);
+    let bg = buf[(PH - 4) * PW + 4];
+    let same = |p: PremultipliedRgbaColor| (p.red, p.green, p.blue) == (bg.red, bg.green, bg.blue);
+    let first = (0..PH).find(|&y| [2, PW / 2, PW - 2].iter().all(|&x| !same(buf[y * PW + x])));
+    assert!(first.is_some_and(|y| y < 60), "summary ends at {first:?}");
 }

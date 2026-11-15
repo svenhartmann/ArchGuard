@@ -3,7 +3,7 @@
 import { ScrollView, Switch } from "std-widgets.slint";
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
-import { Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
+import { Icons, Button, KpiItem, StatInline, ZoomControls, Disclosure } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { Fit } from "architecture_blocks.slint";
 
@@ -296,10 +296,14 @@ export component ArcVisual inherits Rectangle {
     // Set by the view from its own width (never from the content, which
     // sits in a scroll view).
     in property <bool> compact;
-    property <bool> levels-on: map.kind == 0 && !root.compact;
+    // The user hid the level list to give the diagram its width.
+    property <bool> levels-hidden;
+    property <bool> levels-on: map.kind == 0 && !root.compact && !root.levels-hidden;
     property <length> pad: root.compact ? 10px : 16px;
     property <length> box-width: root.width - 2 * root.pad - (root.levels-on ? 216px : 0);
-    property <float> fit-zoom: map.dw > 0 ? min(1, (box-width / 1px - 2) / map.dw) : 1;
+    // Below this the card labels are unreadable; a wider diagram scrolls.
+    property <float> min-fit: 0.8;
+    property <float> fit-zoom: map.dw > 0 ? min(1, max(root.min-fit, (box-width / 1px - 2) / map.dw)) : 1;
     property <float> zoom: user-zoom > 0 ? user-zoom : fit-zoom;
     property <string> unit: map.kind == 1 ? @tr("recorded call sites") : @tr("source connections");
     property <string> counts: @tr("{} · {} inside the shown groups", root.counted(root.map.total), Fmt.int(root.map.internal));
@@ -360,6 +364,14 @@ export component ArcVisual inherits Rectangle {
             if root.map.kind == 0 && !root.compact: HorizontalLayout {
                 spacing: 6px;
                 alignment: start;
+                // Shows or hides the level list, as the Graph's explorer button.
+                Button {
+                    compact: true;
+                    icon: Icons.panel-left;
+                    text: @tr("Building blocks");
+                    pressed-state: root.levels-on;
+                    clicked => { root.levels-hidden = !root.levels-hidden; }
+                }
                 for c[i] in root.map.crumbs: HorizontalLayout {
                     spacing: 6px;
                     if i > 0: Text { text: "›"; color: Theme.muted; vertical-alignment: center; }
