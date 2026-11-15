@@ -109,6 +109,7 @@ pub fn analyze_review(
                 .map(|id| (*id, scc.node_ids.len() as u32))
         })
         .collect();
+    let (dependency_counts, dependent_counts) = (reach_counts(&outgoing), reach_counts(&incoming));
     let mut shown_files = BTreeSet::new();
     let mut nodes = Vec::with_capacity(view.nodes.len());
     for (index, node) in view.nodes.iter().enumerate() {
@@ -123,8 +124,7 @@ pub fn analyze_review(
         let fan_out = outgoing[index].len() as u32;
         let degree = fan_in.saturating_add(fan_out);
         let scc_size = scc_sizes.get(&node.id).copied().unwrap_or(0);
-        let dependencies = reachable(index, &outgoing);
-        let dependents = reachable(index, &incoming);
+        let (dependencies, dependents) = (dependency_counts[index], dependent_counts[index]);
         let components = ReviewScore {
             cycle: if scc_size > 0 {
                 30u32
@@ -305,6 +305,67 @@ fn source_totals(
     (mapped, lines, changes)
 }
 
+/// Per node: how many other nodes it reaches along `adjacency`, in one pass
+/// over the SCC condensation (members of one SCC share their reach).
+/// Memory: one bitset over all nodes per SCC, at most n²/8 bytes (20k
+/// nodes: 50 MB), freed on return.
+fn reach_counts(adjacency: &[BTreeSet<usize>]) -> Vec<u32> {
+    let (sccs, scc_of) = condensation(adjacency);
+    let mut reach: Vec<Vec<u64>> = Vec::with_capacity(sccs.len());
+    let mut counts = vec![0; adjacency.len()];
+    for (c, scc) in sccs.iter().enumerate() {
+        let successors: BTreeSet<usize> = scc
+            .iter()
+            .flat_map(|&node| &adjacency[node])
+            .map(|&to| scc_of[to])
+            .filter(|&d| d != c)
+            .collect();
+        let mut row = vec![0u64; adjacency.len().div_ceil(64)];
+        for d in successors {
+            for (bit, &other) in row.iter_mut().zip(&reach[d]) {
+                *bit |= other;
+            }
+            for &member in &sccs[d] {
+                row[member / 64] |= 1 << (member % 64);
+            }
+        }
+        let count = row.iter().map(|w| w.count_ones()).sum::<u32>() + scc.len() as u32 - 1;
+        for &node in scc {
+            counts[node] = count;
+        }
+        reach.push(row);
+    }
+    counts
+}
+
+/// The SCCs of `adjacency` in reverse topological order (every SCC an SCC
+/// points to comes before it, as Kosaraju returns them), and each node's SCC.
+fn condensation(adjacency: &[BTreeSet<usize>]) -> (Vec<Vec<usize>>, Vec<usize>) {
+    use petgraph::prelude::{DiGraph, NodeIndex};
+    let mut graph = DiGraph::<(), ()>::with_capacity(adjacency.len(), 0);
+    for _ in adjacency {
+        graph.add_node(());
+    }
+    for (from, targets) in adjacency.iter().enumerate() {
+        for &to in targets {
+            graph.add_edge(NodeIndex::new(from), NodeIndex::new(to), ());
+        }
+    }
+    let sccs: Vec<Vec<usize>> = petgraph::algo::kosaraju_scc(&graph)
+        .into_iter()
+        .map(|scc| scc.into_iter().map(NodeIndex::index).collect())
+        .collect();
+    let mut scc_of = vec![0; adjacency.len()];
+    for (c, scc) in sccs.iter().enumerate() {
+        for &node in scc {
+            scc_of[node] = c;
+        }
+    }
+    (sccs, scc_of)
+}
+
+/// The old per-node search, kept to check [`reach_counts`] against.
+#[cfg(test)]
 fn reachable(start: usize, adjacency: &[BTreeSet<usize>]) -> u32 {
     let mut reached = BTreeSet::from([start]);
     let mut stack = vec![start];
@@ -744,5 +805,53 @@ mod tests {
                 .iter()
                 .all(|node| node.changes.is_none() && node.components.churn == 0)
         );
+    }
+
+    /// The counts over the SCC condensation equal one search per node, on
+    /// cycles, diamonds, self-loops, isolated nodes and a pseudo-random graph.
+    #[test]
+    fn reach_counts_equal_one_search_per_node() {
+        fn check(n: usize, edges: &[(usize, usize)]) {
+            let mut out = vec![BTreeSet::new(); n];
+            let mut inc = out.clone();
+            for &(a, b) in edges {
+                out[a].insert(b);
+                inc[b].insert(a);
+            }
+            for adjacency in [&out, &inc] {
+                let expected: Vec<u32> = (0..n).map(|i| reachable(i, adjacency)).collect();
+                assert_eq!(reach_counts(adjacency), expected, "{edges:?}");
+            }
+        }
+        check(0, &[]);
+        // Diamond 0→{1,2}→3, cycle 3→4→5→3 leading to 6, self-loop on 7,
+        // isolated 8, and a second cycle 9⇄10 that reaches the diamond.
+        check(
+            11,
+            &[
+                (0, 1),
+                (0, 2),
+                (1, 3),
+                (2, 3),
+                (3, 4),
+                (4, 5),
+                (5, 3),
+                (5, 6),
+                (7, 7),
+                (9, 10),
+                (10, 9),
+                (10, 0),
+            ],
+        );
+        let mut seed = 7u64;
+        let mut next = |m: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % m
+        };
+        let n = 150;
+        let edges: Vec<_> = (0..400).map(|_| (next(n), next(n))).collect();
+        check(n, &edges);
     }
 }
