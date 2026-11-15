@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeProfile {
     pub schema_version: u32,
-    /// Project-relative input files in read order.
+    /// Project-relative input files in path order; spans index into this list.
     pub inputs: Vec<String>,
     /// Unique, valid spans imported.
     pub spans: u64,
