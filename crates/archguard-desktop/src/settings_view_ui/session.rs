@@ -10,7 +10,9 @@ use std::rc::Rc;
 use archguard_engine::core::Config;
 
 use crate::config_editor::SaveError;
-use crate::config_editor::{self, ConfigEditor, FIELDS, FieldError, Group, Kind};
+use crate::config_editor::{
+    self, ConfigEditor, FIELDS, FieldError, Group, InputError, Kind, catalogue,
+};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 
@@ -40,6 +42,8 @@ pub struct SettingsState {
     pub(super) text_mode: bool,
     /// The raw text while it does not parse, and the parse error.
     pub(super) text_draft: Option<Draft>,
+    /// The first draft error, which the document's save hook refuses.
+    input_error: InputError,
     pub(super) changed_on_disk: bool,
     pub(super) save_error: String,
     pub(super) preview: PreviewStatus,
@@ -62,6 +66,7 @@ impl SettingsState {
             baseline: BTreeMap::new(),
             text_mode: false,
             text_draft: None,
+            input_error: InputError::default(),
             changed_on_disk: false,
             save_error: String::new(),
             preview: PreviewStatus::Idle,
@@ -94,7 +99,7 @@ impl SettingsState {
             (Err(e), _) => Err(e),
         };
         if let Ok(rc) = &self.editor {
-            config_editor::bind(self.doc, rc);
+            config_editor::bind(self.doc, rc, &self.input_error);
             self.baseline = fingerprints(&rc.borrow());
         }
         self.revalidate();
@@ -106,6 +111,29 @@ impl SettingsState {
             .as_ref()
             .ok()
             .and_then(|rc| rc.borrow().validate().err());
+        self.track_input();
+    }
+
+    /// Input that is no value yet is unsaved too: it keeps the document
+    /// dirty (quitting asks) and blocks the save hook.
+    fn track_input(&self) {
+        let input = match &self.text_draft {
+            Some(d) => d.error.clone().map(|e| FieldError::new("", e)),
+            None => self
+                .drafts
+                .iter()
+                .find_map(|(p, d)| Some(FieldError::new(p.as_str(), d.error.clone()?))),
+        };
+        match &input {
+            Some(e) => {
+                let what =
+                    catalogue::resolve(&e.path).map_or("Configuration text", |f| f.group.label());
+                documents::mark_dirty(self.doc, config_editor::PART, what);
+            }
+            None if !self.is_dirty() => documents::mark_clean(self.doc, config_editor::PART),
+            None => {}
+        }
+        *self.input_error.borrow_mut() = input;
     }
 
     /// The text pane: the whole file. Text that does not parse is kept

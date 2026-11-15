@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use super::document::ConfigEditor;
-use super::error::SaveError;
+use super::error::{FieldError, SaveError};
 use crate::documents::{self, DocId};
 
 impl ConfigEditor {
@@ -79,8 +79,9 @@ pub const PART: &str = "config";
 /// dirty (or clean when the text is back to the file), and
 /// `documents::save(doc)` saves through the editor. A Save button in the
 /// view should call `documents::save_part(doc, PART)`, so the part is
-/// marked clean in one place.
-pub fn bind(doc: DocId, editor: &Rc<RefCell<ConfigEditor>>) {
+/// marked clean in one place. While `input` holds an error (text the
+/// view could not apply), saving refuses and writes nothing.
+pub fn bind(doc: DocId, editor: &Rc<RefCell<ConfigEditor>>, input: &InputError) {
     editor.borrow_mut().on_change(move |dirty, what| {
         if dirty {
             documents::mark_dirty(doc, PART, what);
@@ -88,12 +89,21 @@ pub fn bind(doc: DocId, editor: &Rc<RefCell<ConfigEditor>>) {
             documents::mark_clean(doc, PART);
         }
     });
-    documents::set_save_hook(doc, PART, save_hook(Rc::clone(editor)));
+    documents::set_save_hook(doc, PART, save_hook(Rc::clone(editor), Rc::clone(input)));
 }
 
+/// Input the view holds that is no value yet, shared with the save hook.
+pub type InputError = Rc<RefCell<Option<FieldError>>>;
+
 /// The hook `documents::set_save_hook` takes.
-pub fn save_hook(editor: Rc<RefCell<ConfigEditor>>) -> impl FnMut() -> Result<(), String> {
+pub fn save_hook(
+    editor: Rc<RefCell<ConfigEditor>>,
+    input: InputError,
+) -> impl FnMut() -> Result<(), String> {
     move || {
+        if let Some(e) = input.borrow().clone() {
+            return Err(SaveError::Invalid(e).to_string());
+        }
         editor
             .borrow_mut()
             .save()

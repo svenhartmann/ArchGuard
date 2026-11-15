@@ -141,7 +141,7 @@ fn invalid_input_stays_on_its_row() {
         ("abc", "expected a number")
     );
     assert_eq!(s.errors(), 1);
-    assert!(!documents::is_dirty(doc), "the file's value stays");
+    assert!(documents::is_dirty(doc), "unsaved input, asked about on quit");
     assert!(s.groups()[5].failed);
     s.save();
     assert!(
@@ -390,7 +390,7 @@ fn the_text_pane_reports_the_parse_error() {
         "{draft:?}"
     );
     assert_eq!(s.errors(), 1);
-    assert!(!documents::is_dirty(doc));
+    assert!(documents::is_dirty(doc), "unsaved input, asked about on quit");
     s.edit_text("[rules]\nmax_acd = 1.5\n");
     assert!(s.text_draft.is_none());
     assert!(documents::is_dirty(doc));
@@ -562,6 +562,28 @@ fn list_rows_carry_their_line_count() {
     let items = in_group(&mut s, Group::Architecture);
     let empty = item(&items, "architecture.asyncapi");
     assert_eq!((empty.text.as_str(), empty.lines), ("", 1));
+}
+
+/// Invalid input marks the document dirty, so quitting asks; the
+/// prompt's Save refuses like the Save button and writes nothing.
+#[test]
+fn invalid_input_is_unsaved_and_blocks_the_prompt_save() {
+    let text = "[rules]\nmax_acd = 3.5\n";
+    let (dir, doc, mut s) = project(text);
+    s.edit("rules.max_acd", "2,5");
+    assert!(documents::is_dirty(doc));
+    s.edit("rules.max_acd", "3.5");
+    assert!(!documents::is_dirty(doc), "back to the file");
+    s.edit("rules.max_scc_size", "4");
+    s.edit("rules.max_acd", "2,5");
+    let error = documents::save(doc).expect_err("invalid input");
+    assert!(error.contains("rules.max_acd"), "{error}");
+    assert!(documents::is_dirty(doc));
+    assert_eq!(fs::read_to_string(config_file(dir.path())).unwrap(), text);
+    s.edit("rules.max_acd", "3.5");
+    s.edit_text("[rules]\nmax_acd = \n");
+    assert!(documents::save(doc).is_err(), "text that does not parse");
+    assert_eq!(fs::read_to_string(config_file(dir.path())).unwrap(), text);
 }
 
 /// Clearing a list writes an empty list: for `public`, absent means
