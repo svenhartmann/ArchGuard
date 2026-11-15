@@ -199,23 +199,27 @@ impl Arc42Files {
 
     /// Write chapter `n` with the edited Markdown; returns the file
     /// written. The generated blocks are refreshed, so edits inside them
-    /// do not survive; a broken block marker or a file changed on disk
-    /// since it was read refuses the save.
+    /// do not survive; a broken block marker refuses the save. `base` is
+    /// the file's text the edit started from ([`Self::saved`]): a file
+    /// that no longer has it refuses the save too, and `base` becomes its
+    /// new text.
     pub fn save_chapter(
         &mut self,
         doc: &Arc42Document,
         n: u8,
         edited: &str,
+        base: &mut Option<String>,
     ) -> Result<PathBuf, String> {
         let edited = edited.replace("\r\n", "\n");
         let mut edited = refresh(doc, &edited)?;
         if !edited.ends_with('\n') {
             edited.push('\n');
         }
-        let (path, old) = self.file_of(n);
+        let path = self.path_of(n);
         let on_disk = read(&path)?;
-        if on_disk != old {
+        if on_disk != *base {
             // Load the new text, so saving again writes the chapter into it.
+            base.clone_from(&on_disk);
             match (&self.target, on_disk) {
                 (Target::File(_), text) => self.whole = text,
                 (Target::Folder(_), Some(text)) => {
@@ -226,11 +230,11 @@ impl Arc42Files {
                 }
             }
             return Err(format!(
-                "{} changed on disk since it was read; its new text is loaded, save again to write this chapter into it",
+                "{} changed on disk while this chapter was edited; its new text is loaded, save again to write this chapter into it",
                 path.display()
             ));
         }
-        let text = self.compose(doc, n, old.as_deref(), edited);
+        let text = self.compose(doc, n, on_disk.as_deref(), edited);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
@@ -255,13 +259,12 @@ impl Arc42Files {
         }
     }
 
-    /// The file that holds chapter `n`, with its text if it exists.
-    fn file_of(&self, n: u8) -> (PathBuf, Option<String>) {
-        let text = match &self.target {
+    /// The text of the file that holds chapter `n` as read, if it exists.
+    pub fn saved(&self, n: u8) -> Option<String> {
+        match &self.target {
             Target::File(_) => self.whole.clone(),
             Target::Folder(_) => self.chapters.get(&n).map(|(_, t)| t.clone()),
-        };
-        (self.path_of(n), text)
+        }
     }
 
     /// The new text of that file, in its old line endings.
@@ -486,7 +489,10 @@ pub(crate) mod tests {
                 "<!-- Eigene Erläuterungen zu Kapitel 5 hier ergänzen. -->",
                 "Eigene Notiz zu Bausteinen.",
             );
-        assert_eq!(files.save_chapter(&new, 5, &edited), Ok(path.clone()));
+        assert_eq!(
+            files.save_chapter(&new, 5, &edited, &mut files.saved(5)),
+            Ok(path.clone())
+        );
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.replace("\r\n", "").contains('\n'), "CRLF stays");
         let text = text.replace("\r\n", "\n");
@@ -519,7 +525,11 @@ pub(crate) mod tests {
         let edited = files
             .chapter(&new, 5)
             .replace("<!-- archguard:arc42:05:end -->", "");
-        assert!(files.save_chapter(&new, 5, &edited).is_err());
+        assert!(
+            files
+                .save_chapter(&new, 5, &edited, &mut files.saved(5))
+                .is_err()
+        );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             saved,
@@ -527,7 +537,11 @@ pub(crate) mod tests {
         );
         // Removing both markers makes the chapter free text.
         let free = "## 5. Title\n\nNur eigener Text.\n";
-        assert!(files.save_chapter(&new, 5, free).is_ok());
+        assert!(
+            files
+                .save_chapter(&new, 5, free, &mut files.saved(5))
+                .is_ok()
+        );
         assert!(
             std::fs::read_to_string(&path)
                 .unwrap()
@@ -543,7 +557,9 @@ pub(crate) mod tests {
         assert_eq!(files.path_of(3), path, "one file holds every chapter");
         let new = doc("New");
         let edited = files.chapter(&new, 3) + "Kontext vom Team.\n";
-        files.save_chapter(&new, 3, &edited).unwrap();
+        files
+            .save_chapter(&new, 3, &edited, &mut files.saved(3))
+            .unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# arc42"));
         assert!(text.contains("Kontext vom Team.\n\n## 4. Title"), "{text}");
@@ -570,7 +586,7 @@ pub(crate) mod tests {
             "the file a save creates"
         );
         assert_eq!(
-            files.save_chapter(&new, 5, "## 5. Bausteine\n\nNeu."),
+            files.save_chapter(&new, 5, "## 5. Bausteine\n\nNeu.", &mut files.saved(5)),
             Ok(folder.join("05_bausteine.md"))
         );
         assert_eq!(
@@ -579,7 +595,7 @@ pub(crate) mod tests {
         );
         let nine = files.chapter(&new, 9) + "Entscheidung A.\n";
         assert_eq!(
-            files.save_chapter(&new, 9, &nine),
+            files.save_chapter(&new, 9, &nine, &mut files.saved(9)),
             Ok(folder.join("arc42-09.md"))
         );
         let written = std::fs::read_to_string(folder.join("arc42-09.md")).unwrap();
@@ -605,19 +621,20 @@ pub(crate) mod tests {
         let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
         let new = doc("New");
         let edited = files.chapter(&new, 5) + "Mein Kapitel 5.\n";
+        let mut base = files.saved(5);
         // Someone else edits chapter 9 meanwhile (git pull, an editor).
         let theirs = std::fs::read_to_string(&path)
             .unwrap()
             .replace("Old 9", "Old 9 und Text von außen");
         std::fs::write(&path, &theirs).unwrap();
-        assert!(files.save_chapter(&new, 5, &edited).is_err());
+        assert!(files.save_chapter(&new, 5, &edited, &mut base).is_err());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             theirs,
             "not written"
         );
         // The new text is loaded: saving again keeps the other change.
-        files.save_chapter(&new, 5, &edited).unwrap();
+        files.save_chapter(&new, 5, &edited, &mut base).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Text von außen") && text.contains("Mein Kapitel 5."));
     }
@@ -629,8 +646,13 @@ pub(crate) mod tests {
         std::fs::create_dir(&folder).unwrap();
         let mut files = Arc42Files::load(Target::Folder(folder.clone())).unwrap();
         let new = doc("New");
+        let mut base = files.saved(9);
         std::fs::write(folder.join("arc42-09.md"), "## 9. Von außen\n").unwrap();
-        assert!(files.save_chapter(&new, 9, "## 9. Meins\n").is_err());
+        assert!(
+            files
+                .save_chapter(&new, 9, "## 9. Meins\n", &mut base)
+                .is_err()
+        );
         assert_eq!(
             std::fs::read_to_string(folder.join("arc42-09.md")).unwrap(),
             "## 9. Von außen\n"
