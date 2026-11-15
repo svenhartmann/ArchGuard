@@ -23,7 +23,7 @@ mod view;
 mod visual;
 mod window;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use slint::{ComponentHandle, SharedString};
 
@@ -50,22 +50,20 @@ pub fn wire(ui: &AppWindow) {
     let toggle =
         a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
-    d.on_start_edit(a.on0(|s, ui| {
+    d.on_start_edit(a.on0(|s, _| {
         if let Ok(doc) = &s.doc {
-            s.editor.start(ui, doc, s.chapter);
+            s.editor.start(doc, s.chapter);
         }
     }));
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
+            s.editor.edit(&text);
             s.editor.preview(ui, &text);
         });
     }));
-    d.on_save_edit(a.on0(|s, ui| {
+    d.on_save_edit(a.on0(|s, _| {
         if let Ok(doc) = &s.doc {
-            s.saved = s
-                .editor
-                .save(ui, doc)
-                .unwrap_or(std::mem::take(&mut s.saved));
+            s.saved = s.editor.save(doc).unwrap_or(std::mem::take(&mut s.saved));
         }
     }));
     d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
@@ -102,7 +100,7 @@ pub fn wire(ui: &AppWindow) {
     }));
     let action = navigation(ui, a.on(|s, ui, ()| card_action(s, ui)));
     d.on_card_action(move || action(()));
-    d.on_download(a.on(|s, _, all: bool| download(s, all)));
+    d.on_download(a.on(|s, ui, all: bool| download(s, ui, all)));
     d.on_plantuml(a.on(|s, ui, unit: SharedString| plantuml(s, ui, &unit)));
     follow::wire();
 }
@@ -113,9 +111,9 @@ impl TabState for ArchitectureState {
         push(ui, self);
     }
 
-    fn arrive(&mut self, ui: &AppWindow) {
+    fn arrive(&mut self, _: &AppWindow) {
         if let Ok(doc) = &self.doc
-            && let Some(path) = self.editor.snapshot(ui, doc, self.chapter)
+            && let Some(path) = self.editor.snapshot(doc, self.chapter)
         {
             self.saved = path;
         }
@@ -136,6 +134,7 @@ impl TabState for ArchitectureState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     let lang = Texts::of(ui).doc_lang();
     tab_support::show_async(ui, || {
+        let id = crate::documents::active_id().unwrap_or_default();
         let calls = Calls::of(data);
         let (root, config, graph, report) = (
             data.root.to_path_buf(),
@@ -143,7 +142,11 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
             data.run.graph.clone(),
             data.run.report.clone(),
         );
-        move || build_from(&root, &config, graph, &report, &calls.get(), lang)
+        move || {
+            let mut state = build_from(&root, &config, graph, &report, &calls.get(), lang);
+            state.editor.doc = id;
+            state
+        }
     });
 }
 
@@ -179,9 +182,10 @@ pub fn push(ui: &AppWindow, s: &ArchitectureState) {
     let d = ui.global::<ArchitectureData>();
     sync::keep(&d.get_model(), &mut m);
     d.set_model(m);
+    s.editor.show(ui);
 }
 
-fn download(s: &mut ArchitectureState, all: bool) {
+fn download(s: &mut ArchitectureState, ui: &AppWindow, all: bool) {
     let Ok(doc) = &s.doc else { return };
     let (name, content) = if all {
         ("arc42.md".to_string(), doc.markdown(None))
@@ -191,7 +195,9 @@ fn download(s: &mut ArchitectureState, all: bool) {
             doc.markdown(Some(s.chapter)),
         )
     };
-    s.saved = save(&s.root, &name, &content);
+    if let Some(saved) = save(ui, &s.root, &name, &content) {
+        s.saved = saved;
+    }
 }
 
 fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
@@ -227,20 +233,30 @@ fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
     } else {
         "arc42-dependencies.puml"
     };
-    s.saved = save(&s.root, name, &diagram::plantuml(&nodes, &edges, unit));
+    if let Some(saved) = save(ui, &s.root, name, &diagram::plantuml(&nodes, &edges, unit)) {
+        s.saved = saved;
+    }
 }
 
-/// Write an export to `~/Downloads` (else the project root), as the web's
-/// download; returns the path, or the path and the error.
-fn save(root: &Path, name: &str, content: &str) -> String {
-    let downloads = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Downloads"));
-    let dir = downloads
-        .filter(|d| d.is_dir())
-        .unwrap_or_else(|| root.to_path_buf());
-    let path = dir.join(name);
-    match std::fs::write(&path, content) {
+/// Write an export where the save dialog points (as `export_ui`; never
+/// in headless runs); `None` when cancelled.
+fn save(ui: &AppWindow, root: &Path, name: &str, content: &str) -> Option<String> {
+    if crate::context::headless_run() {
+        return None;
+    }
+    let path = rfd::FileDialog::new()
+        .set_title(ui.get_export_title().as_str())
+        .set_file_name(name)
+        .set_directory(root)
+        .save_file()?;
+    Some(write(&path, content))
+}
+
+/// Write `content` in one step; the path written, or the error.
+fn write(path: &Path, content: &str) -> String {
+    match crate::export::write(path, content.as_bytes()) {
         Ok(()) => path.display().to_string(),
-        Err(e) => format!("{}: {e}", path.display()),
+        Err(e) => e.to_string(),
     }
 }
 
@@ -277,5 +293,18 @@ mod tests {
         assert_eq!(derived(&state, 11), Some(Kind::Cycles));
         assert_eq!(derived(&state, 1), None);
         assert_eq!(state.deps.len(), run.graph.edges.len());
+    }
+
+    /// A download goes only where the save dialog points, in one step;
+    /// a missing folder is an error, never a fallback into the project.
+    #[test]
+    fn a_download_writes_only_the_chosen_file() {
+        let d = tempfile::tempdir().expect("temp dir");
+        let chosen = d.path().join("arc42.md");
+        assert_eq!(write(&chosen, "# arc42\n"), chosen.display().to_string());
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "# arc42\n");
+        let missing = d.path().join("gone/arc42.md");
+        assert!(write(&missing, "x").starts_with("Could not write"));
+        assert!(!d.path().join("gone").exists());
     }
 }

@@ -87,7 +87,7 @@ pub(super) fn build_from(
         chapter,
         maps: Default::default(),
         saved: String::new(),
-        editor: edit::Editor::new(root),
+        editor: edit::Editor::new(0, root),
         format: config.arc42.diagram_format,
         hidden: config.arc42.hidden_diagrams.clone(),
         catalogue: false,
