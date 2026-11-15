@@ -28,6 +28,9 @@ export struct StartPin {
     entries: int,
     cyclic: bool,
     findings: int,
+    // A cyclic area's strongest cycle partner and the number of partners.
+    partner: string,
+    partners: int,
     max: string,
     x: float,
     y: float,
@@ -147,7 +150,7 @@ export struct StartAiPoint {
     tip: string,
 }
 
-// "Architecture at a glance" (`renderStartKpis`): the project's review KPIs,
+// "Key figures" (`renderStartKpis`): the project's review KPIs,
 // independent of the World scope. measured: the analysis carries review
 // KPIs; missing: card kinds without a measurement (hidden cards).
 // Health: ring the score arc in a 100 × 100 box ("" no score), trend
@@ -217,6 +220,9 @@ export struct StartModel {
     // Overlays in canvas pixels.
     arrows: string,
     heads: string,
+    // The cycle arrows touching the selected area, drawn at full strength.
+    arrows-hot: string,
+    heads-hot: string,
     leaders: string,
     pins: [StartPin],
     canvas-w: float,

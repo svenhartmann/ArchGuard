@@ -1,4 +1,4 @@
-//! "Architecture at a glance" below the World: the port of
+//! "Key figures" below the World: the port of
 //! `renderStartKpis` (viewer_development.js) and `renderDashKpis`
 //! (viewer_dash_kpis.js). The figures are the analysis' review KPIs
 //! (`Graph::review_kpis`, as the CLI's report embeds them); a KPI the

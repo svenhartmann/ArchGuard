@@ -177,15 +177,17 @@ fn fit(v: f64, lo: f64, hi: f64) -> f64 {
 }
 
 /// Place the pins of `wants` in priority order. `occupied` starts with the
-/// floating controls.
+/// floating controls; after `shown` pins on the canvas the rest collapse.
 pub fn place(
     wants: &[Want],
     canvas: (f64, f64),
     mut occupied: Vec<Rect>,
     cover: &Cover,
+    shown: usize,
 ) -> Vec<Spot> {
     let (w, h) = canvas;
     let diag = w.hypot(h).max(1.0);
+    let mut room = shown;
     wants
         .iter()
         .map(|want| {
@@ -193,6 +195,10 @@ pub fn place(
             if !(0.0..=w).contains(&px) || !(0.0..=h).contains(&py) {
                 return Spot::Off;
             }
+            if room == 0 {
+                return Spot::Collapsed;
+            }
+            room -= 1;
             let (hw, hh) = (want.width / 2.0, PIN_H / 2.0);
             let rect = |(x, y): (f64, f64)| Rect {
                 x: fit(x, hw + 8.0, w - hw - 8.0),
@@ -268,6 +274,7 @@ mod tests {
             (1000.0, 800.0),
             Vec::new(),
             &cover,
+            usize::MAX,
         );
         let Spot::Shown(r) = spots[0] else {
             panic!("{spots:?}")
@@ -287,7 +294,7 @@ mod tests {
         let canvas = (1000.0, 800.0);
         let cover = Cover::new(&blocks, canvas);
         let wants: Vec<Want> = blocks.iter().map(|b| want((b.x, b.y), *b)).collect();
-        let spots = place(&wants, canvas, Vec::new(), &cover);
+        let spots = place(&wants, canvas, Vec::new(), &cover, usize::MAX);
         let shown: Vec<Rect> = spots
             .iter()
             .filter_map(|s| {
@@ -319,7 +326,7 @@ mod tests {
         };
         let cover = Cover::new(&[], (1000.0, 800.0));
         let free = want((500.0, 400.0), sq(500.0, 400.0, 0.0));
-        let placed = place(&[free], (1000.0, 800.0), vec![blocker], &cover);
+        let placed = place(&[free], (1000.0, 800.0), vec![blocker], &cover, usize::MAX);
         let Spot::Shown(r) = placed[0] else { panic!() };
         assert!(!blocker.overlaps(&r));
         let edge = place(
@@ -327,6 +334,7 @@ mod tests {
             (1000.0, 800.0),
             Vec::new(),
             &cover,
+            usize::MAX,
         );
         let Spot::Shown(r) = edge[0] else { panic!() };
         assert!(r.x - r.w / 2.0 >= 8.0 && r.y - r.h / 2.0 >= 8.0);
@@ -335,10 +343,29 @@ mod tests {
             (1000.0, 800.0),
             Vec::new(),
             &cover,
+            usize::MAX,
         );
         assert_eq!(off[0], Spot::Off);
         assert_eq!(width("x", "", true), 7.8 + 26.0 + 18.0);
         assert_eq!(width(&"n".repeat(40), "", false), 180.0);
+    }
+
+    /// Only the first `shown` pins on the canvas show; the rest wait as
+    /// dots, and pins off the canvas do not count.
+    #[test]
+    fn pins_beyond_the_limit_collapse_to_dots() {
+        let cover = Cover::new(&[], (1000.0, 800.0));
+        let wants = [
+            want((-5.0, 10.0), sq(-5.0, 10.0, 0.0)),
+            want((200.0, 200.0), sq(200.0, 200.0, 0.0)),
+            want((800.0, 600.0), sq(800.0, 600.0, 0.0)),
+            want((200.0, 600.0), sq(200.0, 600.0, 0.0)),
+        ];
+        let spots = place(&wants, (1000.0, 800.0), Vec::new(), &cover, 2);
+        assert_eq!(spots[0], Spot::Off);
+        assert!(matches!(spots[1], Spot::Shown(_)), "{spots:?}");
+        assert!(matches!(spots[2], Spot::Shown(_)), "{spots:?}");
+        assert_eq!(spots[3], Spot::Collapsed);
     }
 
     #[test]
@@ -346,7 +373,7 @@ mod tests {
         let cover = Cover::new(&[], (1000.0, 800.0));
         let mut w = want((500.0, 400.0), sq(500.0, 400.0, 40.0));
         w.last = Some((150.0, 0.0));
-        let Spot::Shown(r) = place(&[w], (1000.0, 800.0), Vec::new(), &cover)[0] else {
+        let Spot::Shown(r) = place(&[w], (1000.0, 800.0), Vec::new(), &cover, usize::MAX)[0] else {
             panic!()
         };
         assert_eq!((r.x, r.y), (650.0, 400.0));

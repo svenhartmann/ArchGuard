@@ -14,7 +14,7 @@ msgid "Classes / files"
 msgstr "Klassen / Dateien"
 
 msgid "Click package labels or double-click a surface to open a package. Use the path or Back to navigate. Wheel: zoom at the cursor; at the maximum further wheeling over a package opens it, at the minimum it returns to the previous view. Left-drag or arrow keys: pan. Right-, Shift- or Ctrl-drag, Q/E or a two-finger twist: rotate; pinch or + / −: zoom, 0: fit; the arrows turn in 15° steps and the orientation control restores the original direction. Each surface represents a class, or a file without class data. Large scopes group surfaces; select one to see every member. Height at each surface center: log-scaled observed maximum cyclomatic method complexity. Colors are observations, not a quality verdict. Coverage belongs to files. Red package cycles may exist without file cycles. Search dims surfaces whose class or file name lacks the term; Enter selects the first match. On the World, Enter shows the details and Esc closes them without clearing the selection."
-msgstr "Paketnamen anklicken oder eine Fläche doppelklicken, um ein Paket zu öffnen. Über Pfad und Zurück navigieren. Mausrad: Zoom am Zeiger; am Maximum öffnet weiteres Zoomen über einem Paket dieses, am Minimum kehrt es zur vorherigen Ansicht zurück. Linksziehen oder Pfeiltasten: verschieben. Rechts-, Umschalt- oder Strg-Ziehen, Q/E oder eine Zwei-Finger-Drehung: drehen; Auseinanderziehen oder + / −: Zoom, 0: einpassen; die Pfeile drehen in 15°-Schritten, die Richtungsanzeige stellt die Ausgangsrichtung wieder her. Jede Fläche steht für eine Klasse oder eine Datei ohne Klassendaten. Große Ausschnitte bündeln Flächen; Auswählen zeigt alle Mitglieder. Höhe im Flächenmittelpunkt: logarithmisch skalierte, erfasste maximale Methodenkomplexität. Farben zeigen Beobachtungen, kein Qualitätsurteil. Abdeckung bezieht sich auf Dateien. Paketzyklen können ohne Dateizyklen bestehen. Die Suche blendet Flächen aus, deren Klassen- oder Dateiname den Begriff nicht enthält; Enter wählt den ersten Treffer. In der World zeigt Enter die Details, Esc schließt sie, ohne die Auswahl zu löschen."
+msgstr "Paketnamen anklicken oder eine Fläche doppelklicken, um ein Paket zu öffnen. Über Pfad und Zurück navigieren. Mausrad: Zoom am Zeiger; am Maximum öffnet weiteres Zoomen über einem Paket dieses, am Minimum kehrt es zur vorherigen Ansicht zurück. Linksziehen oder Pfeiltasten: verschieben. Rechts-, Umschalt- oder Strg-Ziehen, Q/E oder eine Zwei-Finger-Drehung: drehen; Auseinanderziehen oder + / −: Zoom, 0: einpassen; die Pfeile drehen in 15°-Schritten, die Richtungsanzeige stellt die Ausgangsrichtung wieder her. Jede Fläche steht für eine Klasse oder eine Datei ohne Klassendaten. Große Ausschnitte bündeln Flächen; Auswählen zeigt alle Mitglieder. Höhe im Flächenmittelpunkt: logarithmisch skalierte, erfasste maximale Methodenkomplexität. Farben zeigen Beobachtungen, kein Qualitätsurteil. Abdeckung bezieht sich auf Dateien. Paketzyklen können ohne Dateizyklen bestehen. Die Suche blendet Flächen aus, deren Klassen- oder Dateiname den Begriff nicht enthält; Enter wählt den ersten Treffer. In der 3D-Übersicht zeigt Enter die Details, Esc schließt sie, ohne die Auswahl zu löschen."
 
 msgid "Complexity"
 msgstr "Komplexität"
@@ -72,6 +72,12 @@ msgstr "Erfasste {}-Messwerte"
 
 msgid "Package cycle"
 msgstr "Paketzyklus"
+
+msgid "Cycle with {}"
+msgstr "Zyklus mit {}"
+
+msgid "Cycle with {} +{}"
+msgstr "Zyklus mit {} +{}"
 
 msgid "Problems and cycles"
 msgstr "Probleme und Zyklen"
@@ -432,14 +438,38 @@ msgstr "Hotspot {} mit {} ungedeckten Zeilen — bei unbekannter Abdeckung bleib
 msgid "not measured"
 msgstr "nicht gemessen"
 
-msgid "Green"
-msgstr "Grün"
+msgid "Good"
+msgstr "Gut"
 
-msgid "Yellow"
-msgstr "Gelb"
+msgid "Fair"
+msgstr "Mittel"
 
-msgid "Red"
-msgstr "Rot"
+msgid "Poor"
+msgstr "Schwach"
+
+msgid "Overall rating; higher is better"
+msgstr "Gesamtbewertung; höher ist besser"
+
+msgid "Share of the system the top cycle reaches"
+msgstr "Anteil des Systems, den der größte Zyklus erreicht"
+
+msgid "Stable modules depending on less stable ones"
+msgstr "Stabile Module, die von instabileren abhängen"
+
+msgid "Share of nodes inside cycles"
+msgstr "Anteil der Knoten in Zyklen"
+
+msgid "Concentration of incoming dependencies: 0 even, 1 one hub"
+msgstr "Bündelung eingehender Abhängigkeiten: 0 gleichmäßig, 1 ein Hub"
+
+msgid "TODO/FIXME/HACK/XXX in the sources"
+msgstr "TODO/FIXME/HACK/XXX in den Quellen"
+
+msgid "Access to internals a module does not export"
+msgstr "Zugriffe auf Interna, die ein Modul nicht exportiert"
+
+msgid "Hotspots without test coverage"
+msgstr "Hotspots ohne Testabdeckung"
 
 msgid "Score history"
 msgstr "Score-Verlauf"
@@ -468,17 +498,17 @@ msgstr "{} Pain · {} Uselessness · {} Hauptsequenz · {} nicht gemessen"
 msgid "Zone distribution not measured — the KPI block carries no zone statistics."
 msgstr "Zonenverteilung nicht gemessen — die Kennzahlen enthalten keine Zonen-Statistik."
 
-msgid "Architecture at a glance"
-msgstr "Architektur im Blick"
+msgid "Key figures"
+msgstr "Kennzahlen"
 
 msgid "Project analysis · independent of the World scope"
-msgstr "Projektanalyse · unabhängig vom World-Ausschnitt"
+msgstr "Projektanalyse · unabhängig vom Ausschnitt der 3D-Übersicht"
 
 msgid "Project-wide review KPIs of this analysis, independent of the package shown in the World. A KPI the analysis did not measure is listed as not measured, never shown as zero. Cards naming a module or file open it in the Graph."
-msgstr "Projektweite Review-Kennzahlen dieser Analyse, unabhängig vom Paket, das die World zeigt. Eine Kennzahl, die die Analyse nicht gemessen hat, erscheint als nicht gemessen, nie als null. Karten mit einem Modul oder einer Datei öffnen diese im Graph."
+msgstr "Projektweite Review-Kennzahlen dieser Analyse, unabhängig vom Paket, das die 3D-Übersicht zeigt. Eine Kennzahl, die die Analyse nicht gemessen hat, erscheint als nicht gemessen, nie als null. Karten mit einem Modul oder einer Datei öffnen diese im Graph."
 
 msgid "World View ↑"
-msgstr "World-Ansicht ↑"
+msgstr "3D-Übersicht ↑"
 
 msgid "Not measured"
 msgstr "Nicht gemessen"

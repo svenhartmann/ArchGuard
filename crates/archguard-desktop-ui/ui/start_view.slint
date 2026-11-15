@@ -132,14 +132,16 @@ export component StartView inherits Rectangle {
     padding: 18px;
     spacing: 18px;
     card := Rectangle {
-        height: max(460px, page.visible-height - 36px - (root.glance ? 44px : 0));
+        // Never shorter than its rows plus a usable stage: a small window
+        // scrolls instead of shrinking the World to a blob.
+        height: max(inner.min-height, page.visible-height - 36px - (root.glance ? 44px : 0));
         border-radius: 18px;
         border-width: 1px;
         border-color: Theme.border;
         background: Theme.panel;
         clip: true;
 
-        VerticalLayout {
+        inner := VerticalLayout {
             HorizontalLayout {
                 padding-left: 24px;
                 padding-right: 24px;
@@ -374,6 +376,7 @@ export component StartView inherits Rectangle {
             }
             stage := StartStage {
                 vertical-stretch: 1;
+                min-height: 360px;
                 if !m.ready: Text {
                     text: m.error != "" ? m.error : @tr("Analyzing calls and classes …");
                     color: Theme.muted;
