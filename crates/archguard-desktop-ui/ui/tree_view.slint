@@ -151,6 +151,20 @@ component RowCard inherits Rectangle {
     }
 }
 
+// In place of an empty canvas when the project has no modules.
+export component NoSources inherits Rectangle {
+    Text {
+        x: 24px;
+        width: parent.width - 48px;
+        text: @tr("No supported source files found. Check project.source_roots in the settings.");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
 component Port inherits Rectangle {
     in property <float> cx;
     in property <float> cy;
@@ -203,7 +217,11 @@ export component TreeView inherits Rectangle {
         zoom = max(0.3, min(2.0, zoom * f));
     }
 
+    // Below the zoom strip: floating over the canvas, the controls
+    // covered the first row (its whole name in a split pane).
     flick := Flickable {
+        y: zoom-strip.height;
+        height: parent.height - zoom-strip.height;
         content-width: max(self.width, canvas-w * zoom * 1px);
         content-height: max(self.height, canvas-h * zoom * 1px);
       Rectangle {
@@ -303,18 +321,14 @@ export component TreeView inherits Rectangle {
       }
     }
 
-    // Zoom controls, top left below the column labels as in the web tree.
-    Rectangle {
+    if root.rows.length == 0: NoSources {}
+
+    // Zoom controls, top left above the column labels.
+    zoom-strip := Rectangle {
         x: 12px;
-        y: 36px;
+        y: 0;
         width: bar.preferred-width;
         height: 40px;
-        border-radius: Theme.radius;
-        background: Theme.panel;
-        border-width: 1px;
-        border-color: Theme.border;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: Theme.shadow;
         bar := HorizontalLayout {
             padding: 5px;
             spacing: 4px;
