@@ -75,7 +75,7 @@ impl SettingsState {
     pub fn reload(&mut self) {
         let loaded = ConfigEditor::load(&self.root);
         self.install(loaded);
-        documents::mark_clean(self.doc);
+        documents::mark_clean(self.doc, config_editor::PART);
     }
 
     /// Use `loaded` as the editor, keeping the `Rc` the save hook holds.
@@ -165,7 +165,7 @@ impl SettingsState {
         if self.errors() > 0 {
             return;
         }
-        match documents::save(self.doc) {
+        match documents::save_part(self.doc, config_editor::PART) {
             Ok(()) => self.saved(),
             Err(e) if e == SaveError::ChangedOnDisk.to_string() => self.changed_on_disk = true,
             Err(e) => self.save_error = e,
@@ -199,7 +199,7 @@ impl SettingsState {
         self.install(loaded);
         // The edits are still unsaved against the file as it was.
         self.baseline = baseline;
-        documents::mark_dirty(self.doc, "Configuration text");
+        documents::mark_dirty(self.doc, config_editor::PART, "Configuration text");
         self.save();
     }
 }

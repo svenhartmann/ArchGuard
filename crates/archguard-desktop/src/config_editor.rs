@@ -31,7 +31,7 @@ pub use {
     document::ConfigEditor,
     error::{FieldError, SaveError},
     provenance::{EntryState, FieldState, Provenance},
-    save::{bind, write_atomic},
+    save::{PART, bind, write_atomic},
     value::FieldValue,
 };
 // The Settings view's tests build preview results.

@@ -71,20 +71,24 @@ fn publish(tmp: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(tmp, path)
 }
 
-/// Connect `editor` to document `doc`: every edit marks the document
+/// The part of a document the configuration editor owns
+/// (`documents::mark_dirty`).
+pub const PART: &str = "config";
+
+/// Connect `editor` to document `doc`: every edit marks its [`PART`]
 /// dirty (or clean when the text is back to the file), and
 /// `documents::save(doc)` saves through the editor. A Save button in the
-/// view should call `documents::save(doc)` too, so the document is
+/// view should call `documents::save_part(doc, PART)`, so the part is
 /// marked clean in one place.
 pub fn bind(doc: DocId, editor: &Rc<RefCell<ConfigEditor>>) {
     editor.borrow_mut().on_change(move |dirty, what| {
         if dirty {
-            documents::mark_dirty(doc, what);
+            documents::mark_dirty(doc, PART, what);
         } else {
-            documents::mark_clean(doc);
+            documents::mark_clean(doc, PART);
         }
     });
-    documents::set_save_hook(doc, save_hook(Rc::clone(editor)));
+    documents::set_save_hook(doc, PART, save_hook(Rc::clone(editor)));
 }
 
 /// The hook `documents::set_save_hook` takes.

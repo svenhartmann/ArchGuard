@@ -12,6 +12,9 @@ use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 
+/// The part of a document the chapter editor owns (`documents::mark_dirty`).
+pub(super) const PART: &str = "arc42";
+
 /// The project's arc42 text and the open chapter editor, if any.
 pub struct Editor {
     /// The document whose open editor ([`Open`]) this shows; `show` sets
@@ -143,14 +146,21 @@ impl Editor {
         }
     }
 
-    /// Mark the document dirty, or clean when nothing else of it is.
+    /// Mark this editor's part of the document dirty or clean.
     fn mark(&self, chapter: u8, dirty: bool) {
-        let what = format!("arc42 chapter {chapter}");
         if dirty {
-            documents::mark_dirty(self.doc, &what);
-        } else if documents::with_store(|s| s.get(self.doc).is_some_and(|d| d.unsaved() == what)) {
-            documents::mark_clean(self.doc);
+            documents::mark_dirty(self.doc, PART, &format!("arc42 chapter {chapter}"));
+        } else {
+            documents::mark_clean(self.doc, PART);
         }
+    }
+
+    /// Why the open draft was not saved.
+    pub(super) fn unsaved_reason(&self) -> String {
+        self.with_open(|o| match o {
+            Some(e) if !e.error.is_empty() => e.error.clone(),
+            _ => "Choose where the arc42 text goes in the Architecture tab.".into(),
+        })
     }
 
     fn set_error(&self, error: String) {
@@ -297,7 +307,7 @@ mod tests {
         documents::with_store(|s| s.get_mut(a).map(documents::Document::forget_derived));
         let mut rebuilt = Editor::new(a, dir.path());
         assert!(rebuilt.is_open());
-        documents::mark_dirty(a, "Layer rules");
+        documents::mark_dirty(a, crate::config_editor::PART, "Layer rules");
         assert!(rebuilt.save(&new).is_some());
         let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
         assert!(text.contains("Neu.\n"));

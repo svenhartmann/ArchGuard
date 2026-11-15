@@ -28,6 +28,7 @@ use std::path::Path;
 use slint::{ComponentHandle, SharedString};
 
 use crate::context::Loaded;
+use crate::documents;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
 use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
 use follow::navigation;
@@ -50,22 +51,15 @@ pub fn wire(ui: &AppWindow) {
     let toggle =
         a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
-    d.on_start_edit(a.on0(|s, _| {
-        if let Ok(doc) = &s.doc {
-            s.editor.start(doc, s.chapter);
-        }
-    }));
+    d.on_start_edit(a.on0(|s, _| start_edit(s)));
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
             s.editor.edit(&text);
             s.editor.preview(ui, &text);
         });
     }));
-    d.on_save_edit(a.on0(|s, _| {
-        if let Ok(doc) = &s.doc {
-            s.saved = s.editor.save(doc).unwrap_or(std::mem::take(&mut s.saved));
-        }
-    }));
+    // Errors show in the editor itself.
+    d.on_save_edit(a.on0(|s, _| drop(save_draft(s))));
     d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
     d.on_choose_location(a.on(|s, ui, choice: i32| {
         if let Ok(doc) = &s.doc {
@@ -148,6 +142,34 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
             state
         }
     });
+}
+
+/// Open the chapter editor. Save in the close and quit prompt saves its
+/// draft as the Save button does, on the document's tab state as it is then.
+fn start_edit(s: &mut ArchitectureState) {
+    let Ok(doc) = &s.doc else { return };
+    s.editor.start(doc, s.chapter);
+    let id = s.editor.doc;
+    documents::set_save_hook(id, edit::PART, move || {
+        documents::with_state(id, save_draft)
+            .unwrap_or_else(|| Err("The Architecture tab is still loading; save again.".into()))
+    });
+}
+
+/// The Save button: write the open draft and remember the path. `Err`
+/// keeps the editor open (its error, or the question where to save).
+fn save_draft(s: &mut ArchitectureState) -> Result<(), String> {
+    if !s.editor.is_open() {
+        return Ok(());
+    }
+    let doc = s.doc.as_ref().map_err(Clone::clone)?;
+    match s.editor.save(doc) {
+        Some(path) => {
+            s.saved = path;
+            Ok(())
+        }
+        None => Err(s.editor.unsaved_reason()),
+    }
 }
 
 fn select_card(s: &mut ArchitectureState, ui: &AppWindow, i: i32) {
@@ -293,6 +315,49 @@ mod tests {
         assert_eq!(derived(&state, 11), Some(Kind::Cycles));
         assert_eq!(derived(&state, 1), None);
         assert_eq!(state.deps.len(), run.graph.edges.len());
+    }
+
+    /// Save in the close or quit prompt with Settings also unsaved writes
+    /// the open arc42 draft too, instead of dropping it.
+    #[test]
+    fn saving_from_the_prompt_writes_the_arc42_draft_too() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let old = crate::arc42_file::tests::doc("Old");
+        std::fs::write(dir.path().join("arc42.md"), old.markdown(None)).unwrap();
+        let (a, _) = documents::with_store(|s| s.open(dir.path()));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/py-layers")
+            .canonicalize()
+            .expect("fixture");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        // The fixture's analysis, but the arc42 text of the temporary project.
+        let mut state = build_from(
+            dir.path(),
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        );
+        state.doc = Ok(old);
+        state.editor.doc = a;
+        documents::set_state(a, state);
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            start_edit(s);
+            let text = s.editor.chapter(s.doc.as_ref().unwrap(), 5) + "Neu.\n";
+            s.editor.edit(&text);
+        });
+        // Settings is open with unsaved edits and its own save hook.
+        documents::set_save_hook(a, crate::config_editor::PART, || Ok(()));
+        documents::mark_dirty(a, crate::config_editor::PART, "Layer rules");
+        assert_eq!(documents::save(a), Ok(()));
+        let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
+        assert!(text.contains("Neu.\n"), "the draft is written");
+        assert!(!documents::is_dirty(a));
     }
 
     /// A download goes only where the save dialog points, in one step;

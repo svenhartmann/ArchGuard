@@ -378,9 +378,10 @@ fn mark_dirty(tabs: &str) {
     {
         let id = crate::documents::with_store(|s| s.docs().get(i).map(|d| d.id));
         if let Some(id) = id {
-            crate::documents::set_save_hook(id, || Ok(()));
-            crate::documents::mark_dirty(id, "Layer rules");
-            crate::documents::mark_dirty(id, "Thresholds");
+            let part = crate::config_editor::PART;
+            crate::documents::set_save_hook(id, part, || Ok(()));
+            crate::documents::mark_dirty(id, part, "Layer rules");
+            crate::documents::mark_dirty(id, part, "Thresholds");
         }
     }
 }

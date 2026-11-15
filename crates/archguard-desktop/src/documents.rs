@@ -26,18 +26,19 @@
 //!
 //! # Unsaved changes
 //!
-//! A view that edits a document (the configuration editor) marks it dirty
-//! with a short description and registers how to save it:
+//! A view that edits a document (the configuration editor, the arc42
+//! chapter editor) owns one part of it, marks that part dirty with a short
+//! description and registers how to save it:
 //!
 //! ```ignore
-//! documents::set_save_hook(doc, move || write_config(&path, &text));
-//! documents::mark_dirty(doc, "Layer rules");   // after each edit
-//! documents::mark_clean(doc);                  // after the editor saved itself
+//! documents::set_save_hook(doc, "config", move || write_config(&path, &text));
+//! documents::mark_dirty(doc, "config", "Layer rules"); // after each edit
+//! documents::mark_clean(doc, "config");                // after it saved itself
 //! ```
 //!
 //! Closing the document, closing all or quitting then asks
-//! "Save changes to <project>?" (`shell.rs`). Save runs the hook through
-//! [`save`]; it marks the document clean on success.
+//! "Save changes to <project>?" (`shell.rs`). Save runs the hook of every
+//! dirty part through [`save`]; each part is marked clean on its success.
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
@@ -81,12 +82,13 @@ pub struct Document {
     /// Counts [`Document::forget_derived`]: a worker's result for an older
     /// analysis is dropped ([`generation`]).
     generation: u64,
-    /// What is unsaved, in the order it was first marked; empty: clean.
-    unsaved: Vec<String>,
-    save_hook: Option<SaveHook>,
+    /// What is unsaved as (part, description), in the order it was first
+    /// marked; empty: clean.
+    unsaved: Vec<(&'static str, String)>,
+    save_hooks: HashMap<&'static str, SaveHook>,
 }
 
-/// Saves a document's unsaved changes; `Err` is shown to the user.
+/// Saves one part's unsaved changes; `Err` is shown to the user.
 pub type SaveHook = Box<dyn FnMut() -> Result<(), String>>;
 
 impl Document {
@@ -105,7 +107,7 @@ impl Document {
             states: HashMap::new(),
             generation: 0,
             unsaved: Vec::new(),
-            save_hook: None,
+            save_hooks: HashMap::new(),
         }
     }
 
@@ -136,7 +138,12 @@ impl Document {
 
     /// What is unsaved, e.g. "Layer rules, Thresholds"; empty when clean.
     pub fn unsaved(&self) -> String {
-        self.unsaved.join(", ")
+        let what: Vec<&str> = self.unsaved.iter().map(|(_, w)| w.as_str()).collect();
+        what.join(", ")
+    }
+
+    fn is_dirty_part(&self, part: &str) -> bool {
+        self.unsaved.iter().any(|(p, _)| *p == part)
     }
 }
 
@@ -211,21 +218,22 @@ impl Store {
         self.docs.iter().position(|d| d.id == id)
     }
 
-    /// Note that `what` of document `id` is unsaved; false if it is closed.
-    #[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
-    pub fn mark_dirty(&mut self, id: DocId, what: &str) -> bool {
+    /// Note that `what` of `part` of document `id` is unsaved; false if
+    /// it is closed.
+    pub fn mark_dirty(&mut self, id: DocId, part: &'static str, what: &str) -> bool {
         let Some(doc) = self.get_mut(id) else {
             return false;
         };
-        if !doc.unsaved.iter().any(|w| w == what) {
-            doc.unsaved.push(what.to_string());
+        if !doc.unsaved.iter().any(|(p, w)| *p == part && w == what) {
+            doc.unsaved.push((part, what.to_string()));
         }
         true
     }
 
-    pub fn mark_clean(&mut self, id: DocId) {
+    /// `part` of document `id` has nothing unsaved; other parts keep theirs.
+    pub fn mark_clean(&mut self, id: DocId, part: &str) {
         if let Some(doc) = self.get_mut(id) {
-            doc.unsaved.clear();
+            doc.unsaved.retain(|(p, _)| *p != part);
         }
     }
 
@@ -386,20 +394,17 @@ fn dirty_changed() {
     }
 }
 
-// The configuration editor (ADR 0002 decision 8) is the first user of
-// the dirty API; until then only tests and snapshots call parts of it.
-
-/// Note that `what` of document `doc` is unsaved (see the module docs).
-#[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
-pub fn mark_dirty(doc: DocId, what: &str) {
-    if with_store(|s| s.mark_dirty(doc, what)) {
+/// Note that `what` of `part` of document `doc` is unsaved (see the
+/// module docs).
+pub fn mark_dirty(doc: DocId, part: &'static str, what: &str) {
+    if with_store(|s| s.mark_dirty(doc, part, what)) {
         dirty_changed();
     }
 }
 
-/// The document has no unsaved changes any more.
-pub fn mark_clean(doc: DocId) {
-    with_store(|s| s.mark_clean(doc));
+/// `part` of the document has no unsaved changes any more.
+pub fn mark_clean(doc: DocId, part: &str) {
+    with_store(|s| s.mark_clean(doc, part));
     dirty_changed();
 }
 
@@ -409,18 +414,37 @@ pub fn is_dirty(doc: DocId) -> bool {
     with_store(|s| s.is_dirty(doc))
 }
 
-/// How [`save`] saves document `doc`; replaces an earlier hook.
-#[cfg_attr(not(feature = "snapshot"), allow(dead_code))]
-pub fn set_save_hook(doc: DocId, hook: impl FnMut() -> Result<(), String> + 'static) {
-    with_store(|s| s.get_mut(doc).map(|d| d.save_hook = Some(Box::new(hook))));
+/// How [`save`] saves `part` of document `doc`; replaces an earlier hook
+/// of that part.
+pub fn set_save_hook(
+    doc: DocId,
+    part: &'static str,
+    hook: impl FnMut() -> Result<(), String> + 'static,
+) {
+    with_store(|s| {
+        s.get_mut(doc)
+            .map(|d| d.save_hooks.insert(part, Box::new(hook)))
+    });
 }
 
-/// Save document `doc` with its hook and mark it clean. Clean documents
-/// need nothing; a dirty one without hook is an error.
+/// Save every dirty part of document `doc`; stops at the first error, so
+/// the document stays dirty and open.
 pub fn save(doc: DocId) -> Result<(), String> {
+    let parts: Vec<&'static str> = with_store(|s| {
+        s.get(doc)
+            .map(|d| d.unsaved.iter().map(|(p, _)| *p).collect())
+    })
+    .unwrap_or_default();
+    // A part saved already is clean, so a second entry of it does nothing.
+    parts.into_iter().try_for_each(|part| save_part(doc, part))
+}
+
+/// Save `part` of document `doc` with its hook and mark it clean. A clean
+/// part needs nothing; a dirty one without hook is an error.
+pub fn save_part(doc: DocId, part: &'static str) -> Result<(), String> {
     let hook = with_store(|s| {
         let d = s.get_mut(doc)?;
-        d.is_dirty().then(|| d.save_hook.take())
+        d.is_dirty_part(part).then(|| d.save_hooks.remove(part))
     });
     let Some(hook) = hook else {
         return Ok(());
@@ -433,11 +457,11 @@ pub fn save(doc: DocId) -> Result<(), String> {
     // Put it back unless the hook registered a new one.
     with_store(|s| {
         if let Some(d) = s.get_mut(doc) {
-            d.save_hook.get_or_insert(hook);
+            d.save_hooks.entry(part).or_insert(hook);
         }
     });
     if result.is_ok() {
-        mark_clean(doc);
+        mark_clean(doc, part);
     }
     result
 }
@@ -586,19 +610,22 @@ mod tests {
         let mut s = store(&["/a", "/b"]);
         let (a, b) = (s.docs()[0].id, s.docs()[1].id);
         assert!(!s.is_dirty(a));
-        assert!(s.mark_dirty(a, "Layer rules"));
-        assert!(s.mark_dirty(a, "Thresholds"));
-        assert!(s.mark_dirty(a, "Layer rules"));
+        assert!(s.mark_dirty(a, "config", "Layer rules"));
+        assert!(s.mark_dirty(a, "config", "Thresholds"));
+        assert!(s.mark_dirty(a, "config", "Layer rules"));
         assert!(s.is_dirty(a) && !s.is_dirty(b));
         assert_eq!(
             s.get(a).map(Document::unsaved).as_deref(),
             Some("Layer rules, Thresholds")
         );
-        s.mark_clean(a);
+        s.mark_clean(a, "config");
         assert!(!s.is_dirty(a));
         assert_eq!(s.index_of(b), Some(1));
         s.close(1);
-        assert!(!s.mark_dirty(b, "x"), "closed documents cannot be dirty");
+        assert!(
+            !s.mark_dirty(b, "config", "x"),
+            "closed documents cannot be dirty"
+        );
         assert!(!s.is_dirty(b));
     }
 
@@ -609,7 +636,7 @@ mod tests {
         let calls = Rc::new(std::cell::Cell::new(0));
         let fail = Rc::new(std::cell::Cell::new(true));
         let (c, f) = (calls.clone(), fail.clone());
-        set_save_hook(a, move || {
+        set_save_hook(a, "config", move || {
             c.set(c.get() + 1);
             // The store is not borrowed while the hook runs.
             assert!(is_dirty(a));
@@ -621,16 +648,63 @@ mod tests {
         });
         assert_eq!(save(a), Ok(()), "a clean document needs no save");
         assert_eq!(calls.get(), 0);
-        mark_dirty(a, "Layer rules");
+        mark_dirty(a, "config", "Layer rules");
         assert_eq!(save(a), Err("disk full".into()));
         assert!(is_dirty(a), "a failed save keeps the changes");
         fail.set(false);
         assert_eq!(save(a), Ok(()));
         assert!(!is_dirty(a));
         assert_eq!(calls.get(), 2);
-        mark_dirty(b, "Dashboard");
+        mark_dirty(b, "config", "Dashboard");
         assert!(save(b).is_err(), "no hook");
         assert!(is_dirty(b));
+    }
+
+    /// Settings and the arc42 editor each save and clean only their own
+    /// part; Save in the close prompt saves both.
+    #[test]
+    fn each_part_saves_and_cleans_on_its_own() {
+        with_store(|s| *s = store(&["/a"]));
+        let a = with_store(|s| s.docs()[0].id);
+        let saved = Rc::new(RefCell::new(Vec::new()));
+        for part in ["config", "arc42"] {
+            let log = saved.clone();
+            set_save_hook(a, part, move || {
+                log.borrow_mut().push(part);
+                Ok(())
+            });
+        }
+        mark_dirty(a, "config", "Layer rules");
+        mark_dirty(a, "arc42", "arc42 chapter 5");
+        mark_clean(a, "config");
+        let unsaved = with_store(|s| s.get(a).map(Document::unsaved));
+        assert_eq!(
+            unsaved.as_deref(),
+            Some("arc42 chapter 5"),
+            "Settings' reload"
+        );
+        mark_dirty(a, "config", "Layer rules");
+        assert_eq!(save_part(a, "config"), Ok(()));
+        assert_eq!(*saved.borrow(), ["config"], "Settings' Save button");
+        assert!(is_dirty(a));
+        mark_dirty(a, "config", "Thresholds");
+        assert_eq!(save(a), Ok(()));
+        assert_eq!(
+            *saved.borrow(),
+            ["config", "arc42", "config"],
+            "in marking order"
+        );
+        assert!(!is_dirty(a));
+        set_save_hook(a, "arc42", || Err("disk full".into()));
+        mark_dirty(a, "config", "Layer rules");
+        mark_dirty(a, "arc42", "arc42 chapter 5");
+        assert_eq!(save(a), Err("disk full".into()));
+        let unsaved = with_store(|s| s.get(a).map(Document::unsaved));
+        assert_eq!(
+            unsaved.as_deref(),
+            Some("arc42 chapter 5"),
+            "the failed part stays"
+        );
     }
 
     #[test]
@@ -640,9 +714,9 @@ mod tests {
         let seen = Rc::new(std::cell::Cell::new(0));
         let n = seen.clone();
         on_dirty_changed(move || n.set(n.get() + 1));
-        mark_dirty(a, "x");
-        mark_clean(a);
-        mark_dirty(999, "closed");
+        mark_dirty(a, "config", "x");
+        mark_clean(a, "config");
+        mark_dirty(999, "config", "closed");
         assert_eq!(seen.get(), 2);
     }
 
