@@ -67,8 +67,9 @@ fn group_edges(
 
 /// Siblings in dependency construction order: strongly connected groups
 /// ([`scc`]), dependents before their dependencies by longest path,
-/// ties alphabetical — the web viewer's sibling order before searching.
-fn construction_order(
+/// ties alphabetical — the web viewer's sibling order before searching
+/// (also the Services tree's order, which skips the search).
+pub(crate) fn construction_order(
     children: &mut Children,
     deps: &[(usize, usize)],
     rank: &BTreeMap<usize, usize>,
@@ -81,9 +82,8 @@ fn construction_order(
     }
 }
 
-/// Siblings in the web's dependency construction order (also used by the
-/// Services tree, which lays out its rows with the same rule).
-pub(crate) fn level_order(
+/// Siblings in the web's dependency construction order.
+fn level_order(
     siblings: &[usize],
     pairs: &[(usize, usize)],
     rank: &BTreeMap<usize, usize>,
