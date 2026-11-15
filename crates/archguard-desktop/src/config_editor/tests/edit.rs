@@ -200,3 +200,127 @@ fn edits_report_dirty_until_the_text_is_back() {
     );
     assert!(!editor.is_dirty());
 }
+
+const LISTED: &str = "\
+[arc42]
+shown_diagrams = [
+    # the main map
+    \"building-blocks@x\",
+    \"runtime-y\", # hot path
+]
+";
+
+fn list(items: &[&str]) -> FieldValue {
+    FieldValue::List(items.iter().map(|s| s.to_string()).collect())
+}
+
+#[test]
+fn list_edits_keep_the_comments_of_items_that_stay() {
+    let dir = fixture("");
+    let mut editor = editor_with(dir.path(), LISTED);
+    editor
+        .set(
+            "arc42.shown_diagrams",
+            list(&["building-blocks@x", "runtime-y", "deployment-z"]),
+        )
+        .unwrap();
+    assert_eq!(
+        editor.text(),
+        "[arc42]\nshown_diagrams = [\n    # the main map\n    \"building-blocks@x\",\n    \
+         \"runtime-y\", # hot path\n    \"deployment-z\",\n]\n"
+    );
+    editor
+        .set("arc42.shown_diagrams", list(&["runtime-y", "deployment-z"]))
+        .unwrap();
+    assert_eq!(
+        editor.text(),
+        "[arc42]\nshown_diagrams = [\n    \"runtime-y\", # hot path\n    \"deployment-z\",\n]\n"
+    );
+}
+
+#[test]
+fn map_edits_keep_the_table_its_comments_and_integers() {
+    let dir = fixture("");
+    let text = "\
+[review.health_weights]
+# hubs weigh most
+hubs = 3   # integer stays
+sdp = 0.5
+legacy = 1 # dropped
+";
+    let mut editor = editor_with(dir.path(), text);
+    let weights = vec![
+        ("hubs".to_string(), 4.0),
+        ("sdp".to_string(), 0.25),
+        ("cycles".to_string(), 1.5),
+    ];
+    editor
+        .set("review.health_weights", FieldValue::Map(weights))
+        .unwrap();
+    assert_eq!(
+        editor.text(),
+        "\
+[review.health_weights]
+# hubs weigh most
+hubs = 4   # integer stays
+sdp = 0.25
+cycles = 1.5
+"
+    );
+}
+
+#[test]
+fn edits_keep_arrays_without_trailing_comma_and_inline_tables() {
+    let dir = fixture("");
+    let text = "\
+[arc42]
+hidden_diagrams = [
+  \"a\", # first
+  \"b\"
+]
+
+[review]
+health_weights = { hubs = 2, sdp = 0.5 } # inline
+";
+    let mut editor = editor_with(dir.path(), text);
+    editor
+        .set("arc42.hidden_diagrams", list(&["b", "a", "c"]))
+        .unwrap();
+    let weights = vec![("hubs".to_string(), 1.0), ("sdp".to_string(), 0.5)];
+    editor
+        .set("review.health_weights", FieldValue::Map(weights))
+        .unwrap();
+    assert_eq!(
+        editor.text(),
+        "\
+[arc42]
+hidden_diagrams = [
+  \"b\",
+  \"a\", # first
+  \"c\"
+]
+
+[review]
+health_weights = { hubs = 1, sdp = 0.5 } # inline
+"
+    );
+}
+
+#[test]
+fn unchanged_value_writes_nothing() {
+    let dir = fixture("");
+    let text = format!("{LISTED}\n[rules]\nmax_acd = 3 # whole\n");
+    let mut editor = editor_with(dir.path(), &text);
+    let calls = Rc::new(RefCell::new(0));
+    let count = Rc::clone(&calls);
+    editor.on_change(move |_, _| *count.borrow_mut() += 1);
+    editor
+        .set(
+            "arc42.shown_diagrams",
+            list(&["building-blocks@x", "runtime-y"]),
+        )
+        .unwrap();
+    editor.set("rules.max_acd", FieldValue::Float(3.0)).unwrap();
+    assert_eq!(editor.text(), text);
+    assert_eq!(*calls.borrow(), 0);
+}

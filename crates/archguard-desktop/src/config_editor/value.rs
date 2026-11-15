@@ -29,10 +29,7 @@ impl FieldValue {
         match kind {
             Kind::Bool => value.as_bool().map(FieldValue::Bool),
             Kind::Int => value.as_integer().map(FieldValue::Int),
-            Kind::Float => value
-                .as_float()
-                .or_else(|| value.as_integer().map(|i| i as f64))
-                .map(FieldValue::Float),
+            Kind::Float => number(value).map(FieldValue::Float),
             Kind::Text | Kind::Enum(_) => value.as_str().map(|s| FieldValue::Text(s.into())),
             Kind::List => strings(value.as_array()?).map(FieldValue::List),
             Kind::Map | Kind::Table | Kind::TableArray => None,
@@ -55,6 +52,24 @@ impl FieldValue {
                 Value::InlineTable(table)
             }
         }
+    }
+
+    /// Write this value over `item`, which holds the old one. A list keeps
+    /// the items that stay with their comments; a table (standard or
+    /// inline) keeps the entries that stay as written. Any other value is
+    /// replaced, keeping the comments around it.
+    pub fn update(&self, item: &mut Item) {
+        if let (FieldValue::List(items), Some(array)) = (self, item.as_array_mut()) {
+            return update_list(array, items);
+        }
+        if let (FieldValue::Map(pairs), Some(table)) = (self, item.as_table_like_mut()) {
+            return update_map(table, pairs);
+        }
+        let mut new = self.to_value();
+        if let Some(old) = item.as_value() {
+            *new.decor_mut() = old.decor().clone();
+        }
+        *item = Item::Value(new);
     }
 
     /// Whether this value can be stored in a field of `kind`.
@@ -134,12 +149,126 @@ fn strings(array: &Array) -> Option<Vec<String>> {
 fn numbers(table: &dyn TableLike) -> Option<Vec<(String, f64)>> {
     table
         .iter()
-        .map(|(k, item)| {
-            let v = item.as_value()?;
-            let x = v.as_float().or_else(|| v.as_integer().map(|i| i as f64))?;
-            Some((k.to_string(), x))
-        })
+        .map(|(k, item)| Some((k.to_string(), number(item.as_value()?)?)))
         .collect()
+}
+
+fn number(value: &Value) -> Option<f64> {
+    value
+        .as_float()
+        .or_else(|| value.as_integer().map(|i| i as f64))
+}
+
+fn prefix(value: &Value) -> Option<&str> {
+    value.decor().prefix()?.as_str()
+}
+
+/// Rebuild `array` as `items`: an item that stays keeps its comments, a
+/// new one goes on a line of its own in a multi-line array.
+fn update_list(array: &mut Array, items: &[String]) {
+    // Without a trailing comma the text before `]` is the last value's
+    // suffix; move it to `trailing`, which stays at the end.
+    if !array.trailing_comma()
+        && let Some(last) = array.iter_mut().last()
+    {
+        let suffix = last.decor().suffix().and_then(|s| s.as_str()).unwrap_or("");
+        let suffix = suffix.to_string();
+        last.decor_mut().set_suffix("");
+        let trailing = array.trailing().as_str().unwrap_or("");
+        array.set_trailing(format!("{suffix}{trailing}"));
+    }
+    let old: Vec<Value> = array.iter().cloned().collect();
+    let mut used = vec![false; old.len()];
+    let picks: Vec<Option<usize>> = items
+        .iter()
+        .map(|item| {
+            let i = (0..old.len()).find(|&i| !used[i] && old[i].as_str() == Some(item))?;
+            used[i] = true;
+            Some(i)
+        })
+        .collect();
+    // A comment after a value's comma opens the next prefix (or `trailing`);
+    // split it off so it stays with its value. `lines[i + 1]` follows
+    // value `i`, `lines[0]` follows `[`.
+    let (mut lines, owns): (Vec<&str>, Vec<Option<&str>>) = old
+        .iter()
+        .map(|v| match prefix(v) {
+            Some(p) => {
+                let (line, own) = split_line(p);
+                (line, Some(own))
+            }
+            None => ("", None),
+        })
+        .unzip();
+    let trailing = array.trailing().as_str().unwrap_or("").to_string();
+    let (line, rest) = split_line(&trailing);
+    lines.push(line);
+    let indent = owns
+        .last()
+        .copied()
+        .flatten()
+        .and_then(|p| p.rsplit_once('\n'))
+        .map(|(_, indent)| format!("\n{indent}"));
+    array.clear();
+    let mut carry = lines[0];
+    for (pick, item) in picks.iter().zip(items) {
+        let (mut value, own) = match pick {
+            Some(i) => (old[*i].clone(), owns[*i]),
+            None => (Value::from(item.as_str()), indent.as_deref()),
+        };
+        if let Some(prefix) = join(carry, own) {
+            value.decor_mut().set_prefix(prefix);
+        }
+        carry = pick.map_or("", |i| lines[i + 1]);
+        array.push_formatted(value);
+    }
+    array.set_trailing(join(carry, Some(rest)).unwrap_or_default());
+}
+
+/// The text before a value (or `]`): the comment ending the previous
+/// line, and the rest from the first line break on.
+fn split_line(text: &str) -> (&str, &str) {
+    text.find('\n').map_or(("", text), |i| text.split_at(i))
+}
+
+/// A same-line comment, then `own` on the next line; `None`: default
+/// formatting.
+fn join(line: &str, own: Option<&str>) -> Option<String> {
+    match own {
+        _ if line.is_empty() => own.map(String::from),
+        Some(own) if own.starts_with('\n') => Some(format!("{line}{own}")),
+        own => Some(format!("{line}\n{}", own.unwrap_or(""))),
+    }
+}
+
+/// Set `table` to `pairs`: entries that stay keep their formatting, a
+/// changed weight keeps its comments and stays an integer if it was one
+/// and still is whole.
+fn update_map(table: &mut dyn TableLike, pairs: &[(String, f64)]) {
+    let dropped: Vec<String> = table
+        .iter()
+        .map(|(k, _)| k.to_string())
+        .filter(|k| !pairs.iter().any(|(name, _)| name == k))
+        .collect();
+    for key in dropped {
+        table.remove(&key);
+    }
+    for (name, weight) in pairs {
+        let Some(old) = table.get_mut(name).and_then(Item::as_value_mut) else {
+            table.insert(name, Item::Value(Value::from(*weight)));
+            continue;
+        };
+        if number(old) == Some(*weight) {
+            continue;
+        }
+        let mut new = if old.is_integer() && weight.fract() == 0.0 {
+            Value::from(*weight as i64)
+        } else {
+            Value::from(*weight)
+        };
+        *new.decor_mut() = old.decor().clone();
+        *old = new;
+    }
 }
 
 fn lines(input: &str) -> impl Iterator<Item = &str> {
