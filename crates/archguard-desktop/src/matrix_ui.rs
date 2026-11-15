@@ -6,6 +6,7 @@ mod names;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+use archguard_engine::core::NodeId;
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
 use crate::deferred::{Coalesce, TYPING};
@@ -41,6 +42,8 @@ pub struct MatrixState {
     matrix: Matrix,
     /// Labels of the top rows (and their columns), see `names`.
     labels: BTreeMap<usize, String>,
+    /// Full-graph node id → node index, for the evidence of a cell.
+    index: BTreeMap<NodeId, usize>,
     expanded: BTreeSet<usize>,
     query: String,
     cycle: Option<usize>,
@@ -60,6 +63,9 @@ impl MatrixState {
         let matrix = Matrix::build(&tree, None, &project);
         MatrixState {
             labels: names::root_labels(&tree, &matrix.roots),
+            index: (tree.full.nodes.iter().enumerate())
+                .map(|(i, n)| (n.id, i))
+                .collect(),
             tree,
             project,
             scope: None,
@@ -433,7 +439,7 @@ fn data(
         .scope
         .and_then(|s| m.scopes.iter().position(|&n| n == s))
         .map_or(0, |i| i + 1);
-    let (title, lines) = evidence(m).unwrap_or_default();
+    let (title, lines) = evidence(m, texts.locale()).unwrap_or_default();
     MatrixData {
         id: id as i32,
         columns: sync_rows(&old.columns, mx.columns.iter().map(|c| column(m, c))),
@@ -533,21 +539,15 @@ fn marked_row(m: &MatrixState, rows: &[MatrixRow]) -> i32 {
 
 /// Title and list of the open cell; `None` when no cell with
 /// dependencies is open.
-fn evidence(m: &MatrixState) -> Option<(String, Vec<SharedString>)> {
+fn evidence(m: &MatrixState, locale: Locale) -> Option<(String, Vec<SharedString>)> {
     let (row, col) = m.evidence?;
     let cell = m.matrix.cells.get(&row)?.get(&col)?;
     let name = |n: usize| m.tree.nodes[n].name.as_str();
     let full = &m.tree.full;
-    let index: std::collections::BTreeMap<_, usize> = full
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id, i))
-        .collect();
     let mut lines = Vec::new();
     for &e in cell.edges.iter().take(EVIDENCE) {
         let edge = &full.edges[e];
-        let (a, b) = (index[&edge.from], index[&edge.to]);
+        let (a, b) = (m.index[&edge.from], m.index[&edge.to]);
         lines.push(SharedString::from(format!("{} → {}", name(a), name(b))));
         for r in &edge.refs {
             lines.push(format!("    {}:{}  {}", r.file, r.line, r.raw.trim()).into());
@@ -557,13 +557,14 @@ fn evidence(m: &MatrixState) -> Option<(String, Vec<SharedString>)> {
     if more > 0 {
         lines.push(format!("… +{more}").into());
     }
-    Some((format!("{} · {}", name(row), cell.count), lines))
+    let shown = count(locale, cell.count as usize, cell.exact);
+    Some((format!("{} · {shown}", name(row)), lines))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_engine::core::{Graph, Node, NodeId, NodeKind};
+    use archguard_engine::core::{Graph, Node, NodeKind};
 
     fn state() -> MatrixState {
         MatrixState::new(Rc::new(crate::matrix::tests::tree()), "p".into())
@@ -783,9 +784,25 @@ mod tests {
         let (&row, cols) = m.matrix.cells.iter().next().expect("a cell");
         let col = *cols.keys().next().expect("a column");
         m.evidence = Some((row, col));
-        assert!(evidence(&m).is_some());
+        assert!(evidence(&m, Locale::En).is_some());
         m.evidence = Some((row, m.matrix.columns.len() + 1));
-        assert_eq!(evidence(&m), None);
+        assert_eq!(evidence(&m, Locale::En), None);
+    }
+
+    /// The evidence title writes the count as its cell does: grouped
+    /// for the locale, `≥` for a count the analysis cut off.
+    #[test]
+    fn the_evidence_title_counts_as_its_cell() {
+        let mut m = state();
+        let (&row, cols) = m.matrix.cells.iter().next().expect("a cell");
+        let col = *cols.keys().next().expect("a column");
+        let cell = m.matrix.cells.get_mut(&row).unwrap().get_mut(&col).unwrap();
+        (cell.count, cell.exact) = (1234, false);
+        m.evidence = Some((row, col));
+        let (title, _) = evidence(&m, Locale::De).expect("evidence");
+        let shown = count(Locale::De, 1234, false);
+        assert!(shown.contains("1.234"), "{shown}");
+        assert_eq!(title, format!("{} · {shown}", m.tree.nodes[row].name));
     }
 
     /// The export holds every row of the scope (not one page) and the
