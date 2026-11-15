@@ -836,6 +836,34 @@ mod tests {
         assert_eq!((s.mode, s.entered), (Mode::Architecture, false));
     }
 
+    /// Enter in the search on the services World selects the first
+    /// matching island by path, also with more islands than packages.
+    #[test]
+    fn enter_on_the_services_world_selects_an_island_by_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for name in ["c", "a", "b"] {
+            let p = dir.path().join("functions").join(name);
+            std::fs::create_dir_all(p.join("src")).expect("dir");
+            let manifest =
+                format!(r#"{{"name": "{name}", "version": "1.0.0", "main": "src/index.js"}}"#);
+            std::fs::write(p.join("package.json"), manifest).expect("manifest");
+            std::fs::write(p.join("src/index.js"), "export const x = 1;\n").expect("source");
+        }
+        // A project without sources is an island but no package area.
+        let empty = dir.path().join("functions/d");
+        std::fs::create_dir_all(&empty).expect("dir");
+        std::fs::write(empty.join("package.json"), r#"{"name": "d"}"#).expect("manifest");
+        let mut s = fixture_state_at(dir.path());
+        assert_eq!(s.mode, Mode::Services);
+        let shown = s.services.as_ref().expect("services").shown.len();
+        assert!(shown > s.scope.areas.len(), "{shown} islands");
+        s.set_search("functions/".into());
+        s.accept_search();
+        let w = s.services.as_ref().expect("services");
+        let picked = w.selected.map(|i| w.inventory[i].path.as_str());
+        assert_eq!(picked, Some("functions/a"));
+    }
+
     fn fixture_root(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures")
