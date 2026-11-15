@@ -4,6 +4,7 @@
 //! `.archguard/scenarios/` of the project, so both apps and git can read
 //! them.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use archguard_engine::analysis::{SimOp, apply_ops, cycle_hash};
@@ -70,7 +71,8 @@ pub fn project(g: &Graph) -> String {
 /// The web viewer's `scenarioSource`: SHA-256 over the import structure,
 /// counts and evidence by name, so dense ids do not matter.
 pub fn fingerprint(g: &Graph) -> Source {
-    let name = |id: NodeId| g.nodes.iter().find(|n| n.id == id).map(|n| n.name.clone());
+    let names: HashMap<NodeId, &str> = g.nodes.iter().map(|n| (n.id, n.name.as_str())).collect();
+    let name = |id: NodeId| names.get(&id).copied();
     let mut nodes: Vec<Value> = g
         .nodes
         .iter()
@@ -161,7 +163,11 @@ pub fn validate(s: &Scenario) -> Result<(), String> {
         return Err("scenarios hold only cut_edge and move_node changes".into());
     }
     let fp = s.source.fingerprint.strip_prefix("sha256:").unwrap_or("");
-    if fp.len() != 64 || !fp.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if fp.len() != 64
+        || !fp
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return Err("invalid dependency-graph fingerprint".into());
     }
     Ok(())
@@ -209,18 +215,37 @@ pub fn file_for(root: &Path, name: &str) -> PathBuf {
     let slug: String = name
         .trim()
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let slug = slug.trim_matches('-');
-    dir(root).join(format!("{}.json", if slug.is_empty() { "scenario" } else { slug }))
+    dir(root).join(format!(
+        "{}.json",
+        if slug.is_empty() { "scenario" } else { slug }
+    ))
 }
 
-/// Write `s` to its file under `root`.
+/// Write `s` to its file under `root`, atomically. Refused when
+/// `.archguard` or its `scenarios` is a symlink: a repository must not
+/// redirect the write outside it (as for a linked `archguard.toml`).
 pub fn save(root: &Path, s: &Scenario) -> Result<PathBuf, String> {
+    for d in [root.join(".archguard"), dir(root)] {
+        if std::fs::symlink_metadata(&d).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "{}: the scenarios folder must not be a symlink",
+                d.display()
+            ));
+        }
+    }
     let path = file_for(root, &s.name);
-    std::fs::create_dir_all(dir(root)).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(s).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    crate::config_editor::write_atomic(&path, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -262,13 +287,28 @@ impl Scenarios {
         self.saved = list(root, &fingerprint(full));
     }
 
-    /// Save `ops` on `full` as `name`; asks first when that name is saved.
+    /// Save `ops` on `full` as `name`; asks first when that name is saved,
+    /// refuses when its file holds another scenario (names can share one).
     pub fn save(&mut self, root: &Path, name: &str, full: &Graph, ops: &[SimOp]) {
         self.ask = None;
-        match snapshot(name, "", full, ops) {
-            Ok(s) if file_for(root, &s.name).exists() => self.ask = Some(Ask::Replace(s)),
-            Ok(s) => self.write(root, full, &s),
-            Err(e) => self.status = Some(Status::Failed(e)),
+        let s = match snapshot(name, "", full, ops) {
+            Ok(s) => s,
+            Err(e) => return self.status = Some(Status::Failed(e)),
+        };
+        let path = file_for(root, &s.name);
+        if !path.exists() {
+            return self.write(root, full, &s);
+        }
+        match read(&path) {
+            Ok(old) if old.name.trim() == s.name => self.ask = Some(Ask::Replace(s)),
+            Ok(old) => {
+                self.status = Some(Status::Failed(format!(
+                    "{} holds the scenario \"{}\"; choose another name",
+                    path.display(),
+                    old.name
+                )))
+            }
+            Err(e) => self.status = Some(Status::Failed(format!("{}: {e}", path.display()))),
         }
     }
 
@@ -354,10 +394,16 @@ mod tests {
         assert_eq!(read(&path).expect("read"), s);
         let listed = list(&root, &fingerprint(&g));
         assert_eq!(listed.len(), 1);
-        assert_eq!((listed[0].name.as_str(), listed[0].ops, listed[0].stale), ("Break app/core", 1, false));
+        assert_eq!(
+            (listed[0].name.as_str(), listed[0].ops, listed[0].stale),
+            ("Break app/core", 1, false)
+        );
         let mut other = g.clone();
         other.edges.pop();
-        assert!(list(&root, &fingerprint(&other))[0].stale, "made on another graph");
+        assert!(
+            list(&root, &fingerprint(&other))[0].stale,
+            "made on another graph"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -368,22 +414,44 @@ mod tests {
         let v: Value = serde_json::to_value(&s).expect("json");
         assert_eq!(v["schema"], SCHEMA);
         assert_eq!(v["ops"][0]["cut_edge"]["from"], "core");
-        let keys: Vec<&str> = v.as_object().expect("object").keys().map(String::as_str).collect();
+        let keys: Vec<&str> = v
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
         let mut keys = keys;
         keys.sort_unstable();
-        assert_eq!(keys, ["description", "name", "ops", "project", "schema", "scope", "source"]);
+        assert_eq!(
+            keys,
+            [
+                "description",
+                "name",
+                "ops",
+                "project",
+                "schema",
+                "scope",
+                "source"
+            ]
+        );
     }
 
     #[test]
     fn invalid_scenarios_are_refused() {
         let g = graph();
         assert!(snapshot("  ", "", &g, &[]).is_err(), "no name");
-        assert!(snapshot("x", "", &g, &[cut("nowhere", "app")]).is_err(), "op does not apply");
+        assert!(
+            snapshot("x", "", &g, &[cut("nowhere", "app")]).is_err(),
+            "op does not apply"
+        );
         let mut s = snapshot("x", "", &g, &[]).expect("valid");
         s.schema = "other/v2".into();
         assert!(validate(&s).is_err());
         let extra = r#"{"schema":"archguard-refactoring-scenario/v1","name":"x","description":"","project":".","source":{"fingerprint":"sha256:0000000000000000000000000000000000000000000000000000000000000000","nodes":0,"edges":0},"scope":{"nodes":[]},"ops":[],"more":1}"#;
-        assert!(serde_json::from_str::<Scenario>(extra).is_err(), "unknown field");
+        assert!(
+            serde_json::from_str::<Scenario>(extra).is_err(),
+            "unknown field"
+        );
     }
 
     /// Saving under a used name asks; loading asks and then hands back the
@@ -411,5 +479,49 @@ mod tests {
         assert_eq!(p.status, Some(Status::Deleted("Plan".into())));
         assert!(p.saved.is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two names with one file name: the second must not offer to replace
+    /// the first, whose name differs.
+    #[test]
+    fn a_name_that_shares_the_file_of_another_scenario_is_refused() {
+        let root = std::env::temp_dir().join(format!("ag-slug-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (g, ops) = (graph(), vec![cut("core", "app")]);
+        let mut p = Scenarios::default();
+        p.save(&root, "Break app/core", &g, &ops);
+        p.save(&root, "break app core", &g, &[]);
+        assert_eq!(p.ask, None, "not the same scenario");
+        assert!(
+            matches!(&p.status, Some(Status::Failed(e)) if e.contains("Break app/core")),
+            "{:?}",
+            p.status
+        );
+        assert_eq!(
+            read(&file_for(&root, "Break app/core")).expect("kept").ops,
+            ops
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A repository must not redirect saving outside it through a linked
+    /// `.archguard` or `.archguard/scenarios`.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_scenarios_folder_is_refused() {
+        let base = std::env::temp_dir().join(format!("ag-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, outside) = (base.join("repo"), base.join("outside"));
+        std::fs::create_dir_all(&root).expect("repo");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let s = snapshot("Plan", "", &graph(), &[]).expect("valid");
+        std::os::unix::fs::symlink(&outside, root.join(".archguard")).expect("link");
+        assert!(save(&root, &s).is_err(), "linked .archguard");
+        std::fs::remove_file(root.join(".archguard")).expect("unlink");
+        std::fs::create_dir_all(root.join(".archguard")).expect("dir");
+        std::os::unix::fs::symlink(&outside, dir(&root)).expect("link");
+        assert!(save(&root, &s).is_err(), "linked scenarios");
+        assert_eq!(std::fs::read_dir(&outside).expect("outside").count(), 0);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

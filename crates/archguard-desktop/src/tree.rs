@@ -11,7 +11,14 @@ pub mod scenario;
 pub mod simulation;
 
 /// Evidence sample per link, as `core::view::aggregate` caps it.
-const MAX_REFS: usize = 10;
+pub const MAX_REFS: usize = 10;
+
+/// `refs` sorted by file, line and code, without duplicates.
+pub fn sorted_refs(mut refs: Vec<&Ref>) -> Vec<&Ref> {
+    refs.sort_by(|a, b| (&a.file, a.line, &a.raw).cmp(&(&b.file, b.line, &b.raw)));
+    refs.dedup();
+    refs
+}
 
 /// One node of the containment tree, addressed by its index in
 /// `Graph::nodes`.
@@ -198,7 +205,10 @@ impl Tree {
             .collect();
         let mut children = crate::tree_order::Children::new();
         for r in &v.rows {
-            let parent = self.nodes[r.node].parent.filter(|p| row_of.contains_key(p));
+            // A chain row hangs where its first node does.
+            let parent = self.nodes[r.chain[0]]
+                .parent
+                .filter(|p| row_of.contains_key(p));
             children.entry(parent).or_default().push(r.node);
         }
         // Rows are alphabetical (packages first), the web's initial order.
@@ -229,7 +239,7 @@ impl Tree {
             .rows
             .iter()
             .filter_map(|r| {
-                let p = self.nodes[r.node].parent?;
+                let p = self.nodes[r.chain[0]].parent?;
                 row_of.contains_key(&p).then_some((r.node, p))
             })
             .collect();
@@ -250,13 +260,13 @@ impl Tree {
         let rep: Vec<usize> = (0..self.nodes.len())
             .map(|n| self.representative(n, &row_of))
             .collect();
-        let mut merged: BTreeMap<(usize, usize), (u64, Vec<Ref>)> = BTreeMap::new();
+        let mut merged: BTreeMap<(usize, usize), (u64, Vec<&Ref>)> = BTreeMap::new();
         for &(from, to, w, edge) in &self.edges {
             let (a, b) = (rep[from], rep[to]);
             if a != b && a != usize::MAX && b != usize::MAX {
                 let entry = merged.entry((a, b)).or_default();
                 entry.0 += w;
-                entry.1.extend(self.full.edges[edge].refs.iter().cloned());
+                entry.1.extend(&self.full.edges[edge].refs);
             }
         }
         let component = components(rows.len(), merged.keys().copied());
@@ -268,17 +278,16 @@ impl Tree {
         let cycle_groups = size.values().filter(|&&s| s > 1).count();
         let links: Vec<Link> = merged
             .into_iter()
-            .map(|((from, to), (weight, mut refs))| {
-                refs.sort_by(|a, b| (&a.file, a.line, &a.raw).cmp(&(&b.file, b.line, &b.raw)));
-                refs.dedup();
-                refs.truncate(MAX_REFS);
-                Link {
-                    from,
-                    to,
-                    weight,
-                    cyclic: component[from] == component[to],
-                    refs,
-                }
+            .map(|((from, to), (weight, refs))| Link {
+                from,
+                to,
+                weight,
+                cyclic: component[from] == component[to],
+                refs: sorted_refs(refs)
+                    .into_iter()
+                    .take(MAX_REFS)
+                    .cloned()
+                    .collect(),
             })
             .collect();
         let (mut incoming, mut outgoing) = (vec![0; rows.len()], vec![0; rows.len()]);
@@ -706,6 +715,77 @@ mod tests {
         // Links follow their rows.
         let mcp_to_engine = v.links.iter().any(|l| l.from == 2 && l.to == 4);
         assert!(mcp_to_engine);
+    }
+
+    /// A compressed chain row (`src/main`) stays under its parent in the
+    /// connection order: its parent is that of the chain's first node. The
+    /// edge A.java → lib/x.rs would pull a detached chain before `lib`.
+    #[test]
+    fn connection_order_keeps_chain_rows_under_their_parent() {
+        let node = |id: u32, name: &str, kind, parent: Option<u32>| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind,
+            parent: parent.map(NodeId),
+            lang: None,
+        };
+        use NodeKind::{File, Module};
+        let g = Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: vec![
+                node(0, "lib", Module, None),
+                node(1, "lib/x.rs", File, Some(0)),
+                node(2, "mod", Module, None),
+                node(3, "mod/build.rs", File, Some(2)),
+                node(4, "mod/src", Module, Some(2)),
+                node(5, "mod/src/main", Module, Some(4)),
+                node(6, "mod/src/main/A.java", File, Some(5)),
+                node(7, "mod/src/main/B.java", File, Some(5)),
+            ],
+            edges: vec![Edge {
+                from: NodeId(6),
+                to: NodeId(1),
+                refs: Vec::new(),
+                count: Some(1),
+            }],
+            semantic: None,
+            review_kpis: None,
+        };
+        let t = Tree::from_graph(&g);
+        let v = t.view_sorted(&BTreeSet::from([2, 4, 5]), Sort::Connections);
+        let chain = v
+            .rows
+            .iter()
+            .position(|r| r.chain == [4, 5])
+            .expect("src/main row");
+        let mod_row = v.rows.iter().position(|r| r.node == 2).expect("mod row");
+        let covered: BTreeSet<usize> = v
+            .selection(mod_row)
+            .iter()
+            .map(|&r| v.rows[r].node)
+            .collect();
+        assert_eq!(
+            covered,
+            BTreeSet::from([2, 3, 5, 6, 7]),
+            "{:?}",
+            names(&t, &v)
+        );
+        assert!(mod_row < chain);
+        // Every row sits below the nearest shallower row, its tree parent.
+        for (i, r) in v.rows.iter().enumerate().filter(|(_, r)| r.depth > 0) {
+            let above = v.rows[..i]
+                .iter()
+                .rev()
+                .find(|p| p.depth < r.depth)
+                .expect("parent row");
+            assert_eq!(
+                t.nodes[r.chain[0]].parent,
+                Some(above.node),
+                "{:?}",
+                names(&t, &v)
+            );
+        }
     }
 
     #[test]

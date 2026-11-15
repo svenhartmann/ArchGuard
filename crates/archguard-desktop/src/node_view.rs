@@ -10,10 +10,7 @@ use std::collections::BTreeMap;
 
 use archguard_engine::core::Ref;
 
-use crate::tree::Tree;
-
-/// Evidence lines kept per dependency, as the tree's links keep them.
-const MAX_REFS: usize = 10;
+use crate::tree::{MAX_REFS, Tree, sorted_refs};
 
 /// The file on the other end of a node's dependencies.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +58,7 @@ pub fn node_view(tree: &Tree, node: usize) -> Option<NodeView> {
             _ => continue,
         };
         entry.0 += edge.weight();
-        entry.1.extend(edge.refs.iter().cloned());
+        entry.1.extend(&edge.refs);
     }
     let (files, packages) = if tree.nodes[node].file {
         (0, 0)
@@ -78,7 +75,7 @@ pub fn node_view(tree: &Tree, node: usize) -> Option<NodeView> {
 }
 
 /// Weight and references per node on the other end.
-type Group = BTreeMap<usize, (u64, Vec<Ref>)>;
+type Group<'a> = BTreeMap<usize, (u64, Vec<&'a Ref>)>;
 
 fn deps(tree: &Tree, group: Group) -> Vec<NodeDep> {
     let mut list: Vec<NodeDep> = group
@@ -97,9 +94,8 @@ fn deps(tree: &Tree, group: Group) -> Vec<NodeDep> {
     list
 }
 
-fn evidence(mut refs: Vec<Ref>) -> Vec<String> {
-    refs.sort_by(|a, b| (&a.file, a.line, &a.raw).cmp(&(&b.file, b.line, &b.raw)));
-    refs.dedup();
+fn evidence(refs: Vec<&Ref>) -> Vec<String> {
+    let refs = sorted_refs(refs);
     let more = refs.len().saturating_sub(MAX_REFS);
     let mut lines: Vec<String> = refs
         .iter()
@@ -199,14 +195,14 @@ mod tests {
 
     #[test]
     fn evidence_is_capped_with_the_rest_counted() {
-        let refs = (1..=12)
+        let refs: Vec<Ref> = (1..=12)
             .map(|line| Ref {
                 file: "a.rs".into(),
                 line,
                 raw: "x".into(),
             })
             .collect();
-        let lines = evidence(refs);
+        let lines = evidence(refs.iter().collect());
         assert_eq!(lines.len(), MAX_REFS + 1);
         assert_eq!(lines.last().map(String::as_str), Some("… +2"));
     }
