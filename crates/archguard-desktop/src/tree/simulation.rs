@@ -7,6 +7,8 @@
 //! nodes by name, so a newer analysis gets them applied again. Ops that no
 //! longer apply leave the original graph shown and say why.
 
+use std::collections::HashMap;
+
 use archguard_engine::analysis::{
     SimDelta, SimOp, apply_ops, find_sccs, sample_cycles, simulate, suggest_cuts,
 };
@@ -101,7 +103,8 @@ pub fn cut_hints(g: &Graph, depth: usize, members: &[String]) -> Vec<CutHint> {
     const MAX_LEN: usize = 20;
     const MAX_CUTS: usize = 5;
     let view = aggregate(g, &Cut::at_depth(g, depth));
-    let name = |id: &NodeId| view.nodes.iter().find(|n| n.id == *id).map(|n| n.name.as_str());
+    let names: HashMap<NodeId, &str> = view.nodes.iter().map(|n| (n.id, n.name.as_str())).collect();
+    let name = |id: &NodeId| names.get(id).copied();
     let mut wanted: Vec<&str> = members.iter().map(String::as_str).collect();
     wanted.sort_unstable();
     let sccs = find_sccs(&view);
@@ -113,7 +116,10 @@ pub fn cut_hints(g: &Graph, depth: usize, members: &[String]) -> Vec<CutHint> {
         return Vec::new();
     };
     let cycles = sample_cycles(&view, scc, MAX_CYCLES, MAX_LEN);
-    let named: Vec<Vec<&str>> = cycles.iter().map(|c| c.iter().filter_map(name).collect()).collect();
+    let named: Vec<Vec<&str>> = cycles
+        .iter()
+        .map(|c| c.iter().filter_map(name).collect())
+        .collect();
     let runs_through = |c: &Vec<&str>, from: &str, to: &str| {
         (0..c.len()).any(|i| c[i] == from && c[(i + 1) % c.len()] == to)
     };
@@ -127,7 +133,10 @@ pub fn cut_hints(g: &Graph, depth: usize, members: &[String]) -> Vec<CutHint> {
                 .map(|e| e.weight())
                 .sum();
             CutHint {
-                broken: named.iter().filter(|c| runs_through(c, &cut.from, &cut.to)).count(),
+                broken: named
+                    .iter()
+                    .filter(|c| runs_through(c, &cut.from, &cut.to))
+                    .count(),
                 sampled: cycles.len(),
                 refs,
                 from: cut.from,
@@ -140,7 +149,8 @@ pub fn cut_hints(g: &Graph, depth: usize, members: &[String]) -> Vec<CutHint> {
 /// Cyclic groups of `g` aggregated to `depth`, members by name.
 fn cycle_groups(g: &Graph, depth: usize) -> Vec<Vec<String>> {
     let view = aggregate(g, &Cut::at_depth(g, depth));
-    let name = |id: &NodeId| view.nodes.iter().find(|n| n.id == *id).map(|n| n.name.clone());
+    let names: HashMap<NodeId, &str> = view.nodes.iter().map(|n| (n.id, n.name.as_str())).collect();
+    let name = |id: &NodeId| names.get(id).map(|n| n.to_string());
     find_sccs(&view)
         .iter()
         .map(|s| s.node_ids.iter().filter_map(name).collect())
@@ -245,9 +255,15 @@ pub(crate) mod tests {
         for h in &hints {
             assert_eq!((h.broken, h.sampled, h.refs), (1, 1, 1), "{h:?}");
         }
-        let ends: Vec<(&str, &str)> = hints.iter().map(|h| (h.from.as_str(), h.to.as_str())).collect();
+        let ends: Vec<(&str, &str)> = hints
+            .iter()
+            .map(|h| (h.from.as_str(), h.to.as_str()))
+            .collect();
         assert!(ends.contains(&("app", "core")) && ends.contains(&("core", "app")));
-        assert!(cut_hints(&g, 0, &["app".to_string()]).is_empty(), "no such group");
+        assert!(
+            cut_hints(&g, 0, &["app".to_string()]).is_empty(),
+            "no such group"
+        );
     }
 
     /// The export is the frozen SimOp JSON the CLI and web viewer read.
