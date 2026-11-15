@@ -1,6 +1,7 @@
 import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Icons, Button, Badge, ZoomControls } from "widgets.slint";
+import { NoSources } from "tree_view.slint";
 
 export struct NetCard {
     row: int,
@@ -193,6 +194,8 @@ export component NetworkView inherits Rectangle {
         }
       }
     }
+
+    if root.cards.length == 0: NoSources {}
 
     Rectangle {
         x: 16px;
