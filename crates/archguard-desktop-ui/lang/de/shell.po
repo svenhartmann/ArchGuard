@@ -54,3 +54,21 @@ msgstr "Einstellungen waren nicht lesbar, eine Kopie liegt hier: {}"
 
 msgid "Could not save the changes: {}"
 msgstr "Änderungen konnten nicht gespeichert werden: {}"
+
+msgid "Show or hide the explorer"
+msgstr "Navigator ein- oder ausblenden"
+
+msgid "Show or hide the details"
+msgstr "Details ein- oder ausblenden"
+
+msgid "More"
+msgstr "Weitere Aktionen"
+
+msgid "Not scanned: no dependency scan exists for this project."
+msgstr "Nicht gescannt: Für dieses Projekt gibt es keinen Abhängigkeits-Scan."
+
+msgid "No runtime recordings for this project."
+msgstr "Für dieses Projekt gibt es keine Laufzeitaufzeichnungen."
+
+msgid "No services found in this project."
+msgstr "In diesem Projekt wurden keine Dienste gefunden."

@@ -24,6 +24,11 @@ export global Icons {
     // Show or hide a side panel: the Graph's explorer (left), details (right).
     out property <string> panel-left: "M 4 5 L 20 5 L 20 19 L 4 19 Z M 9.5 5 L 9.5 19";
     out property <string> panel-right: "M 4 5 L 20 5 L 20 19 L 4 19 Z M 14.5 5 L 14.5 19";
+    // The Graph's explorer (a package tree) and details (a sheet of facts).
+    out property <string> tree: "M 4 5 L 10 5 M 7 5 L 7 17 M 7 11 L 12 11 M 7 17 L 12 17 M 15 9 L 20 9 L 20 13 L 15 13 Z M 15 15 L 20 15 L 20 19 L 15 19 Z";
+    out property <string> details: "M 6 3 L 18 3 L 18 21 L 6 21 Z M 9 8 L 15 8 M 9 12 L 15 12 M 9 16 L 13 16";
+    // Overflow menu.
+    out property <string> more: "M 5 11 L 7 11 L 7 13 L 5 13 Z M 11 11 L 13 11 L 13 13 L 11 13 Z M 17 11 L 19 11 L 19 13 L 17 13 Z";
 }
 
 export component Icon inherits Path {
@@ -37,207 +42,6 @@ export component Icon inherits Path {
     stroke-width: stroke-w;
     fill: transparent;
 }
-
-// The web viewer's .btn / .btn-secondary / .btn-primary.
-export component Button inherits Rectangle {
-    in property <string> text;
-    in property <string> icon;
-    in property <bool> primary;
-    in property <bool> pressed-state;
-    in property <bool> compact;
-    in property <bool> enabled: true;
-    callback clicked;
-    height: compact ? Theme.control-h-sm : Theme.control-h;
-    // Never narrower than the label: toolbars shrink their texts instead.
-    min-width: max(self.height, content.min-width);
-    horizontal-stretch: 0;
-    border-radius: Theme.radius-sm;
-    background: primary ? Theme.accent
-        : pressed-state ? Theme.accent.with-alpha(0.16)
-        : touch.pressed ? Theme.panel-2.mix(Theme.border, 0.7)
-        : touch.has-hover ? Theme.panel-2 : Theme.panel;
-    border-width: 1px;
-    border-color: pressed-state ? Theme.accent : Theme.border;
-    opacity: enabled ? 1 : 0.5;
-    animate background { duration: 100ms; }
-    content := HorizontalLayout {
-        padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
-        padding-right: self.padding-left;
-        spacing: 6px;
-        alignment: center;
-        if root.icon != "": Icon {
-            icon: root.icon;
-            tint: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
-            width: compact ? 14px : 16px;
-            height: self.width;
-            y: (parent.height - self.height) / 2;
-        }
-        if root.text != "": Text {
-            text: root.text;
-            color: primary ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
-            font-size: compact ? Theme.font-small : Theme.font-body;
-            font-weight: primary ? Theme.weight-medium : Theme.weight-regular;
-            vertical-alignment: center;
-        }
-    }
-    touch := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
-// One tab of the top tab bar (#tabs in the web viewer).
-export component Tab inherits Rectangle {
-    in property <string> text;
-    in property <bool> active;
-    callback clicked;
-    // Right button, at a point inside the tab: the TouchArea takes the
-    // press, so a surrounding ContextMenuArea would never see it.
-    callback context-menu(length, length);
-    height: Theme.control-h-sm + 2px;
-    // Sized by the bold label, so the tab keeps its width when it becomes
-    // active and the tabs beside it do not move.
-    width: bold.preferred-width + 24px;
-    border-radius: Theme.radius-sm;
-    background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
-    animate background { duration: 100ms; }
-    label := Text {
-        text: root.text;
-        color: active ? Theme.accent : Theme.text;
-        font-size: Theme.font-body;
-        font-weight: active ? Theme.weight-strong : Theme.weight-regular;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    bold := Text {
-        visible: false;
-        text: root.text;
-        font-size: Theme.font-body;
-        font-weight: Theme.weight-strong;
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-        pointer-event(e) => {
-            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
-                root.context-menu(self.mouse-x, self.mouse-y);
-            }
-        }
-    }
-}
-
-export component Divider inherits Rectangle {
-    width: 1px;
-    height: 18px;
-    background: Theme.border;
-}
-
-export component Metric inherits HorizontalLayout {
-    in property <string> value;
-    in property <string> label;
-    spacing: 5px;
-    Text {
-        text: root.value;
-        color: Theme.text;
-        font-size: Theme.font-body;
-        font-weight: Theme.weight-strong;
-        vertical-alignment: center;
-    }
-    Text {
-        text: root.label;
-        color: Theme.muted;
-        font-size: Theme.font-small;
-        vertical-alignment: center;
-    }
-}
-
-// Keyboard focus around its parent control, in the platform's form
-// (`Theme.focus`, `Theme.focus-w`); it fills the parent, the ring lies
-// outside.
-export component FocusRing inherits Rectangle {
-    in property <bool> has-focus;
-    in property <length> radius: Theme.radius-sm;
-    Rectangle {
-        x: -Theme.focus-w;
-        y: -Theme.focus-w;
-        width: root.width + 2 * Theme.focus-w;
-        height: root.height + 2 * Theme.focus-w;
-        border-radius: root.radius + Theme.focus-w;
-        border-width: Theme.focus-w;
-        border-color: root.has-focus ? Theme.focus : transparent;
-    }
-}
-
-export component SearchField inherits Rectangle {
-    in property <string> placeholder;
-    in-out property <string> text;
-    callback edited(string);
-    callback accepted(string);
-    height: Theme.control-h;
-    forward-focus: input;
-    border-radius: Theme.radius-sm;
-    background: Theme.panel;
-    border-width: 1px;
-    border-color: input.has-focus ? Theme.accent : Theme.border;
-    FocusRing { has-focus: input.has-focus; }
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 8px;
-        Icon {
-            icon: Icons.search;
-            tint: Theme.muted;
-            width: 15px;
-            height: 15px;
-            y: (parent.height - self.height) / 2;
-        }
-        input := LineInput {
-            text <=> root.text;
-            placeholder: root.placeholder;
-            edited(t) => { root.edited(t); }
-            accepted(t) => { root.accepted(t); }
-        }
-    }
-}
-
-// Shown by a tab that is not native yet: the web viewer has it.
-export component TabPlaceholder inherits Rectangle {
-    in property <string> title;
-    callback open-web();
-    VerticalLayout {
-        alignment: center;
-        spacing: 14px;
-        Text {
-            text: root.title;
-            color: Theme.text;
-            font-size: Theme.font-page;
-            font-weight: Theme.weight-title;
-            horizontal-alignment: center;
-        }
-        Text {
-            text: @tr("This view is not native yet. The web viewer shows it for the same project.");
-            color: Theme.muted;
-            font-size: Theme.font-body;
-            horizontal-alignment: center;
-        }
-        HorizontalLayout {
-            alignment: center;
-            Button {
-                text: @tr("Open in web viewer");
-                icon: Icons.external;
-                primary: true;
-                clicked => { root.open-web(); }
-            }
-        }
-    }
-}
-
-// ---- Shared presentation: every tab uses these, none keeps its own copy.
-
-// One key figure from `src/kpi.rs`: label (naming its level), the value
-// Rust formatted and the scope note shown as help on hover.
-export struct KpiItem { label: string, value: string, note: string }
 
 // ---- Tooltips: the web viewer's #metric-tooltip. One bubble for the
 // whole window, drawn by `TipLayer` as AppWindow's topmost element, so
@@ -368,6 +172,240 @@ export component TipArea inherits TouchArea {
         }
     }
 }
+
+// The web viewer's .btn / .btn-secondary / .btn-primary.
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> pressed-state;
+    in property <bool> compact;
+    in property <bool> enabled: true;
+    // Tooltip on hover; for icon-only buttons, what they do.
+    in property <string> tip;
+    callback clicked;
+    // A disabled primary button looks like a disabled secondary one, not
+    // like an action that is ready.
+    property <bool> accent: primary && enabled;
+    height: compact ? Theme.control-h-sm : Theme.control-h;
+    // Never narrower than the label: toolbars shrink their texts instead.
+    min-width: max(self.height, content.min-width);
+    horizontal-stretch: 0;
+    border-radius: Theme.radius-sm;
+    accessible-role: button;
+    accessible-label: root.text != "" ? root.text : root.tip;
+    accessible-enabled: root.enabled;
+    background: accent ? Theme.accent
+        : pressed-state ? Theme.accent.with-alpha(0.16)
+        : touch.pressed ? Theme.panel-2.mix(Theme.border, 0.7)
+        : touch.has-hover ? Theme.panel-2 : Theme.panel;
+    border-width: 1px;
+    border-color: pressed-state ? Theme.accent : Theme.border;
+    opacity: enabled ? 1 : 0.5;
+    animate background { duration: 100ms; }
+    content := HorizontalLayout {
+        padding-left: root.text == "" ? 0 : (compact ? 9px : 12px);
+        padding-right: self.padding-left;
+        spacing: 6px;
+        alignment: center;
+        if root.icon != "": Icon {
+            icon: root.icon;
+            tint: accent ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            width: compact ? 14px : 16px;
+            height: self.width;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: accent ? Theme.accent-contrast : pressed-state ? Theme.accent : Theme.text;
+            font-size: compact ? Theme.font-small : Theme.font-body;
+            font-weight: accent ? Theme.weight-medium : Theme.weight-regular;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        // Inside `touch`, so the button keeps its hover look.
+        if root.tip != "": TipArea {
+            tip: root.tip;
+            enabled: root.enabled;
+            pin-on-click: false;
+            mouse-cursor: pointer;
+            activated => { root.clicked(); }
+        }
+    }
+}
+
+// One tab of the top tab bar (#tabs in the web viewer).
+export component Tab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    // Dimmed (still clickable), e.g. a view without data; `tip` says why.
+    in property <bool> dim;
+    in property <string> tip;
+    // Horizontal room around the label; narrow windows pass less.
+    in property <length> pad: 24px;
+    callback clicked;
+    // Right button, at a point inside the tab: the TouchArea takes the
+    // press, so a surrounding ContextMenuArea would never see it.
+    callback context-menu(length, length);
+    height: Theme.control-h-sm + 2px;
+    // Sized by the bold label, so the tab keeps its width when it becomes
+    // active and the tabs beside it do not move.
+    width: bold.preferred-width + root.pad;
+    border-radius: Theme.radius-sm;
+    background: active ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    animate background { duration: 100ms; }
+    label := Text {
+        text: root.text;
+        color: active ? Theme.accent : dim ? Theme.muted : Theme.text;
+        font-size: Theme.font-body;
+        font-weight: active ? Theme.weight-strong : Theme.weight-regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    bold := Text {
+        visible: false;
+        text: root.text;
+        font-size: Theme.font-body;
+        font-weight: Theme.weight-strong;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                root.context-menu(self.mouse-x, self.mouse-y);
+            }
+        }
+        // Inside `touch`, so the tab keeps its hover look.
+        if root.tip != "": TipArea {
+            tip: root.tip;
+            pin-on-click: false;
+            mouse-cursor: pointer;
+            activated => { root.clicked(); }
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                    root.context-menu(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+    }
+}
+
+export component Divider inherits Rectangle {
+    width: 1px;
+    height: 18px;
+    background: Theme.border;
+}
+
+export component Metric inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> label;
+    spacing: 5px;
+    Text {
+        text: root.value;
+        color: Theme.text;
+        font-size: Theme.font-body;
+        font-weight: Theme.weight-strong;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        vertical-alignment: center;
+    }
+}
+
+// Keyboard focus around its parent control, in the platform's form
+// (`Theme.focus`, `Theme.focus-w`); it fills the parent, the ring lies
+// outside.
+export component FocusRing inherits Rectangle {
+    in property <bool> has-focus;
+    in property <length> radius: Theme.radius-sm;
+    Rectangle {
+        x: -Theme.focus-w;
+        y: -Theme.focus-w;
+        width: root.width + 2 * Theme.focus-w;
+        height: root.height + 2 * Theme.focus-w;
+        border-radius: root.radius + Theme.focus-w;
+        border-width: Theme.focus-w;
+        border-color: root.has-focus ? Theme.focus : transparent;
+    }
+}
+
+export component SearchField inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text;
+    callback edited(string);
+    callback accepted(string);
+    height: Theme.control-h;
+    forward-focus: input;
+    border-radius: Theme.radius-sm;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    FocusRing { has-focus: input.has-focus; }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Icon {
+            icon: Icons.search;
+            tint: Theme.muted;
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+        }
+        input := LineInput {
+            text <=> root.text;
+            placeholder: root.placeholder;
+            edited(t) => { root.edited(t); }
+            accepted(t) => { root.accepted(t); }
+        }
+    }
+}
+
+// Shown by a tab that is not native yet: the web viewer has it.
+export component TabPlaceholder inherits Rectangle {
+    in property <string> title;
+    callback open-web();
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font-page;
+            font-weight: Theme.weight-title;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: @tr("This view is not native yet. The web viewer shows it for the same project.");
+            color: Theme.muted;
+            font-size: Theme.font-body;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Open in web viewer");
+                icon: Icons.external;
+                primary: true;
+                clicked => { root.open-web(); }
+            }
+        }
+    }
+}
+
+// ---- Shared presentation: every tab uses these, none keeps its own copy.
+
+// One key figure from `src/kpi.rs`: label (naming its level), the value
+// Rust formatted and the scope note shown as help on hover.
+export struct KpiItem { label: string, value: string, note: string }
 
 // The web's .context-help-trigger: a round "?" whose help is a tooltip.
 export component HelpTip inherits Rectangle {

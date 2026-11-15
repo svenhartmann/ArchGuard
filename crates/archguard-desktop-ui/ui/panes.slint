@@ -49,6 +49,9 @@ export global Views {
 export component ViewBarTab inherits Rectangle {
     in property <string> view;
     in property <bool> active;
+    // Why the view has nothing to show for the project; dims the tab.
+    in property <string> empty-reason;
+    in property <length> pad: 24px;
     callback navigate(string);
     callback open-tab(string);
     callback open-side(string);
@@ -68,6 +71,9 @@ export component ViewBarTab inherits Rectangle {
         tab := Tab {
             text: Views.label(root.view);
             active: root.active;
+            pad: root.pad;
+            dim: root.empty-reason != "";
+            tip: root.empty-reason;
             clicked => { root.navigate(root.view); }
             context-menu(x, y) => { menu.show({ x: x, y: y }); }
         }
@@ -203,7 +209,6 @@ export component PaneStrip inherits Rectangle {
     callback select(int);
     callback close(int);
     callback close-pane();
-    callback split-right();
     // Tab index and format of a tab's export menu.
     callback export(int, string);
     // "Follow left" on the right pane's strip.
@@ -237,16 +242,11 @@ export component PaneStrip inherits Rectangle {
             blocked: root.follow-blocked;
             toggle => { root.toggle-follow(); }
         }
-        if !root.split: Button {
-            y: (parent.height - self.height) / 2;
-            compact: true;
-            icon: Icons.split;
-            clicked => { root.split-right(); }
-        }
         if root.split: Button {
             y: (parent.height - self.height) / 2;
             compact: true;
             icon: Icons.close;
+            tip: @tr("Close pane");
             clicked => { root.close-pane(); }
         }
     }

@@ -24,6 +24,8 @@ export struct SettingsItem {
     // 5 list (one entry per line), 6 map (name = number per line).
     widget: int,
     text: string,
+    // Lines of `text`, at least 1: the height of a list or map value.
+    lines: int,
     checked: bool,
     options: [string],
     option: int,
@@ -86,6 +88,87 @@ export global SettingsEdit {
     callback move-entry(string, int, int);
 }
 
+// Readable labels of the configuration keys the form shows (the last
+// segment of a catalogue path, or a nested section's whole path); the
+// key itself when there is none. A test checks that every key has one.
+export global FieldLabels {
+    public pure function of(key: string) -> string {
+        if key == "source_roots" { return @tr("Settings" => "Source directories"); }
+        if key == "exclude" { return @tr("Settings" => "Excluded paths"); }
+        if key == "languages" { return @tr("Settings" => "Languages"); }
+        if key == "depth" { return @tr("Settings" => "Module depth"); }
+        if key == "derive_layers" { return @tr("Settings" => "Derive layers"); }
+        if key == "layers" { return @tr("Settings" => "Declared layers"); }
+        if key == "name" { return @tr("Settings" => "Name"); }
+        if key == "contains" { return @tr("Settings" => "Contained modules"); }
+        if key == "may_depend_on" { return @tr("Settings" => "May depend on"); }
+        if key == "dependency_rules" { return @tr("Settings" => "Forbidden dependencies"); }
+        if key == "from" { return @tr("Settings" => "From"); }
+        if key == "to" { return @tr("Settings" => "To"); }
+        if key == "severity" { return @tr("Settings" => "Severity"); }
+        if key == "message" { return @tr("Settings" => "Message"); }
+        if key == "ownership_rules" { return @tr("Settings" => "Forbidden owner dependencies"); }
+        if key == "deny_cycles" { return @tr("Settings" => "Forbidden cycles"); }
+        if key == "max_scc_size" { return @tr("Settings" => "Largest cycle group"); }
+        if key == "baseline" { return @tr("Settings" => "Baseline file"); }
+        if key == "max_acd" { return @tr("Settings" => "Maximum ACD"); }
+        if key == "max_instability_core" { return @tr("Settings" => "Maximum instability of the bottom layer"); }
+        if key == "git_since" { return @tr("Settings" => "History window"); }
+        if key == "entry_points" { return @tr("Settings" => "Entry points"); }
+        if key == "orphans" { return @tr("Settings" => "Orphan files"); }
+        if key == "health_weights" { return @tr("Settings" => "Health index weights"); }
+        if key == "max_sdp_violations" { return @tr("Settings" => "Maximum SDP violations"); }
+        if key == "max_tangledness" { return @tr("Settings" => "Maximum tangledness"); }
+        if key == "max_propagation_cost" { return @tr("Settings" => "Maximum propagation cost"); }
+        if key == "adr_required_on_accept_risk" { return @tr("Settings" => "ADR required to accept a risk"); }
+        if key == "heavy_imports" { return @tr("Settings" => "Heavy imports"); }
+        if key == "min_barrel_exports" { return @tr("Settings" => "Minimum re-exports of a barrel"); }
+        if key == "min_barrel_ratio" { return @tr("Settings" => "Minimum re-export share of a barrel"); }
+        if key == "n_plus_one_min_calls" { return @tr("Settings" => "Minimum calls for N+1"); }
+        if key == "chatty_endpoint_db_calls" { return @tr("Settings" => "Database calls of a chatty endpoint"); }
+        if key == "slow_statement_ms" { return @tr("Settings" => "Slow statement (ms)"); }
+        if key == "goals" { return @tr("Settings" => "Quality goals"); }
+        if key == "priority" { return @tr("Settings" => "Priority"); }
+        if key == "rationale" { return @tr("Settings" => "Rationale"); }
+        if key == "attribute" { return @tr("Settings" => "Quality attribute"); }
+        if key == "scope" { return @tr("Settings" => "Scope"); }
+        if key == "scenario" { return @tr("Settings" => "Quality scenario"); }
+        if key == "constraints" { return @tr("Settings" => "Constraints"); }
+        if key == "decisions" { return @tr("Settings" => "Decisions"); }
+        if key == "id" { return @tr("Settings" => "ID"); }
+        if key == "title" { return @tr("Settings" => "Title"); }
+        if key == "status" { return @tr("Settings" => "Status"); }
+        if key == "chosen_option" { return @tr("Settings" => "Chosen option"); }
+        if key == "alternatives" { return @tr("Settings" => "Alternatives"); }
+        if key == "trade_offs" { return @tr("Settings" => "Accepted trade-offs"); }
+        if key == "links" { return @tr("Settings" => "Links"); }
+        if key == "architecture.model" { return @tr("Settings" => "Target architecture"); }
+        if key == "require_assignment" { return @tr("Settings" => "Every module in a component"); }
+        if key == "components" { return @tr("Settings" => "Components"); }
+        if key == "include" { return @tr("Settings" => "Included modules"); }
+        if key == "public" { return @tr("Settings" => "Public modules"); }
+        if key == "max_incoming_components" { return @tr("Settings" => "Maximum incoming components"); }
+        if key == "max_outgoing_components" { return @tr("Settings" => "Maximum outgoing components"); }
+        if key == "allowed_dependencies" { return @tr("Settings" => "Allowed dependencies"); }
+        if key == "asyncapi" { return @tr("Settings" => "AsyncAPI documents"); }
+        if key == "semantic.java" { return @tr("Settings" => "Java"); }
+        if key == "release" { return @tr("Settings" => "Java release"); }
+        if key == "classpath" { return @tr("Settings" => "Class path"); }
+        if key == "semantic.csharp" { return @tr("Settings" => "C#"); }
+        if key == "project" { return @tr("Settings" => "Project file"); }
+        if key == "configuration" { return @tr("Settings" => "Build configuration"); }
+        if key == "target_framework" { return @tr("Settings" => "Target framework"); }
+        if key == "semantic.typescript" { return @tr("Settings" => "TypeScript"); }
+        if key == "compiler" { return @tr("Settings" => "TypeScript compiler"); }
+        if key == "db" { return @tr("Settings" => "Database file"); }
+        if key == "sync_on_check" { return @tr("Settings" => "Refresh on every check"); }
+        if key == "diagram_format" { return @tr("Settings" => "Diagram format"); }
+        if key == "hidden_diagrams" { return @tr("Settings" => "Hidden diagrams"); }
+        if key == "shown_diagrams" { return @tr("Settings" => "Package map levels"); }
+        return key;
+    }
+}
+
 component ProvenanceBadge inherits Badge {
     in property <int> provenance;
     text: provenance == 1 ? @tr("Settings" => "File")
@@ -119,7 +202,9 @@ component LinesValue inherits TextEdit {
             self.text = root.value;
         }
     }
-    height: 78px;
+    // As high as its lines (up to 8), so a one-entry list is one line.
+    in property <int> lines;
+    height: min(max(root.lines, 1), 8) * Theme.font-body * 1.4 + 14px;
     wrap: no-wrap;
     edited(t) => { SettingsEdit.set-text(root.path, t); }
 }
@@ -165,6 +250,7 @@ component ValueWidget inherits VerticalLayout {
     }
     if !item.read-only && (item.widget == 5 || item.widget == 6): LinesValue {
         value: item.text;
+        lines: item.lines;
         path: item.path;
     }
 }
@@ -188,12 +274,20 @@ component FieldRow inherits Rectangle {
                 HorizontalLayout {
                     spacing: 6px;
                     alignment: start;
-                    Text { text: item.label; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                    Text { text: FieldLabels.of(item.label); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
                     if item.description != "": VerticalLayout {
                         alignment: start;
                         horizontal-stretch: 0;
                         HelpTip { size: 18px; tip: item.description; }
                     }
+                }
+                // The key as written in archguard.toml.
+                if FieldLabels.of(item.label) != item.label: Text {
+                    text: item.label;
+                    color: Theme.muted;
+                    font-size: Theme.font-caption;
+                    font-family: Theme.mono-family;
+                    wrap: char-wrap;
                 }
             }
             ValueWidget { item: item; horizontal-stretch: 1; }
@@ -236,7 +330,7 @@ component ArrayHead inherits VerticalLayout {
     spacing: 4px;
     HorizontalLayout {
         spacing: 10px;
-        SectionHeading { label: item.label; horizontal-stretch: 0; }
+        SectionHeading { label: FieldLabels.of(item.label); horizontal-stretch: 0; }
         if item.description != "": HelpTip { size: 18px; y: (parent.height - self.height) / 2; tip: item.description; }
         Rectangle { horizontal-stretch: 1; }
         Button {
@@ -312,7 +406,7 @@ export component SettingsFormItem inherits VerticalLayout {
     if item.kind == 0: VerticalLayout {
         padding-top: 18px;
         padding-bottom: 4px;
-        SectionHeading { label: item.label; }
+        SectionHeading { label: FieldLabels.of(item.label); }
     }
     if item.kind == 1: FieldRow { item: item; }
     if item.kind == 2: ArrayHead { item: item; }
