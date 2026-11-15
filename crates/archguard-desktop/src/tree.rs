@@ -250,6 +250,20 @@ impl Tree {
             .collect()
     }
 
+    /// Packages to open so the tree starts at the first level with more than
+    /// one entry (`org/apache/commons/collections4`), not on a lone `org`.
+    pub fn start_open(&self) -> BTreeSet<usize> {
+        let mut open = BTreeSet::new();
+        let mut level = &self.roots[..];
+        while let [only] = level
+            && !self.nodes[*only].file
+            && open.insert(*only)
+        {
+            level = &self.nodes[*only].children;
+        }
+        open
+    }
+
     pub fn view(&self, expanded: &BTreeSet<usize>) -> TreeView {
         let rows = self.rows(expanded);
         let mut row_of = vec![usize::MAX; self.nodes.len()];
@@ -630,6 +644,38 @@ mod tests {
             semantic: None,
             review_kpis: None,
         }
+    }
+
+    #[test]
+    fn a_single_package_chain_starts_open() {
+        let module = |id: u32, name: &str, parent: Option<u32>, kind| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind,
+            parent: parent.map(NodeId),
+            lang: None,
+        };
+        let chain = Graph {
+            nodes: vec![
+                module(0, "a", None, NodeKind::Module),
+                module(1, "a/b", Some(0), NodeKind::Module),
+                module(2, "a/b/x.rs", Some(1), NodeKind::File),
+                module(3, "a/b/y.rs", Some(1), NodeKind::File),
+            ],
+            edges: Vec::new(),
+            ..graph()
+        };
+        let t = Tree::from_graph(&chain);
+        let open: Vec<&str> = t
+            .start_open()
+            .iter()
+            .map(|&n| t.nodes[n].name.as_str())
+            .collect();
+        assert_eq!(open, ["a", "a/b"]);
+        assert!(
+            Tree::from_graph(&graph()).start_open().is_empty(),
+            "three roots"
+        );
     }
 
     fn names(t: &Tree, v: &TreeView) -> Vec<String> {

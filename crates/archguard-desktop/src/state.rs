@@ -67,10 +67,11 @@ impl GraphState {
         review_sources: ReviewSources,
         entry_points: Vec<String>,
     ) -> Self {
+        let expanded = tree.start_open();
         let mut s = GraphState {
-            view: tree.view_sorted(&BTreeSet::new(), Sort::Connections),
+            view: tree.view_sorted(&expanded, Sort::Connections),
             tree,
-            expanded: BTreeSet::new(),
+            expanded,
             selected: None,
             mode: EdgeMode::All,
             sort: Sort::Connections,
@@ -206,13 +207,14 @@ impl GraphState {
         self.refresh();
     }
 
-    /// The project crumb: collapse everything and clear the selection and
-    /// the scope.
+    /// The project crumb: back to the start level and clear the selection
+    /// and the scope.
     pub fn reset(&mut self) {
         self.selected = None;
         self.scope = None;
         self.mode = EdgeMode::All;
-        self.collapse_all();
+        self.expanded = self.tree.start_open();
+        self.refresh();
     }
 
     /// The selection's ancestors and itself, outermost first.
