@@ -208,7 +208,7 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
 fn wire_rich(ui: &AppWindow) {
     let r = ui.global::<RichData>();
     // Run `f` on the open editor and show it; `None` without one.
-    fn edit<R>(ui: &AppWindow, f: impl FnOnce(&mut Rich) -> R) -> Option<R> {
+    fn on_rich<R>(ui: &AppWindow, f: impl FnOnce(&mut Rich) -> R) -> Option<R> {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
             let out = s.editor.rich(f);
             s.editor.show(ui);
@@ -221,7 +221,7 @@ fn wire_rich(ui: &AppWindow) {
         let Some(ui) = weak.upgrade() else {
             return false;
         };
-        match edit(&ui, |r| r.key(&name, shift, alt, control)) {
+        match on_rich(&ui, |r| r.key(&name, shift, alt, control)) {
             Some(Key::Done) => true,
             Some(Key::Link) => {
                 ui.global::<RichData>().set_linking(true);
@@ -233,13 +233,13 @@ fn wire_rich(ui: &AppWindow) {
     let weak = ui.as_weak();
     r.on_type(move |text| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.type_text(&text));
+            on_rich(&ui, |r| r.type_text(&text));
         }
     });
     let weak = ui.as_weak();
     r.on_press(move |piece, block, x, y, shift| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| {
+            on_rich(&ui, |r| {
                 r.press(piece as usize, block as usize, x, y, shift)
             });
         }
@@ -247,31 +247,31 @@ fn wire_rich(ui: &AppWindow) {
     let weak = ui.as_weak();
     r.on_drag(move |piece, block, x, y| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.drag(piece as usize, block as usize, x, y));
+            on_rich(&ui, |r| r.drag(piece as usize, block as usize, x, y));
         }
     });
     let weak = ui.as_weak();
     r.on_word(move |piece, block, x, y| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.word(piece as usize, block as usize, x, y));
+            on_rich(&ui, |r| r.word(piece as usize, block as usize, x, y));
         }
     });
     let weak = ui.as_weak();
     r.on_width(move |w| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.set_width(w));
+            on_rich(&ui, |r| r.set_width(w));
         }
     });
     let weak = ui.as_weak();
     r.on_tool(move |name| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.tool(&name));
+            on_rich(&ui, |r| r.tool(&name));
         }
     });
     let weak = ui.as_weak();
     r.on_link(move |target| {
         if let Some(ui) = weak.upgrade() {
-            edit(&ui, |r| r.link(&target));
+            on_rich(&ui, |r| r.link(&target));
         }
     });
 }

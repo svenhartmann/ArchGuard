@@ -175,6 +175,23 @@ impl Doc {
     }
 }
 
+/// The bytes of `text` inside generated `archguard:arc42` blocks; a block
+/// without its end marker runs to the end.
+pub fn generated(text: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut open = None;
+    for (i, _) in text.match_indices(crate::arc42_file::MARKER) {
+        let tag = text[i..].split_once("-->").map_or("", |(tag, _)| tag);
+        if tag.trim_end().ends_with(":start") {
+            open.get_or_insert(i);
+        } else if let Some(start) = open.take() {
+            out.push(start..i);
+        }
+    }
+    out.extend(open.map(|start| start..text.len()));
+    out
+}
+
 /// The blocks the editor edits, or `None` for a chunk it keeps as written.
 fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
     let mut out = Vec::new();
@@ -358,7 +375,7 @@ fn main() {}
 Ende.
 ";
 
-    fn generated(md: &str) -> Vec<Range<usize>> {
+    fn chapter_five(md: &str) -> Vec<Range<usize>> {
         let start = md.find("<!-- archguard:arc42:05:start").unwrap();
         let end = md.find("<!-- archguard:arc42:05:end").unwrap();
         std::iter::once(start..end).collect()
@@ -376,7 +393,7 @@ Ende.
 
     #[test]
     fn an_untouched_chapter_writes_back_unchanged() {
-        let doc = Doc::parse(CHAPTER, &generated(CHAPTER));
+        let doc = Doc::parse(CHAPTER, &chapter_five(CHAPTER));
         assert_eq!(doc.to_markdown(), CHAPTER);
     }
 
@@ -396,7 +413,7 @@ Ende.
                 .expect("arc42");
             for n in 1..=12 {
                 let md = crate::arc42_file::generated(&doc, n);
-                let parsed = Doc::parse(&md, &super::super::super::edit::generated(&md));
+                let parsed = Doc::parse(&md, &generated(&md));
                 assert_eq!(parsed.to_markdown(), md, "{project} chapter {n}");
             }
         }
@@ -404,7 +421,7 @@ Ende.
 
     #[test]
     fn heading_generated_blocks_tables_and_rules_stay_fixed() {
-        let mut doc = Doc::parse(CHAPTER, &generated(CHAPTER));
+        let mut doc = Doc::parse(CHAPTER, &chapter_five(CHAPTER));
         let kinds: Vec<Vec<Kind>> = parts(&mut doc)
             .iter()
             .map(|p| p.blocks().iter().map(|b| b.kind.clone()).collect())
@@ -448,7 +465,7 @@ Ende.
 
     #[test]
     fn a_paragraph_reads_its_line_breaks_as_spaces() {
-        let mut doc = Doc::parse(CHAPTER, &generated(CHAPTER));
+        let mut doc = Doc::parse(CHAPTER, &chapter_five(CHAPTER));
         let all = parts(&mut doc);
         let p = &all[0].blocks()[0].inline;
         assert_eq!(p.text, "Ein Absatz mit fett und einer zweiten Zeile.");
@@ -463,12 +480,12 @@ Ende.
 
     #[test]
     fn edited_parts_write_markdown_that_reads_back_the_same() {
-        let mut doc = Doc::parse(CHAPTER, &generated(CHAPTER));
+        let mut doc = Doc::parse(CHAPTER, &chapter_five(CHAPTER));
         for part in parts(&mut doc) {
             part.edit();
         }
         let md = doc.to_markdown();
-        let mut again = Doc::parse(&md, &generated(&md));
+        let mut again = Doc::parse(&md, &chapter_five(&md));
         let blocks = |d: &mut Doc| -> Vec<Vec<Block>> {
             parts(d).iter().map(|p| p.blocks().to_vec()).collect()
         };
