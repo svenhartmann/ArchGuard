@@ -105,7 +105,7 @@ impl Open {
 
 /// The bytes of `text` inside generated `archguard:arc42` blocks; a block
 /// without its end marker runs to the end.
-fn generated(text: &str) -> Vec<Range<usize>> {
+pub(super) fn generated(text: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut open = None;
     for (i, _) in text.match_indices(arc42_file::MARKER) {
