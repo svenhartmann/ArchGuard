@@ -477,9 +477,10 @@ pub fn levels(model: &SourceModel, graph: &Graph, scope: Option<usize>) -> Level
             parent: None,
         })
         .collect();
+    let mut seen: HashSet<usize> = model.overview.iter().copied().collect();
     for &parent in &model.overview {
         for child in model.modules(graph, Some(model.inside(parent))) {
-            if !entries.iter().any(|e| e.node == child) {
+            if seen.insert(child) {
                 entries.push(Entry {
                     node: child,
                     level: 3,
@@ -488,7 +489,7 @@ pub fn levels(model: &SourceModel, graph: &Graph, scope: Option<usize>) -> Level
             }
         }
     }
-    let known = |n: &usize| entries.iter().any(|e| e.node == *n);
+    let known = |n: &usize| seen.contains(n);
     let scope = scope.and_then(|s| model.ancestors[s].iter().copied().find(known));
     let entry = scope.and_then(|s| entries.iter().find(|e| e.node == s).copied());
     let mut path = Vec::new();
