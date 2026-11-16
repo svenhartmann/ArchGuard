@@ -111,7 +111,7 @@ impl Index {
     /// `callMethodLabel`.
     pub fn method_label(&self, id: Option<&str>, l: &Labels) -> String {
         match self.method(id).filter(|m| !m.signature.is_empty()) {
-            Some(m) => m.signature.clone(),
+            Some(m) => signature(&m.signature),
             None => match id {
                 Some(id) if !id.is_empty() => id.to_string(),
                 _ => l.initializer.clone(),
@@ -119,14 +119,26 @@ impl Index {
         }
     }
 
+    /// The bare method name for headings; [`Self::method_label`] without one.
+    pub fn method_name(&self, id: Option<&str>, l: &Labels) -> String {
+        match self.method(id).filter(|m| !m.name.is_empty()) {
+            Some(m) => m.name.clone(),
+            None => self.method_label(id, l),
+        }
+    }
+
     /// `callTargetLabel`.
     pub fn target_label(&self, call: &MethodCall, qualified: bool, l: &Labels) -> String {
         match self.method(call.to_method.as_deref()) {
             Some(m) if qualified => {
-                format!("{}#{}", self.class_label(Some(&m.class_id), l), m.signature)
+                format!(
+                    "{}#{}",
+                    self.class_label(Some(&m.class_id), l),
+                    signature(&m.signature)
+                )
             }
-            Some(m) => m.signature.clone(),
-            None if !call.target_label.is_empty() => call.target_label.clone(),
+            Some(m) => signature(&m.signature),
+            None if !call.target_label.is_empty() => signature(&call.target_label),
             None => l.unresolved_target.clone(),
         }
     }
@@ -135,7 +147,11 @@ impl Index {
     pub fn qualified(&self, kind: ElementKind, id: &str, l: &Labels) -> String {
         match (kind, self.method(Some(id))) {
             (ElementKind::Method, Some(m)) => {
-                format!("{}#{}", self.class_label(Some(&m.class_id), l), m.signature)
+                format!(
+                    "{}#{}",
+                    self.class_label(Some(&m.class_id), l),
+                    signature(&m.signature)
+                )
             }
             _ => self.class_label(Some(id), l),
         }
@@ -188,6 +204,44 @@ pub fn class_name(c: &CallClass) -> String {
         Some(file) if file_module(c) && !file.is_empty() => file.to_string(),
         _ => c.name.clone(),
     }
+}
+
+/// A signature with normal spacing. The Rust extractor stores the
+/// token stream (`fn f (& self , x : Vec < u8 > ,)`); other languages
+/// arrive formatted and pass unchanged.
+pub fn signature(raw: &str) -> String {
+    // Only a token stream has a space before its parameter list.
+    if !raw.contains(" (") {
+        return raw.to_string();
+    }
+    let mut out = String::new();
+    let (mut before, mut prev) = ("", "");
+    for t in raw.split_whitespace() {
+        if !out.is_empty() && !glued(before, prev, t) {
+            out.push(' ');
+        }
+        out.push_str(t);
+        (before, prev) = (prev, t);
+    }
+    // A trailing comma before a closing bracket (`x ,)`) goes.
+    out.replace(",)", ")").replace(",>", ">")
+}
+
+/// Whether token `t` follows `prev` (after `before`) without a space.
+fn glued(before: &str, prev: &str, t: &str) -> bool {
+    t.starts_with([',', ';', ')', ']', '>'])
+        || [":", "::"].contains(&t)
+        || t == "<" && operand(prev)
+        || ["<", "::", "?"].contains(&prev)
+        // A reference or pointer prefix, also glued to a bracket (`(&`).
+        || prev.ends_with(['&', '*']) && (prev.len() > 1 || !operand(before))
+        || t.starts_with('(') && operand(prev) && !prev.ends_with(')')
+}
+
+/// A token that ends a type or value: a following `&`/`*` is binary (TS `A & B`).
+fn operand(t: &str) -> bool {
+    t.ends_with(|c: char| c.is_alphanumeric() || "_)]".contains(c))
+        || (t.ends_with('>') && t != "->" && t != "=>")
 }
 
 /// Module-level code that [`class_name`] names by its file.
@@ -714,6 +768,59 @@ mod tests {
         );
         a.calls.retain(|c| c.resolution != "project");
         assert_eq!(Index::new(a).default_resolution(), Resolution::All);
+    }
+
+    /// Rust token streams (as `syn` prints them) read like rustfmt.
+    #[test]
+    fn rust_signatures_get_normal_spacing() {
+        for (raw, want) in [
+            (
+                "async fn config_view (& self , Parameters (params) : Parameters < ConfigViewParams > ,) -> Result < String , ErrorData >",
+                "async fn config_view(&self, Parameters(params): Parameters<ConfigViewParams>) -> Result<String, ErrorData>",
+            ),
+            (
+                "fn effective_config (& self) -> LoadedConfig",
+                "fn effective_config(&self) -> LoadedConfig",
+            ),
+            (
+                "fn a < 'a , T : Clone + ? Sized > (x : & 'a mut Vec < Vec < u8 > > , y : & [u8 ; 4] , f : impl Fn (u32) -> u32 , p : * const T , q : std :: io :: Result < () >) -> & 'a str where T : Debug",
+                "fn a<'a, T: Clone + ?Sized>(x: &'a mut Vec<Vec<u8>>, y: &[u8; 4], f: impl Fn(u32) -> u32, p: *const T, q: std::io::Result<()>) -> &'a str where T: Debug",
+            ),
+            (
+                "fn b (self : Box < Self > , (a , b) : (u32 , u32) , _ : & dyn Trait , mut m : Vec < u8 >) -> !",
+                "fn b(self: Box<Self>, (a, b): (u32, u32), _: &dyn Trait, mut m: Vec<u8>) -> !",
+            ),
+            (
+                "fn c (x : < T as Iterator > :: Item , y : Option < & 'static str > , z : & & str) -> Option < & mut [u8] >",
+                "fn c(x: <T as Iterator>::Item, y: Option<&'static str>, z: &&str) -> Option<&mut [u8]>",
+            ),
+        ] {
+            assert_eq!(signature(raw), want);
+        }
+    }
+
+    /// Signatures of the other extractors are already formatted.
+    #[test]
+    fn formatted_signatures_stay_unchanged() {
+        for s in [
+            // Java (javac erasure), C# (Roslyn), TypeScript (checker).
+            "collectionBag(org.apache.c4.Bag,java.util.List)",
+            "describe()",
+            "Map`1(System.Collections.Generic.List<T>,ref int)",
+            "Run(System.Func<int, string>,(int, string))",
+            "send(string,{ a: number; b?: string; })",
+            "merge(A & B,Array<A> & B,(x: number) => void)",
+            "(x: number) => Promise<void>",
+            "(a: string) => (b: number) => A & B",
+            "<T>(x: T) => T extends string ? A : B",
+            // Go, Python, Kotlin, PHP.
+            "func(ctx context.Context, xs ...int) (int, error)",
+            "def send(self, msg) -> Tuple[int, str]",
+            "fun create(): Repo<Int>?",
+            "function send($msg)",
+        ] {
+            assert_eq!(signature(s), s);
+        }
     }
 
     #[test]

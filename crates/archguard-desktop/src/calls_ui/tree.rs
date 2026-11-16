@@ -191,7 +191,7 @@ fn add_site(t: &mut CallTree, idx: &Index, call: usize) {
         }
         seen.push(id);
         let n = t.add("method", Kind::Method, id, Some(owner));
-        t.nodes[n].label = Some(m.signature.clone());
+        t.nodes[n].label = Some(super::model::signature(&m.signature));
         t.nodes[n].count += 1;
     }
     if idx.method(c.from_method.as_deref()).is_none()

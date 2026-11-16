@@ -151,7 +151,7 @@ pub fn measurements(counts: &[Row], idx: &Index, f: &Filter) -> (Vec<Row>, usize
         if !idx.in_language(cls, f.language.as_deref())
             || f.package.as_ref().is_some_and(|p| cls.package != *p)
             || (!q.is_empty()
-                && !format!("{} {}", cls.name, m.signature)
+                && !format!("{} {}", cls.name, super::model::signature(&m.signature))
                     .to_lowercase()
                     .contains(&q))
         {
