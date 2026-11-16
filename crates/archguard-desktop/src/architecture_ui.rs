@@ -217,7 +217,7 @@ fn download(s: &mut ArchitectureState, ui: &AppWindow, all: bool) {
             doc.markdown(Some(s.chapter)),
         )
     };
-    if let Some(saved) = save(ui, &s.root, &name, &content) {
+    if let Some(saved) = save(ui, &name, &content) {
         s.saved = saved;
     }
 }
@@ -255,23 +255,32 @@ fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
     } else {
         "arc42-dependencies.puml"
     };
-    if let Some(saved) = save(ui, &s.root, name, &diagram::plantuml(&nodes, &edges, unit)) {
+    if let Some(saved) = save(ui, name, &diagram::plantuml(&nodes, &edges, unit)) {
         s.saved = saved;
     }
 }
 
-/// Write an export where the save dialog points (as `export_ui`; never
-/// in headless runs); `None` when cancelled.
-fn save(ui: &AppWindow, root: &Path, name: &str, content: &str) -> Option<String> {
+/// Write an export where the save dialog points (never in headless
+/// runs); `None` when cancelled.
+fn save(ui: &AppWindow, name: &str, content: &str) -> Option<String> {
     if crate::context::headless_run() {
         return None;
     }
-    let path = rfd::FileDialog::new()
+    let mut dialog = rfd::FileDialog::new()
         .set_title(ui.get_export_title().as_str())
-        .set_file_name(name)
-        .set_directory(root)
-        .save_file()?;
+        .set_file_name(name);
+    if let Some(dir) = start_dir(std::env::home_dir().as_deref()) {
+        dialog = dialog.set_directory(dir);
+    }
+    let path = dialog.save_file()?;
     Some(write(&path, content))
+}
+
+/// Where the save dialog starts: the user's Downloads folder if it exists,
+/// else `None` (the dialog chooses). Never the project, where Enter would
+/// replace its own arc42.md with the generated text.
+fn start_dir(home: Option<&Path>) -> Option<std::path::PathBuf> {
+    Some(home?.join("Downloads")).filter(|d| d.is_dir())
 }
 
 /// Write `content` in one step; the path written, or the error.
@@ -371,5 +380,19 @@ mod tests {
         let missing = d.path().join("gone/arc42.md");
         assert!(write(&missing, "x").starts_with("Could not write"));
         assert!(!d.path().join("gone").exists());
+    }
+
+    /// The save dialog never starts in the project, where Enter would
+    /// replace its own arc42.md: Downloads, else the dialog's choice.
+    #[test]
+    fn a_download_starts_in_the_downloads_folder_or_where_the_dialog_likes() {
+        let home = tempfile::tempdir().expect("temp dir");
+        assert_eq!(start_dir(Some(home.path())), None, "no Downloads folder");
+        assert_eq!(start_dir(None), None, "no home folder");
+        std::fs::create_dir(home.path().join("Downloads")).unwrap();
+        assert_eq!(
+            start_dir(Some(home.path())),
+            Some(home.path().join("Downloads"))
+        );
     }
 }
