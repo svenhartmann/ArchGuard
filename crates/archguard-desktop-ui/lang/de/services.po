@@ -4,6 +4,9 @@ msgstr "Diensttopologie wird gelesen …"
 msgid " · Analysis incomplete – missing connections do not establish isolation"
 msgstr " · Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation"
 
+msgid "Analysis incomplete"
+msgstr "Analyse unvollständig"
+
 msgid " Analysis incomplete – missing connections do not establish isolation; see diagnostics."
 msgstr " Analyse unvollständig – fehlende Dienstbeziehungen sind kein Beleg für Isolation; siehe Diagnosehinweise."
 

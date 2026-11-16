@@ -329,6 +329,14 @@ export component ServicesView inherits Rectangle {
                     // diagram starts near the top.
                     if m.state == 1: HorizontalLayout {
                         spacing: 8px;
+                        // First, so an elided line still shows it.
+                        if !m.complete: Text {
+                            text: @tr("Analysis incomplete");
+                            color: Theme.warning;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            TipArea { tip: root.status(); }
+                        }
                         Text {
                             text: root.short-status();
                             color: Theme.text;
@@ -478,8 +486,7 @@ export component ServicesView inherits Rectangle {
                     + @tr("{0} Compose file" | "{0} Compose files" % m.compose-files, Fmt.int(m.compose-files)))
             + " · " + @tr("{} / {} service relations shown", Fmt.int(m.shown), Fmt.int(m.all))
             + " · " + @tr("{0} cycle group" | "{0} cycle groups" % m.cycles.length, Fmt.int(m.cycles.length))
-            + (m.monorepo ? " · " + @tr("Monorepo detected") : "")
-            + (m.complete ? "" : @tr(" · Analysis incomplete – missing connections do not establish isolation"));
+            + (m.monorepo ? " · " + @tr("Monorepo detected") : "");
     }
 
     // services-limitations for the chosen relation kind.

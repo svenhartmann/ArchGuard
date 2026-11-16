@@ -231,3 +231,43 @@ fn the_summary_leaves_the_height_to_the_diagram() {
     let first = (0..PH).find(|&y| [2, PW / 2, PW - 2].iter().all(|&x| !same(buf[y * PW + x])));
     assert!(first.is_some_and(|y| y < 60), "summary ends at {first:?}");
 }
+
+/// An incomplete analysis in a narrow pane: the warning stays visible on
+/// the one summary line instead of being elided at its end.
+#[test]
+fn a_narrow_summary_still_warns_of_an_incomplete_analysis() {
+    let window = window(PW, PH);
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ServicesData>().set_model(ServicesModel {
+        state: 1,
+        complete: false,
+        projects: 12,
+        applications: 6,
+        containers: 5,
+        monorepo: true,
+        diagnostics: ModelRc::new(VecModel::from(vec![slint::SharedString::from(
+            "diagnostic",
+        )])),
+        rows: ModelRc::new(VecModel::from((0..4).map(row).collect::<Vec<_>>())),
+        width: 360.0,
+        height: 200.0,
+        zoom: 1.0,
+        ..Default::default()
+    });
+    let buf = frame(&window, PW, PH);
+    let bg = buf[(PH - 4) * PW + 4];
+    let same = |p: PremultipliedRgbaColor| (p.red, p.green, p.blue) == (bg.red, bg.green, bg.blue);
+    let first = (0..PH)
+        .find(|&y| [2, PW / 2, PW - 2].iter().all(|&x| !same(buf[y * PW + x])))
+        .expect("separator below the summary");
+    assert!(first < 60, "summary ends at {first}");
+    // Theme.warning (dark #FFC267): the only warm text color there.
+    let warm = |p: &PremultipliedRgbaColor| {
+        p.red as i32 - p.blue as i32 > 80 && p.green as i32 - p.blue as i32 > 40
+    };
+    assert!(
+        buf[..first * PW].iter().any(warm),
+        "no warning drawn above the separator at {first}"
+    );
+}
