@@ -1,6 +1,9 @@
-//! The chapter editor of the Architecture tab: Markdown beside its
-//! preview, saved into the project's arc42 text (see [`crate::arc42_file`]).
+//! The chapter editor of the Architecture tab, saved into the project's
+//! arc42 text (see [`crate::arc42_file`]). Visual: the chapter as the
+//! reader shows it, one block at a time open as Markdown in its place.
+//! Markdown: the whole chapter beside its preview.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use archguard_engine::report::Arc42Document;
@@ -10,7 +13,7 @@ use super::{blocks, markdown, sync};
 use crate::arc42_file::{self, Arc42Files, Target};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
-use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
+use crate::ui::{AppWindow, ArcBlock, ArchitectureData, ArchitectureModel};
 
 /// The part of a document the chapter editor owns (`documents::mark_dirty`).
 pub(super) const PART: &str = "arc42";
@@ -42,6 +45,79 @@ struct Open {
     /// The file's text when editing began. Kept with the draft, so a new
     /// analysis that reads the file again cannot hide a change on disk.
     base: Option<String>,
+    /// The block open in the visual editor: its bytes in `draft`.
+    block: Option<Range<usize>>,
+}
+
+/// A top-level block of the draft as the visual editor shows it.
+struct Piece {
+    /// Its bytes in the draft.
+    range: Range<usize>,
+    blocks: Vec<markdown::Block>,
+    /// Inside a generated archguard block: refreshed on save, so not edited.
+    generated: bool,
+}
+
+impl Open {
+    /// The chapter body in reading order; `None` is the open block. The
+    /// text before and after the open block is parsed on its own, so the
+    /// other blocks stay as they are while it is typed in.
+    fn pieces(&self) -> Vec<Option<Piece>> {
+        let end = self.draft.len();
+        let body = end - blocks::chapter_body(&self.draft, self.chapter, false).len();
+        let generated = &generated(&self.draft);
+        let part = |from: usize, to: usize| {
+            let chunks = markdown::chunks(&self.draft[from..to]).into_iter();
+            chunks.map(move |(r, blocks)| {
+                let range = r.start + from..r.end + from;
+                Some(Piece {
+                    generated: generated.iter().any(|g| g.contains(&range.start)),
+                    range,
+                    blocks,
+                })
+            })
+        };
+        match &self.block {
+            None => part(body, end).collect(),
+            // `min`: a chapter heading typed into the block moves the body.
+            Some(b) => part(body.min(b.start), b.start)
+                .chain([None])
+                .chain(part(b.end, end))
+                .collect(),
+        }
+    }
+
+    /// The pieces as rows of the editor; a row knows its piece.
+    fn rows(&self, note: &str) -> Vec<ArcBlock> {
+        let mut rows = Vec::new();
+        for (i, piece) in self.pieces().iter().enumerate() {
+            let Some(p) = piece else {
+                rows.push(blocks::editor_row());
+                continue;
+            };
+            let piece = if p.generated { -1 } else { i as i32 };
+            let shown = blocks::ui_blocks(&p.blocks, note).into_iter();
+            rows.extend(shown.map(|row| ArcBlock { piece, ..row }));
+        }
+        rows
+    }
+}
+
+/// The bytes of `text` inside generated `archguard:arc42` blocks; a block
+/// without its end marker runs to the end.
+fn generated(text: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut open = None;
+    for (i, _) in text.match_indices(arc42_file::MARKER) {
+        let tag = text[i..].split_once("-->").map_or("", |(tag, _)| tag);
+        if tag.trim_end().ends_with(":start") {
+            open.get_or_insert(i);
+        } else if let Some(start) = open.take() {
+            out.push(start..i);
+        }
+    }
+    out.extend(open.map(|start| start..text.len()));
+    out
 }
 
 impl Editor {
@@ -107,7 +183,8 @@ impl Editor {
     }
 
     pub fn start(&mut self, doc: &Arc42Document, chapter: u8) {
-        let text = self.chapter(doc, chapter);
+        // LF in the draft, as the block ranges expect; saving keeps CRLF files CRLF.
+        let text = self.chapter(doc, chapter).replace("\r\n", "\n");
         let open = Open {
             chapter,
             ask_location: false,
@@ -115,27 +192,90 @@ impl Editor {
             draft: text.clone(),
             original: text,
             base: self.files.as_ref().and_then(|f| f.saved(chapter)),
+            block: None,
         };
         documents::set_state(self.doc, Some(open));
     }
 
-    /// Show this document's draft in the window's one editor.
+    /// Show this document's draft in the window's one editor: the
+    /// Markdown, the open block's text and the chapter as the reader
+    /// would show it. On every keystroke: only the rows that changed are set.
     pub fn show(&self, ui: &AppWindow) {
-        let Some(draft) = self.with_open(|o| o.as_ref().map(|e| e.draft.clone())) else {
+        let note = Texts::of(ui)
+            .t("Diagram source · this diagram syntax is not supported in the viewer.")
+            .to_string();
+        let shown = self.with_open(|o| {
+            let e = o.as_ref()?;
+            let block = e.block.clone().map_or("", |b| &e.draft[b]);
+            Some((e.draft.clone(), block.to_string(), e.rows(&note)))
+        });
+        let Some((draft, block, rows)) = shown else {
             return;
         };
         let d = ui.global::<ArchitectureData>();
         if d.get_draft() != draft.as_str() {
             d.set_draft(draft.as_str().into());
         }
-        self.preview(ui, &draft);
+        if d.get_block_text() != block.as_str() {
+            d.set_block_text(block.as_str().into());
+        }
+        d.set_preview(sync::keep_blocks(&d.get_preview(), rows));
     }
 
-    /// Keep the edited text; the document is unsaved while it differs.
+    /// Keep the edited Markdown; the document is unsaved while it differs.
     pub fn edit(&self, text: &str) {
+        self.change(|e| {
+            e.draft = text.to_string();
+            e.block = None;
+        });
+    }
+
+    /// Open piece `index` of the visual editor in its place; an index
+    /// without a piece starts a new block at the end of the chapter.
+    pub fn open_block(&self, index: i32) {
+        self.with_open(|o| {
+            let Some(e) = o else { return };
+            let mut pieces = e.pieces();
+            let index = usize::try_from(index).unwrap_or(usize::MAX);
+            e.block = match pieces.get_mut(index).map(Option::take) {
+                Some(Some(p)) if !p.generated => Some(p.range),
+                // The open block itself, or a generated one.
+                Some(_) => return,
+                None => Some(e.draft.len()..e.draft.len()),
+            };
+        });
+    }
+
+    /// The open block shows as the reader shows it again.
+    pub fn close_block(&self) {
+        self.with_open(|o| o.as_mut().map(|e| e.block = None));
+    }
+
+    /// Keep the text typed into the open block.
+    pub fn edit_block(&self, text: &str) {
+        self.change(|e| {
+            let Some(b) = e.block.clone() else { return };
+            let text = text.replace("\r\n", "\n");
+            // A new block starts after an empty line.
+            let before = &e.draft[..b.start];
+            let gap = match () {
+                () if !b.is_empty() || text.is_empty() || before.is_empty() => "",
+                () if before.ends_with("\n\n") => "",
+                () if before.ends_with('\n') => "\n",
+                () => "\n\n",
+            };
+            e.draft.replace_range(b.clone(), &format!("{gap}{text}"));
+            let start = b.start + gap.len();
+            e.block = Some(start..start + text.len());
+        });
+    }
+
+    /// Change the open draft; the document is unsaved while it differs
+    /// from the chapter the editor opened.
+    fn change(&self, f: impl FnOnce(&mut Open)) {
         let changed = self.with_open(|o| {
             o.as_mut().map(|e| {
-                e.draft = text.to_string();
+                f(e);
                 (e.chapter, e.draft != e.original)
             })
         });
@@ -169,21 +309,6 @@ impl Editor {
 
     fn set_error(&self, error: String) {
         self.with_open(|o| o.as_mut().map(|e| e.error = error));
-    }
-
-    /// Show the draft as the reader would.
-    pub fn preview(&self, ui: &AppWindow, text: &str) {
-        let Some(chapter) = self.with_open(|o| o.as_ref().map(|e| e.chapter)) else {
-            return;
-        };
-        let body = blocks::chapter_body(text, chapter, false);
-        let note = Texts::of(ui)
-            .t("Diagram source · this diagram syntax is not supported in the viewer.")
-            .to_string();
-        let rows = blocks::ui_blocks(&markdown::parse(&body), &note);
-        // Every keystroke: only the blocks that changed are set.
-        let d = ui.global::<ArchitectureData>();
-        d.set_preview(sync::keep_blocks(&d.get_preview(), rows));
     }
 
     /// Save the draft; the path written, or `None` while the editor stays
@@ -239,12 +364,18 @@ impl Editor {
         self.save(doc)
     }
 
-    /// `ARCHGUARD_DESKTOP_ARC_EDIT=1` opens the chapter editor, `=save`
-    /// also saves it (asking where, in a project without arc42 text).
+    /// `ARCHGUARD_DESKTOP_ARC_EDIT=1` opens the chapter editor, `=block`
+    /// also opens its first editable block (a new one, if it has none),
+    /// `=save` also saves it (asking where, in a project without arc42 text).
     #[cfg(feature = "snapshot")]
     pub fn snapshot(&mut self, doc: &Arc42Document, chapter: u8) -> Option<String> {
         let mode = std::env::var("ARCHGUARD_DESKTOP_ARC_EDIT").ok()?;
         self.start(doc, chapter);
+        if mode == "block" {
+            let own = |p: &Option<Piece>| p.as_ref().is_some_and(|p| !p.generated);
+            let first = self.with_open(|o| o.as_ref()?.pieces().iter().position(own));
+            self.open_block(first.map_or(-1, |i| i as i32));
+        }
         (mode == "save").then(|| self.save(doc)).flatten()
     }
 
@@ -296,6 +427,80 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Text von A.") && !text.contains("Text von B."));
         assert!(!in_a.is_open() && in_b.is_open());
+    }
+
+    /// The pieces of the open draft: their text and whether generated.
+    fn pieces(editor: &Editor) -> Vec<Option<(String, bool)>> {
+        editor.with_open(|o| {
+            let e = o.as_ref().expect("open editor");
+            let text = |p: Piece| (e.draft[p.range].to_string(), p.generated);
+            e.pieces().into_iter().map(|p| p.map(text)).collect()
+        })
+    }
+
+    fn open_text(editor: &Editor) -> Option<String> {
+        editor.with_open(|o| {
+            let e = o.as_ref()?;
+            e.block.clone().map(|b| e.draft[b].to_string())
+        })
+    }
+
+    #[test]
+    fn the_visual_editor_changes_one_block_in_place_and_no_generated_one() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        let generated = Some(("Old 5".to_string(), true));
+        assert_eq!(pieces(&editor), vec![generated.clone()]);
+        editor.open_block(0);
+        assert_eq!(open_text(&editor), None, "a generated block does not open");
+        // "Add text": a new block at the end, after an empty line.
+        editor.open_block(-1);
+        assert!(!documents::is_dirty(a), "nothing typed yet");
+        editor.edit_block("Eigener Text.");
+        editor.edit_block("Eigener Text.\r\n\r\n- a\n- b");
+        assert!(documents::is_dirty(a));
+        assert_eq!(pieces(&editor), vec![generated.clone(), None]);
+        editor.close_block();
+        let own = |s: &str| Some((s.to_string(), false));
+        assert_eq!(
+            pieces(&editor),
+            vec![generated.clone(), own("Eigener Text."), own("- a\n- b")]
+        );
+        // One of two own blocks changes; the other stays as typed.
+        editor.open_block(1);
+        assert_eq!(open_text(&editor).as_deref(), Some("Eigener Text."));
+        editor.edit_block("Neuer Text,\nzwei Zeilen.");
+        assert_eq!(
+            pieces(&editor),
+            vec![generated, None, own("- a\n- b")],
+            "the blocks around the open one stay"
+        );
+        // Another block opens straight from the open one.
+        editor.open_block(2);
+        assert_eq!(open_text(&editor).as_deref(), Some("- a\n- b"));
+        assert!(editor.save(&new).is_some());
+        let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
+        assert!(
+            text.contains("-->\n\nNeuer Text,\nzwei Zeilen.\n\n- a\n- b\n"),
+            "{text}"
+        );
+        assert!(text.contains("Old 5"), "the generated block stays: {text}");
+    }
+
+    #[test]
+    fn typing_markdown_in_the_whole_chapter_closes_the_open_block() {
+        let (dir, a) = project();
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&doc("Old"), 5);
+        editor.open_block(-1);
+        editor.edit("## 5. Title\n\nAlles neu.\n");
+        assert_eq!(open_text(&editor), None, "its range is no longer valid");
+        assert_eq!(
+            pieces(&editor),
+            vec![Some(("Alles neu.".to_string(), false))]
+        );
     }
 
     #[test]

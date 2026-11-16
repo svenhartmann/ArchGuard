@@ -146,6 +146,18 @@ msgstr "Vorschau"
 msgid "Save chapter"
 msgstr "Kapitel speichern"
 
+msgid "Click a text to change it; Esc shows it formatted again. Generated blocks cannot be changed."
+msgstr "Text anklicken, um ihn zu ändern; Esc zeigt ihn wieder formatiert. Generierte Blöcke lassen sich nicht ändern."
+
+msgid "Add text"
+msgstr "Text hinzufügen"
+
+msgid "Edit Markdown"
+msgstr "Markdown bearbeiten"
+
+msgid "Edit in the text"
+msgstr "Im Text bearbeiten"
+
 msgid "The project's arc42 text could not be read: {}"
 msgstr "Der arc42-Text des Projekts konnte nicht gelesen werden: {}"
 

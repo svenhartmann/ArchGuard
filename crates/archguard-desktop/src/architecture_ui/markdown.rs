@@ -40,12 +40,35 @@ pub enum Block {
 
 /// Parse a Markdown document into blocks.
 pub fn parse(markdown: &str) -> Vec<Block> {
-    let text = strip_comments(&markdown.replace("\r\n", "\n").replace('\r', "\n"));
+    let text = strip_comments(&markdown.replace("\r\n", "\n").replace('\r', "\n"), false);
     let lines: Vec<&str> = text.split('\n').collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         i = parse_block(&lines, i, &mut out);
+    }
+    out
+}
+
+/// The top-level blocks of `markdown` (LF line ends), each with the bytes
+/// of the lines it was parsed from, without the last line's end.
+pub fn chunks(markdown: &str) -> Vec<(std::ops::Range<usize>, Vec<Block>)> {
+    // Comments keep their line breaks, so the lines are those of the source.
+    let text = strip_comments(markdown, true);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let breaks: Vec<usize> = markdown.match_indices('\n').map(|(i, _)| i).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let mut blocks = Vec::new();
+        // An open code fence ends one line after the last.
+        let next = parse_block(&lines, i, &mut blocks).min(lines.len());
+        if !blocks.is_empty() {
+            let start = if i == 0 { 0 } else { breaks[i - 1] + 1 };
+            let end = breaks.get(next - 1).copied().unwrap_or(markdown.len());
+            out.push((start..end, blocks));
+        }
+        i = next;
     }
     out
 }
@@ -181,8 +204,8 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
 }
 
 /// Removes `<!-- -->` outside code blocks; a fence inside an open comment
-/// is comment text.
-fn strip_comments(text: &str) -> String {
+/// is comment text. `lines`: the line breaks inside a comment stay.
+fn strip_comments(text: &str, lines: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut prose = String::new();
     let mut fenced = false;
@@ -191,8 +214,8 @@ fn strip_comments(text: &str) -> String {
         if fenced {
             out.push_str(line);
             fenced = fence(bare) != Some("");
-        } else if fence(bare).is_some() && !strip_prose(&prose).contains("<!--") {
-            out.push_str(&strip_prose(&prose));
+        } else if fence(bare).is_some() && !strip_prose(&prose, false).contains("<!--") {
+            out.push_str(&strip_prose(&prose, lines));
             prose.clear();
             out.push_str(line);
             fenced = true;
@@ -200,17 +223,23 @@ fn strip_comments(text: &str) -> String {
             prose.push_str(line);
         }
     }
-    out.push_str(&strip_prose(&prose));
+    out.push_str(&strip_prose(&prose, lines));
     out
 }
 
-fn strip_prose(text: &str) -> String {
+fn strip_prose(text: &str, lines: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("<!--") {
         out.push_str(&rest[..start]);
         match rest[start + 4..].find("-->") {
-            Some(end) => rest = &rest[start + 4 + end + 3..],
+            Some(end) => {
+                let after = start + 4 + end + 3;
+                if lines {
+                    out.extend(rest[start..after].matches('\n'));
+                }
+                rest = &rest[after..];
+            }
             None => {
                 rest = &rest[start..];
                 break;
@@ -431,6 +460,26 @@ mod tests {
 
     fn para(s: &str) -> Block {
         Block::Paragraph(s.into())
+    }
+
+    #[test]
+    fn chunks_give_the_source_lines_of_each_top_level_block() {
+        let md = "### H\ntext **b**\nmore\n\n<!-- m\nn -->\n- a\n- b\n\n| x | y |\n| --- | --- |\n| 1 | 2 |\n";
+        let got: Vec<&str> = chunks(md).iter().map(|(r, _)| &md[r.clone()]).collect();
+        assert_eq!(
+            got,
+            vec![
+                "### H",
+                "text **b**\nmore",
+                "- a\n- b",
+                "| x | y |\n| --- | --- |\n| 1 | 2 |"
+            ]
+        );
+        let blocks: Vec<Block> = chunks(md).into_iter().flat_map(|(_, b)| b).collect();
+        assert_eq!(blocks, parse(md), "the blocks `parse` gives");
+        // A code fence that is not closed runs to the end.
+        let open = "a\n\n```\ncode";
+        assert_eq!(&open[chunks(open)[1].0.clone()], "```\ncode");
     }
 
     #[test]

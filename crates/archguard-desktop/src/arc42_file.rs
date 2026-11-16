@@ -25,7 +25,7 @@ const SKIP: &[&str] = &[
 ];
 /// How many folder levels below the project root are searched.
 const DEPTH: usize = 4;
-const MARKER: &str = "<!-- archguard:arc42:";
+pub(crate) const MARKER: &str = "<!-- archguard:arc42:";
 
 /// Where the project's arc42 text lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
