@@ -2,6 +2,7 @@
 //! its open chapter.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use archguard_engine::core::{
     Arc42Config, CallAnalysis, Config, DiagramFormat, DocLang, Graph, Report,
@@ -11,6 +12,7 @@ use archguard_engine::report::Arc42Document;
 use super::projection::{self, Labels, SourceModel};
 use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
 use super::{catalogue, edit};
+use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::AppWindow;
 use slint::ComponentHandle;
@@ -46,7 +48,14 @@ pub struct ArchitectureState {
     /// What the document is written from, to write it again after a tick.
     pub(super) config: Config,
     pub(super) report: Report,
+    /// The newest rewrite started on this state (0: none); only its
+    /// document is kept.
+    write: u64,
 }
+
+/// Numbers rewrites across all states, so a rebuilt state (0) never takes
+/// the document of a rewrite started before.
+static WRITES: AtomicU64 = AtomicU64::new(0);
 
 /// Build the tab state (writes the arc42 document, runs the call analysis).
 pub(super) fn build_from(
@@ -95,6 +104,7 @@ pub(super) fn build_from(
         shown: config.arc42.shown_diagrams.clone(),
         config: config.clone(),
         report: report.clone(),
+        write: 0,
     };
     snapshot_overrides(&mut state);
     state
@@ -222,6 +232,7 @@ pub(super) fn follow_language(s: &mut ArchitectureState, ui: &AppWindow, lang: D
 
 /// Write the document again (off the UI thread unless snapshotting).
 fn rewrite(s: &mut ArchitectureState, ui: Option<&AppWindow>) {
+    s.write = WRITES.fetch_add(1, Ordering::Relaxed) + 1;
     let (root, config, graph, report) = (
         s.root.clone(),
         s.config.clone(),
@@ -232,30 +243,44 @@ fn rewrite(s: &mut ArchitectureState, ui: Option<&AppWindow>) {
         archguard_engine::arc42_document(&root, &config, &graph, &report).map_err(|e| e.to_string())
     };
     match ui {
-        Some(ui) if !crate::tab_support::snapshot_mode() => write_later(ui, s.root.clone(), write),
+        Some(ui) if !crate::tab_support::snapshot_mode() => {
+            write_later(ui, s.editor.doc, s.write, write);
+        }
         _ => s.doc = write(),
     }
 }
 
-/// Run `write` on a worker thread and give its document to the state of
-/// `root`, if that is still the active document.
+/// Run `write` on a worker thread and give its document to document `doc`
+/// ([`deliver`]).
 fn write_later(
     ui: &AppWindow,
-    root: PathBuf,
+    doc: DocId,
+    number: u64,
     write: impl FnOnce() -> Result<Arc42Document, String> + Send + 'static,
 ) {
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let doc = write();
+        let result = write();
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = weak.upgrade() else { return };
-            crate::tab_support::update(&ui, |st: &mut ArchitectureState, _| {
-                if st.root == root {
-                    st.doc = doc;
-                }
-            });
+            if deliver(doc, number, result) && documents::active_id() == Some(doc) {
+                crate::tab_support::update(&ui, |_: &mut ArchitectureState, _| ());
+            }
         });
     });
+}
+
+/// Give rewrite `number`'s document to document `doc`'s state, active or
+/// not, if it is that state's newest rewrite; true if it took it.
+fn deliver(doc: DocId, number: u64, result: Result<Arc42Document, String>) -> bool {
+    documents::with_state(doc, |st: &mut ArchitectureState| {
+        let took = st.write == number;
+        if took {
+            st.doc = result;
+        }
+        took
+    })
+    .unwrap_or(false)
 }
 
 pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<usize>) {
@@ -264,4 +289,66 @@ pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<us
         selected: None,
         relations: RELATIONS_PAGE,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> ArchitectureState {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/py-layers")
+            .canonicalize()
+            .expect("fixture");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        build_from(
+            &root,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            DocLang::De,
+        )
+    }
+
+    /// Two ticks in quick succession whose first write finishes last,
+    /// another project tab active meanwhile, then a re-analysis.
+    #[test]
+    fn only_the_newest_rewrite_lands_in_its_document_active_or_not() {
+        let mut state = fixture();
+        let (a, _) = documents::with_store(|s| s.open(&state.root));
+        state.editor.doc = a;
+        rewrite(&mut state, None);
+        let older = state.write;
+        rewrite(&mut state, None);
+        let newer = state.write;
+        let base = state.doc.clone().expect("document");
+        let written = |scope: &str| {
+            Ok(Arc42Document {
+                scope: scope.into(),
+                ..base.clone()
+            })
+        };
+        documents::set_state(a, state);
+        let other = tempfile::tempdir().expect("temp dir");
+        documents::with_store(|s| s.open(other.path()));
+        let scope = || {
+            documents::with_state(a, |s: &mut ArchitectureState| {
+                s.doc.as_ref().map(|d| d.scope.clone()).unwrap_or_default()
+            })
+        };
+        assert!(deliver(a, newer, written("newer")), "not the active tab");
+        assert!(!deliver(a, older, written("older")), "older, finished last");
+        assert_eq!(scope().as_deref(), Some("newer"));
+        // A re-analysis builds the state again.
+        let mut rebuilt = fixture();
+        rebuilt.editor.doc = a;
+        documents::set_state(a, rebuilt);
+        assert!(!deliver(a, newer, written("stale")), "started before it");
+        assert_ne!(scope().as_deref(), Some("stale"));
+    }
 }
