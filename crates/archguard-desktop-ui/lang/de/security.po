@@ -157,3 +157,7 @@ msgstr "Noch kein Abhängigkeitsscan"
 msgctxt "Security"
 msgid "This tab reads .archguard/security.json in the project folder, and that file does not exist yet. Run this command in a terminal (it needs Trivy), then reopen the project:"
 msgstr "Dieser Tab liest .archguard/security.json im Projektordner; die Datei gibt es noch nicht. Führe diesen Befehl im Terminal aus (benötigt Trivy) und öffne das Projekt danach erneut:"
+
+msgctxt "Security"
+msgid "Show scan command"
+msgstr "Scanbefehl anzeigen"

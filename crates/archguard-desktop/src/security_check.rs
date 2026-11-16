@@ -179,6 +179,39 @@ fn scan() -> SecurityModel {
     }
 }
 
+/// The status line's button above the closed panel, if any: a run of a
+/// small button's height.
+fn status_button(buf: &[PremultipliedRgbaColor], panel_top: usize) -> Option<(usize, usize)> {
+    runs(buf, PANEL_X)
+        .into_iter()
+        .find(|&(a, b)| b < panel_top && (20..=34).contains(&(b - a + 1)))
+}
+
+/// A stale scan asks for a fresh one: the status line's button opens the
+/// scan panel with the command. A ready scan has no such button.
+#[test]
+fn a_stale_status_opens_the_scan_panel() {
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    window.set_size(PhysicalSize::new(W as u32, H as u32));
+    slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    let data = page.global::<SecurityData>();
+    data.set_model(SecurityModel {
+        status: "ready".into(),
+        ..scan()
+    });
+    let ready = frame(&window);
+    assert_eq!(status_button(&ready, closed_panel(&ready).0), None);
+    data.set_model(scan());
+    let stale = frame(&window);
+    let (top, _) = closed_panel(&stale);
+    let (a, b) = status_button(&stale, top).expect("a button on the stale status line");
+    click(&window, PANEL_X + 10, (a + b) / 2);
+    let open = encloses_its_rows(&frame(&window), top);
+    assert!(open > top + 150, "the panel opened (bottom at {open})");
+}
+
 /// Asserts that nothing is drawn in the page's right padding, between the
 /// content's right edge and the vertical scroll bar.
 fn fits(buf: &[PremultipliedRgbaColor], when: &str) {
