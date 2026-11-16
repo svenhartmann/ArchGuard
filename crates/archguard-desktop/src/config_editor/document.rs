@@ -100,21 +100,28 @@ impl ConfigEditor {
     }
 
     /// Write `value` at the concrete `path` (`rules.max_acd`,
-    /// `layers[1].name`), keeping the comments around an existing value.
+    /// `layers[1].name`), updating an existing value in place (see
+    /// [`FieldValue::update`]); an unchanged value writes nothing.
     pub fn set(&mut self, path: &str, value: FieldValue) -> Result<(), FieldError> {
         let field = value_field(path)?;
         if !value.fits(field.kind) {
             return Err(FieldError::new(path, mismatch(field.kind)));
         }
         let segs = segs(path)?;
+        let old = toml_path::get(self.doc.as_table(), &segs)
+            .and_then(|item| FieldValue::from_item(field.kind, item));
+        if old.as_ref() == Some(&value) {
+            return Ok(());
+        }
         let key = toml_path::leaf(&segs).map_err(|e| FieldError::new(path, e))?;
         let parent = toml_path::parent_mut(self.doc.as_table_mut(), &segs)
             .map_err(|e| FieldError::new(path, e))?;
-        let mut new = value.to_value();
-        if let Some(old) = parent.get(key).and_then(Item::as_value) {
-            *new.decor_mut() = old.decor().clone();
+        match parent.get_mut(key) {
+            Some(old) => value.update(old),
+            None => {
+                parent.insert(key, Item::Value(value.to_value()));
+            }
         }
-        parent.insert(key, Item::Value(new));
         self.changed(field.group.label());
         Ok(())
     }
