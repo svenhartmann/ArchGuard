@@ -216,8 +216,12 @@ fn the_summary_leaves_the_height_to_the_diagram() {
         build_units: 12,
         diagnostics: ModelRc::new(VecModel::from(diagnostics)),
         cycles: ModelRc::new(VecModel::from(vec![
-            SvcCycle { names: "a, b".into() },
-            SvcCycle { names: "c, d".into() },
+            SvcCycle {
+                names: "a, b".into(),
+            },
+            SvcCycle {
+                names: "c, d".into(),
+            },
         ])),
         rows: ModelRc::new(VecModel::from((0..4).map(row).collect::<Vec<_>>())),
         width: 360.0,

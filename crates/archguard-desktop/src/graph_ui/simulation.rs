@@ -225,8 +225,12 @@ pub fn data(g: &GraphState, locale: Locale, old: &SimData) -> SimData {
             has_delta: d.is_some(),
             cycles_before: d.map_or(0, |d| d.scc_count_before as i32),
             cycles_after: d.map_or(0, |d| d.scc_count_after as i32),
-            acd_before: d.map_or(String::new(), |d| locale.dec(d.acd_before, 2)).into(),
-            acd_after: d.map_or(String::new(), |d| locale.dec(d.acd_after, 2)).into(),
+            acd_before: d
+                .map_or(String::new(), |d| locale.dec(d.acd_before, 2))
+                .into(),
+            acd_after: d
+                .map_or(String::new(), |d| locale.dec(d.acd_after, 2))
+                .into(),
             targets: sync_rows(&old.targets, targets.into_iter().map(SharedString::from)),
             ..scenario_data(old)
         }
@@ -248,7 +252,13 @@ fn scenario_data(old: &SimData) -> SimData {
                 scenario,
                 current,
                 stale,
-            }) => (1, scenario.name.clone(), scenario.ops.len(), *current, *stale),
+            }) => (
+                1,
+                scenario.name.clone(),
+                scenario.ops.len(),
+                *current,
+                *stale,
+            ),
             Some(Ask::Delete(s)) => (2, s.name.clone(), s.ops, 0, false),
             Some(Ask::Replace(s)) => (3, s.name.clone(), s.ops.len(), 0, false),
         };
@@ -292,7 +302,12 @@ mod tests {
             "the planner needs no selection"
         );
         g.select_row(Some(0));
-        let names: Vec<&str> = g.view.rows.iter().map(|r| g.tree.nodes[r.node].name.as_str()).collect();
+        let names: Vec<&str> = g
+            .view
+            .rows
+            .iter()
+            .map(|r| g.tree.nodes[r.node].name.as_str())
+            .collect();
         assert_eq!(names, ["app", "core"]);
         assert_eq!(proposal(&g, "cut-out", "1"), Some(cut("app", "core")));
         assert_eq!(proposal(&g, "cut-in", "1"), Some(cut("core", "app")));
@@ -315,5 +330,4 @@ mod tests {
         assert_eq!(targets(&t, at("app/a.rs")), ["core"], "not its parent app");
         assert_eq!(targets(&t, at("app")), ["core"], "not itself");
     }
-
 }

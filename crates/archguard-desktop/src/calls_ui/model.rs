@@ -752,7 +752,10 @@ mod tests {
         let shop = Some("shop");
         assert_eq!(relative("shop.py", shop), "shop.py");
         assert_eq!(relative("shop/shop.py", shop), "shop/shop.py");
-        assert_eq!(relative("shop.py → shop.cart.Cart", shop), "shop.py → cart.Cart");
+        assert_eq!(
+            relative("shop.py → shop.cart.Cart", shop),
+            "shop.py → cart.Cart"
+        );
         let auth = Some("auth");
         assert_eq!(relative("auth.service.ts", auth), "auth.service.ts");
         assert_eq!(
