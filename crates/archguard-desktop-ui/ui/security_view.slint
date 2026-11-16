@@ -83,7 +83,7 @@ component Fact inherits Text {
 // #security-coverage: a closed <details> with scanner facts and the command.
 component Coverage inherits Rectangle {
     in property <SecurityModel> model;
-    property <bool> open;
+    in-out property <bool> open;
     property <string> copied;
     border-radius: Theme.radius-sm;
     border-width: 1px;
@@ -225,6 +225,8 @@ export component SecurityView inherits Rectangle {
     // A split pane (as in Quality): KPI cards and severity chips in two
     // rows each, a finding's ID and facts one below the other.
     property <bool> narrow: root.width < 620px;
+    // The scan panel's disclosure, also opened from a stale status line.
+    property <bool> scan-open;
 
     if !root.model.loaded: Text {
         text: @tr("Security" => "Reading the saved dependency scan …");
@@ -242,6 +244,16 @@ export component SecurityView inherits Rectangle {
             spacing: 0;
             Rectangle { height: 14px; }
             StatusText { code: root.model.status; status: root.model.status-slot; label: root.model.status-label; }
+            // The viewer cannot scan; the next step is the panel's command.
+            if root.model.status == "stale": HorizontalLayout {
+                alignment: start;
+                padding-top: 6px;
+                Button {
+                    text: @tr("Security" => "Show scan command");
+                    compact: true;
+                    clicked => { root.scan-open = true; }
+                }
+            }
             if root.model.status == "not_scanned": VerticalLayout {
                 padding-top: 24px;
                 NotScanned { command: root.model.command; }
@@ -296,7 +308,7 @@ export component SecurityView inherits Rectangle {
                     }
                 }
                 Rectangle { height: 16px; }
-                Coverage { model: root.model; }
+                Coverage { model: root.model; open <=> root.scan-open; }
                 Rectangle { height: 16px; }
                 Controls { model: root.model; }
                 Rectangle { height: 8px; }
