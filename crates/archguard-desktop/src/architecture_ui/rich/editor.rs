@@ -43,12 +43,20 @@ pub struct Editor {
 const UNDO: usize = 200;
 
 impl Editor {
-    /// Edit `doc`; a chapter without editable text gets an empty part.
+    /// Edit `doc`. A chapter that ends in text it keeps as written (a
+    /// generated block, a table) gets an empty part after it to type in;
+    /// it writes nothing while empty.
     pub fn new(mut doc: Doc) -> Editor {
-        let piece = match (0..doc.pieces.len()).find(|&p| doc.part(p).is_some()) {
-            Some(p) => p,
-            None => doc.append_part(),
-        };
+        let last = doc.pieces.iter().rposition(|p| match p {
+            super::doc::Piece::Fixed(text) => !text.trim().is_empty(),
+            super::doc::Piece::Part(_) => true,
+        });
+        if last.is_none_or(|i| doc.part(i).is_none()) {
+            doc.append_part();
+        }
+        let piece = (0..doc.pieces.len())
+            .find(|&p| doc.part(p).is_some())
+            .expect("a part exists");
         let caret = Caret {
             piece,
             block: 0,
@@ -156,6 +164,24 @@ impl Editor {
 
     pub fn undo(&mut self) {
         self.swap(true);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// The link target at the selection's start or the caret, if any.
+    pub fn link_target(&self) -> Option<String> {
+        let c = self.selection().map_or(self.focus, |(start, _)| start);
+        let inline = &self.block(c).inline;
+        inline.spans.iter().find_map(|s| match &s.mark {
+            Mark::Link(t) if s.range.start <= c.at && c.at <= s.range.end => Some(t.clone()),
+            _ => None,
+        })
     }
 
     pub fn redo(&mut self) {

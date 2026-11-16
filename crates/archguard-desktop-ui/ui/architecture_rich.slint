@@ -1,0 +1,408 @@
+// The arc42 chapter editor that edits formatted text in place (WYSIWYG).
+// Slint has no input for styled text, so Rust lays the text out
+// (src/architecture_ui/rich/) and this draws it: each block's runs as
+// Texts at their places, the selection, the caret, list markers, quote
+// bars and code backgrounds. Keys go to Rust through RichData.key; typed
+// text and input methods through an invisible TextInput at the caret.
+import { Theme } from "theme.slint";
+import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
+import { Icon, Icons } from "widgets.slint";
+
+// A stretch of one line in one look, in its block's text coordinates.
+export struct RichRun {
+    text: string,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    size: float,
+    weight: float,
+    italic: bool,
+    code: bool,
+    link: bool,
+}
+
+export struct RichRect {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+// One row of the editor: a fixed piece (blocks it does not edit, shown
+// as the reader shows them) or one editable block.
+export struct RichItem {
+    fixed: [ArcBlock],
+    // The block's place in the chapter (Rust's Caret).
+    piece: int,
+    block: int,
+    // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code.
+    kind: int,
+    // Space above the text, the text's height and left edge.
+    top: float,
+    height: float,
+    indent: float,
+    // A list entry's bullet or number, and its first line.
+    marker: string,
+    marker-y: float,
+    marker-h: float,
+    runs: [RichRun],
+    selection: [RichRect],
+    caret: bool,
+    caret-rect: RichRect,
+}
+
+// What the toolbar shows as on.
+export struct RichTools {
+    bold: bool,
+    italic: bool,
+    code: bool,
+    link: bool,
+    // As RichItem.kind; heading level, ordered list.
+    kind: int,
+    level: int,
+    ordered: bool,
+    undo: bool,
+    redo: bool,
+    // The link target of the selection, for the link row.
+    target: string,
+}
+
+export global RichData {
+    in-out property <[RichItem]> items;
+    in-out property <RichTools> tools;
+    // The link row under the toolbar is open.
+    in-out property <bool> linking;
+    // The editor's input has the keyboard focus.
+    in-out property <bool> focused;
+    // The caret in window coordinates when it moved, so the page scrolls
+    // it into view, and in the editor (scrolling does not move it there)
+    // for the input that sits on it.
+    in-out property <length> caret-top;
+    in-out property <length> caret-h;
+    in-out property <length> caret-in-x;
+    in-out property <length> caret-in-y;
+    // A named key (left, right, up, down, home, end, backspace, delete,
+    // enter, tab, backtab) or shortcut letter; true when handled.
+    callback key(string, bool, bool, bool) -> bool;
+    callback type(string);
+    // A press, a drag or a double click in block (piece, block) at x, y
+    // of its text; the press with Shift extends the selection.
+    callback press(int, int, float, float, bool);
+    callback drag(int, int, float, float);
+    callback word(int, int, float, float);
+    callback width(float);
+    // bold, italic, code, h2, h3, h4, bullet, numbered, quote, codeblock,
+    // paragraph, undo, redo, unlink.
+    callback tool(string);
+    callback link(string);
+}
+
+component ToolButton inherits Rectangle {
+    in property <string> label;
+    // An Icons path instead of the label.
+    in property <string> icon;
+    in property <string> tip;
+    in property <bool> on;
+    in property <bool> bold;
+    in property <bool> italic;
+    in property <bool> mono;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: root.icon != "" ? 28px : max(28px, t.preferred-width + 14px);
+    height: 28px;
+    border-radius: Theme.radius-sm;
+    background: root.on ? Theme.accent.with-alpha(0.18) : touch.has-hover && root.enabled ? Theme.panel-2 : transparent;
+    if root.icon != "": Icon {
+        icon: root.icon;
+        tint: root.enabled ? Theme.text : Theme.muted;
+        width: 16px;
+        height: 16px;
+    }
+    t := Text {
+        text: root.icon != "" ? "" : root.label;
+        color: !root.enabled ? Theme.muted : root.on ? Theme.accent : Theme.text;
+        font-size: Theme.font-body;
+        font-weight: root.bold ? Theme.weight-title : Theme.weight-regular;
+        font-italic: root.italic;
+        font-family: root.mono ? Theme.mono-family : Theme.font-family;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    accessible-role: button;
+    accessible-label: root.tip;
+}
+
+// The formatting toolbar.
+export component RichToolbar inherits VerticalLayout {
+    spacing: 6px;
+    HorizontalLayout {
+        spacing: 2px;
+        alignment: start;
+        ToolButton { label: "B"; bold: true; tip: @tr("Bold"); on: RichData.tools.bold; clicked => { RichData.tool("bold"); } }
+        ToolButton { label: "I"; italic: true; tip: @tr("Italic"); on: RichData.tools.italic; clicked => { RichData.tool("italic"); } }
+        ToolButton { label: "</>"; mono: true; tip: @tr("Code"); on: RichData.tools.code; clicked => { RichData.tool("code"); } }
+        ToolButton {
+            label: @tr("Link");
+            tip: @tr("Link");
+            on: RichData.tools.link || RichData.linking;
+            clicked => { RichData.linking = !RichData.linking; }
+        }
+        Rectangle { width: 10px; }
+        ToolButton { label: "H2"; tip: @tr("Heading 2"); on: RichData.tools.kind == 1 && RichData.tools.level == 2; clicked => { RichData.tool("h2"); } }
+        ToolButton { label: "H3"; tip: @tr("Heading 3"); on: RichData.tools.kind == 1 && RichData.tools.level == 3; clicked => { RichData.tool("h3"); } }
+        ToolButton { label: "H4"; tip: @tr("Heading 4"); on: RichData.tools.kind == 1 && RichData.tools.level == 4; clicked => { RichData.tool("h4"); } }
+        ToolButton { label: "•"; tip: @tr("Bulleted list"); on: RichData.tools.kind == 2 && !RichData.tools.ordered; clicked => { RichData.tool("bullet"); } }
+        ToolButton { label: "1."; tip: @tr("Numbered list"); on: RichData.tools.kind == 2 && RichData.tools.ordered; clicked => { RichData.tool("numbered"); } }
+        ToolButton { label: "❝"; tip: @tr("Quote"); on: RichData.tools.kind == 3; clicked => { RichData.tool("quote"); } }
+        ToolButton { label: "{ }"; mono: true; tip: @tr("Code block"); on: RichData.tools.kind == 4; clicked => { RichData.tool("codeblock"); } }
+        Rectangle { width: 10px; }
+        ToolButton { icon: Icons.undo; tip: @tr("Undo"); enabled: RichData.tools.undo; clicked => { RichData.tool("undo"); } }
+        ToolButton { icon: Icons.redo; tip: @tr("Redo"); enabled: RichData.tools.redo; clicked => { RichData.tool("redo"); } }
+    }
+    if RichData.linking: HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Text { text: @tr("Link target"); color: Theme.muted; font-size: Theme.font-small; vertical-alignment: center; }
+        Rectangle {
+            width: 320px;
+            height: 26px;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.panel;
+            target := TextInput {
+                x: 6px;
+                width: parent.width - 12px;
+                single-line: true;
+                vertical-alignment: center;
+                color: Theme.text;
+                font-size: Theme.font-small;
+                text: RichData.tools.target;
+                init => { self.focus(); self.select-all(); }
+                accepted => { RichData.link(self.text); RichData.linking = false; }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) {
+                        RichData.linking = false;
+                        return accept;
+                    }
+                    reject
+                }
+            }
+        }
+        ToolButton { label: @tr("Apply"); tip: @tr("Apply"); clicked => { RichData.link(target.text); RichData.linking = false; } }
+        ToolButton { label: @tr("Remove"); tip: @tr("Remove the link"); clicked => { RichData.tool("unlink"); RichData.linking = false; } }
+    }
+}
+
+// One editable block: its runs at Rust's places, the selection behind
+// them, the caret and the input that takes typed text where the caret is.
+component RichBlock inherits Rectangle {
+    in property <RichItem> item;
+    // The editor's place in the window, to report the caret inside it.
+    in property <Point> origin;
+    // A press in the text: the editor gives its input the focus (at once;
+    // a `changed` handler would run only after the next keys).
+    callback pressed();
+    property <bool> has-caret: item.caret;
+    property <bool> blink: true;
+    height: (item.top + item.height) * 1px + (item.kind == 4 ? 8px : 0px);
+    if item.kind == 4: Rectangle {
+        y: item.top * 1px - 8px;
+        height: item.height * 1px + 16px;
+        border-radius: Theme.radius-sm;
+        background: Theme.panel-2;
+    }
+    if item.kind == 3: Rectangle {
+        x: 0;
+        y: item.top * 1px;
+        width: 3px;
+        height: item.height * 1px;
+        background: Theme.accent;
+    }
+    if item.marker != "": Text {
+        x: item.indent * 1px - 30px;
+        width: 24px;
+        y: (item.top + item.marker-y) * 1px;
+        height: item.marker-h * 1px;
+        text: item.marker;
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+    for r in item.selection: Rectangle {
+        x: (item.indent + r.x) * 1px;
+        y: (item.top + r.y) * 1px;
+        width: max(r.w * 1px, 3px);
+        height: r.h * 1px;
+        background: Theme.accent.with-alpha(0.28);
+    }
+    for run in item.runs: Rectangle {
+        x: (item.indent + run.x) * 1px;
+        y: (item.top + run.y) * 1px;
+        width: run.w * 1px;
+        height: run.h * 1px;
+        background: run.code && item.kind != 4 ? Theme.panel-2 : transparent;
+        Text {
+            width: parent.width + 4px;
+            height: parent.height;
+            text: run.text;
+            font-size: run.size * 1px;
+            font-weight: run.weight;
+            font-italic: run.italic;
+            font-family: run.code ? Theme.mono-family : Theme.font-family;
+            color: run.link ? Theme.accent : Theme.text;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+        if run.link: Rectangle {
+            y: parent.height - 3px;
+            height: 1px;
+            background: Theme.accent;
+        }
+    }
+    if root.has-caret && RichData.items.length > 0: Rectangle {
+        x: (item.indent + item.caret-rect.x) * 1px;
+        y: (item.top + item.caret-rect.y) * 1px;
+        width: 1.5px;
+        height: item.caret-rect.h * 1px;
+        background: root.blink && RichData.focused ? Theme.text : transparent;
+    }
+    // Restarts on every caret move, so the caret shows while typing.
+    Timer {
+        interval: 530ms;
+        running: root.has-caret;
+        triggered => { root.blink = !root.blink; }
+    }
+    changed item => {
+        root.blink = true;
+        root.report();
+    }
+    function report() {
+        if (root.has-caret) {
+            let x = (item.indent + item.caret-rect.x) * 1px;
+            let y = (item.top + item.caret-rect.y) * 1px;
+            RichData.caret-in-x = root.absolute-position.x - root.origin.x + x;
+            RichData.caret-in-y = root.absolute-position.y - root.origin.y + y;
+            RichData.caret-top = root.absolute-position.y + y;
+            RichData.caret-h = item.caret-rect.h * 1px;
+        }
+    }
+    changed has-caret => {
+        if (root.has-caret) {
+            root.report();
+        }
+    }
+    init => { root.report(); }
+    TouchArea {
+        mouse-cursor: text;
+        pointer-event(e) => {
+            // Slint takes the focus from an input on a press elsewhere
+            // after this handler; the release gives it back.
+            if (e.kind == PointerEventKind.up) {
+                root.pressed();
+            }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.pressed();
+                RichData.press(item.piece, item.block, self.mouse-x / 1px - item.indent, self.mouse-y / 1px - item.top, e.modifiers.shift);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                RichData.drag(item.piece, item.block, self.mouse-x / 1px - item.indent, self.mouse-y / 1px - item.top);
+            }
+        }
+        double-clicked => {
+            RichData.word(item.piece, item.block, self.mouse-x / 1px - item.indent, self.mouse-y / 1px - item.top);
+        }
+    }
+}
+
+// The chapter as one formatted text: fixed pieces as the reader shows
+// them, editable blocks to type in.
+export component RichEditor inherits FocusScope {
+    // The input below takes the keys; a click must not move them here.
+    focus-on-click: false;
+    // Keys before the input at the caret: moves, deletions, Enter, Tab
+    // and shortcuts go to Rust; the rest is typed text.
+    capture-key-pressed(e) => {
+        if (RichData.linking) {
+            return reject;
+        }
+        if (e.text == Key.LeftArrow) { return RichData.key("left", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.RightArrow) { return RichData.key("right", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.UpArrow) { return RichData.key("up", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.DownArrow) { return RichData.key("down", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Home) { return RichData.key("home", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.End) { return RichData.key("end", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Backspace) { return RichData.key("backspace", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Delete) { return RichData.key("delete", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Return) { return RichData.key("enter", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Tab) { return RichData.key("tab", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        if (e.text == Key.Backtab) { return RichData.key("backtab", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
+        // Control is the Command key on macOS.
+        if (e.modifiers.control && !e.modifiers.alt) {
+            return RichData.key(e.text, e.modifiers.shift, false, true) ? accept : reject;
+        }
+        reject
+    }
+    // Typed text and input methods, one input for the whole editor (a
+    // new block keeps the focus): at the caret, so an input method shows
+    // its composition there; emptied after each edit.
+    ime := TextInput {
+        // Inside the editor and so inside the page's visible part with the
+        // caret: Slint drops the focus of an input that is not visible.
+        x: RichData.caret-in-x;
+        y: RichData.caret-in-y;
+        width: 240px;
+        height: max(RichData.caret-h, 1px);
+        single-line: true;
+        color: Theme.text;
+        font-size: Theme.font-body;
+        text-cursor-width: 0px;
+        changed has-focus => { RichData.focused = self.has-focus; }
+        edited => {
+            if (self.text != "") {
+                RichData.type(self.text);
+                self.text = "";
+            }
+        }
+    }
+    property <bool> linking: RichData.linking;
+    changed linking => {
+        if (!self.linking) {
+            ime.focus();
+        }
+    }
+    // Once the editor shows: the keys go to its text.
+    Timer {
+        interval: 1ms;
+        running: !ime.has-focus && !RichData.linking && !root.opened;
+        triggered => {
+            root.opened = true;
+            ime.focus();
+        }
+    }
+    property <bool> opened;
+    VerticalLayout {
+        alignment: start;
+        changed width => { RichData.width(self.width / 1px); }
+        init => { RichData.width(self.width / 1px); }
+        for item in RichData.items: VerticalLayout {
+            if item.fixed.length > 0: VerticalLayout {
+                for b in item.fixed: ArcBlockView { block: b; }
+            }
+            if item.fixed.length == 0: RichBlock {
+                item: item;
+                origin: root.absolute-position;
+                pressed => { ime.focus(); }
+            }
+        }
+    }
+}

@@ -583,8 +583,8 @@ fn emphasis(delims: &mut [Delim]) -> Vec<(usize, usize, Mark)> {
         let opener = (0..ci).rev().find(|&oi| {
             let o = &delims[list[oi]];
             let both = (o.open && o.close) || (delims[d].open && delims[d].close);
-            let three =
-                (o.len + delims[d].len) % 3 == 0 && !(o.len % 3 == 0 && delims[d].len % 3 == 0);
+            let three = (o.len + delims[d].len).is_multiple_of(3)
+                && !(o.len.is_multiple_of(3) && delims[d].len.is_multiple_of(3));
             o.open && o.left > 0 && !(both && three)
         });
         let Some(oi) = opener else {

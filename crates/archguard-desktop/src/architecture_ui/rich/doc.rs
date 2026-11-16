@@ -220,7 +220,7 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
     Some(out)
 }
 
-fn chapter_number(heading: &str) -> bool {
+pub fn chapter_number(heading: &str) -> bool {
     let digits = heading.chars().take_while(char::is_ascii_digit).count();
     digits > 0 && heading[digits..].starts_with('.')
 }
@@ -234,17 +234,47 @@ fn one_line(md: &str) -> Inline {
     inline
 }
 
+/// Whether a block is written: empty text blocks are dropped (an empty
+/// code block stays).
+pub fn written(b: &Block) -> bool {
+    matches!(b.kind, Kind::Code { .. }) || !b.inline.text.trim().is_empty()
+}
+
+/// Each list entry's depth as written (at most one deeper than the entry
+/// before) and its number: an ordered entry after one of its list counts
+/// on from it. Other blocks end the list; blocks not written do not.
+pub fn list_entries(blocks: &[Block]) -> Vec<Option<(usize, Option<u64>)>> {
+    let mut numbers: Vec<Option<u64>> = Vec::new();
+    blocks
+        .iter()
+        .map(|b| {
+            let Kind::Item { depth, number } = b.kind else {
+                if written(b) {
+                    numbers.clear();
+                }
+                return None;
+            };
+            let depth = depth.min(numbers.len());
+            numbers.truncate(depth + 1);
+            let number = match (number, numbers.get(depth)) {
+                (Some(_), Some(Some(last))) => Some(last + 1),
+                (n, _) => n,
+            };
+            numbers.resize(depth, None);
+            numbers.push(number);
+            Some((depth, number))
+        })
+        .collect()
+}
+
 /// The Markdown of edited blocks; empty text blocks are dropped.
 fn write(blocks: &[Block]) -> String {
     let mut out = String::new();
-    // Per list depth: the marker width (for the indent below it) and the
-    // last number of an ordered list.
+    // Per list depth: the marker width, for the indent below it.
     let mut widths: Vec<usize> = Vec::new();
-    let mut numbers: Vec<Option<u64>> = Vec::new();
     let mut prev: Option<&Kind> = None;
-    for b in blocks {
-        let code = matches!(b.kind, Kind::Code { .. });
-        if !code && b.inline.text.trim().is_empty() {
+    for (b, entry) in blocks.iter().zip(list_entries(blocks)) {
+        if !written(b) {
             continue;
         }
         out.push_str(match (prev, &b.kind) {
@@ -253,10 +283,6 @@ fn write(blocks: &[Block]) -> String {
             (Some(Kind::Quote), Kind::Quote) => "\n>\n",
             _ => "\n\n",
         });
-        if !matches!(b.kind, Kind::Item { .. }) {
-            widths.clear();
-            numbers.clear();
-        }
         let text = b.inline.to_markdown();
         match &b.kind {
             Kind::Paragraph => out.push_str(&text),
@@ -265,17 +291,9 @@ fn write(blocks: &[Block]) -> String {
                 out.push(' ');
                 out.push_str(&text);
             }
-            Kind::Item { depth, number } => {
-                let depth = (*depth).min(widths.len());
+            Kind::Item { .. } => {
+                let (depth, number) = entry.expect("an item has an entry");
                 widths.truncate(depth);
-                numbers.truncate(depth + 1);
-                // An ordered entry after one of its list counts on from it.
-                let number = match (number, numbers.get(depth)) {
-                    (Some(_), Some(Some(last))) => Some(last + 1),
-                    (n, _) => *n,
-                };
-                numbers.resize(depth, None);
-                numbers.push(number);
                 let marker = number.map_or("-".to_string(), |n| format!("{n}."));
                 out.push_str(&" ".repeat(widths.iter().sum()));
                 out.push_str(&marker);
@@ -343,7 +361,7 @@ Ende.
     fn generated(md: &str) -> Vec<Range<usize>> {
         let start = md.find("<!-- archguard:arc42:05:start").unwrap();
         let end = md.find("<!-- archguard:arc42:05:end").unwrap();
-        vec![start..end]
+        std::iter::once(start..end).collect()
     }
 
     fn parts(doc: &mut Doc) -> Vec<&mut Part> {

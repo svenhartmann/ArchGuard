@@ -31,9 +31,10 @@ use slint::{ComponentHandle, SharedString};
 use crate::context::Loaded;
 use crate::documents;
 use crate::tab_support::{self, Actions, Calls, TabState, Texts, index};
-use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel};
+use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel, RichData};
 use follow::navigation;
 use projection::Group;
+use rich::view::{Key, Rich};
 pub use state::ArchitectureState;
 use state::{build_from, current, derived, follow_language, labels, open_scope, toggle_diagram};
 use visual::{Action, Kind, RELATIONS_PAGE};
@@ -59,14 +60,10 @@ pub fn wire(ui: &AppWindow) {
             s.editor.show(ui);
         });
     }));
-    d.on_open_block(a.on(|s, _, piece: i32| s.editor.open_block(piece)));
-    d.on_close_block(a.on0(|s, _| s.editor.close_block()));
-    d.on_block_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
-        crate::documents::with_active_state(|s: &mut ArchitectureState| {
-            s.editor.edit_block(&text);
-            s.editor.show(ui);
-        });
+    d.on_visual_changed(tab_support::with_ui(ui, |ui, _: bool| {
+        crate::documents::with_active_state(|s: &mut ArchitectureState| s.editor.show(ui));
     }));
+    wire_rich(ui);
     // Errors show in the editor itself.
     d.on_save_edit(a.on0(|s, _| drop(save_draft(s))));
     d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
@@ -204,6 +201,79 @@ fn card_action(s: &mut ArchitectureState, ui: &AppWindow) {
         // Graph-tab nodes are the graph's nodes.
         Action::OpenInGraph(n) => crate::panes_ui::reveal(ui, n),
     }
+}
+
+/// The formatted editor's callbacks: each edits the active document's
+/// draft and shows only the editor again.
+fn wire_rich(ui: &AppWindow) {
+    let r = ui.global::<RichData>();
+    // Run `f` on the open editor and show it; `None` without one.
+    fn edit<R>(ui: &AppWindow, f: impl FnOnce(&mut Rich) -> R) -> Option<R> {
+        crate::documents::with_active_state(|s: &mut ArchitectureState| {
+            let out = s.editor.rich(f);
+            s.editor.show(ui);
+            out
+        })
+        .flatten()
+    }
+    let weak = ui.as_weak();
+    r.on_key(move |name, shift, alt, control| {
+        let Some(ui) = weak.upgrade() else {
+            return false;
+        };
+        match edit(&ui, |r| r.key(&name, shift, alt, control)) {
+            Some(Key::Done) => true,
+            Some(Key::Link) => {
+                ui.global::<RichData>().set_linking(true);
+                true
+            }
+            Some(Key::Ignored) | None => false,
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_type(move |text| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.type_text(&text));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_press(move |piece, block, x, y, shift| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| {
+                r.press(piece as usize, block as usize, x, y, shift)
+            });
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_drag(move |piece, block, x, y| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.drag(piece as usize, block as usize, x, y));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_word(move |piece, block, x, y| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.word(piece as usize, block as usize, x, y));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_width(move |w| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.set_width(w));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_tool(move |name| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.tool(&name));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_link(move |target| {
+        if let Some(ui) = weak.upgrade() {
+            edit(&ui, |r| r.link(&target));
+        }
+    });
 }
 
 /// Show the state in the window, keeping the list models it shows.

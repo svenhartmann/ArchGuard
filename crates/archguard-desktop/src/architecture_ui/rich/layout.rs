@@ -33,8 +33,12 @@ pub struct Style {
     pub small: f32,
     pub section: f32,
     pub page: f32,
-    /// Line height as a multiple of the font size.
-    pub line: f32,
+    /// Weights of headings up to level 3 and below.
+    pub title: f32,
+    pub strong: f32,
+    /// The window's scale factor: Slint shapes text in physical pixels,
+    /// and fonts with optical sizes run wider or narrower there.
+    pub scale: f32,
 }
 
 impl Default for Style {
@@ -46,7 +50,9 @@ impl Default for Style {
             small: 12.0,
             section: 17.0,
             page: 21.0,
-            line: 1.45,
+            title: 700.0,
+            strong: 600.0,
+            scale: 1.0,
         }
     }
 }
@@ -70,8 +76,8 @@ pub struct Run {
     pub height: f32,
     pub baseline: f32,
     pub size: f32,
-    /// Heading weight for the whole block.
-    pub strong: bool,
+    /// Bold, the block's heading weight, or regular.
+    pub weight: f32,
     pub look: Look,
 }
 
@@ -90,19 +96,23 @@ pub struct Laid {
     /// The block's text length; an empty block lays out a space.
     len: usize,
     pub size: f32,
-    strong: bool,
+    /// A heading's weight.
+    strong: Option<f32>,
     looks: Vec<(Range<usize>, Look)>,
     text: String,
+    /// Physical pixels per logical one: the layout is in physical pixels.
+    scale: f32,
 }
 
-/// Font size and heading weight of a block's kind.
-fn size_of(kind: &Kind, style: &Style) -> (f32, bool) {
+/// Font size and heading weight of a block's kind, as the reader's
+/// (`architecture_blocks.slint`).
+fn size_of(kind: &Kind, style: &Style) -> (f32, Option<f32>) {
     match kind {
-        Kind::Heading(level) if *level <= 2 => (style.page, true),
-        Kind::Heading(3) => (style.section, true),
-        Kind::Heading(_) => (style.body, true),
-        Kind::Code { .. } => (style.small, false),
-        _ => (style.body, false),
+        Kind::Heading(level) if *level <= 2 => (style.page, Some(style.title)),
+        Kind::Heading(3) => (style.section, Some(style.title)),
+        Kind::Heading(_) => (style.body, Some(style.strong)),
+        Kind::Code { .. } => (style.small, None),
+        _ => (style.body, None),
     }
 }
 
@@ -144,15 +154,21 @@ impl Fonts {
         };
         let looks = looks(block);
         let code = matches!(block.kind, Kind::Code { .. });
-        let mut b = self.lcx.ranged_builder(&mut self.fcx, text, 1.0, false);
-        let family = if code { &style.mono } else { &style.family };
-        b.push_default(StyleProperty::FontFamily(family.as_str().into()));
+        let scale = style.scale.max(0.25);
+        // As Slint's own text (i-slint-core `sharedparley/shaping.rs`).
+        let mut b = self.lcx.ranged_builder(&mut self.fcx, text, scale, false);
+        let family = match (code, style.family.as_str()) {
+            (true, _) => style.mono.as_str(),
+            // No family: the system's, as Slint's fallback.
+            (false, "") => "system-ui, sans-serif",
+            (false, family) => family,
+        };
+        b.push_default(StyleProperty::FontFamily(family.into()));
         b.push_default(StyleProperty::FontSize(size));
-        b.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
-            style.line,
-        )));
-        if strong {
-            b.push_default(StyleProperty::FontWeight(FontWeight::BOLD));
+        // A Slint `Text`'s line: the font's own line height.
+        b.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        if let Some(weight) = strong {
+            b.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
         }
         for (range, look) in &looks {
             if look.bold {
@@ -170,7 +186,7 @@ impl Fonts {
             b.push(StyleProperty::Brush(*look), range.clone());
         }
         let mut layout = b.build(text);
-        layout.break_all_lines(Some(width.max(1.0)));
+        layout.break_all_lines(Some(width.max(1.0) * scale));
         layout.align(Alignment::Start, AlignmentOptions::default());
         Laid {
             layout,
@@ -179,22 +195,25 @@ impl Fonts {
             strong,
             looks,
             text: block.inline.text.clone(),
+            scale,
         }
     }
 }
 
-fn rect(b: parley::BoundingBox) -> Rect {
-    Rect {
-        x: b.x0 as f32,
-        y: b.y0 as f32,
-        w: (b.x1 - b.x0) as f32,
-        h: (b.y1 - b.y0) as f32,
-    }
-}
-
 impl Laid {
+    /// A layout box in logical pixels.
+    fn rect(&self, b: parley::BoundingBox) -> Rect {
+        let s = f64::from(self.scale);
+        Rect {
+            x: (b.x0 / s) as f32,
+            y: (b.y0 / s) as f32,
+            w: ((b.x1 - b.x0) / s) as f32,
+            h: ((b.y1 - b.y0) / s) as f32,
+        }
+    }
+
     pub fn height(&self) -> f32 {
-        self.layout.height()
+        self.layout.height() / self.scale
     }
 
     fn cursor(&self, at: usize, affinity: Affinity) -> Cursor {
@@ -208,7 +227,8 @@ impl Laid {
         } else {
             Affinity::Downstream
         };
-        rect(self.cursor(at, affinity).geometry(&self.layout, 0.0)).x
+        self.rect(self.cursor(at, affinity).geometry(&self.layout, 0.0))
+            .x
     }
 
     /// The runs to draw: each line cut at every change of look.
@@ -216,6 +236,7 @@ impl Laid {
         let mut out = Vec::new();
         for line in self.layout.lines() {
             let m = line.metrics();
+            let s = self.scale;
             let lr = line.text_range();
             for (range, look) in &self.looks {
                 let from = range.start.max(lr.start);
@@ -227,12 +248,16 @@ impl Laid {
                 out.push(Run {
                     text: self.text[from..to].to_string(),
                     x,
-                    y: m.block_min_coord,
+                    y: m.block_min_coord / s,
                     width: self.x(to, true) - x,
-                    height: m.line_height,
-                    baseline: m.baseline - m.block_min_coord,
+                    height: m.line_height / s,
+                    baseline: (m.baseline - m.block_min_coord) / s,
                     size: self.size,
-                    strong: self.strong,
+                    weight: match (look.bold, self.strong) {
+                        (true, _) => 700.0,
+                        (false, Some(w)) => w,
+                        (false, None) => 400.0,
+                    },
                     look: *look,
                 });
             }
@@ -242,9 +267,9 @@ impl Laid {
 
     /// The caret before byte `at`.
     pub fn caret(&self, at: usize) -> Rect {
-        rect(
+        self.rect(
             self.cursor(at, Affinity::Downstream)
-                .geometry(&self.layout, 1.5),
+                .geometry(&self.layout, 1.5 * self.scale),
         )
     }
 
@@ -259,34 +284,38 @@ impl Laid {
         );
         s.geometry(&self.layout)
             .into_iter()
-            .map(|(b, _)| rect(b))
+            .map(|(b, _)| self.rect(b))
             .collect()
     }
 
     /// The byte under the point `x`, `y` (block coordinates).
     pub fn hit(&self, x: f32, y: f32) -> usize {
-        Cursor::from_point(&self.layout, x, y).index().min(self.len)
+        let s = self.scale;
+        Cursor::from_point(&self.layout, x * s, y * s)
+            .index()
+            .min(self.len)
     }
 
     /// The word under a point (a double click).
     pub fn word(&self, x: f32, y: f32) -> Range<usize> {
-        let r = Selection::word_from_point(&self.layout, x, y).text_range();
+        let s = self.scale;
+        let r = Selection::word_from_point(&self.layout, x * s, y * s).text_range();
         r.start.min(self.len)..r.end.min(self.len)
     }
 
-    /// The byte one line up (`delta` -1) or down (+1) from `at` at the
-    /// same x; `None` past the first or last line.
-    pub fn line(&self, at: usize, delta: isize) -> Option<usize> {
+    /// The byte at `x` one line up (`delta` -1) or down (+1) from the line
+    /// of `at`; `None` past the first or last line.
+    pub fn line_at(&self, at: usize, delta: isize, x: f32) -> Option<usize> {
         let line = self.line_of(at);
         let target = line.checked_add_signed(delta)?;
         let l = self.layout.lines().nth(target)?;
-        let x = self.caret(at).x;
         let m = l.metrics();
-        Some(self.hit(x, (m.block_min_coord + m.block_max_coord) / 2.0))
+        let middle = (m.block_min_coord + m.block_max_coord) / 2.0 / self.scale;
+        Some(self.hit(x, middle))
     }
 
     fn line_of(&self, at: usize) -> usize {
-        let y = self.caret(at).y;
+        let y = self.caret(at).y * self.scale;
         self.layout
             .lines()
             .position(|l| l.metrics().block_max_coord > y + 0.5)
@@ -309,6 +338,7 @@ impl Laid {
         r.start.min(self.len)..end.min(self.len)
     }
 
+    #[cfg(test)]
     pub fn lines(&self) -> usize {
         self.layout.lines().count()
     }
@@ -332,19 +362,31 @@ mod tests {
         let b = block(
             "Ein **langer** Absatz mit *mehreren* Wörtern, der bei schmaler Breite umbricht.",
         );
-        let laid = fonts.lay_out(&b, 160.0, &Style::default());
-        assert!(laid.lines() > 2, "{} lines", laid.lines());
-        let text = &b.inline.text;
-        for (at, _) in text.char_indices().skip(1) {
-            let c = laid.caret(at);
-            assert_eq!(laid.hit(c.x + 0.1, c.y + c.h / 2.0), at, "byte {at}");
+        // Slint lays out in physical pixels: a Retina window at scale 2.
+        for scale in [1.0, 2.0] {
+            let style = Style {
+                scale,
+                ..Style::default()
+            };
+            let laid = fonts.lay_out(&b, 160.0, &style);
+            assert!(laid.lines() > 2, "{} lines", laid.lines());
+            let text = &b.inline.text;
+            for (at, _) in text.char_indices().skip(1) {
+                let c = laid.caret(at);
+                assert_eq!(
+                    laid.hit(c.x + 0.1, c.y + c.h / 2.0),
+                    at,
+                    "byte {at} at {scale}"
+                );
+            }
+            for run in laid.runs() {
+                assert!(run.x + run.width <= 160.5, "{run:?}");
+                assert!(!run.text.is_empty());
+                assert!(run.height < 30.0, "logical pixels: {run:?}");
+            }
+            let joined: String = laid.runs().iter().map(|r| r.text.as_str()).collect();
+            assert_eq!(&joined, text, "the runs are the text");
         }
-        for run in laid.runs() {
-            assert!(run.x + run.width <= 160.5, "{run:?}");
-            assert!(!run.text.is_empty());
-        }
-        let joined: String = laid.runs().iter().map(|r| r.text.as_str()).collect();
-        assert_eq!(&joined, text, "the runs are the text");
     }
 
     #[test]
@@ -365,11 +407,13 @@ mod tests {
                 (" normal".into(), false)
             ]
         );
-        assert_eq!(laid.line(3, 1), None, "one line only");
+        assert_eq!(laid.line_at(3, 1, 0.0), None, "one line only");
         let narrow = fonts.lay_out(&block("aaa bbb ccc ddd eee fff"), 40.0, &Style::default());
-        let down = narrow.line(1, 1).expect("a second line");
+        let x = narrow.caret(1).x;
+        let down = narrow.line_at(1, 1, x).expect("a second line");
         assert!(narrow.caret(down).y > narrow.caret(1).y);
-        assert_eq!(narrow.line(down, -1).map(|b| narrow.line_of(b)), Some(0));
+        let up = narrow.line_at(down, -1, x);
+        assert_eq!(up.map(|b| narrow.line_of(b)), Some(0));
     }
 
     #[test]

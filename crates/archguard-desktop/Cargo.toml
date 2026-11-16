@@ -22,6 +22,9 @@ png = "0.18"
 # Text layout of the arc42 rich-text editor; the version Slint lays out
 # its own text with, so lines break alike (`architecture_ui/rich/layout.rs`).
 parley = "0.11"
+# Clipboard of the arc42 rich-text editor; the features Slint's winit
+# backend uses, so it builds once.
+arboard = { version = "3.6", default-features = false }
 serde_json = "1"
 # Native folder picker for "Open project"; on Linux via the XDG desktop
 # portal only, without GTK.

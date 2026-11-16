@@ -331,6 +331,7 @@ dependencies = [
 name = "archguard-desktop"
 version = "0.3.5"
 dependencies = [
+ "arboard",
  "archguard-desktop-ui",
  "archguard-engine",
  "archguard-update",

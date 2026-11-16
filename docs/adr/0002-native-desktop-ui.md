@@ -490,7 +490,7 @@ comparison of the native view against the web view on the same project
   before and after the open block is parsed on its own, so the other
   blocks do not move while it is typed in. Rejected: an own rich-text
   input (cursor, selection, IME and undo by hand) and a web view (against
-  this ADR). Snapshot hooks: `ARCHGUARD_DESKTOP_ARC_EDIT=block` opens the
+  this ADR). Snapshot hooks: `ARCHGUARD_DESKTOP_ARC_EDIT=block` opened the
   first editable block, `ARCHGUARD_DESKTOP_TYPE=<text>` types into the
   focused field. Checked with unit tests and headless snapshots on macOS
   (temp copies of fixtures/py-layers, with and without `arc42.md`, light
@@ -498,3 +498,32 @@ comparison of the native view against the web view on the same project
   text arrives, Escape formats it, a generated block stays closed, "Add
   text" and the switch to Markdown work. Not checked by hand in a window;
   not checked on Windows and Linux.
+- **2026-11-16:** WYSIWYG chapter editor, replacing the block editor of
+  2026-11-15 at the user's request ("a real WYSIWYG editor"). Slint
+  (also 1.18, issue slint-ui/slint#2723) still has no input for styled
+  text, so the rejected option is taken after all: an own rich-text
+  editor, without a web view. Rust keeps the model and Slint only draws:
+  `architecture_ui/rich/` reads the chapter into blocks with inline marks
+  (`inline.rs`: CommonMark's emphasis rules, so what it writes reads the
+  same in Slint, on GitHub and in the web viewer), keeps blocks it does
+  not edit (generated archguard blocks, tables, rules, the chapter
+  heading) and every part nobody edited byte for byte (`doc.rs`), edits
+  with caret, selection and undo (`editor.rs`), and lays text out with
+  parley at the window's scale factor exactly as Slint's own text does
+  (`layout.rs`), so each run is drawn as a `Text` where parley put it and
+  the caret meets the glyphs. Keys reach Rust through `capture-key-pressed`;
+  typed text and input methods through one invisible `TextInput` at the
+  caret, positioned inside the editor (Slint drops the focus of an input
+  that is not visible). Toolbar: bold, italic, code, link, headings 2-4,
+  lists, quote, code block, undo, redo; shortcuts Cmd/Ctrl+B, I, E, K, Z,
+  Y, A, C, X, V; Tab indents list entries. "Edit Markdown" stays for
+  tables and anything else. Limits: text is added only in editable parts
+  and in an empty part after the chapter's fixed end, not between two
+  fixed blocks; Backspace removes a character, not a grapheme cluster; a
+  line of three backticks inside a code block ends it early. Checked with
+  unit and property tests (20000 random mark combinations read back the
+  same; every exported chapter of fixtures/py-layers and
+  examples/service-shop writes back unchanged), the real window on Slint's
+  testing backend (`app_check.rs`: click into the editor, type, Enter,
+  bold shortcut, the draft) and headless snapshots on macOS. Not checked
+  by hand in a window; not checked on Windows and Linux.

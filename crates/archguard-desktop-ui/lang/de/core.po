@@ -290,3 +290,12 @@ msgstr "Alles auswählen"
 
 msgid "No supported source files found. Check project.source_roots in the settings."
 msgstr "Keine unterstützten Quelldateien gefunden. project.source_roots in den Einstellungen prüfen."
+
+msgid "Undo"
+msgstr "Rückgängig"
+
+msgid "Apply"
+msgstr "Anwenden"
+
+msgid "Remove"
+msgstr "Entfernen"
