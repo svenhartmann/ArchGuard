@@ -70,7 +70,10 @@ impl Files {
     fn score(&self, f: &File) -> Option<f64> {
         let usable = matches!(self.status.as_str(), "ready" | "partial" | "stale");
         let fresh = f.status == "unchanged_since_import";
-        let measured = counter(Locale::En, f.lines.as_ref()) != UNKNOWN;
+        let measured = f
+            .lines
+            .as_ref()
+            .is_some_and(|c| c.total > 0 && c.covered <= c.total);
         f.score
             .filter(|s| usable && fresh && measured && s.is_finite())
     }
@@ -113,9 +116,14 @@ pub fn review(out: &mut Vec<StartLine>, files: &Files, open: Option<usize>, l: L
         ..line(kind::COV_REVIEW_OPEN, "", "", REVIEW)
     });
     let Some(limit) = open else { return };
-    let mut rows: Vec<(&String, &File)> = files.by_node.iter().collect();
-    let score = |f: &File| files.score(f).unwrap_or(-1.0);
-    rows.sort_by(|a, b| score(b.1).total_cmp(&score(a.1)).then_with(|| a.0.cmp(b.0)));
+    // Each score once, not per comparison: this runs on every frame.
+    let mut ranked: Vec<(f64, &String, &File)> = files
+        .by_node
+        .iter()
+        .map(|(n, f)| (files.score(f).unwrap_or(-1.0), n, f))
+        .collect();
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    let rows: Vec<(&String, &File)> = ranked.into_iter().map(|(_, n, f)| (n, f)).collect();
     let status = if files.status.is_empty() {
         "not_imported"
     } else {
@@ -254,6 +262,38 @@ mod tests {
             (out.last().unwrap().kind, out.last().unwrap().a.as_str()),
             (kind::MORE, "1")
         );
+    }
+
+    /// Equal indexes keep the node order; files without a usable index
+    /// (changed, unmeasured, over-counted, not finite) sort last by node.
+    #[test]
+    fn the_review_order_breaks_ties_by_node() {
+        let mut f = files("ready", "unchanged_since_import", Some(0.5));
+        let base = f.by_node["a.rs"].clone();
+        let mut add = |node: &str, change: &dyn Fn(&mut File)| {
+            let mut file = base.clone();
+            change(&mut file);
+            f.by_node.insert(node.into(), file);
+        };
+        add("d.rs", &|_| {});
+        add("e.rs", &|x| x.score = Some(0.7));
+        add("b.rs", &|x| x.status = "changed_since_import".into());
+        add("c.rs", &|x| x.lines = None);
+        add("g.rs", &|x| {
+            x.lines = Some(CoverageCounter {
+                covered: 5,
+                total: 4,
+            })
+        });
+        add("f.rs", &|x| x.score = Some(f64::NAN));
+        let mut out = Vec::new();
+        review(&mut out, &f, Some(20), Locale::En);
+        let rows: Vec<&str> = out
+            .iter()
+            .filter(|l| l.kind == kind::COV_ROW)
+            .map(|l| l.a.as_str())
+            .collect();
+        assert_eq!(rows, ["e.rs", "a.rs", "d.rs", "b.rs", "c.rs", "f.rs", "g.rs"]);
     }
 
     /// Without an import the review says coverage is unknown.
