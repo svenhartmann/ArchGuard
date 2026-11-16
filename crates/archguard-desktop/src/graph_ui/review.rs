@@ -100,7 +100,12 @@ pub fn data(g: &GraphState, old: &ReviewData) -> ReviewData {
         git_commits: git.scanned_commits as i32,
         git_incomplete: git.shallow || git.truncated,
         // The window's sentence ends it with its own period.
-        git_message: git.message.as_deref().unwrap_or("").trim_end_matches('.').into(),
+        git_message: git
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .trim_end_matches('.')
+            .into(),
         orphans_only: g.review_orphans,
         items: sync_rows(&old.items, items),
         more: rows.len().saturating_sub(g.review_limit) as i32,
@@ -131,7 +136,9 @@ mod tests {
         assert_eq!((r.kind, r.a, r.b), (3, 5, 5));
         let r = reason("Git change touches × coupling: 7 × 2 (+9)");
         assert_eq!((r.kind, r.a, r.b, r.c), (4, 7, 2, 9));
-        let r = reason("No incoming imports in this scope; check entry points and dynamic consumers before removing code.");
+        let r = reason(
+            "No incoming imports in this scope; check entry points and dynamic consumers before removing code.",
+        );
         assert_eq!(r.kind, 5);
         let r = reason("Something new (+1)");
         assert_eq!((r.kind, r.text.as_str()), (0, "Something new (+1)"));
