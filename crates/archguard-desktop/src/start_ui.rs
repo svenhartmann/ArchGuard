@@ -107,7 +107,9 @@ impl Inputs {
         let snapshots = archguard_engine::read_snapshots(&root);
         let mut glance = kpis::Glance::new(graph.review_kpis.clone(), &findings, &snapshots);
         glance.abstractions = kpis_zones::apply(glance.kpis.as_mut(), zones.measure(&calls));
-        let services = ServicesWorld::new(tab_support::topology(&topology, &root));
+        let roots = &config.project.source_roots;
+        let services = ServicesWorld::new(tab_support::topology(&topology, &root))
+            .map(|w| w.with_packages(&graph, roots));
         let mut state = from_evidence(Evidence::new(graph, findings, &calls, world), services);
         state.glance = glance;
         state.files = coverage_detail::Files::new(&coverage, &review);

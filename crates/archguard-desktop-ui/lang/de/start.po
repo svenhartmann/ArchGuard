@@ -184,6 +184,17 @@ msgstr "Punkte zeigen Aufruf- und Event-Richtung, keine gemessene Last"
 msgid "first 60 arrows; select a service to focus"
 msgstr "erste 60 Pfeile; Service auswählen zum Eingrenzen"
 
+msgid "{0} package dependency"
+msgid_plural "{0} package dependencies"
+msgstr[0] "{0} Paketabhängigkeit"
+msgstr[1] "{0} Paketabhängigkeiten"
+
+msgid "no service communication found"
+msgstr "keine Service-Kommunikation gefunden"
+
+msgid "Package dependency (source imports)"
+msgstr "Paketabhängigkeit (Imports im Quellcode)"
+
 msgid "cyclic communication marked"
 msgstr "zyklische Kommunikation markiert"
 

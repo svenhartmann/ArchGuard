@@ -20,7 +20,10 @@ fn set_filter(w: &mut ServicesWorld, which: i32, v: i32) -> bool {
             return true;
         }
         1 => w.filter.source = SOURCES[i.min(SOURCES.len() - 1)],
-        2 => w.filter.kind = index(v - 1).and_then(|i| KINDS.get(i).copied()),
+        2 => {
+            w.filter.kind = index(v - 1).and_then(|i| KINDS.get(i).copied());
+            w.filter.packages = index(v - 1) == Some(KINDS.len());
+        }
         _ => w.filter.direction = DIRECTIONS[i.min(DIRECTIONS.len() - 1)],
     }
     false

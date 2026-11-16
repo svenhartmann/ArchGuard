@@ -102,6 +102,7 @@ export struct StartServices {
     deployments: [string],
     deployment: int,
     source: int,
+    // 0 communication, 1..6 the kinds, 7 package dependencies.
     kind: int,
     direction: int,
     cycles-only: bool,
@@ -114,6 +115,10 @@ export struct StartServices {
     connections: int,
     cyclic: bool,
     complete: bool,
+    // Any service dependency (else Evidence and Connection kind are
+    // hidden) and any call, event or configured endpoint (else Data flow).
+    communicates: bool,
+    carriers: bool,
     islands: int,
     local: int,
     edges: [StartEdges],
@@ -352,7 +357,8 @@ export global StartTones {
     public pure function kind-label(k: int) -> string {
         return k == 0 ? @tr("HTTP client") : k == 1 ? @tr("gRPC client")
             : k == 2 ? @tr("Event flow (inferred)") : k == 3 ? @tr("Configured HTTP route / endpoint")
-            : k == 4 ? @tr("Configuration reference") : @tr("Startup dependency (depends_on)");
+            : k == 4 ? @tr("Configuration reference") : k == 5 ? @tr("Startup dependency (depends_on)")
+            : @tr("Package dependency (source imports)");
     }
 
     public pure function project-kind(k: int) -> string {

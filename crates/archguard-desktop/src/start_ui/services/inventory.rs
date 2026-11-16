@@ -38,10 +38,14 @@ impl Island {
         self.path.rsplit('/').next().unwrap_or(&self.path)
     }
 
-    /// The pin's line after the kind: technology and source path, without
-    /// the "." of a project at the repository root.
-    pub fn detail(&self) -> String {
+    /// The pin's line after the kind: technology and source path below
+    /// `parent`, without the "." of a project at the repository root or a
+    /// path that only repeats the pin's name.
+    pub fn detail(&self, parent: &str) -> String {
         let path = self.source.as_deref().filter(|p| *p != ".");
+        let path = path
+            .map(|p| p.strip_prefix(parent).unwrap_or(p))
+            .filter(|p| *p != self.label());
         let parts: Vec<&str> = [self.tech.as_deref(), path].into_iter().flatten().collect();
         parts.join(" · ")
     }
@@ -50,6 +54,21 @@ impl Island {
     pub fn title(&self) -> &str {
         self.display.as_deref().unwrap_or(&self.name)
     }
+}
+
+/// The directory all `paths` share, with its trailing `/` ("" none).
+pub fn common_parent<'a>(mut paths: impl Iterator<Item = &'a str>) -> String {
+    let dir = |p: &'a str| p.rfind('/').map_or("", |i| &p[..=i]);
+    let Some(first) = paths.next() else {
+        return String::new();
+    };
+    let mut prefix = dir(first);
+    for p in paths {
+        while !p.starts_with(prefix) {
+            prefix = dir(&prefix[..prefix.len() - 1]);
+        }
+    }
+    prefix.to_string()
 }
 
 /// `repositorySelectableProjects`: no workspaces, relative and unique paths.
@@ -382,14 +401,34 @@ pub mod tests {
         root.runtime = Some("node".into());
         let t = topology(vec![root, project("lib/core", "library")], Vec::new());
         let inv = inventory(&t);
-        assert_eq!(inv[0].detail(), "node");
-        assert_eq!(inv[1].detail(), "maven · lib/core");
+        assert_eq!(inv[0].detail(""), "node");
+        assert_eq!(inv[1].detail(""), "maven · lib/core");
         let external = Island {
             tech: None,
             source: None,
             ..inv[0].clone()
         };
-        assert_eq!(external.detail(), "");
+        assert_eq!(external.detail(""), "");
+    }
+
+    /// Crates under one directory: the shared `crates/` is dropped, and a
+    /// path then equal to the pin's name says nothing new.
+    #[test]
+    fn island_details_drop_the_shared_directory() {
+        let t = topology(
+            vec![
+                project("crates/archguard-engine", "library"),
+                project("crates/tools/gen", "tooling"),
+            ],
+            Vec::new(),
+        );
+        let inv = inventory(&t);
+        let parent = common_parent(inv.iter().filter_map(|i| i.source.as_deref()));
+        assert_eq!(parent, "crates/");
+        assert_eq!(inv[0].detail(&parent), "maven");
+        assert_eq!(inv[1].detail(&parent), "maven · tools/gen");
+        assert_eq!(common_parent(["a/x", "b/y"].into_iter()), "");
+        assert_eq!(common_parent(["a/b/x", "a/bc/y"].into_iter()), "a/");
     }
 
     #[test]
