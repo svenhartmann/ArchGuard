@@ -517,9 +517,8 @@ comparison of the native view against the web view on the same project
   that is not visible). Toolbar: bold, italic, code, link, headings 2-4,
   lists, quote, code block, undo, redo; shortcuts Cmd/Ctrl+B, I, E, K, Z,
   Y, A, C, X, V; Tab indents list entries. "Edit Markdown" stays for
-  tables and anything else. Limits: text is added only in editable parts
-  and in an empty part after the chapter's fixed end, not between two
-  fixed blocks; Backspace removes a character, not a grapheme cluster; a
+  anything else. Limits: text is added only in editable parts and in an
+  empty part after the chapter's fixed end, not between two fixed blocks; Backspace removes a character, not a grapheme cluster; a
   line of three backticks inside a code block ends it early. Checked with
   unit and property tests (20000 random mark combinations read back the
   same; every exported chapter of fixtures/py-layers and
@@ -527,3 +526,13 @@ comparison of the native view against the web view on the same project
   testing backend (`app_check.rs`: click into the editor, type, Enter,
   bold shortcut, the draft) and headless snapshots on macOS. Not checked
   by hand in a window; not checked on Windows and Linux.
+  *Changed 2026-11-16:* generated blocks are no longer only read-only. A
+  bar above each says it is refreshed from the analysis and offers "Edit as
+  own text", which removes its `archguard:arc42` markers (undoable); from
+  then on the analysis no longer updates it. Tables are edited cell by
+  cell (one block per cell, written back as a Markdown table): Tab and
+  Shift+Tab move between cells, Enter adds a row, toolbar buttons add a
+  table, rows and columns or delete them; cells never merge. An empty
+  paragraph shows a placeholder, and a click on fixed text puts the caret
+  in the nearest text to edit. Checked with unit tests and headless
+  snapshots of chapter 12 before and after taking the glossary over.

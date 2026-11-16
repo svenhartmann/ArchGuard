@@ -112,6 +112,8 @@ fn size_of(kind: &Kind, style: &Style) -> (f32, Option<f32>) {
         Kind::Heading(3) => (style.section, Some(style.title)),
         Kind::Heading(_) => (style.body, Some(style.strong)),
         Kind::Code { .. } => (style.small, None),
+        Kind::Cell { row: 0, .. } => (style.small, Some(style.strong)),
+        Kind::Cell { .. } => (style.body, None),
         _ => (style.body, None),
     }
 }
@@ -296,13 +298,6 @@ impl Laid {
         Cursor::from_point(&self.layout, x * s, y * s)
             .index()
             .min(self.len)
-    }
-
-    /// The word under a point (a double click).
-    pub fn word(&self, x: f32, y: f32) -> Range<usize> {
-        let s = self.scale;
-        let r = Selection::word_from_point(&self.layout, x * s, y * s).text_range();
-        r.start.min(self.len)..r.end.min(self.len)
     }
 
     /// The byte at `x` one line up (`delta` -1) or down (+1) from the line

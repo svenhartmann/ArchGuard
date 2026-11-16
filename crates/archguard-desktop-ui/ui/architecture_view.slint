@@ -8,10 +8,10 @@ import { Button, Disclosure, HelpTip, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView, Fit } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
-import { RichEditor, RichToolbar, RichData, RichItem, RichRun, RichRect, RichTools } from "architecture_rich.slint";
+import { RichEditor, RichToolbar, RichData, RichItem, RichRun, RichRect, RichTools, RichCell } from "architecture_rich.slint";
 
 export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation, ArcFigure, ArcFrame }
-export { RichData, RichItem, RichRun, RichRect, RichTools }
+export { RichData, RichItem, RichRun, RichRect, RichTools, RichCell }
 
 export struct ArcChapter {
     number: int,
@@ -150,7 +150,7 @@ component ChapterEditor inherits VerticalLayout {
     }
     if ArchitectureData.visual: Fit {
         Text {
-            text: @tr("Type in the text as it will read. Generated blocks are refreshed from the analysis and cannot be changed.");
+            text: @tr("Type in the text as it will read. Generated blocks are refreshed from the analysis; take one over as own text to change it.");
             color: Theme.muted;
             font-size: Theme.font-small;
             wrap: word-wrap;

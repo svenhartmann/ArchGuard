@@ -180,7 +180,7 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
 
 /// Share of the table width per column, the same for every row: by the
 /// longest text in the column (6 to 48 characters), at least 8 %.
-fn column_widths(columns: &[String], rows: &[Vec<String>]) -> Vec<f32> {
+pub(super) fn column_widths(columns: &[String], rows: &[Vec<String>]) -> Vec<f32> {
     let weight = |i: usize| {
         std::iter::once(&columns[i])
             .chain(rows.iter().filter_map(|r| r.get(i)))

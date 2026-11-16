@@ -240,7 +240,7 @@ fn wire_rich(ui: &AppWindow) {
     r.on_press(move |piece, block, x, y, shift| {
         if let Some(ui) = weak.upgrade() {
             on_rich(&ui, |r| {
-                r.press(piece as usize, block as usize, x, y, shift)
+                r.press(piece as usize, usize::try_from(block).ok(), x, y, shift)
             });
         }
     });
@@ -266,6 +266,12 @@ fn wire_rich(ui: &AppWindow) {
     r.on_tool(move |name| {
         if let Some(ui) = weak.upgrade() {
             on_rich(&ui, |r| r.tool(&name));
+        }
+    });
+    let weak = ui.as_weak();
+    r.on_take_over(move |piece| {
+        if let Some(ui) = weak.upgrade() {
+            on_rich(&ui, |r| r.take_over(piece as usize));
         }
     });
     let weak = ui.as_weak();
