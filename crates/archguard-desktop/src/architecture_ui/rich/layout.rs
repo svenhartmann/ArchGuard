@@ -157,13 +157,15 @@ impl Fonts {
         let scale = style.scale.max(0.25);
         // As Slint's own text (i-slint-core `sharedparley/shaping.rs`).
         let mut b = self.lcx.ranged_builder(&mut self.fcx, text, scale, false);
-        let family = match (code, style.family.as_str()) {
-            (true, _) => style.mono.as_str(),
-            // No family: the system's, as Slint's fallback.
-            (false, "") => "system-ui, sans-serif",
-            (false, family) => family,
+        let family = if code { &style.mono } else { &style.family };
+        // Slint's list: the family, then its fallbacks sans-serif and
+        // system-ui (i-slint-common `FALLBACK_FAMILIES`), so a text with
+        // no family (Linux) or a glyph the family lacks gets Slint's font.
+        let list = match family.as_str() {
+            "" => "sans-serif, system-ui".to_string(),
+            family => format!("\"{}\", sans-serif, system-ui", family.replace('"', "")),
         };
-        b.push_default(StyleProperty::FontFamily(family.into()));
+        b.push_default(StyleProperty::FontFamily(list.as_str().into()));
         b.push_default(StyleProperty::FontSize(size));
         // A Slint `Text`'s line: the font's own line height.
         b.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
@@ -363,7 +365,8 @@ mod tests {
             "Ein **langer** Absatz mit *mehreren* Wörtern, der bei schmaler Breite umbricht.",
         );
         // Slint lays out in physical pixels: a Retina window at scale 2.
-        for scale in [1.0, 2.0] {
+        // 1.25: a common Windows display setting.
+        for scale in [1.0, 1.25, 2.0] {
             let style = Style {
                 scale,
                 ..Style::default()
