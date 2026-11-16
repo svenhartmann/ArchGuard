@@ -122,17 +122,15 @@ fn start_live(ui: &AppWindow) {
     });
 }
 
-/// Re-read the active document's profile when its input changed and a pane
-/// shows the tab; a change while hidden is read once the tab shows again.
+/// Re-read the active document's profile when it is [`due`]; a change while
+/// hidden is read once the tab shows again.
 fn tick(ui: &AppWindow) {
     let Some(doc) = documents::active_id() else {
         return;
     };
-    if !runtime_shown(&crate::panes_ui::layout()) {
-        return;
-    }
+    let shown = runtime_shown(&crate::panes_ui::layout());
     let root = documents::with_state(doc, |s: &mut RuntimeState| {
-        if !s.live || s.reloading || stamp(&s.root) == s.stamp {
+        if !due(s, shown) {
             return None;
         }
         s.reloading = true;
@@ -187,18 +185,37 @@ fn land(s: &mut RuntimeState, profile: Result<Option<RuntimeProfile>, String>, n
     s.reloading = false;
 }
 
+/// Whether `tick` re-reads now: Live on, no read running, the input changed,
+/// and a pane shows the tab or the document has no recording yet, so the
+/// first one un-dims the tab while another view shows.
+fn due(s: &RuntimeState, shown: bool) -> bool {
+    (shown || s.profile.is_none()) && s.live && !s.reloading && stamp(&s.root) != s.stamp
+}
+
 fn runtime_shown(l: &crate::panes::Layout) -> bool {
     (0..l.panes.len()).any(|p| l.view(p).is_some_and(|t| t.kind == "runtime"))
 }
 
 impl TabState for RuntimeState {
+    /// It reads only the trace folder; the stamp keeps it current, so a new
+    /// analysis keeps the chosen request and Live off.
+    const DERIVED: bool = false;
+
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
 
-    fn pending(ui: &AppWindow, _error: Option<&str>) {
-        ui.global::<RuntimeData>()
-            .set_model(RuntimeModel::default());
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        ui.global::<RuntimeData>().set_model(pending_model(error));
+    }
+}
+
+/// The loading text, or why the first read failed.
+fn pending_model(error: Option<&str>) -> RuntimeModel {
+    RuntimeModel {
+        state: if error.is_some() { 3 } else { 0 },
+        error: error.unwrap_or_default().into(),
+        ..Default::default()
     }
 }
 
@@ -257,6 +274,7 @@ fn build(s: &RuntimeState) -> RuntimeModel {
         summary,
         breakdown: time::breakdown(p),
         hot: time::hot(p),
+        error: Default::default(),
     }
 }
 
@@ -337,6 +355,72 @@ mod tests {
         let mut l = Layout::single("graph");
         l.split_right(Some("runtime"), None);
         assert!(runtime_shown(&l));
+    }
+
+    /// The tab is dimmed without recordings; the first one, made while
+    /// another view shows, must reach it without a click.
+    #[test]
+    fn without_recordings_live_reload_runs_also_while_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = build_from(dir.path().to_path_buf());
+        let run = dir.path().join(".archguard/runtime/run-1");
+        std::fs::create_dir_all(&run).unwrap();
+        let file = run.join("traces-0.jsonl");
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/runtime/shop.jsonl"
+        );
+        std::fs::copy(fixture, &file).unwrap();
+        assert!(due(&s, false), "the first recording un-dims the tab");
+        let s = build_from(dir.path().to_path_buf());
+        let mut more = std::fs::read(&file).unwrap();
+        more.push(b'\n');
+        std::fs::write(&file, more).unwrap();
+        assert!(!due(&s, false), "with data it idles while hidden");
+        assert!(due(&s, true));
+    }
+
+    /// A failed first read is kept as the tab's error and not retried, so
+    /// the tab must say so instead of loading forever.
+    #[test]
+    fn a_failed_first_read_shows_its_error() {
+        assert_eq!(pending_model(None).state, 0, "loading");
+        let m = pending_model(Some("boom"));
+        assert_eq!((m.state, m.error.as_str()), (3, "boom"));
+    }
+
+    /// The tab reads only the trace folder: a new analysis (rust-analyzer
+    /// finished indexing) keeps the chosen request, page and Live off;
+    /// closing the document drops them.
+    #[test]
+    fn a_new_analysis_keeps_the_runtime_state() {
+        use tab_support::Start;
+        let dir = tempfile::tempdir().unwrap();
+        let doc = documents::with_store(|s| {
+            *s = documents::Store::default();
+            s.open(dir.path()).0
+        });
+        assert_eq!(tab_support::start::<RuntimeState>(), Start::Build(doc));
+        let mut built = build_from(dir.path().to_path_buf());
+        built.selected = Some(("t".into(), "s".into()));
+        (built.page, built.live) = (0, false);
+        assert!(tab_support::finish(
+            doc,
+            documents::generation(doc),
+            Ok(built)
+        ));
+        documents::with_store(|s| s.get_mut(doc).unwrap().forget_derived());
+        assert_eq!(
+            tab_support::start::<RuntimeState>(),
+            Start::Ready,
+            "not rebuilt"
+        );
+        let kept = documents::with_state(doc, |s: &mut RuntimeState| {
+            (s.selected.clone(), s.page, s.live)
+        });
+        assert_eq!(kept, Some((Some(("t".into(), "s".into())), 0, false)));
+        documents::with_store(|s| s.close(0));
+        assert!(documents::with_state(doc, |_: &mut RuntimeState| ()).is_none());
     }
 
     #[test]

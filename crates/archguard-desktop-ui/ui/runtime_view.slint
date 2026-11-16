@@ -65,8 +65,9 @@ export struct RtDetail {
 }
 
 export struct RuntimeModel {
-    // 0 loading, 1 ready, 2 no runtime input.
+    // 0 loading, 1 ready, 2 no runtime input, 3 reading failed (error).
     state: int,
+    error: string,
     // 0 requests, 1 summary, 2 time.
     page: int,
     live: bool,
@@ -206,14 +207,15 @@ export component RuntimeView inherits Rectangle {
     max-width: 100000px;
     preferred-height: 860px;
 
-    if m.state == 0: Text {
-        text: @tr("Reading the recorded runtime …");
-        color: Theme.muted;
+    if m.state == 0 || m.state == 3: Text {
+        text: m.state == 3 ? m.error : @tr("Reading the recorded runtime …");
+        color: m.state == 3 ? Theme.danger : Theme.muted;
         font-size: Theme.font-body;
+        wrap: word-wrap;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    if m.state > 0: VerticalLayout {
+    if m.state == 1 || m.state == 2: VerticalLayout {
         HorizontalLayout {
             padding-left: Theme.page-pad;
             padding-right: Theme.page-pad;

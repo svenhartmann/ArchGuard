@@ -25,6 +25,11 @@ pub(crate) use trace::traced;
 
 /// One tab's state, kept per document in [`documents`].
 pub trait TabState: Sized + 'static {
+    /// Whether the state is built from the analysis, so a new analysis
+    /// drops it ([`documents::derived`]); false for one that reads
+    /// something else and keeps itself current.
+    const DERIVED: bool = true;
+
     /// Show the state in the window.
     fn push(&mut self, ui: &AppWindow);
 
@@ -171,7 +176,7 @@ struct Pending<T> {
 
 /// What [`show_async`] does for the active document.
 #[derive(Debug, PartialEq, Eq)]
-enum Start {
+pub(crate) enum Start {
     /// The state exists: show it.
     Ready,
     /// A worker builds it, or its build failed.
@@ -183,7 +188,7 @@ enum Start {
 }
 
 /// Decide for the active document, marking it pending when building starts.
-fn start<T: 'static>() -> Start {
+pub(crate) fn start<T: TabState>() -> Start {
     if documents::with_active_state(|_: &mut T| ()).is_some() {
         return Start::Ready;
     }
@@ -193,7 +198,11 @@ fn start<T: 'static>() -> Start {
     let Some(doc) = documents::active_id() else {
         return Start::None;
     };
-    documents::derived::<T>();
+    if T::DERIVED {
+        documents::derived::<T>();
+    }
+    // Always: a new analysis drops a running build's result (generation),
+    // so its marker must go too, or the tab would wait for it forever.
     documents::derived::<Pending<T>>();
     documents::derived::<Queued<T>>();
     documents::set_state(
@@ -209,7 +218,7 @@ fn start<T: 'static>() -> Start {
 /// Store a worker's result for `doc`: the state, or the failure message in
 /// its pending marker. Returns whether `doc` is active. A result built
 /// from an older analysis (`generation`) is dropped: a newer build runs.
-fn finish<T: 'static>(doc: DocId, generation: u64, result: Result<T, String>) -> bool {
+pub(crate) fn finish<T: 'static>(doc: DocId, generation: u64, result: Result<T, String>) -> bool {
     if documents::generation(doc) != generation {
         return false;
     }
@@ -475,6 +484,10 @@ mod tests {
     }
 
     struct Demo(u32);
+
+    impl TabState for Demo {
+        fn push(&mut self, _: &AppWindow) {}
+    }
 
     /// Switching back to a document while its worker runs starts none.
     #[test]
