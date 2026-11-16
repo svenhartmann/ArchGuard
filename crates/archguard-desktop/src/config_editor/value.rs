@@ -211,10 +211,15 @@ fn update_list(array: &mut Array, items: &[String]) {
         .map(|(_, indent)| format!("\n{indent}"));
     array.clear();
     let mut carry = lines[0];
-    for (pick, item) in picks.iter().zip(items) {
+    for (k, (pick, item)) in picks.iter().zip(items).enumerate() {
         let (mut value, own) = match pick {
             Some(i) => (old[*i].clone(), owns[*i]),
             None => (Value::from(item.as_str()), indent.as_deref()),
+        };
+        // An item on the line before it is spaced by its new place.
+        let own = match own {
+            Some(o) if !o.contains('\n') => Some(if k == 0 { "" } else { " " }),
+            o => o,
         };
         if let Some(prefix) = join(carry, own) {
             value.decor_mut().set_prefix(prefix);

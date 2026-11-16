@@ -270,6 +270,26 @@ cycles = 1.5
 }
 
 #[test]
+fn one_line_lists_stay_spaced_as_written() {
+    let dir = fixture("");
+    let mut editor = editor_with(
+        dir.path(),
+        "[arc42]\nhidden_diagrams = [\"a\", \"b\", \"c\"]\n",
+    );
+    editor
+        .set("arc42.hidden_diagrams", list(&["b", "c"]))
+        .unwrap();
+    assert_eq!(editor.text(), "[arc42]\nhidden_diagrams = [\"b\", \"c\"]\n");
+    editor
+        .set("arc42.hidden_diagrams", list(&["c", "b", "d"]))
+        .unwrap();
+    assert_eq!(
+        editor.text(),
+        "[arc42]\nhidden_diagrams = [\"c\", \"b\", \"d\"]\n"
+    );
+}
+
+#[test]
 fn edits_keep_arrays_without_trailing_comma_and_inline_tables() {
     let dir = fixture("");
     let text = "\
