@@ -70,19 +70,22 @@ impl Files {
     fn score(&self, f: &File) -> Option<f64> {
         let usable = matches!(self.status.as_str(), "ready" | "partial" | "stale");
         let fresh = f.status == "unchanged_since_import";
-        let measured = f
-            .lines
-            .as_ref()
-            .is_some_and(|c| c.total > 0 && c.covered <= c.total);
+        let measured = f.lines.as_ref().and_then(share).is_some();
         f.score
             .filter(|s| usable && fresh && measured && s.is_finite())
     }
 }
 
+/// The covered share of a valid counter, 0 to 1: the one rule for a
+/// usable coverage count everywhere (`total > 0`, `covered <= total`).
+pub(crate) fn share(c: &CoverageCounter) -> Option<f64> {
+    (c.total > 0 && c.covered <= c.total).then(|| c.covered as f64 / c.total as f64)
+}
+
 /// `coverageCounterText`: `75.0% (3 / 4)`, `—` without a valid count.
 fn counter(l: Locale, c: Option<&CoverageCounter>) -> String {
     match c {
-        Some(c) if c.total > 0 && c.covered <= c.total => {
+        Some(c) if share(c).is_some() => {
             let (covered, total) = (c.covered as f64, c.total as f64);
             let pct = l.pct(100.0 * covered / total, 1);
             format!("{pct} ({})", l.ratio(c.covered as i64, c.total as i64))
@@ -294,6 +297,17 @@ mod tests {
             .map(|l| l.a.as_str())
             .collect();
         assert_eq!(rows, ["e.rs", "a.rs", "d.rs", "b.rs", "c.rs", "f.rs", "g.rs"]);
+    }
+
+    /// A counter is valid with lines to count and no more covered than
+    /// total; its share is then 0 to 1.
+    #[test]
+    fn only_a_valid_counter_has_a_share() {
+        let c = |covered, total| CoverageCounter { covered, total };
+        assert_eq!(share(&c(3, 4)), Some(0.75));
+        assert_eq!(share(&c(4, 4)), Some(1.0));
+        assert_eq!(share(&c(0, 0)), None);
+        assert_eq!(share(&c(5, 4)), None);
     }
 
     /// Without an import the review says coverage is unknown.

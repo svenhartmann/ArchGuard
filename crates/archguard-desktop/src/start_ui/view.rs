@@ -3,6 +3,7 @@
 
 use slint::{ComponentHandle, SharedString};
 
+use super::coverage_detail::share;
 use super::details;
 use super::evidence::Scope;
 use super::kpis;
@@ -82,14 +83,16 @@ fn kpi_tone(s: &StartState, cell: &Cell) -> Tone {
     }
 }
 
+/// The entity's line coverage when it is a valid count.
+fn lines(s: &StartState, e: usize) -> Option<archguard_engine::CoverageCounter> {
+    let l = s.ev.entity(e).coverage.as_ref()?.lines.as_ref()?;
+    share(l).map(|_| l.clone())
+}
+
 /// Red with a gap, green when fully covered, gray unless every member has
 /// usable file coverage.
 fn coverage_tone(s: &StartState, cell: &Cell) -> Tone {
-    let known: Vec<_> = cell
-        .entities
-        .iter()
-        .filter_map(|&e| s.ev.entity(e).coverage.as_ref()?.lines.clone())
-        .collect();
+    let known: Vec<_> = cell.entities.iter().filter_map(|&e| lines(s, e)).collect();
     if known.is_empty() || known.len() != cell.entities.len() {
         return Tone::Muted;
     }
@@ -381,7 +384,7 @@ fn fill_coverage(m: &mut StartModel, s: &StartState) {
         .cells
         .iter()
         .flat_map(|c| &c.entities)
-        .filter_map(|&e| s.ev.entity(e).coverage.as_ref()?.lines.clone())
+        .filter_map(|&e| lines(s, e))
         .collect();
     m.coverage_known = !known.is_empty();
     m.covered_lines = known.iter().map(|l| l.covered).sum::<u64>() as i32;

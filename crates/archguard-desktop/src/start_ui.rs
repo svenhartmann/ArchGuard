@@ -11,7 +11,7 @@ mod arrows;
 mod camera_wire;
 mod class_detail;
 mod connections;
-mod coverage_detail;
+pub(crate) mod coverage_detail;
 mod details;
 mod evidence;
 mod follow_place;
