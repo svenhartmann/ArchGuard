@@ -84,9 +84,9 @@ pub fn wire(ui: &AppWindow) {
         v.filter = state::filter_of(first_or(i));
         v.limit = PAGE;
     }));
-    q.on_sort(on_view(&a, |v, i: i32| {
-        v.sort = state::sort_of(first_or(i));
-        v.limit = PAGE;
+    q.on_sort(a.on(|s, _, i: i32| {
+        s.view.sort = state::sort_of(first_or(i), &s.columns);
+        s.view.limit = PAGE;
     }));
     q.on_more(a.on0(|s, _| s.view.limit += PAGE));
     q.on_select_class(follow::navigation(
@@ -242,6 +242,15 @@ pub fn push(ui: &AppWindow, s: &mut QualityState) {
             m.status_reason = heatmap::gaps(&s.lang, &code.classes).into();
         }
         m.noc_unmeasured = heatmap::unmeasured(&code.classes, "noc");
+        // Hidden columns `gaps` does not name: metrics that apply to no class.
+        m.heat_inapplicable = (0..heatmap::METRICS.len())
+            .filter(|i| !s.columns.contains(i))
+            .map(|i| heatmap::METRICS[i])
+            .filter(|k| !heatmap::unmeasured(&code.classes, k))
+            .map(str::to_uppercase)
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into();
     }
     ui.global::<QualityData>().set_model(m);
 }
@@ -265,9 +274,17 @@ fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
         heat: sync_rows_with(&old.heat, p.heat.into_iter().map(heat_row), |o, n| {
             n.cells = sync_rows(&o.cells, n.cells.iter());
         }),
+        heat_keys: sync_rows(
+            &old.heat_keys,
+            p.columns
+                .iter()
+                .map(|&i| SharedString::from(heatmap::METRICS[i].to_uppercase())),
+        ),
         heat_help: sync_rows(
             &old.heat_help,
-            (0..heatmap::METRICS.len()).map(|i| SharedString::from(heatmap_text::help(lang, i))),
+            p.columns
+                .iter()
+                .map(|&i| SharedString::from(heatmap_text::help(lang, i))),
         ),
         detail: sync_rows_with(
             &old.detail,

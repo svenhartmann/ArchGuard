@@ -32,8 +32,12 @@ export struct QualityModel {
     filter: int,
     sort: int,
     heat: [QualityHeatRow],
-    // Metric definitions for the heatmap's column headers.
+    // The heatmap's columns: the metrics measured for some class
+    // ("WMC"), and their definitions for the headers.
+    heat-keys: [string],
     heat-help: [string],
+    // Hidden columns of metrics that apply to no class, "DIT · NOC".
+    heat-inapplicable: string,
     detail: [QualityCard],
     cards: [QualityCard],
     more: bool,
@@ -113,6 +117,8 @@ export component QualityView inherits Rectangle {
     // A split pane: the search moves below view and scope.
     property <bool> narrow: root.width < 620px;
     property <bool> picker;
+    // NOC is the fourth metric, so a shown NOC is among the first four keys.
+    property <bool> noc-shown: root.m.heat-keys[0] == "NOC" || root.m.heat-keys[1] == "NOC" || root.m.heat-keys[2] == "NOC" || root.m.heat-keys[3] == "NOC";
     property <string> noc-note: @tr("Not measured in this analysis: NOC needs a complete call and inheritance analysis, and this one is partial. “—” means not measured, not zero.");
 
     VerticalLayout {
@@ -268,6 +274,12 @@ export component QualityView inherits Rectangle {
                 font-size: Theme.font-small;
                 overflow: elide;
             }
+            if root.m.heatmap && root.m.heat-inapplicable != "": Text {
+                text: @tr("Not applicable to these classes: {}", root.m.heat-inapplicable);
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                overflow: elide;
+            }
         }
 
         scroll := ScrollView {
@@ -302,7 +314,14 @@ export component QualityView inherits Rectangle {
                         ComboBox {
                             height: Theme.control-h;
                             width: 130px;
-                            model: [@tr("Review first"), @tr("Class name"), "CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"];
+                            // Only the shown columns (Slint has no array concatenation).
+                            property <[string]> k: root.m.heat-keys;
+                            model: k.length == 1 ? [@tr("Review first"), @tr("Class name"), k[0]]
+                                : k.length == 2 ? [@tr("Review first"), @tr("Class name"), k[0], k[1]]
+                                : k.length == 3 ? [@tr("Review first"), @tr("Class name"), k[0], k[1], k[2]]
+                                : k.length == 4 ? [@tr("Review first"), @tr("Class name"), k[0], k[1], k[2], k[3]]
+                                : k.length == 5 ? [@tr("Review first"), @tr("Class name"), k[0], k[1], k[2], k[3], k[4]]
+                                : [@tr("Review first"), @tr("Class name"), k[0], k[1], k[2], k[3], k[4], k[5]];
                             current-index: root.m.sort;
                             selected => { QualityData.sort(self.current-index); }
                         }
@@ -316,7 +335,7 @@ export component QualityView inherits Rectangle {
                         RatingChip { rating: 2; text: @tr("Elevated"); font: Theme.font-caption; width: self.label-w + 16px; height: 24px; }
                         RatingChip { rating: 3; text: @tr("High"); font: Theme.font-caption; width: self.label-w + 16px; height: 24px; }
                         RatingChip { rating: 0; text: @tr("Unknown"); font: Theme.font-caption; width: self.label-w + 16px; height: 24px; }
-                        RatingChip { rating: 4; text: @tr("Informational"); font: Theme.font-caption; width: self.label-w + 16px; height: 24px; }
+                        if root.noc-shown: RatingChip { rating: 4; text: @tr("Informational"); font: Theme.font-caption; width: self.label-w + 16px; height: 24px; }
                         HelpTip {
                             size: 24px;
                             y: (parent.height - self.height) / 2 + 9px;
@@ -339,8 +358,10 @@ export component QualityView inherits Rectangle {
 
                 if root.m.heatmap && root.m.heat.length > 0: table := Rectangle {
                     property <length> gap: 4px;
-                    property <length> name-w: (self.width - 2 * gap) * 0.4;
-                    property <length> cell-w: (self.width - name-w - 8 * gap) / 6;
+                    property <int> n: root.m.heat-keys.length;
+                    // Cells keep their six-column width; the class name takes the rest.
+                    property <length> cell-w: (self.width - (self.width - 2 * gap) * 0.4 - 8 * gap) / 6;
+                    property <length> name-w: self.width - n * cell-w - (n + 2) * gap;
                     border-radius: 8px;
                     border-width: 1px;
                     border-color: Theme.border;
@@ -356,7 +377,7 @@ export component QualityView inherits Rectangle {
                         font-weight: Theme.weight-strong;
                         vertical-alignment: center;
                     }
-                    for key[j] in ["CBO", "RFC", "DIT", "NOC", "WMC", "LCOM4"]: Rectangle {
+                    for key[j] in root.m.heat-keys: Rectangle {
                         x: gap + table.name-w + gap + j * (table.cell-w + gap);
                         y: 8px;
                         width: table.cell-w;
@@ -381,7 +402,7 @@ export component QualityView inherits Rectangle {
                                 y: (parent.height - self.height) / 2;
                             }
                         }
-                        TipArea { tip: root.m.heat-help[j] + (j == 3 && root.m.noc-unmeasured ? "\n\n" + root.noc-note : ""); }
+                        TipArea { tip: root.m.heat-help[j] + (key == "NOC" && root.m.noc-unmeasured ? "\n\n" + root.noc-note : ""); }
                     }
                     for row[r] in root.m.heat: Rectangle {
                         y: 36px + r * 47px;
@@ -419,7 +440,7 @@ export component QualityView inherits Rectangle {
                             rating: cell.state;
                             text: cell.text;
                             TipArea {
-                                tip: cell.tip + (j == 3 && root.m.noc-unmeasured ? "\n\n" + root.noc-note : "");
+                                tip: cell.tip + (root.m.heat-keys[j] == "NOC" && root.m.noc-unmeasured ? "\n\n" + root.noc-note : "");
                                 pin-on-click: false;
                                 mouse-cursor: pointer;
                                 activated => { QualityData.select-class(row.class-id); }

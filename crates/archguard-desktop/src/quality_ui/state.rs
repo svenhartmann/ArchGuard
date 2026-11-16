@@ -73,6 +73,8 @@ pub struct QualityState {
     /// The source node names, the targets the tab knows.
     pub(super) names: BTreeSet<String>,
     cohorts: Cohorts,
+    /// The heatmap's columns, see [`heatmap::columns`].
+    pub(super) columns: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -110,6 +112,8 @@ pub struct Page {
     pub filter: usize,
     pub sort: usize,
     pub heat: Vec<HeatRow>,
+    /// The heatmap's columns, as [`METRICS`] indices.
+    pub columns: Vec<usize>,
     pub detail: Option<Card>,
     pub cards: Vec<Card>,
     pub more: bool,
@@ -124,12 +128,14 @@ impl QualityState {
             view: View::default(),
             names: BTreeSet::new(),
             cohorts: Cohorts::default(),
+            columns: Vec::new(),
         }
     }
 
     pub fn new(lang: Texts, inputs: Inputs) -> Self {
         let names = inputs.source.nodes.iter().map(|n| n.name.clone()).collect();
         let cohorts = Cohorts::new(&inputs.code.classes);
+        let columns = heatmap::columns(&inputs.code.classes);
         let section = if inputs.code.classes.is_empty() {
             Section::Cohesion
         } else {
@@ -144,6 +150,7 @@ impl QualityState {
             inputs: Some(inputs),
             names,
             cohorts,
+            columns,
         }
     }
 
@@ -173,9 +180,10 @@ impl QualityState {
             notes: self.notes(inputs),
             heatmap: self.view.section == Section::Heatmap,
             filter: filter_index(self.view.filter),
-            sort: sort_index(self.view.sort),
+            sort: sort_index(self.sort(), &self.columns),
             cards,
             heat,
+            columns: self.columns.clone(),
             more: self.view.limit < total,
             ..Page::default()
         };
@@ -246,19 +254,22 @@ pub fn filter_of(i: usize) -> Filter {
     [Filter::All, Filter::High, Filter::Low, Filter::Unknown][i.min(3)]
 }
 
-fn sort_index(s: Sort) -> usize {
+/// The sort picker lists "Review first", "Class name" and the `columns`.
+fn sort_index(s: Sort, columns: &[usize]) -> usize {
     match s {
         Sort::Priority => 0,
         Sort::Name => 1,
-        Sort::Metric(i) => 2 + i,
+        Sort::Metric(m) => columns.iter().position(|&c| c == m).map_or(0, |p| 2 + p),
     }
 }
 
-pub fn sort_of(i: usize) -> Sort {
+pub fn sort_of(i: usize, columns: &[usize]) -> Sort {
     match i {
         0 => Sort::Priority,
         1 => Sort::Name,
-        i => Sort::Metric((i - 2).min(METRICS.len() - 1)),
+        i => columns
+            .get(i - 2)
+            .map_or(Sort::Priority, |&m| Sort::Metric(m)),
     }
 }
 
@@ -353,7 +364,15 @@ impl QualityState {
         scope: &Scope,
     ) -> Vec<&'a archguard_engine::ClassMetrics> {
         let found = rows::classes(&inputs.code.classes, scope, &self.view.query);
-        heatmap::rows(&self.cohorts, found, self.view.filter, self.view.sort)
+        heatmap::rows(&self.cohorts, found, self.view.filter, self.sort())
+    }
+
+    /// The chosen sort; one by a hidden metric sorts as "Review first".
+    fn sort(&self) -> Sort {
+        match self.view.sort {
+            Sort::Metric(m) if !self.columns.contains(&m) => Sort::Priority,
+            s => s,
+        }
     }
 
     fn heat_row(&self, row: &archguard_engine::ClassMetrics) -> HeatRow {
@@ -367,7 +386,11 @@ impl QualityState {
                 .to_string(),
             file: row.file.clone(),
             selected: self.view.selected.as_deref() == Some(row.class_id.as_str()),
-            cells: (0..METRICS.len()).map(|i| self.heat_cell(row, i)).collect(),
+            cells: self
+                .columns
+                .iter()
+                .map(|&i| self.heat_cell(row, i))
+                .collect(),
         }
     }
 
@@ -616,6 +639,29 @@ mod tests {
         assert_eq!((page.heat.len(), page.more), (25, false));
         assert_eq!(page.scope_summary, "All packages");
         assert_eq!(page.targets[0], "Entire source scope");
+    }
+
+    /// A metric measured for no class is no column and no sort option;
+    /// without any measured metric all columns stay.
+    #[test]
+    fn metrics_measured_for_no_class_are_no_columns() {
+        let mut rows = classes(3);
+        rows[0].wmc = crate::quality_ui::heatmap::tests::count(Some(7), "ready");
+        let mut s = QualityState::new(Texts::default(), inputs(rows));
+        let page = s.page();
+        assert_eq!(page.columns, [4], "only WMC has a value");
+        assert_eq!(page.heat[0].cells.len(), 1);
+        assert_eq!(page.heat[0].cells[0].text, "7");
+        // Sort options: "Review first", "Class name", "WMC".
+        s.view.sort = sort_of(2, &page.columns);
+        assert_eq!(s.view.sort, Sort::Metric(4));
+        assert_eq!(s.page().sort, 2);
+        assert_eq!(sort_of(3, &page.columns), Sort::Priority);
+        s.view.sort = Sort::Metric(0);
+        assert_eq!(s.page().sort, 0, "a hidden metric sorts as Review first");
+
+        let mut s = QualityState::new(Texts::default(), inputs(classes(3)));
+        assert_eq!(s.page().columns, [0, 1, 2, 3, 4, 5]);
     }
 
     #[test]
