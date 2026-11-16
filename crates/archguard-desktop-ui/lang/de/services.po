@@ -238,3 +238,11 @@ msgstr "{} Manifest-Projektwurzeln ohne Workspace-Aggregatoren, {} lokale Compos
 
 msgid "The direction is relative to the selected service. Select a service in the diagram to show its incoming, outgoing or both relations."
 msgstr "Die Richtung bezieht sich auf den ausgewählten Dienst. Wähle im Diagramm einen Dienst, um seine eingehenden, ausgehenden oder beide Beziehungen zu zeigen."
+
+msgid "Services come from Docker Compose files, Kubernetes workload manifests, .NET Aspire AppHosts, application project manifests and OpenTelemetry traces in .archguard/otel-traces.json. Helm charts and Kustomize overlays are read only when ARCHGUARD_RENDER_MANIFESTS=1 is set."
+msgstr "Dienste stammen aus Docker-Compose-Dateien, Kubernetes-Workload-Manifesten, .NET-Aspire-AppHosts, Projektmanifesten von Anwendungen und OpenTelemetry-Traces in .archguard/otel-traces.json. Helm-Charts und Kustomize-Overlays werden nur gelesen, wenn ARCHGUARD_RENDER_MANIFESTS=1 gesetzt ist."
+
+msgid "Rust executables can be command-line tools or jobs, so they become services only with a deployment declaration. The {0} application found is listed under Details."
+msgid_plural "Rust executables can be command-line tools or jobs, so they become services only with a deployment declaration. The {0} applications found are listed under Details."
+msgstr[0] "Rust-Programme können Kommandozeilenwerkzeuge oder Jobs sein und werden daher erst mit einer Deployment-Deklaration zu Diensten. Die gefundene Anwendung steht unter Details."
+msgstr[1] "Rust-Programme können Kommandozeilenwerkzeuge oder Jobs sein und werden daher erst mit einer Deployment-Deklaration zu Diensten. Die {0} gefundenen Anwendungen stehen unter Details."

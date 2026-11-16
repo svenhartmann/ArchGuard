@@ -275,3 +275,30 @@ fn a_narrow_summary_still_warns_of_an_incomplete_analysis() {
         "no warning drawn above the separator at {first}"
     );
 }
+
+/// Applications but no service: below the summary the page explains in a
+/// heading and several lines where services come from (the text itself is
+/// checked in the snapshot), not only one grey "none found" line.
+#[test]
+fn without_services_the_page_explains_where_they_come_from() {
+    let window = window(PW, PH);
+    let page = Page::new().expect("component");
+    page.show().expect("shown");
+    page.global::<ServicesData>().set_model(ServicesModel {
+        state: 1,
+        projects: 3,
+        applications: 2,
+        zoom: 1.0,
+        ..Default::default()
+    });
+    let buf = frame(&window, PW, PH);
+    let bg = buf[(PH - 4) * PW + 4];
+    let same = |p: PremultipliedRgbaColor| (p.red, p.green, p.blue) == (bg.red, bg.green, bg.blue);
+    let first = (0..PH)
+        .find(|&y| [2, PW / 2, PW - 2].iter().all(|&x| !same(buf[y * PW + x])))
+        .expect("separator below the summary");
+    let inked = (first + 2..PH)
+        .filter(|&y| (0..PW).any(|x| !same(buf[y * PW + x])))
+        .count();
+    assert!(inked > 60, "only {inked} inked rows below the summary");
+}
