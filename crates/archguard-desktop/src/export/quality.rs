@@ -3,13 +3,14 @@
 //! the tab's filters.
 
 use archguard_engine::{
-    CodeMetricsReport, CohesionReport, DuplicationReport, KnowledgeReport, MeasurementReport,
-    MutationReport, QualityHistoryReport, TestEvidenceReport,
+    CodeMetricsReport, CohesionReport, CoverageCounter, DuplicationReport, KnowledgeReport,
+    MeasurementReport, MutationReport, QualityHistoryReport, TestEvidenceReport,
 };
 use serde_json::{Value, json};
 
 use super::cells::{Lines, cell, text, vcell};
 use super::snapshot::{Snapshot, add_filters, base, extend};
+use crate::start_ui::coverage_detail::share;
 
 /// The Quality tab's reports (`quality_ui::inputs::Inputs`).
 pub struct QualityInput<'a> {
@@ -325,10 +326,11 @@ fn history(lines: &mut Lines, s: &Value) {
 fn history_modules(lines: &mut Lines, h: &Value) {
     for p in items(&h["latest"], "modules") {
         let lc = &p["line_coverage"];
-        let cov = lc["total"]
-            .as_f64()
-            .filter(|t| *t != 0.0)
-            .and_then(|t| lc["covered"].as_f64().map(|c| 100.0 * c / t));
+        let cov = lc["covered"]
+            .as_u64()
+            .zip(lc["total"].as_u64())
+            .and_then(|(covered, total)| share(&CoverageCounter { covered, total }))
+            .map(|s| 100.0 * s);
         push(
             lines,
             &[
@@ -560,6 +562,20 @@ mod tests {
             "{md}"
         );
         assert!(md.contains("## Code duplication"), "{md}");
+    }
+
+    /// An over-counted coverage counter (covered > total) exports as "—",
+    /// not as more than 100 %.
+    #[test]
+    fn over_counted_module_coverage_exports_unknown() {
+        let h = json!({"latest": {"modules": [{
+            "node": "a", "coverage_status": "ready",
+            "line_coverage": {"covered": 5, "total": 4}
+        }]}});
+        let mut lines = Lines::new();
+        history_modules(&mut lines, &h);
+        let text = lines.join("\n");
+        assert!(text.contains("Coverage: ready · — ·"), "{text}");
     }
 
     #[test]

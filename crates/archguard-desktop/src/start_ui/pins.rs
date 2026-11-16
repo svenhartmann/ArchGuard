@@ -142,8 +142,10 @@ pub struct Want {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Spot {
     Shown(Rect),
-    /// A dot at the anchor; the pin shows on hover.
+    /// No free place: a hover-only spot at the anchor.
     Collapsed,
+    /// Beyond the `shown` limit: a visible dot at the anchor.
+    Waiting,
     /// The anchor is off the canvas.
     Off,
 }
@@ -177,7 +179,7 @@ fn fit(v: f64, lo: f64, hi: f64) -> f64 {
 }
 
 /// Place the pins of `wants` in priority order. `occupied` starts with the
-/// floating controls; after `shown` pins on the canvas the rest collapse.
+/// floating controls; after `shown` pins on the canvas the rest wait.
 pub fn place(
     wants: &[Want],
     canvas: (f64, f64),
@@ -196,7 +198,7 @@ pub fn place(
                 return Spot::Off;
             }
             if room == 0 {
-                return Spot::Collapsed;
+                return Spot::Waiting;
             }
             room -= 1;
             let (hw, hh) = (want.width / 2.0, PIN_H / 2.0);
@@ -365,7 +367,19 @@ mod tests {
         assert_eq!(spots[0], Spot::Off);
         assert!(matches!(spots[1], Spot::Shown(_)), "{spots:?}");
         assert!(matches!(spots[2], Spot::Shown(_)), "{spots:?}");
-        assert_eq!(spots[3], Spot::Collapsed);
+        assert_eq!(spots[3], Spot::Waiting);
+    }
+
+    /// A pin beyond the limit waits as a visible dot; a pin within the
+    /// limit that finds no free place collapses to a hover-only spot.
+    #[test]
+    fn limit_dots_differ_from_crowded_dots() {
+        // One big block covers the whole canvas: no place is clear.
+        let block = sq(500.0, 400.0, 2000.0);
+        let cover = Cover::new(&[block], (1000.0, 800.0));
+        let wants = [want((500.0, 400.0), block), want((300.0, 300.0), block)];
+        let spots = place(&wants, (1000.0, 800.0), Vec::new(), &cover, 1);
+        assert_eq!(spots, [Spot::Collapsed, Spot::Waiting]);
     }
 
     #[test]

@@ -9,6 +9,7 @@ use archguard_engine::{DuplicateGroup, QualityHistoryReport};
 use super::card::{Builder, Card, Kind, Line};
 use super::lang::{self, number, percent};
 use super::rows::{HistoryRow, MutationRow, TestRow};
+use crate::start_ui::coverage_detail::share;
 use crate::tab_support::Texts;
 
 fn opt<T: ToString>(v: Option<T>) -> String {
@@ -90,8 +91,8 @@ fn history_metrics(b: &mut Builder, report: &QualityHistoryReport, row: &History
         .and_then(|c| c.modules.iter().find(|m| m.node == row.node));
     let coverage = p
         .and_then(|p| p.line_coverage.as_ref())
-        .filter(|c| c.total > 0)
-        .map(|c| 100.0 * c.covered as f64 / c.total as f64);
+        .and_then(share)
+        .map(|s| 100.0 * s);
     let metrics = [
         (
             lang.t("Line coverage"),
@@ -304,6 +305,34 @@ pub fn duplicate(lang: &Texts, nodes: &BTreeSet<String>, group: &DuplicateGroup)
 mod tests {
     use super::*;
     use archguard_engine::DuplicateOccurrence;
+
+    /// An over-counted coverage counter (covered > total) is no valid
+    /// measurement: the card shows "—", not more than 100 %.
+    #[test]
+    fn over_counted_line_coverage_shows_unknown() {
+        let snapshot: archguard_engine::ModuleQualitySnapshot = serde_json::from_value(
+            serde_json::json!({
+                "node": "a", "files": 1, "mapped_files": 1, "source_sha256": "",
+                "coverage_status": "ready", "line_coverage": {"covered": 5, "total": 4},
+                "coverage_files": 1, "semantic_status": "", "declared_methods": 0,
+                "measured_methods": 0, "findings_status": ""
+            }),
+        )
+        .expect("snapshot");
+        let report: QualityHistoryReport = serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "status": "ready", "records": [],
+            "records_truncated": false, "diagnostics": []
+        }))
+        .expect("report");
+        let row = HistoryRow {
+            node: "a".into(),
+            snapshot: Some(&snapshot),
+        };
+        let (lang, nodes) = (Texts::default(), BTreeSet::new());
+        let mut b = Builder::new(&lang, &nodes, "a");
+        history_metrics(&mut b, &report, &row);
+        assert_eq!(b.done().items[0].text, "Line coverage: —");
+    }
 
     #[test]
     fn duplicate_card_counts_tokens_lines_and_locations() {
