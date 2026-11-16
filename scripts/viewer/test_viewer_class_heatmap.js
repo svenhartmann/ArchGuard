@@ -49,3 +49,7 @@ console.log('Class heatmap: honest comparison, stable filters, paging, exact cla
 assert.match(app.run("classMetricInterpretation({file:'api.go',dit:{value:null,observed:0,status:'not_applicable'}},'dit')"),/Not applicable|Nicht anwendbar/,'Go inheritance is not an incomplete zero measurement');
 assert.equal(app.run("classMetricLanguage({file:'api.go'})"),'go');
 assert.equal(app.run("classMetricAssessment({file:'api.go',dit:{value:null,observed:0,status:'not_applicable'}},'dit').state"),'not_applicable');
+// Same extensions the engine scans: .mts/.cts are TypeScript, .kts build scripts are not scanned.
+assert.equal(app.run("classMetricLanguage({file:'src/a.mts'})"),'typescript');
+assert.equal(app.run("classMetricLanguage({file:'src/a.cts'})"),'typescript');
+assert.equal(app.run("classMetricLanguage({file:'build.gradle.kts'})"),'unknown');

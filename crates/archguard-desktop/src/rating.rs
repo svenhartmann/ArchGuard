@@ -88,18 +88,19 @@ pub fn not_applicable(row: &ClassMetrics, key: &str) -> bool {
     metric(row, key).is_some_and(|m| m.status == "not_applicable")
 }
 
-/// `classMetricLanguage`: the cohort language from the file extension.
+/// `classMetricLanguage`: the cohort language from the file extension,
+/// for the extensions `archguard_extract::Lang::from_extension` scans.
 pub fn language(file: &str) -> &'static str {
     let ext = file.rsplit('.').next().unwrap_or("").to_lowercase();
     match ext.as_str() {
         "go" => "go",
         "java" => "java",
         "cs" => "csharp",
-        "ts" | "tsx" => "typescript",
+        "ts" | "tsx" | "mts" | "cts" => "typescript",
         "js" | "jsx" | "mjs" | "cjs" => "javascript",
         "rs" => "rust",
         "php" => "php",
-        "kt" | "kts" => "kotlin",
+        "kt" => "kotlin",
         "py" => "python",
         _ => "unknown",
     }
@@ -277,12 +278,16 @@ pub(crate) mod tests {
     #[test]
     fn languages_come_from_the_extension() {
         assert_eq!(language("src/A.TSX"), "typescript");
+        // Same extensions the engine scans (`Lang::from_extension`).
+        assert_eq!(language("src/a.mts"), "typescript");
+        assert_eq!(language("src/a.cts"), "typescript");
         assert_eq!(language("a/B.cs"), "csharp");
         // Languages the engine measures classes for get their own cohort.
         assert_eq!(language("lib.rs"), "rust");
         assert_eq!(language("src/A.php"), "php");
         assert_eq!(language("A.kt"), "kotlin");
-        assert_eq!(language("build.gradle.kts"), "kotlin");
+        // The engine skips `.kts` build scripts, so they get no cohort.
+        assert_eq!(language("build.gradle.kts"), "unknown");
         assert_eq!(language("a/b.py"), "python");
         assert_eq!(language("main.zig"), "unknown");
     }
