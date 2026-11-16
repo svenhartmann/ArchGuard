@@ -23,12 +23,13 @@ impl SettingsState {
     }
 
     /// Text typed into the field at `path`: one line, or one entry per
-    /// line for lists and maps. Empty text unsets an optional field.
+    /// line for lists and maps. Empty text unsets an optional field, but
+    /// writes an empty list: absent `public` means all, empty means none.
     pub fn edit(&mut self, path: &str, raw: &str) {
         let Some(field) = catalogue::field(path) else {
             return;
         };
-        let parsed = if raw.trim().is_empty() && field.optional {
+        let parsed = if raw.trim().is_empty() && field.optional && field.kind != Kind::List {
             None
         } else {
             Some(FieldValue::parse(field.kind, raw))

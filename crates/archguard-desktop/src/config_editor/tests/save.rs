@@ -88,7 +88,7 @@ fn bind_marks_the_document_dirty_and_saves_through_it() {
     let dir = fixture("ts-cyclic");
     let (doc, _) = documents::with_store(|s| s.open(dir.path()));
     let editor = Rc::new(RefCell::new(ConfigEditor::load(dir.path()).unwrap()));
-    bind(doc, &editor);
+    bind(doc, &editor, &Default::default());
     editor
         .borrow_mut()
         .set("modules.depth", FieldValue::Int(1))

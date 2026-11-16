@@ -70,13 +70,13 @@ impl SettingsState {
     ) {
         let in_array = f.path.contains("[]");
         match f.kind {
-            Kind::TableArray if query.is_empty() || array_matches(f, query, &self.texts) => {
+            Kind::TableArray if query.is_empty() || self.array_matches(f, query) => {
                 out.push(array_head(f, &self.texts));
                 self.push_entries(out, &editor.entries(f.path, self.effective.as_ref()), f);
             }
             // Nested sections (`semantic.java`); top-level ones are the group.
             Kind::Table if query.is_empty() && f.path.contains('.') => out.push(heading(f.path)),
-            _ if in_array || !f.kind.is_value() || !matches(f, query, &self.texts) => {}
+            _ if in_array || !f.kind.is_value() || !self.matches(f, query) => {}
             _ => out.extend(rows.get(f.path).map(|s| self.field_item(s, false))),
         }
     }
@@ -111,7 +111,8 @@ impl SettingsState {
             description: self.texts.t(s.field.description).into(),
             widget,
             text: text.into(),
-            lines: text.lines().count().max(1) as i32,
+            // `lines()` drops a trailing newline: Enter would not grow the box.
+            lines: text.split('\n').count() as i32,
             checked: s.value == Some(FieldValue::Bool(true)),
             options,
             option,
@@ -170,9 +171,7 @@ impl SettingsState {
                 } else {
                     FIELDS
                         .iter()
-                        .filter(|f| {
-                            f.group == g && f.kind.is_value() && matches(f, &query, &self.texts)
-                        })
+                        .filter(|f| f.group == g && f.kind.is_value() && self.matches(f, &query))
                         .count() as i32
                 },
             })
@@ -253,22 +252,35 @@ fn entry_head(array: &Field, e: &EntryState, written: usize) -> SettingsItem {
     }
 }
 
-/// Whether `query` (lower case) is in the field's path or in its
-/// description, English or in the window language.
-fn matches(f: &Field, query: &str, texts: &Texts) -> bool {
-    query.is_empty()
-        || f.path.to_lowercase().contains(query)
-        || f.description.to_lowercase().contains(query)
-        || texts.t(f.description).to_lowercase().contains(query)
+impl SettingsState {
+    /// Whether `query` (lower case) is in the field's path, its row's
+    /// label or its description, English or in the window language.
+    fn matches(&self, f: &Field, query: &str) -> bool {
+        let label = self.labels.get(last_segment(f.path));
+        query.is_empty()
+            || f.path.to_lowercase().contains(query)
+            || label.is_some_and(|l| l.to_lowercase().contains(query))
+            || f.description.to_lowercase().contains(query)
+            || self.texts.t(f.description).to_lowercase().contains(query)
+    }
+
+    /// A table array is shown when it or one of its entry fields matches.
+    fn array_matches(&self, array: &Field, query: &str) -> bool {
+        let scope = format!("{}[].", array.path);
+        FIELDS
+            .iter()
+            .filter(|f| f.path == array.path || f.path.starts_with(&scope))
+            .any(|f| self.matches(f, query))
+    }
 }
 
-/// A table array is shown when it or one of its entry fields matches.
-fn array_matches(array: &Field, query: &str, texts: &Texts) -> bool {
-    let scope = format!("{}[].", array.path);
+/// The readable label of each catalogue key, from `FieldLabels`.
+pub(super) fn labels(label: impl Fn(&str) -> String) -> HashMap<&'static str, String> {
     FIELDS
         .iter()
-        .filter(|f| f.path == array.path || f.path.starts_with(&scope))
-        .any(|f| matches(f, query, texts))
+        .map(|f| last_segment(f.path))
+        .map(|key| (key, label(key)))
+        .collect()
 }
 
 fn last_segment(path: &str) -> &str {
