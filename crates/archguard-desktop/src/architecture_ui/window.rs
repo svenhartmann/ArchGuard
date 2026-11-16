@@ -66,6 +66,8 @@ pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
     }
     m.figure_error = s.figure_error.as_str().into();
     s.editor.fill(&mut m);
+    // The diagram view shows no chapter; its unsaved changes keep the save bar.
+    m.editing &= !s.catalogue;
     m
 }
 
@@ -82,10 +84,14 @@ fn fill_figures(
     let map = view.as_ref().map(|(kind, _)| catalogue::map_id(*kind));
     // A chapter without a generated block never gets a diagram on its own:
     // it can take one over as text.
-    let has_block = s
-        .editor
-        .chapter(doc, s.chapter)
-        .contains(crate::arc42_file::MARKER);
+    let text = s.editor.chapter(doc, s.chapter);
+    let has_block = text.contains(crate::arc42_file::MARKER);
+    // Diagram blocks of the chapter draw in its text, not above it.
+    let inserted: Vec<String> = crate::arc42_file::diagram_ranges(&text)
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    let inserted = |id: &str| inserted.iter().any(|i| i == id);
     let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
@@ -101,14 +107,14 @@ fn fill_figures(
             .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
             .into();
         m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
-        m.map_insertable = !has_block && entry.is_some();
+        m.map_insertable = !has_block && entry.is_some() && !inserted(id);
     }
     let figures = doc
         .diagrams
         .iter()
         .filter(|d| {
             let drawn = Some(d.id.as_str()) == map || Some(d.id.as_str()) == open;
-            s.catalogue || (d.chapter == s.chapter && !drawn)
+            s.catalogue || (d.chapter == s.chapter && !drawn && !inserted(&d.id))
         })
         .map(|d| {
             let chapter = if s.catalogue {

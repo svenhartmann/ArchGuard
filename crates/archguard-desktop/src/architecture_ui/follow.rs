@@ -18,7 +18,7 @@ pub(super) fn follow(s: &mut ArchitectureState, labels: &Labels, nav: &Nav) {
     if matches!(nav, Nav::Expand { .. }) {
         return;
     }
-    if derived(s, s.chapter).is_none() && derived(s, BLOCKS).is_some() && !s.editor.is_open() {
+    if derived(s, s.chapter).is_none() && derived(s, BLOCKS).is_some() && !s.editor.is_dirty() {
         s.chapter = BLOCKS;
     }
     let Some(kind) = derived(s, s.chapter) else {

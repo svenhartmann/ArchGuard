@@ -11,7 +11,7 @@ use super::editor::{Caret, Editor};
 use super::inline::Mark;
 use super::layout::{Fonts, Laid, Rect, Style};
 use crate::tab_support::model;
-use crate::ui::{RichCell, RichItem, RichRect, RichRun, RichTools};
+use crate::ui::{ArcFigure, RichCell, RichItem, RichRect, RichRun, RichTools};
 
 thread_local! {
     /// Fonts and layout caches of the window's thread.
@@ -23,6 +23,9 @@ const CODE_PAD: f32 = 8.0;
 /// Space around a table cell's text.
 const CELL_X: f32 = 8.0;
 const CELL_Y: f32 = 6.0;
+/// A diagram block's height for drags and arrow keys, which only need
+/// its order: the view sizes it to its drawing.
+const DIAGRAM_H: f32 = 360.0;
 
 /// What a key did.
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +46,8 @@ pub struct Rich {
     laid: HashMap<(usize, usize), (Block, f32, Laid)>,
     /// The x the caret keeps over moves up and down.
     goal: Option<f32>,
+    /// The drawings of the diagram blocks, by diagram id.
+    figures: HashMap<String, ArcFigure>,
 }
 
 /// Space above a block and the left edge of its text.
@@ -78,6 +83,7 @@ fn kind_number(kind: &Kind) -> i32 {
         Kind::Quote => 3,
         Kind::Code { .. } => 4,
         Kind::Cell { .. } => 5,
+        Kind::Diagram { .. } => 6,
     }
 }
 
@@ -156,7 +162,16 @@ impl Rich {
             style: Style::default(),
             laid: HashMap::new(),
             goal: None,
+            figures: HashMap::new(),
         }
+    }
+
+    /// Insert the diagram `id` with Markdown `section` at the caret, as a
+    /// block the analysis refreshes on save.
+    pub fn insert_diagram(&mut self, id: &str, section: &str) {
+        self.goal = None;
+        self.editor
+            .insert_diagram(id, &doc::diagram_block(id, section));
     }
 
     pub fn markdown(&self) -> String {
@@ -256,6 +271,9 @@ impl Rich {
 
     /// The height of the row block `b` is in: a table row, or the block.
     fn unit_height(&mut self, piece: usize, b: usize) -> f32 {
+        if matches!(self.blocks(piece)[b].kind, Kind::Diagram { .. }) {
+            return DIAGRAM_H;
+        }
         if self.is_cell(piece, b) {
             let (first, _) = self.row_of(piece, b);
             self.row_height(piece, first)
@@ -287,8 +305,15 @@ impl Rich {
     }
 
     /// The rows the view draws; `note` is the reader's text under a
-    /// diagram it cannot draw.
-    pub fn items(&mut self, note: &str) -> Vec<RichItem> {
+    /// diagram it cannot draw, `figure` draws a diagram block's diagram,
+    /// and `drawn` are the diagram sections fixed text leaves out (the view
+    /// draws them above the text, as the reader).
+    pub fn items(
+        &mut self,
+        note: &str,
+        figure: &dyn Fn(&str) -> Option<ArcFigure>,
+        drawn: &[String],
+    ) -> Vec<RichItem> {
         let selection = self.editor.selection();
         let focus = self.editor.focus;
         let pieces: Vec<Result<Vec<Block>, String>> = self
@@ -305,6 +330,9 @@ impl Rich {
         for (p, piece) in pieces.into_iter().enumerate() {
             let blocks = match piece {
                 Err(text) => {
+                    let text = drawn
+                        .iter()
+                        .fold(text, |t, s| t.replacen(s.as_str(), "", 1));
                     // The chapter heading shows above the editor.
                     let shown: Vec<markdown::Block> = markdown::parse(&text)
                         .into_iter()
@@ -332,6 +360,28 @@ impl Rich {
                     if col == 0 {
                         out.push(self.table_row(p, b, row, cols, top, selection, focus));
                     }
+                    continue;
+                }
+                if let Kind::Diagram { id, .. } = &block.kind {
+                    if !self.figures.contains_key(id)
+                        && let Some(f) = figure(id)
+                    {
+                        self.figures.insert(id.clone(), f);
+                    }
+                    let here = focus.piece == p && focus.block == b;
+                    out.push(RichItem {
+                        fixed: model(Vec::new()),
+                        cells: model(Vec::new()),
+                        runs: model(Vec::new()),
+                        selection: model(Vec::new()),
+                        figure: self.figures.get(id).cloned().unwrap_or_default(),
+                        piece: p as i32,
+                        block: b as i32,
+                        kind: 6,
+                        top: 14.0,
+                        caret: here,
+                        ..Default::default()
+                    });
                     continue;
                 }
                 let laid = self.laid(p, b);
@@ -368,6 +418,7 @@ impl Rich {
                     } else {
                         RichRect::default()
                     },
+                    figure: Default::default(),
                 });
             }
         }
@@ -424,6 +475,7 @@ impl Rich {
             selection: model(sel),
             caret: caret.is_some(),
             caret_rect: caret.unwrap_or_default(),
+            figure: Default::default(),
         }
     }
 
@@ -484,6 +536,8 @@ impl Rich {
             "col_add" => e.add_column(),
             "row_del" => e.delete_row(),
             "col_del" => e.delete_column(),
+            "detach" => e.detach(),
+            "remove_diagram" => e.remove_diagram(),
             _ => {}
         }
     }
@@ -684,6 +738,13 @@ impl Rich {
                 u = next;
                 continue;
             }
+            if matches!(self.blocks(piece)[u].kind, Kind::Diagram { .. }) {
+                return Caret {
+                    piece,
+                    block: u,
+                    at: 0,
+                };
+            }
             if self.is_cell(piece, u) {
                 let (first, cols) = self.row_of(piece, u);
                 let end = (first + cols).min(len);
@@ -783,7 +844,7 @@ mod tests {
         use slint::Model;
         let md = "## 5. Bausteine\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nText **fett**.\n\n- eins\n- zwei\n\n---\n";
         let mut r = rich(md);
-        let items = r.items("");
+        let items = r.items("", &|_| None, &[]);
         let shape: Vec<(i32, bool, usize, String)> = items
             .iter()
             .map(|i| {
@@ -880,7 +941,7 @@ mod tests {
     #[test]
     fn a_drag_past_a_block_selects_into_the_next() {
         let mut r = rich("eins\n\nzwei\n");
-        r.items("");
+        r.items("", &|_| None, &[]);
         r.press(r.editor.focus.piece, Some(0), 0.0, 5.0, false);
         let below = r.laid(r.editor.focus.piece, 0).height() + 15.0;
         r.drag(r.editor.focus.piece, 0, 200.0, below);

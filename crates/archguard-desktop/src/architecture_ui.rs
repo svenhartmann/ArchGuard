@@ -43,37 +43,37 @@ use visual::{Action, Kind, RELATIONS_PAGE};
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ArchitectureData>();
     let a = Actions::<ArchitectureState>::new(ui);
-    d.on_select_chapter(a.on(|s, _, n: i32| {
-        if !s.editor.is_open() {
-            s.chapter = u8::try_from(n).unwrap_or(5);
-            s.catalogue = false;
-        }
-    }));
-    d.on_open_catalogue(a.on0(|s, _| s.catalogue = !s.editor.is_open()));
+    d.on_select_chapter(a.on(select_chapter));
+    d.on_open_catalogue(a.on0(|s, _| s.catalogue = true));
     let toggle =
         a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
     d.on_insert_diagram(a.on(|s, _, id: SharedString| insert_diagram(s, &id)));
-    d.on_start_edit(a.on0(|s, _| start_edit(s)));
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
             s.editor.edit(&text);
-            s.editor.show(ui);
+            show_editor(s, ui);
         });
     }));
     d.on_visual_changed(tab_support::with_ui(ui, |ui, _: bool| {
-        crate::documents::with_active_state(|s: &mut ArchitectureState| s.editor.show(ui));
+        crate::documents::with_active_state(|s: &mut ArchitectureState| show_editor(s, ui));
     }));
     wire_rich(ui);
     // Errors show in the editor itself.
-    d.on_save_edit(a.on0(|s, _| drop(save_draft(s))));
+    d.on_save_edit(a.on0(|s, ui| {
+        let what = s.editor.label(s.chapter);
+        if save_draft(s).is_ok() {
+            tab_support::saved_notice(ui, &what);
+        }
+    }));
+    // The push opens the chapter again as it is saved.
     d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
     d.on_choose_location(a.on(|s, ui, choice: i32| {
-        if let Ok(doc) = &s.doc {
-            s.saved = s
-                .editor
-                .choose(ui, doc, choice)
-                .unwrap_or(std::mem::take(&mut s.saved));
+        let Ok(doc) = &s.doc else { return };
+        if let Some(path) = s.editor.choose(ui, doc, choice) {
+            let what = s.editor.label(s.chapter);
+            tab_support::saved_notice(ui, &what);
+            s.saved = path;
         }
     }));
     d.on_navigate(navigation(
@@ -151,16 +151,63 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
     });
 }
 
-/// Open the chapter editor. Save in the close and quit prompt saves its
-/// draft as the Save button does, on the document's tab state as it is then.
-fn start_edit(s: &mut ArchitectureState) {
+/// The chapter is always open in the editor; unsaved changes keep their
+/// chapter open. File → Save and Save in the close and quit prompt save
+/// its draft as the Save button does, on the document's tab state as it
+/// is then.
+fn open_editor(s: &mut ArchitectureState) {
     let Ok(doc) = &s.doc else { return };
-    s.editor.start(doc, s.chapter);
+    if s.editor.is_dirty()
+        && let Some(c) = s.editor.open_chapter()
+    {
+        s.chapter = c;
+    }
+    s.editor.ensure_open(doc, s.chapter);
     let id = s.editor.doc;
     documents::set_save_hook(id, edit::PART, move || {
         documents::with_state(id, save_draft)
             .unwrap_or_else(|| Err("The Architecture tab is still loading; save again.".into()))
     });
+}
+
+/// Another chapter, unless this one has unsaved changes: they are never
+/// dropped, the save bar asks to save or discard them first.
+fn select_chapter(s: &mut ArchitectureState, ui: &AppWindow, n: i32) {
+    let n = u8::try_from(n).unwrap_or(5);
+    if s.editor.is_dirty() && n != s.chapter {
+        let texts = Texts::of(ui);
+        let why = texts.t("Save or discard the changes to this chapter first.");
+        s.editor.set_error(why.to_string());
+    } else {
+        s.chapter = n;
+    }
+    s.catalogue = false;
+}
+
+/// Show the editor with the chapter's diagrams: inserted diagram blocks
+/// drawn as figures, shown generated ones left out of fixed text (the
+/// figures above draw them).
+fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
+    let Ok(doc) = &s.doc else { return };
+    let texts = Texts::of(ui);
+    let figure = |id: &str| {
+        let d = doc.diagrams.iter().find(|d| d.id == id)?;
+        Some(figure::figure(d, s.format, String::new(), &texts))
+    };
+    let drawn: Vec<String> = doc
+        .diagrams
+        .iter()
+        .filter(|d| d.chapter == s.chapter && d.shown)
+        .map(|d| archguard_engine::report::diagram_section(d, s.format))
+        .collect();
+    s.editor.show(ui, &figure, &drawn);
+    // Keys change only the editor; the save bar follows its first change.
+    let d = ui.global::<ArchitectureData>();
+    let mut m = d.get_model();
+    if m.dirty != s.editor.is_dirty() {
+        m.dirty = !m.dirty;
+        d.set_model(m);
+    }
 }
 
 /// The Save button: write the open draft and remember the path. `Err`
@@ -212,7 +259,7 @@ fn wire_rich(ui: &AppWindow) {
     fn on_rich<R>(ui: &AppWindow, f: impl FnOnce(&mut Rich) -> R) -> Option<R> {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
             let out = s.editor.rich(f);
-            s.editor.show(ui);
+            show_editor(s, ui);
             out
         })
         .flatten()
@@ -283,29 +330,28 @@ fn wire_rich(ui: &AppWindow) {
     });
 }
 
-/// "Insert into chapter": the diagram as own text at the end of the open
-/// chapter (a chapter without generated block never gets it on its own),
-/// opening the editor if it is closed.
+/// "Insert into chapter": the diagram as a diagram block at the caret of
+/// the open chapter (a chapter without generated block never gets it on
+/// its own). Every save draws it again from the analysis.
 fn insert_diagram(s: &mut ArchitectureState, id: &str) {
+    open_editor(s);
     let Ok(doc) = &s.doc else { return };
     let Some(d) = doc.diagrams.iter().find(|d| d.id == id) else {
         return;
     };
     let section = archguard_engine::report::diagram_section(d, s.format);
-    if !s.editor.is_open() {
-        s.editor.start(doc, s.chapter);
-    }
-    s.editor.append(&section);
+    s.editor.insert_diagram(id, &section);
 }
 
 /// Show the state in the window, keeping the list models it shows.
-pub fn push(ui: &AppWindow, s: &ArchitectureState) {
+fn push(ui: &AppWindow, s: &mut ArchitectureState) {
     let _span = archguard_engine::self_trace::tracing::info_span!("push").entered();
+    open_editor(s);
     let mut m = window::model(s, &Texts::of(ui));
     let d = ui.global::<ArchitectureData>();
     sync::keep(&d.get_model(), &mut m);
     d.set_model(m);
-    s.editor.show(ui);
+    show_editor(s, ui);
 }
 
 fn download(s: &mut ArchitectureState, ui: &AppWindow, all: bool) {
@@ -457,7 +503,7 @@ mod tests {
         state.editor.doc = a;
         documents::set_state(a, state);
         documents::with_state(a, |s: &mut ArchitectureState| {
-            start_edit(s);
+            open_editor(s);
             let text = s.editor.chapter(s.doc.as_ref().unwrap(), 5) + "Neu.\n";
             s.editor.edit(&text);
         });

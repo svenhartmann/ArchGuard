@@ -210,6 +210,15 @@ impl Editor {
         let Some((start, end)) = self.selection() else {
             return false;
         };
+        let (mut start, mut end) = (start, end);
+        // A diagram at an end of the selection goes with it: as an empty
+        // paragraph it merges with the text beside it.
+        for c in [&mut start, &mut end] {
+            if self.is_diagram(c.piece, c.block) {
+                self.blocks_mut(c.piece)[c.block] = Self::empty_cell();
+                c.at = 0;
+            }
+        }
         let cells = (start.block..=end.block).any(|b| self.is_cell(start.piece, b));
         if cells && start.block != end.block {
             // Table cells keep their places: only their text goes.
@@ -241,6 +250,7 @@ impl Editor {
         }
         self.checkpoint(!text.contains('\n') && self.selection().is_none());
         self.delete_selection();
+        self.leave_diagram();
         let code = matches!(self.block(self.focus).kind, Kind::Code { .. });
         // A cell holds one line.
         let text = if self.is_cell(self.focus.piece, self.focus.block) {
@@ -275,11 +285,28 @@ impl Editor {
         });
     }
 
+    /// On a diagram: a new empty paragraph after it, the caret there.
+    fn leave_diagram(&mut self) {
+        let c = self.focus;
+        if self.is_diagram(c.piece, c.block) {
+            self.blocks_mut(c.piece)
+                .insert(c.block + 1, Self::empty_cell());
+            self.collapse(Caret {
+                block: c.block + 1,
+                at: 0,
+                ..c
+            });
+        }
+    }
+
     /// Enter: a new block after the caret's text; in code a new line; an
     /// empty list entry or quote line becomes a paragraph.
     pub fn enter(&mut self) {
         self.checkpoint(false);
         self.delete_selection();
+        if self.is_diagram(self.focus.piece, self.focus.block) {
+            return self.leave_diagram();
+        }
         let c = self.focus;
         let block = self.block(c);
         match block.kind {
@@ -322,6 +349,15 @@ impl Editor {
             return;
         }
         let c = self.focus;
+        if self.is_diagram(c.piece, c.block) {
+            return self.remove_block(c);
+        }
+        if c.at == 0 && c.block > 0 && self.is_diagram(c.piece, c.block - 1) {
+            return self.remove_block(Caret {
+                block: c.block - 1,
+                ..c
+            });
+        }
         if c.at > 0 {
             let text = &self.block(c).inline.text;
             // shortcut: removes one char, not a grapheme cluster (é as e + ́ takes two).
@@ -358,7 +394,18 @@ impl Editor {
             return;
         }
         let c = self.focus;
+        if self.is_diagram(c.piece, c.block) {
+            return self.remove_block(c);
+        }
         let len = self.block(c).inline.text.len();
+        if c.at == len && self.is_diagram(c.piece, c.block + 1) {
+            self.remove_block(Caret {
+                block: c.block + 1,
+                at: 0,
+                ..c
+            });
+            return self.collapse(c);
+        }
         if c.at < len {
             let text = &self.block(c).inline.text;
             let next = text[c.at..].chars().next().map_or(0, char::len_utf8);
@@ -371,6 +418,105 @@ impl Editor {
         {
             self.join(c.piece, c.block);
         }
+    }
+
+    fn is_diagram(&self, piece: usize, block: usize) -> bool {
+        matches!(
+            self.blocks(piece).get(block).map(|b| &b.kind),
+            Some(Kind::Diagram { .. })
+        )
+    }
+
+    /// Remove block `c.block` (a diagram); a part keeps one block to type in.
+    fn remove_block(&mut self, c: Caret) {
+        let blocks = self.blocks_mut(c.piece);
+        blocks.remove(c.block);
+        if blocks.is_empty() {
+            blocks.push(Self::empty_cell());
+        }
+        let block = c.block.min(blocks.len() - 1);
+        let at = if block < c.block {
+            blocks[block].inline.text.len()
+        } else {
+            0
+        };
+        self.collapse(Caret { block, at, ..c });
+    }
+
+    /// A diagram block at the caret: in place of an empty paragraph, else
+    /// before the caret's block (caret at its start) or after it; never
+    /// inside a table. An empty paragraph follows a diagram at the end.
+    pub fn insert_diagram(&mut self, id: &str, source: &str) {
+        self.checkpoint(false);
+        let mut c = self.focus;
+        if let Some((range, _)) = self.table() {
+            c = Caret {
+                block: range.end - 1,
+                at: usize::MAX,
+                ..c
+            };
+        }
+        let block = Block {
+            kind: Kind::Diagram {
+                id: id.to_string(),
+                source: source.to_string(),
+            },
+            inline: Inline::default(),
+        };
+        let blocks = self.blocks_mut(c.piece);
+        let here = &blocks[c.block];
+        let at = if here.kind == Kind::Paragraph && here.inline.text.is_empty() {
+            blocks[c.block] = block;
+            c.block
+        } else if c.at == 0 && !matches!(here.kind, Kind::Diagram { .. }) {
+            blocks.insert(c.block, block);
+            c.block
+        } else {
+            blocks.insert(c.block + 1, block);
+            c.block + 1
+        };
+        if at + 1 == blocks.len() {
+            blocks.push(Self::empty_cell());
+        }
+        self.collapse(Caret {
+            block: at,
+            at: 0,
+            ..c
+        });
+    }
+
+    /// The diagram at the caret as editable text (its title, note and
+    /// Mermaid or PlantUML source); the analysis no longer updates it.
+    pub fn detach(&mut self) {
+        let c = self.focus;
+        let Kind::Diagram { source, .. } = &self.block(c).kind else {
+            return;
+        };
+        // Without its marker lines.
+        let inner: Vec<&str> = source.lines().collect();
+        let inner = inner[1..inner.len().saturating_sub(1)].join("\n");
+        let blocks = super::doc::blocks_of(&inner);
+        if blocks.is_empty() {
+            return;
+        }
+        self.checkpoint(false);
+        self.blocks_mut(c.piece).splice(c.block..=c.block, blocks);
+        self.collapse(Caret { at: 0, ..c });
+    }
+
+    /// Remove the diagram at the caret.
+    pub fn remove_diagram(&mut self) {
+        let c = self.focus;
+        if self.is_diagram(c.piece, c.block) {
+            self.checkpoint(false);
+            self.remove_block(c);
+        }
+    }
+
+    /// Whether the caret is on a diagram block.
+    #[cfg(test)]
+    pub fn on_diagram(&self) -> bool {
+        self.is_diagram(self.focus.piece, self.focus.block)
     }
 
     fn is_cell(&self, piece: usize, block: usize) -> bool {
@@ -664,7 +810,7 @@ impl Editor {
             .all(|b| same(&self.blocks(piece)[b].kind, &kind));
         for b in range {
             let block = &mut self.blocks_mut(piece)[b];
-            if matches!(block.kind, Kind::Cell { .. }) {
+            if matches!(block.kind, Kind::Cell { .. } | Kind::Diagram { .. }) {
                 continue;
             }
             block.kind = match (&kind, &block.kind) {
@@ -1204,6 +1350,52 @@ mod tests {
         assert!(
             !plain.take_over(0),
             "a chapter heading is no generated block"
+        );
+    }
+
+    #[test]
+    fn diagrams_go_in_at_the_caret_and_out_with_backspace_or_detach() {
+        let block = super::super::doc::diagram_block(
+            "calls",
+            "### Aufrufe\n\nQuelle.\n\n```mermaid\nflowchart LR\n```",
+        );
+        let mut e = editor("eins\n\nzwei\n");
+        e.place(at(&e, 0, 4), false);
+        e.insert_diagram("calls", &block);
+        assert!(e.on_diagram());
+        assert_eq!(
+            e.markdown(),
+            format!("eins\n\n{block}\n\nzwei\n"),
+            "after the caret's paragraph"
+        );
+        e.type_text("x");
+        assert_eq!(
+            e.markdown(),
+            format!("eins\n\n{block}\n\nx\n\nzwei\n"),
+            "typing on it opens a paragraph after it"
+        );
+        e.place(at(&e, 2, 0), false);
+        e.backspace();
+        assert_eq!(
+            e.markdown(),
+            "eins\n\nx\n\nzwei\n",
+            "Backspace after it removes it as a whole"
+        );
+        e.undo();
+        e.place(at(&e, 1, 0), false);
+        e.detach();
+        assert_eq!(
+            e.markdown(),
+            "eins\n\n### Aufrufe\n\nQuelle.\n\n```mermaid\nflowchart LR\n```\n\nx\n\nzwei\n"
+        );
+        let mut last = editor("nur Text\n");
+        last.place(at(&last, 0, 8), false);
+        last.insert_diagram("calls", &block);
+        last.type_text("weiter");
+        assert_eq!(
+            last.markdown(),
+            format!("nur Text\n\n{block}\n\nweiter\n"),
+            "a paragraph follows a diagram at the end"
         );
     }
 

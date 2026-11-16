@@ -123,6 +123,12 @@ impl<T: TabState> Actions<T> {
     }
 }
 
+/// The notice bar's "Saved {}" (notice 10, `ui/app.slint`) with what was saved.
+pub fn saved_notice(ui: &AppWindow, what: &str) {
+    ui.set_notice_kind(10);
+    ui.set_notice(what.into());
+}
+
 /// A callback that runs `f` while the window exists.
 pub fn with_ui<A: 'static>(
     ui: &AppWindow,

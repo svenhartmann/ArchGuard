@@ -536,3 +536,25 @@ comparison of the native view against the web view on the same project
   paragraph shows a placeholder, and a click on fixed text puts the caret
   in the nearest text to edit. Checked with unit tests and headless
   snapshots of chapter 12 before and after taking the glossary over.
+  *Changed 2026-11-16:* the chapter is always editable, asked for by the
+  user after inserted diagrams vanished at the end of the text and a save
+  gave no visible notice. There is no "Edit chapter" button any more: the
+  chapter view is the editor, with the package map and the chapter's
+  diagrams above it. A save bar appears above the page only while the
+  chapter has unsaved changes (Save, Discard; File → Save with Cmd/Ctrl+S
+  saves everything unsaved in the project); another chapter opens only
+  after saving or discarding. After a save the chapter stays open with its
+  caret, and the notice bar says what was saved and where ("Saved arc42
+  chapter 5 (docs/arc42.md)"); the close prompt names the file too.
+  "Insert into chapter" now puts a diagram block at the caret instead of
+  Markdown at the end: the diagram is drawn in place and written between
+  `<!-- archguard:diagram:<id>:start/end -->` markers, which every save
+  refreshes from the analysis (an id the analysis no longer has keeps its
+  last text). On the block, "Edit as source" turns it into editable
+  Mermaid or PlantUML text, "Remove" (or Backspace, Delete) deletes it,
+  typing opens a paragraph after it. Chapters with a generated block still
+  show their diagrams above the text and offer no insert. Checked with unit
+  tests, the real window on Slint's testing backend (`app_check.rs`: type,
+  Save in the save bar, the location question, the notice, the file) and
+  headless snapshots of a chapter with a diagram block and with the save
+  bar. Not checked by hand in a window; not checked on Windows and Linux.

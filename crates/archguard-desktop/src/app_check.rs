@@ -3,7 +3,8 @@
 //! thread, then click every view in the view bar by its label (as a user
 //! would, found through the accessibility tree) and check the view opens.
 //! Then edit the Architecture chapter as formatted text: a click into the
-//! editor, typed keys, Enter and the bold shortcut.
+//! editor, typed keys, Enter and the bold shortcut; save it from the save
+//! bar into a new `arc42.md` and see the notice.
 //!
 //! Slint keeps one event-loop proxy per process, and the analysis reaches
 //! the window through `invoke_from_event_loop`; so this is one test that
@@ -70,12 +71,15 @@ fn status() -> Option<Status> {
     with_store(|s| s.docs().first().map(|d| d.status.clone()))
 }
 
-/// The views shown after each click, and the chapter draft after editing.
-type Walk = (Vec<String>, String);
+/// The views shown after each click, the chapter draft after editing and
+/// the notice after saving it.
+type Walk = (Vec<String>, String, String);
 
 thread_local! {
     /// What the walk through the views found, set on the event loop.
     static OUTCOME: RefCell<Option<Result<Walk, String>>> = const { RefCell::new(None) };
+    /// The editor was clicked into; the next step types.
+    static CLICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The views shown after each click, once clicked.
     static VIEWS_SHOWN: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
 }
@@ -97,18 +101,45 @@ fn type_text(ui: &AppWindow, text: &str) {
     }
 }
 
-/// Open the chapter editor, click into its last block (the empty one to
-/// type in after the generated text) and type there; the draft. `None`
-/// while the chapter is still being written (a worker writes it).
+/// Chapter 1 shows in its editor: click into its last block (the empty
+/// one to type in after the generated text) and type there; the draft.
+/// `None` while the chapter is still being written (a worker writes it).
 fn edit_chapter(ui: &AppWindow) -> Option<Result<String, String>> {
     view_tab(ui, "Architecture").mock_single_click(PointerEventButton::Left);
-    let edit = ElementHandle::find_by_accessible_label(ui, "Edit chapter")
-        .find(|e| e.size().width > 0.0)?;
-    edit.mock_single_click(PointerEventButton::Left);
+    // Chapter 1: its editor is in view (chapter 5's map fills the page);
+    // its blocks are placed by the next step.
+    let d = ui.global::<ArchitectureData>();
+    if d.get_model().chapter != 1 {
+        d.invoke_select_chapter(1);
+        return None;
+    }
+    ElementHandle::find_by_element_type_name(ui, "RichBlock").find(|e| e.size().width > 0.0)?;
+    // The click places the input at the caret on the event loop's next
+    // turn, as between a person's click and key.
+    if !CLICKED.replace(true) {
+        return click_into_editor(ui).err().map(Err);
+    }
     Some(type_into_editor(ui))
 }
 
-fn type_into_editor(ui: &AppWindow) -> Result<String, String> {
+/// The visible button labelled `label`.
+fn click(ui: &AppWindow, label: &str) -> Result<(), String> {
+    ElementHandle::find_by_accessible_label(ui, label)
+        .find(|e| e.size().width > 0.0)
+        .ok_or_else(|| format!("no button {label:?}"))?
+        .mock_single_click(PointerEventButton::Left);
+    Ok(())
+}
+
+/// Save from the save bar; the project has no arc42 text, so it asks
+/// where and the first answer creates `arc42.md`. The notice shown.
+fn save_chapter(ui: &AppWindow) -> Result<String, String> {
+    click(ui, "Save")?;
+    click(ui, "arc42.md in the project folder")?;
+    Ok(format!("{} {}", ui.get_notice_kind(), ui.get_notice()))
+}
+
+fn click_into_editor(ui: &AppWindow) -> Result<(), String> {
     let block = ElementHandle::find_by_element_type_name(ui, "RichBlock")
         .filter(|e| e.size().width > 0.0)
         .last()
@@ -129,6 +160,10 @@ fn type_into_editor(ui: &AppWindow) -> Result<String, String> {
         ui.window().dispatch_event(event);
     }
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+    Ok(())
+}
+
+fn type_into_editor(ui: &AppWindow) -> Result<String, String> {
     type_text(ui, "Neu");
     key(ui, Key::Return);
     // Bold: Control, which Slint reads as Command on macOS.
@@ -170,7 +205,7 @@ fn step(ui: &AppWindow, started: Instant) -> Option<Result<Walk, String>> {
                 Some(draft) => draft,
             };
             let views = VIEWS_SHOWN.take().unwrap_or_default();
-            Some(draft.map(|draft| (views, draft)))
+            Some(draft.and_then(|draft| Ok((views, draft, save_chapter(ui)?))))
         }
     }
 }
@@ -198,7 +233,7 @@ fn every_view_opens_from_the_view_bar_after_a_project_loads() {
     format::wire(&ui);
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
-    documents_ui::open(&ui, project);
+    documents_ui::open(&ui, project.clone());
     ui.show().expect("shown");
     // A shown window has the keyboard, as on screen: focused inputs keep it.
     ui.window()
@@ -234,7 +269,7 @@ fn every_view_opens_from_the_view_bar_after_a_project_loads() {
     done.store(true, std::sync::atomic::Ordering::SeqCst);
     ticks.join().expect("tick thread");
 
-    let (shown, draft) = OUTCOME
+    let (shown, draft, notice) = OUTCOME
         .take()
         .expect("the check ran")
         .unwrap_or_else(|e| panic!("{e}"));
@@ -243,4 +278,7 @@ fn every_view_opens_from_the_view_bar_after_a_project_loads() {
     // Typed after the generated text: a paragraph, then a bold one.
     let end = &draft[draft.len().saturating_sub(80)..];
     assert!(draft.ends_with("\n\nNeu\n\n**x**\n"), "{end:?}");
+    assert_eq!(notice, "10 arc42 chapter 1 (arc42.md)", "the saved notice");
+    let saved = std::fs::read_to_string(project.join("arc42.md")).expect("arc42.md written");
+    assert!(saved.contains("\n\nNeu\n\n**x**\n"), "the draft is saved");
 }
