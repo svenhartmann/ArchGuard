@@ -183,12 +183,12 @@ pub fn context_value(
             }));
         update_page(&mut value, start, start, total);
     }
-    for index in start..end {
+    for (index, item) in context.items.iter().enumerate().take(end).skip(start) {
         let mut candidate = value.clone();
         candidate["items"]
             .as_array_mut()
             .expect("items array")
-            .push(context.items[index].clone());
+            .push(item.clone());
         update_page(&mut candidate, start, index + 1, total);
         if measured_size(&mut candidate) <= maximum {
             value = candidate;
@@ -204,7 +204,7 @@ pub fn context_value(
             .as_array_mut()
             .expect("omissions array")
             .push(json!({
-                "index":index,"bytes":context.items[index].to_string().len(),
+                "index":index,"bytes":item.to_string().len(),
                 "reason":"item_exceeds_byte_budget"
             }));
         update_page(&mut value, start, index + 1, total);
