@@ -313,3 +313,6 @@ msgstr "Spalte löschen"
 
 msgid "Table"
 msgstr "Tabelle"
+
+msgid "Insert into chapter"
+msgstr "In Kapitel übernehmen"

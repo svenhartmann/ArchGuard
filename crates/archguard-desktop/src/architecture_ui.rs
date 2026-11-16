@@ -53,6 +53,7 @@ pub fn wire(ui: &AppWindow) {
     let toggle =
         a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
+    d.on_insert_diagram(a.on(|s, _, id: SharedString| insert_diagram(s, &id)));
     d.on_start_edit(a.on0(|s, _| start_edit(s)));
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
@@ -280,6 +281,21 @@ fn wire_rich(ui: &AppWindow) {
             on_rich(&ui, |r| r.link(&target));
         }
     });
+}
+
+/// "Insert into chapter": the diagram as own text at the end of the open
+/// chapter (a chapter without generated block never gets it on its own),
+/// opening the editor if it is closed.
+fn insert_diagram(s: &mut ArchitectureState, id: &str) {
+    let Ok(doc) = &s.doc else { return };
+    let Some(d) = doc.diagrams.iter().find(|d| d.id == id) else {
+        return;
+    };
+    let section = archguard_engine::report::diagram_section(d, s.format);
+    if !s.editor.is_open() {
+        s.editor.start(doc, s.chapter);
+    }
+    s.editor.append(&section);
 }
 
 /// Show the state in the window, keeping the list models it shows.

@@ -78,6 +78,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
         source: source(d, format).into(),
         sequence: false,
         legend: legend(d.kind, texts).into(),
+        insertable: false,
     }
 }
 

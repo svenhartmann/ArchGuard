@@ -176,6 +176,15 @@ impl Editor {
         });
     }
 
+    /// Append `text` (Markdown) to the open chapter as own text.
+    pub fn append(&self, text: &str) {
+        self.change(|e| {
+            e.draft = format!("{}\n\n{}\n", e.draft.trim_end(), text.trim_end());
+            // The formatted editor reads the draft anew.
+            e.rich = None;
+        });
+    }
+
     /// Run `f` on the formatted editor, then keep what it wrote as the draft.
     pub fn rich<R>(&self, f: impl FnOnce(&mut Rich) -> R) -> Option<R> {
         let mut out = None;
@@ -404,6 +413,27 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Text von A.") && !text.contains("Text von B."));
         assert!(!in_a.is_open() && in_b.is_open());
+    }
+
+    /// A diagram taken into a chapter without generated block is own text
+    /// and is saved with it.
+    #[test]
+    fn a_diagram_appended_to_a_chapter_of_own_text_is_saved() {
+        let d = tempfile::tempdir().expect("temp dir");
+        let path = d.path().join("arc42.md");
+        std::fs::write(&path, "## 5. Bausteine\n\nEigener Text.\n").unwrap();
+        let (a, _) = documents::with_store(|s| s.open(d.path()));
+        let new = doc("Old");
+        let mut editor = Editor::new(a, d.path());
+        editor.start(&new, 5);
+        editor.append("### Paketübersicht\n\nQuelle: Analyse.\n\n```mermaid\nflowchart LR\n```\n");
+        assert!(documents::is_dirty(a));
+        assert!(editor.save(&new).is_some());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            "## 5. Bausteine\n\nEigener Text.\n\n### Paketübersicht\n\nQuelle: Analyse.\n\n```mermaid\nflowchart LR\n```\n"
+        );
     }
 
     /// Typing in the formatted editor: nothing changes until a key does,
