@@ -162,7 +162,9 @@ pub fn tree(data: &Loaded) -> Rc<Tree> {
     let (full, config) = (&data.run.graph, &data.run.config);
     let build = || {
         let simulated = documents::with_active_state(|s: &mut Simulation| s.apply(full, config));
-        Rc::new(Tree::from_graph(simulated.flatten().as_ref().unwrap_or(full)))
+        Rc::new(Tree::from_graph(
+            simulated.flatten().as_ref().unwrap_or(full),
+        ))
     };
     documents::with_active_state_or(build, |t: &mut Rc<Tree>| t.clone()).unwrap_or_else(build)
 }

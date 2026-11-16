@@ -310,15 +310,14 @@ mod tests {
     /// measurement: the card shows "—", not more than 100 %.
     #[test]
     fn over_counted_line_coverage_shows_unknown() {
-        let snapshot: archguard_engine::ModuleQualitySnapshot = serde_json::from_value(
-            serde_json::json!({
+        let snapshot: archguard_engine::ModuleQualitySnapshot =
+            serde_json::from_value(serde_json::json!({
                 "node": "a", "files": 1, "mapped_files": 1, "source_sha256": "",
                 "coverage_status": "ready", "line_coverage": {"covered": 5, "total": 4},
                 "coverage_files": 1, "semantic_status": "", "declared_methods": 0,
                 "measured_methods": 0, "findings_status": ""
-            }),
-        )
-        .expect("snapshot");
+            }))
+            .expect("snapshot");
         let report: QualityHistoryReport = serde_json::from_value(serde_json::json!({
             "schema_version": 1, "status": "ready", "records": [],
             "records_truncated": false, "diagnostics": []

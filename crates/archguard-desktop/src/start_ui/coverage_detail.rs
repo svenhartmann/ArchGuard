@@ -296,7 +296,10 @@ mod tests {
             .filter(|l| l.kind == kind::COV_ROW)
             .map(|l| l.a.as_str())
             .collect();
-        assert_eq!(rows, ["e.rs", "a.rs", "d.rs", "b.rs", "c.rs", "f.rs", "g.rs"]);
+        assert_eq!(
+            rows,
+            ["e.rs", "a.rs", "d.rs", "b.rs", "c.rs", "f.rs", "g.rs"]
+        );
     }
 
     /// A counter is valid with lines to count and no more covered than

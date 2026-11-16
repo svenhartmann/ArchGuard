@@ -141,7 +141,10 @@ fn invalid_input_stays_on_its_row() {
         ("abc", "expected a number")
     );
     assert_eq!(s.errors(), 1);
-    assert!(documents::is_dirty(doc), "unsaved input, asked about on quit");
+    assert!(
+        documents::is_dirty(doc),
+        "unsaved input, asked about on quit"
+    );
     assert!(s.groups()[5].failed);
     s.save();
     assert!(
@@ -390,7 +393,10 @@ fn the_text_pane_reports_the_parse_error() {
         "{draft:?}"
     );
     assert_eq!(s.errors(), 1);
-    assert!(documents::is_dirty(doc), "unsaved input, asked about on quit");
+    assert!(
+        documents::is_dirty(doc),
+        "unsaved input, asked about on quit"
+    );
     s.edit_text("[rules]\nmax_acd = 1.5\n");
     assert!(s.text_draft.is_none());
     assert!(documents::is_dirty(doc));
@@ -555,7 +561,8 @@ fn every_shown_key_has_a_readable_german_label() {
 /// A list or map value's text area is as high as its lines, one at least.
 #[test]
 fn list_rows_carry_their_line_count() {
-    let (_dir, _, mut s) = project("[project]\nexclude = [\"a\", \"b\", \"c\"]\nlanguages = [\"auto\"]\n");
+    let (_dir, _, mut s) =
+        project("[project]\nexclude = [\"a\", \"b\", \"c\"]\nlanguages = [\"auto\"]\n");
     let items = in_group(&mut s, Group::Project);
     assert_eq!(item(&items, "project.exclude").lines, 3);
     assert_eq!(item(&items, "project.languages").lines, 1);
@@ -564,7 +571,11 @@ fn list_rows_carry_their_line_count() {
     assert_eq!((empty.text.as_str(), empty.lines), ("", 1));
     s.edit("project.languages", "auto\n");
     let items = in_group(&mut s, Group::Project);
-    assert_eq!(item(&items, "project.languages").lines, 2, "Enter adds a line");
+    assert_eq!(
+        item(&items, "project.languages").lines,
+        2,
+        "Enter adds a line"
+    );
 }
 
 /// The search finds a field by the readable label its row shows
@@ -591,7 +602,11 @@ fn a_search_finds_a_field_by_its_label() {
     }
     s.query = "verbotene".into();
     let items = s.items().0;
-    assert!(items.iter().any(|i| i.kind == ARRAY && i.path == "dependency_rules"));
+    assert!(
+        items
+            .iter()
+            .any(|i| i.kind == ARRAY && i.path == "dependency_rules")
+    );
 }
 
 /// Invalid input marks the document dirty, so quitting asks; the

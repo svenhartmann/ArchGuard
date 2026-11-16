@@ -10,19 +10,19 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, SharedString, VecModel};
 
+use crate::context::Loaded;
 use crate::deferred::{Coalesce, TYPING};
 use crate::documents::{self, with_store};
-use crate::context::Loaded;
 use crate::export::{Diagram, GraphInput};
+use crate::file_ui::FileState;
 use crate::follow::{self, Nav};
 use crate::follow_ui;
 use crate::instances::{self, Instance};
+use crate::matrix_ui::MatrixState;
 use crate::panes::Layout;
 use crate::panes_ui;
 use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
-use crate::file_ui::FileState;
-use crate::matrix_ui::MatrixState;
 use crate::tree::simulation::cut_hints;
 use crate::tree::{EdgeMode, Sort, Tree};
 use crate::ui::*;
@@ -235,16 +235,20 @@ pub fn wire(ui: &AppWindow) {
             return;
         };
         if action == "cycle" {
-            let depth = with_store(|s| Some(s.active()?.analysis.as_ref()?.run.config.modules.depth));
+            let depth =
+                with_store(|s| Some(s.active()?.analysis.as_ref()?.run.config.modules.depth));
             let (Ok(i), Some(depth)) = (arg.parse::<usize>(), depth) else {
                 return;
             };
             let layout = panes_ui::layout();
-            instances::update(&ui, &layout, id, |s: &mut Graph| s.choose_cycle(i, depth as usize));
+            instances::update(&ui, &layout, id, |s: &mut Graph| {
+                s.choose_cycle(i, depth as usize)
+            });
             return;
         }
-        let proposed =
-            instances::with(id, |s: &mut Graph| simulation::proposal(&s.g, &action, &arg));
+        let proposed = instances::with(id, |s: &mut Graph| {
+            simulation::proposal(&s.g, &action, &arg)
+        });
         if simulation::act(&ui, &action, &arg, proposed.flatten()) {
             resimulate(&ui);
         } else {
