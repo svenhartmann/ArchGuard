@@ -201,9 +201,17 @@ impl TabState for RuntimeState {
         push(ui, self);
     }
 
-    fn pending(ui: &AppWindow, _error: Option<&str>) {
-        ui.global::<RuntimeData>()
-            .set_model(RuntimeModel::default());
+    fn pending(ui: &AppWindow, error: Option<&str>) {
+        ui.global::<RuntimeData>().set_model(pending_model(error));
+    }
+}
+
+/// The loading text, or why the first read failed.
+fn pending_model(error: Option<&str>) -> RuntimeModel {
+    RuntimeModel {
+        state: if error.is_some() { 3 } else { 0 },
+        error: error.unwrap_or_default().into(),
+        ..Default::default()
     }
 }
 
@@ -262,6 +270,7 @@ fn build(s: &RuntimeState) -> RuntimeModel {
         summary,
         breakdown: time::breakdown(p),
         hot: time::hot(p),
+        error: Default::default(),
     }
 }
 
@@ -365,6 +374,15 @@ mod tests {
         std::fs::write(&file, more).unwrap();
         assert!(!due(&s, false), "with data it idles while hidden");
         assert!(due(&s, true));
+    }
+
+    /// A failed first read is kept as the tab's error and not retried, so
+    /// the tab must say so instead of loading forever.
+    #[test]
+    fn a_failed_first_read_shows_its_error() {
+        assert_eq!(pending_model(None).state, 0, "loading");
+        let m = pending_model(Some("boom"));
+        assert_eq!((m.state, m.error.as_str()), (3, "boom"));
     }
 
     #[test]
