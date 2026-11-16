@@ -38,7 +38,10 @@ const VIEWS: [(&str, &str); 8] = [
 
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("target dir");
-    for entry in std::fs::read_dir(from).expect("example is readable").flatten() {
+    for entry in std::fs::read_dir(from)
+        .expect("example is readable")
+        .flatten()
+    {
         let path = entry.path();
         let target = to.join(entry.file_name());
         if path.is_dir() {
