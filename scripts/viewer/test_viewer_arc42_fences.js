@@ -15,4 +15,7 @@ assert.deepEqual(fenced.code,['int a;','let b;','$ ls'],'non-word info strings o
 assert.ok(fenced.paragraphs.includes('prose'),'prose between the blocks stays a paragraph');
 const open=render('## 5. Bausteinsicht\n\ntext\n\n```rust\nfn a() {}\n\nmore');
 assert.deepEqual(open.code,['fn a() {}\n\nmore'],'an unclosed fence runs to the end of the chapter');
-console.log('arc42 fences: info strings, bare closing fence and unclosed fence passed');
+const comments=render('## 5. Bausteinsicht\n\n<!-- gone -->\n```html\n<!-- kept -->\n```\nend <!-- gone -->');
+assert.deepEqual(comments.code,['<!-- kept -->'],'comments inside a code block stay');
+assert.ok(comments.paragraphs.includes('end '),'comments in prose are removed');
+console.log('arc42 fences: info strings, bare closing fence, unclosed fence and comments in code passed');

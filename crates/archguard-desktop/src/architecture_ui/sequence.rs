@@ -249,10 +249,6 @@ pub fn tone(kind: RelationKind) -> i32 {
     }
 }
 
-/// A participant's head card (placed by the caller). Its namespace
-/// (`group`, e.g. the crate of a module) is the card's header line;
-/// building blocks of a scenario are packages, or classes in a class
-/// scenario; traces show services.
 /// What a participant card shows: a class scenario only the class name
 /// (more of the name only where two would read the same), a package
 /// scenario the packages named among each other, as the package map does.
@@ -283,6 +279,10 @@ fn labels(names: &[&str], classes: bool) -> Vec<String> {
     out
 }
 
+/// A participant's head card (placed by the caller). Its namespace
+/// (`group`, e.g. the crate of a module) is the card's header line;
+/// building blocks of a scenario are packages, or classes in a class
+/// scenario; traces show services.
 fn participant(i: usize, e: &DiagramElement, label: &str, classes: bool, texts: &Texts) -> ArcCard {
     let (name1, name2) = diagram::name_lines(label);
     let tag = match (&e.group, e.kind) {

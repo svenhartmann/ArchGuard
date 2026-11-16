@@ -151,8 +151,19 @@ function arc42Diagram(parent,source) {
   for(const edge of edges)edge.cycle=membership.has(edge.from)&&membership.get(edge.from)===membership.get(edge.to);
   arc42Graph(parent,model,{all:true});return true;
 }
+// Removes <!-- --> outside code blocks; a fence inside an open comment is comment text. As markdown::strip_comments (desktop).
+function arc42StripComments(text){
+  const strip=s=>s.replace(/<!--[\s\S]*?-->/g,'');let out='',prose='',fenced=false;
+  for(const line of text.split(/(?<=\n)/)){
+    const bare=line.replace(/\n$/,'');
+    if(fenced){out+=line;fenced=!/^\s*```\s*$/.test(bare);}
+    else if(/^\s*```[^`]*$/.test(bare)&&!strip(prose).includes('<!--')){out+=strip(prose)+line;prose='';fenced=true;}
+    else prose+=line;
+  }
+  return out+strip(prose);
+}
 function arc42Markdown(parent,markdown) {
-  const lines=String(markdown||'').replace(/\r\n?/g,'\n').replace(/<!--[\s\S]*?-->/g,'').split('\n');
+  const lines=arc42StripComments(String(markdown||'').replace(/\r\n?/g,'\n')).split('\n');
   const listItem=line=>line.match(/^(\s*)([-+*]|\d+[.)])\s+(.+)$/);
   const divider=line=>/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line?.trim()||'');
   const block=i=>/^\s*$|^#{1,6}\s|^\s*```|^\s*>|^\s*([-*_])\1{2,}\s*$/.test(lines[i])||listItem(lines[i])||divider(lines[i+1]);
