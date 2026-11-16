@@ -141,6 +141,15 @@ impl MatrixState {
         }
     }
 
+    /// The packages a following tree view opens on a new pair: also those
+    /// the matrix skips, which `marks` leaves out so a scope change
+    /// reports no closes.
+    fn shown_open(&self) -> BTreeSet<String> {
+        let mut marks = self.marks();
+        marks.open.extend(self.matrix.shown_open(&self.tree));
+        follow::marks_open(&self.tree, &marks)
+    }
+
     /// "Follow left": do what the left pane did. A scope the matrix does
     /// not offer (a file) is revealed instead.
     pub fn follow(&mut self, nav: &Nav) {
@@ -283,9 +292,7 @@ pub fn wire(ui: &AppWindow) {
         })
     });
     follow_ui::on_open("dsm", |id| {
-        instances::with(id, |m: &mut MatrixState| {
-            follow::marks_open(&m.tree, &m.marks())
-        })
+        instances::with(id, |m: &mut MatrixState| m.shown_open())
     });
     // Linked selection from the pane beside.
     panes_ui::on_reveal("dsm", |ui, id, node| act(ui, id as i32, |m| m.reveal(node)));
@@ -605,6 +612,50 @@ mod tests {
         m.follow(&Nav::Select("lib".into()));
         assert_eq!(m.scope, Some(lib));
         assert!(m.expanded.contains(&src), "{:?}", m.expanded);
+    }
+
+    /// `org/apache/{x/a.rs, y/b.rs}`: one root chain, as a Java project.
+    fn single_chain() -> MatrixState {
+        use NodeKind::{File, Module};
+        let tree = graph_tree(&[
+            ("org", Module, None),
+            ("org/apache", Module, Some(0)),
+            ("org/apache/x", Module, Some(1)),
+            ("org/apache/x/a.rs", File, Some(2)),
+            ("org/apache/y", Module, Some(1)),
+            ("org/apache/y/b.rs", File, Some(4)),
+        ]);
+        MatrixState::new(Rc::new(tree), "p".into())
+    }
+
+    fn names(m: &MatrixState, nodes: impl IntoIterator<Item = usize>) -> BTreeSet<String> {
+        nodes
+            .into_iter()
+            .map(|n| m.tree.nodes[n].name.clone())
+            .collect()
+    }
+
+    /// A Graph following the Matrix overview keeps its start chain open:
+    /// the Matrix shows it open by skipping it, not through `expanded`.
+    #[test]
+    fn a_graph_following_the_overview_keeps_the_start_chain() {
+        let m = single_chain();
+        let graph = names(&m, m.tree.start_open());
+        assert_eq!(graph, names(&m, [0, 1]), "org, org/apache");
+        let nav = follow::expand("dsm", "graph", &m.shown_open(), &graph);
+        assert_eq!(nav, None, "nothing to open or close");
+    }
+
+    /// A Graph following a scoped Matrix keeps the scope and its
+    /// ancestors open, which the Matrix shows as its top level.
+    #[test]
+    fn a_graph_following_a_scope_keeps_its_ancestors() {
+        let mut m = single_chain();
+        let x = named(&m, "org/apache/x");
+        m.set_scope(Some(x));
+        let graph = names(&m, [0, 1, x]);
+        let nav = follow::expand("dsm", "graph", &m.shown_open(), &graph);
+        assert_eq!(nav, None, "nothing to open or close");
     }
 
     /// Revealing a node from the pane beside it (linked selection) opens

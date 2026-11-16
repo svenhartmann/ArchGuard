@@ -270,6 +270,15 @@ impl Matrix {
         }
         rows
     }
+
+    /// Packages shown open without a row of their own: the scope and its
+    /// ancestors, or the chains the overview skips.
+    pub fn shown_open(&self, tree: &Tree) -> BTreeSet<usize> {
+        self.roots
+            .iter()
+            .flat_map(|&r| chain(tree, r).skip(1))
+            .collect()
+    }
 }
 
 /// `n` and its ancestors, innermost first.
