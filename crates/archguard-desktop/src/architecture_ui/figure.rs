@@ -8,16 +8,11 @@ use archguard_engine::core::{
     Diagram, DiagramElement, DiagramFormat, DiagramKind, ElementKind, RelationKind,
 };
 use archguard_engine::report::{diagram_mermaid, diagram_plantuml};
-use slint::{ModelRc, VecModel};
 
 use super::diagram::{self, Layout};
 use super::sequence::tone;
-use crate::tab_support::Texts;
+use crate::tab_support::{Texts, model};
 use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
-
-fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items))
-}
 
 /// `chapter` names the chapter in the diagram view; empty in a chapter.
 pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts) -> ArcFigure {
@@ -43,14 +38,14 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
             .iter()
             .any(|f| Some(f.label.as_str()) == e.group.as_deref())
     };
-    let cards = d
+    let cards: Vec<_> = d
         .elements
         .iter()
         .zip(&l.cards)
         .enumerate()
         .map(|(i, (e, c))| card(i, e, c, framed(e), texts))
         .collect();
-    let lines = relations
+    let lines: Vec<_> = relations
         .iter()
         .zip(&l.routes)
         .map(|((r, _, _), route)| ArcLine {

@@ -6,11 +6,12 @@
 use archguard_engine::core::{
     ServiceCycle, ServiceDependency, ServiceDependencyKind, ServiceEvidence, ServiceTopology,
 };
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString};
 
 use super::layout::{self, Link, Node, Side};
 use super::paths;
 use super::state::{KINDS, Mode, ServicesState};
+use crate::tab_support::model;
 use crate::ui::{
     ServicesModel, SvcCycle, SvcEdge, SvcEvidence, SvcInspector, SvcLink, SvcProject, SvcRow,
 };
@@ -62,10 +63,6 @@ pub fn key(e: &ServiceDependency) -> String {
         quote(&e.to),
         quote(kind_name(e.kind))
     )
-}
-
-fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
 }
 
 /// What the current relation kind and filters select.
