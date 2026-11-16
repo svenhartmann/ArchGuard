@@ -4,4 +4,5 @@
 //! blocks that write back to Markdown.
 
 pub mod doc;
+pub mod editor;
 pub mod inline;

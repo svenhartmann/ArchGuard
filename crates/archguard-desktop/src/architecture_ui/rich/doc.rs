@@ -54,6 +54,18 @@ impl Part {
         &mut self.blocks
     }
 
+    /// A part the chapter did not have: one empty paragraph to type in.
+    fn new() -> Part {
+        Part {
+            source: String::new(),
+            blocks: vec![Block {
+                kind: Kind::Paragraph,
+                inline: Inline::default(),
+            }],
+            edited: true,
+        }
+    }
+
     fn markdown(&self) -> String {
         if self.edited {
             write(&self.blocks)
@@ -93,11 +105,21 @@ impl Doc {
                 .iter()
                 .any(|g| g.start < range.end && range.start < g.end);
             match editable(&blocks).filter(|_| !locked) {
-                Some(blocks) => pieces.push(Piece::Part(Part {
-                    source: source.to_string(),
-                    blocks,
-                    edited: false,
-                })),
+                // Parts with only blank lines between are one: Backspace
+                // joins paragraphs across them.
+                Some(blocks) => match pieces.as_mut_slice() {
+                    [.., Piece::Part(last), Piece::Fixed(gap)] if gap.trim().is_empty() => {
+                        last.source.push_str(gap);
+                        last.source.push_str(source);
+                        last.blocks.extend(blocks);
+                        pieces.pop();
+                    }
+                    _ => pieces.push(Piece::Part(Part {
+                        source: source.to_string(),
+                        blocks,
+                        edited: false,
+                    })),
+                },
                 None => keep(&mut pieces, source),
             }
             pos = range.end;
@@ -106,14 +128,50 @@ impl Doc {
         Doc { pieces }
     }
 
+    /// The editable part `piece`, if it is one.
+    pub fn part(&self, piece: usize) -> Option<&Part> {
+        match self.pieces.get(piece)? {
+            Piece::Part(part) => Some(part),
+            Piece::Fixed(_) => None,
+        }
+    }
+
+    pub fn part_mut(&mut self, piece: usize) -> Option<&mut Part> {
+        match self.pieces.get_mut(piece)? {
+            Piece::Part(part) => Some(part),
+            Piece::Fixed(_) => None,
+        }
+    }
+
+    /// Add an empty part at the end to type in; its piece.
+    pub fn append_part(&mut self) -> usize {
+        self.pieces.push(Piece::Part(Part::new()));
+        self.pieces.len() - 1
+    }
+
     pub fn to_markdown(&self) -> String {
-        self.pieces
-            .iter()
-            .map(|p| match p {
-                Piece::Fixed(text) => text.clone(),
-                Piece::Part(part) => part.markdown(),
-            })
-            .collect()
+        let mut out = String::new();
+        for (i, p) in self.pieces.iter().enumerate() {
+            match p {
+                Piece::Fixed(text) => out.push_str(text),
+                Piece::Part(part) => {
+                    let text = part.markdown();
+                    // A new part starts a block of its own and ends its line.
+                    if part.source.is_empty() && !text.is_empty() {
+                        while !out.is_empty() && !out.ends_with("\n\n") {
+                            out.push('\n');
+                        }
+                        out.push_str(&text);
+                        if i + 1 == self.pieces.len() {
+                            out.push('\n');
+                        }
+                    } else {
+                        out.push_str(&text);
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -336,18 +394,19 @@ Ende.
         let item = |depth, number| Kind::Item { depth, number };
         assert_eq!(
             kinds,
+            // One part up to the rule: only blank lines lie between.
             [
-                vec![Kind::Paragraph],
                 vec![
+                    Kind::Paragraph,
                     item(0, None),
                     item(1, None),
                     item(0, Some(3)),
-                    item(0, Some(4))
+                    item(0, Some(4)),
+                    Kind::Quote,
+                    Kind::Code {
+                        lang: "rust".into()
+                    },
                 ],
-                vec![Kind::Quote],
-                vec![Kind::Code {
-                    lang: "rust".into()
-                }],
                 vec![Kind::Paragraph],
             ]
         );
@@ -402,6 +461,33 @@ Ende.
             "{md}"
         );
         assert!(md.contains("> Zitat *kursiv*"), "{md}");
+    }
+
+    #[test]
+    fn parts_with_only_blank_lines_between_are_one() {
+        let md = "a\n\nb\n\n<!-- c -->\nd\n";
+        let mut doc = Doc::parse(md, &[]);
+        assert_eq!(
+            parts(&mut doc)
+                .iter()
+                .map(|p| p.blocks().len())
+                .collect::<Vec<_>>(),
+            [2, 1]
+        );
+        assert_eq!(doc.to_markdown(), md);
+    }
+
+    #[test]
+    fn a_new_part_is_its_own_block_and_writes_nothing_while_empty() {
+        let md = "<!-- Eigene Erläuterungen hier ergänzen. -->\n";
+        let mut doc = Doc::parse(md, &[]);
+        let piece = doc.append_part();
+        assert_eq!(doc.to_markdown(), md, "empty");
+        doc.part_mut(piece).unwrap().edit()[0].inline = Inline::plain("Neu.");
+        assert_eq!(
+            doc.to_markdown(),
+            "<!-- Eigene Erläuterungen hier ergänzen. -->\n\nNeu.\n"
+        );
     }
 
     #[test]
