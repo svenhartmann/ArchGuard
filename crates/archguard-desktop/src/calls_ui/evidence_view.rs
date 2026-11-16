@@ -77,8 +77,11 @@ fn method_group(s: &State, g: &evidence::MethodGroup, open: bool) -> CallsMethod
             s,
             &format!(
                 "{} → {}",
-                idx.method_label(first.from_method.as_deref(), l),
-                idx.target_label(first, false, l)
+                idx.method_name(first.from_method.as_deref(), l),
+                match idx.method(first.to_method.as_deref()) {
+                    Some(_) => idx.method_name(first.to_method.as_deref(), l),
+                    None => idx.target_label(first, false, l),
+                }
             ),
         )
         .into(),
@@ -208,7 +211,11 @@ fn cohesion(d: &mut CallsDeclaration, s: &State, class: &str) {
     d.groups = model(c.groups.iter().map(|g| {
         let known: Vec<(String, &String)> = g
             .iter()
-            .filter_map(|id| s.idx.method(Some(id)).map(|m| (m.signature.clone(), id)))
+            .filter_map(|id| {
+                s.idx
+                    .method(Some(id))
+                    .map(|m| (super::model::signature(&m.signature), id))
+            })
             .collect();
         CallsCohesionGroup {
             methods: model(
@@ -225,9 +232,69 @@ fn cohesion(d: &mut CallsDeclaration, s: &State, class: &str) {
 mod tests {
     use super::super::model::fixture;
     use super::*;
+    use slint::Model;
 
     fn rows(m: &[CallsMetric]) -> Vec<(i32, String)> {
         m.iter().map(|x| (x.role, x.label.to_string())).collect()
+    }
+
+    /// A group heading names caller and target briefly; the signatures
+    /// below it read with normal spacing.
+    #[test]
+    fn method_group_heading_shows_short_names() {
+        let mut a = fixture::analysis();
+        let mut from = fixture::method("blue.Blue", "config_view@1", 1);
+        from.name = "config_view".into();
+        from.signature =
+            "async fn config_view (& self , x : Vec < u8 > ,) -> Result < String , E >".into();
+        let mut to = fixture::method("red.Red", "effective_config@2", 1);
+        to.name = "effective_config".into();
+        to.signature = "fn effective_config (& self) -> LoadedConfig".into();
+        a.methods.extend([from, to]);
+        a.calls.push(fixture::call(
+            "blue.Blue#config_view@1",
+            Some("red.Red#effective_config@2"),
+            "project",
+            40,
+        ));
+        a.calls.push(fixture::call(
+            "blue.Blue#config_view@1",
+            None,
+            "unresolved",
+            41,
+        ));
+        let mut s = State::new(a);
+        s.filter.package = None;
+        let g = |i: usize| evidence::MethodGroup {
+            key: String::new(),
+            calls: vec![i],
+            total: 1,
+        };
+        let m = method_group(&s, &g(6), true);
+        assert_eq!(m.title, "config_view → effective_config");
+        assert_eq!(
+            rows(&m.metrics.iter().collect::<Vec<_>>()),
+            [
+                (
+                    1,
+                    "blue.Blue#async fn config_view(&self, x: Vec<u8>) -> Result<String, E>".into()
+                ),
+                (
+                    2,
+                    "red.Red#fn effective_config(&self) -> LoadedConfig".into()
+                )
+            ]
+        );
+        let site = m.sites.row_data(0).unwrap();
+        assert_eq!(
+            site.declared,
+            "red.Red#fn effective_config(&self) -> LoadedConfig"
+        );
+        // An unresolved target keeps its label.
+        assert_eq!(
+            method_group(&s, &g(7), true).title,
+            "config_view → dyn.call"
+        );
     }
 
     /// Caller and target with the same signature in different classes
