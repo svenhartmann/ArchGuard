@@ -86,6 +86,9 @@ fn main() {
     let config = slint_build::CompilerConfiguration::new()
         .with_style(style())
         .with_bundled_translations(out)
-        .with_default_translation_context(slint_build::DefaultTranslationContext::None);
+        .with_default_translation_context(slint_build::DefaultTranslationContext::None)
+        // Element ids and types for the testing backend's element search
+        // (`src/app_check.rs`); debug builds only, so release stays lean.
+        .with_debug_info(std::env::var("PROFILE").as_deref() == Ok("debug"));
     slint_build::compile_with_config("ui/app.slint", config).expect("ui/app.slint compiles");
 }

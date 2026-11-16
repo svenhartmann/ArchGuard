@@ -1,10 +1,11 @@
 - Split work into small tasks. A task is small enough when one agent can finish
   it with its own tests in one pass. Do reads and small edits yourself. Use a
   subagent only for a task that shares no files with other running work.
-- Run at most two agents that edit or analyze at the same time, counting other
-  sessions in this repo. Check for them first: run `git worktree list`, read the
-  task list, and use `ListAgents` if you have it. If two are already running,
-  wait or tell the user.
+- If you run on Qwen 3.8 Flash Next: run at most two agents that edit or analyze
+  at the same time, counting other sessions in this repo. Check for them first:
+  run `git worktree list`, read the task list, and use `ListAgents` if you have
+  it. If two are already running, wait or tell the user. Other models have no
+  fixed agent limit.
 - Every file has one owner at a time. Before you edit, run `git status`. If a file
   you need has changes you did not make, do not edit it. Ask the user or the
   owning session. Tasks that touch the same file run one after another.

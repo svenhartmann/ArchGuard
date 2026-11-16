@@ -143,7 +143,7 @@ fn sim_hook(ui: &AppWindow) {
         // `from>to`.
         match action.trim() {
             "explorer" => ui.invoke_set_explorer_tab(id, arg.trim().parse().unwrap_or(0)),
-            a => ui.invoke_graph_sim(id, a.into(), arg.trim().replace('>', "\n").into()),
+            a => ui.invoke_graph_action(id, a.into(), arg.trim().replace('>', "\n").into()),
         }
     }
 }

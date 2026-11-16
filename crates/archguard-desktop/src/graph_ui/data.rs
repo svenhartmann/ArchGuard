@@ -103,6 +103,7 @@ pub fn graph_data(
         cuts: sync_rows(&old.cuts, cycles.cuts.iter().cloned()),
         node_total: g.tree.nodes.len() as i32,
         sim: super::simulation::data(g, texts.locale(), &old.sim),
+        review: super::review::data(g, &old.review),
     }
 }
 

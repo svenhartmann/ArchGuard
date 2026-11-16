@@ -44,6 +44,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [dev-dependencies]
 # Parses exported SVG in tests.
 roxmltree = "0.21.1"
+# Drives the real window in `app_check.rs`: element search by accessible
+# label and simulated clicks. Internal crate: the version must match slint.
+i-slint-backend-testing = "=1.18.1"
 
 [features]
 # `ARCHGUARD_DESKTOP_SNAPSHOT=<file.png>` renders the window to a PNG and
