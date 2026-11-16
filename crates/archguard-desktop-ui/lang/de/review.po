@@ -1,0 +1,68 @@
+msgid "Cyclic group: {} nodes (+{})"
+msgstr "Zyklische Gruppe: {} Knoten (+{})"
+
+msgid "Direct coupling: {} incoming + {} outgoing (+{})"
+msgstr "Direkte Kopplung: {} eingehend + {} ausgehend (+{})"
+
+msgid "Transitive dependents: {} (+{})"
+msgstr "Transitiv abhängige Knoten: {} (+{})"
+
+msgid "Git change touches × coupling: {} × {} (+{})"
+msgstr "Git-Dateiänderungen × Kopplung: {} × {} (+{})"
+
+msgid "No incoming dependencies in this scope; check entry points and dynamic consumers before removing code."
+msgstr "Keine eingehenden Abhängigkeiten in diesem Analysebereich; vor dem Entfernen Einstiegspunkte und dynamische Aufrufer prüfen."
+
+msgid "High review priority · {}/100"
+msgstr "Hohe Prüfpriorität · {}/100"
+
+msgid "Medium review priority · {}/100"
+msgstr "Mittlere Prüfpriorität · {}/100"
+
+msgid "Low review priority · {}/100"
+msgstr "Niedrige Prüfpriorität · {}/100"
+
+msgid "Isolated candidate · verify consumers"
+msgstr "Isolierter Kandidat · Aufrufer prüfen"
+
+msgid "Unreferenced candidate · verify consumers"
+msgstr "Unreferenzierter Kandidat · Aufrufer prüfen"
+
+msgid "No scored structural signals."
+msgstr "Keine bewerteten Struktursignale."
+
+msgid "No review for this view."
+msgstr "Keine Prüfung für diese Ansicht."
+
+msgid "{} nodes in view · {} high priority. Scores are a review order, not defect probabilities."
+msgstr "{} Knoten in der Ansicht · {} mit hoher Priorität. Die Bewertung bestimmt eine Prüfreihenfolge, keine Fehlerwahrscheinlichkeit."
+
+msgid "Simulated structure."
+msgstr "Simulierte Struktur."
+
+msgid "Git window: {} · {} commits scanned"
+msgstr "Git-Zeitraum: {} · {} Commits analysiert"
+
+msgid "incomplete history: change counts and scores are lower bounds."
+msgstr "unvollständige Historie: Änderungszahlen und Bewertungen sind Untergrenzen."
+
+msgid "Git unavailable: {}. Priorities use structural evidence."
+msgstr "Git nicht verfügbar: {}. Die Prioritäten beruhen auf Strukturbelegen."
+
+msgid "Orphan candidates only"
+msgstr "Nur verwaiste Kandidaten"
+
+msgid "No orphan candidates in this view."
+msgstr "Keine verwaisten Kandidaten in dieser Ansicht."
+
+msgid "No review candidates in this view."
+msgstr "Keine Prüfkandidaten in dieser Ansicht."
+
+msgid "Show next 20 ({} remaining)"
+msgstr "Nächste 20 anzeigen ({} verbleibend)"
+
+msgid "No priority signals in this scope. This does not establish absence of defects."
+msgstr "Keine Prioritätssignale in diesem Analysebereich. Das belegt keine Fehlerfreiheit."
+
+msgid "Contains a configured entry point; excluded from orphan candidates."
+msgstr "Enthält einen konfigurierten Einstiegspunkt und ist daher kein verwaister Kandidat."
