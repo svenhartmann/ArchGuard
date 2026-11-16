@@ -41,24 +41,41 @@ pub fn breakdown(p: &RuntimeProfile) -> ModelRc<RtBreakdown> {
     rows.sort_by(|a, b| b.mean_ms.total_cmp(&a.mean_ms));
     list(
         rows.into_iter()
-            .map(|b| RtBreakdown {
-                service: b.service.as_str().into(),
-                name: b.name.as_str().into(),
-                requests: i32::try_from(b.requests).unwrap_or(i32::MAX),
-                mean: number(b.mean_ms),
-                parts: list(
-                    b.parts
-                        .iter()
-                        .map(|x| RtPart {
-                            category: index(&x.category),
-                            width: share(x.mean_ms, max),
-                            ms: number(x.mean_ms),
-                        })
-                        .collect(),
-                ),
+            .map(|b| {
+                let mut start = 0.0;
+                let parts = b.parts.iter().map(|x| {
+                    let part = RtPart {
+                        category: index(&x.category),
+                        x: share(start, max),
+                        width: share(x.mean_ms, max),
+                        ms: number(x.mean_ms),
+                    };
+                    start += x.mean_ms;
+                    part
+                });
+                RtBreakdown {
+                    service: b.service.as_str().into(),
+                    name: b.name.as_str().into(),
+                    requests: i32::try_from(b.requests).unwrap_or(i32::MAX),
+                    mean: number(b.mean_ms),
+                    parts: list(parts.collect()),
+                }
             })
             .collect(),
     )
+}
+
+/// The legend: the categories the bars and method rows use, in `CATEGORIES` order.
+pub fn legend(p: &RuntimeProfile) -> ModelRc<i32> {
+    let parts = p.breakdown.iter().flat_map(|b| &b.parts);
+    let hot = p.hot_methods.iter();
+    let mut used: Vec<i32> = parts
+        .map(|x| index(&x.category))
+        .chain(hot.map(|m| index(m.kind.as_deref().unwrap_or("other"))))
+        .collect();
+    used.sort_unstable();
+    used.dedup();
+    list(used)
 }
 
 /// Methods by self time, bars scaled to the first.
@@ -128,7 +145,29 @@ mod tests {
         for b in bars.iter() {
             let width: f32 = b.parts.iter().map(|x| x.width).sum();
             assert!(width <= 1.01, "{width}");
+            let mut end = 0.0;
+            for x in b.parts.iter() {
+                assert!((x.x - end).abs() < 1e-4, "parts sit end to end");
+                end = x.x + x.width;
+            }
         }
+    }
+
+    #[test]
+    fn legend_lists_only_the_categories_on_the_page_in_order() {
+        let p = fixture();
+        let mut used: Vec<i32> = breakdown(&p)
+            .iter()
+            .flat_map(|b| b.parts.iter().map(|x| x.category).collect::<Vec<_>>())
+            .chain(hot(&p).iter().map(|h| h.category))
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        assert!(
+            used.len() < CATEGORIES.len(),
+            "fixture lacks some: {used:?}"
+        );
+        assert_eq!(legend(&p).iter().collect::<Vec<_>>(), used);
     }
 
     #[test]

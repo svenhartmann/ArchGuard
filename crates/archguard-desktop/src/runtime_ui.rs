@@ -274,6 +274,7 @@ fn build(s: &RuntimeState) -> RuntimeModel {
         summary,
         breakdown: time::breakdown(p),
         hot: time::hot(p),
+        legend: time::legend(p),
         error: Default::default(),
     }
 }

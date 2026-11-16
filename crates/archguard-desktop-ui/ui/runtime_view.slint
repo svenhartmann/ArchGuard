@@ -77,6 +77,8 @@ export struct RuntimeModel {
     summary: RtSummary,
     breakdown: [RtBreakdown],
     hot: [RtHot],
+    // The categories `breakdown` and `hot` use, for the Time page's legend.
+    legend: [int],
 }
 
 export global RuntimeData {
@@ -264,7 +266,7 @@ export component RuntimeView inherits Rectangle {
                 : @tr("Send a request to the application; with Live on it appears here within about a second.");
         }
         if m.state == 1 && m.page == 1: RuntimeSummary { vertical-stretch: 1; data: m.summary; }
-        if m.state == 1 && m.page == 2: RuntimeTime { vertical-stretch: 1; breakdown: m.breakdown; hot: m.hot; }
+        if m.state == 1 && m.page == 2: RuntimeTime { vertical-stretch: 1; breakdown: m.breakdown; hot: m.hot; legend: m.legend; }
         if m.state == 1 && m.page == 0 && m.requests.length > 0: HorizontalLayout {
             vertical-stretch: 1;
             ScrollView {
