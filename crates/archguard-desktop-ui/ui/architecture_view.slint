@@ -55,6 +55,9 @@ export struct ArchitectureModel {
     map-shown: bool,
     // A package map level: opt-in, so the map stays when it is off.
     map-optional: bool,
+    // The open chapter has no generated block: the map can be taken into
+    // its text.
+    map-insertable: bool,
     // Why a tick could not be written to archguard.toml.
     figure-error: string,
 }
@@ -72,6 +75,8 @@ export global ArchitectureData {
     callback plantuml(string);
     // Show (true) or hide a catalogue diagram in the documentation.
     callback toggle-diagram(string, bool);
+    // A diagram as own text at the end of the open chapter (opens the editor).
+    callback insert-diagram(string);
     callback open-catalogue();
 
     // The chapter editor. Visual: the formatted text to type in
@@ -476,6 +481,15 @@ export component ArchitectureView inherits Rectangle {
                             if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown || ArchitectureData.model.map-optional): VerticalLayout {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
+                                spacing: 8px;
+                                if ArchitectureData.model.map-insertable: HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        compact: true;
+                                        text: @tr("Insert into chapter");
+                                        clicked => { ArchitectureData.insert-diagram(ArchitectureData.model.map-id); }
+                                    }
+                                }
                                 ArcVisual {
                                     compact: root.narrow;
                                     map: ArchitectureData.model.map;
@@ -498,6 +512,7 @@ export component ArchitectureView inherits Rectangle {
                                         figure: f;
                                         compact: root.narrow;
                                         toggle(id, on) => { ArchitectureData.toggle-diagram(id, on); }
+                                        insert(id) => { ArchitectureData.insert-diagram(id); }
                                     }
                                 }
                             }

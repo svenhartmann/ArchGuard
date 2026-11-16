@@ -11,7 +11,7 @@ use super::visual::Kind;
 use super::{catalogue, figure, view};
 use crate::kpi;
 use crate::tab_support::Texts;
-use crate::ui::ArchitectureModel;
+use crate::ui::{ArcFigure, ArchitectureModel};
 
 /// The window model of the state.
 pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
@@ -80,6 +80,12 @@ fn fill_figures(
 ) {
     // The map draws its overview and the open level itself.
     let map = view.as_ref().map(|(kind, _)| catalogue::map_id(*kind));
+    // A chapter without a generated block never gets a diagram on its own:
+    // it can take one over as text.
+    let has_block = s
+        .editor
+        .chapter(doc, s.chapter)
+        .contains(crate::arc42_file::MARKER);
     let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
@@ -95,6 +101,7 @@ fn fill_figures(
             .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
             .into();
         m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
+        m.map_insertable = !has_block && entry.is_some();
     }
     let figures = doc
         .diagrams
@@ -109,7 +116,11 @@ fn fill_figures(
             } else {
                 String::new()
             };
-            figure::figure(d, s.format, chapter, texts)
+            let insertable = !s.catalogue && !has_block;
+            ArcFigure {
+                insertable,
+                ..figure::figure(d, s.format, chapter, texts)
+            }
         });
     m.figures = slint::ModelRc::new(slint::VecModel::from(figures.collect::<Vec<_>>()));
 }
