@@ -7,7 +7,7 @@ import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { TextEdit } from "fields.slint";
 import { Button, SearchField, StatusLine, EmptyState, SectionHeading } from "widgets.slint";
-import { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit, SettingsFormItem, GroupRow, PreviewPanel } from "settings_parts.slint";
+import { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit, SettingsFormItem, GroupRow, PreviewPanel, FieldLabels } from "settings_parts.slint";
 
 export { SettingsItem, SettingsGroupItem, SettingsFinding, SettingsPreview, SettingsEdit }
 
@@ -48,6 +48,10 @@ export global SettingsData {
     callback edit-text(string);
     callback reload();
     callback overwrite();
+    // The row label of a key, so the search finds what the rows show.
+    public pure function label(key: string) -> string {
+        return FieldLabels.of(key);
+    }
 }
 
 component TopBar inherits HorizontalLayout {

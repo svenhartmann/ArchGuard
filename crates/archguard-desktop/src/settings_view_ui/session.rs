@@ -3,7 +3,7 @@
 //! engine's validation and the edits per group since the last save.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -49,6 +49,8 @@ pub struct SettingsState {
     pub(super) preview: PreviewStatus,
     /// The window language's group names and field descriptions.
     pub(super) texts: Texts,
+    /// The rows' readable labels by key (`FieldLabels`), for the search.
+    pub(super) labels: HashMap<&'static str, String>,
 }
 
 impl SettingsState {
@@ -71,6 +73,7 @@ impl SettingsState {
             save_error: String::new(),
             preview: PreviewStatus::Idle,
             texts: Texts::default(),
+            labels: HashMap::new(),
         };
         s.reload();
         s

@@ -562,6 +562,36 @@ fn list_rows_carry_their_line_count() {
     let items = in_group(&mut s, Group::Architecture);
     let empty = item(&items, "architecture.asyncapi");
     assert_eq!((empty.text.as_str(), empty.lines), ("", 1));
+    s.edit("project.languages", "auto\n");
+    let items = in_group(&mut s, Group::Project);
+    assert_eq!(item(&items, "project.languages").lines, 2, "Enter adds a line");
+}
+
+/// The search finds a field by the readable label its row shows
+/// (`FieldLabels` in settings_parts.slint, in the window language).
+#[test]
+fn a_search_finds_a_field_by_its_label() {
+    let (_dir, _, mut s) = project("");
+    s.labels = [
+        ("source_roots", "Quellverzeichnisse"),
+        ("exclude", "Excluded paths"),
+        ("dependency_rules", "Verbotene Abhängigkeiten"),
+    ]
+    .into_iter()
+    .map(|(k, l)| (k, l.to_string()))
+    .collect();
+    for (query, path) in [
+        ("quellverz", "project.source_roots"),
+        ("Excluded paths", "project.exclude"),
+    ] {
+        s.query = query.into();
+        let items = s.items().0;
+        item(&items, path);
+        assert_eq!(s.groups()[0].matches, 1, "{query}");
+    }
+    s.query = "verbotene".into();
+    let items = s.items().0;
+    assert!(items.iter().any(|i| i.kind == ARRAY && i.path == "dependency_rules"));
 }
 
 /// Invalid input marks the document dirty, so quitting asks; the

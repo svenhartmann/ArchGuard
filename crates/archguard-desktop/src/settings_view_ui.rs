@@ -185,8 +185,9 @@ fn show(ui: &AppWindow) {
 
 fn push(ui: &AppWindow, s: &mut SettingsState) {
     s.texts = Texts::of(ui);
-    preview_panel::collect(s.doc, &mut s.preview);
     let d = ui.global::<SettingsData>();
+    s.labels = form::labels(|key| d.invoke_label(key.into()).into());
+    preview_panel::collect(s.doc, &mut s.preview);
     let old = d.get_model();
     d.set_model(model(s, &old));
 }
