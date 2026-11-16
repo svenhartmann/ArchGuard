@@ -3,13 +3,14 @@
 //! formatted text to type in ([`super::rich`]). Markdown: the whole
 //! chapter beside its preview.
 
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use archguard_engine::report::Arc42Document;
 use slint::{ComponentHandle, SharedString};
 
 use super::rich::layout::Style;
+#[cfg(test)]
+use super::rich::view::Key;
 use super::rich::view::Rich;
 use super::{blocks, markdown, sync};
 use crate::arc42_file::{self, Arc42Files, Target};
@@ -50,23 +51,6 @@ struct Open {
     /// The formatted editor while the visual editor shows; made from the
     /// draft when it opens, and it writes the draft on every edit.
     rich: Option<Rich>,
-}
-
-/// The bytes of `text` inside generated `archguard:arc42` blocks; a block
-/// without its end marker runs to the end.
-pub(super) fn generated(text: &str) -> Vec<Range<usize>> {
-    let mut out = Vec::new();
-    let mut open = None;
-    for (i, _) in text.match_indices(arc42_file::MARKER) {
-        let tag = text[i..].split_once("-->").map_or("", |(tag, _)| tag);
-        if tag.trim_end().ends_with(":start") {
-            open.get_or_insert(i);
-        } else if let Some(start) = open.take() {
-            out.push(start..i);
-        }
-    }
-    out.extend(open.map(|start| start..text.len()));
-    out
 }
 
 impl Editor {
@@ -379,7 +363,6 @@ fn ask_path(ui: &AppWindow, root: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::rich::view::Key;
     use super::*;
     use crate::arc42_file::tests::doc;
 

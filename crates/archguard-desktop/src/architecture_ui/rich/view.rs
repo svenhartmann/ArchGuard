@@ -84,7 +84,7 @@ fn rich_rect(r: Rect) -> RichRect {
 impl Rich {
     /// Edit chapter Markdown (LF line ends).
     pub fn new(md: &str) -> Rich {
-        let fixed = super::super::edit::generated(md);
+        let fixed = doc::generated(md);
         Rich {
             editor: Editor::new(Doc::parse(md, &fixed)),
             width: 600.0,
