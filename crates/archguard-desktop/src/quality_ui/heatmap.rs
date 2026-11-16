@@ -101,6 +101,19 @@ pub fn gaps(lang: &crate::tab_support::Texts, classes: &[ClassMetrics]) -> Strin
         .join(" · ")
 }
 
+/// The heatmap's columns as [`METRICS`] indices: the metrics measured for
+/// some class; all of them when none is, so the table keeps its shape.
+pub fn columns(classes: &[ClassMetrics]) -> Vec<usize> {
+    let measured: Vec<usize> = (0..METRICS.len())
+        .filter(|&i| classes.iter().any(|r| value(r, METRICS[i]).is_some()))
+        .collect();
+    if measured.is_empty() {
+        (0..METRICS.len()).collect()
+    } else {
+        measured
+    }
+}
+
 /// Metric `key` applies to some class but was measured for none.
 pub fn unmeasured(classes: &[ClassMetrics], key: &str) -> bool {
     matches!(coverage(classes, key), (0, 1..))

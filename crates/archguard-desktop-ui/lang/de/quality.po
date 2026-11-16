@@ -525,5 +525,8 @@ msgstr "in Seiten zu 20 angezeigt; „Nächste 20 anzeigen“ am Listenende läd
 msgid "Not measured for every class: {}"
 msgstr "Nicht für jede Klasse gemessen: {}"
 
+msgid "Not applicable to these classes: {}"
+msgstr "Für diese Klassen nicht anwendbar: {}"
+
 msgid "Not measured in this analysis: NOC needs a complete call and inheritance analysis, and this one is partial. “—” means not measured, not zero."
 msgstr "In dieser Analyse nicht gemessen: NOC braucht eine vollständige Aufruf- und Vererbungsanalyse, diese ist nur teilweise. „—“ heißt nicht gemessen, nicht null."
