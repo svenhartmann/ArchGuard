@@ -252,13 +252,13 @@ fn strip_prose(text: &str, lines: bool) -> String {
 
 /// `^\s*```([^`]*)$`; the language is the info string's first word, so a
 /// closing fence (only whitespace after ```) gives `Some("")`.
-fn fence(line: &str) -> Option<&str> {
+pub(super) fn fence(line: &str) -> Option<&str> {
     let info = line.trim_start().strip_prefix("```")?;
     (!info.contains('`')).then(|| info.split_whitespace().next().unwrap_or(""))
 }
 
 /// `^(#{1,6})\s+(.+)$`
-fn heading(line: &str) -> Option<(usize, &str)> {
+pub(super) fn heading(line: &str) -> Option<(usize, &str)> {
     let level = line.chars().take_while(|&c| c == '#').count();
     let rest = &line[level..];
     if !(1..=6).contains(&level) || !rest.starts_with(char::is_whitespace) {
@@ -269,7 +269,7 @@ fn heading(line: &str) -> Option<(usize, &str)> {
 }
 
 /// `^(\s*)([-+*]|\d+[.)])\s+(.+)$`
-fn list_item(line: &str) -> Option<(usize, &str, &str)> {
+pub(super) fn list_item(line: &str) -> Option<(usize, &str, &str)> {
     let body = line.trim_start();
     let indent = line.len() - body.len();
     let marker_len = if body.starts_with(['-', '+', '*']) {
@@ -290,13 +290,13 @@ fn list_item(line: &str) -> Option<(usize, &str, &str)> {
 }
 
 /// `^\s*> ?(.*)`
-fn quote_line(line: &str) -> Option<&str> {
+pub(super) fn quote_line(line: &str) -> Option<&str> {
     let rest = line.trim_start().strip_prefix('>')?;
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
 /// `^\s*([-*_])\1{2,}\s*$`
-fn rule(line: &str) -> bool {
+pub(super) fn rule(line: &str) -> bool {
     let t = line.trim();
     let Some(c) = t.chars().next() else {
         return false;

@@ -8,8 +8,10 @@ import { Button, Disclosure, HelpTip, PageTitle } from "widgets.slint";
 import { ArcBlock, ArcBlockView, Fit } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
+import { RichEditor, RichToolbar, RichData, RichItem, RichRun, RichRect, RichTools } from "architecture_rich.slint";
 
 export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation, ArcFigure, ArcFrame }
+export { RichData, RichItem, RichRun, RichRect, RichTools }
 
 export struct ArcChapter {
     number: int,
@@ -72,87 +74,26 @@ export global ArchitectureData {
     callback toggle-diagram(string, bool);
     callback open-catalogue();
 
-    // The chapter editor: its Markdown and the chapter as the reader
-    // shows it. Visual: a click on a block of that edits it in place.
+    // The chapter editor. Visual: the formatted text to type in
+    // (RichData); else its Markdown beside the chapter as the reader shows it.
     in-out property <bool> visual: true;
     in-out property <string> draft;
     in-out property <[ArcBlock]> preview;
-    // The Markdown of the block that is open in the visual editor.
-    in-out property <string> block-text;
     callback start-edit();
     callback draft-changed(string);
-    // Open the block (ArcBlock.piece) in its place; -1: a new one at the end.
-    callback open-block(int);
-    callback block-changed(string);
-    callback close-block();
+    // The editor switched between formatted text and Markdown.
+    callback visual-changed(bool);
     callback save-edit();
     callback cancel-edit();
     // 0 arc42.md in the project folder, 1 another file, 2 cancel.
     callback choose-location(int);
 }
 
-// A row of the chapter in the visual editor: a click opens its block as
-// Markdown in its place (kind 9), Escape shows it formatted again.
-component EditBlock inherits VerticalLayout {
-    in property <ArcBlock> block;
-    // The pointer is on a row of this block.
-    in property <bool> lit;
-    callback hovered(bool);
-    if root.block.kind == 9: Fit {
-        top: 4px;
-        bottom: 8px;
-        Rectangle {
-            border-radius: Theme.radius-sm;
-            border-width: 1px;
-            border-color: Theme.accent;
-            background: Theme.panel;
-            VerticalLayout {
-                padding: 10px;
-                TextInput {
-                    single-line: false;
-                    wrap: word-wrap;
-                    color: Theme.text;
-                    font-size: Theme.font-body;
-                    selection-background-color: Theme.accent.with-alpha(0.35);
-                    selection-foreground-color: Theme.text;
-                    text <=> ArchitectureData.block-text;
-                    edited => { ArchitectureData.block-changed(self.text); }
-                    key-pressed(e) => {
-                        if (e.text == Key.Escape) {
-                            ArchitectureData.close-block();
-                            return accept;
-                        }
-                        reject
-                    }
-                    init => {
-                        self.focus();
-                        // The cursor at the end: an offset past the text is clamped to it.
-                        self.set-selection-offsets(1000000000, 1000000000);
-                    }
-                }
-            }
-        }
-    }
-    Rectangle {
-        background: root.lit ? Theme.panel-2 : transparent;
-        border-radius: Theme.radius-sm;
-        ArcBlockView { block: root.block; }
-        touch := TouchArea {
-            enabled: root.block.piece >= 0;
-            mouse-cursor: text;
-            clicked => { ArchitectureData.open-block(root.block.piece); }
-            changed has-hover => { root.hovered(self.has-hover); }
-        }
-    }
-}
-
-// Visual: the chapter as the reader shows it, a block at a time open in
-// its place. Markdown: the source on the left, the chapter on the right;
-// one above the other in a narrow pane.
+// Visual: the chapter as formatted text to type in. Markdown: the source
+// on the left, the chapter on the right; one above the other in a narrow
+// pane.
 component ChapterEditor inherits VerticalLayout {
     in property <bool> narrow;
-    // The block under the pointer in the visual editor.
-    property <int> hover: -1;
     spacing: 12px;
     alignment: start;
     Text {
@@ -209,31 +150,14 @@ component ChapterEditor inherits VerticalLayout {
     }
     if ArchitectureData.visual: Fit {
         Text {
-            text: @tr("Click a text to change it; Esc shows it formatted again. Generated blocks cannot be changed.");
+            text: @tr("Type in the text as it will read. Generated blocks are refreshed from the analysis and cannot be changed.");
             color: Theme.muted;
             font-size: Theme.font-small;
             wrap: word-wrap;
         }
     }
-    if ArchitectureData.visual: VerticalLayout {
-        alignment: start;
-        for b in ArchitectureData.preview: EditBlock {
-            block: b;
-            lit: b.piece >= 0 && b.piece == root.hover;
-            hovered(on) => {
-                if (on) {
-                    root.hover = b.piece;
-                } else if (root.hover == b.piece) {
-                    root.hover = -1;
-                }
-            }
-        }
-        HorizontalLayout {
-            alignment: start;
-            padding-top: 10px;
-            Button { compact: true; text: @tr("Add text"); clicked => { ArchitectureData.open-block(-1); } }
-        }
-    }
+    if ArchitectureData.visual: RichToolbar {}
+    if ArchitectureData.visual: RichEditor {}
     if !ArchitectureData.visual && !root.narrow: HorizontalLayout {
         spacing: 18px;
         TextEdit {
@@ -277,8 +201,8 @@ component ChapterEditor inherits VerticalLayout {
         Button {
             text: ArchitectureData.visual ? @tr("Edit Markdown") : @tr("Edit in the text");
             clicked => {
-                ArchitectureData.close-block();
                 ArchitectureData.visual = !ArchitectureData.visual;
+                ArchitectureData.visual-changed(ArchitectureData.visual);
             }
         }
     }
@@ -468,8 +392,20 @@ export component ArchitectureView inherits Rectangle {
                     }
                 }
             }
-            ScrollView {
+            page := ScrollView {
                 horizontal-stretch: 1;
+                // The editor's caret stays in view while it moves.
+                property <length> caret: RichData.caret-top;
+                changed caret => {
+                    if (!ArchitectureData.model.editing) {
+                        return;
+                    }
+                    let top = self.absolute-position.y + 24px;
+                    let bottom = self.absolute-position.y + self.visible-height - 24px;
+                    let shift = RichData.caret-top < top ? top - RichData.caret-top
+                        : RichData.caret-top + RichData.caret-h > bottom ? bottom - RichData.caret-top - RichData.caret-h : 0px;
+                    self.content-y = max(min(self.content-y + shift, 0px), self.visible-height - self.content-height);
+                }
                 VerticalLayout {
                     alignment: start;
                     padding-bottom: 28px;

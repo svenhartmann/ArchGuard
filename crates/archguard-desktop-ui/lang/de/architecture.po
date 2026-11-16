@@ -146,12 +146,6 @@ msgstr "Vorschau"
 msgid "Save chapter"
 msgstr "Kapitel speichern"
 
-msgid "Click a text to change it; Esc shows it formatted again. Generated blocks cannot be changed."
-msgstr "Text anklicken, um ihn zu ändern; Esc zeigt ihn wieder formatiert. Generierte Blöcke lassen sich nicht ändern."
-
-msgid "Add text"
-msgstr "Text hinzufügen"
-
 msgid "Edit Markdown"
 msgstr "Markdown bearbeiten"
 
@@ -232,3 +226,48 @@ msgstr "Grau: Programme, die der Code startet · Blau: per HTTP angesprochene Ho
 
 msgid "Building blocks"
 msgstr "Bausteine"
+
+msgid "Type in the text as it will read. Generated blocks are refreshed from the analysis and cannot be changed."
+msgstr "Schreiben Sie den Text so, wie er gelesen wird. Generierte Blöcke werden aus der Analyse erneuert und lassen sich nicht ändern."
+
+msgid "Bold"
+msgstr "Fett"
+
+msgid "Italic"
+msgstr "Kursiv"
+
+msgid "Code"
+msgstr "Code"
+
+msgid "Link"
+msgstr "Link"
+
+msgid "Heading 2"
+msgstr "Überschrift 2"
+
+msgid "Heading 3"
+msgstr "Überschrift 3"
+
+msgid "Heading 4"
+msgstr "Überschrift 4"
+
+msgid "Bulleted list"
+msgstr "Aufzählung"
+
+msgid "Numbered list"
+msgstr "Nummerierte Liste"
+
+msgid "Quote"
+msgstr "Zitat"
+
+msgid "Code block"
+msgstr "Codeblock"
+
+msgid "Redo"
+msgstr "Wiederholen"
+
+msgid "Link target"
+msgstr "Linkziel"
+
+msgid "Remove the link"
+msgstr "Link entfernen"

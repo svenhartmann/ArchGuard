@@ -8,7 +8,7 @@ import { MatrixView, MatrixColumn, MatrixRowItem, MatrixData } from "matrix_view
 import { GraphView, GraphData, Crumb, Hit, CycleItem, Neighbor } from "graph_view.slint";
 import { FileView, FileData, NodeDep } from "file_view.slint";
 import { StartView, StartData } from "start_view.slint";
-import { ArchitectureView, ArchitectureData } from "architecture_view.slint";
+import { ArchitectureView, ArchitectureData, RichData } from "architecture_view.slint";
 import { CallsView, CallsData } from "calls_view.slint";
 import { ServicesView, ServicesData } from "services_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
@@ -26,6 +26,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 // Data of the views that can be open several times: one per instance.
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
+export { RichData }
 export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).

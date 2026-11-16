@@ -13,9 +13,6 @@ msgstr "Manuelle Simulation"
 msgid "This changes only the simulated graph; source files remain unchanged."
 msgstr "Dies ändert nur den simulierten Graphen; Quelldateien bleiben unverändert."
 
-msgid "Apply"
-msgstr "Anwenden"
-
 msgid "Move under module"
 msgstr "Unter Modul verschieben"
 
@@ -27,9 +24,6 @@ msgstr "Simulierte Änderungen"
 
 msgid "Cycle groups {} → {} · ACD {} → {}"
 msgstr "Zyklusgruppen {} → {} · ACD {} → {}"
-
-msgid "Undo"
-msgstr "Rückgängig"
 
 msgid "Clear changes"
 msgstr "Änderungen verwerfen"
