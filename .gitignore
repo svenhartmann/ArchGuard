@@ -25,3 +25,7 @@
 __pycache__/
 *.py[cod]
 /zyklen.html
+*.DS_Store
+
+# Local runtime recordings (OTLP traces of the app itself).
+**/.archguard/runtime/
