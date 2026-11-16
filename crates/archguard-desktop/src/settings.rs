@@ -266,11 +266,13 @@ pub fn render(doc: &mut DocumentMut, settings: &Settings) -> String {
 }
 
 fn render_projects(doc: &mut DocumentMut, projects: &BTreeMap<String, ProjectView>) {
-    if projects.is_empty() {
+    if projects.is_empty() && doc.get("projects").is_none() {
         return;
     }
     let all = table(doc, "projects");
     all.set_implicit(true);
+    // Removed in another app instance (`settings_file::merge_others`).
+    all.retain(|path, item| projects.contains_key(path) || !item.is_table_like());
     for (path, view) in projects {
         let entry = all.entry(path).or_insert_with(|| Item::Table(Table::new()));
         if !entry.is_table() {

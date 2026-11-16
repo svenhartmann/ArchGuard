@@ -151,7 +151,9 @@ pub fn edit(f: impl FnOnce(&mut Settings)) {
 pub fn write() {
     let error = CURRENT.with_borrow_mut(|c| {
         let path = c.path.clone()?;
-        merge_others(&path, &c.doc, &mut c.settings);
+        if let Err(e) = merge_others(&path, &c.doc, &mut c.settings) {
+            return Some(format!("{}: {e}", path.display()));
+        }
         let e = save(&path, &mut c.doc, &c.settings).err()?;
         Some(format!("{}: {e}", path.display()))
     });
@@ -161,30 +163,71 @@ pub fn write() {
     ON_ERROR.with_borrow(|f| f.as_ref().map(|f| f(error)));
 }
 
-/// Add the recent projects and project views another app instance wrote
-/// to `path` since `doc` (this instance's last read or write) to
-/// `settings`, after this instance's own. Entries `doc` already has stay
-/// as `settings` has them, so this instance's removals stick.
-fn merge_others(path: &Path, doc: &DocumentMut, settings: &mut Settings) {
+/// Take over what another app instance changed in `path` since `doc`
+/// (this instance's last read or write): per value, per project and per
+/// recent entry, what this instance left as in `doc` takes the file's
+/// state, so the other instance's changes and removals stick; what this
+/// instance changed stays. A file that does not parse is an error: it is
+/// not overwritten.
+fn merge_others(path: &Path, doc: &DocumentMut, settings: &mut Settings) -> Result<(), String> {
     let Ok(text) = std::fs::read_to_string(path) else {
-        return;
+        return Ok(());
     };
-    let (Ok((_, disk)), Ok((_, base))) =
-        (settings::parse(&text), settings::parse(&doc.to_string()))
-    else {
-        return;
-    };
-    for root in disk.recent {
-        if !base.recent.contains(&root) && !settings.recent.contains(&root) {
-            settings.recent.push(root);
-        }
+    let (_, disk) = settings::parse(&text)
+        .map_err(|e| e.lines().next().unwrap_or_default().trim().to_string())?;
+    let (_, base) = settings::parse(&doc.to_string())?;
+    let s = settings;
+    s.theme = pick(base.theme, disk.theme, s.theme);
+    s.language = pick(
+        base.language,
+        disk.language,
+        std::mem::take(&mut s.language),
+    );
+    s.window = pick(base.window, disk.window, s.window);
+    s.session = pick(base.session, disk.session, s.session.take());
+    if s.recent == base.recent {
+        s.recent = disk.recent;
+    } else {
+        let mine = std::mem::take(&mut s.recent);
+        let keep = |p: &PathBuf| {
+            pick(
+                base.recent.contains(p),
+                disk.recent.contains(p),
+                mine.contains(p),
+            )
+        };
+        let new = disk.recent.iter().filter(|p| !mine.contains(p));
+        s.recent = mine
+            .iter()
+            .chain(new)
+            .filter(|p| keep(p))
+            .cloned()
+            .collect();
+        s.recent.truncate(settings::RECENT_MAX);
     }
-    settings.recent.truncate(settings::RECENT_MAX);
-    for (key, view) in disk.projects {
-        if !base.projects.contains_key(&key) {
-            settings.projects.entry(key).or_insert(view);
-        }
+    let keys: std::collections::BTreeSet<String> = [&base.projects, &disk.projects, &s.projects]
+        .into_iter()
+        .flat_map(|m| m.keys().cloned())
+        .collect();
+    for key in keys {
+        let view = pick(
+            base.projects.get(&key),
+            disk.projects.get(&key),
+            s.projects.get(&key),
+        )
+        .cloned();
+        match view {
+            Some(view) => s.projects.insert(key, view),
+            None => s.projects.remove(&key),
+        };
     }
+    Ok(())
+}
+
+/// Three-way merge of one value: unchanged here (`mine == base`) takes
+/// the file's, else this instance's.
+fn pick<T: PartialEq>(base: T, disk: T, mine: T) -> T {
+    if mine == base { disk } else { mine }
 }
 
 /// Call `f` with the message of every failed [`write`].
@@ -405,6 +448,64 @@ mod tests {
         // Clearing the list after the merge sticks.
         update(|s| s.recent.clear());
         assert!(load(&path).settings.recent.is_empty());
+        init(None);
+    }
+
+    /// What another instance changed or removed survives a write of this
+    /// instance that did not touch it.
+    #[test]
+    fn a_write_keeps_what_another_instance_changed_or_removed() {
+        let dir = temp("two-instances-changed");
+        let path = dir.join(FILE);
+        std::fs::write(
+            &path,
+            "recent = [\"/w/p\", \"/w/q\"]\n\
+             [projects.\"/w/p\"]\ntab = \"graph\"\n\
+             [projects.\"/w/q\"]\ntab = \"dsm\"\n",
+        )
+        .expect("write");
+        init(Some(path.clone()));
+        // Instance A rearranges /w/p, forgets /w/q, clears the recent list
+        // and picks a theme.
+        let mut a = load(&path);
+        a.settings.projects.get_mut("/w/p").expect("p").tab = "calls".into();
+        a.settings.projects.remove("/w/q");
+        a.settings.recent.clear();
+        a.settings.theme = Theme::Light;
+        save(&path, &mut a.doc, &a.settings).expect("written");
+        // This instance only records its window size, twice.
+        update(|s| s.window = Some((800, 600)));
+        update(|s| s.window = Some((900, 700)));
+        let back = load(&path).settings;
+        assert_eq!(back.window, Some((900, 700)));
+        assert_eq!(back.theme, Theme::Light);
+        assert!(back.recent.is_empty(), "{back:?}");
+        assert_eq!(back.projects["/w/p"].tab, "calls");
+        assert!(back.project(Path::new("/w/q")).is_none(), "{back:?}");
+        // What this instance changes itself still wins.
+        update(|s| s.projects.get_mut("/w/p").expect("p").tab = "dsm".into());
+        assert_eq!(load(&path).settings.projects["/w/p"].tab, "dsm");
+        init(None);
+    }
+
+    /// A file that stops parsing while the app runs is not replaced; the
+    /// window reports it instead.
+    #[test]
+    fn a_file_broken_on_disk_is_kept_and_reported() {
+        let dir = temp("broken-on-disk");
+        let path = dir.join(FILE);
+        std::fs::write(&path, "").expect("write");
+        init(Some(path.clone()));
+        let broken = "theme = \"dark\"\n[[[ not toml\n";
+        std::fs::write(&path, broken).expect("write");
+        let seen = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        on_error(move |e| sink.borrow_mut().push(e));
+        update(|s| s.language = "en".into());
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), broken);
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert!(seen[0].contains(&path.display().to_string()), "{seen:?}");
         init(None);
     }
 
