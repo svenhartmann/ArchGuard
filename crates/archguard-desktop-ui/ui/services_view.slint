@@ -4,7 +4,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
-import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea } from "widgets.slint";
+import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea, EmptyState } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
@@ -417,21 +417,21 @@ export component ServicesView inherits Rectangle {
                 fit => { ServicesData.fit(tree.visible-width(), tree.visible-height()); }
             }
             if m.state == 1 && m.rows.length > 0: Rectangle { height: 1px; background: Theme.border; }
-            if m.state != 1 || m.rows.length == 0: HorizontalLayout {
-                padding-left: Theme.page-pad;
-                padding-right: Theme.page-pad;
-                height: 40px;
-                Text {
-                    text: m.state == 2 ? m.error
-                        : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
-                        : @tr("No service declarations were found.");
-                    color: Theme.muted;
-                    font-size: Theme.font-small;
-                    vertical-alignment: center;
-                }
+            if m.state != 1 || m.rows.length == 0: EmptyState {
+                vertical-stretch: 1;
+                title: m.state == 2 ? m.error
+                    : m.state == 3 ? @tr("No supported project manifests or Docker Compose files found.")
+                    : @tr("No service declarations were found.");
+                // The sources the engine reads (analyze_services); a Rust binary
+                // becomes a service only with deployment evidence (service_projects).
+                reason: m.state == 2 ? ""
+                    : @tr("Services come from Docker Compose files, Kubernetes workload manifests, .NET Aspire AppHosts, application project manifests and OpenTelemetry traces in .archguard/otel-traces.json. Helm charts and Kustomize overlays are read only when ARCHGUARD_RENDER_MANIFESTS=1 is set.")
+                        + (m.applications > 0
+                            ? "\n\n" + @tr("Rust executables can be command-line tools or jobs, so they become services only with a deployment declaration. The {0} application found is listed under Details." | "Rust executables can be command-line tools or jobs, so they become services only with a deployment declaration. The {0} applications found are listed under Details." % m.applications, Fmt.int(m.applications))
+                            : "");
             }
             tree := ServicesTree {
-                vertical-stretch: 1;
+                vertical-stretch: m.state == 1 && m.rows.length > 0 ? 1 : 0;
                 rows: m.rows;
                 edges: m.edges;
                 hierarchy: m.hierarchy;
