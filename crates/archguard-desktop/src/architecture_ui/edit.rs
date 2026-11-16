@@ -284,12 +284,24 @@ impl Editor {
 
     /// `ARCHGUARD_DESKTOP_ARC_EDIT=1` opens the chapter editor with the
     /// caret in its first editable block (`ARCHGUARD_DESKTOP_TYPE` types
-    /// there), `=save` also saves it (asking where, in a project without
+    /// there), `=take` also takes its first generated block over as own
+    /// text, `=save` also saves it (asking where, in a project without
     /// arc42 text).
     #[cfg(feature = "snapshot")]
     pub fn snapshot(&mut self, doc: &Arc42Document, chapter: u8) -> Option<String> {
         let mode = std::env::var("ARCHGUARD_DESKTOP_ARC_EDIT").ok()?;
         self.start(doc, chapter);
+        if mode == "take" {
+            self.with_open(|o| {
+                let e = o.as_mut()?;
+                let mut rich = Rich::new(&e.draft);
+                let pieces = rich.editor.doc().pieces.len();
+                (0..pieces).find(|&p| rich.editor.take_over(p))?;
+                e.draft = rich.markdown();
+                e.rich = Some(rich);
+                Some(())
+            });
+        }
         (mode == "save").then(|| self.save(doc)).flatten()
     }
 
@@ -344,6 +356,8 @@ fn same_item(a: &RichItem, b: &RichItem) -> bool {
         && a.marker == b.marker
         && a.caret_rect == b.caret_rect
         && a.fixed.row_count() == b.fixed.row_count()
+        && (a.empty, a.generated) == (b.empty, b.generated)
+        && rows(&a.cells, &b.cells)
         && rows(&a.runs, &b.runs)
         && rows(&a.selection, &b.selection)
 }

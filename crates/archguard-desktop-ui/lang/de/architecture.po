@@ -227,8 +227,8 @@ msgstr "Grau: Programme, die der Code startet · Blau: per HTTP angesprochene Ho
 msgid "Building blocks"
 msgstr "Bausteine"
 
-msgid "Type in the text as it will read. Generated blocks are refreshed from the analysis and cannot be changed."
-msgstr "Schreiben Sie den Text so, wie er gelesen wird. Generierte Blöcke werden aus der Analyse erneuert und lassen sich nicht ändern."
+msgid "Type in the text as it will read. Generated blocks are refreshed from the analysis; take one over as own text to change it."
+msgstr "Schreiben Sie den Text so, wie er gelesen wird. Generierte Blöcke werden aus der Analyse erneuert; zum Ändern als eigenen Text übernehmen."
 
 msgid "Bold"
 msgstr "Fett"
@@ -271,3 +271,45 @@ msgstr "Linkziel"
 
 msgid "Remove the link"
 msgstr "Link entfernen"
+
+msgid "Write your own text here …"
+msgstr "Eigenen Text hier schreiben …"
+
+msgid "Generated from the analysis and refreshed on every save."
+msgstr "Aus der Analyse erzeugt und bei jedem Speichern erneuert."
+
+msgid "Edit as own text"
+msgstr "Als eigenen Text bearbeiten"
+
+msgid "Edit as own text; the analysis no longer updates it"
+msgstr "Als eigenen Text bearbeiten; die Analyse aktualisiert ihn dann nicht mehr"
+
+msgid "Insert table"
+msgstr "Tabelle einfügen"
+
+msgid "+ Row"
+msgstr "+ Zeile"
+
+msgid "+ Column"
+msgstr "+ Spalte"
+
+msgid "− Row"
+msgstr "− Zeile"
+
+msgid "− Column"
+msgstr "− Spalte"
+
+msgid "Add row"
+msgstr "Zeile einfügen"
+
+msgid "Add column"
+msgstr "Spalte einfügen"
+
+msgid "Delete row"
+msgstr "Zeile löschen"
+
+msgid "Delete column"
+msgstr "Spalte löschen"
+
+msgid "Table"
+msgstr "Tabelle"

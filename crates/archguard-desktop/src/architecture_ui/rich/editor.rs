@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use super::super::markdown::Align;
 use super::doc::{Block, Doc, Kind};
 use super::inline::{Inline, Mark};
 
@@ -46,14 +47,8 @@ impl Editor {
     /// Edit `doc`. A chapter that ends in text it keeps as written (a
     /// generated block, a table) gets an empty part after it to type in;
     /// it writes nothing while empty.
-    pub fn new(mut doc: Doc) -> Editor {
-        let last = doc.pieces.iter().rposition(|p| match p {
-            super::doc::Piece::Fixed(text) => !text.trim().is_empty(),
-            super::doc::Piece::Part(_) => true,
-        });
-        if last.is_none_or(|i| doc.part(i).is_none()) {
-            doc.append_part();
-        }
+    pub fn new(doc: Doc) -> Editor {
+        let doc = with_trailing_part(doc);
         let piece = (0..doc.pieces.len())
             .find(|&p| doc.part(p).is_some())
             .expect("a part exists");
@@ -215,6 +210,15 @@ impl Editor {
         let Some((start, end)) = self.selection() else {
             return false;
         };
+        let cells = (start.block..=end.block).any(|b| self.is_cell(start.piece, b));
+        if cells && start.block != end.block {
+            // Table cells keep their places: only their text goes.
+            for (b, r) in self.ranges(start, end) {
+                self.blocks_mut(start.piece)[b].inline.delete(r);
+            }
+            self.collapse(start);
+            return true;
+        }
         let blocks = self.blocks_mut(start.piece);
         if start.block == end.block {
             blocks[start.block].inline.delete(start.at..end.at);
@@ -238,6 +242,12 @@ impl Editor {
         self.checkpoint(!text.contains('\n') && self.selection().is_none());
         self.delete_selection();
         let code = matches!(self.block(self.focus).kind, Kind::Code { .. });
+        // A cell holds one line.
+        let text = if self.is_cell(self.focus.piece, self.focus.block) {
+            text.replace('\n', " ")
+        } else {
+            text.to_string()
+        };
         for (i, line) in text.split('\n').enumerate() {
             if i > 0 && code {
                 self.insert("\n");
@@ -274,6 +284,7 @@ impl Editor {
         let block = self.block(c);
         match block.kind {
             Kind::Code { .. } => self.insert("\n"),
+            Kind::Cell { .. } => self.add_row(),
             Kind::Item { .. } | Kind::Quote if block.inline.text.is_empty() => {
                 self.blocks_mut(c.piece)[c.block].kind = Kind::Paragraph;
             }
@@ -322,9 +333,19 @@ impl Editor {
                 at: c.at - prev,
                 ..c
             });
+        } else if self.is_cell(c.piece, c.block) {
+            // Cells do not merge; Backspace at a cell's start goes to the one before.
+            if c.block > 0 && self.is_cell(c.piece, c.block - 1) {
+                let at = self.blocks(c.piece)[c.block - 1].inline.text.len();
+                self.collapse(Caret {
+                    block: c.block - 1,
+                    at,
+                    ..c
+                });
+            }
         } else if !matches!(self.block(c).kind, Kind::Paragraph | Kind::Code { .. }) {
             self.blocks_mut(c.piece)[c.block].kind = Kind::Paragraph;
-        } else if c.block > 0 {
+        } else if c.block > 0 && !self.is_cell(c.piece, c.block - 1) {
             self.join(c.piece, c.block - 1);
         }
     }
@@ -344,9 +365,210 @@ impl Editor {
             self.blocks_mut(c.piece)[c.block]
                 .inline
                 .delete(c.at..c.at + next);
-        } else if c.block + 1 < self.blocks(c.piece).len() {
+        } else if c.block + 1 < self.blocks(c.piece).len()
+            && !self.is_cell(c.piece, c.block)
+            && !self.is_cell(c.piece, c.block + 1)
+        {
             self.join(c.piece, c.block);
         }
+    }
+
+    fn is_cell(&self, piece: usize, block: usize) -> bool {
+        matches!(
+            self.blocks(piece).get(block).map(|b| &b.kind),
+            Some(Kind::Cell { .. })
+        )
+    }
+
+    /// The blocks of the table the caret is in, as rows of blocks.
+    fn table(&self) -> Option<(std::ops::Range<usize>, Vec<Vec<Block>>)> {
+        let c = self.focus;
+        if !self.is_cell(c.piece, c.block) {
+            return None;
+        }
+        let blocks = self.blocks(c.piece);
+        let start = (0..=c.block)
+            .rev()
+            .take_while(|&b| self.is_cell(c.piece, b))
+            .last()?;
+        let end = (c.block..blocks.len())
+            .take_while(|&b| self.is_cell(c.piece, b))
+            .last()?
+            + 1;
+        let mut rows: Vec<Vec<Block>> = Vec::new();
+        for b in &blocks[start..end] {
+            if let Kind::Cell { col: 0, .. } = b.kind {
+                rows.push(Vec::new());
+            }
+            rows.last_mut()?.push(b.clone());
+        }
+        Some((start..end, rows))
+    }
+
+    /// Put `rows` in place of the table at `range`, numbering the cells
+    /// anew (alignment by column from the header); the caret to `row`, `col`.
+    fn set_table(
+        &mut self,
+        range: std::ops::Range<usize>,
+        rows: Vec<Vec<Block>>,
+        row: usize,
+        col: usize,
+    ) {
+        let piece = self.focus.piece;
+        let cols = rows.first().map_or(0, Vec::len);
+        let aligns: Vec<Align> = rows
+            .first()
+            .map(|h| {
+                h.iter()
+                    .map(|b| match b.kind {
+                        Kind::Cell { align, .. } => align,
+                        _ => Align::Left,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let start = range.start;
+        let cells: Vec<Block> = rows
+            .into_iter()
+            .enumerate()
+            .flat_map(|(r, cells)| {
+                let aligns = aligns.clone();
+                cells.into_iter().enumerate().map(move |(c, b)| Block {
+                    kind: Kind::Cell {
+                        row: r,
+                        col: c,
+                        cols,
+                        align: aligns.get(c).copied().unwrap_or(Align::Left),
+                    },
+                    inline: b.inline,
+                })
+            })
+            .collect();
+        let count = cells.len();
+        self.blocks_mut(piece).splice(range, cells);
+        let block = (start + row * cols + col.min(cols.saturating_sub(1)))
+            .min(start + count.saturating_sub(1));
+        self.collapse(Caret {
+            piece,
+            block,
+            at: 0,
+        });
+    }
+
+    fn empty_cell() -> Block {
+        Block {
+            kind: Kind::Paragraph,
+            inline: Inline::default(),
+        }
+    }
+
+    fn cell_at(&self) -> (usize, usize) {
+        match self.block(self.focus).kind {
+            Kind::Cell { row, col, .. } => (row, col),
+            _ => (0, 0),
+        }
+    }
+
+    /// A new empty row below the caret's (Enter in a cell).
+    pub fn add_row(&mut self) {
+        let Some((range, mut rows)) = self.table() else {
+            return;
+        };
+        self.checkpoint(false);
+        let (row, _) = self.cell_at();
+        let cols = rows[0].len();
+        rows.insert(row + 1, vec![Self::empty_cell(); cols]);
+        self.set_table(range, rows, row + 1, 0);
+    }
+
+    /// A new empty column right of the caret's.
+    pub fn add_column(&mut self) {
+        let Some((range, mut rows)) = self.table() else {
+            return;
+        };
+        self.checkpoint(false);
+        let (row, col) = self.cell_at();
+        for cells in &mut rows {
+            cells.insert(col + 1, Self::empty_cell());
+        }
+        self.set_table(range, rows, row, col + 1);
+    }
+
+    /// Remove the caret's row; the header stays.
+    pub fn delete_row(&mut self) {
+        let Some((range, mut rows)) = self.table() else {
+            return;
+        };
+        let (row, col) = self.cell_at();
+        if row == 0 {
+            return;
+        }
+        self.checkpoint(false);
+        rows.remove(row);
+        let row = row.min(rows.len() - 1);
+        self.set_table(range, rows, row, col);
+    }
+
+    /// Remove the caret's column; the last one stays.
+    pub fn delete_column(&mut self) {
+        let Some((range, mut rows)) = self.table() else {
+            return;
+        };
+        let (row, col) = self.cell_at();
+        if rows[0].len() < 2 {
+            return;
+        }
+        self.checkpoint(false);
+        for cells in &mut rows {
+            cells.remove(col);
+        }
+        self.set_table(range, rows, row, col.saturating_sub(1));
+    }
+
+    /// A two-column table with a header and one row after the caret's block.
+    pub fn insert_table(&mut self) {
+        let c = self.focus;
+        if self.is_cell(c.piece, c.block) {
+            return;
+        }
+        self.checkpoint(false);
+        let at = c.block + 1;
+        self.blocks_mut(c.piece).insert(at, Self::empty_cell());
+        let rows = vec![vec![Self::empty_cell(); 2]; 2];
+        self.set_table(at..at + 1, rows, 0, 0);
+    }
+
+    /// Tab in a table: the next cell, a new row after the last; Shift+Tab
+    /// the cell before. False outside a table.
+    pub fn next_cell(&mut self, back: bool) -> bool {
+        let c = self.focus;
+        if !self.is_cell(c.piece, c.block) {
+            return false;
+        }
+        if back {
+            if c.block > 0 && self.is_cell(c.piece, c.block - 1) {
+                self.place(
+                    Caret {
+                        block: c.block - 1,
+                        at: 0,
+                        ..c
+                    },
+                    false,
+                );
+            }
+        } else if self.is_cell(c.piece, c.block + 1) {
+            self.place(
+                Caret {
+                    block: c.block + 1,
+                    at: 0,
+                    ..c
+                },
+                false,
+            );
+        } else {
+            self.add_row();
+        }
+        true
     }
 
     /// Append block `block + 1` to `block`; the caret at the join.
@@ -442,6 +664,9 @@ impl Editor {
             .all(|b| same(&self.blocks(piece)[b].kind, &kind));
         for b in range {
             let block = &mut self.blocks_mut(piece)[b];
+            if matches!(block.kind, Kind::Cell { .. }) {
+                continue;
+            }
             block.kind = match (&kind, &block.kind) {
                 _ if all => Kind::Paragraph,
                 (Kind::Item { number, .. }, Kind::Item { depth, .. }) => Kind::Item {
@@ -573,6 +798,94 @@ impl Editor {
         })
     }
 
+    /// Make the generated blocks in fixed piece `piece` own text: their
+    /// `archguard:arc42` markers go, so the analysis no longer refreshes
+    /// them and they can be edited. False if the piece has none.
+    pub fn take_over(&mut self, piece: usize) -> bool {
+        let md = self.doc.to_markdown();
+        let start = piece_start(&self.doc, piece);
+        let end = start + self.doc.piece_markdown(piece).len();
+        let blocks: Vec<std::ops::Range<usize>> = super::doc::generated(&md)
+            .into_iter()
+            .filter(|g| g.start < end && start < g.end.max(g.start + 1))
+            .collect();
+        if blocks.is_empty() {
+            return false;
+        }
+        self.checkpoint(false);
+        // The marker lines, from the last on, so earlier offsets hold.
+        let line = |at: usize| at..md[at..].find('\n').map_or(md.len(), |n| at + n + 1);
+        let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+        for g in blocks {
+            cuts.push(line(g.start));
+            if md[g.end..].starts_with(crate::arc42_file::MARKER) {
+                cuts.push(line(g.end));
+            }
+        }
+        cuts.sort_by_key(|r| std::cmp::Reverse(r.start));
+        let mut new = md;
+        for r in cuts {
+            new.replace_range(r, "");
+        }
+        self.doc = with_trailing_part(Doc::parse(&new, &super::doc::generated(&new)));
+        // The caret in the first part from where the block was.
+        let piece = (0..self.doc.pieces.len())
+            .find(|&p| self.doc.part(p).is_some() && piece_start(&self.doc, p) + 1 >= start)
+            .or_else(|| (0..self.doc.pieces.len()).find(|&p| self.doc.part(p).is_some()))
+            .expect("a part exists");
+        self.collapse(Caret {
+            piece,
+            block: 0,
+            at: 0,
+        });
+        true
+    }
+
+    /// A click on fixed piece `piece`: the caret to the next part, or the
+    /// end of the part before.
+    pub fn jump_from_fixed(&mut self, piece: usize) {
+        let is_part = |p: &usize| self.doc.part(*p).is_some();
+        let target = if let Some(p) = (piece + 1..self.doc.pieces.len()).find(is_part) {
+            Caret {
+                piece: p,
+                block: 0,
+                at: 0,
+            }
+        } else if let Some(p) = (0..piece).rev().find(is_part) {
+            let block = self.blocks(p).len() - 1;
+            let at = self.blocks(p)[block].inline.text.len();
+            Caret {
+                piece: p,
+                block,
+                at,
+            }
+        } else {
+            return;
+        };
+        self.place(target, false);
+    }
+
+    /// Whether the caret is in a table.
+    pub fn in_table(&self) -> bool {
+        self.is_cell(self.focus.piece, self.focus.block)
+    }
+
+    /// Select the word at `c` (a double click): the text between spaces.
+    pub fn select_word(&mut self, c: Caret) {
+        let c = self.clamp(c);
+        let text = &self.block(c).inline.text;
+        let start = text[..c.at]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| ch.is_whitespace())
+            .map_or(0, |(i, ch)| i + ch.len_utf8());
+        let end = text[c.at..]
+            .find(char::is_whitespace)
+            .map_or(text.len(), |i| c.at + i);
+        self.place(Caret { at: start, ..c }, false);
+        self.place(Caret { at: end, ..c }, true);
+    }
+
     /// Select the whole part the caret is in.
     pub fn select_all(&mut self) {
         let piece = self.focus.piece;
@@ -598,6 +911,23 @@ impl Editor {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// `doc` with an empty part at its end if it ends in fixed text.
+fn with_trailing_part(mut doc: Doc) -> Doc {
+    let last = doc.pieces.iter().rposition(|p| match p {
+        super::doc::Piece::Fixed(text) => !text.trim().is_empty(),
+        super::doc::Piece::Part(_) => true,
+    });
+    if last.is_none_or(|i| doc.part(i).is_none()) {
+        doc.append_part();
+    }
+    doc
+}
+
+/// The byte where piece `i` starts in the Markdown `doc` writes.
+fn piece_start(doc: &Doc, i: usize) -> usize {
+    (0..i).map(|p| doc.piece_markdown(p).len()).sum()
 }
 
 fn word_start(text: &str, at: usize) -> usize {
@@ -761,10 +1091,10 @@ mod tests {
         assert_eq!(e.markdown(), md);
         e.type_text("Eigener Text.");
         assert_eq!(e.markdown(), format!("{md}\nEigener Text.\n"));
-        let mut e = editor("eins\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nzwei\n");
+        let mut e = editor("eins\n\n---\n\nzwei\n");
         e.place(at(&e, 0, 4), false);
         e.right(false, false);
-        assert_eq!(e.block(e.focus).inline.text, "zwei", "over the table");
+        assert_eq!(e.block(e.focus).inline.text, "zwei", "over the rule");
         e.left(false, false);
         assert_eq!(
             (e.block(e.focus).inline.text.as_str(), e.focus.at),
@@ -781,6 +1111,99 @@ mod tests {
         assert_eq!(
             e.focus.piece, e.anchor.piece,
             "a selection stays in its part"
+        );
+    }
+
+    #[test]
+    fn tables_grow_and_shrink_and_cells_never_merge() {
+        let mut e = editor("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+        e.place(at(&e, 2, 0), false);
+        e.backspace();
+        assert_eq!(
+            (e.focus.block, e.focus.at),
+            (1, 1),
+            "to the end of the cell before"
+        );
+        e.place(at(&e, 3, 1), false);
+        e.enter();
+        e.type_text("x\ny");
+        assert_eq!(
+            e.markdown(),
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n| x y |  |\n"
+        );
+        e.next_cell(false);
+        e.type_text("z");
+        e.next_cell(false);
+        assert_eq!(
+            e.markdown(),
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n| x y | z |\n|  |  |\n",
+            "Tab after the last cell"
+        );
+        e.delete_row();
+        e.place(at(&e, 0, 0), false);
+        e.add_column();
+        e.type_text("c");
+        assert_eq!(
+            e.markdown(),
+            "| a | c | b |\n| --- | --- | --- |\n| 1 |  | 2 |\n| x y |  | z |\n"
+        );
+        e.place(at(&e, 0, 0), false);
+        e.place(at(&e, 4, 1), true);
+        e.backspace();
+        assert_eq!(
+            e.markdown(),
+            "|  |  |  |\n| --- | --- | --- |\n|  |  | 2 |\n| x y |  | z |\n",
+            "only text goes"
+        );
+        e.delete_column();
+        assert!(
+            e.markdown().starts_with("|  |  |\n| --- | --- |\n"),
+            "{}",
+            e.markdown()
+        );
+        e.undo();
+        e.undo();
+        assert_eq!(
+            e.markdown(),
+            "| a | c | b |\n| --- | --- | --- |\n| 1 |  | 2 |\n| x y |  | z |\n"
+        );
+    }
+
+    #[test]
+    fn a_table_goes_in_after_a_paragraph() {
+        let mut e = editor("Text\n");
+        e.insert_table();
+        e.type_text("Kopf");
+        assert_eq!(
+            e.markdown(),
+            "Text\n\n| Kopf |  |\n| --- | --- |\n|  |  |\n"
+        );
+    }
+
+    #[test]
+    fn a_generated_block_taken_over_is_own_text_and_undo_brings_it_back() {
+        let md = "## 12. Glossar\n\n<!-- archguard:arc42:12:start -->\n| Begriff | Bedeutung |\n| --- | --- |\n| SCC | Gruppe |\n<!-- archguard:arc42:12:end -->\n\n<!-- hier ergänzen -->\n";
+        let fixed = super::super::doc::generated(md);
+        let mut e = Editor::new(Doc::parse(md, &fixed));
+        let piece = (0..e.doc().pieces.len())
+            .find(|&p| e.doc().part(p).is_none())
+            .unwrap();
+        e.jump_from_fixed(piece);
+        assert_eq!(e.block(e.focus).inline.text, "", "the empty part after it");
+        assert!(e.take_over(piece));
+        assert!(e.in_table(), "the caret in the taken table");
+        e.type_text("Neu");
+        assert_eq!(
+            e.markdown(),
+            "## 12. Glossar\n\n| NeuBegriff | Bedeutung |\n| --- | --- |\n| SCC | Gruppe |\n\n<!-- hier ergänzen -->\n"
+        );
+        e.undo();
+        e.undo();
+        assert_eq!(e.markdown(), md);
+        let mut plain = editor("## 5. Bausteine\n\nText\n");
+        assert!(
+            !plain.take_over(0),
+            "a chapter heading is no generated block"
         );
     }
 

@@ -29,14 +29,28 @@ export struct RichRect {
     h: float,
 }
 
+// A table cell's place in its row.
+export struct RichCell {
+    x: float,
+    w: float,
+    header: bool,
+}
+
 // One row of the editor: a fixed piece (blocks it does not edit, shown
-// as the reader shows them) or one editable block.
+// as the reader shows them), one editable block, or one table row.
 export struct RichItem {
     fixed: [ArcBlock],
+    // A fixed piece holding generated archguard blocks (it can be taken over).
+    generated: bool,
+    // An empty paragraph: it shows where to type.
+    empty: bool,
+    // A table row's cells (kind 5); its runs, selection and caret are in
+    // row coordinates.
+    cells: [RichCell],
     // The block's place in the chapter (Rust's Caret).
     piece: int,
     block: int,
-    // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code.
+    // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code, 5 table row.
     kind: int,
     // Space above the text, the text's height and left edge.
     top: float,
@@ -64,6 +78,8 @@ export struct RichTools {
     ordered: bool,
     undo: bool,
     redo: bool,
+    // The caret is in a table: the row and column buttons show.
+    table: bool,
     // The link target of the selection, for the link row.
     target: string,
 }
@@ -93,9 +109,12 @@ export global RichData {
     callback word(int, int, float, float);
     callback width(float);
     // bold, italic, code, h2, h3, h4, bullet, numbered, quote, codeblock,
-    // paragraph, undo, redo, unlink.
+    // paragraph, undo, redo, unlink, table, row_add, col_add, row_del,
+    // col_del.
     callback tool(string);
     callback link(string);
+    // "Edit as own text" on the generated blocks of a fixed piece.
+    callback take-over(int);
 }
 
 component ToolButton inherits Rectangle {
@@ -161,9 +180,18 @@ export component RichToolbar inherits VerticalLayout {
         ToolButton { label: "1."; tip: @tr("Numbered list"); on: RichData.tools.kind == 2 && RichData.tools.ordered; clicked => { RichData.tool("numbered"); } }
         ToolButton { label: "❝"; tip: @tr("Quote"); on: RichData.tools.kind == 3; clicked => { RichData.tool("quote"); } }
         ToolButton { label: "{ }"; mono: true; tip: @tr("Code block"); on: RichData.tools.kind == 4; clicked => { RichData.tool("codeblock"); } }
+        ToolButton { label: @tr("Table"); tip: @tr("Insert table"); on: RichData.tools.table; enabled: !RichData.tools.table; clicked => { RichData.tool("table"); } }
         Rectangle { width: 10px; }
         ToolButton { icon: Icons.undo; tip: @tr("Undo"); enabled: RichData.tools.undo; clicked => { RichData.tool("undo"); } }
         ToolButton { icon: Icons.redo; tip: @tr("Redo"); enabled: RichData.tools.redo; clicked => { RichData.tool("redo"); } }
+    }
+    if RichData.tools.table: HorizontalLayout {
+        spacing: 2px;
+        alignment: start;
+        ToolButton { label: @tr("+ Row"); tip: @tr("Add row"); clicked => { RichData.tool("row_add"); } }
+        ToolButton { label: @tr("+ Column"); tip: @tr("Add column"); clicked => { RichData.tool("col_add"); } }
+        ToolButton { label: @tr("− Row"); tip: @tr("Delete row"); clicked => { RichData.tool("row_del"); } }
+        ToolButton { label: @tr("− Column"); tip: @tr("Delete column"); clicked => { RichData.tool("col_del"); } }
     }
     if RichData.linking: HorizontalLayout {
         spacing: 8px;
@@ -217,6 +245,25 @@ component RichBlock inherits Rectangle {
         height: item.height * 1px + 16px;
         border-radius: Theme.radius-sm;
         background: Theme.panel-2;
+    }
+    // A table row: the header's background and the cell borders.
+    for cell in item.cells: Rectangle {
+        x: cell.x * 1px;
+        y: item.top * 1px;
+        width: cell.w * 1px;
+        height: item.height * 1px;
+        background: cell.header ? Theme.panel-2 : transparent;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    if item.empty: Text {
+        x: item.indent * 1px;
+        y: item.top * 1px;
+        height: item.height * 1px;
+        text: @tr("Write your own text here …");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        vertical-alignment: center;
     }
     if item.kind == 3: Rectangle {
         x: 0;
@@ -324,6 +371,47 @@ component RichBlock inherits Rectangle {
     }
 }
 
+// Text the editor keeps as written, as the reader shows it. A click sends
+// the caret to the nearest text to edit; generated blocks can be taken
+// over as own text.
+component FixedPiece inherits VerticalLayout {
+    in property <RichItem> item;
+    callback pressed();
+    spacing: 4px;
+    if item.generated: HorizontalLayout {
+        spacing: 10px;
+        padding-top: 6px;
+        alignment: start;
+        Text {
+            text: @tr("Generated from the analysis and refreshed on every save.");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        ToolButton {
+            label: @tr("Edit as own text");
+            tip: @tr("Edit as own text; the analysis no longer updates it");
+            clicked => {
+                root.pressed();
+                RichData.take-over(item.piece);
+            }
+        }
+    }
+    Rectangle {
+        border-radius: Theme.radius-sm;
+        background: item.generated && touch.has-hover ? Theme.panel-2 : transparent;
+        VerticalLayout {
+            for b in item.fixed: ArcBlockView { block: b; }
+        }
+        touch := TouchArea {
+            clicked => {
+                RichData.press(item.piece, -1, 0, 0, false);
+                root.pressed();
+            }
+        }
+    }
+}
+
 // The chapter as one formatted text: fixed pieces as the reader shows
 // them, editable blocks to type in.
 export component RichEditor inherits FocusScope {
@@ -395,8 +483,9 @@ export component RichEditor inherits FocusScope {
         changed width => { RichData.width(self.width / 1px); }
         init => { RichData.width(self.width / 1px); }
         for item in RichData.items: VerticalLayout {
-            if item.fixed.length > 0: VerticalLayout {
-                for b in item.fixed: ArcBlockView { block: b; }
+            if item.fixed.length > 0: FixedPiece {
+                item: item;
+                pressed => { ime.focus(); }
             }
             if item.fixed.length == 0: RichBlock {
                 item: item;

@@ -1,14 +1,14 @@
 //! A chapter as the rich-text editor holds it: the Markdown's top-level
 //! blocks ([`markdown::chunks`]) as parts of formatted blocks, and between
 //! them the text it keeps as written (blank lines, comments) along with
-//! the blocks it does not edit: tables, rules, quotes holding more than
-//! text, the chapter heading and generated `archguard:arc42` blocks
-//! (saving refreshes them). A part nobody edited writes its source back
+//! the blocks it does not edit: rules, quotes holding more than text, the
+//! chapter heading and generated `archguard:arc42` blocks (saving
+//! refreshes them). A table is one cell block per cell. A part nobody edited writes its source back
 //! unchanged, so opening and saving a chapter changes nothing.
 
 use std::ops::Range;
 
-use super::super::markdown::{self, Block as Md};
+use super::super::markdown::{self, Align, Block as Md};
 use super::inline::Inline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,14 @@ pub enum Kind {
     /// Its text is the code; it has no marks.
     Code {
         lang: String,
+    },
+    /// A table cell; the cells of a table follow each other row by row,
+    /// row 0 the header.
+    Cell {
+        row: usize,
+        col: usize,
+        cols: usize,
+        align: Align,
     },
 }
 
@@ -143,6 +151,14 @@ impl Doc {
         }
     }
 
+    /// The Markdown piece `i` writes.
+    pub fn piece_markdown(&self, i: usize) -> String {
+        match &self.pieces[i] {
+            Piece::Fixed(text) => text.clone(),
+            Piece::Part(part) => part.markdown(),
+        }
+    }
+
     /// Add an empty part at the end to type in; its piece.
     pub fn append_part(&mut self) -> usize {
         self.pieces.push(Piece::Part(Part::new()));
@@ -231,7 +247,26 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
                 kind: Kind::Code { lang: lang.clone() },
                 inline: Inline::plain(text),
             }),
-            Md::Table { .. } | Md::Rule => return None,
+            Md::Table {
+                columns,
+                align,
+                rows,
+            } => {
+                let cols = columns.len();
+                for (row, cells) in std::iter::once(columns).chain(rows).enumerate() {
+                    for (col, text) in cells.iter().enumerate() {
+                        let align = align.get(col).copied().unwrap_or(Align::Left);
+                        let kind = Kind::Cell {
+                            row,
+                            col,
+                            cols,
+                            align,
+                        };
+                        out.push(block(kind, text));
+                    }
+                }
+            }
+            Md::Rule => return None,
         }
     }
     Some(out)
@@ -254,7 +289,7 @@ fn one_line(md: &str) -> Inline {
 /// Whether a block is written: empty text blocks are dropped (an empty
 /// code block stays).
 pub fn written(b: &Block) -> bool {
-    matches!(b.kind, Kind::Code { .. }) || !b.inline.text.trim().is_empty()
+    matches!(b.kind, Kind::Code { .. } | Kind::Cell { .. }) || !b.inline.text.trim().is_empty()
 }
 
 /// Each list entry's depth as written (at most one deeper than the entry
@@ -284,13 +319,32 @@ pub fn list_entries(blocks: &[Block]) -> Vec<Option<(usize, Option<u64>)>> {
         .collect()
 }
 
+/// The `| --- | ---: |` line under a header row of `header` cells.
+fn separator(header: &[Block]) -> String {
+    let mut out = String::from("|");
+    for b in header {
+        out.push_str(match b.kind {
+            Kind::Cell {
+                align: Align::Center,
+                ..
+            } => " :---: |",
+            Kind::Cell {
+                align: Align::Right,
+                ..
+            } => " ---: |",
+            _ => " --- |",
+        });
+    }
+    out
+}
+
 /// The Markdown of edited blocks; empty text blocks are dropped.
 fn write(blocks: &[Block]) -> String {
     let mut out = String::new();
     // Per list depth: the marker width, for the indent below it.
     let mut widths: Vec<usize> = Vec::new();
     let mut prev: Option<&Kind> = None;
-    for (b, entry) in blocks.iter().zip(list_entries(blocks)) {
+    for (i, (b, entry)) in blocks.iter().zip(list_entries(blocks)).enumerate() {
         if !written(b) {
             continue;
         }
@@ -298,6 +352,9 @@ fn write(blocks: &[Block]) -> String {
             (None, _) => "",
             (Some(Kind::Item { .. }), Kind::Item { .. }) => "\n",
             (Some(Kind::Quote), Kind::Quote) => "\n>\n",
+            // A table's rows; a cell after another in its row.
+            (Some(Kind::Cell { .. }), Kind::Cell { col: 0, .. }) => "\n",
+            (Some(Kind::Cell { .. }), Kind::Cell { .. }) => "",
             _ => "\n\n",
         });
         let text = b.inline.to_markdown();
@@ -321,6 +378,20 @@ fn write(blocks: &[Block]) -> String {
             Kind::Quote => {
                 out.push_str("> ");
                 out.push_str(&text);
+            }
+            Kind::Cell { row, col, cols, .. } => {
+                if *col == 0 {
+                    out.push('|');
+                }
+                // shortcut: a `|` inside inline code is written as `\|` and
+                // reads back with the backslash; split the code span if it matters.
+                out.push(' ');
+                out.push_str(&text.replace('|', "\\|"));
+                out.push_str(" |");
+                if *row == 0 && col + 1 == *cols {
+                    out.push('\n');
+                    out.push_str(&separator(&blocks[i + 1 - cols..=i]));
+                }
             }
             Kind::Code { lang } => {
                 // shortcut: a line of three backticks inside the code ends it
@@ -523,6 +594,33 @@ Ende.
             doc.to_markdown(),
             "<!-- Eigene Erläuterungen hier ergänzen. -->\n\nNeu.\n"
         );
+    }
+
+    #[test]
+    fn tables_are_cells_and_write_back_as_tables() {
+        let md = "| Begriff | Bedeutung |\n| --- | ---: |\n| SCC | Gruppe **gegenseitig** erreichbarer Knoten |\n| A\\|B | |\n";
+        let mut doc = Doc::parse(md, &[]);
+        assert_eq!(doc.to_markdown(), md, "untouched");
+        let mut all = parts(&mut doc);
+        let cells = all[0].edit();
+        assert_eq!(cells.len(), 6);
+        assert_eq!(
+            cells[3].kind,
+            Kind::Cell {
+                row: 1,
+                col: 1,
+                cols: 2,
+                align: Align::Right
+            }
+        );
+        assert_eq!(cells[4].inline.text, "A|B");
+        cells[5].inline = Inline::plain("neu");
+        let written = doc.to_markdown();
+        assert_eq!(
+            written,
+            "| Begriff | Bedeutung |\n| --- | ---: |\n| SCC | Gruppe **gegenseitig** erreichbarer Knoten |\n| A\\|B | neu |\n"
+        );
+        assert_eq!(Doc::parse(&written, &[]).to_markdown(), written);
     }
 
     #[test]
