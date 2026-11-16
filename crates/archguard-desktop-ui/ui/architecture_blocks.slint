@@ -2,7 +2,8 @@
 import { Theme } from "theme.slint";
 
 // kind: 0 heading, 1 paragraph, 2 list item, 3 table header, 4 table row,
-// 5 code, 6 rule, 7 muted note, 8 empty table row.
+// 5 code, 6 rule, 7 muted note, 8 empty table row, 9 the block that is
+// open in the chapter editor.
 export struct ArcBlock {
     kind: int,
     // Heading level (2..6) or list depth.
@@ -20,6 +21,8 @@ export struct ArcBlock {
     // "Offen zu ergänzen": the web's .arc42-open-heading.
     open: bool,
     last: bool,
+    // The chapter editor's block this row belongs to; -1: not editable.
+    piece: int,
 }
 
 component Heading inherits VerticalLayout {

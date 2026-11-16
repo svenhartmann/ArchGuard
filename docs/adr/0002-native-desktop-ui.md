@@ -475,3 +475,26 @@ comparison of the native view against the web view on the same project
   ABI 4 since the same day; Windows with an AppContainer when
   `archguard-confine.exe` lies next to the app, untested so far);
   otherwise the app needs `ARCHGUARD_TRUST_PROJECT_COMPILER=1` again.
+- **2026-11-15:** Visual chapter editor (`feat/arc42-visual-editor`),
+  asked for by the user as a WYSIWYG editor. Slint 1.18 shows styled text
+  (`StyledText`) but has no input for it; `TextInput` is plain text. So
+  the editor is not formatted-while-typing: "Edit chapter" shows the
+  chapter as the reader draws it, and a click on a block (a paragraph, a
+  heading, a whole list, table, quote or code block) opens that block's
+  Markdown in its place; Escape or a click on another block shows it
+  formatted again. "Add text" starts a block at the end of the chapter.
+  Blocks inside the generated `archguard:arc42` markers do not open, as
+  saving refreshes them. The whole chapter as Markdown beside its preview
+  stays behind "Edit Markdown". The blocks come from `markdown::chunks`
+  (the parser's top-level blocks with their source lines); the text
+  before and after the open block is parsed on its own, so the other
+  blocks do not move while it is typed in. Rejected: an own rich-text
+  input (cursor, selection, IME and undo by hand) and a web view (against
+  this ADR). Snapshot hooks: `ARCHGUARD_DESKTOP_ARC_EDIT=block` opens the
+  first editable block, `ARCHGUARD_DESKTOP_TYPE=<text>` types into the
+  focused field. Checked with unit tests and headless snapshots on macOS
+  (temp copies of fixtures/py-layers, with and without `arc42.md`, light
+  and dark, de): click opens the block with the cursor at its end, typed
+  text arrives, Escape formats it, a generated block stays closed, "Add
+  text" and the switch to Markdown work. Not checked by hand in a window;
+  not checked on Windows and Linux.

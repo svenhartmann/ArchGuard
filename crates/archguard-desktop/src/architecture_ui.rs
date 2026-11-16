@@ -55,7 +55,15 @@ pub fn wire(ui: &AppWindow) {
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
             s.editor.edit(&text);
-            s.editor.preview(ui, &text);
+            s.editor.show(ui);
+        });
+    }));
+    d.on_open_block(a.on(|s, _, piece: i32| s.editor.open_block(piece)));
+    d.on_close_block(a.on0(|s, _| s.editor.close_block()));
+    d.on_block_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
+        crate::documents::with_active_state(|s: &mut ArchitectureState| {
+            s.editor.edit_block(&text);
+            s.editor.show(ui);
         });
     }));
     // Errors show in the editor itself.

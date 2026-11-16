@@ -19,8 +19,8 @@
 //! (`ARCHGUARD_DESKTOP_CLICK=x:y,rx:y`, `r`: right button; e.g. the menu bar Slint draws with
 //! `SLINT_NO_MUDA=1`) and move the mouse to the last point after them
 //! (`ARCHGUARD_DESKTOP_HOVER_AT=x:y`, opens a sub-menu; over a help
-//! trigger it shows the tooltip after its delay), or pin a sample tooltip
-//! at a point ([`tip_hook`]). Settings come from
+//! trigger it shows the tooltip after its delay), pin a sample tooltip
+//! at a point ([`tip_hook`]) or type into the focused field ([`type_hook`]). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
 //! Export without the save dialog: [`export_hook`]. View → Settings:
 //! `crate::settings_view_ui::snapshot_hook`.
@@ -420,6 +420,27 @@ fn apply_shell_hooks(ui: &AppWindow) {
     }
     drag(ui);
     tip_hook(ui);
+    type_hook(ui);
+}
+
+/// `ARCHGUARD_DESKTOP_TYPE=<text>`: keys for the focused field, sent once
+/// the clicks took effect (`<esc>`: Escape).
+fn type_hook(ui: &AppWindow) {
+    use slint::platform::WindowEvent;
+    let Ok(text) = std::env::var("ARCHGUARD_DESKTOP_TYPE") else {
+        return;
+    };
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        for c in text.replace("<esc>", "\u{1b}").chars() {
+            let text = slint::SharedString::from(c);
+            let pressed = WindowEvent::KeyPressed { text: text.clone() };
+            ui.window().dispatch_event(pressed);
+            ui.window()
+                .dispatch_event(WindowEvent::KeyReleased { text });
+        }
+    });
 }
 
 /// `ARCHGUARD_DESKTOP_TIP=x:y`: a pinned tooltip for a 22 px trigger at

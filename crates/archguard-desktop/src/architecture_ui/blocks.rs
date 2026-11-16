@@ -79,7 +79,13 @@ fn base(kind: i32) -> ArcBlock {
         quote: false,
         open: false,
         last: false,
+        piece: -1,
     }
+}
+
+/// The row of the block that is open in the visual editor.
+pub fn editor_row() -> ArcBlock {
+    base(9)
 }
 
 /// Window rows for parsed blocks; tables become one row per table row.
