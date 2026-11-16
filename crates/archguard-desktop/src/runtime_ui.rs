@@ -197,6 +197,10 @@ fn runtime_shown(l: &crate::panes::Layout) -> bool {
 }
 
 impl TabState for RuntimeState {
+    /// It reads only the trace folder; the stamp keeps it current, so a new
+    /// analysis keeps the chosen request and Live off.
+    const DERIVED: bool = false;
+
     fn push(&mut self, ui: &AppWindow) {
         push(ui, self);
     }
@@ -383,6 +387,40 @@ mod tests {
         assert_eq!(pending_model(None).state, 0, "loading");
         let m = pending_model(Some("boom"));
         assert_eq!((m.state, m.error.as_str()), (3, "boom"));
+    }
+
+    /// The tab reads only the trace folder: a new analysis (rust-analyzer
+    /// finished indexing) keeps the chosen request, page and Live off;
+    /// closing the document drops them.
+    #[test]
+    fn a_new_analysis_keeps_the_runtime_state() {
+        use tab_support::Start;
+        let dir = tempfile::tempdir().unwrap();
+        let doc = documents::with_store(|s| {
+            *s = documents::Store::default();
+            s.open(dir.path()).0
+        });
+        assert_eq!(tab_support::start::<RuntimeState>(), Start::Build(doc));
+        let mut built = build_from(dir.path().to_path_buf());
+        built.selected = Some(("t".into(), "s".into()));
+        (built.page, built.live) = (0, false);
+        assert!(tab_support::finish(
+            doc,
+            documents::generation(doc),
+            Ok(built)
+        ));
+        documents::with_store(|s| s.get_mut(doc).unwrap().forget_derived());
+        assert_eq!(
+            tab_support::start::<RuntimeState>(),
+            Start::Ready,
+            "not rebuilt"
+        );
+        let kept = documents::with_state(doc, |s: &mut RuntimeState| {
+            (s.selected.clone(), s.page, s.live)
+        });
+        assert_eq!(kept, Some((Some(("t".into(), "s".into())), 0, false)));
+        documents::with_store(|s| s.close(0));
+        assert!(documents::with_state(doc, |_: &mut RuntimeState| ()).is_none());
     }
 
     #[test]
