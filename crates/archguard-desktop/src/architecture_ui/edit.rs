@@ -39,6 +39,9 @@ struct Open {
     draft: String,
     /// The chapter as the editor opened it: an equal draft is unsaved nothing.
     original: String,
+    /// The file's text when editing began. Kept with the draft, so a new
+    /// analysis that reads the file again cannot hide a change on disk.
+    base: Option<String>,
 }
 
 impl Editor {
@@ -111,6 +114,7 @@ impl Editor {
             error: String::new(),
             draft: text.clone(),
             original: text,
+            base: self.files.as_ref().and_then(|f| f.saved(chapter)),
         };
         documents::set_state(self.doc, Some(open));
     }
@@ -185,19 +189,22 @@ impl Editor {
     /// Save the draft; the path written, or `None` while the editor stays
     /// open (an error, or the question where to create the file).
     pub fn save(&mut self, doc: &Arc42Document) -> Option<String> {
-        let (chapter, draft) =
-            self.with_open(|o| o.as_ref().map(|e| (e.chapter, e.draft.clone())))?;
+        let (chapter, draft, mut base) = self.with_open(|o| {
+            o.as_ref()
+                .map(|e| (e.chapter, e.draft.clone(), e.base.clone()))
+        })?;
         let Some(files) = &mut self.files else {
             self.with_open(|o| o.as_mut().map(|e| e.ask_location = true));
             return None;
         };
-        match files.save_chapter(doc, chapter, &draft) {
+        match files.save_chapter(doc, chapter, &draft, &mut base) {
             Ok(path) => {
                 self.files_error.clear();
                 self.cancel();
                 Some(path.display().to_string())
             }
             Err(e) => {
+                self.with_open(|o| o.as_mut().map(|o| o.base = base));
                 self.set_error(e);
                 None
             }
@@ -315,5 +322,40 @@ mod tests {
             documents::is_dirty(a),
             "the other unsaved change stays marked"
         );
+    }
+
+    /// `git pull` changes the chapter while it is edited, then a new
+    /// analysis reads the file again: the save still sees the change.
+    #[test]
+    fn a_chapter_pulled_during_editing_survives_a_new_analysis_and_the_save() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let path = dir.path().join("arc42.md");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        editor.edit(&(editor.chapter(&new, 5) + "Mein Entwurf.\n"));
+        let pulled = std::fs::read_to_string(&path).unwrap().replace(
+            "<!-- Eigene Erläuterungen zu Kapitel 5 hier ergänzen. -->",
+            "Gepullter Text.",
+        );
+        std::fs::write(&path, &pulled).unwrap();
+        documents::with_store(|s| s.get_mut(a).map(documents::Document::forget_derived));
+        let mut rebuilt = Editor::new(a, dir.path());
+        assert_eq!(rebuilt.save(&new), None, "refused");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            pulled,
+            "not written"
+        );
+        let reason = rebuilt.unsaved_reason();
+        assert!(
+            reason.contains("changed on disk") && reason.contains("save again"),
+            "{reason}"
+        );
+        assert!(rebuilt.is_open(), "the draft stays");
+        // Refused once, the new text is loaded: saving again writes the draft.
+        assert_eq!(rebuilt.save(&new), Some(path.display().to_string()));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("Mein Entwurf.") && !text.contains("Gepullter Text."));
     }
 }
