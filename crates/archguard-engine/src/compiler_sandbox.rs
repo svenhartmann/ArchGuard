@@ -24,14 +24,15 @@ pub(crate) fn available() -> bool {
 }
 
 /// The `archguard-confine` starter next to the running program (or one
-/// directory up, where test binaries run from `deps`).
+/// directory up). Test binaries run deeper below `target/debug`: in `deps`,
+/// or in Cargo's newer `build/<package>/<hash>/out`.
 #[cfg(windows)]
 fn launcher() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    [Some(dir), dir.parent()]
-        .into_iter()
-        .flatten()
+    let levels = if cfg!(test) { 5 } else { 2 };
+    exe.ancestors()
+        .skip(1)
+        .take(levels)
         .map(|d| d.join("archguard-confine.exe"))
         .find(|p| p.is_file())
 }
