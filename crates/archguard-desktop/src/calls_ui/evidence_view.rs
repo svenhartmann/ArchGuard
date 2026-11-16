@@ -3,21 +3,18 @@
 //! helpers the other columns use.
 
 use archguard_engine::core::MethodCall;
-use slint::{ModelRc, SharedString, VecModel};
+use slint::SharedString;
 
 use super::evidence::{self, Proposal};
 use super::model::ElementKind;
 use super::model::Relation;
 use super::rankings;
 use super::state::State;
+pub use crate::tab_support::model;
 use crate::ui::{
     CallsCohesionGroup, CallsDeclaration, CallsMethodGroup, CallsMetric, CallsModel, CallsSite,
     CallsSuggestion,
 };
-
-pub fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
-}
 
 pub fn int(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)

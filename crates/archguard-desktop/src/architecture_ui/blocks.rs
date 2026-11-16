@@ -1,9 +1,10 @@
 //! Chapter text for the window: the body the web shows under the chapter
 //! heading, and Markdown blocks as `ArcBlock` rows.
 
-use slint::{ModelRc, SharedString, StyledText, VecModel};
+use slint::{SharedString, StyledText};
 
 use super::markdown::{self, Align, Block};
+use crate::tab_support::model;
 use crate::ui::ArcBlock;
 
 /// The chapter body after its `## N.` heading, as the web's `update()`;
@@ -62,10 +63,6 @@ fn drop_mermaid(text: &str) -> String {
 fn styled(text: &str) -> StyledText {
     StyledText::from_markdown(&markdown::inline_source(text))
         .unwrap_or_else(|_| StyledText::from_plain_text(&markdown::plain(text)))
-}
-
-fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items))
 }
 
 fn base(kind: i32) -> ArcBlock {
@@ -159,7 +156,7 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
         .collect();
     let widths = model(column_widths(columns, rows));
     out.push(ArcBlock {
-        heads: model(columns.iter().map(|c| markdown::plain(c).into()).collect()),
+        heads: model(columns.iter().map(|c| markdown::plain(c).into())),
         widths: widths.clone(),
         ..base(3)
     });
@@ -172,7 +169,7 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
     }
     for (i, row) in rows.iter().enumerate() {
         out.push(ArcBlock {
-            cells: model(row.iter().map(|c| styled(c)).collect()),
+            cells: model(row.iter().map(|c| styled(c))),
             align: model(align.clone()),
             widths: widths.clone(),
             last: i + 1 == rows.len(),

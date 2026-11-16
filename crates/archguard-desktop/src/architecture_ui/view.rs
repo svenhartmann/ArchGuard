@@ -2,20 +2,16 @@
 
 use archguard_engine::core::Graph;
 use archguard_engine::report::Arc42Document;
-use slint::{ModelRc, SharedString, VecModel};
+use slint::SharedString;
 
 use super::projection::Group;
 use super::visual::{self, Action, Kind, Map, RELATIONS_PAGE};
 use super::{blocks, diagram, markdown};
 use crate::kpi;
-use crate::tab_support::Texts;
+use crate::tab_support::{Texts, model};
 use crate::ui::{
     ArcCard, ArcChapter, ArcLevelItem, ArcLine, ArcMap, ArcRelation, ArchitectureModel,
 };
-
-fn model<T: Clone + 'static>(items: impl IntoIterator<Item = T>) -> ModelRc<T> {
-    ModelRc::new(VecModel::from(items.into_iter().collect::<Vec<_>>()))
-}
 
 /// The Markdown the reader shows: the open chapter from its heading on,
 /// and the whole document (or its part before the first chapter).
