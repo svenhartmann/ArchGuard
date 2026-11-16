@@ -10,7 +10,8 @@ import { Fmt } from "format.slint";
 export struct RtPart {
     // Index into RtTime.label / RtTime.color.
     category: int,
-    // Share of the widest bar (the slowest endpoint's mean).
+    // Start and length, as shares of the widest bar (the slowest endpoint's mean).
+    x: float,
     width: float,
     ms: string,
 }
@@ -61,7 +62,8 @@ export global RtTime {
             : c == 3 ? Theme.success
             : c == 4 ? Theme.rate-medium
             : c == 5 ? Theme.priority
-            : c == 6 ? Theme.package-border
+            // Not package-border: next to rate-medium and priority it read as the same brown.
+            : c == 6 ? Theme.text
             : c == 7 ? Theme.edge
             : Theme.dim;
     }
@@ -76,9 +78,10 @@ component Small inherits Text {
 }
 
 component Legend inherits HorizontalLayout {
+    in property <[int]> categories;
     spacing: 14px;
     alignment: start;
-    for c in [0, 1, 2, 3, 4, 5, 6, 7, 8]: HorizontalLayout {
+    for c in categories: HorizontalLayout {
         spacing: 5px;
         Rectangle { width: 10px; height: 10px; y: (parent.height - self.height) / 2; border-radius: 2px; background: RtTime.color(c); }
         Small { text: RtTime.label(c); muted: true; }
@@ -93,14 +96,14 @@ component EndpointBar inherits VerticalLayout {
         Small { text: b.service + " · " + b.name; font-family: Theme.mono-family; horizontal-stretch: 1; }
         Small { text: @tr("Ø {1} ms over {0} request" | "Ø {1} ms over {0} requests" % b.requests, Fmt.int(b.requests), b.mean); muted: true; horizontal-stretch: 0; }
     }
+    // Placed, not laid out: the parts' widths would add up to the page's
+    // minimum width, and rounding made the page scroll sideways.
     track := Rectangle {
         height: 16px;
-        HorizontalLayout {
-            alignment: start;
-            for p in b.parts: Rectangle {
-                width: max(1px, p.width * track.width);
-                background: RtTime.color(p.category);
-            }
+        for p in b.parts: Rectangle {
+            x: p.x * track.width;
+            width: max(1px, p.width * track.width);
+            background: RtTime.color(p.category);
         }
     }
     HorizontalLayout {
@@ -164,6 +167,7 @@ export component FlameGraph inherits Rectangle {
 export component RuntimeTime inherits Rectangle {
     in property <[RtBreakdown]> breakdown;
     in property <[RtHot]> hot;
+    in property <[int]> legend;
     ScrollView {
         VerticalLayout {
             width: parent.visible-width;
@@ -172,7 +176,7 @@ export component RuntimeTime inherits Rectangle {
             spacing: 8px;
             alignment: start;
             Small { muted: true; wrap: word-wrap; overflow: clip; text: @tr("Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."); }
-            Legend { }
+            Legend { categories: legend; }
             SectionHeading { label: @tr("Endpoints ({})", Fmt.int(breakdown.length)); }
             for b in breakdown: EndpointBar { b: b; }
             SectionHeading { label: @tr("Methods by self time ({})", Fmt.int(hot.length)); }
