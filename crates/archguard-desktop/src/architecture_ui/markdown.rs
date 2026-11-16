@@ -99,9 +99,7 @@ fn parse_block(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
 fn code(lines: &[&str], i: usize, lang: &str, out: &mut Vec<Block>) -> usize {
     let mut j = i + 1;
     let mut body = Vec::new();
-    while j < lines.len()
-        && !(lines[j].trim_start().starts_with("```") && fence(lines[j]) == Some(""))
-    {
+    while j < lines.len() && fence(lines[j]) != Some("") {
         body.push(lines[j]);
         j += 1;
     }
@@ -182,7 +180,31 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
     j
 }
 
+/// Removes `<!-- -->` outside code blocks; a fence inside an open comment
+/// is comment text.
 fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prose = String::new();
+    let mut fenced = false;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches('\n');
+        if fenced {
+            out.push_str(line);
+            fenced = fence(bare) != Some("");
+        } else if fence(bare).is_some() && !strip_prose(&prose).contains("<!--") {
+            out.push_str(&strip_prose(&prose));
+            prose.clear();
+            out.push_str(line);
+            fenced = true;
+        } else {
+            prose.push_str(line);
+        }
+    }
+    out.push_str(&strip_prose(&prose));
+    out
+}
+
+fn strip_prose(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("<!--") {
@@ -199,13 +221,11 @@ fn strip_comments(text: &str) -> String {
     out
 }
 
-/// `^\s*```(\w*)\s*$`
+/// `^\s*```([^`]*)$`; the language is the info string's first word, so a
+/// closing fence (only whitespace after ```) gives `Some("")`.
 fn fence(line: &str) -> Option<&str> {
-    let rest = line.trim_start().strip_prefix("```")?;
-    let lang = rest.trim_end();
-    lang.chars()
-        .all(|c| c.is_alphanumeric() || c == '_')
-        .then_some(lang)
+    let info = line.trim_start().strip_prefix("```")?;
+    (!info.contains('`')).then(|| info.split_whitespace().next().unwrap_or(""))
 }
 
 /// `^(#{1,6})\s+(.+)$`
@@ -496,6 +516,57 @@ mod tests {
                 Block::Quote(vec![para("quoted\nmore")]),
                 Block::Rule,
                 para("text"),
+            ]
+        );
+    }
+
+    #[test]
+    fn fences_take_any_info_string_and_close_only_on_a_bare_fence() {
+        let md = "```c++\nint a;\n```\nprose\n\n```js title=\"x\"\nlet b;\n```";
+        assert_eq!(
+            parse(md),
+            vec![
+                Block::Code {
+                    lang: "c++".into(),
+                    text: "int a;".into()
+                },
+                para("prose"),
+                Block::Code {
+                    lang: "js".into(),
+                    text: "let b;".into()
+                },
+            ]
+        );
+        assert_eq!(fence("```c#"), Some("c#"));
+        assert_eq!(fence("```shell-session"), Some("shell-session"));
+        assert_eq!(fence("```a`b"), None);
+    }
+
+    #[test]
+    fn an_unclosed_fence_runs_to_the_end() {
+        assert_eq!(
+            parse("text\n\n```rust\nfn a() {}\n\nmore"),
+            vec![
+                para("text"),
+                Block::Code {
+                    lang: "rust".into(),
+                    text: "fn a() {}\n\nmore".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn comments_inside_code_blocks_stay() {
+        let md = "<!-- gone -->\n```html\n<!-- kept -->\n```\nend <!-- gone -->";
+        assert_eq!(
+            parse(md),
+            vec![
+                Block::Code {
+                    lang: "html".into(),
+                    text: "<!-- kept -->".into()
+                },
+                para("end "),
             ]
         );
     }

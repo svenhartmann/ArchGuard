@@ -158,7 +158,7 @@ function arc42Markdown(parent,markdown) {
   const block=i=>/^\s*$|^#{1,6}\s|^\s*```|^\s*>|^\s*([-*_])\1{2,}\s*$/.test(lines[i])||listItem(lines[i])||divider(lines[i+1]);
   for(let i=0;i<lines.length;){
     const line=lines[i];if(!line.trim()){i++;continue;}
-    const fence=line.match(/^\s*```(\w*)\s*$/);
+    const fence=line.match(/^\s*```\s*([^`\s]*)[^`]*$/);
     if(fence){const code=[];i++;while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))code.push(lines[i++]);i++;const source=code.join('\n');
       if(fence[1]==='mermaid'&&arc42Diagram(parent,source))continue;
       if(fence[1]==='mermaid')parent.appendChild(element('p',t('Diagram source · this diagram syntax is not supported in the viewer.','Diagrammquelle · diese Diagrammsyntax wird im Viewer nicht unterstützt.'),'muted'));
