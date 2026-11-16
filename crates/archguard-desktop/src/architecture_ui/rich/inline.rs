@@ -33,7 +33,7 @@ pub struct Span {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Inline {
     pub text: String,
-    /// Sorted by start, merged, never empty ([`Inline::normalize`]).
+    /// Sorted by start, merged, never empty ([`Inline::tidy`]).
     pub spans: Vec<Span>,
 }
 
@@ -70,24 +70,40 @@ impl Inline {
     /// where they touch or only spaces lie between (a code span split
     /// around a link, two links to one target), and no empty spans.
     pub fn normalize(&mut self) {
+        self.clean(true);
+    }
+
+    /// The form while editing: as [`Inline::normalize`], but spaces at the
+    /// ends of a mark stay marked (typing on after `**bold **` stays bold)
+    /// and only touching spans merge.
+    pub fn tidy(&mut self) {
+        self.clean(false);
+    }
+
+    fn clean(&mut self, trim: bool) {
         let text = &self.text;
         let mut given: Vec<Span> = Vec::new();
         for s in std::mem::take(&mut self.spans) {
             if matches!(s.mark, Mark::Link(_)) {
                 given = given
                     .into_iter()
-                    .flat_map(|l| cut_out(l, &s.range))
+                    .flat_map(|l| match l.mark {
+                        Mark::Link(_) => cut(l, &s.range),
+                        _ => vec![l],
+                    })
                     .collect();
             }
             given.push(s);
         }
         let mut spans: Vec<Span> = Vec::new();
         for s in given {
-            let r = s.range.start.min(text.len())..s.range.end.min(text.len());
-            let inner = &text[r.clone()];
-            let start = r.start + (inner.len() - inner.trim_start().len());
-            // Only spaces: empty, dropped below.
-            let r = start..(r.start + inner.trim_end().len()).max(start);
+            let mut r = s.range.start.min(text.len())..s.range.end.min(text.len());
+            if trim {
+                let inner = &text[r.clone()];
+                let start = r.start + (inner.len() - inner.trim_start().len());
+                // Only spaces: empty, dropped below.
+                r = start..(r.start + inner.trim_end().len()).max(start);
+            }
             if s.mark == Mark::Code {
                 let mut from = r.start;
                 for (i, _) in text[r.clone()].match_indices('`') {
@@ -116,7 +132,7 @@ impl Inline {
                 Some(last)
                     if last.mark == s.mark
                         && (s.range.start <= last.range.end
-                            || text[last.range.end..s.range.start].trim().is_empty()) =>
+                            || (trim && text[last.range.end..s.range.start].trim().is_empty())) =>
                 {
                     last.range.end = last.range.end.max(s.range.end);
                 }
@@ -127,6 +143,126 @@ impl Inline {
         self.spans = merged;
     }
 
+    /// Insert `s` at byte `at`; the new text carries exactly `marks`.
+    pub fn insert(&mut self, at: usize, s: &str, marks: &BTreeSet<Mark>) {
+        let n = s.len();
+        self.text.insert_str(at, s);
+        for span in &mut self.spans {
+            if span.range.start >= at {
+                span.range.start += n;
+            }
+            if span.range.end > at {
+                span.range.end += n;
+            }
+        }
+        let new = at..at + n;
+        self.spans = std::mem::take(&mut self.spans)
+            .into_iter()
+            .flat_map(|span| match marks.contains(&span.mark) {
+                true => vec![span],
+                false => cut(span, &new),
+            })
+            .collect();
+        self.spans.extend(marks.iter().map(|m| Span {
+            range: new.clone(),
+            mark: m.clone(),
+        }));
+        self.tidy();
+    }
+
+    /// Remove the bytes `r`.
+    pub fn delete(&mut self, r: Range<usize>) {
+        let n = r.len();
+        self.text.replace_range(r.clone(), "");
+        let map = |p: usize| match p {
+            p if p <= r.start => p,
+            p if p >= r.end => p - n,
+            _ => r.start,
+        };
+        for span in &mut self.spans {
+            span.range = map(span.range.start)..map(span.range.end);
+        }
+        self.tidy();
+    }
+
+    /// Whether every character in `r` but spaces has `mark` (any link for
+    /// a link); false without such characters.
+    pub fn has(&self, r: Range<usize>, mark: &Mark) -> bool {
+        let mut chars = self.text[r.clone()]
+            .char_indices()
+            .filter(|(_, c)| !c.is_whitespace())
+            .peekable();
+        chars.peek().is_some()
+            && chars.all(|(i, _)| {
+                self.spans
+                    .iter()
+                    .any(|s| s.range.contains(&(r.start + i)) && same(&s.mark, mark))
+            })
+    }
+
+    /// Mark the bytes `r`; a link replaces links there.
+    pub fn add(&mut self, r: Range<usize>, mark: Mark) {
+        self.spans.push(Span { range: r, mark });
+        self.tidy();
+    }
+
+    /// Take `mark` (any link for a link) off the bytes `r`.
+    pub fn remove(&mut self, r: Range<usize>, mark: &Mark) {
+        self.spans = std::mem::take(&mut self.spans)
+            .into_iter()
+            .flat_map(|s| match same(&s.mark, mark) {
+                true => cut(s, &r),
+                false => vec![s],
+            })
+            .collect();
+        self.tidy();
+    }
+
+    /// The marks typing at `at` carries on: those of the character before
+    /// (at the start: after), never a link.
+    pub fn typing(&self, at: usize) -> BTreeSet<Mark> {
+        let before = self.text[..at]
+            .chars()
+            .next_back()
+            .map(|c| at - c.len_utf8());
+        self.marks_at(before.unwrap_or(0))
+            .into_iter()
+            .filter(|m| !matches!(m, Mark::Link(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// Split at byte `at`: this keeps the text before, the rest is returned.
+    pub fn split_off(&mut self, at: usize) -> Inline {
+        let mut rest = Inline {
+            text: self.text.split_off(at),
+            spans: Vec::new(),
+        };
+        for s in std::mem::take(&mut self.spans) {
+            if s.range.start < at {
+                self.spans.push(Span {
+                    range: s.range.start..s.range.end.min(at),
+                    mark: s.mark.clone(),
+                });
+            }
+            if s.range.end > at {
+                rest.spans.push(Span {
+                    range: s.range.start.max(at) - at..s.range.end - at,
+                    mark: s.mark,
+                });
+            }
+        }
+        rest.tidy();
+        self.tidy();
+        rest
+    }
+
+    /// Append `other` (its marks with it).
+    pub fn append(&mut self, other: Inline) {
+        append(self, other);
+        self.tidy();
+    }
+
     /// Where the span of `mark` that covers byte `at` ends.
     fn end_of(&self, mark: &Mark, at: usize) -> usize {
         self.spans
@@ -135,8 +271,15 @@ impl Inline {
             .map_or(at, |s| s.range.end)
     }
 
-    /// Write as inline Markdown that [`Inline::parse`] reads back the same.
+    /// Write as inline Markdown that [`Inline::parse`] reads back the same
+    /// (in its [`Inline::normalize`]d form).
     pub fn to_markdown(&self) -> String {
+        let mut canonical = self.clone();
+        canonical.normalize();
+        canonical.write()
+    }
+
+    fn write(&self) -> String {
         let mut cuts: BTreeSet<usize> = [0, self.text.len()].into();
         for s in &self.spans {
             cuts.insert(s.range.start);
@@ -192,10 +335,9 @@ impl Inline {
     }
 }
 
-/// `l` without `range` if `l` is a link: up to two pieces.
-fn cut_out(l: Span, range: &Range<usize>) -> Vec<Span> {
-    let apart = l.range.end <= range.start || range.end <= l.range.start;
-    if !matches!(l.mark, Mark::Link(_)) || apart {
+/// `l` without `range`: up to two pieces.
+fn cut(l: Span, range: &Range<usize>) -> Vec<Span> {
+    if l.range.end <= range.start || range.end <= l.range.start {
         return vec![l];
     }
     [l.range.start..range.start, range.end..l.range.end]
@@ -410,6 +552,11 @@ fn scope(c: &[char]) -> Inline {
     out
 }
 
+/// The same mark; any two links count as one kind.
+fn same(a: &Mark, b: &Mark) -> bool {
+    a == b || matches!((a, b), (Mark::Link(_), Mark::Link(_)))
+}
+
 fn append(to: &mut Inline, from: Inline) {
     let shift = to.text.len();
     to.text.push_str(&from.text);
@@ -602,6 +749,62 @@ mod tests {
         let i = styled("x`y", vec![span(0..3, Mark::Code)]);
         assert_eq!(i.to_markdown(), "`x`\\``y`");
         assert_eq!(Inline::parse(&i.to_markdown()), i);
+    }
+
+    #[test]
+    fn typing_inserting_and_deleting_keep_the_marks_in_place() {
+        let mut i = Inline::parse("a **bold** c");
+        let typing = i.typing(6);
+        assert_eq!(typing, [Mark::Bold].into());
+        i.insert(6, "er ", &typing);
+        assert_eq!(i.text, "a bolder  c");
+        assert_eq!(
+            i.spans,
+            [span(2..9, Mark::Bold)],
+            "a typed space stays bold"
+        );
+        assert_eq!(
+            i.typing(9),
+            [Mark::Bold].into(),
+            "so typing goes on in bold"
+        );
+        assert_eq!(i.to_markdown(), "a **bolder**  c", "written without it");
+        i.delete(8..9);
+        i.insert(0, "x", &BTreeSet::new());
+        assert_eq!(i.to_markdown(), "xa **bolder** c");
+        i.insert(5, "!", &BTreeSet::new());
+        assert_eq!(i.to_markdown(), "xa **bo**!**lder** c");
+        i.delete(4..7);
+        assert_eq!(i.to_markdown(), "xa **bder** c");
+        i.delete(0..i.text.len());
+        assert_eq!(i, Inline::default());
+    }
+
+    #[test]
+    fn marks_go_on_and_off_a_range() {
+        let mut i = Inline::plain("one two three");
+        i.add(4..7, Mark::Italic);
+        assert!(i.has(4..7, &Mark::Italic) && !i.has(3..7, &Mark::Bold));
+        assert!(i.has(3..8, &Mark::Italic), "spaces do not count");
+        i.add(0..13, Mark::Link("a".into()));
+        i.add(4..7, Mark::Link("b".into()));
+        assert_eq!(i.to_markdown(), "[one](a) [*two*](b) [three](a)");
+        i.remove(0..13, &Mark::Link(String::new()));
+        i.remove(5..6, &Mark::Italic);
+        assert_eq!(i.to_markdown(), "one *t*w*o* three");
+        assert_eq!(i.typing(0), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_text_splits_and_joins_with_its_marks() {
+        let mut i = Inline::parse("a **bc** d");
+        let rest = i.split_off(3);
+        assert_eq!(
+            (i.to_markdown(), rest.to_markdown()),
+            ("a **b**".into(), "**c** d".into())
+        );
+        i.append(rest);
+        assert_eq!(i, Inline::parse("a **bc** d"));
     }
 
     /// Any marks whose ends lie at word ends write Markdown that reads back
