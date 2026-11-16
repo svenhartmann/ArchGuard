@@ -16,6 +16,7 @@ mod figure;
 mod follow;
 mod markdown;
 mod projection;
+mod rich;
 pub mod sequence;
 mod state;
 mod sync;
