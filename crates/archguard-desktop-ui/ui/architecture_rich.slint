@@ -7,6 +7,7 @@
 import { Theme } from "theme.slint";
 import { ArcBlock, ArcBlockView } from "architecture_blocks.slint";
 import { Icon, Icons } from "widgets.slint";
+import { ArcFigure, FigureView } from "architecture_figure.slint";
 
 // A stretch of one line in one look, in its block's text coordinates.
 export struct RichRun {
@@ -50,8 +51,11 @@ export struct RichItem {
     // The block's place in the chapter (Rust's Caret).
     piece: int,
     block: int,
-    // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code, 5 table row.
+    // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code, 5 table
+    // row, 6 diagram block.
     kind: int,
+    // A diagram block's drawing; an empty id when the analysis lacks it.
+    figure: ArcFigure,
     // Space above the text, the text's height and left edge.
     top: float,
     height: float,
@@ -358,6 +362,9 @@ component RichBlock inherits Rectangle {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.pressed();
                 RichData.press(item.piece, item.block, self.mouse-x / 1px - item.indent, self.mouse-y / 1px - item.top, e.modifiers.shift);
+                // Also when the caret was here already: a new chapter's
+                // first report ran before its layout.
+                root.report();
             }
         }
         moved => {
@@ -369,6 +376,81 @@ component RichBlock inherits Rectangle {
             RichData.word(item.piece, item.block, self.mouse-x / 1px - item.indent, self.mouse-y / 1px - item.top);
         }
     }
+}
+
+// A diagram block (kind 6): the diagram as the analysis draws it, kept in
+// the chapter's Markdown between archguard:diagram markers and drawn anew
+// on every save. A click puts the caret on it: typing opens a paragraph
+// after it, Backspace or Delete removes it.
+component DiagramBlock inherits Rectangle {
+    in property <RichItem> item;
+    in property <Point> origin;
+    callback pressed();
+    property <bool> has-caret: item.caret;
+    border-radius: 12px;
+    border-width: root.has-caret && RichData.focused ? 2px : 0px;
+    border-color: Theme.accent;
+    TouchArea {
+        clicked => {
+            root.pressed();
+            RichData.press(item.piece, item.block, 0, 0, false);
+            root.report();
+        }
+    }
+    VerticalLayout {
+        padding-top: item.top * 1px;
+        padding-bottom: 4px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            Text {
+                text: @tr("Diagram from the analysis, drawn anew on every save.");
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                vertical-alignment: center;
+            }
+            ToolButton {
+                label: @tr("Edit as source");
+                tip: @tr("Edit the diagram's source as own text; the analysis no longer updates it");
+                clicked => {
+                    root.pressed();
+                    RichData.press(item.piece, item.block, 0, 0, false);
+                    RichData.tool("detach");
+                }
+            }
+            ToolButton {
+                label: @tr("Remove");
+                tip: @tr("Remove the diagram from the chapter");
+                clicked => {
+                    root.pressed();
+                    RichData.press(item.piece, item.block, 0, 0, false);
+                    RichData.tool("remove_diagram");
+                }
+            }
+        }
+        if item.figure.id != "": FigureView {
+            figure: item.figure;
+            doc: false;
+            preview: true;
+        }
+        if item.figure.id == "": Text {
+            text: @tr("The analysis has no such diagram any more; the block keeps its last version.");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+    }
+    function report() {
+        if (root.has-caret) {
+            RichData.caret-in-x = root.absolute-position.x - root.origin.x;
+            RichData.caret-in-y = root.absolute-position.y - root.origin.y + item.top * 1px;
+            RichData.caret-top = root.absolute-position.y + item.top * 1px;
+            RichData.caret-h = 24px;
+        }
+    }
+    changed has-caret => { root.report(); }
+    init => { root.report(); }
 }
 
 // Text the editor keeps as written, as the reader shows it. A click sends
@@ -468,16 +550,6 @@ export component RichEditor inherits FocusScope {
             ime.focus();
         }
     }
-    // Once the editor shows: the keys go to its text.
-    Timer {
-        interval: 1ms;
-        running: !ime.has-focus && !RichData.linking && !root.opened;
-        triggered => {
-            root.opened = true;
-            ime.focus();
-        }
-    }
-    property <bool> opened;
     VerticalLayout {
         alignment: start;
         changed width => { RichData.width(self.width / 1px); }
@@ -487,7 +559,12 @@ export component RichEditor inherits FocusScope {
                 item: item;
                 pressed => { ime.focus(); }
             }
-            if item.fixed.length == 0: RichBlock {
+            if item.kind == 6: DiagramBlock {
+                item: item;
+                origin: root.absolute-position;
+                pressed => { ime.focus(); }
+            }
+            if item.fixed.length == 0 && item.kind != 6: RichBlock {
                 item: item;
                 origin: root.absolute-position;
                 pressed => { ime.focus(); }

@@ -76,6 +76,8 @@ export component AppWindow inherits Window {
     callback open-recent(int);
     callback clear-recent();
     callback close-active();
+    // File → Save: everything unsaved in the active project (notice 10 or 11).
+    callback save-active();
     callback close-all();
     callback quit-app();
     callback choose-theme(bool);
@@ -208,6 +210,8 @@ export component AppWindow inherits Window {
         if root.notice-kind == 7 { return @tr("SVG is available in Graph → Tree and Services."); }
         if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."); }
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
+        if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
+        if root.notice-kind == 11 { return @tr("Nothing to save."); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 
@@ -255,6 +259,12 @@ export component AppWindow inherits Window {
                     enabled: root.recent.length > 0;
                     activated => { root.clear-recent(); }
                 }
+            }
+            MenuItem {
+                title: @tr("Save");
+                shortcut: @keys(Control + S);
+                enabled: root.has-doc;
+                activated => { root.save-active(); }
             }
             MenuSeparator { }
             Menu {
@@ -603,7 +613,7 @@ export component AppWindow inherits Window {
 
         if root.notice != "": NoticeBar {
             text: root.notice-text();
-            done: root.notice-kind >= 3 && root.notice-kind <= 5;
+            done: (root.notice-kind >= 3 && root.notice-kind <= 5) || root.notice-kind >= 10;
             dismiss => { root.notice = ""; }
         }
 

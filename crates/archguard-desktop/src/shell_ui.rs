@@ -71,6 +71,8 @@ pub fn wire(ui: &AppWindow) {
         }
     });
     ui.on_close_active(move || close_active(()));
+    let save = with_ui(ui, |ui, ()| save_active(ui));
+    ui.on_save_active(move || save(()));
     let close_all = with_ui(ui, |ui, ()| request(ui, Request::CloseAll));
     ui.on_close_all(move || close_all(()));
     let quit = with_ui(ui, |ui, ()| request(ui, Request::Quit));
@@ -101,6 +103,25 @@ pub fn wire(ui: &AppWindow) {
     });
     route_app_quit();
     crate::settings_view_ui::wire(ui);
+}
+
+/// File → Save: everything unsaved in the active project; the notice
+/// says what was saved and where, or why not.
+fn save_active(ui: &AppWindow) {
+    crate::settings_view_ui::flush_typing();
+    let Some(id) = documents::active_id() else {
+        return;
+    };
+    let what = with_store(|s| s.get(id).map(documents::Document::unsaved)).unwrap_or_default();
+    if what.is_empty() {
+        show_notice(ui, NOTHING_TO_SAVE, " ");
+        return;
+    }
+    match documents::save(id) {
+        Ok(()) => crate::tab_support::saved_notice(ui, &what),
+        Err(e) => show_notice(ui, 2, &e),
+    }
+    documents_ui::refresh(ui);
 }
 
 fn open_recent(ui: &AppWindow, i: usize) {
@@ -209,6 +230,9 @@ fn remember_window(ui: &AppWindow) {
 fn saved_size(fullscreen: bool, size: slint::LogicalSize) -> Option<(u32, u32)> {
     (!fullscreen).then_some((size.width.round() as u32, size.height.round() as u32))
 }
+
+/// Notice 11 reads "Nothing to save." (`ui/app.slint`).
+const NOTHING_TO_SAVE: i32 = 11;
 
 fn show_notice(ui: &AppWindow, kind: i32, text: &str) {
     ui.set_notice_kind(kind);

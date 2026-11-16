@@ -39,8 +39,10 @@ export struct ArchitectureModel {
     // while the project has none.
     file: string,
     file-error: string,
-    // The chapter editor is open.
+    // The chapter shows in the editor (always, except in the diagram view).
     editing: bool,
+    // The open chapter has unsaved changes: the save bar shows.
+    dirty: bool,
     // No arc42 text in the project yet: where should it go?
     ask-location: bool,
     edit-error: string,
@@ -75,7 +77,7 @@ export global ArchitectureData {
     callback plantuml(string);
     // Show (true) or hide a catalogue diagram in the documentation.
     callback toggle-diagram(string, bool);
-    // A diagram as own text at the end of the open chapter (opens the editor).
+    // A diagram as a diagram block at the caret of the open chapter.
     callback insert-diagram(string);
     callback open-catalogue();
 
@@ -84,7 +86,6 @@ export global ArchitectureData {
     in-out property <bool> visual: true;
     in-out property <string> draft;
     in-out property <[ArcBlock]> preview;
-    callback start-edit();
     callback draft-changed(string);
     // The editor switched between formatted text and Markdown.
     callback visual-changed(bool);
@@ -101,64 +102,24 @@ component ChapterEditor inherits VerticalLayout {
     in property <bool> narrow;
     spacing: 12px;
     alignment: start;
-    Text {
-        text: ArchitectureData.model.file != "" ? @tr("Editing {}. Generated archguard blocks are refreshed from the analysis when you save; your text outside them is kept.", ArchitectureData.model.file) : @tr("Editing the generated chapter. The project has no arc42 text yet; saving asks where to create it.");
-        color: Theme.muted;
-        font-size: Theme.font-small;
-        wrap: word-wrap;
-    }
-    if ArchitectureData.model.ask-location: Fit { Rectangle {
-        background: Theme.panel-2;
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: Theme.accent;
-        VerticalLayout {
-            padding: 14px;
-            spacing: 10px;
-            Text {
-                text: @tr("This project has no arc42.md and no arc42 folder. Where should the architecture documentation be created?");
-                color: Theme.text;
-                font-size: Theme.font-body;
-                font-weight: Theme.weight-strong;
-                wrap: word-wrap;
-            }
-            if !root.narrow: HorizontalLayout {
-                spacing: 10px;
-                alignment: start;
-                Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
-                Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
-                Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
-            }
-            // The first answer on a row of its own in a narrow pane.
-            if root.narrow: VerticalLayout {
-                spacing: 8px;
-                HorizontalLayout {
-                    alignment: start;
-                    Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
-                }
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
-                    Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
-                    Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
-                }
-            }
-        }
-    } }
-    if ArchitectureData.model.edit-error != "": Fit {
+    HorizontalLayout {
+        spacing: 10px;
         Text {
-            text: ArchitectureData.model.edit-error;
-            color: Theme.danger;
-            font-size: Theme.font-small;
-            wrap: word-wrap;
-        }
-    }
-    if ArchitectureData.visual: Fit {
-        Text {
-            text: @tr("Type in the text as it will read. Generated blocks are refreshed from the analysis; take one over as own text to change it.");
+            text: ArchitectureData.model.file != "" ? @tr("Saved to {}. Generated blocks are refreshed from the analysis on every save; your own text is kept.", ArchitectureData.model.file) : @tr("The project has no arc42 text yet; saving asks where to create it.");
             color: Theme.muted;
             font-size: Theme.font-small;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
             wrap: word-wrap;
+        }
+        Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            text: ArchitectureData.visual ? @tr("Edit Markdown") : @tr("Edit in the text");
+            clicked => {
+                ArchitectureData.visual = !ArchitectureData.visual;
+                ArchitectureData.visual-changed(ArchitectureData.visual);
+            }
         }
     }
     if ArchitectureData.visual: RichToolbar {}
@@ -198,16 +159,73 @@ component ChapterEditor inherits VerticalLayout {
         Text { text: @tr("Preview"); color: Theme.muted; font-size: Theme.font-caption; }
         for b in ArchitectureData.preview: ArcBlockView { block: b; }
     }
-    HorizontalLayout {
-        spacing: 10px;
-        alignment: start;
-        Button { primary: true; text: @tr("Save chapter"); clicked => { ArchitectureData.save-edit(); } }
-        Button { text: @tr("Cancel"); clicked => { ArchitectureData.cancel-edit(); } }
-        Button {
-            text: ArchitectureData.visual ? @tr("Edit Markdown") : @tr("Edit in the text");
-            clicked => {
-                ArchitectureData.visual = !ArchitectureData.visual;
-                ArchitectureData.visual-changed(ArchitectureData.visual);
+}
+
+// Above the page while the chapter has unsaved changes: Save (also
+// File → Save) or Discard; the question where a new arc42 text goes and
+// why a save failed.
+component SaveBar inherits Rectangle {
+    in property <bool> narrow;
+    background: Theme.accent.with-alpha(0.10);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.accent;
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 8px;
+        if ArchitectureData.model.dirty: HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: ArchitectureData.model.file != "" ? @tr("Unsaved changes in {}", ArchitectureData.model.file) : @tr("Unsaved changes");
+                color: Theme.text;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-strong;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+            }
+            Button { y: (parent.height - self.height) / 2; compact: true; primary: true; text: @tr("Save"); clicked => { ArchitectureData.save-edit(); } }
+            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Discard"); clicked => { ArchitectureData.cancel-edit(); } }
+        }
+        if ArchitectureData.model.edit-error != "": Fit {
+            Text {
+                text: ArchitectureData.model.edit-error;
+                color: Theme.danger;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+        }
+        if ArchitectureData.model.ask-location: VerticalLayout {
+            spacing: 8px;
+            Text {
+                text: @tr("This project has no arc42.md and no arc42 folder. Where should the architecture documentation be created?");
+                color: Theme.text;
+                font-size: Theme.font-body;
+                wrap: word-wrap;
+            }
+            if !root.narrow: HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
+                Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
+                Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
+            }
+            // The first answer on a row of its own in a narrow pane.
+            if root.narrow: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: start;
+                    Button { compact: true; primary: true; text: @tr("arc42.md in the project folder"); clicked => { ArchitectureData.choose-location(0); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Button { compact: true; text: @tr("Other place …"); clicked => { ArchitectureData.choose-location(1); } }
+                    Button { compact: true; text: @tr("Cancel"); clicked => { ArchitectureData.choose-location(2); } }
+                }
             }
         }
     }
@@ -217,13 +235,11 @@ component ChapterEditor inherits VerticalLayout {
 // further rows when the pane is too narrow for one (from the view's
 // width, never the content), as the Matrix toolbar does.
 component ChapterActions inherits Rectangle {
-    in property <bool> editing;
     property <length> gap: 10px;
     property <length> h: one.preferred-height;
-    property <length> w1: root.editing ? 0 : edit.preferred-width;
     property <length> w2: one.preferred-width;
-    property <length> x2: root.editing ? 0 : self.fx(self.w1, self.w2);
-    property <int> r2: root.editing ? 0 : self.fr(self.w1, self.w2, 0);
+    property <length> x2: 0;
+    property <int> r2: 0;
     property <length> w3: all.preferred-width;
     property <length> x3: self.fx(self.x2 + self.w2, self.w3);
     property <int> r3: self.fr(self.x2 + self.w2, self.w3, self.r2);
@@ -234,15 +250,6 @@ component ChapterActions inherits Rectangle {
     pure function fr(end: length, w: length, r: int) -> int { return self.fits(end, w) ? r : r + 1; }
     pure function row-y(r: int) -> length { return r * (self.h + 8px); }
     height: self.row-y(self.r3) + self.h;
-    edit := Button {
-        x: 0;
-        y: 0;
-        width: self.preferred-width;
-        visible: !root.editing;
-        compact: true;
-        text: @tr("Edit chapter");
-        clicked => { ArchitectureData.start-edit(); }
-    }
     one := Button {
         x: root.x2;
         y: root.row-y(root.r2);
@@ -350,11 +357,11 @@ export component ArchitectureView inherits Rectangle {
                 horizontal-stretch: 1;
                 PageTitle { text: @tr("Architecture documentation"); sub: @tr("arc42 · Evidence, decisions and open questions"); }
             }
-            if !root.narrow && !ArchitectureData.model.editing: Button { y: (parent.height - self.height) / 2; text: @tr("Edit chapter"); clicked => { ArchitectureData.start-edit(); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
             if !root.narrow: Button { y: (parent.height - self.height) / 2; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
         }
-        if root.narrow: ChapterActions { editing: ArchitectureData.model.editing; }
+        if root.narrow: ChapterActions { }
+        if ArchitectureData.model.dirty || ArchitectureData.model.edit-error != "" || ArchitectureData.model.ask-location: SaveBar { narrow: root.narrow; }
         if ArchitectureData.model.file-error != "": Text {
             text: @tr("The project's arc42 text could not be read: {}", ArchitectureData.model.file-error);
             color: Theme.danger;
@@ -402,7 +409,7 @@ export component ArchitectureView inherits Rectangle {
                 // The editor's caret stays in view while it moves.
                 property <length> caret: RichData.caret-top;
                 changed caret => {
-                    if (!ArchitectureData.model.editing) {
+                    if (!RichData.focused) {
                         return;
                     }
                     let top = self.absolute-position.y + 24px;
@@ -432,7 +439,6 @@ export component ArchitectureView inherits Rectangle {
                                 Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
-                            if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
                             if ArchitectureData.model.figure-error != "": Fit {
                                 Text {
                                     text: ArchitectureData.model.figure-error;
@@ -460,7 +466,7 @@ export component ArchitectureView inherits Rectangle {
                                 }
                             }
                             // A hidden map is one line with its tick; a shown one has it in its header.
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: Fit {
+                            if !ArchitectureData.model.catalogue && ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: Fit {
                                 top: 8px;
                                 HorizontalLayout {
                                     spacing: 12px;
@@ -478,7 +484,7 @@ export component ArchitectureView inherits Rectangle {
                                     }
                                 }
                             }
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown || ArchitectureData.model.map-optional): VerticalLayout {
+                            if !ArchitectureData.model.catalogue && ArchitectureData.model.map.kind >= 0 && (ArchitectureData.model.map-id == "" || ArchitectureData.model.map-shown || ArchitectureData.model.map-optional): VerticalLayout {
                                 padding-top: 8px;
                                 padding-bottom: 22px;
                                 spacing: 8px;
@@ -504,7 +510,7 @@ export component ArchitectureView inherits Rectangle {
                                     plantuml(u) => { ArchitectureData.plantuml(u); }
                                 }
                             }
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
+                            if !ArchitectureData.model.catalogue: VerticalLayout {
                                 spacing: 14px;
                                 padding-bottom: 8px;
                                 for f in ArchitectureData.model.figures: Fit {
@@ -516,6 +522,7 @@ export component ArchitectureView inherits Rectangle {
                                     }
                                 }
                             }
+                            if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
                             if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
                                 for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
                             }

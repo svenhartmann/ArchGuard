@@ -10,6 +10,7 @@ use std::ops::Range;
 
 use super::super::markdown::{self, Align, Block as Md};
 use super::inline::Inline;
+pub use crate::arc42_file::{diagram_block, diagram_ranges};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
@@ -26,6 +27,13 @@ pub enum Kind {
     /// Its text is the code; it has no marks.
     Code {
         lang: String,
+    },
+    /// A diagram of the analysis kept in the text (`archguard:diagram`
+    /// markers): drawn as a picture, refreshed on save; `source` is its
+    /// Markdown with the markers. It has no text.
+    Diagram {
+        id: String,
+        source: String,
     },
     /// A table cell; the cells of a table follow each other row by row,
     /// row 0 the header.
@@ -99,6 +107,29 @@ impl Doc {
     /// Read chapter Markdown (LF line ends); the blocks overlapping `fixed`
     /// (byte ranges of `md`) stay as written.
     pub fn parse(md: &str, fixed: &[Range<usize>]) -> Doc {
+        let locked = |r: &Range<usize>| fixed.iter().any(|g| g.start < r.end && r.start < g.end);
+        // Diagram blocks are one block each; the chunks inside them are theirs.
+        let diagrams = diagram_ranges(md);
+        let mut units: Vec<(Range<usize>, Option<Vec<Block>>)> = markdown::chunks(md)
+            .into_iter()
+            .filter(|(r, _)| !diagrams.iter().any(|(d, _)| d.contains(&r.start)))
+            .map(|(r, blocks)| {
+                let editable = editable(&blocks).filter(|_| !locked(&r));
+                (r, editable)
+            })
+            .collect();
+        for (r, id) in diagrams {
+            let block = Block {
+                kind: Kind::Diagram {
+                    id,
+                    source: md[r.clone()].to_string(),
+                },
+                inline: Inline::default(),
+            };
+            let editable = (!locked(&r)).then(|| vec![block]);
+            units.push((r, editable));
+        }
+        units.sort_by_key(|(r, _)| r.start);
         let mut pieces = Vec::new();
         let keep = |pieces: &mut Vec<Piece>, text: &str| match pieces.last_mut() {
             _ if text.is_empty() => {}
@@ -106,13 +137,10 @@ impl Doc {
             _ => pieces.push(Piece::Fixed(text.to_string())),
         };
         let mut pos = 0;
-        for (range, blocks) in markdown::chunks(md) {
+        for (range, editable) in units {
             keep(&mut pieces, &md[pos..range.start]);
             let source = &md[range.clone()];
-            let locked = fixed
-                .iter()
-                .any(|g| g.start < range.end && range.start < g.end);
-            match editable(&blocks).filter(|_| !locked) {
+            match editable {
                 // Parts with only blank lines between are one: Backspace
                 // joins paragraphs across them.
                 Some(blocks) => match pieces.as_mut_slice() {
@@ -208,6 +236,19 @@ pub fn generated(text: &str) -> Vec<Range<usize>> {
     out
 }
 
+/// The editable blocks of Markdown `md` (a detached diagram's section).
+pub fn blocks_of(md: &str) -> Vec<Block> {
+    Doc::parse(md, &[])
+        .pieces
+        .into_iter()
+        .filter_map(|p| match p {
+            Piece::Part(part) => Some(part.blocks),
+            Piece::Fixed(_) => None,
+        })
+        .flatten()
+        .collect()
+}
+
 /// The blocks the editor edits, or `None` for a chunk it keeps as written.
 fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
     let mut out = Vec::new();
@@ -289,7 +330,10 @@ fn one_line(md: &str) -> Inline {
 /// Whether a block is written: empty text blocks are dropped (an empty
 /// code block stays).
 pub fn written(b: &Block) -> bool {
-    matches!(b.kind, Kind::Code { .. } | Kind::Cell { .. }) || !b.inline.text.trim().is_empty()
+    matches!(
+        b.kind,
+        Kind::Code { .. } | Kind::Cell { .. } | Kind::Diagram { .. }
+    ) || !b.inline.text.trim().is_empty()
 }
 
 /// Each list entry's depth as written (at most one deeper than the entry
@@ -393,6 +437,7 @@ fn write(blocks: &[Block]) -> String {
                     out.push_str(&separator(&blocks[i + 1 - cols..=i]));
                 }
             }
+            Kind::Diagram { source, .. } => out.push_str(source),
             Kind::Code { lang } => {
                 // shortcut: a line of three backticks inside the code ends it
                 // early; write a longer fence once the reader knows them.
@@ -594,6 +639,35 @@ Ende.
             doc.to_markdown(),
             "<!-- Eigene Erläuterungen hier ergänzen. -->\n\nNeu.\n"
         );
+    }
+
+    #[test]
+    fn a_diagram_block_is_one_block_and_writes_back_as_written() {
+        let block = diagram_block(
+            "runtime-calls",
+            "### Aufrufe\n\nQuelle.\n\n```mermaid\nflowchart LR\n```\n\n",
+        );
+        let md = format!("Text davor.\n\n{block}\n\nText danach.\n");
+        let mut doc = Doc::parse(&md, &[]);
+        assert_eq!(doc.to_markdown(), md, "untouched");
+        let mut all = parts(&mut doc);
+        let blocks = all[0].edit();
+        assert_eq!(blocks.len(), 3, "{blocks:?}");
+        assert!(matches!(&blocks[1].kind, Kind::Diagram { id, .. } if id == "runtime-calls"));
+        assert_eq!(
+            blocks[1].inline.text, "",
+            "a diagram has no text to type in"
+        );
+        blocks.swap(0, 1);
+        assert_eq!(
+            doc.to_markdown(),
+            format!("{block}\n\nText davor.\n\nText danach.\n"),
+            "moved as a whole"
+        );
+        let inner = blocks_of("### Aufrufe\n\nQuelle.\n\n```mermaid\nflowchart LR\n```\n");
+        assert_eq!(inner.len(), 3);
+        assert!(matches!(&inner[2].kind, Kind::Code { lang } if lang == "mermaid"));
+        assert!(diagram_ranges("<!-- archguard:diagram:x:start -->\nohne Ende").is_empty());
     }
 
     #[test]

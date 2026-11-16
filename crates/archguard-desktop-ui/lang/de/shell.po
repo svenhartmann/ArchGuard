@@ -72,3 +72,6 @@ msgstr "Für dieses Projekt gibt es keine Laufzeitaufzeichnungen."
 
 msgid "No services found in this project."
 msgstr "In diesem Projekt wurden keine Dienste gefunden."
+
+msgid "Nothing to save."
+msgstr "Nichts zu speichern."

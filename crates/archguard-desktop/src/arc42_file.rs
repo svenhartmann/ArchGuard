@@ -9,8 +9,10 @@
 //! chapter, named by its number (`05_building_blocks.md`, `arc42-05.md`).
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use archguard_engine::core::DiagramFormat;
 use archguard_engine::report::Arc42Document;
 
 /// Folders the search never enters.
@@ -211,7 +213,7 @@ impl Arc42Files {
         base: &mut Option<String>,
     ) -> Result<PathBuf, String> {
         let edited = edited.replace("\r\n", "\n");
-        let mut edited = refresh(doc, &edited)?;
+        let mut edited = refresh_diagrams(doc, &refresh(doc, &edited)?);
         if !edited.ends_with('\n') {
             edited.push('\n');
         }
@@ -300,6 +302,63 @@ fn read(path: &Path) -> Result<Option<String>, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The start of a diagram block's marker; `<id>:start -->` / `<id>:end -->` follow.
+pub const DIAGRAM_MARKER: &str = "<!-- archguard:diagram:";
+
+/// A diagram's Markdown `section` as a diagram block with its markers.
+pub fn diagram_block(id: &str, section: &str) -> String {
+    format!(
+        "{DIAGRAM_MARKER}{id}:start -->\n{}\n{DIAGRAM_MARKER}{id}:end -->",
+        section.trim_end()
+    )
+}
+
+/// Each diagram block of `md`: its bytes (start marker to end marker) and
+/// its diagram's id; a start without its end is no block.
+pub fn diagram_ranges(md: &str) -> Vec<(Range<usize>, String)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = md[from..].find(DIAGRAM_MARKER).map(|i| from + i) {
+        let rest = &md[at + DIAGRAM_MARKER.len()..];
+        from = at + DIAGRAM_MARKER.len();
+        let Some(id) = rest.split_once(":start -->").map(|(id, _)| id) else {
+            continue;
+        };
+        if id.contains(char::is_whitespace) {
+            continue;
+        }
+        let end_marker = format!("{DIAGRAM_MARKER}{id}:end -->");
+        if let Some(end) = md[from..]
+            .find(&end_marker)
+            .map(|i| from + i + end_marker.len())
+        {
+            out.push((at..end, id.to_string()));
+            from = end;
+        }
+    }
+    out
+}
+
+/// Refresh each diagram block in `text` from `doc`: its diagram's section
+/// in the block's format (Mermaid unless it holds PlantUML); a diagram
+/// the analysis no longer has stays as written.
+fn refresh_diagrams(doc: &Arc42Document, text: &str) -> String {
+    let mut out = text.to_string();
+    for (r, id) in diagram_ranges(text).into_iter().rev() {
+        let Some(d) = doc.diagrams.iter().find(|d| d.id == id) else {
+            continue;
+        };
+        let format = if text[r.clone()].contains("```plantuml") {
+            DiagramFormat::Plantuml
+        } else {
+            DiagramFormat::Mermaid
+        };
+        let section = archguard_engine::report::diagram_section(d, format);
+        out.replace_range(r, &diagram_block(&id, &section));
+    }
+    out
+}
+
 /// Refresh the generated blocks in `text`; text without any block stays
 /// as it is.
 fn refresh(doc: &Arc42Document, text: &str) -> Result<String, String> {
@@ -383,6 +442,45 @@ fn put_section(text: &str, n: u8, chapter: &str) -> String {
 pub(crate) mod tests {
     use super::*;
     use archguard_engine::report::Arc42Chapter;
+
+    /// A diagram block in own text is written with the analysis' current
+    /// section; one the analysis no longer has stays as written.
+    #[test]
+    fn saving_refreshes_diagram_blocks_from_the_analysis() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("arc42.md");
+        let mut new = doc("New");
+        let diagram = archguard_engine::core::Diagram {
+            id: "calls".into(),
+            chapter: 6,
+            title: "Aufrufe".into(),
+            note: "Neu.".into(),
+            kind: archguard_engine::core::DiagramKind::Packages,
+            unit: String::new(),
+            elements: Vec::new(),
+            relations: Vec::new(),
+            shown: true,
+        };
+        new.diagrams.push(diagram.clone());
+        let old = diagram_block(
+            "calls",
+            "### Aufrufe\n\nAlt.\n\n```mermaid\nflowchart LR\n```",
+        );
+        let gone = diagram_block("gone", "### Weg\n\n```mermaid\nflowchart LR\n```");
+        std::fs::write(&path, format!("## 6. Laufzeit\n\n{old}\n\n{gone}\n")).unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        let chapter = files.chapter(&new, 6);
+        files
+            .save_chapter(&new, 6, &chapter, &mut files.saved(6))
+            .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let fresh = diagram_block(
+            "calls",
+            &archguard_engine::report::diagram_section(&diagram, DiagramFormat::Mermaid),
+        );
+        assert!(text.contains(&fresh) && !text.contains("Alt."), "{text}");
+        assert!(text.contains(&gone), "{text}");
+    }
 
     pub(crate) fn doc(evidence: &str) -> Arc42Document {
         Arc42Document {

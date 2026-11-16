@@ -6,17 +6,19 @@
 use std::path::{Path, PathBuf};
 
 use archguard_engine::report::Arc42Document;
-use slint::{ComponentHandle, SharedString};
+use slint::ComponentHandle;
 
 use super::rich::layout::Style;
 #[cfg(test)]
 use super::rich::view::Key;
 use super::rich::view::Rich;
 use super::{blocks, markdown, sync};
-use crate::arc42_file::{self, Arc42Files, Target};
+use crate::arc42_file::{self, Arc42Files, Target, diagram_block};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
-use crate::ui::{AppWindow, ArchitectureData, ArchitectureModel, RichData, RichItem, Theme};
+use crate::ui::{
+    AppWindow, ArcFigure, ArchitectureData, ArchitectureModel, RichData, RichItem, Theme,
+};
 
 /// The part of a document the chapter editor owns (`documents::mark_dirty`).
 pub(super) const PART: &str = "arc42";
@@ -98,26 +100,71 @@ impl Editor {
     pub fn fill(&self, m: &mut ArchitectureModel) {
         self.with_open(|open| {
             // The file the open chapter is saved to; the editor shows it.
-            m.file = match (&self.files, &*open) {
-                (Some(f), Some(e)) => {
-                    let path = f.path_of(e.chapter);
-                    let shown = path.strip_prefix(&self.root).unwrap_or(&path);
-                    shown.display().to_string().into()
-                }
-                _ => SharedString::new(),
-            };
+            m.file = open
+                .as_ref()
+                .and_then(|e| self.file_of(e.chapter))
+                .unwrap_or_default()
+                .into();
             m.file_error = self.files_error.as_str().into();
             if let Some(e) = open {
                 m.editing = true;
+                m.dirty = e.draft != e.original;
                 m.ask_location = e.ask_location;
                 m.edit_error = e.error.as_str().into();
             }
         });
     }
 
-    pub fn start(&mut self, doc: &Arc42Document, chapter: u8) {
-        // LF in the draft, as the block ranges expect; saving keeps CRLF files CRLF.
+    /// The file chapter `n` is saved to, relative to the project; `None`
+    /// while the project has no arc42 text.
+    fn file_of(&self, n: u8) -> Option<String> {
+        let path = self.files.as_ref()?.path_of(n);
+        let shown = path.strip_prefix(&self.root).unwrap_or(&path);
+        Some(shown.display().to_string())
+    }
+
+    /// What the open chapter is called in the save notice and the close
+    /// prompt: "arc42 chapter 5 (docs/arc42.md)".
+    pub fn label(&self, chapter: u8) -> String {
+        match self.file_of(chapter) {
+            Some(f) => format!("arc42 chapter {chapter} ({f})"),
+            None => format!("arc42 chapter {chapter}"),
+        }
+    }
+
+    /// Open chapter `chapter` as it is now, unless an open draft has
+    /// unsaved changes (they are never dropped). An unchanged open chapter
+    /// stays as it is, with its caret.
+    pub fn ensure_open(&self, doc: &Arc42Document, chapter: u8) {
         let text = self.chapter(doc, chapter).replace("\r\n", "\n");
+        let keep = self.with_open(|o| {
+            o.as_ref().is_some_and(|e| {
+                e.draft != e.original
+                    || (e.chapter == chapter && e.original.trim_end() == text.trim_end())
+            })
+        });
+        if !keep {
+            self.open(chapter, text);
+        }
+    }
+
+    /// The chapter open in the editor.
+    pub fn open_chapter(&self) -> Option<u8> {
+        self.with_open(|o| o.as_ref().map(|e| e.chapter))
+    }
+
+    /// Whether the open chapter has unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        self.with_open(|o| o.as_ref().is_some_and(|e| e.draft != e.original))
+    }
+
+    #[cfg(any(test, feature = "snapshot"))]
+    pub fn start(&self, doc: &Arc42Document, chapter: u8) {
+        // LF in the draft, as the block ranges expect; saving keeps CRLF files CRLF.
+        self.open(chapter, self.chapter(doc, chapter).replace("\r\n", "\n"));
+    }
+
+    fn open(&self, chapter: u8, text: String) {
         let open = Open {
             chapter,
             ask_location: false,
@@ -133,7 +180,12 @@ impl Editor {
     /// Show this document's draft in the window's one editor: as
     /// formatted text, or as Markdown beside the chapter as the reader
     /// would show it. On every keystroke: only the rows that changed are set.
-    pub fn show(&self, ui: &AppWindow) {
+    pub fn show(
+        &self,
+        ui: &AppWindow,
+        figure: &dyn Fn(&str) -> Option<ArcFigure>,
+        drawn: &[String],
+    ) {
         let note = Texts::of(ui)
             .t("Diagram source · this diagram syntax is not supported in the viewer.")
             .to_string();
@@ -150,7 +202,8 @@ impl Editor {
             }
             let rich = e.rich.get_or_insert_with(|| Rich::new(&e.draft));
             rich.set_style(style);
-            Some((e.draft.clone(), Ok((rich.items(&note), rich.tools()))))
+            let items = rich.items(&note, figure, drawn);
+            Some((e.draft.clone(), Ok((items, rich.tools()))))
         });
         let Some((draft, shown)) = shown else {
             return;
@@ -176,12 +229,18 @@ impl Editor {
         });
     }
 
-    /// Append `text` (Markdown) to the open chapter as own text.
-    pub fn append(&self, text: &str) {
-        self.change(|e| {
-            e.draft = format!("{}\n\n{}\n", e.draft.trim_end(), text.trim_end());
-            // The formatted editor reads the draft anew.
-            e.rich = None;
+    /// Insert diagram `id` (its Markdown `section`) as a diagram block: at
+    /// the caret in the formatted editor, at the end of the Markdown.
+    pub fn insert_diagram(&self, id: &str, section: &str) {
+        self.change(|e| match &mut e.rich {
+            Some(rich) => {
+                rich.insert_diagram(id, section);
+                e.draft = rich.markdown();
+            }
+            None => {
+                let block = diagram_block(id, section);
+                e.draft = format!("{}\n\n{block}\n", e.draft.trim_end());
+            }
         });
     }
 
@@ -220,7 +279,7 @@ impl Editor {
     /// Mark this editor's part of the document dirty or clean.
     fn mark(&self, chapter: u8, dirty: bool) {
         if dirty {
-            documents::mark_dirty(self.doc, PART, &format!("arc42 chapter {chapter}"));
+            documents::mark_dirty(self.doc, PART, &self.label(chapter));
         } else {
             documents::mark_clean(self.doc, PART);
         }
@@ -234,12 +293,14 @@ impl Editor {
         })
     }
 
-    fn set_error(&self, error: String) {
+    pub(super) fn set_error(&self, error: String) {
         self.with_open(|o| o.as_mut().map(|e| e.error = error));
     }
 
-    /// Save the draft; the path written, or `None` while the editor stays
-    /// open (an error, or the question where to create the file).
+    /// Save the draft; the path written, or `None` (an error, or the
+    /// question where to create the file). The chapter stays open as
+    /// saved, with the formatted editor and its caret unless the save
+    /// refreshed generated text.
     pub fn save(&mut self, doc: &Arc42Document) -> Option<String> {
         let (chapter, draft, mut base) = self.with_open(|o| {
             o.as_ref()
@@ -252,7 +313,19 @@ impl Editor {
         match files.save_chapter(doc, chapter, &draft, &mut base) {
             Ok(path) => {
                 self.files_error.clear();
-                self.cancel();
+                let text = self.chapter(doc, chapter).replace("\r\n", "\n");
+                let base = self.files.as_ref().and_then(|f| f.saved(chapter));
+                self.with_open(|o| {
+                    let e = o.as_mut()?;
+                    // The file ends a chapter with its own blank lines.
+                    if e.draft.trim_end() != text.trim_end() {
+                        e.draft = text;
+                        e.rich = None;
+                    }
+                    (e.original, e.base, e.error) = (e.draft.clone(), base, String::new());
+                    Some(())
+                });
+                self.mark(chapter, false);
                 Some(path.display().to_string())
             }
             Err(e) => {
@@ -366,6 +439,7 @@ fn same_item(a: &RichItem, b: &RichItem) -> bool {
         && a.caret_rect == b.caret_rect
         && a.fixed.row_count() == b.fixed.row_count()
         && (a.empty, a.generated) == (b.empty, b.generated)
+        && a.figure.id == b.figure.id
         && rows(&a.cells, &b.cells)
         && rows(&a.runs, &b.runs)
         && rows(&a.selection, &b.selection)
@@ -405,20 +479,20 @@ mod tests {
         in_a.start(&new, 5);
         in_a.edit("## 5. Title\n\nText von A.\n");
         // The other document opens an editor meanwhile.
-        let mut in_b = Editor::new(b, b_dir.path());
+        let in_b = Editor::new(b, b_dir.path());
         in_b.start(&new, 3);
         in_b.edit("## 3. Title\n\nText von B.\n");
         let path = a_dir.path().join("arc42.md");
         assert_eq!(in_a.save(&new), Some(path.display().to_string()));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Text von A.") && !text.contains("Text von B."));
-        assert!(!in_a.is_open() && in_b.is_open());
+        assert!(!in_a.is_dirty() && in_b.is_dirty());
     }
 
-    /// A diagram taken into a chapter without generated block is own text
-    /// and is saved with it.
+    /// A diagram inserted into a chapter of own text is saved as a diagram
+    /// block, which the next save refreshes from the analysis.
     #[test]
-    fn a_diagram_appended_to_a_chapter_of_own_text_is_saved() {
+    fn a_diagram_inserted_into_a_chapter_of_own_text_is_saved() {
         let d = tempfile::tempdir().expect("temp dir");
         let path = d.path().join("arc42.md");
         std::fs::write(&path, "## 5. Bausteine\n\nEigener Text.\n").unwrap();
@@ -426,13 +500,27 @@ mod tests {
         let new = doc("Old");
         let mut editor = Editor::new(a, d.path());
         editor.start(&new, 5);
-        editor.append("### Paketübersicht\n\nQuelle: Analyse.\n\n```mermaid\nflowchart LR\n```\n");
-        assert!(documents::is_dirty(a));
+        let section = "### Paketübersicht\n\nQuelle: Analyse.\n\n```mermaid\nflowchart LR\n```\n";
+        editor.with_open(|o| {
+            let e = o.as_mut().unwrap();
+            e.rich = Some(Rich::new(&e.draft));
+        });
+        // The caret at the end of the own text.
+        editor.rich(|r| {
+            r.key("down", false, false, false);
+            r.key("end", false, false, false);
+        });
+        editor.insert_diagram("unknown", section);
+        assert!(documents::is_dirty(a) && editor.is_dirty());
         assert!(editor.save(&new).is_some());
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             text,
-            "## 5. Bausteine\n\nEigener Text.\n\n### Paketübersicht\n\nQuelle: Analyse.\n\n```mermaid\nflowchart LR\n```\n"
+            format!(
+                "## 5. Bausteine\n\nEigener Text.\n\n{}\n",
+                diagram_block("unknown", section)
+            ),
+            "a diagram the analysis does not know stays as inserted"
         );
     }
 
@@ -471,11 +559,48 @@ mod tests {
         );
     }
 
+    /// The chapter stays open after a save, with its caret; an unchanged
+    /// one follows the file, a changed one is never replaced.
+    #[test]
+    fn the_chapter_stays_open_and_follows_the_file_until_it_is_changed() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let editor = Editor::new(a, dir.path());
+        editor.ensure_open(&new, 5);
+        editor.with_open(|o| {
+            let e = o.as_mut().unwrap();
+            e.rich = Some(Rich::new(&e.draft));
+        });
+        editor.rich(|r| {
+            r.key("end", false, false, false);
+            r.type_text("Neu");
+        });
+        let mut editor = editor;
+        assert!(editor.save(&new).is_some());
+        assert!(editor.is_open() && !editor.is_dirty());
+        assert!(
+            editor.rich(|_| ()).is_some(),
+            "the formatted editor and its caret stay"
+        );
+        // Another chapter while unchanged: it opens.
+        editor.ensure_open(&new, 3);
+        assert_eq!(editor.open_chapter(), Some(3));
+        // Changed: neither another chapter nor the file replaces the draft.
+        editor.edit("## 3. Title\n\nEntwurf.\n");
+        editor.ensure_open(&new, 5);
+        assert_eq!(editor.open_chapter(), Some(3));
+        assert!(editor.is_dirty());
+        // Discarded: the chapter opens again as the file has it.
+        editor.cancel();
+        editor.ensure_open(&new, 3);
+        assert!(editor.is_open() && !editor.is_dirty());
+    }
+
     /// Markdown typed in the whole chapter makes a new formatted editor.
     #[test]
     fn markdown_edits_make_the_formatted_editor_anew() {
         let (dir, a) = project();
-        let mut editor = Editor::new(a, dir.path());
+        let editor = Editor::new(a, dir.path());
         editor.start(&doc("Old"), 5);
         editor.with_open(|o| {
             let e = o.as_mut().unwrap();
@@ -495,7 +620,7 @@ mod tests {
     fn an_open_draft_survives_a_new_analysis_and_marks_the_document_dirty() {
         let (dir, a) = project();
         let new = doc("Old");
-        let mut editor = Editor::new(a, dir.path());
+        let editor = Editor::new(a, dir.path());
         editor.start(&new, 5);
         let original = editor.chapter(&new, 5);
         editor.edit(&(original.clone() + "Neu.\n"));
@@ -524,7 +649,7 @@ mod tests {
         let (dir, a) = project();
         let new = doc("Old");
         let path = dir.path().join("arc42.md");
-        let mut editor = Editor::new(a, dir.path());
+        let editor = Editor::new(a, dir.path());
         editor.start(&new, 5);
         editor.edit(&(editor.chapter(&new, 5) + "Mein Entwurf.\n"));
         let pulled = std::fs::read_to_string(&path).unwrap().replace(
