@@ -9,7 +9,10 @@ use slint::{ModelRc, SharedString, VecModel};
 use super::details::{kind, line};
 use super::overlay::{center, place_pins};
 use super::scene::{self, Paint, Tone};
-use super::services::{Direction, Drawn, KINDS, ServicesWorld, Source, draw, tone_index};
+use super::services::{
+    Direction, Drawn, Filter, KINDS, ServicesWorld, Source, carrier, common_parent, draw,
+    tone_index,
+};
 use super::stage::{Look, fill_camera, fill_scene};
 use super::state::StartState;
 use crate::model_sync::sync_rows;
@@ -28,6 +31,16 @@ pub(super) const DIRECTIONS: [Direction; 5] = [
     Direction::Downstream,
     Direction::Upstream,
 ];
+
+/// The "Connection kind" picker's entry: communication, the kinds, then
+/// the package dependencies.
+pub(super) fn kind_index(f: &Filter) -> i32 {
+    match f.kind {
+        _ if f.packages => KINDS.len() as i32 + 1,
+        Some(k) => position(&KINDS, &k) + 1,
+        None => 0,
+    }
+}
 
 pub(super) fn position<T: PartialEq>(all: &[T], v: &T) -> i32 {
     all.iter().position(|x| x == v).map_or(0, |i| i as i32)
@@ -93,7 +106,9 @@ fn status(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usiz
         .and_then(|d| w.scopes.iter().position(|x| x == d))
         .map_or(0, |i| i as i32 + 1);
     sv.source = position(&SOURCES, &f.source);
-    sv.kind = f.kind.map_or(0, |k| position(&KINDS, &k) + 1);
+    sv.kind = kind_index(f);
+    sv.communicates = w.communicates();
+    sv.carriers = w.topology().dependencies.iter().any(|d| carrier(d.kind));
     sv.direction = position(&DIRECTIONS, &f.direction);
     (sv.cycles_only, sv.all_projects, sv.flow) = (f.cycles_only, f.all_projects, f.flow);
     sv.selected = selected
@@ -151,11 +166,13 @@ fn pins(
     v: &scene::View,
     cyclic: &[bool],
 ) {
+    let sources = (0..w.shown.len()).filter_map(|a| w.island(a).source.as_deref());
+    let parent = common_parent(sources.filter(|p| *p != "."));
     let rows = (0..w.shown.len())
         .map(|area| {
             let i = w.island(area);
             let svc = svc(i);
-            let detail = i.detail();
+            let detail = i.detail(&parent);
             // English widths; German labels are about as long.
             let label = [
                 "",
@@ -233,7 +250,7 @@ fn details(m: &mut StartModel, s: &StartState, w: &ServicesWorld, visible: &[usi
         let l = &w.links[i];
         let open = w.is_open(i);
         lines.push(StartLine {
-            entity: position(&KINDS, &l.kind),
+            entity: l.kind.map_or(KINDS.len() as i32, |k| position(&KINDS, &k)),
             flag: l.cyclic,
             id: i as i32,
             open,

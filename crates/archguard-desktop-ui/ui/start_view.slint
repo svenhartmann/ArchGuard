@@ -101,7 +101,10 @@ export component StartView inherits Rectangle {
     property <bool> has-pick: m.services.selected != "";
     property <string> picked-name: has-pick ? m.services.selected : @tr("All projects");
     property <string> services-status: picked-name
-        + " · " + @tr("{0} connection" | "{0} connections" % m.services.connections, Fmt.int(m.services.connections))
+        + " · " + (m.services.kind == 7
+            ? @tr("{0} package dependency" | "{0} package dependencies" % m.services.connections, Fmt.int(m.services.connections))
+            : @tr("{0} connection" | "{0} connections" % m.services.connections, Fmt.int(m.services.connections)))
+        + (!m.services.communicates ? " · " + @tr("no service communication found") : "")
         + (has-pick && m.services.direction == 3 ? " · " + @tr("where the data flows, all hops")
             : has-pick && m.services.direction == 4 ? " · " + @tr("where the data comes from, all hops") : "")
         + (m.services.flow ? " · " + @tr("dots show call and event direction, not measured load") : "")
@@ -180,10 +183,10 @@ export component StartView inherits Rectangle {
                 property <length> h: 32px;
                 property <length> avail: self.width - 2 * self.pad;
                 property <length> w0: m.services.deployments.length > 2 ? deployment.preferred-width : 0;
-                property <length> w1: evidence.preferred-width;
+                property <length> w1: m.services.communicates ? evidence.preferred-width : 0;
                 property <length> x1: Flow.x(self.w0, self.w1, self.gap, self.avail);
                 property <int> r1: Flow.row(self.w0, self.w1, self.gap, self.avail, 0);
-                property <length> w2: kind.preferred-width;
+                property <length> w2: m.services.communicates ? kind.preferred-width : 0;
                 property <length> x2: Flow.x(self.x1 + self.w1, self.w2, self.gap, self.avail);
                 property <int> r2: Flow.row(self.x1 + self.w1, self.w2, self.gap, self.avail, self.r1);
                 property <length> w3: direction.preferred-width;
@@ -192,7 +195,7 @@ export component StartView inherits Rectangle {
                 property <length> w4: cycles.width;
                 property <length> x4: Flow.x(self.x3 + self.w3, self.w4, self.gap, self.avail);
                 property <int> r4: Flow.row(self.x3 + self.w3, self.w4, self.gap, self.avail, self.r3);
-                property <length> w5: flow.width;
+                property <length> w5: m.services.carriers ? flow.width : 0;
                 property <length> x5: Flow.x(self.x4 + self.w4, self.w5, self.gap, self.avail);
                 property <int> r5: Flow.row(self.x4 + self.w4, self.w5, self.gap, self.avail, self.r4);
                 property <length> w6: all.width;
@@ -212,6 +215,7 @@ export component StartView inherits Rectangle {
                     picked(i) => { StartData.services-filter(0, i); }
                 }
                 evidence := FilterPick {
+                    visible: m.services.communicates;
                     x: parent.pad + parent.x1;
                     y: parent.row-y(parent.r1);
                     width: self.preferred-width;
@@ -223,13 +227,14 @@ export component StartView inherits Rectangle {
                     picked(i) => { StartData.services-filter(1, i); }
                 }
                 kind := FilterPick {
+                    visible: m.services.communicates;
                     x: parent.pad + parent.x2;
                     y: parent.row-y(parent.r2);
                     width: self.preferred-width;
                     height: parent.h;
                     label: @tr("Connection kind");
                     model: [@tr("Communication"), StartTones.kind-label(0), StartTones.kind-label(1), StartTones.kind-label(2),
-                        StartTones.kind-label(3), StartTones.kind-label(4), StartTones.kind-label(5)];
+                        StartTones.kind-label(3), StartTones.kind-label(4), StartTones.kind-label(5), StartTones.kind-label(6)];
                     index: m.services.kind;
                     box-width: 170px;
                     picked(i) => { StartData.services-filter(2, i); }
@@ -253,6 +258,7 @@ export component StartView inherits Rectangle {
                     clicked => { StartData.services-toggle(0); }
                 }
                 flow := LensButton {
+                    visible: m.services.carriers;
                     x: parent.pad + parent.x5;
                     y: parent.row-y(parent.r5);
                     text: @tr("Data flow");

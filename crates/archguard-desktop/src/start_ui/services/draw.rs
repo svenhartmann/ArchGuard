@@ -59,12 +59,12 @@ pub fn draw(w: &ServicesWorld, visible: &[usize], center: impl Fn(usize) -> Poin
         let (p, q) = (center(a), center(b));
         let tone = w.tone(l);
         let s = &mut out.strokes[tone_index(tone)];
-        if l.kind == Kind::Event {
+        if l.kind == Some(Kind::Event) {
             arrows::dashed(p, q, 7.0, 5.0, &mut s.curves, &mut s.heads);
         } else {
             arrows::arrow(p, q, &mut s.curves, &mut s.heads);
         }
-        if w.filter.flow && links::carrier(l.kind) {
+        if w.filter.flow && l.kind.is_some_and(links::carrier) {
             let length = (q.0 - p.0).hypot(q.1 - p.1).max(1.0);
             out.flows.push(Flow {
                 p,
@@ -94,7 +94,7 @@ mod tests {
         let l = |from, to, kind, cyclic| Link {
             from,
             to,
-            kind,
+            kind: Some(kind),
             evidence: Vec::new(),
             cyclic,
         };

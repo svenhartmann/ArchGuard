@@ -5,7 +5,7 @@
 //! kept: it changes on every drag.
 
 use super::services::KINDS;
-use super::services_view::{DIRECTIONS, SOURCES, position};
+use super::services_view::{DIRECTIONS, SOURCES, kind_index, position};
 use super::state::{Lens, Mode, Selection, StartState};
 use crate::tab_support::index;
 use crate::ui::AppWindow;
@@ -73,10 +73,7 @@ impl StartState {
                 put("deployment", d.clone());
             }
             put("source", position(&SOURCES, &f.source).to_string());
-            put(
-                "kind",
-                f.kind.map_or(0, |k| position(&KINDS, &k) + 1).to_string(),
-            );
+            put("kind", kind_index(f).to_string());
             put("direction", position(&DIRECTIONS, &f.direction).to_string());
             let flags = [
                 (f.cycles_only, "cycles"),
@@ -123,14 +120,16 @@ impl StartState {
     fn restore_services(&mut self, m: &Memo) {
         let Some(w) = &mut self.services else { return };
         let Some(flags) = get(m, "flags") else { return };
+        let communicates = w.communicates();
         let f = &mut w.filter;
         f.source = num(m, "source")
             .and_then(index)
             .and_then(|i| SOURCES.get(i).copied())
             .unwrap_or(f.source);
-        f.kind = num(m, "kind")
-            .and_then(|k| index(k - 1))
-            .and_then(|i| KINDS.get(i).copied());
+        let kind = num(m, "kind").and_then(|k| index(k - 1));
+        f.kind = kind.and_then(|i| KINDS.get(i).copied());
+        // Without service dependencies the kind filter is hidden.
+        f.packages = kind == Some(KINDS.len()) || (f.packages && !communicates);
         f.direction = num(m, "direction")
             .and_then(index)
             .and_then(|i| DIRECTIONS.get(i).copied())

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use archguard_engine::core::{ServiceDependencyKind as Kind, ServiceTopology};
+use archguard_engine::core::{Graph, ServiceDependencyKind as Kind, ServiceTopology};
 
 use super::super::layout::{Cell, Layout, Plate};
 use super::inventory::{self, Island};
@@ -18,6 +18,8 @@ pub struct Filter {
     pub source: Source,
     /// One kind; `None`: communication (all but startup).
     pub kind: Option<Kind>,
+    /// The package dependencies of the source graph instead of `kind`.
+    pub packages: bool,
     pub direction: Direction,
     pub cycles_only: bool,
     pub all_projects: bool,
@@ -53,11 +55,13 @@ pub struct ServicesWorld {
     /// Inventory indices of the islands shown, in layout order.
     pub(crate) shown: Vec<usize>,
     pub(crate) links: Vec<Link>,
+    /// Package dependencies between all islands (see [`links::packages`]).
+    packages: Vec<Link>,
     /// The selected island (inventory index).
     pub(crate) selected: Option<usize>,
     pub(crate) layout: Layout,
     /// Detail entries opened, by the connection's ends and kind.
-    open: BTreeSet<(usize, usize, Kind)>,
+    open: BTreeSet<(usize, usize, Option<Kind>)>,
 }
 
 impl ServicesWorld {
@@ -74,6 +78,7 @@ impl ServicesWorld {
             deployment: inventory::default_deployment(&scopes),
             source: Source::All,
             kind: None,
+            packages: false,
             direction: Direction::Both,
             cycles_only: false,
             all_projects: false,
@@ -86,6 +91,7 @@ impl ServicesWorld {
             filter,
             shown: Vec::new(),
             links: Vec::new(),
+            packages: Vec::new(),
             selected: None,
             layout: Layout::default(),
             open: BTreeSet::new(),
@@ -112,7 +118,14 @@ impl ServicesWorld {
             None => (0..self.inventory.len()).collect(),
             Some(_) => shown.clone(),
         };
-        self.links = links::connections(t, &self.inventory, &pool, f.source);
+        let mut links = links::connections(t, &self.inventory, &pool, f.source);
+        // Package dependencies come from source imports.
+        if matches!(f.source, Source::All | Source::Code) {
+            let both = |l: &&Link| pool.contains(&l.from) && pool.contains(&l.to);
+            links.extend(self.packages.iter().filter(both).cloned());
+            links::mark_cycles(&mut links, self.inventory.len());
+        }
+        self.links = links;
         self.layout = islands(shown.len());
         self.selected = self.selected.filter(|s| shown.contains(s));
         self.shown = shown;
@@ -124,10 +137,26 @@ impl ServicesWorld {
         links::visible(
             &self.links,
             f.kind,
+            f.packages,
             f.cycles_only,
             f.direction,
             self.selected,
         )
+    }
+
+    /// Add the package dependencies of the source graph `g`; without
+    /// service communication they are the connections shown.
+    pub fn with_packages(mut self, g: &Graph, roots: &[String]) -> Self {
+        self.packages = links::packages(g, &self.inventory, roots);
+        self.filter.packages = !self.packages.is_empty() && !self.communicates();
+        self.refresh();
+        self
+    }
+
+    /// Whether any service dependency is known: else the evidence and
+    /// kind filters have nothing to choose.
+    pub(crate) fn communicates(&self) -> bool {
+        !self.topology().dependencies.is_empty()
     }
 
     /// The layout area of an island.
@@ -250,7 +279,7 @@ mod tests {
         Link {
             from,
             to,
-            kind: Kind::HttpCall,
+            kind: Some(Kind::HttpCall),
             evidence: Vec::new(),
             cyclic,
         }
@@ -282,6 +311,58 @@ mod tests {
         assert!(w.matches(0, "a") && !w.matches(0, "zz"));
         w.set_islands(None, true);
         assert_eq!(w.selected, None, "changing the islands drops the selection");
+    }
+
+    /// Crates without service communication: their source dependencies
+    /// are the World's connections by default, merged per pair of
+    /// islands with the references as evidence.
+    #[test]
+    fn package_dependencies_show_without_communication() {
+        use archguard_engine::core::{Edge, Graph, Node, NodeId, NodeKind, Ref};
+        let topology = std::sync::Arc::new(Ok(inventory::tests::topology(
+            vec![
+                inventory::tests::project("crates/a", "library"),
+                inventory::tests::project("crates/b", "library"),
+            ],
+            Vec::new(),
+        )));
+        let mut g: Graph =
+            serde_json::from_str(r#"{"schema_version":1,"root":".","nodes":[],"edges":[]}"#)
+                .expect("an empty graph");
+        let node = |id: u32, name: &str, parent: Option<u32>| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind: NodeKind::Module,
+            parent: parent.map(NodeId),
+            lang: None,
+        };
+        g.nodes = vec![
+            node(1, "a", None),
+            node(2, "a/src/x.rs", Some(1)),
+            node(3, "b", None),
+            node(4, "b/src/y.rs", Some(3)),
+            node(5, "b/src/z.rs", Some(3)),
+        ];
+        let edge = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: vec![Ref {
+                file: "a/src/x.rs".into(),
+                line: 3,
+                raw: "use b::y;".into(),
+            }],
+            count: None,
+        };
+        g.edges = vec![edge(2, 4), edge(2, 5), edge(4, 5)];
+        let w = ServicesWorld::new(topology)
+            .expect("two projects")
+            .with_packages(&g, &["crates".to_string()]);
+        assert!(w.filter.packages, "no communication: packages by default");
+        let visible = w.visible();
+        assert_eq!(visible.len(), 1, "one connection a → b, none inside b");
+        let l = &w.links[visible[0]];
+        assert_eq!((l.from, l.to, l.kind, l.evidence.len()), (0, 1, None, 2));
+        assert_eq!(l.evidence[0].file, "a/src/x.rs");
     }
 
     /// A connection entry opens and closes by its ends and kind, so it

@@ -62,7 +62,7 @@ fn actual(w: &ServicesWorld) -> (Vec<String>, Vec<Value>) {
             serde_json::json!([
                 path(l.from),
                 path(l.to),
-                kind_name(l.kind),
+                kind_name(l.kind.expect("a service link")),
                 l.cyclic,
                 l.evidence.len()
             ])

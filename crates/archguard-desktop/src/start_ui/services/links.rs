@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-use archguard_engine::core::{ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology};
+use archguard_engine::core::{
+    Graph, ServiceDependencyKind as Kind, ServiceEvidence, ServiceTopology,
+};
 
 use super::inventory::Island;
 
@@ -45,7 +47,8 @@ pub const COMMUNICATION: [Kind; 5] = [
 pub struct Link {
     pub from: usize,
     pub to: usize,
-    pub kind: Kind,
+    /// `None`: a package dependency of the source graph.
+    pub kind: Option<Kind>,
     pub evidence: Vec<ServiceEvidence>,
     pub cyclic: bool,
 }
@@ -114,7 +117,7 @@ pub fn connections(
             links.push(Link {
                 from,
                 to,
-                kind: d.kind,
+                kind: Some(d.kind),
                 evidence: Vec::new(),
                 cyclic: false,
             });
@@ -126,10 +129,62 @@ pub fn connections(
     links
 }
 
+/// References kept per package dependency.
+const PACKAGE_REFS: usize = 10;
+
+/// Package dependencies: the source graph's edges between the islands'
+/// source projects (a module named by the stripped project path), merged
+/// per pair, the first references as evidence. Deployments and the
+/// repository root are left out.
+pub fn packages(g: &Graph, inventory: &[Island], roots: &[String]) -> Vec<Link> {
+    let modules: HashMap<String, usize> = inventory
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.source.as_deref() == Some(i.path.as_str()) && i.path != ".")
+        .map(|(at, i)| (archguard_engine::strip_root(&i.path, roots), at))
+        .collect();
+    // A node's island: the nearest ancestor that is a project's module.
+    let parent: HashMap<_, _> = g.nodes.iter().map(|n| (n.id, n)).collect();
+    let island = |mut id| loop {
+        let n = parent.get(&id)?;
+        if let Some(&at) = modules.get(&n.name) {
+            return Some(at);
+        }
+        id = n.parent?;
+    };
+    let mut merged: BTreeMap<(usize, usize), Vec<ServiceEvidence>> = BTreeMap::new();
+    for e in &g.edges {
+        let (Some(from), Some(to)) = (island(e.from), island(e.to)) else {
+            continue;
+        };
+        if from == to {
+            continue;
+        }
+        let proofs = merged.entry((from, to)).or_default();
+        let room = PACKAGE_REFS.saturating_sub(proofs.len());
+        proofs.extend(e.refs.iter().take(room).map(|r| ServiceEvidence {
+            file: r.file.clone(),
+            pointer: String::new(),
+            line: Some(r.line),
+            description: r.raw.trim().to_string(),
+        }));
+    }
+    merged
+        .into_iter()
+        .map(|((from, to), evidence)| Link {
+            from,
+            to,
+            kind: None,
+            evidence,
+            cyclic: false,
+        })
+        .collect()
+}
+
 /// A link is cyclic when its ends share a strongly connected component of
 /// the links of its kind.
-fn mark_cycles(links: &mut [Link], n: usize) {
-    let kinds: BTreeSet<Kind> = links.iter().map(|l| l.kind).collect();
+pub fn mark_cycles(links: &mut [Link], n: usize) {
+    let kinds: BTreeSet<Option<Kind>> = links.iter().map(|l| l.kind).collect();
     for kind in kinds {
         let typed = || links.iter().filter(|l| l.kind == kind);
         let mut component = vec![usize::MAX; n];
@@ -148,18 +203,23 @@ fn mark_cycles(links: &mut [Link], n: usize) {
 }
 
 /// `repositoryVisibleConnections`: indices into `links` for a kind
-/// (`None`: communication), cycles only and, with a selected island, a
-/// direction.
+/// (`None`: communication) or the package dependencies, cycles only and,
+/// with a selected island, a direction.
 pub fn visible(
     links: &[Link],
     kind: Option<Kind>,
+    packages: bool,
     cycles_only: bool,
     direction: Direction,
     selected: Option<usize>,
 ) -> Vec<usize> {
     let shown = (0..links.len()).filter(|&i| {
         let l = &links[i];
-        let k = kind.map_or(COMMUNICATION.contains(&l.kind), |k| l.kind == k);
+        let k = match (packages, kind) {
+            (true, _) => l.kind.is_none(),
+            (_, None) => l.kind.is_some_and(|k| COMMUNICATION.contains(&k)),
+            (_, k) => l.kind == k,
+        };
         k && (!cycles_only || l.cyclic)
     });
     let shown: Vec<usize> = shown.collect();
@@ -182,7 +242,7 @@ fn flow_path(links: &[Link], shown: &[usize], start: usize, downstream: bool) ->
     let carriers: Vec<usize> = shown
         .iter()
         .copied()
-        .filter(|&i| carrier(links[i].kind))
+        .filter(|&i| links[i].kind.is_some_and(carrier))
         .collect();
     let ends = |i: usize| {
         let l = &links[i];
@@ -300,9 +360,9 @@ mod tests {
         assert_eq!(
             summary,
             [
-                (0, 1, Kind::HttpCall, true, 2),
-                (1, 0, Kind::HttpCall, true, 1),
-                (1, 0, Kind::Event, false, 1)
+                (0, 1, Some(Kind::HttpCall), true, 2),
+                (1, 0, Some(Kind::HttpCall), true, 1),
+                (1, 0, Some(Kind::Event), false, 1)
             ],
             "the event back edge makes no HTTP cycle, nor one of its own"
         );
@@ -324,7 +384,7 @@ mod tests {
         let l = |from, to, kind| Link {
             from,
             to,
-            kind,
+            kind: Some(kind),
             evidence: Vec::new(),
             cyclic: false,
         };
@@ -334,7 +394,7 @@ mod tests {
             l(2, 3, Kind::ConfiguredReference),
             l(4, 1, Kind::Startup),
         ];
-        let v = |d, s| visible(&links, None, false, d, s);
+        let v = |d, s| visible(&links, None, false, false, d, s);
         assert_eq!(
             v(Direction::Both, None),
             [0, 1, 2],
@@ -347,11 +407,21 @@ mod tests {
         assert_eq!(v(Direction::Upstream, Some(3)), Vec::<usize>::new());
         assert_eq!(v(Direction::Upstream, Some(2)), [0, 1]);
         assert_eq!(
-            visible(&links, Some(Kind::Startup), false, Direction::Both, None),
+            visible(
+                &links,
+                Some(Kind::Startup),
+                false,
+                false,
+                Direction::Both,
+                None
+            ),
             [3]
         );
         let mut cyclic = links.clone();
         cyclic[1].cyclic = true;
-        assert_eq!(visible(&cyclic, None, true, Direction::Both, None), [1]);
+        assert_eq!(
+            visible(&cyclic, None, false, true, Direction::Both, None),
+            [1]
+        );
     }
 }
