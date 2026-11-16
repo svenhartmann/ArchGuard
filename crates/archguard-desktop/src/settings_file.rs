@@ -173,8 +173,14 @@ fn merge_others(path: &Path, doc: &DocumentMut, settings: &mut Settings) -> Resu
     let Ok(text) = std::fs::read_to_string(path) else {
         return Ok(());
     };
-    let (_, disk) = settings::parse(&text)
-        .map_err(|e| e.lines().next().unwrap_or_default().trim().to_string())?;
+    let (_, disk) = match settings::parse(&text) {
+        Ok(parsed) => parsed,
+        // Already copied to `.bak` ([`load`]): replacing it loses nothing.
+        Err(_) if std::fs::read_to_string(backup_path(path)).is_ok_and(|b| b == text) => {
+            return Ok(());
+        }
+        Err(e) => return Err(e.lines().next().unwrap_or_default().trim().to_string()),
+    };
     let (_, base) = settings::parse(&doc.to_string())?;
     let s = settings;
     s.theme = pick(base.theme, disk.theme, s.theme);
@@ -506,6 +512,28 @@ mod tests {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 1, "{seen:?}");
         assert!(seen[0].contains(&path.display().to_string()), "{seen:?}");
+        init(None);
+    }
+
+    /// A file broken at start is saved as `.bak`, so the next write
+    /// replaces it instead of failing on it forever.
+    #[test]
+    fn a_file_broken_at_start_is_replaced_by_the_next_write() {
+        let dir = temp("broken-at-start");
+        let path = dir.join(FILE);
+        let broken = "theme = \"dark\"\n[[[ not toml\n";
+        std::fs::write(&path, broken).expect("write");
+        assert!(init(Some(path.clone())).is_some(), "reported");
+        let seen = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        on_error(move |e| sink.borrow_mut().push(e));
+        update(|s| s.language = "en".into());
+        assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+        assert_eq!(load(&path).settings.language, "en");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("desktop.toml.bak")).expect("backup"),
+            broken
+        );
         init(None);
     }
 
