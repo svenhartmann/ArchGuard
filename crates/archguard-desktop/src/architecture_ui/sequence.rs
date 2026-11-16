@@ -11,6 +11,7 @@ use archguard_engine::core::{
 use slint::{ModelRc, VecModel};
 
 use super::diagram;
+use crate::block_names as names;
 use crate::tab_support::Texts;
 use crate::ui::{ArcCard, ArcFigure, ArcLine};
 
@@ -43,24 +44,24 @@ impl Lanes {
 }
 
 pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> ArcFigure {
-    let two_lines = d
-        .elements
-        .iter()
-        .any(|e| !diagram::name_lines(&e.name).1.is_empty());
+    let classes = d.id.starts_with("runtime-scenario-classes-");
+    let names: Vec<&str> = d.elements.iter().map(|e| e.name.as_str()).collect();
+    let labels = labels(&names, classes);
+    let two_lines = labels.iter().any(|l| !diagram::name_lines(l).1.is_empty());
     let card_h = if two_lines { 66.0 } else { 50.0 };
     let lanes = Lanes {
         first: TOP + card_h + 30.0,
     };
     let rows = steps(&d.relations);
     let bottom = lanes.row(rows.len());
-    let classes = d.id.starts_with("runtime-scenario-classes-");
+    let labels = &labels;
     let cards: Vec<ArcCard> = [TOP, bottom]
         .into_iter()
         .flat_map(|y| {
             d.elements.iter().enumerate().map(move |(i, e)| ArcCard {
                 y,
                 h: card_h,
-                ..participant(i, e, classes, texts)
+                ..participant(i, e, &labels[i], classes, texts)
             })
         })
         .collect();
@@ -252,8 +253,38 @@ pub fn tone(kind: RelationKind) -> i32 {
 /// (`group`, e.g. the crate of a module) is the card's header line;
 /// building blocks of a scenario are packages, or classes in a class
 /// scenario; traces show services.
-fn participant(i: usize, e: &DiagramElement, classes: bool, texts: &Texts) -> ArcCard {
-    let (name1, name2) = diagram::name_lines(&e.name);
+/// What a participant card shows: a class scenario only the class name
+/// (more of the name only where two would read the same), a package
+/// scenario the packages named among each other, as the package map does.
+fn labels(names: &[&str], classes: bool) -> Vec<String> {
+    if !classes {
+        return names::short_names(names);
+    }
+    // Type arguments (`Box<java.util.List>`) stay whole.
+    let simple = |n: &str| {
+        let (head, args) = n.split_at(n.find('<').unwrap_or(n.len()));
+        let class = head.rsplit(['.', '/', ':']).next().unwrap_or(head);
+        format!("{class}{args}")
+    };
+    let short: Vec<String> = names.iter().map(|n| simple(n)).collect();
+    let clash: Vec<usize> = (0..names.len())
+        .filter(|&i| (0..names.len()).any(|j| short[j] == short[i] && names[j] != names[i]))
+        .collect();
+    let paths: Vec<String> = clash.iter().map(|&i| names[i].replace('.', "/")).collect();
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let mut out = short;
+    for (&i, label) in clash.iter().zip(names::short_names(&refs)) {
+        out[i] = if names[i].contains('/') {
+            label
+        } else {
+            label.replace('/', ".")
+        };
+    }
+    out
+}
+
+fn participant(i: usize, e: &DiagramElement, label: &str, classes: bool, texts: &Texts) -> ArcCard {
+    let (name1, name2) = diagram::name_lines(label);
     let tag = match (&e.group, e.kind) {
         (Some(space), _) => space.as_str(),
         (None, ElementKind::Package) if classes => texts.t("Class"),
@@ -308,6 +339,38 @@ mod tests {
             caller,
             reply: false,
         }
+    }
+
+    #[test]
+    fn participants_show_class_names_and_relative_packages() {
+        let classes = [
+            "org.apache.commons.collections4.bidimap.UnmodifiableBidiMap",
+            "org.apache.commons.collections4.set.UnmodifiableSet",
+            "eShop.WebApp.Services.BasketState",
+            "a.Foo",
+            "b.Foo",
+            "x.Box<java.util.List>",
+        ];
+        assert_eq!(
+            labels(&classes, true),
+            [
+                "UnmodifiableBidiMap",
+                "UnmodifiableSet",
+                "BasketState",
+                "a.Foo",
+                "b.Foo",
+                "Box<java.util.List>"
+            ]
+        );
+        let packages = [
+            "org/apache/commons/collections4/bidimap",
+            "org/apache/commons/collections4",
+            "org/apache/commons/collections4/map",
+        ];
+        assert_eq!(
+            labels(&packages, false),
+            ["collections4/bidimap", "collections4", "collections4/map"]
+        );
     }
 
     #[test]

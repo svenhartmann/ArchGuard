@@ -505,9 +505,12 @@ function arc42ShortNames(names){
   return new Map(unique.map((n,i)=>[n,label(i)]));
 }
 function arc42Label(node){return node.label??node.name;}
-// At most two lines of 24 characters, the first ending after its last '/'; as diagram::name_lines (desktop).
+// At most two lines of 24 characters, the first ending after its last '/', else before the last
+// capital that starts a word (AbstractSerializableSet|Decorator); as diagram::name_lines (desktop).
 function arc42NameLines(text){
-  if(text.length<=24)return [text];const cut=text.lastIndexOf('/',23),head=cut>0?text.slice(0,cut+1):text.slice(0,24),rest=text.slice(head.length).trimStart();
+  if(text.length<=24)return [text];const cut=text.lastIndexOf('/',23);let word=0;
+  for(let i=23;i>0&&!word;i--)if(/\p{Lu}/u.test(text[i])&&/\p{Ll}/u.test(text[i-1]))word=i;
+  const head=cut>0?text.slice(0,cut+1):text.slice(0,word||24),rest=text.slice(head.length).trimStart();
   return [head,rest.length>24?rest.slice(0,24)+'…':rest];
 }
 // Ever longer candidates for one name: without source roots, with them, the full path.

@@ -22,11 +22,18 @@ pub fn name_lines(label: &str) -> (String, String) {
     if chars.len() <= 24 {
         return (label.to_string(), String::new());
     }
+    // After the last "/", else before the last capital that starts a word
+    // (`AbstractSerializableSet|Decorator`), else after 24 characters.
+    let word = (1..24)
+        .rev()
+        .find(|&i| chars[i].is_uppercase() && chars[i - 1].is_lowercase());
     let cut = chars[..24]
         .iter()
         .rposition(|&c| c == '/')
         .filter(|&i| i > 0)
-        .map_or(24, |i| i + 1);
+        .map(|i| i + 1)
+        .or(word)
+        .unwrap_or(24);
     let skip = chars[cut..]
         .iter()
         .take_while(|c| c.is_whitespace())
@@ -248,6 +255,11 @@ mod tests {
         assert_eq!(
             name_lines("archguard-desktop / direct files"),
             ("archguard-desktop /".into(), "direct files".into())
+        );
+        // A class name without a slash breaks between its words.
+        assert_eq!(
+            name_lines("AbstractSerializableSetDecorator"),
+            ("AbstractSerializableSet".into(), "Decorator".into())
         );
         let long = "a".repeat(50);
         let (one, two) = name_lines(&long);
