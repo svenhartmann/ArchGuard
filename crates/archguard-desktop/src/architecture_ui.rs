@@ -200,14 +200,29 @@ fn select_chapter(s: &mut ArchitectureState, ui: &AppWindow, n: i32) {
 }
 
 /// Tick diagram `id` on or off; the open chapter's file follows at once
-/// (its diagram blocks in or out) when it holds the chapter and the
-/// chapter has no unsaved changes.
+/// (its diagram blocks in or out) when the diagram is the chapter's or in
+/// its text, the file holds the chapter and it has no unsaved changes.
 fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show: bool) {
     toggle_diagram(s, ui, id, show);
+    if !s.figure_error.is_empty() || s.editor.is_dirty() {
+        return;
+    }
     // A package map level is written off the UI thread; its doc is late.
     let level = archguard_engine::core::Arc42Config::level_of(id).is_some();
-    if s.figure_error.is_empty() && !level && !s.editor.is_dirty() && s.editor.in_file(s.chapter) {
-        let _ = save_draft(s);
+    let ours = s.doc.as_ref().is_ok_and(|doc| {
+        doc.diagrams
+            .iter()
+            .any(|d| d.id == id && d.chapter == s.chapter)
+            || crate::arc42_file::diagram_ranges(&s.editor.chapter(doc, s.chapter))
+                .iter()
+                .any(|(_, i)| i == id)
+    });
+    if !level
+        && ours
+        && s.editor.in_file(s.chapter)
+        && let Err(e) = save_draft(s)
+    {
+        s.figure_error = e;
     }
     s.editor.redraw();
 }
@@ -554,6 +569,89 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
         assert!(text.contains("Neu.\n"), "the draft is written");
         assert!(!documents::is_dirty(a));
+    }
+
+    /// The fixture's analysis with the arc42 text of the temporary
+    /// project `dir`, open as document `a`; a shown diagram and its block.
+    fn ticking_state(
+        dir: &Path,
+    ) -> (
+        crate::documents::DocId,
+        ArchitectureState,
+        archguard_engine::core::Diagram,
+        String,
+    ) {
+        let (a, _) = documents::with_store(|s| s.open(dir));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/py-layers")
+            .canonicalize()
+            .expect("fixture");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let state = build_from(
+            dir,
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        );
+        let doc = state.doc.as_ref().expect("document");
+        let d = doc
+            .diagrams
+            .iter()
+            .find(|d| d.shown && archguard_engine::core::Arc42Config::level_of(&d.id).is_none())
+            .expect("a shown diagram")
+            .clone();
+        let section = archguard_engine::report::diagram_section(&d, state.format);
+        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        (a, state, d, block)
+    }
+
+    /// A tick saves only the chapter of the ticked diagram, keeps the
+    /// hidden list for the next rewrite of the document (a language
+    /// switch) and says when the save fails.
+    #[test]
+    fn a_tick_saves_only_its_chapter_keeps_the_list_and_reports_a_failed_save() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, mut state, d, block) = ticking_state(dir.path());
+        let doc = state.doc.as_ref().unwrap();
+        let other = doc
+            .diagrams
+            .iter()
+            .find(|o| {
+                o.shown
+                    && o.chapter != d.chapter
+                    && archguard_engine::core::Arc42Config::level_of(&o.id).is_none()
+            })
+            .expect("a diagram of another chapter")
+            .id
+            .clone();
+        let n = d.chapter;
+        let path = dir.path().join("arc42.md");
+        let text = format!("## {n}. Kapitel\n\nText.\n\n{block}\n");
+        std::fs::write(&path, &text).unwrap();
+        state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
+        state.chapter = n;
+        documents::set_state(a, state);
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            open_editor(s);
+            follow_tick(s, None, &other, false);
+            assert!(s.config.arc42.hidden_diagrams.contains(&other));
+        });
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text,
+            "another chapter's tick"
+        );
+        std::fs::write(&path, format!("{text}\nDraußen geändert.\n")).unwrap();
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            follow_tick(s, None, &d.id, false);
+            assert!(!s.figure_error.is_empty(), "the failed save is shown");
+        });
     }
 
     /// A shown diagram removed from its chapter leaves the documentation on

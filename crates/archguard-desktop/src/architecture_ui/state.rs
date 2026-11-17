@@ -203,6 +203,8 @@ pub(super) fn toggle_diagram(
             catalogue::rebase(doc, &hidden, s.format);
         }
         s.hidden = hidden;
+        // The next rewrite (a language switch) keeps it.
+        s.config.arc42.hidden_diagrams = s.hidden.clone();
     }
 }
 
@@ -227,6 +229,10 @@ pub(super) fn follow_language(s: &mut ArchitectureState, ui: &AppWindow, lang: D
     if s.config.arc42.lang != lang {
         s.config.arc42.lang = lang;
         rewrite(s, Some(ui));
+        // Drawn diagrams name their kinds in the window's language.
+        if !s.editor.is_dirty() {
+            s.editor.redraw();
+        }
     }
 }
 

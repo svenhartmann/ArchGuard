@@ -619,3 +619,12 @@ comparison of the native view against the web view on the same project
   save takes the diagram block of a diagram ticked off out and puts one
   ticked on in, as `archguard.toml` now says. This replaces "the chapter
   is always editable" of 2026-11-16.
+  *Changed 2026-11-17:* a second review fixed: a tick saves the open
+  chapter only when the ticked diagram is that chapter's or in its text
+  (a tick in the diagram view saved the open chapter instead), says when
+  that save fails, and keeps the hidden list for the next rewrite, so a
+  language switch no longer shows a hidden diagram again; drawn diagrams
+  follow a language switch. Own Mermaid reads ids with `-` and `.`, `;`
+  and brackets inside labels, skips `accTitle`/`accDescr`/`title`, points
+  `Rel_Back` back and `BiRel` both ways, and groups what a deployment
+  node holds.
