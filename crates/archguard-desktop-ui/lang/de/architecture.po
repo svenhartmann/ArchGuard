@@ -305,6 +305,12 @@ msgstr "Zuerst die Änderungen an diesem Kapitel speichern oder verwerfen."
 msgid "Edit as source"
 msgstr "Als Quelltext bearbeiten"
 
+msgid "Edit source"
+msgstr "Quelltext bearbeiten"
+
+msgid "Edit the diagram's Mermaid source"
+msgstr "Den Mermaid-Quelltext des Diagramms bearbeiten"
+
 msgid "Edit the diagram's source as own text; the analysis no longer updates it"
 msgstr "Quelltext des Diagramms als eigenen Text bearbeiten; die Analyse aktualisiert ihn dann nicht mehr"
 

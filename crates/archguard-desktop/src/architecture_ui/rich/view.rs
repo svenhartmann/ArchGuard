@@ -310,12 +310,14 @@ impl Rich {
 
     /// The rows the view draws; `note` is the reader's text under a
     /// diagram it cannot draw, `figure` draws a diagram block's diagram,
-    /// and `drawn` are the diagram sections (id, Markdown) fixed text
-    /// shows as their drawing, in their place.
+    /// `own` the Mermaid source of an own code block, and `drawn` are the
+    /// diagram sections (id, Markdown) fixed text shows as their drawing,
+    /// in their place.
     pub fn items(
         &mut self,
         note: &str,
         figure: &dyn Fn(&str) -> Option<ArcFigure>,
+        own: &dyn Fn(&str) -> Option<ArcFigure>,
         drawn: &[(String, String)],
     ) -> Vec<RichItem> {
         self.drawn = drawn.to_vec();
@@ -409,6 +411,22 @@ impl Rich {
                     });
                     continue;
                 }
+                let here = focus.piece == p && focus.block == b;
+                // Own Mermaid is drawn until the caret goes in to edit it.
+                if !here
+                    && matches!(&block.kind, Kind::Code { lang } if lang == "mermaid")
+                    && let Some(f) = self.own_figure(&block.inline.text, own)
+                {
+                    out.push(RichItem {
+                        figure: f,
+                        piece: p as i32,
+                        block: b as i32,
+                        kind: 8,
+                        top,
+                        ..Default::default()
+                    });
+                    continue;
+                }
                 let laid = self.laid(p, b);
                 let len = block.inline.text.len();
                 let runs = runs(laid, 0.0, 0.0);
@@ -420,7 +438,6 @@ impl Rich {
                     Some(_) => "•".into(),
                     None => String::new(),
                 };
-                let here = focus.piece == p && focus.block == b;
                 out.push(RichItem {
                     fixed: model(Vec::new()),
                     cells: model(Vec::new()),
@@ -448,6 +465,20 @@ impl Rich {
             }
         }
         out
+    }
+
+    /// The drawing of own Mermaid `source`, kept until the source changes.
+    fn own_figure(
+        &mut self,
+        source: &str,
+        own: &dyn Fn(&str) -> Option<ArcFigure>,
+    ) -> Option<ArcFigure> {
+        // Ids have no line break, so a source never meets one.
+        let key = format!("\n{source}");
+        if !self.figures.contains_key(&key) {
+            self.figures.insert(key.clone(), own(source)?);
+        }
+        self.figures.get(&key).cloned()
     }
 
     /// One table row as one row of the view: its cells' runs, selection
@@ -891,7 +922,7 @@ mod tests {
         use slint::Model;
         let md = "## 5. Bausteine\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nText **fett**.\n\n- eins\n- zwei\n\n---\n";
         let mut r = rich(md);
-        let items = r.items("", &|_| None, &[]);
+        let items = r.items("", &|_| None, &|_| None, &[]);
         let shape: Vec<(i32, bool, usize, String)> = items
             .iter()
             .map(|i| {
@@ -936,7 +967,7 @@ mod tests {
         use slint::Model;
         let md = "Text.\n\n```mermaid\nflowchart LR\n  A[Portal] --> B[APIM]\n  K -. Metadaten .-> B\n```\n";
         let mut r = rich(md);
-        let items = r.items("", &|_| None, &[]);
+        let items = r.items("", &|_| None, &|_| None, &[]);
         let code = items.iter().find(|i| i.kind == 4).expect("the code block");
         let runs: Vec<_> = code.runs.iter().collect();
         let texts: Vec<&str> = runs.iter().map(|r| r.text.as_str()).collect();
@@ -952,6 +983,40 @@ mod tests {
         assert!(
             runs[0].y < runs[1].y && runs[1].y < runs[2].y,
             "one below the other"
+        );
+    }
+
+    /// Own Mermaid is drawn while the caret is elsewhere and shows its
+    /// source to edit once the caret is in it; other code stays code.
+    #[test]
+    fn own_mermaid_is_drawn_until_the_caret_is_in_it() {
+        let md = "Text.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```rust\nfn x() {}\n```\n";
+        let mut r = rich(md);
+        let own = |source: &str| {
+            Some(ArcFigure {
+                id: source.into(),
+                ..Default::default()
+            })
+        };
+        let kinds = |r: &mut Rich| -> Vec<(i32, String)> {
+            r.items("", &|_| None, &own, &[])
+                .iter()
+                .map(|i| (i.kind, i.figure.id.to_string()))
+                .collect()
+        };
+        assert_eq!(
+            kinds(&mut r),
+            [
+                (0, String::new()),
+                (8, "flowchart LR\n  A --> B".into()),
+                (4, String::new()),
+            ]
+        );
+        r.key("down", false, false, false);
+        assert_eq!(
+            kinds(&mut r),
+            [(0, String::new()), (4, String::new()), (4, String::new())],
+            "the caret in it shows the source"
         );
     }
 
@@ -972,7 +1037,7 @@ mod tests {
             })
         };
         let drawn = [("packages".to_string(), section.to_string())];
-        let items = r.items("", &figure, &drawn);
+        let items = r.items("", &figure, &|_| None, &drawn);
         let shape: Vec<(i32, usize, String)> = items
             .iter()
             .map(|i| (i.kind, i.fixed.row_count(), i.figure.id.to_string()))
@@ -1054,7 +1119,7 @@ mod tests {
     #[test]
     fn a_drag_past_a_block_selects_into_the_next() {
         let mut r = rich("eins\n\nzwei\n");
-        r.items("", &|_| None, &[]);
+        r.items("", &|_| None, &|_| None, &[]);
         r.press(r.editor.focus.piece, Some(0), 0.0, 5.0, false);
         let below = r.laid(r.editor.focus.piece, 0).height() + 15.0;
         r.drag(r.editor.focus.piece, 0, 200.0, below);

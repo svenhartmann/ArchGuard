@@ -62,7 +62,8 @@ export component FigureView inherits Rectangle {
     VerticalLayout {
         padding: 16px;
         spacing: 10px;
-        HorizontalLayout {
+        // Own Mermaid has no title.
+        if figure.title != "" || figure.chapter != "" || root.doc: HorizontalLayout {
             spacing: 12px;
             VerticalLayout {
                 horizontal-stretch: 1;
@@ -98,7 +99,7 @@ export component FigureView inherits Rectangle {
                 wrap: word-wrap;
             }
         }
-        if root.drawn: Fit { Text { text: figure.note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; } }
+        if root.drawn && figure.note != "": Fit { Text { text: figure.note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; } }
         if root.drawn && figure.insertable: HorizontalLayout {
             alignment: start;
             Button {
@@ -144,7 +145,8 @@ export component FigureView inherits Rectangle {
                 }
             }
         }
-        if root.drawn: Disclosure { text: @tr("Diagram source"); open <=> root.source-open; }
+        // Own Mermaid is its own source, edited in the text.
+        if root.drawn && figure.source != "": Disclosure { text: @tr("Diagram source"); open <=> root.source-open; }
         if root.drawn && root.source-open: Fit {
             Rectangle {
                 background: Theme.panel;
