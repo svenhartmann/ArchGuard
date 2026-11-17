@@ -881,6 +881,33 @@ mod tests {
         assert_eq!(texts, ["Text ", "fett", "."]);
     }
 
+    /// Every line of a code block is drawn with its text and width; the
+    /// line break is not part of the line (it made all but the last line
+    /// zero wide, so only a sliver of each showed).
+    #[test]
+    fn each_line_of_a_code_block_is_drawn_whole() {
+        use slint::Model;
+        let md = "Text.\n\n```mermaid\nflowchart LR\n  A[Portal] --> B[APIM]\n  K -. Metadaten .-> B\n```\n";
+        let mut r = rich(md);
+        let items = r.items("", &|_| None, &[]);
+        let code = items.iter().find(|i| i.kind == 4).expect("the code block");
+        let runs: Vec<_> = code.runs.iter().collect();
+        let texts: Vec<&str> = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "flowchart LR",
+                "  A[Portal] --> B[APIM]",
+                "  K -. Metadaten .-> B"
+            ]
+        );
+        assert!(runs.iter().all(|r| r.w > 50.0), "every line has its width");
+        assert!(
+            runs[0].y < runs[1].y && runs[1].y < runs[2].y,
+            "one below the other"
+        );
+    }
+
     #[test]
     fn clicks_and_arrows_find_table_cells_and_the_space_between_rows() {
         let mut r = rich("| a | b |\n| --- | --- |\n| 1 | 2 |\n\nText\n");

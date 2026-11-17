@@ -18,7 +18,8 @@ slint::slint! {
     export component Page inherits Window {
         width: 380px;
         height: 3000px;
-        ArchitectureView { width: 100%; height: 100%; }
+        // The diagrams below the text open, so they are checked too.
+        ArchitectureView { width: 100%; height: 100%; map-open: true; figures-open: true; }
     }
 }
 

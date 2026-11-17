@@ -1,9 +1,3 @@
-msgid "Architecture documentation"
-msgstr "Architekturdokumentation"
-
-msgid "arc42 · Evidence, decisions and open questions"
-msgstr "arc42 · Belege, Entscheidungen und offene Fragen"
-
 msgid "Download chapter"
 msgstr "Kapitel herunterladen"
 
@@ -260,9 +254,6 @@ msgstr "Link entfernen"
 msgid "Write your own text here …"
 msgstr "Eigenen Text hier schreiben …"
 
-msgid "Generated from the analysis and refreshed on every save."
-msgstr "Aus der Analyse erzeugt und bei jedem Speichern erneuert."
-
 msgid "Edit as own text"
 msgstr "Als eigenen Text bearbeiten"
 
@@ -302,12 +293,6 @@ msgstr "Tabelle"
 msgid "Insert into chapter"
 msgstr "In Kapitel übernehmen"
 
-msgid "Saved to {}. Generated blocks are refreshed from the analysis on every save; your own text is kept."
-msgstr "Gespeichert in {}. Generierte Blöcke werden bei jedem Speichern aus der Analyse erneuert; eigener Text bleibt erhalten."
-
-msgid "The project has no arc42 text yet; saving asks where to create it."
-msgstr "Das Projekt hat noch keinen arc42-Text; beim Speichern wird gefragt, wo er angelegt werden soll."
-
 msgid "Unsaved changes in {}"
 msgstr "Ungespeicherte Änderungen in {}"
 
@@ -316,9 +301,6 @@ msgstr "Verwerfen"
 
 msgid "Save or discard the changes to this chapter first."
 msgstr "Zuerst die Änderungen an diesem Kapitel speichern oder verwerfen."
-
-msgid "Diagram from the analysis, drawn anew on every save."
-msgstr "Diagramm aus der Analyse, bei jedem Speichern neu gezeichnet."
 
 msgid "Edit as source"
 msgstr "Als Quelltext bearbeiten"
@@ -331,3 +313,6 @@ msgstr "Diagramm aus dem Kapitel entfernen"
 
 msgid "The analysis has no such diagram any more; the block keeps its last version."
 msgstr "Die Analyse kennt dieses Diagramm nicht mehr; der Block behält seine letzte Fassung."
+
+msgid "Package map"
+msgstr "Paketkarte"

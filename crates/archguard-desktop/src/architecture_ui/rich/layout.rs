@@ -242,9 +242,13 @@ impl Laid {
             let m = line.metrics();
             let s = self.scale;
             let lr = line.text_range();
+            // The line break ends the line but is not drawn: with it, the
+            // run would end at the next line's start and be zero wide.
+            let end = lr.end.min(self.len);
+            let end = end - usize::from(self.text[..end].ends_with('\n'));
             for (range, look) in &self.looks {
                 let from = range.start.max(lr.start);
-                let to = range.end.min(lr.end).min(self.len);
+                let to = range.end.min(end);
                 if from >= to {
                     continue;
                 }
