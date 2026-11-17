@@ -180,9 +180,9 @@ component DiagramEntry inherits VerticalLayout {
     }
 }
 
-// Above the page while the chapter has unsaved changes: Save (also
-// File → Save) or Discard; the question where a new arc42 text goes and
-// why a save failed.
+// Above the page while the chapter has unsaved changes: Discard (Save is
+// in the chapter's header and File → Save); the question where a new
+// arc42 text goes and why a save failed.
 component SaveBar inherits Rectangle {
     in property <bool> narrow;
     background: Theme.accent.with-alpha(0.10);
@@ -206,7 +206,6 @@ component SaveBar inherits Rectangle {
                 horizontal-stretch: 1;
                 wrap: word-wrap;
             }
-            Button { y: (parent.height - self.height) / 2; compact: true; primary: true; text: @tr("Save"); clicked => { ArchitectureData.save-edit(); } }
             Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Discard"); clicked => { ArchitectureData.cancel-edit(); } }
         }
         if ArchitectureData.model.edit-error != "": Fit {
@@ -451,6 +450,15 @@ export component ArchitectureView inherits Rectangle {
                                     horizontal-stretch: 1;
                                     text: ArchitectureData.model.chapter-title;
                                     sub: ArchitectureData.model.catalogue ? "" : ArchitectureData.model.file;
+                                }
+                                // Also in a narrow pane; enabled while the chapter has unsaved changes.
+                                if ArchitectureData.model.editing: Button {
+                                    y: 0;
+                                    compact: true;
+                                    primary: ArchitectureData.model.dirty;
+                                    enabled: ArchitectureData.model.dirty;
+                                    text: @tr("Save");
+                                    clicked => { ArchitectureData.save-edit(); }
                                 }
                                 if !root.narrow && !ArchitectureData.model.catalogue: Button { y: 0; compact: true; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
                                 if !root.narrow: Button { y: 0; compact: true; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }
