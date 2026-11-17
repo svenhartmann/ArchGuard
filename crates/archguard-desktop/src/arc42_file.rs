@@ -141,6 +141,8 @@ pub struct Arc42Files {
     whole: Option<String>,
     /// The chapter files of a folder target, as on disk.
     chapters: BTreeMap<u8, (PathBuf, String)>,
+    /// The format a diagram the chapter lacks goes in with (`[arc42]`).
+    pub format: DiagramFormat,
 }
 
 impl Arc42Files {
@@ -149,6 +151,7 @@ impl Arc42Files {
             target,
             whole: None,
             chapters: BTreeMap::new(),
+            format: DiagramFormat::Mermaid,
         };
         match &files.target {
             Target::File(path) => files.whole = read(path)?,
@@ -213,7 +216,8 @@ impl Arc42Files {
         base: &mut Option<String>,
     ) -> Result<PathBuf, String> {
         let edited = edited.replace("\r\n", "\n");
-        let mut edited = refresh_diagrams(doc, &refresh(doc, &edited)?);
+        let edited = refresh_diagrams(doc, &refresh(doc, &edited)?);
+        let mut edited = complete_diagrams(doc, n, &edited, self.format);
         if !edited.ends_with('\n') {
             edited.push('\n');
         }
@@ -359,6 +363,32 @@ fn refresh_diagrams(doc: &Arc42Document, text: &str) -> String {
     out
 }
 
+/// `text` with the diagrams of chapter `n` as the documentation has them:
+/// a shown one that is in neither generated text nor a diagram block goes
+/// in at the end as a diagram block, a hidden one's diagram block goes out.
+fn complete_diagrams(doc: &Arc42Document, n: u8, text: &str, format: DiagramFormat) -> String {
+    let mut out = text.to_string();
+    for (r, id) in diagram_ranges(text).into_iter().rev() {
+        if doc.diagrams.iter().any(|d| d.id == id && !d.shown) {
+            // With the line break and blank line it went in with.
+            let blank = out[r.end..].len() - out[r.end..].trim_start_matches('\n').len();
+            out.replace_range(r.start..r.end + blank.min(2), "");
+        }
+    }
+    let present: Vec<String> = diagram_ranges(&out).into_iter().map(|(_, id)| id).collect();
+    for d in doc.diagrams.iter().filter(|d| d.chapter == n && d.shown) {
+        let in_text = present.contains(&d.id)
+            || [DiagramFormat::Mermaid, DiagramFormat::Plantuml]
+                .into_iter()
+                .any(|f| out.contains(&archguard_engine::report::diagram_section(d, f)));
+        if !in_text {
+            let block = diagram_block(&d.id, &archguard_engine::report::diagram_section(d, format));
+            out = format!("{}\n\n{block}\n", out.trim_end());
+        }
+    }
+    out
+}
+
 /// Refresh the generated blocks in `text`; text without any block stays
 /// as it is.
 fn refresh(doc: &Arc42Document, text: &str) -> Result<String, String> {
@@ -445,6 +475,43 @@ pub(crate) mod tests {
 
     /// A diagram block in own text is written with the analysis' current
     /// section; one the analysis no longer has stays as written.
+    #[test]
+    fn saving_puts_in_shown_diagrams_and_takes_out_hidden_ones() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("arc42.md");
+        let mut new = doc("New");
+        let diagram = |id: &str, shown| archguard_engine::core::Diagram {
+            id: id.into(),
+            chapter: 5,
+            title: id.into(),
+            note: String::new(),
+            kind: archguard_engine::core::DiagramKind::Packages,
+            unit: String::new(),
+            elements: Vec::new(),
+            relations: Vec::new(),
+            shown,
+        };
+        new.diagrams = vec![diagram("shown", true), diagram("hidden", false)];
+        let section = |d| archguard_engine::report::diagram_section(d, DiagramFormat::Plantuml);
+        let hidden = diagram_block("hidden", &section(&new.diagrams[1]));
+        std::fs::write(
+            &path,
+            format!("## 5. Bausteine\n\nEigener Text.\n\n{hidden}\n\nDanach.\n"),
+        )
+        .unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        files.format = DiagramFormat::Plantuml;
+        let chapter = files.chapter(&new, 5);
+        files
+            .save_chapter(&new, 5, &chapter, &mut files.saved(5))
+            .unwrap();
+        let shown = diagram_block("shown", &section(&new.diagrams[0]));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("## 5. Bausteine\n\nEigener Text.\n\nDanach.\n\n{shown}\n"),
+        );
+    }
+
     #[test]
     fn saving_refreshes_diagram_blocks_from_the_analysis() {
         let d = tempfile::tempdir().unwrap();

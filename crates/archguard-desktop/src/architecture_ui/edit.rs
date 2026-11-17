@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use archguard_engine::core::DiagramFormat;
 use archguard_engine::report::Arc42Document;
 use slint::ComponentHandle;
 
@@ -33,6 +34,8 @@ pub struct Editor {
     files: Option<Arc42Files>,
     /// Why the project's arc42 text could not be read.
     files_error: String,
+    /// The format diagrams the chapter lacks go in with (`[arc42]`).
+    format: DiagramFormat,
 }
 
 /// An open chapter editor. Kept per document as its own state, not in the
@@ -63,6 +66,7 @@ impl Editor {
             root: root.to_path_buf(),
             files: None,
             files_error: String::new(),
+            format: DiagramFormat::Mermaid,
         };
         if let Some(target) = arc42_file::find(root) {
             match Arc42Files::load(target) {
@@ -71,6 +75,10 @@ impl Editor {
             }
         }
         editor
+    }
+
+    pub fn with_format(self, format: DiagramFormat) -> Self {
+        Editor { format, ..self }
     }
 
     fn with_open<R: Default>(&self, f: impl FnOnce(&mut Option<Open>) -> R) -> R {
@@ -184,7 +192,7 @@ impl Editor {
         &self,
         ui: &AppWindow,
         figure: &dyn Fn(&str) -> Option<ArcFigure>,
-        drawn: &[String],
+        drawn: &[(String, String)],
     ) {
         let note = Texts::of(ui)
             .t("Diagram source · this diagram syntax is not supported in the viewer.")
@@ -310,6 +318,7 @@ impl Editor {
             self.with_open(|o| o.as_mut().map(|e| e.ask_location = true));
             return None;
         };
+        files.format = self.format;
         match files.save_chapter(doc, chapter, &draft, &mut base) {
             Ok(path) => {
                 self.files_error.clear();
@@ -378,7 +387,7 @@ impl Editor {
                 let e = o.as_mut()?;
                 let mut rich = Rich::new(&e.draft);
                 let pieces = rich.editor.doc().pieces.len();
-                (0..pieces).find(|&p| rich.editor.take_over(p))?;
+                (0..pieces).find(|&p| rich.editor.take_over(p, &[]))?;
                 e.draft = rich.markdown();
                 e.rich = Some(rich);
                 Some(())

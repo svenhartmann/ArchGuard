@@ -947,7 +947,7 @@ impl Editor {
     /// Make the generated blocks in fixed piece `piece` own text: their
     /// `archguard:arc42` markers go, so the analysis no longer refreshes
     /// them and they can be edited. False if the piece has none.
-    pub fn take_over(&mut self, piece: usize) -> bool {
+    pub fn take_over(&mut self, piece: usize, drawn: &[(String, String)]) -> bool {
         let md = self.doc.to_markdown();
         let start = piece_start(&self.doc, piece);
         let end = start + self.doc.piece_markdown(piece).len();
@@ -970,8 +970,20 @@ impl Editor {
         }
         cuts.sort_by_key(|r| std::cmp::Reverse(r.start));
         let mut new = md;
+        let mut end = end;
         for r in cuts {
+            end -= r.len();
             new.replace_range(r, "");
+        }
+        // Its diagrams stay diagrams: each section a diagram block.
+        for (id, section) in drawn.iter().filter(|(_, s)| !s.is_empty()) {
+            let end = end.min(new.len());
+            if let Some(at) = new[start..end].find(section.as_str()) {
+                let at = start + at;
+                let tail = if section.ends_with('\n') { "\n" } else { "" };
+                let block = super::doc::diagram_block(id, section) + tail;
+                new.replace_range(at..at + section.len(), &block);
+            }
         }
         self.doc = with_trailing_part(Doc::parse(&new, &super::doc::generated(&new)));
         // The caret in the first part from where the block was.
@@ -1336,7 +1348,7 @@ mod tests {
             .unwrap();
         e.jump_from_fixed(piece);
         assert_eq!(e.block(e.focus).inline.text, "", "the empty part after it");
-        assert!(e.take_over(piece));
+        assert!(e.take_over(piece, &[]));
         assert!(e.in_table(), "the caret in the taken table");
         e.type_text("Neu");
         assert_eq!(
@@ -1348,8 +1360,37 @@ mod tests {
         assert_eq!(e.markdown(), md);
         let mut plain = editor("## 5. Bausteine\n\nText\n");
         assert!(
-            !plain.take_over(0),
+            !plain.take_over(0, &[]),
             "a chapter heading is no generated block"
+        );
+    }
+
+    /// Taken over, a generated block's diagrams stay diagrams: each of
+    /// its diagram sections becomes a diagram block.
+    #[test]
+    fn diagrams_of_a_taken_over_block_become_diagram_blocks() {
+        let section = "### Pakete\n\n```mermaid\nflowchart LR\n```\n";
+        let md = format!(
+            "## 5. Bausteine\n\n<!-- archguard:arc42:05:start -->\nVorher.\n\n{section}\nNachher.\n<!-- archguard:arc42:05:end -->\n"
+        );
+        let fixed = super::super::doc::generated(&md);
+        let mut e = Editor::new(Doc::parse(&md, &fixed));
+        let piece = (0..e.doc().pieces.len())
+            .find(|&p| e.doc().part(p).is_none())
+            .unwrap();
+        let drawn = [("packages".to_string(), section.to_string())];
+        assert!(e.take_over(piece, &drawn));
+        let block = super::super::doc::diagram_block("packages", section);
+        assert_eq!(
+            e.markdown(),
+            format!("## 5. Bausteine\n\nVorher.\n\n{block}\n\nNachher.\n")
+        );
+        assert!(
+            (0..e.doc().pieces.len()).any(|p| e.doc().part(p).is_some_and(|part| part
+                .blocks()
+                .iter()
+                .any(|b| matches!(b.kind, Kind::Diagram { .. })))),
+            "a diagram block to detach or remove"
         );
     }
 

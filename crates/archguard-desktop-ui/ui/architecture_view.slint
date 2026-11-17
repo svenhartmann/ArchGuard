@@ -328,10 +328,10 @@ component ChapterButton inherits Rectangle {
 
 export component ArchitectureView inherits Rectangle {
     callback open-web();
-    // The package map below the chapter's text is open; the other
-    // diagrams there start open (the layout check opens them all).
+    // The interactive package map below the chapter's text is open (the
+    // layout check opens it); the other diagrams there start open.
     in-out property <bool> map-open;
-    in property <bool> figures-open;
+    in property <bool> figures-open: true;
     property <bool> about-open;
     background: Theme.bg;
     // Tabs must not change the window's preferred size; a split pane can

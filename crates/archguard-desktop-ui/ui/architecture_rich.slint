@@ -52,7 +52,7 @@ export struct RichItem {
     piece: int,
     block: int,
     // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code, 5 table
-    // row, 6 diagram block.
+    // row, 6 diagram block, 7 a diagram of fixed text.
     kind: int,
     // A diagram block's drawing; an empty id when the analysis lacks it.
     figure: ArcFigure,
@@ -452,6 +452,34 @@ component DiagramBlock inherits Rectangle {
     init => { root.report(); }
 }
 
+// A diagram of fixed text (kind 7), drawn where its section is; generated
+// ones have the generated text's bar. A click puts the caret in the
+// nearest text to edit.
+component FixedFigure inherits Rectangle {
+    in property <RichItem> item;
+    callback pressed();
+    if item.generated: Rectangle {
+        x: -10px;
+        width: 2px;
+        background: Theme.accent.with-alpha(0.35);
+    }
+    TouchArea {
+        clicked => {
+            RichData.press(item.piece, -1, 0, 0, false);
+            root.pressed();
+        }
+    }
+    VerticalLayout {
+        padding-top: item.top * 1px;
+        padding-bottom: 4px;
+        FigureView {
+            figure: item.figure;
+            doc: false;
+            preview: true;
+        }
+    }
+}
+
 // Text the editor keeps as written, as the reader shows it. A click sends
 // the caret to the nearest text to edit. Generated blocks have a thin bar
 // on their left; pointing at them offers to take them over as own text.
@@ -559,7 +587,11 @@ export component RichEditor inherits FocusScope {
                 origin: root.absolute-position;
                 pressed => { ime.focus(); }
             }
-            if item.fixed.length == 0 && item.kind != 6: RichBlock {
+            if item.kind == 7: FixedFigure {
+                item: item;
+                pressed => { ime.focus(); }
+            }
+            if item.fixed.length == 0 && item.kind != 6 && item.kind != 7: RichBlock {
                 item: item;
                 origin: root.absolute-position;
                 pressed => { ime.focus(); }

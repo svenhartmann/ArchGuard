@@ -92,6 +92,10 @@ fn fill_figures(
         .map(|(_, id)| id)
         .collect();
     let inserted = |id: &str| inserted.iter().any(|i| i == id);
+    // Shown diagrams whose section is in the text draw there too.
+    let in_text = |d: &archguard_engine::core::Diagram| {
+        d.shown && text.contains(&archguard_engine::report::diagram_section(d, s.format))
+    };
     let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
@@ -114,7 +118,7 @@ fn fill_figures(
         .iter()
         .filter(|d| {
             let drawn = Some(d.id.as_str()) == map || Some(d.id.as_str()) == open;
-            s.catalogue || (d.chapter == s.chapter && !drawn && !inserted(&d.id))
+            s.catalogue || (d.chapter == s.chapter && !drawn && !inserted(&d.id) && !in_text(d))
         })
         .map(|d| {
             let chapter = if s.catalogue {
