@@ -558,3 +558,15 @@ comparison of the native view against the web view on the same project
   Save in the save bar, the location question, the notice, the file) and
   headless snapshots of a chapter with a diagram block and with the save
   bar. Not checked by hand in a window; not checked on Windows and Linux.
+  *Changed 2026-11-17:* the chapter page was too cluttered for the user.
+  It now reads as a document: the chapter title with the file it is saved
+  to and the downloads in one row (the page title "Architecture
+  documentation" is gone), the toolbar with "Edit Markdown" at its end,
+  the text, then a "Diagrams" section with the package map and the
+  chapter's diagrams, each closed until clicked. The hint lines are gone:
+  generated text has a thin bar on its left and offers "Edit as own text"
+  when pointed at; a diagram block shows "Edit as source" and "Remove"
+  when pointed at or with the caret. "Markdown source" is gone ("Edit
+  Markdown" shows it). Fixed with it: every line of a code block shows in
+  the editor (all but the last were drawn zero wide). Checked with unit
+  tests and headless snapshots of chapters 3 and 5, in English and German.

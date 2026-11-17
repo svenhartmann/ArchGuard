@@ -131,6 +131,7 @@ component ToolButton inherits Rectangle {
     in property <bool> italic;
     in property <bool> mono;
     in property <bool> enabled: true;
+    out property <bool> hovered: touch.has-hover;
     callback clicked();
     width: root.icon != "" ? 28px : max(28px, t.preferred-width + 14px);
     height: 28px;
@@ -390,7 +391,7 @@ component DiagramBlock inherits Rectangle {
     border-radius: 12px;
     border-width: root.has-caret && RichData.focused ? 2px : 0px;
     border-color: Theme.accent;
-    TouchArea {
+    touch := TouchArea {
         clicked => {
             root.pressed();
             RichData.press(item.piece, item.block, 0, 0, false);
@@ -400,35 +401,6 @@ component DiagramBlock inherits Rectangle {
     VerticalLayout {
         padding-top: item.top * 1px;
         padding-bottom: 4px;
-        spacing: 6px;
-        HorizontalLayout {
-            spacing: 10px;
-            alignment: start;
-            Text {
-                text: @tr("Diagram from the analysis, drawn anew on every save.");
-                color: Theme.muted;
-                font-size: Theme.font-small;
-                vertical-alignment: center;
-            }
-            ToolButton {
-                label: @tr("Edit as source");
-                tip: @tr("Edit the diagram's source as own text; the analysis no longer updates it");
-                clicked => {
-                    root.pressed();
-                    RichData.press(item.piece, item.block, 0, 0, false);
-                    RichData.tool("detach");
-                }
-            }
-            ToolButton {
-                label: @tr("Remove");
-                tip: @tr("Remove the diagram from the chapter");
-                clicked => {
-                    root.pressed();
-                    RichData.press(item.piece, item.block, 0, 0, false);
-                    RichData.tool("remove_diagram");
-                }
-            }
-        }
         if item.figure.id != "": FigureView {
             figure: item.figure;
             doc: false;
@@ -439,6 +411,33 @@ component DiagramBlock inherits Rectangle {
             color: Theme.muted;
             font-size: Theme.font-small;
             wrap: word-wrap;
+        }
+    }
+    // Pointed at or with the caret: turn into source text or remove.
+    HorizontalLayout {
+        x: parent.width - self.preferred-width - 12px;
+        y: item.top * 1px + 12px;
+        width: self.preferred-width;
+        height: self.preferred-height;
+        spacing: 2px;
+        visible: root.has-caret || touch.has-hover || source.hovered || remove.hovered;
+        source := ToolButton {
+            label: @tr("Edit as source");
+            tip: @tr("Edit the diagram's source as own text; the analysis no longer updates it");
+            clicked => {
+                root.pressed();
+                RichData.press(item.piece, item.block, 0, 0, false);
+                RichData.tool("detach");
+            }
+        }
+        remove := ToolButton {
+            label: @tr("Remove");
+            tip: @tr("Remove the diagram from the chapter");
+            clicked => {
+                root.pressed();
+                RichData.press(item.piece, item.block, 0, 0, false);
+                RichData.tool("remove_diagram");
+            }
         }
     }
     function report() {
@@ -454,42 +453,38 @@ component DiagramBlock inherits Rectangle {
 }
 
 // Text the editor keeps as written, as the reader shows it. A click sends
-// the caret to the nearest text to edit; generated blocks can be taken
-// over as own text.
-component FixedPiece inherits VerticalLayout {
+// the caret to the nearest text to edit. Generated blocks have a thin bar
+// on their left; pointing at them offers to take them over as own text.
+component FixedPiece inherits Rectangle {
     in property <RichItem> item;
     callback pressed();
-    spacing: 4px;
-    if item.generated: HorizontalLayout {
-        spacing: 10px;
-        padding-top: 6px;
-        alignment: start;
-        Text {
-            text: @tr("Generated from the analysis and refreshed on every save.");
-            color: Theme.muted;
-            font-size: Theme.font-small;
-            vertical-alignment: center;
-        }
-        ToolButton {
-            label: @tr("Edit as own text");
-            tip: @tr("Edit as own text; the analysis no longer updates it");
-            clicked => {
-                root.pressed();
-                RichData.take-over(item.piece);
-            }
+    property <bool> hover: touch.has-hover || take.hovered;
+    border-radius: Theme.radius-sm;
+    background: item.generated && root.hover ? Theme.panel-2 : transparent;
+    if item.generated: Rectangle {
+        x: -10px;
+        width: 2px;
+        background: Theme.accent.with-alpha(0.35);
+    }
+    VerticalLayout {
+        padding-top: 4px;
+        for b in item.fixed: ArcBlockView { block: b; }
+    }
+    touch := TouchArea {
+        clicked => {
+            RichData.press(item.piece, -1, 0, 0, false);
+            root.pressed();
         }
     }
-    Rectangle {
-        border-radius: Theme.radius-sm;
-        background: item.generated && touch.has-hover ? Theme.panel-2 : transparent;
-        VerticalLayout {
-            for b in item.fixed: ArcBlockView { block: b; }
-        }
-        touch := TouchArea {
-            clicked => {
-                RichData.press(item.piece, -1, 0, 0, false);
-                root.pressed();
-            }
+    take := ToolButton {
+        x: parent.width - self.width - 4px;
+        y: 4px;
+        visible: item.generated && root.hover;
+        label: @tr("Edit as own text");
+        tip: @tr("Edit as own text; the analysis no longer updates it");
+        clicked => {
+            root.pressed();
+            RichData.take-over(item.piece);
         }
     }
 }
