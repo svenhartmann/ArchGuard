@@ -144,7 +144,7 @@ impl Editor {
     /// unsaved changes (they are never dropped). An unchanged open chapter
     /// stays as it is, with its caret.
     pub fn ensure_open(&self, doc: &Arc42Document, chapter: u8) {
-        let text = self.chapter(doc, chapter).replace("\r\n", "\n");
+        let text = self.chapter(doc, chapter);
         let keep = self.with_open(|o| {
             o.as_ref().is_some_and(|e| {
                 e.draft != e.original
@@ -169,7 +169,7 @@ impl Editor {
     #[cfg(any(test, feature = "snapshot"))]
     pub fn start(&self, doc: &Arc42Document, chapter: u8) {
         // LF in the draft, as the block ranges expect; saving keeps CRLF files CRLF.
-        self.open(chapter, self.chapter(doc, chapter).replace("\r\n", "\n"));
+        self.open(chapter, self.chapter(doc, chapter));
     }
 
     fn open(&self, chapter: u8, text: String) {
@@ -322,7 +322,7 @@ impl Editor {
         match files.save_chapter(doc, chapter, &draft, &mut base) {
             Ok(path) => {
                 self.files_error.clear();
-                let text = self.chapter(doc, chapter).replace("\r\n", "\n");
+                let text = self.chapter(doc, chapter);
                 let base = self.files.as_ref().and_then(|f| f.saved(chapter));
                 self.with_open(|o| {
                     let e = o.as_mut()?;
@@ -343,6 +343,14 @@ impl Editor {
                 None
             }
         }
+    }
+
+    /// The shown diagrams the last save took out of their chapter.
+    pub fn take_dropped(&mut self) -> Vec<String> {
+        self.files
+            .as_mut()
+            .map(|f| std::mem::take(&mut f.dropped))
+            .unwrap_or_default()
     }
 
     /// The answer to "where should the arc42 text go": 0 `arc42.md` in the

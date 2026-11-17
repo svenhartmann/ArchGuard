@@ -108,11 +108,16 @@ impl Doc {
     /// (byte ranges of `md`) stay as written.
     pub fn parse(md: &str, fixed: &[Range<usize>]) -> Doc {
         let locked = |r: &Range<usize>| fixed.iter().any(|g| g.start < r.end && r.start < g.end);
-        // Diagram blocks are one block each; the chunks inside them are theirs.
+        // Diagram blocks are one block each; a chunk reaching into one (an
+        // unclosed fence before it) stays as written.
         let diagrams = diagram_ranges(md);
         let mut units: Vec<(Range<usize>, Option<Vec<Block>>)> = markdown::chunks(md)
             .into_iter()
-            .filter(|(r, _)| !diagrams.iter().any(|(d, _)| d.contains(&r.start)))
+            .filter(|(r, _)| {
+                !diagrams
+                    .iter()
+                    .any(|(d, _)| d.start < r.end && r.start < d.end)
+            })
             .map(|(r, blocks)| {
                 let editable = editable(&blocks).filter(|_| !locked(&r));
                 (r, editable)
@@ -533,6 +538,15 @@ Ende.
                 assert_eq!(parsed.to_markdown(), md, "{project} chapter {n}");
             }
         }
+    }
+
+    /// An unclosed code fence before a diagram block reaches into the
+    /// block; the text stays as written instead of crashing the view.
+    #[test]
+    fn an_unclosed_fence_before_a_diagram_block_writes_back_unchanged() {
+        let block = diagram_block("calls", "### Aufrufe\n\n```mermaid\nflowchart LR\n```");
+        let md = format!("Text.\n\n```\noffen\n\n{block}\n\nDanach.\n");
+        assert_eq!(Doc::parse(&md, &[]).to_markdown(), md);
     }
 
     #[test]

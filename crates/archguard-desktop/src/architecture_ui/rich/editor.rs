@@ -494,7 +494,10 @@ impl Editor {
         };
         // Without its marker lines.
         let inner: Vec<&str> = source.lines().collect();
-        let inner = inner[1..inner.len().saturating_sub(1)].join("\n");
+        if inner.len() < 2 {
+            return;
+        }
+        let inner = inner[1..inner.len() - 1].join("\n");
         let blocks = super::doc::blocks_of(&inner);
         if blocks.is_empty() {
             return;
@@ -977,12 +980,12 @@ impl Editor {
         }
         // Its diagrams stay diagrams: each section a diagram block.
         for (id, section) in drawn.iter().filter(|(_, s)| !s.is_empty()) {
-            let end = end.min(new.len());
             if let Some(at) = new[start..end].find(section.as_str()) {
                 let at = start + at;
                 let tail = if section.ends_with('\n') { "\n" } else { "" };
                 let block = super::doc::diagram_block(id, section) + tail;
                 new.replace_range(at..at + section.len(), &block);
+                end += block.len() - section.len();
             }
         }
         self.doc = with_trailing_part(Doc::parse(&new, &super::doc::generated(&new)));
@@ -1392,6 +1395,45 @@ mod tests {
                 .any(|b| matches!(b.kind, Kind::Diagram { .. })))),
             "a diagram block to detach or remove"
         );
+    }
+
+    /// Each section of a taken-over block becomes a diagram block, also
+    /// when an earlier one made the text longer (umlauts near the end).
+    #[test]
+    fn every_diagram_of_a_taken_over_block_becomes_a_diagram_block() {
+        let first = "### Pakete\n\n```mermaid\nflowchart LR\n```\n";
+        let second = "### Zyklen\n\n```mermaid\nflowchart TB\n```\n";
+        let tail = "Größe: äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü äöü.\n";
+        let md = format!(
+            "## 5. Bausteine\n\n<!-- archguard:arc42:05:start -->\n{first}\n{second}\n{tail}<!-- archguard:arc42:05:end -->\n"
+        );
+        let fixed = super::super::doc::generated(&md);
+        let mut e = Editor::new(Doc::parse(&md, &fixed));
+        let piece = (0..e.doc().pieces.len())
+            .find(|&p| e.doc().part(p).is_none())
+            .unwrap();
+        let drawn = [
+            ("packages".to_string(), first.to_string()),
+            ("cycles".to_string(), second.to_string()),
+        ];
+        assert!(e.take_over(piece, &drawn));
+        let one = super::super::doc::diagram_block("packages", first);
+        let two = super::super::doc::diagram_block("cycles", second);
+        assert_eq!(
+            e.markdown(),
+            format!("## 5. Bausteine\n\n{one}\n\n{two}\n\n{tail}")
+        );
+    }
+
+    /// A block with both markers on one line has no inside to keep.
+    #[test]
+    fn detaching_a_one_line_diagram_block_keeps_it() {
+        let block = "<!-- archguard:diagram:calls:start --> <!-- archguard:diagram:calls:end -->";
+        let mut e = editor(&format!("eins\n\n{block}\n"));
+        e.place(at(&e, 1, 0), false);
+        assert!(e.on_diagram());
+        e.detach();
+        assert!(e.markdown().contains(block));
     }
 
     #[test]

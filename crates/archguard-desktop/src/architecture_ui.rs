@@ -74,6 +74,7 @@ pub fn wire(ui: &AppWindow) {
             let what = s.editor.label(s.chapter);
             tab_support::saved_notice(ui, &what);
             s.saved = path;
+            hide_dropped(s);
         }
     }));
     d.on_navigate(navigation(
@@ -222,9 +223,18 @@ fn save_draft(s: &mut ArchitectureState) -> Result<(), String> {
     match s.editor.save(doc) {
         Some(path) => {
             s.saved = path;
+            hide_dropped(s);
             Ok(())
         }
         None => Err(s.editor.unsaved_reason()),
+    }
+}
+
+/// A shown diagram the save took out of its chapter (removed, or taken
+/// over as own text) leaves the documentation, as its tick would.
+fn hide_dropped(s: &mut ArchitectureState) {
+    for id in s.editor.take_dropped() {
+        toggle_diagram(s, None, &id, false);
     }
 }
 
@@ -516,6 +526,63 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
         assert!(text.contains("Neu.\n"), "the draft is written");
         assert!(!documents::is_dirty(a));
+    }
+
+    /// A shown diagram removed from its chapter leaves the documentation on
+    /// save: `hidden_diagrams` lists it, so the next save does not put it
+    /// back in.
+    #[test]
+    fn a_diagram_removed_from_its_chapter_is_hidden_on_save() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, _) = documents::with_store(|s| s.open(dir.path()));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/py-layers")
+            .canonicalize()
+            .expect("fixture");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let mut state = build_from(
+            dir.path(),
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        );
+        let doc = state.doc.as_ref().expect("document");
+        let d = doc
+            .diagrams
+            .iter()
+            .find(|d| d.shown && archguard_engine::core::Arc42Config::level_of(&d.id).is_none())
+            .expect("a shown diagram")
+            .clone();
+        let section = archguard_engine::report::diagram_section(&d, state.format);
+        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        let n = d.chapter;
+        std::fs::write(
+            dir.path().join("arc42.md"),
+            format!("## {n}. Kapitel\n\nText.\n\n{block}\n"),
+        )
+        .unwrap();
+        state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
+        state.chapter = n;
+        documents::set_state(a, state);
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            open_editor(s);
+            s.editor.edit(&format!("## {n}. Kapitel\n\nText.\n"));
+        });
+        assert_eq!(documents::save(a), Ok(()));
+        let text = std::fs::read_to_string(dir.path().join("arc42.md")).unwrap();
+        assert_eq!(text, format!("## {n}. Kapitel\n\nText.\n"));
+        let config = std::fs::read_to_string(dir.path().join(".archguard/archguard.toml")).unwrap();
+        let config: archguard_engine::core::Config = toml::from_str(&config).unwrap();
+        assert!(config.arc42.hidden_diagrams.contains(&d.id), "{config:?}");
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            assert!(s.hidden.contains(&d.id));
+        });
     }
 
     /// A download goes only where the save dialog points, in one step;
