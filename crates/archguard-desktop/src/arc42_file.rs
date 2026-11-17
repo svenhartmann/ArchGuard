@@ -143,6 +143,8 @@ pub struct Arc42Files {
     chapters: BTreeMap<u8, (PathBuf, String)>,
     /// The format a diagram the chapter lacks goes in with (`[arc42]`).
     pub format: DiagramFormat,
+    /// The shown diagrams the last save took out of their chapter.
+    pub dropped: Vec<String>,
 }
 
 impl Arc42Files {
@@ -152,6 +154,7 @@ impl Arc42Files {
             whole: None,
             chapters: BTreeMap::new(),
             format: DiagramFormat::Mermaid,
+            dropped: Vec::new(),
         };
         match &files.target {
             Target::File(path) => files.whole = read(path)?,
@@ -188,7 +191,8 @@ impl Arc42Files {
                 .and_then(|w| section(w, n).map(|r| w[r].to_string())),
             Target::Folder(_) => self.chapters.get(&n).map(|(_, t)| t.clone()),
         };
-        match saved {
+        // LF, as the diagram sections the text is compared with.
+        match saved.map(|t| t.replace("\r\n", "\n")) {
             Some(text) => refresh(doc, &text).unwrap_or(text),
             None => generated(doc, n),
         }
@@ -217,7 +221,8 @@ impl Arc42Files {
     ) -> Result<PathBuf, String> {
         let edited = edited.replace("\r\n", "\n");
         let edited = refresh_diagrams(doc, &refresh(doc, &edited)?);
-        let mut edited = complete_diagrams(doc, n, &edited, self.format);
+        let before = self.chapter(doc, n);
+        let (mut edited, dropped) = complete_diagrams(doc, n, &before, &edited, self.format);
         if !edited.ends_with('\n') {
             edited.push('\n');
         }
@@ -251,6 +256,7 @@ impl Arc42Files {
                 self.chapters.insert(n, (path.clone(), text));
             }
         }
+        self.dropped = dropped;
         Ok(path)
     }
 
@@ -332,7 +338,11 @@ pub fn diagram_ranges(md: &str) -> Vec<(Range<usize>, String)> {
             continue;
         }
         let end_marker = format!("{DIAGRAM_MARKER}{id}:end -->");
-        if let Some(end) = md[from..]
+        // Not past the next start of the same diagram.
+        let until = md[from..]
+            .find(&format!("{DIAGRAM_MARKER}{id}:start -->"))
+            .map_or(md.len(), |i| from + i);
+        if let Some(end) = md[from..until]
             .find(&end_marker)
             .map(|i| from + i + end_marker.len())
         {
@@ -366,7 +376,15 @@ fn refresh_diagrams(doc: &Arc42Document, text: &str) -> String {
 /// `text` with the diagrams of chapter `n` as the documentation has them:
 /// a shown one that is in neither generated text nor a diagram block goes
 /// in at the end as a diagram block, a hidden one's diagram block goes out.
-fn complete_diagrams(doc: &Arc42Document, n: u8, text: &str, format: DiagramFormat) -> String {
+/// A shown one that was in the chapter `before` and is not in `text` was
+/// removed or taken over as own text: it stays out and is returned.
+fn complete_diagrams(
+    doc: &Arc42Document,
+    n: u8,
+    before: &str,
+    text: &str,
+    format: DiagramFormat,
+) -> (String, Vec<String>) {
     let mut out = text.to_string();
     for (r, id) in diagram_ranges(text).into_iter().rev() {
         if doc.diagrams.iter().any(|d| d.id == id && !d.shown) {
@@ -375,18 +393,25 @@ fn complete_diagrams(doc: &Arc42Document, n: u8, text: &str, format: DiagramForm
             out.replace_range(r.start..r.end + blank.min(2), "");
         }
     }
-    let present: Vec<String> = diagram_ranges(&out).into_iter().map(|(_, id)| id).collect();
-    for d in doc.diagrams.iter().filter(|d| d.chapter == n && d.shown) {
-        let in_text = present.contains(&d.id)
+    let has = |text: &str, d: &archguard_engine::core::Diagram| {
+        diagram_ranges(text).iter().any(|(_, id)| *id == d.id)
             || [DiagramFormat::Mermaid, DiagramFormat::Plantuml]
                 .into_iter()
-                .any(|f| out.contains(&archguard_engine::report::diagram_section(d, f)));
-        if !in_text {
+                .any(|f| text.contains(&archguard_engine::report::diagram_section(d, f)))
+    };
+    let mut dropped = Vec::new();
+    for d in doc.diagrams.iter().filter(|d| d.chapter == n && d.shown) {
+        if has(&out, d) {
+            continue;
+        }
+        if has(before, d) {
+            dropped.push(d.id.clone());
+        } else {
             let block = diagram_block(&d.id, &archguard_engine::report::diagram_section(d, format));
             out = format!("{}\n\n{block}\n", out.trim_end());
         }
     }
-    out
+    (out, dropped)
 }
 
 /// Refresh the generated blocks in `text`; text without any block stays
@@ -510,6 +535,67 @@ pub(crate) mod tests {
             std::fs::read_to_string(&path).unwrap(),
             format!("## 5. Bausteine\n\nEigener Text.\n\nDanach.\n\n{shown}\n"),
         );
+    }
+
+    /// A chapter of a file with Windows line ends reads with LF, as the
+    /// diagram sections it is compared with.
+    #[test]
+    fn a_chapter_reads_with_lf_line_ends() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("arc42.md");
+        std::fs::write(&path, "## 5. Bausteine\r\n\r\nText.\r\n").unwrap();
+        let files = Arc42Files::load(Target::File(path)).unwrap();
+        assert_eq!(files.chapter(&doc("New"), 5), "## 5. Bausteine\n\nText.\n");
+    }
+
+    fn shown_diagram(id: &str) -> archguard_engine::core::Diagram {
+        archguard_engine::core::Diagram {
+            id: id.into(),
+            chapter: 5,
+            title: id.into(),
+            note: String::new(),
+            kind: archguard_engine::core::DiagramKind::Packages,
+            unit: String::new(),
+            elements: Vec::new(),
+            relations: Vec::new(),
+            shown: true,
+        }
+    }
+
+    /// A shown diagram the user removed from the chapter, or turned into
+    /// own text, stays out; saving names it, so the view can hide it.
+    #[test]
+    fn saving_keeps_a_removed_or_detached_diagram_out() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("arc42.md");
+        let mut new = doc("New");
+        new.diagrams = vec![shown_diagram("gone"), shown_diagram("own")];
+        let section = |d| archguard_engine::report::diagram_section(d, DiagramFormat::Mermaid);
+        let gone = diagram_block("gone", &section(&new.diagrams[0]));
+        let own = diagram_block("own", &section(&new.diagrams[1]));
+        std::fs::write(
+            &path,
+            format!("## 5. Bausteine\n\nText.\n\n{gone}\n\n{own}\n"),
+        )
+        .unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        let edited = "## 5. Bausteine\n\nText.\n\n```mermaid\nflowchart LR\n  a --> b\n```\n";
+        files
+            .save_chapter(&new, 5, edited, &mut files.saved(5))
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        assert_eq!(files.dropped, ["gone", "own"]);
+    }
+
+    /// A start marker without its end is text: the block of the same
+    /// diagram further down does not swallow what is between.
+    #[test]
+    fn an_unended_diagram_start_does_not_swallow_the_text_after_it() {
+        let block = diagram_block("calls", "### Aufrufe\n\n```mermaid\nflowchart LR\n```");
+        let md = format!("<!-- archguard:diagram:calls:start -->\nEigener Absatz.\n\n{block}\n");
+        let ranges = diagram_ranges(&md);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(&md[ranges[0].0.clone()], block);
     }
 
     #[test]

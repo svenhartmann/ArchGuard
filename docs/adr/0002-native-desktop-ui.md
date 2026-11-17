@@ -586,3 +586,14 @@ comparison of the native view against the web view on the same project
   downloads, asked for by the user: highlighted while the chapter has
   unsaved changes, greyed out otherwise. The bar above the page keeps
   "Unsaved changes in …" and Discard.
+  *Changed 2026-11-17:* a review of the editor found that saving put a
+  removed diagram back in, and a diagram turned into source text in twice.
+  A shown diagram that was in the chapter before the save and is in it
+  neither as a diagram block nor as its section now counts as removed by
+  the user: the save leaves it out and ticks it off "In documentation"
+  (`hidden_diagrams`), so it stays out. Fixed with it: an unclosed code
+  fence before a diagram block, a block with both markers on one line,
+  and taking over a block with two diagrams and umlauts no longer crash
+  the editor; a start marker without its end no longer swallows the text
+  up to the next block of the same diagram; a chapter of a file with
+  Windows line ends reads with LF, so its diagrams are not listed twice.
