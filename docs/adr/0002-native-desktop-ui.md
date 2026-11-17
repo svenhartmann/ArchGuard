@@ -582,3 +582,7 @@ comparison of the native view against the web view on the same project
   and takes out the diagram block of a diagram ticked off. A generated
   block taken over as own text keeps its diagrams as diagram blocks, so
   they stay drawn and can each be turned into source or removed.
+  *Changed 2026-11-17:* Save sits in the chapter's header next to the
+  downloads, asked for by the user: highlighted while the chapter has
+  unsaved changes, greyed out otherwise. The bar above the page keeps
+  "Unsaved changes in …" and Discard.
