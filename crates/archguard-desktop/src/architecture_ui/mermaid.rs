@@ -31,7 +31,7 @@ pub fn diagram(source: &str) -> Option<Diagram> {
     let word = head.split_whitespace().next().unwrap_or_default();
     if matches!(word, "flowchart" | "graph") {
         for line in lines {
-            for statement in line.split(';') {
+            for statement in split_unquoted(line, ';') {
                 flow_statement(statement.trim(), &mut d);
             }
         }
@@ -104,11 +104,14 @@ const SKIPPED: &[&str] = &[
     "linkStyle",
     "click",
     "direction",
+    "accTitle",
+    "accDescr",
 ];
 
 /// One flowchart statement: a node, or nodes joined by links.
 fn flow_statement(s: &str, d: &mut Diagram) {
-    if s.is_empty() || SKIPPED.contains(&s.split_whitespace().next().unwrap_or_default()) {
+    let first = s.split([' ', ':']).next().unwrap_or_default();
+    if s.is_empty() || SKIPPED.contains(&first) {
         return;
     }
     let Some((mut from, mut rest)) = node(s, d) else {
@@ -127,9 +130,17 @@ fn flow_statement(s: &str, d: &mut Diagram) {
 /// given), and the text after it.
 fn node<'a>(s: &'a str, d: &mut Diagram) -> Option<(String, &'a str)> {
     let s = s.trim_start();
+    // `-` and `.` join word characters (`api-gateway`); `-->` ends the id.
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let end = s
-        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .unwrap_or(s.len());
+        .char_indices()
+        .find(|&(i, c)| {
+            let joins = matches!(c, '-' | '.')
+                && word(s[..i].chars().last())
+                && word(s[i + 1..].chars().next());
+            !(word(Some(c)) || joins)
+        })
+        .map_or(s.len(), |(i, _)| i);
     if end == 0 {
         return None;
     }
@@ -144,15 +155,32 @@ fn node<'a>(s: &'a str, d: &mut Diagram) -> Option<(String, &'a str)> {
             - rest
                 .trim_start_matches(['[', '(', '{', '>', '/', '\\'])
                 .len();
+        // The shape closes with its opening reversed: `[(` with `)]`.
+        let closing: String = rest[..open]
+            .chars()
+            .rev()
+            .map(|c| match c {
+                '[' | '>' => ']',
+                '(' => ')',
+                '{' => '}',
+                c => c,
+            })
+            .collect();
         let inner = &rest[open..];
-        let close = if let Some(quoted) = inner.strip_prefix('"') {
-            quoted.find('"').map(|i| i + 2)?
+        let (close, after) = if let Some(quoted) = inner.strip_prefix('"') {
+            let close = quoted.find('"').map(|i| i + 2)?;
+            let after = inner[close..].trim_start_matches([']', ')', '}', '/', '\\']);
+            (close, after)
+        } else if let Some(close) = inner.find(&closing) {
+            (close, &inner[close + closing.len()..])
         } else {
-            inner.find([']', ')', '}'])?
+            // A trapezoid mixes its slashes: `[/text\]`.
+            let last = closing.chars().last()?;
+            let close = inner.find(last)?;
+            (close, &inner[close + last.len_utf8()..])
         };
         name = Some(label(inner[..close].trim_end_matches(['/', '\\'])));
-        let after = &inner[close..];
-        rest = after.trim_start_matches([']', ')', '}', '/', '\\']);
+        rest = after;
     }
     if let Some(class) = rest.strip_prefix(":::") {
         rest = class.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '-');
@@ -201,6 +229,10 @@ fn c4_line(line: &str, groups: &mut Vec<String>, d: &mut Diagram) {
         groups.pop();
         return;
     }
+    let first = line.split([' ', ':']).next().unwrap_or_default();
+    if matches!(first, "title" | "accTitle" | "accDescr") {
+        return;
+    }
     let Some((name, args)) = line.split_once('(') else {
         return;
     };
@@ -213,10 +245,12 @@ fn c4_line(line: &str, groups: &mut Vec<String>, d: &mut Diagram) {
         .collect();
     let arg = |i: usize| args.get(i).cloned().filter(|a| !a.is_empty());
     let name = name.trim();
+    // A boundary or deployment node holds what follows up to its `}`.
+    if line.trim_end().ends_with('{') {
+        groups.push(arg(1).or_else(|| arg(0)).unwrap_or_default());
+        return;
+    }
     if name.contains("Boundary") {
-        if line.trim_end().ends_with('{') {
-            groups.push(arg(1).or_else(|| arg(0)).unwrap_or_default());
-        }
         return;
     }
     if name == "Rel" || name == "BiRel" || name.starts_with("Rel_") {
@@ -225,7 +259,14 @@ fn c4_line(line: &str, groups: &mut Vec<String>, d: &mut Diagram) {
                 (Some(l), Some(t)) => Some(format!("{l} [{t}]")),
                 (l, _) => l,
             };
-            relation(d, &from, &to, text, false);
+            if name == "Rel_Back" {
+                relation(d, &to, &from, text, false);
+            } else {
+                relation(d, &from, &to, text.clone(), false);
+                if name == "BiRel" {
+                    relation(d, &to, &from, text, false);
+                }
+            }
         }
         return;
     }
@@ -259,16 +300,23 @@ fn c4_line(line: &str, groups: &mut Vec<String>, d: &mut Diagram) {
 
 /// Arguments split at commas outside quotes, trimmed and unquoted.
 fn split_args(args: &str) -> Vec<String> {
-    let mut out = vec![String::new()];
-    let mut quoted = false;
-    for c in args.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            ',' if !quoted => out.push(String::new()),
-            _ => out.last_mut().expect("one").push(c),
+    split_unquoted(args, ',').into_iter().map(label).collect()
+}
+
+/// `s` split at `sep` outside double quotes.
+fn split_unquoted(s: &str, sep: char) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut from, mut quoted) = (0, false);
+    for (i, c) in s.char_indices() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if c == sep && !quoted {
+            out.push(&s[from..i]);
+            from = i + c.len_utf8();
         }
     }
-    out.iter().map(|a| label(a)).collect()
+    out.push(&s[from..]);
+    out
 }
 
 #[cfg(test)]
@@ -353,8 +401,82 @@ mod tests {
                     RelationKind::Dependency
                 ),
                 ("shop", "mail", Some("Sendet"), RelationKind::Dependency),
+                ("mail", "shop", Some("Sendet"), RelationKind::Dependency),
             ]
         );
+    }
+
+    /// Ids with hyphens and dots, `;` inside quotes, words after brackets
+    /// in a label and accessibility lines read as Mermaid reads them.
+    #[test]
+    fn ids_quotes_and_labels_read_as_mermaid_does() {
+        let d = diagram(
+            "flowchart LR\n  accTitle: Shop\n  accDescr: Wer was nutzt\n  api-gateway --> orders.v2\n  A[\"a; b\"] --> B; B-->C\n  D[Shop (alt) v2] --> E\n",
+        )
+        .expect("a diagram");
+        let ids: Vec<&str> = d.elements.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["api-gateway", "orders.v2", "A", "B", "C", "D", "E"]);
+        assert_eq!(d.elements[2].name, "a; b");
+        assert_eq!(d.elements[5].name, "Shop (alt) v2");
+        let links: Vec<(&str, &str)> = d
+            .relations
+            .iter()
+            .map(|r| (r.from.as_str(), r.to.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("api-gateway", "orders.v2"),
+                ("A", "B"),
+                ("B", "C"),
+                ("D", "E")
+            ]
+        );
+    }
+
+    /// `Rel_Back` points back, `BiRel` both ways; deployment nodes group
+    /// what they hold; a title is no element.
+    #[test]
+    fn c4_relations_point_as_written_and_nodes_group() {
+        let d = diagram(
+            "C4Deployment\n  title MongoDb (prod)\n  Deployment_Node(dc, \"Rechenzentrum\") {\n    Container(app, \"App\")\n  }\n  System_Boundary(b, \"Shop\") {\n    Deployment_Node(k8s, \"Cluster\") {\n      ContainerDb(db, \"DB\")\n    }\n    Container(web, \"Web\")\n  }\n  Rel_Back(app, db, \"liest\")\n  BiRel(app, web, \"spricht\")\n",
+        )
+        .expect("a diagram");
+        let groups: Vec<(&str, Option<&str>)> = d
+            .elements
+            .iter()
+            .map(|e| (e.id.as_str(), e.group.as_deref()))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                ("app", Some("Rechenzentrum")),
+                ("db", Some("Cluster")),
+                ("web", Some("Shop")),
+            ]
+        );
+        let links: Vec<(&str, &str)> = d
+            .relations
+            .iter()
+            .map(|r| (r.from.as_str(), r.to.as_str()))
+            .collect();
+        assert_eq!(links, [("db", "app"), ("app", "web"), ("web", "app")]);
+    }
+
+    /// A label keeps brackets of another kind than its shape's.
+    #[test]
+    fn labels_keep_their_own_brackets() {
+        let d = diagram("flowchart LR\n  A[Shop (alt)] --> B(Liste [neu])\n  C[(Daten (roh))]\n")
+            .expect("a diagram");
+        assert_eq!(
+            names(&d),
+            [
+                ("A", "Shop (alt)", ElementKind::Package),
+                ("B", "Liste [neu]", ElementKind::Package),
+                ("C", "Daten (roh)", ElementKind::Database),
+            ]
+        );
+        assert_eq!(links(&d), [("A", "B", None, RelationKind::Dependency)]);
     }
 
     #[test]
