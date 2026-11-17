@@ -119,6 +119,11 @@ export global RichData {
     callback link(string);
     // "Edit as own text" on the generated blocks of a fixed piece.
     callback take-over(int);
+    // The chapter is read, not edited: no caret, clicks or keys; the
+    // diagrams have their documentation tick.
+    in-out property <bool> reading: true;
+    // That tick on a drawn diagram.
+    callback toggle(string, bool);
 }
 
 component ToolButton inherits Rectangle {
@@ -353,6 +358,7 @@ component RichBlock inherits Rectangle {
     }
     init => { root.report(); }
     TouchArea {
+        enabled: !RichData.reading;
         mouse-cursor: text;
         pointer-event(e) => {
             // Slint takes the focus from an input on a press elsewhere
@@ -392,6 +398,7 @@ component DiagramBlock inherits Rectangle {
     border-width: root.has-caret && RichData.focused ? 2px : 0px;
     border-color: Theme.accent;
     touch := TouchArea {
+        enabled: !RichData.reading;
         clicked => {
             root.pressed();
             RichData.press(item.piece, item.block, 0, 0, false);
@@ -403,8 +410,9 @@ component DiagramBlock inherits Rectangle {
         padding-bottom: 4px;
         if item.figure.id != "": FigureView {
             figure: item.figure;
-            doc: false;
+            doc: RichData.reading;
             preview: true;
+            toggle(id, on) => { RichData.toggle(id, on); }
         }
         if item.figure.id == "": Text {
             text: @tr("The analysis has no such diagram any more; the block keeps its last version.");
@@ -420,7 +428,7 @@ component DiagramBlock inherits Rectangle {
         width: self.preferred-width;
         height: self.preferred-height;
         spacing: 2px;
-        visible: root.has-caret || touch.has-hover || source.hovered || remove.hovered;
+        visible: !RichData.reading && (root.has-caret || touch.has-hover || source.hovered || remove.hovered);
         source := ToolButton {
             label: @tr("Edit as source");
             tip: @tr("Edit the diagram's source as own text; the analysis no longer updates it");
@@ -464,6 +472,7 @@ component FixedFigure inherits Rectangle {
         background: Theme.accent.with-alpha(0.35);
     }
     TouchArea {
+        enabled: !RichData.reading;
         clicked => {
             RichData.press(item.piece, -1, 0, 0, false);
             root.pressed();
@@ -474,8 +483,9 @@ component FixedFigure inherits Rectangle {
         padding-bottom: 4px;
         FigureView {
             figure: item.figure;
-            doc: false;
+            doc: RichData.reading;
             preview: true;
+            toggle(id, on) => { RichData.toggle(id, on); }
         }
     }
 }
@@ -486,8 +496,9 @@ component OwnFigure inherits Rectangle {
     in property <RichItem> item;
     callback pressed();
     border-radius: 12px;
-    background: touch.has-hover || edit.hovered ? Theme.panel-2 : transparent;
+    background: !RichData.reading && (touch.has-hover || edit.hovered) ? Theme.panel-2 : transparent;
     touch := TouchArea {
+        enabled: !RichData.reading;
         clicked => {
             RichData.press(item.piece, item.block, 0, 0, false);
             root.pressed();
@@ -505,7 +516,7 @@ component OwnFigure inherits Rectangle {
     edit := ToolButton {
         x: parent.width - self.width - 12px;
         y: item.top * 1px + 12px;
-        visible: touch.has-hover || self.hovered;
+        visible: !RichData.reading && (touch.has-hover || self.hovered);
         label: @tr("Edit source");
         tip: @tr("Edit the diagram's Mermaid source");
         clicked => {
@@ -523,7 +534,7 @@ component FixedPiece inherits Rectangle {
     callback pressed();
     property <bool> hover: touch.has-hover || take.hovered;
     border-radius: Theme.radius-sm;
-    background: item.generated && root.hover ? Theme.panel-2 : transparent;
+    background: item.generated && root.hover && !RichData.reading ? Theme.panel-2 : transparent;
     if item.generated: Rectangle {
         x: -10px;
         width: 2px;
@@ -534,6 +545,7 @@ component FixedPiece inherits Rectangle {
         for b in item.fixed: ArcBlockView { block: b; }
     }
     touch := TouchArea {
+        enabled: !RichData.reading;
         clicked => {
             RichData.press(item.piece, -1, 0, 0, false);
             root.pressed();
@@ -542,7 +554,7 @@ component FixedPiece inherits Rectangle {
     take := ToolButton {
         x: parent.width - self.width - 4px;
         y: 4px;
-        visible: item.generated && root.hover;
+        visible: item.generated && root.hover && !RichData.reading;
         label: @tr("Edit as own text");
         tip: @tr("Edit as own text; the analysis no longer updates it");
         clicked => {
@@ -560,7 +572,7 @@ export component RichEditor inherits FocusScope {
     // Keys before the input at the caret: moves, deletions, Enter, Tab
     // and shortcuts go to Rust; the rest is typed text.
     capture-key-pressed(e) => {
-        if (RichData.linking) {
+        if (RichData.linking || RichData.reading) {
             return reject;
         }
         if (e.text == Key.LeftArrow) { return RichData.key("left", e.modifiers.shift, e.modifiers.alt, e.modifiers.control) ? accept : reject; }
@@ -591,6 +603,7 @@ export component RichEditor inherits FocusScope {
         width: 240px;
         height: max(RichData.caret-h, 1px);
         single-line: true;
+        read-only: RichData.reading;
         color: Theme.text;
         font-size: Theme.font-body;
         text-cursor-width: 0px;

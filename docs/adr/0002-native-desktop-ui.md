@@ -608,3 +608,14 @@ comparison of the native view against the web view on the same project
   the caret leaving draws it again. Other Mermaid (sequence diagrams,
   subgraphs, styles) and code that is not Mermaid stay source text. The
   layout is the catalogue's, top down; `LR` is not followed.
+  *Changed 2026-11-17:* a chapter opens to read again, asked for by the
+  user (the always open editor was too busy): text and every diagram
+  drawn, no toolbar, caret or hover buttons, and each diagram ArchGuard
+  derives has its "In documentation" tick in place. "Edit" in the
+  chapter's header opens the formatted editor; Save (with changes) and
+  Done close it, Discard too; another chapter opens to read; unsaved
+  changes keep the editor open. A tick changes the open chapter's file at
+  once when the file holds the chapter and it has no unsaved changes: a
+  save takes the diagram block of a diagram ticked off out and puts one
+  ticked on in, as `archguard.toml` now says. This replaces "the chapter
+  is always editable" of 2026-11-16.

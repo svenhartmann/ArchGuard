@@ -78,6 +78,8 @@ type Walk = (Vec<String>, String, String);
 thread_local! {
     /// What the walk through the views found, set on the event loop.
     static OUTCOME: RefCell<Option<Result<Walk, String>>> = const { RefCell::new(None) };
+    /// Edit was clicked; the next step clicks into the editor.
+    static EDITING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The editor was clicked into; the next step types.
     static CLICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The views shown after each click, once clicked.
@@ -114,6 +116,10 @@ fn edit_chapter(ui: &AppWindow) -> Option<Result<String, String>> {
         return None;
     }
     ElementHandle::find_by_element_type_name(ui, "RichBlock").find(|e| e.size().width > 0.0)?;
+    // The chapter opens to read; Edit opens the editor.
+    if !EDITING.replace(true) {
+        return click(ui, "Edit").err().map(Err);
+    }
     // The click places the input at the caret on the event loop's next
     // turn, as between a person's click and key.
     if !CLICKED.replace(true) {

@@ -260,6 +260,17 @@ impl Arc42Files {
         Ok(path)
     }
 
+    /// Whether a file holds chapter `n`.
+    pub fn has_chapter(&self, n: u8) -> bool {
+        match &self.target {
+            Target::File(_) => self
+                .whole
+                .as_deref()
+                .is_some_and(|w| section(w, n).is_some()),
+            Target::Folder(_) => self.chapters.contains_key(&n),
+        }
+    }
+
     /// The file that holds chapter `n`, or that saving it creates.
     pub fn path_of(&self, n: u8) -> PathBuf {
         match &self.target {
@@ -388,9 +399,15 @@ fn complete_diagrams(
     let mut out = text.to_string();
     for (r, id) in diagram_ranges(text).into_iter().rev() {
         if doc.diagrams.iter().any(|d| d.id == id && !d.shown) {
-            // With the line break and blank line it went in with.
+            // With the line break and blank line it went in with; at the
+            // end, with the blank line before it.
             let blank = out[r.end..].len() - out[r.end..].trim_start_matches('\n').len();
-            out.replace_range(r.start..r.end + blank.min(2), "");
+            let start = if r.end + blank == out.len() {
+                out[..r.start].trim_end_matches('\n').len() + 1
+            } else {
+                r.start
+            };
+            out.replace_range(start.min(r.start)..r.end + blank.min(2), "");
         }
     }
     let has = |text: &str, d: &archguard_engine::core::Diagram| {

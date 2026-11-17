@@ -51,6 +51,8 @@ pub struct Rich {
     /// The diagram sections of fixed text last drawn (`items`): taken
     /// over, they become diagram blocks.
     drawn: Vec<(String, String)>,
+    /// Read only: no caret or selection, every own diagram drawn.
+    pub reading: bool,
 }
 
 /// Space above a block and the left edge of its text.
@@ -167,6 +169,7 @@ impl Rich {
             goal: None,
             figures: HashMap::new(),
             drawn: Vec::new(),
+            reading: false,
         }
     }
 
@@ -321,8 +324,18 @@ impl Rich {
         drawn: &[(String, String)],
     ) -> Vec<RichItem> {
         self.drawn = drawn.to_vec();
-        let selection = self.editor.selection();
-        let focus = self.editor.focus;
+        // Reading: a caret in no block.
+        let reading = self.reading;
+        let (selection, focus) = if reading {
+            let nowhere = Caret {
+                piece: usize::MAX,
+                block: 0,
+                at: 0,
+            };
+            (None, nowhere)
+        } else {
+            (self.editor.selection(), self.editor.focus)
+        };
         let pieces: Vec<Result<Vec<Block>, String>> = self
             .editor
             .doc()
@@ -441,7 +454,8 @@ impl Rich {
                 out.push(RichItem {
                     fixed: model(Vec::new()),
                     cells: model(Vec::new()),
-                    empty: len == 0 && block.kind == Kind::Paragraph,
+                    // The hint to write shows only to edit.
+                    empty: len == 0 && block.kind == Kind::Paragraph && !reading,
                     generated: false,
                     piece: p as i32,
                     block: b as i32,
@@ -1018,6 +1032,23 @@ mod tests {
             [(0, String::new()), (4, String::new()), (4, String::new())],
             "the caret in it shows the source"
         );
+    }
+
+    /// Reading draws every own diagram and shows no caret or selection.
+    #[test]
+    fn reading_draws_every_diagram_and_shows_no_caret() {
+        let mut r = rich("Text.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n");
+        r.key("down", false, false, false);
+        r.reading = true;
+        let own = |source: &str| {
+            Some(ArcFigure {
+                id: source.into(),
+                ..Default::default()
+            })
+        };
+        let items = r.items("", &|_| None, &own, &[]);
+        assert_eq!(items.iter().map(|i| i.kind).collect::<Vec<_>>(), [0, 8]);
+        assert!(items.iter().all(|i| !i.caret));
     }
 
     /// A generated block's diagram section is drawn in its place: the
