@@ -570,3 +570,15 @@ comparison of the native view against the web view on the same project
   Markdown" shows it). Fixed with it: every line of a code block shows in
   the editor (all but the last were drawn zero wide). Checked with unit
   tests and headless snapshots of chapters 3 and 5, in English and German.
+  *Changed 2026-11-17:* diagrams of generated text are drawn where their
+  section is in the text (the user missed them once the "Diagrams" section
+  was closed). That section now lists only the chapter's other diagrams
+  (hidden ones, or ones a chapter of own text can take in), open; the
+  interactive package map stays closed until clicked.
+  *Changed 2026-11-17:* every diagram ticked "In documentation" is saved
+  with its chapter, asked for by the user: a save adds each shown diagram
+  of the chapter that is neither in generated text nor a diagram block as
+  a diagram block at the chapter's end (in the `[arc42]` diagram format),
+  and takes out the diagram block of a diagram ticked off. A generated
+  block taken over as own text keeps its diagrams as diagram blocks, so
+  they stay drawn and can each be turned into source or removed.

@@ -184,9 +184,8 @@ fn select_chapter(s: &mut ArchitectureState, ui: &AppWindow, n: i32) {
     s.catalogue = false;
 }
 
-/// Show the editor with the chapter's diagrams: inserted diagram blocks
-/// drawn as figures, shown generated ones left out of fixed text (the
-/// figures above draw them).
+/// Show the editor with the chapter's diagrams drawn in place: inserted
+/// diagram blocks and the diagram sections of generated text.
 fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
     let Ok(doc) = &s.doc else { return };
     let texts = Texts::of(ui);
@@ -194,11 +193,14 @@ fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
         let d = doc.diagrams.iter().find(|d| d.id == id)?;
         Some(figure::figure(d, s.format, String::new(), &texts))
     };
-    let drawn: Vec<String> = doc
+    let drawn: Vec<(String, String)> = doc
         .diagrams
         .iter()
         .filter(|d| d.chapter == s.chapter && d.shown)
-        .map(|d| archguard_engine::report::diagram_section(d, s.format))
+        .map(|d| {
+            let section = archguard_engine::report::diagram_section(d, s.format);
+            (d.id.clone(), section)
+        })
         .collect();
     s.editor.show(ui, &figure, &drawn);
     // Keys change only the editor; the save bar follows its first change.

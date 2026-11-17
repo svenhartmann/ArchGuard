@@ -48,6 +48,9 @@ pub struct Rich {
     goal: Option<f32>,
     /// The drawings of the diagram blocks, by diagram id.
     figures: HashMap<String, ArcFigure>,
+    /// The diagram sections of fixed text last drawn (`items`): taken
+    /// over, they become diagram blocks.
+    drawn: Vec<(String, String)>,
 }
 
 /// Space above a block and the left edge of its text.
@@ -163,6 +166,7 @@ impl Rich {
             laid: HashMap::new(),
             goal: None,
             figures: HashMap::new(),
+            drawn: Vec::new(),
         }
     }
 
@@ -306,14 +310,15 @@ impl Rich {
 
     /// The rows the view draws; `note` is the reader's text under a
     /// diagram it cannot draw, `figure` draws a diagram block's diagram,
-    /// and `drawn` are the diagram sections fixed text leaves out (the view
-    /// draws them above the text, as the reader).
+    /// and `drawn` are the diagram sections (id, Markdown) fixed text
+    /// shows as their drawing, in their place.
     pub fn items(
         &mut self,
         note: &str,
         figure: &dyn Fn(&str) -> Option<ArcFigure>,
-        drawn: &[String],
+        drawn: &[(String, String)],
     ) -> Vec<RichItem> {
+        self.drawn = drawn.to_vec();
         let selection = self.editor.selection();
         let focus = self.editor.focus;
         let pieces: Vec<Result<Vec<Block>, String>> = self
@@ -330,24 +335,44 @@ impl Rich {
         for (p, piece) in pieces.into_iter().enumerate() {
             let blocks = match piece {
                 Err(text) => {
-                    let text = drawn
-                        .iter()
-                        .fold(text, |t, s| t.replacen(s.as_str(), "", 1));
-                    // The chapter heading shows above the editor.
-                    let shown: Vec<markdown::Block> = markdown::parse(&text)
-                        .into_iter()
-                        .filter(|b| {
-                            !matches!(b, markdown::Block::Heading { text, .. } if doc::chapter_number(text))
-                        })
-                        .collect();
-                    if !shown.is_empty() {
-                        out.push(RichItem {
-                            fixed: model(blocks::ui_blocks(&shown, note)),
-                            piece: p as i32,
-                            block: -1,
-                            generated: !doc::generated(&text).is_empty(),
-                            ..Default::default()
-                        });
+                    let generated = !doc::generated(&text).is_empty();
+                    for part in split_drawn(&text, drawn) {
+                        let segment = match part {
+                            Ok(segment) => segment,
+                            Err(id) => {
+                                if !self.figures.contains_key(&id)
+                                    && let Some(f) = figure(&id)
+                                {
+                                    self.figures.insert(id.clone(), f);
+                                }
+                                out.push(RichItem {
+                                    figure: self.figures.get(&id).cloned().unwrap_or_default(),
+                                    piece: p as i32,
+                                    block: -1,
+                                    kind: 7,
+                                    top: 14.0,
+                                    generated,
+                                    ..Default::default()
+                                });
+                                continue;
+                            }
+                        };
+                        // The chapter heading shows above the editor.
+                        let shown: Vec<markdown::Block> = markdown::parse(&segment)
+                            .into_iter()
+                            .filter(|b| {
+                                !matches!(b, markdown::Block::Heading { text, .. } if doc::chapter_number(text))
+                            })
+                            .collect();
+                        if !shown.is_empty() {
+                            out.push(RichItem {
+                                fixed: model(blocks::ui_blocks(&shown, note)),
+                                piece: p as i32,
+                                block: -1,
+                                generated,
+                                ..Default::default()
+                            });
+                        }
                     }
                     continue;
                 }
@@ -800,7 +825,7 @@ impl Rich {
     /// "Edit as own text" on a generated block.
     pub fn take_over(&mut self, piece: usize) {
         self.goal = None;
-        self.editor.take_over(piece);
+        self.editor.take_over(piece, &self.drawn);
     }
 
     pub fn drag(&mut self, piece: usize, block: usize, x: f32, y: f32) {
@@ -827,6 +852,28 @@ fn clipboard_set(text: &str) {
 
 fn clipboard_get() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
+/// `text` cut at the diagram sections of `drawn` (id, Markdown): the text
+/// between them, and each section's id in its place.
+fn split_drawn(text: &str, drawn: &[(String, String)]) -> Vec<Result<String, String>> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some((at, id, len)) = drawn
+        .iter()
+        .filter(|(_, section)| !section.is_empty())
+        .filter_map(|(id, section)| {
+            rest.find(section.as_str())
+                .map(|at| (at, id, section.len()))
+        })
+        .min_by_key(|(at, ..)| *at)
+    {
+        out.push(Ok(rest[..at].to_string()));
+        out.push(Err(id.clone()));
+        rest = &rest[at + len..];
+    }
+    out.push(Ok(rest.to_string()));
+    out
 }
 
 #[cfg(test)]
@@ -905,6 +952,45 @@ mod tests {
         assert!(
             runs[0].y < runs[1].y && runs[1].y < runs[2].y,
             "one below the other"
+        );
+    }
+
+    /// A generated block's diagram section is drawn in its place: the
+    /// text before it, the drawing, the text after it.
+    #[test]
+    fn generated_diagrams_are_drawn_where_their_section_is() {
+        use slint::Model;
+        let section = "### Pakete\n\n```mermaid\nflowchart LR\n```\n";
+        let md = format!(
+            "## 5. Bausteine\n\n<!-- archguard:arc42:05:start -->\nVorher.\n\n{section}\nNachher.\n<!-- archguard:arc42:05:end -->\n\nEigener Text.\n"
+        );
+        let mut r = rich(&md);
+        let figure = |id: &str| {
+            Some(ArcFigure {
+                id: id.into(),
+                ..Default::default()
+            })
+        };
+        let drawn = [("packages".to_string(), section.to_string())];
+        let items = r.items("", &figure, &drawn);
+        let shape: Vec<(i32, usize, String)> = items
+            .iter()
+            .map(|i| (i.kind, i.fixed.row_count(), i.figure.id.to_string()))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (0, 1, String::new()),
+                (7, 0, "packages".into()),
+                (0, 1, String::new()),
+                (0, 0, String::new()),
+            ],
+            "Vorher, the drawing, Nachher, the own text"
+        );
+        assert!(items[1].generated);
+        assert_eq!(
+            split_drawn("abc", &[("x".into(), "zz".into())]),
+            [Ok("abc".to_string())]
         );
     }
 
