@@ -24,7 +24,8 @@ export struct ArcLevelItem {
 }
 
 // kind: 0 source package, 1 direct source nodes, 2 project context,
-// 3 C4 container, 4 C4 database, 5 C4 external container.
+// 3 C4 container, 4 C4 database, 5 C4 external container, 6 a plain box
+// (own Mermaid).
 export struct ArcCard {
     index: int,
     x: float,
@@ -160,7 +161,8 @@ export component Diagram inherits Rectangle {
         // Counts are centred beside the curve; words start beside it.
         x: l.lx * root.zoom * 1px - (l.text != "" ? 0 : self.width / 2);
         y: l.ly * root.zoom * 1px - self.height;
-        text: l.text != "" ? l.text : Fmt.int(l.count);
+        // Own diagrams count nothing.
+        text: l.text != "" ? l.text : l.count > 0 ? Fmt.int(l.count) : "";
         color: l.cycle ? Theme.cycle : Theme.muted;
         font-size: (l.size > 0 ? l.size : 9) * root.zoom * 1px;
         opacity: l.dim ? 0.25 : 1;
@@ -188,7 +190,7 @@ export component Diagram inherits Rectangle {
             border-radius: (c.kind == 3 ? 8px : 2px) * root.zoom;
             border-top-left-radius: (c.kind == 4 ? 18px : c.kind == 3 ? 8px : 2px) * root.zoom;
             border-top-right-radius: self.border-top-left-radius;
-            background: c.kind == 0 || c.kind == 3 || c.kind == 4 ? Theme.panel : Theme.panel-2;
+            background: c.kind == 0 || c.kind == 3 || c.kind == 4 || c.kind == 6 ? Theme.panel : Theme.panel-2;
             border-width: (c.selected ? 2.5px : 1.5px) * root.zoom;
             border-color: c.selected ? Theme.accent : c.cycle ? Theme.cycle : c.kind == 3 ? Theme.accent
                 : c.kind == 4 ? Theme.success : c.kind == 5 ? Theme.muted : Theme.border;
@@ -201,7 +203,7 @@ export component Diagram inherits Rectangle {
             Text {
                 x: 12px * root.zoom;
                 y: (c.kind == 4 ? 20px : 8px) * root.zoom;
-                text: c.tag != "" ? c.tag : c.kind == 0 ? @tr("Source package") : c.kind == 1 ? @tr("Direct source nodes") : @tr("Project context");
+                text: c.tag != "" ? c.tag : c.kind == 6 ? "" : c.kind == 0 ? @tr("Source package") : c.kind == 1 ? @tr("Direct source nodes") : @tr("Project context");
                 color: Theme.muted;
                 font-size: 10px * root.zoom;
             }

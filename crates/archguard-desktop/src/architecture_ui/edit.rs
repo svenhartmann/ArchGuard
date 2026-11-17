@@ -192,6 +192,7 @@ impl Editor {
         &self,
         ui: &AppWindow,
         figure: &dyn Fn(&str) -> Option<ArcFigure>,
+        own: &dyn Fn(&str) -> Option<ArcFigure>,
         drawn: &[(String, String)],
     ) {
         let note = Texts::of(ui)
@@ -210,7 +211,7 @@ impl Editor {
             }
             let rich = e.rich.get_or_insert_with(|| Rich::new(&e.draft));
             rich.set_style(style);
-            let items = rich.items(&note, figure, drawn);
+            let items = rich.items(&note, figure, own, drawn);
             Some((e.draft.clone(), Ok((items, rich.tools()))))
         });
         let Some((draft, shown)) = shown else {

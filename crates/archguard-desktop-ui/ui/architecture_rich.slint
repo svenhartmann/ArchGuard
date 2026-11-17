@@ -52,7 +52,7 @@ export struct RichItem {
     piece: int,
     block: int,
     // 0 paragraph, 1 heading, 2 list entry, 3 quote, 4 code, 5 table
-    // row, 6 diagram block, 7 a diagram of fixed text.
+    // row, 6 diagram block, 7 a diagram of fixed text, 8 own Mermaid drawn.
     kind: int,
     // A diagram block's drawing; an empty id when the analysis lacks it.
     figure: ArcFigure,
@@ -480,6 +480,41 @@ component FixedFigure inherits Rectangle {
     }
 }
 
+// Own Mermaid (kind 8), drawn while the caret is elsewhere. A click puts
+// the caret in its source, which then shows to edit.
+component OwnFigure inherits Rectangle {
+    in property <RichItem> item;
+    callback pressed();
+    border-radius: 12px;
+    background: touch.has-hover || edit.hovered ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        clicked => {
+            RichData.press(item.piece, item.block, 0, 0, false);
+            root.pressed();
+        }
+    }
+    VerticalLayout {
+        padding-top: item.top * 1px;
+        padding-bottom: 4px;
+        FigureView {
+            figure: item.figure;
+            doc: false;
+            preview: true;
+        }
+    }
+    edit := ToolButton {
+        x: parent.width - self.width - 12px;
+        y: item.top * 1px + 12px;
+        visible: touch.has-hover || self.hovered;
+        label: @tr("Edit source");
+        tip: @tr("Edit the diagram's Mermaid source");
+        clicked => {
+            RichData.press(item.piece, item.block, 0, 0, false);
+            root.pressed();
+        }
+    }
+}
+
 // Text the editor keeps as written, as the reader shows it. A click sends
 // the caret to the nearest text to edit. Generated blocks have a thin bar
 // on their left; pointing at them offers to take them over as own text.
@@ -591,7 +626,11 @@ export component RichEditor inherits FocusScope {
                 item: item;
                 pressed => { ime.focus(); }
             }
-            if item.fixed.length == 0 && item.kind != 6 && item.kind != 7: RichBlock {
+            if item.kind == 8: OwnFigure {
+                item: item;
+                pressed => { ime.focus(); }
+            }
+            if item.fixed.length == 0 && item.kind < 6: RichBlock {
                 item: item;
                 origin: root.absolute-position;
                 pressed => { ime.focus(); }

@@ -16,6 +16,24 @@ use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
 
 /// `chapter` names the chapter in the diagram view; empty in a chapter.
 pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts) -> ArcFigure {
+    drawn(d, format, chapter, texts, false)
+}
+
+/// Own Mermaid of a chapter: its nodes as plain boxes, not packages.
+pub fn own(d: &Diagram, texts: &Texts) -> ArcFigure {
+    ArcFigure {
+        source: Default::default(),
+        ..drawn(d, DiagramFormat::Mermaid, String::new(), texts, true)
+    }
+}
+
+fn drawn(
+    d: &Diagram,
+    format: DiagramFormat,
+    chapter: String,
+    texts: &Texts,
+    plain: bool,
+) -> ArcFigure {
     if d.kind == DiagramKind::Sequence {
         return super::sequence::figure(d, source(d, format), chapter, texts);
     }
@@ -43,7 +61,7 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
         .iter()
         .zip(&l.cards)
         .enumerate()
-        .map(|(i, (e, c))| card(i, e, c, framed(e), texts))
+        .map(|(i, (e, c))| card(i, e, c, framed(e), plain, texts))
         .collect();
     let lines: Vec<_> = relations
         .iter()
@@ -117,9 +135,17 @@ fn line_text(kind: RelationKind, texts: &Texts) -> &str {
     }
 }
 
-fn card(i: usize, e: &DiagramElement, c: &diagram::Card, framed: bool, texts: &Texts) -> ArcCard {
+fn card(
+    i: usize,
+    e: &DiagramElement,
+    c: &diagram::Card,
+    framed: bool,
+    plain: bool,
+    texts: &Texts,
+) -> ArcCard {
     let (name1, name2) = diagram::name_lines(&e.name);
     let (kind, what) = match e.kind {
+        ElementKind::Package if plain => (6, ""),
         ElementKind::Package => (0, ""),
         ElementKind::Remainder => (2, texts.t("Further packages")),
         ElementKind::Container => (3, texts.t("Container")),

@@ -15,6 +15,7 @@ mod edit;
 mod figure;
 mod follow;
 mod markdown;
+mod mermaid;
 mod projection;
 mod rich;
 pub mod sequence;
@@ -194,6 +195,7 @@ fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
         let d = doc.diagrams.iter().find(|d| d.id == id)?;
         Some(figure::figure(d, s.format, String::new(), &texts))
     };
+    let own = |source: &str| Some(figure::own(&mermaid::diagram(source)?, &texts));
     let drawn: Vec<(String, String)> = doc
         .diagrams
         .iter()
@@ -203,7 +205,7 @@ fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
             (d.id.clone(), section)
         })
         .collect();
-    s.editor.show(ui, &figure, &drawn);
+    s.editor.show(ui, &figure, &own, &drawn);
     // Keys change only the editor; the save bar follows its first change.
     let d = ui.global::<ArchitectureData>();
     let mut m = d.get_model();

@@ -597,3 +597,14 @@ comparison of the native view against the web view on the same project
   the editor; a start marker without its end no longer swallows the text
   up to the next block of the same diagram; a chapter of a file with
   Windows line ends reads with LF, so its diagrams are not listed twice.
+  *Changed 2026-11-17:* own Mermaid in a chapter is drawn in place, asked
+  for by the user ("they should render outside of editing"): a
+  ```` ```mermaid ```` code block of a flowchart (`flowchart`, `graph`:
+  nodes, shapes, links with and without text, dotted links, chains) or of
+  C4 (`C4Context` and the like: people, systems, containers, databases,
+  relations, boundaries) is read into the catalogue model and drawn with
+  the same layout as the generated diagrams, nodes as plain boxes. A click
+  or "Edit source" puts the caret in it, which shows the source to edit;
+  the caret leaving draws it again. Other Mermaid (sequence diagrams,
+  subgraphs, styles) and code that is not Mermaid stay source text. The
+  layout is the catalogue's, top down; `LR` is not followed.
