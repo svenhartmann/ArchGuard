@@ -103,7 +103,7 @@ component ChapterEditor inherits VerticalLayout {
     spacing: 12px;
     alignment: start;
     // The toolbar and, at its end, the switch to the Markdown source.
-    HorizontalLayout {
+    if !RichData.reading: HorizontalLayout {
         spacing: 10px;
         if ArchitectureData.visual: RichToolbar { horizontal-stretch: 1; }
         if !ArchitectureData.visual: Rectangle { horizontal-stretch: 1; }
@@ -119,8 +119,8 @@ component ChapterEditor inherits VerticalLayout {
             }
         }
     }
-    if ArchitectureData.visual: RichEditor {}
-    if !ArchitectureData.visual && !root.narrow: HorizontalLayout {
+    if ArchitectureData.visual || RichData.reading: RichEditor {}
+    if !ArchitectureData.visual && !RichData.reading && !root.narrow: HorizontalLayout {
         spacing: 18px;
         TextEdit {
             preferred-width: 100px;
@@ -144,7 +144,7 @@ component ChapterEditor inherits VerticalLayout {
             }
         }
     }
-    if !ArchitectureData.visual && root.narrow: VerticalLayout {
+    if !ArchitectureData.visual && !RichData.reading && root.narrow: VerticalLayout {
         spacing: 12px;
         TextEdit {
             height: 360px;
@@ -451,14 +451,35 @@ export component ArchitectureView inherits Rectangle {
                                     text: ArchitectureData.model.chapter-title;
                                     sub: ArchitectureData.model.catalogue ? "" : ArchitectureData.model.file;
                                 }
-                                // Also in a narrow pane; enabled while the chapter has unsaved changes.
-                                if ArchitectureData.model.editing: Button {
+                                // Also in a narrow pane. Edit opens the editor; Save
+                                // (while there are changes) and Done close it.
+                                if ArchitectureData.model.editing && RichData.reading: Button {
+                                    y: 0;
+                                    compact: true;
+                                    primary: true;
+                                    text: @tr("Edit");
+                                    clicked => {
+                                        RichData.reading = false;
+                                        ArchitectureData.visual-changed(ArchitectureData.visual);
+                                    }
+                                }
+                                if ArchitectureData.model.editing && !RichData.reading: Button {
                                     y: 0;
                                     compact: true;
                                     primary: ArchitectureData.model.dirty;
                                     enabled: ArchitectureData.model.dirty;
                                     text: @tr("Save");
                                     clicked => { ArchitectureData.save-edit(); }
+                                }
+                                if ArchitectureData.model.editing && !RichData.reading: Button {
+                                    y: 0;
+                                    compact: true;
+                                    enabled: !ArchitectureData.model.dirty;
+                                    text: @tr("Done");
+                                    clicked => {
+                                        RichData.reading = true;
+                                        ArchitectureData.visual-changed(ArchitectureData.visual);
+                                    }
                                 }
                                 if !root.narrow && !ArchitectureData.model.catalogue: Button { y: 0; compact: true; text: @tr("Download chapter"); clicked => { ArchitectureData.download(false); } }
                                 if !root.narrow: Button { y: 0; compact: true; text: @tr("Download all chapters"); clicked => { ArchitectureData.download(true); } }

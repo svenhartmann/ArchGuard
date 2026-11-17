@@ -201,9 +201,15 @@ impl Editor {
         let d = ui.global::<ArchitectureData>();
         let visual = d.get_visual();
         let style = style(ui);
+        // Unsaved changes stay open to edit.
+        let r = ui.global::<RichData>();
+        if r.get_reading() && self.is_dirty() {
+            r.set_reading(false);
+        }
+        let reading = r.get_reading();
         let shown = self.with_open(|o| {
             let e = o.as_mut()?;
-            if !visual {
+            if !visual && !reading {
                 e.rich = None;
                 let body = blocks::chapter_body(&e.draft, e.chapter, false);
                 let rows = blocks::ui_blocks(&markdown::parse(&body), &note);
@@ -211,6 +217,7 @@ impl Editor {
             }
             let rich = e.rich.get_or_insert_with(|| Rich::new(&e.draft));
             rich.set_style(style);
+            rich.reading = reading;
             let items = rich.items(&note, figure, own, drawn);
             Some((e.draft.clone(), Ok((items, rich.tools()))))
         });
@@ -228,6 +235,16 @@ impl Editor {
                 r.set_tools(tools);
             }
         }
+    }
+
+    /// Draw the chapter anew, its diagrams too (a tick changed them).
+    pub fn redraw(&self) {
+        self.with_open(|o| o.as_mut().map(|e| e.rich = None));
+    }
+
+    /// Whether chapter `n` is in the project's arc42 text.
+    pub fn in_file(&self, n: u8) -> bool {
+        self.files.as_ref().is_some_and(|f| f.has_chapter(n))
     }
 
     /// Keep the edited Markdown; the document is unsaved while it differs.

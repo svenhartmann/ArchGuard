@@ -47,8 +47,12 @@ pub fn wire(ui: &AppWindow) {
     d.on_select_chapter(a.on(select_chapter));
     d.on_open_catalogue(a.on0(|s, _| s.catalogue = true));
     let toggle =
-        a.on(|s, ui, (id, show): (SharedString, bool)| toggle_diagram(s, Some(ui), &id, show));
+        a.on(|s, ui, (id, show): (SharedString, bool)| follow_tick(s, Some(ui), &id, show));
     d.on_toggle_diagram(move |id, show| toggle((id, show)));
+    let toggle =
+        a.on(|s, ui, (id, show): (SharedString, bool)| follow_tick(s, Some(ui), &id, show));
+    ui.global::<RichData>()
+        .on_toggle(move |id, show| toggle((id, show)));
     d.on_insert_diagram(a.on(|s, _, id: SharedString| insert_diagram(s, &id)));
     d.on_draft_changed(tab_support::with_ui(ui, |ui, text: SharedString| {
         crate::documents::with_active_state(|s: &mut ArchitectureState| {
@@ -61,14 +65,19 @@ pub fn wire(ui: &AppWindow) {
     }));
     wire_rich(ui);
     // Errors show in the editor itself.
+    // Saved or discarded, the chapter is read again.
     d.on_save_edit(a.on0(|s, ui| {
         let what = s.editor.label(s.chapter);
         if save_draft(s).is_ok() {
             tab_support::saved_notice(ui, &what);
+            ui.global::<RichData>().set_reading(true);
         }
     }));
     // The push opens the chapter again as it is saved.
-    d.on_cancel_edit(a.on0(|s, _| s.editor.cancel()));
+    d.on_cancel_edit(a.on0(|s, ui| {
+        s.editor.cancel();
+        ui.global::<RichData>().set_reading(true);
+    }));
     d.on_choose_location(a.on(|s, ui, choice: i32| {
         let Ok(doc) = &s.doc else { return };
         if let Some(path) = s.editor.choose(ui, doc, choice) {
@@ -181,9 +190,26 @@ fn select_chapter(s: &mut ArchitectureState, ui: &AppWindow, n: i32) {
         let why = texts.t("Save or discard the changes to this chapter first.");
         s.editor.set_error(why.to_string());
     } else {
+        // Another chapter opens to read.
+        if n != s.chapter {
+            ui.global::<RichData>().set_reading(true);
+        }
         s.chapter = n;
     }
     s.catalogue = false;
+}
+
+/// Tick diagram `id` on or off; the open chapter's file follows at once
+/// (its diagram blocks in or out) when it holds the chapter and the
+/// chapter has no unsaved changes.
+fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show: bool) {
+    toggle_diagram(s, ui, id, show);
+    // A package map level is written off the UI thread; its doc is late.
+    let level = archguard_engine::core::Arc42Config::level_of(id).is_some();
+    if s.figure_error.is_empty() && !level && !s.editor.is_dirty() && s.editor.in_file(s.chapter) {
+        let _ = save_draft(s);
+    }
+    s.editor.redraw();
 }
 
 /// Show the editor with the chapter's diagrams drawn in place: inserted
@@ -585,6 +611,52 @@ mod tests {
         documents::with_state(a, |s: &mut ArchitectureState| {
             assert!(s.hidden.contains(&d.id));
         });
+    }
+
+    /// Ticking a diagram off while reading takes its block out of the
+    /// chapter's file at once, as the tick says.
+    #[test]
+    fn a_tick_off_takes_the_diagram_out_of_the_chapter_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, _) = documents::with_store(|s| s.open(dir.path()));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/py-layers")
+            .canonicalize()
+            .expect("fixture");
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let mut state = build_from(
+            dir.path(),
+            &run.config,
+            run.graph.clone(),
+            &run.report,
+            &calls,
+            archguard_engine::core::DocLang::De,
+        );
+        let doc = state.doc.as_ref().expect("document");
+        let d = doc
+            .diagrams
+            .iter()
+            .find(|d| d.shown && archguard_engine::core::Arc42Config::level_of(&d.id).is_none())
+            .expect("a shown diagram")
+            .clone();
+        let section = archguard_engine::report::diagram_section(&d, state.format);
+        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        let n = d.chapter;
+        let path = dir.path().join("arc42.md");
+        std::fs::write(&path, format!("## {n}. Kapitel\n\nText.\n\n{block}\n")).unwrap();
+        state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
+        state.chapter = n;
+        documents::set_state(a, state);
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            open_editor(s);
+            follow_tick(s, None, &d.id, false);
+        });
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, format!("## {n}. Kapitel\n\nText.\n"));
     }
 
     /// A download goes only where the save dialog points, in one step;
