@@ -376,7 +376,7 @@ impl Rich {
                         let shown: Vec<markdown::Block> = markdown::parse(&segment)
                             .into_iter()
                             .filter(|b| {
-                                !matches!(b, markdown::Block::Heading { level: 2, text } if doc::chapter_number(text))
+                                !matches!(b, markdown::Block::Heading { level: 2, text } if doc::chapter_heading(text))
                             })
                             .collect();
                         if !shown.is_empty() {
