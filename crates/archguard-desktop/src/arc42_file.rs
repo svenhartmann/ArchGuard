@@ -460,12 +460,12 @@ pub fn generated(doc: &Arc42Document, n: u8) -> String {
     }
 }
 
-fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+pub(crate) fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
     std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1))
 }
 
 /// The chapter number of a `## N.` heading line.
-fn heading_number(line: &str) -> Option<u8> {
+pub(crate) fn heading_number(line: &str) -> Option<u8> {
     let rest = line.strip_prefix("## ")?;
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     // `## 5.1 Whitebox` is a section of chapter 5, not its heading.

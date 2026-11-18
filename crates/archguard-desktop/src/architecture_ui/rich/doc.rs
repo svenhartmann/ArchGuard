@@ -270,7 +270,7 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
         };
         match b {
             // The chapter heading (`## 5. Bausteinsicht`) names the chapter.
-            Md::Heading { text, .. } if chapter_number(text) => return None,
+            Md::Heading { level: 2, text } if chapter_heading(text) => return None,
             Md::Heading { level, text } => out.push(block(Kind::Heading(*level), text)),
             Md::Paragraph(text) => out.push(block(Kind::Paragraph, text)),
             Md::Item {
@@ -333,12 +333,22 @@ fn writes_back(block: &Block, md: &str) -> bool {
     if matches!(block.kind, Kind::Cell { .. }) {
         again = again.replace('|', "\\|");
     }
-    again == md.replace('\n', " ") && !md.contains("  \n")
+    let flat = md.replace('\n', " ");
+    let same = again == flat
+        // After `### ` the text starts no block: `1. x` needs no `1\. x`.
+        || matches!(block.kind, Kind::Heading(_)) && {
+            let digits = again.chars().take_while(char::is_ascii_digit).count();
+            again[digits..].starts_with('\\') && {
+                again.remove(digits);
+                again == flat
+            }
+        };
+    same && !md.contains("  \n")
 }
 
-pub fn chapter_number(heading: &str) -> bool {
-    let digits = heading.chars().take_while(char::is_ascii_digit).count();
-    digits > 0 && heading[digits..].starts_with('.')
+/// Whether a level-2 heading with this text names the chapter.
+pub fn chapter_heading(text: &str) -> bool {
+    crate::arc42_file::heading_number(&format!("## {text}")).is_some()
 }
 
 /// Inline Markdown whose source line breaks are spaces, as the reader
@@ -767,5 +777,48 @@ Ende.
             inline: Inline::plain("  "),
         });
         assert_eq!(doc.to_markdown(), "1. a\n2. neu\n3. b\n");
+    }
+
+    /// Only `## N.` names the chapter: numbered sub-headings are own text
+    /// to edit, with the text below them.
+    #[test]
+    fn numbered_sub_headings_stay_editable() {
+        let md = "## 5. Bausteinsicht\n\n### 5.1 Whitebox Gesamtsystem\nText eins.\n\n### 1. Schritt\n\nText zwei.\n";
+        let mut doc = Doc::parse(md, &[]);
+        let blocks: Vec<(Kind, String)> = parts(&mut doc)
+            .iter()
+            .flat_map(|p| p.blocks().iter())
+            .map(|b| (b.kind.clone(), b.inline.text.clone()))
+            .collect();
+        assert_eq!(
+            blocks,
+            [
+                (Kind::Heading(3), "5.1 Whitebox Gesamtsystem".into()),
+                (Kind::Paragraph, "Text eins.".into()),
+                (Kind::Heading(3), "1. Schritt".into()),
+                (Kind::Paragraph, "Text zwei.".into()),
+            ]
+        );
+        assert_eq!(doc.to_markdown(), md);
+        for part in parts(&mut doc) {
+            part.edit();
+        }
+        let written = doc.to_markdown();
+        let mut again = Doc::parse(&written, &[]);
+        let texts = |d: &mut Doc| -> Vec<Vec<Block>> {
+            parts(d).iter().map(|p| p.blocks().to_vec()).collect()
+        };
+        assert_eq!(texts(&mut again), texts(&mut doc), "{written}");
+    }
+
+    /// `## 5.1` is a section of the chapter, not its heading: own text.
+    #[test]
+    fn a_level_two_numbered_section_is_editable() {
+        let md = "## 5. Bausteinsicht\n\n## 5.1 Whitebox\n";
+        let mut doc = Doc::parse(md, &[]);
+        let all = parts(&mut doc);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].blocks()[0].kind, Kind::Heading(2));
+        assert_eq!(all[0].blocks()[0].inline.text, "5.1 Whitebox");
     }
 }

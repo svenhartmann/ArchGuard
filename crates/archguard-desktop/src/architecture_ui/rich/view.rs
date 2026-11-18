@@ -376,7 +376,7 @@ impl Rich {
                         let shown: Vec<markdown::Block> = markdown::parse(&segment)
                             .into_iter()
                             .filter(|b| {
-                                !matches!(b, markdown::Block::Heading { text, .. } if doc::chapter_number(text))
+                                !matches!(b, markdown::Block::Heading { level: 2, text } if doc::chapter_heading(text))
                             })
                             .collect();
                         if !shown.is_empty() {
@@ -971,6 +971,23 @@ mod tests {
             .map(|i| items[2].runs.row_data(i).unwrap().text.to_string())
             .collect();
         assert_eq!(texts, ["Text ", "fett", "."]);
+    }
+
+    /// The reader hides only the chapter heading `## N.`: a numbered
+    /// sub-heading in a block it keeps as written still shows.
+    #[test]
+    fn kept_blocks_show_numbered_sub_headings() {
+        use slint::Model;
+        let md = "## 5. Bausteine\n\n<!-- archguard:arc42:05:start -->\n### 5.1 Whitebox\n\n#### 1. Schritt\n<!-- archguard:arc42:05:end -->\n";
+        let mut r = rich(md);
+        let items = r.items("", &|_| None, &|_| None, &[]);
+        let shown: Vec<String> = items
+            .iter()
+            .flat_map(|i| i.fixed.iter())
+            .map(|b| b.plain.to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(shown, ["5.1 Whitebox", "1. Schritt"]);
     }
 
     /// Every line of a code block is drawn with its text and width; the

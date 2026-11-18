@@ -4,17 +4,14 @@
 use slint::{SharedString, StyledText};
 
 use super::markdown::{self, Align, Block};
+use crate::arc42_file::{heading_number, line_starts};
 use crate::tab_support::model;
 use crate::ui::ArcBlock;
 
 /// The chapter body after its `## N.` heading, as the web's `update()`;
 /// with a derived diagram, chapter 5 drops its Mermaid source.
 pub fn chapter_body(markdown: &str, number: u8, derived: bool) -> String {
-    let marker = format!("## {number}.");
-    let start = line_starts(markdown).find(|&i| {
-        markdown[i..].starts_with(&marker)
-            && markdown[i + marker.len()..].starts_with(char::is_whitespace)
-    });
+    let start = line_starts(markdown).find(|&i| heading_number(&markdown[i..]) == Some(number));
     let mut body = match start {
         None => markdown.to_string(),
         Some(i) => {
@@ -30,16 +27,8 @@ pub fn chapter_body(markdown: &str, number: u8, derived: bool) -> String {
 
 /// Everything before the first `## N.` chapter heading.
 pub fn preamble(markdown: &str) -> &str {
-    let end = line_starts(markdown).find(|&i| {
-        let rest = markdown[i..].strip_prefix("## ").unwrap_or("");
-        let digits = rest.chars().take_while(char::is_ascii_digit).count();
-        digits > 0 && rest[digits..].starts_with('.')
-    });
+    let end = line_starts(markdown).find(|&i| heading_number(&markdown[i..]).is_some());
     &markdown[..end.unwrap_or(markdown.len())]
-}
-
-fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1))
 }
 
 /// `/```mermaid[\s\S]*?```/g` → "".
@@ -220,6 +209,11 @@ mod tests {
     fn preamble_ends_before_the_first_chapter() {
         assert_eq!(preamble(DOC), "# arc42\n\nIntro **x**.\n\n");
         assert_eq!(preamble("no chapters"), "no chapters");
+        // `## 5.1` is a section, not a chapter: the preamble goes on.
+        assert_eq!(
+            preamble("x\n## 5.1 Whitebox\n## 5. B\n"),
+            "x\n## 5.1 Whitebox\n"
+        );
     }
 
     #[test]
