@@ -57,14 +57,17 @@ struct MetaFile {
 
 const META_REL_PATH: &str = ".archguard/dep-meta.json";
 
-/// Directories that never contain first-party manifests.
+/// Directories that never contain first-party manifests; `fixtures` is
+/// test data and `.claude` holds agent worktrees (copies of the project).
 const SKIP_DIRS: &[&str] = &[
     ".archguard",
+    ".claude",
     ".git",
     ".hg",
     ".venv",
     "build",
     "dist",
+    "fixtures",
     "node_modules",
     "out",
     "target",
@@ -604,6 +607,15 @@ version = "1.0.219"
         let inventory = DependencyInventory::default();
         assert_eq!(inventory.total, 0);
         assert_eq!(inventory.stale_count, None, "staleness unknown, not zero");
+    }
+
+    #[test]
+    fn test_fixtures_and_agent_worktrees_are_not_dependencies() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry\"\n";
+        write(dir.path(), "fixtures/demo/Cargo.lock", lock);
+        write(dir.path(), ".claude/worktrees/a/Cargo.lock", lock);
+        assert_eq!(dependency_inventory(dir.path()).total, 0);
     }
 
     #[test]

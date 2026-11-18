@@ -73,6 +73,15 @@ pub(crate) fn run(
     checked
         .findings
         .extend(review_gate_findings(loaded, report));
+    // ADR 0016: the `[licenses]` policy over the lockfiles, likewise about
+    // the current state; an unconfigured section reads no lockfile.
+    let policy = &loaded.config.licenses;
+    if policy.is_active() {
+        let sbom = archguard_engine::sbom(root, policy);
+        checked
+            .findings
+            .extend(archguard_engine::license_findings(&sbom, policy));
+    }
     let paths = if cli.format == crate::args::Format::Sarif {
         match archguard_engine::source_reference_paths(root, &loaded.config) {
             Ok(paths) => paths,
