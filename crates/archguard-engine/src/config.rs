@@ -302,7 +302,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
     for (index, language) in config.project.languages.iter().enumerate() {
         if !matches!(
             language.as_str(),
-            "auto" | "rs" | "ts" | "js" | "py" | "java" | "cs" | "php" | "go" | "kt"
+            "auto" | "rs" | "ts" | "js" | "py" | "java" | "cs" | "php" | "go" | "kt" | "swift"
         ) {
             return Err(invalid(
                 &format!("project.languages[{index}]"),
@@ -851,5 +851,13 @@ mod tests {
                 other => panic!("expected Config error, got {other:?}"),
             }
         }
+    }
+
+    /// Every language id the walk derives is accepted in `project.languages`.
+    #[test]
+    fn swift_is_an_accepted_language() {
+        let mut config = Config::default();
+        config.project.languages = vec!["swift".into()];
+        validate_config(&config).expect("swift is a language id");
     }
 }
