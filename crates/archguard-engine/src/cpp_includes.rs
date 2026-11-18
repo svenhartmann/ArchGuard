@@ -85,7 +85,14 @@ pub(crate) fn cpp_include_dirs(root: &Path, files: &[SourceFile]) -> BTreeSet<St
         .filter(|file| file.lang == Lang::Cpp)
         .peekable();
     match cpp.peek() {
-        Some(_) => include_dirs(root, cpp.map(|file| file.rel_path.as_str())),
+        Some(_) => {
+            let mut warnings = Vec::new();
+            let dirs = include_dirs(root, cpp.map(|file| file.rel_path.as_str()), &mut warnings);
+            for warning in warnings {
+                eprintln!("warning: {warning}");
+            }
+            dirs
+        }
         None => BTreeSet::new(),
     }
 }
@@ -95,13 +102,18 @@ const COMPILE_COMMANDS_LIMIT: u64 = 64 * 1024 * 1024;
 
 /// Root-relative include directories from the build files of the C/C++
 /// sources at `rel_paths`. Build files are read without following symlinks
-/// and only as bounded regular files; unreadable or malformed ones add nothing.
-fn include_dirs<'a>(root: &Path, rel_paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
+/// (except a `compile_commands.json` link into the repository) and only as
+/// bounded regular files; unreadable or malformed ones add nothing.
+fn include_dirs<'a>(
+    root: &Path,
+    rel_paths: impl Iterator<Item = &'a str>,
+    warnings: &mut Vec<String>,
+) -> BTreeSet<String> {
     let base = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut found = BTreeSet::new();
     for dir in ["", "build"] {
         let path = Path::new(dir).join("compile_commands.json");
-        if let Ok(bytes) = read_repo_file(&base, &path, COMPILE_COMMANDS_LIMIT) {
+        if let Some(bytes) = read_compile_commands(&base, &path, warnings) {
             found.extend(compile_commands(
                 &String::from_utf8_lossy(&bytes),
                 &base.join(dir),
@@ -125,6 +137,36 @@ fn include_dirs<'a>(root: &Path, rel_paths: impl Iterator<Item = &'a str>) -> BT
         .iter()
         .filter_map(|dir| relative(&base, dir))
         .collect()
+}
+
+/// The `compile_commands.json` at `path`. A symlink to a file inside `base`
+/// (the clangd setup `-> cmake-build-debug/…`) is read by its target's
+/// root-relative path. A symlink out of the repository and an oversized
+/// file go to `warnings`; a missing or otherwise unreadable one does not.
+fn read_compile_commands(base: &Path, path: &Path, warnings: &mut Vec<String>) -> Option<Vec<u8>> {
+    let shown = path.to_string_lossy().replace('\\', "/");
+    let path = if std::fs::symlink_metadata(base.join(path))
+        .ok()?
+        .is_symlink()
+    {
+        let Some(target) = relative(base, &base.join(path)) else {
+            warnings.push(format!(
+                "{shown} is a symlink outside the repository; not read"
+            ));
+            return None;
+        };
+        PathBuf::from(target)
+    } else {
+        path.to_path_buf()
+    };
+    let bytes = read_repo_file(base, &path, COMPILE_COMMANDS_LIMIT);
+    let large = std::fs::symlink_metadata(base.join(&path))
+        .is_ok_and(|m| m.is_file() && m.len() > COMPILE_COMMANDS_LIMIT);
+    if bytes.is_err() && large {
+        let mib = COMPILE_COMMANDS_LIMIT / (1024 * 1024);
+        warnings.push(format!("{shown} exceeds {mib} MiB; not read"));
+    }
+    bytes.ok()
 }
 
 /// `dir` as a root-relative `/`-joined path, `None` outside the root.
@@ -343,12 +385,59 @@ mod tests {
         let (send, receive) = std::sync::mpsc::channel();
         let scanned = root_dir.clone();
         std::thread::spawn(move || {
-            send.send(include_dirs(&scanned, ["src/a.cpp"].into_iter()))
-                .unwrap();
+            let mut warnings = Vec::new();
+            let dirs = include_dirs(&scanned, ["src/a.cpp"].into_iter(), &mut warnings);
+            send.send((dirs, warnings)).unwrap();
         });
-        let dirs = receive
+        let (dirs, warnings) = receive
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("a FIFO build file must not block the scan");
         assert!(dirs.is_empty(), "{dirs:?}");
+        assert_eq!(
+            warnings,
+            ["compile_commands.json is a symlink outside the repository; not read"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_compile_commands_symlink_into_the_repository_is_read() {
+        let root = tempfile::tempdir().unwrap();
+        let root_dir = root.path().canonicalize().unwrap();
+        fs::create_dir_all(root_dir.join("inc")).unwrap();
+        fs::create_dir_all(root_dir.join("cmake-build-debug")).unwrap();
+        let commands = format!(
+            r#"[{{"directory": "{}", "arguments": ["-Iinc"]}}]"#,
+            root_dir.display()
+        );
+        fs::write(
+            root_dir.join("cmake-build-debug/compile_commands.json"),
+            commands,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "cmake-build-debug/compile_commands.json",
+            root_dir.join("compile_commands.json"),
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        let dirs = include_dirs(&root_dir, ["a.cpp"].into_iter(), &mut warnings);
+        assert_eq!(dirs, BTreeSet::from(["inc".to_string()]));
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn an_oversized_compile_commands_is_reported() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("build")).unwrap();
+        let file = fs::File::create(root.path().join("build/compile_commands.json")).unwrap();
+        file.set_len(COMPILE_COMMANDS_LIMIT + 1).unwrap();
+        let mut warnings = Vec::new();
+        let dirs = include_dirs(root.path(), ["a.cpp"].into_iter(), &mut warnings);
+        assert!(dirs.is_empty(), "{dirs:?}");
+        assert_eq!(
+            warnings,
+            ["build/compile_commands.json exceeds 64 MiB; not read"]
+        );
     }
 }
