@@ -23,9 +23,9 @@ def host_target():
     raise unittest.SkipTest('install.sh test runs on macOS and Linux')
 
 
-def fake_desktop(directory, corrupt=False):
-    """Adds the host's desktop package and SHA256SUMS-desktop; returns the installed path."""
-    target = host_target()
+def fake_desktop(directory, corrupt=False, target=None):
+    """Adds the target's desktop package and SHA256SUMS-desktop; returns the installed path."""
+    target = target or host_target()
     if target.endswith('apple-darwin'):
         package = directory / f'ArchGuard-{VERSION}-{target}.dmg'
         stage = directory / 'stage'
@@ -34,19 +34,17 @@ def fake_desktop(directory, corrupt=False):
         subprocess.run(['hdiutil', 'create', '-quiet', '-volname', 'ArchGuard', '-srcfolder', str(stage),
                         '-fs', 'HFS+', '-format', 'UDZO', '-ov', str(package)], check=True)
         installed = 'apps/ArchGuard.app/Contents/marker'
-    elif target.startswith('x86_64'):
-        package = directory / f'ArchGuard-{VERSION}-x86_64-unknown-linux-gnu.AppImage'
+    elif target.endswith('-linux-musl'):
+        package = directory / f'ArchGuard-{VERSION}-{target.removesuffix("-musl")}-gnu.AppImage'
         package.write_text(VERSION)
         installed = 'bin/archguard-desktop'
-    else:
-        raise unittest.SkipTest('no desktop package for ' + target)
     digest = '0' * 64 if corrupt else hashlib.sha256(package.read_bytes()).hexdigest()
     (directory / 'SHA256SUMS-desktop').write_text(f'{digest}  {package.name}\n')
     return installed
 
 
-def fake_release(directory, corrupt=False):
-    target = host_target()
+def fake_release(directory, corrupt=False, target=None):
+    target = target or host_target()
     stem = f'archguard-{VERSION}-{target}'
     binary = b'#!/bin/sh\necho "archguard ' + VERSION.encode() + b'"\n'
     archive = directory / f'{stem}.tar.gz'
@@ -61,12 +59,12 @@ def fake_release(directory, corrupt=False):
 
 
 class InstallScriptTest(unittest.TestCase):
-    def run_install(self, corrupt=False, desktop=None, **extra):
+    def run_install(self, corrupt=False, desktop=None, target=None, **extra):
         root = Path(tempfile.mkdtemp())
         release, bindir = root / 'release', root / 'bin'
         release.mkdir()
-        fake_release(release, corrupt)
-        self.desktop = root / fake_desktop(release, desktop == 'corrupt') if desktop else None
+        fake_release(release, corrupt, target)
+        self.desktop = root / fake_desktop(release, desktop == 'corrupt', target) if desktop else None
         env = dict(os.environ, ARCHGUARD_VERSION=VERSION,
                    ARCHGUARD_DOWNLOAD_URL=release.as_uri(),
                    ARCHGUARD_INSTALL_DIR=str(bindir),
@@ -101,6 +99,16 @@ class InstallScriptTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('checksum mismatch', result.stderr)
         self.assertFalse(self.desktop.exists())
+
+    def test_installs_the_aarch64_linux_appimage(self):
+        # A fake uname on PATH makes install.sh see Linux on ARM64 on any Unix host.
+        fake = Path(tempfile.mkdtemp())
+        (fake / 'uname').write_text('#!/bin/sh\ncase "$1" in -m) echo aarch64 ;; *) echo Linux ;; esac\n')
+        (fake / 'uname').chmod(0o755)
+        result, _ = self.run_install(desktop='ok', target='aarch64-unknown-linux-musl',
+                                     PATH=f'{fake}{os.pathsep}{os.environ["PATH"]}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.desktop.read_text(), VERSION)
 
     def test_desktop_opt_out(self):
         result, binary = self.run_install(desktop='ok', ARCHGUARD_DESKTOP='0')

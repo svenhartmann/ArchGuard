@@ -104,7 +104,8 @@ echo "Installed $INSTALL_DIR/$binary"
 install_desktop() {
     case "$target" in
         *apple-darwin) package="ArchGuard-$version-$target.dmg" ;;
-        x86_64-unknown-linux-musl) package="ArchGuard-$version-x86_64-unknown-linux-gnu.AppImage" ;;
+        # The CLI is musl, the desktop AppImage is glibc-based.
+        *-unknown-linux-musl) package="ArchGuard-$version-${target%-musl}-gnu.AppImage" ;;
         *windows*) package="ArchGuard-$version-$target.zip" ;;
         *) echo "No desktop app for $target; skipped."; return 0 ;;
     esac
