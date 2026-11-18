@@ -122,7 +122,8 @@ impl Doc {
             .map(|(r, blocks)| {
                 // A quote without text gives no block: a part needs one
                 // for the caret.
-                let editable = editable(&blocks).filter(|b| !b.is_empty() && !locked(&r));
+                let editable = editable(&blocks)
+                    .filter(|b| !b.is_empty() && !locked(&r) && !as_written(&md[r.clone()], &blocks));
                 (r, editable)
             })
             .collect();
@@ -324,6 +325,13 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
         }
     }
     faithful.then_some(out)
+}
+
+/// Whether chunk `source` holds Markdown its `blocks` lose: a comment
+/// outside fenced code (the reader drops it).
+fn as_written(source: &str, blocks: &[Md]) -> bool {
+    let code = matches!(blocks, [Md::Code { .. }]);
+    !code && (source.contains("<!--") || source.contains("-->"))
 }
 
 /// Whether `block`, read from `md`, writes it back (line breaks as
@@ -863,5 +871,33 @@ Ende.
             );
             assert_eq!(doc.to_markdown(), md);
         }
+    }
+
+    /// Edit the first part's first block; every other byte stays.
+    fn edit_first(md: &str) -> String {
+        let mut doc = Doc::parse(md, &[]);
+        assert_eq!(doc.to_markdown(), md, "untouched");
+        parts(&mut doc)[0].edit()[0].inline = Inline::plain("Neu.");
+        doc.to_markdown()
+    }
+
+    /// The reader drops comments; a block with a comment beside its text
+    /// stays as written, else an edit elsewhere in its part deletes it.
+    #[test]
+    fn comments_beside_text_survive_an_edit_elsewhere() {
+        let kept = [
+            "Ein Satz. <!-- TODO Quelle -->",
+            "- a <!-- x -->",
+            "### Titel <!-- {#a} -->",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n\nLetzter.\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        // The end of a comment begun on the line before stays too.
+        let md = "<!-- a\nb --> Text\n\nLetzter.\n";
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let last = all.last_mut().unwrap().edit().last_mut().unwrap();
+        last.inline = Inline::plain("Neu.");
+        assert_eq!(doc.to_markdown(), md.replace("Letzter.", "Neu."));
     }
 }
