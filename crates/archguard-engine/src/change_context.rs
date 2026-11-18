@@ -374,7 +374,8 @@ fn nul_fields(bytes: &[u8]) -> Result<Vec<&str>, ArchguardError> {
 /// filter driver, text converter or filesystem-monitor hook. Bound both time
 /// and output.
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
-    const LIMIT: u64 = 4 * 1024 * 1024;
+    // A repo-wide reformat lists ~60k paths (several MiB); stay bounded anyway.
+    const LIMIT: u64 = 64 * 1024 * 1024;
     let output = tempfile::NamedTempFile::new()?;
     let mut command = Command::new("git");
     command
@@ -401,7 +402,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         command.env_remove(key);
     }
     let mut child = command.spawn()?;
-    let bound = Duration::from_secs(10);
+    let bound = Duration::from_secs(60);
     let status = match crate::go_calls::wait(&mut child, &[output.path()], bound, LIMIT) {
         Ok(status) => status,
         Err(crate::go_calls::Stop::Failed(error)) => return Err(error.into()),
@@ -413,7 +414,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
         ));
     }
     if output.as_file().metadata()?.len() > LIMIT {
-        return Err(invalid("Git context listing exceeds 4 MiB."));
+        return Err(invalid("Git context listing exceeds 64 MiB."));
     }
     use std::io::{Seek, SeekFrom};
     let mut output = output.into_file();
@@ -421,7 +422,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
     let mut bytes = vec![];
     output.take(LIMIT + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > LIMIT {
-        return Err(invalid("Git context listing exceeds 4 MiB."));
+        return Err(invalid("Git context listing exceeds 64 MiB."));
     }
     Ok(bytes)
 }
@@ -651,6 +652,29 @@ mod tests {
                 .iter()
                 .any(|row| row.to_string().contains("right/"))
         );
+    }
+    #[test]
+    fn git_listing_larger_than_four_mib_is_accepted() {
+        // A repo-wide change (e.g. a reformat) lists tens of thousands of
+        // paths; here ~5,200 paths of ~850 bytes exceed 4 MiB of output.
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("keep.txt"), "baseline").unwrap();
+        git(repo.path(), &["init", "--quiet", "--template="]);
+        git(repo.path(), &["add", "keep.txt"]);
+        git(repo.path(), &["commit", "--quiet", "-m", "baseline"]);
+        let dir = ["a", "b", "c"]
+            .iter()
+            .fold(repo.path().to_path_buf(), |path, c| {
+                path.join(c.repeat(200))
+            });
+        fs::create_dir_all(&dir).unwrap();
+        let stem = "f".repeat(240);
+        for index in 0..5_200 {
+            fs::write(dir.join(format!("{stem}{index}.txt")), "").unwrap();
+        }
+        let root = repo.path().canonicalize().unwrap();
+        let selection = changed_files(&root, "HEAD").unwrap();
+        assert_eq!(selection.files.len(), 5_200);
     }
 
     #[test]
