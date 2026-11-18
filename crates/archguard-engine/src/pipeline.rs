@@ -68,7 +68,7 @@ use archguard_core::{
 };
 use archguard_extract::{
     DeclMap, Declaration, Lang, RawImport, SourceFile, SymbolTarget, TargetSpec, parse_psr4,
-    resolve_relative, walk,
+    resolve_relative, strip_root, walk,
 };
 
 /// `schema_version` of the emitted [`Report`] (Kap. 5).
@@ -168,7 +168,7 @@ pub(crate) fn build_graph_included(
         .flat_map(|file| file.extraction.declarations.clone())
         .collect();
     declarations.extend(psr4_declarations(root, &scanned)?);
-    let indexes = Indexes::new(&scanned, &declarations);
+    let indexes = Indexes::new(&scanned, &declarations, &config.project.source_roots);
 
     // ---- Kap. 6 step 6: one file node (plus ancestor modules) per file.
     let mut builder = GraphBuilder::new();
@@ -297,7 +297,7 @@ fn resolve_imports(
             indexes.resolve(raw_import, file, node_of, builder)
         } else {
             let same = |m: &str| Some(m.to_string());
-            resolve_target(raw_import, index, node_of, builder, file.lang, &same)
+            resolve_target(raw_import, index, node_of, builder, file, &same)
         };
         let Some(to) = resolved else {
             // A dotted name in code may be a member access, not a dependency;
@@ -597,7 +597,7 @@ pub(super) struct Indexes<'a> {
 impl<'a> Indexes<'a> {
     /// A Java import cannot bind a C# file merely because its namespace
     /// matches; JavaScript and TypeScript intentionally share one.
-    fn new(scanned: &'a [ScannedFile], declarations: &[Declaration]) -> Self {
+    fn new(scanned: &'a [ScannedFile], declarations: &[Declaration], roots: &[String]) -> Self {
         let mut by_scope = BTreeMap::new();
         let families: BTreeSet<&'static str> =
             scanned.iter().map(|f| import_family(f.lang)).collect();
@@ -617,7 +617,10 @@ impl<'a> Indexes<'a> {
                     .filter(|file| scope.as_ref().is_none_or(|prefix| &file.prefix == prefix))
                     .map(|file| file.stripped.clone())
                     .collect();
-                by_scope.insert((family, scope), ImportIndex::new(&paths, declarations));
+                by_scope.insert(
+                    (family, scope),
+                    ImportIndex::new(&paths, declarations, roots),
+                );
             }
         }
         let mut declared_in: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -673,8 +676,8 @@ impl<'a> Indexes<'a> {
                 _ => None,
             }
         };
-        resolve_target(raw_import, own, node_of, builder, file.lang, &local)
-            .or_else(|| resolve_target(raw_import, global, node_of, builder, file.lang, &anywhere))
+        resolve_target(raw_import, own, node_of, builder, file, &local)
+            .or_else(|| resolve_target(raw_import, global, node_of, builder, file, &anywhere))
     }
 
     /// Families whose files are named after a declared package or namespace.
@@ -692,6 +695,8 @@ impl<'a> Indexes<'a> {
 }
 
 struct ImportIndex {
+    /// The source roots the indexed paths are stripped of.
+    roots: Vec<String>,
     declarations: DeclMap,
     stems: BTreeMap<String, Vec<String>>,
     dirs: BTreeSet<String>,
@@ -699,7 +704,7 @@ struct ImportIndex {
 impl ImportIndex {
     /// The index of one import family over its stripped `paths`, binding
     /// only the `declarations` made in those files.
-    fn new(paths: &[String], declarations: &[Declaration]) -> Self {
+    fn new(paths: &[String], declarations: &[Declaration], roots: &[String]) -> Self {
         let path_set: HashSet<&str> = paths.iter().map(String::as_str).collect();
         let local: Vec<_> = declarations
             .iter()
@@ -720,6 +725,7 @@ impl ImportIndex {
             }
         }
         ImportIndex {
+            roots: roots.to_vec(),
             declarations: DeclMap::new(&local, paths),
             stems,
             dirs,
@@ -788,6 +794,21 @@ fn resolve_python(
         })
 }
 
+/// The stripped stem a `Path` spec names and its `index` stem. A `./` or
+/// `../` spec climbs the real tree, so it may cross into another source root.
+fn path_stems(spec: &str, file: &ScannedFile, roots: &[String]) -> Option<(String, String)> {
+    if !matches!(spec.split('/').next(), Some("." | "..")) {
+        let resolved = resolve_relative(&file.stripped, spec)?;
+        let indexed = format!("{resolved}/index");
+        return Some((resolved, indexed));
+    }
+    let real = resolve_relative(&file.rel_path, spec)?;
+    Some((
+        strip_root(&real, roots),
+        strip_root(&format!("{real}/index"), roots),
+    ))
+}
+
 /// Resolve one raw import to the graph node its edge ends at, `None`
 /// when the target is external (the caller warns and drops the edge).
 /// `module_node` names the pseudo node of a symbolic module target, `None`
@@ -797,14 +818,14 @@ fn resolve_target(
     index: &ImportIndex,
     node_of: &HashMap<String, NodeId>,
     builder: &mut GraphBuilder,
-    lang: &str,
+    file: &ScannedFile,
     module_node: &dyn Fn(&str) -> Option<String>,
 ) -> Option<NodeId> {
+    let lang = file.lang;
     let (decl_map, stem_files, known_dirs) = (&index.declarations, &index.stems, &index.dirs);
     match &raw_import.target {
         TargetSpec::Path(spec) => {
-            let resolved = resolve_relative(&raw_import.source, spec)?;
-            let indexed = format!("{resolved}/index");
+            let (resolved, indexed) = path_stems(spec, file, &index.roots)?;
             let found = stem_files.get(&resolved).or_else(|| {
                 matches!(lang, "js" | "ts")
                     .then(|| stem_files.get(&indexed))
