@@ -515,30 +515,14 @@ mod tests {
     /// viewer.
     #[test]
     fn build_writes_the_document_and_derives_maps() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        let state = build_from(
-            &root,
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        );
+        let state = state::fixture_state(None);
         let doc = state.doc.as_ref().expect("arc42 document");
         assert_eq!(doc.chapters.len(), 12);
         assert_eq!(state.chapter, 5);
         assert_eq!(derived(&state, 5), Some(Kind::Dependencies));
         assert_eq!(derived(&state, 11), Some(Kind::Cycles));
         assert_eq!(derived(&state, 1), None);
-        assert_eq!(state.deps.len(), run.graph.edges.len());
+        assert_eq!(state.deps.len(), state.graph.edges.len());
     }
 
     /// Save in the close or quit prompt with Settings also unsaved writes
@@ -549,24 +533,8 @@ mod tests {
         let old = crate::arc42_file::tests::doc("Old");
         std::fs::write(dir.path().join("arc42.md"), old.markdown(None)).unwrap();
         let (a, _) = documents::with_store(|s| s.open(dir.path()));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
         // The fixture's analysis, but the arc42 text of the temporary project.
-        let mut state = build_from(
-            dir.path(),
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        );
+        let mut state = state::fixture_state(Some(dir.path()));
         state.doc = Ok(old);
         state.editor.doc = a;
         documents::set_state(a, state);
@@ -595,23 +563,7 @@ mod tests {
         String,
     ) {
         let (a, _) = documents::with_store(|s| s.open(dir));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        let state = build_from(
-            dir,
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        );
+        let state = state::fixture_state(Some(dir));
         let doc = state.doc.as_ref().expect("document");
         let d = doc
             .diagrams
@@ -674,23 +626,7 @@ mod tests {
     fn a_diagram_removed_from_its_chapter_is_hidden_on_save() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (a, _) = documents::with_store(|s| s.open(dir.path()));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        let mut state = build_from(
-            dir.path(),
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        );
+        let mut state = state::fixture_state(Some(dir.path()));
         let doc = state.doc.as_ref().expect("document");
         let d = doc
             .diagrams
@@ -762,23 +698,7 @@ mod tests {
     fn a_tick_off_takes_the_diagram_out_of_the_chapter_file() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (a, _) = documents::with_store(|s| s.open(dir.path()));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        let mut state = build_from(
-            dir.path(),
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        );
+        let mut state = state::fixture_state(Some(dir.path()));
         let doc = state.doc.as_ref().expect("document");
         let d = doc
             .diagrams

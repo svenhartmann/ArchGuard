@@ -1,7 +1,7 @@
 //! Block parser for the Markdown the arc42 exporter writes; a port of the
 //! web viewer's `arc42Markdown` and `arc42Inline` (viewer_architecture.js).
 //! Inline markup stays Markdown source: the window renders it with Slint's
-//! `StyledText`; [`plain`] gives the text without markup.
+//! `StyledText`; `rich::inline` reads it as text with marks.
 
 /// Column alignment of a table cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,76 +368,6 @@ pub(super) fn cells(line: &str) -> Vec<String> {
     out
 }
 
-/// The text of inline Markdown without markup (escapes, code, emphasis,
-/// links, images as their alt text and the five entities resolved).
-// shortcut: a second reader beside `rich::inline`, which uses this module's
-// block helpers (calling it is a file cycle); merge once those move out.
-pub fn plain(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let c: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < c.len() {
-        // A link reads as its label, an image as its alt text.
-        let image = usize::from(c[i] == '!');
-        i = match link(&c, i + image) {
-            Some((mid, end)) => {
-                out.push_str(&plain(&c[i + 1 + image..mid].iter().collect::<String>()));
-                end + 1
-            }
-            None => plain_token(&c, i, &mut out),
-        };
-    }
-    out
-}
-
-fn plain_token(c: &[char], i: usize, out: &mut String) -> usize {
-    let close = |from: usize, end: &str| -> Option<usize> {
-        let end: Vec<char> = end.chars().collect();
-        (from..c.len()).find(|&k| c[k..].starts_with(&end))
-    };
-    match c[i] {
-        '\\' if c.get(i + 1).is_some_and(|n| n.is_ascii_punctuation()) => {
-            out.push(c[i + 1]);
-            return i + 2;
-        }
-        '`' => {
-            if let Some(end) = close(i + 1, "`").filter(|&e| e > i + 1) {
-                out.extend(&c[i + 1..end]);
-                return end + 1;
-            }
-        }
-        '*' if c.get(i + 1) == Some(&'*') => {
-            if let Some(end) = close(i + 2, "**").filter(|&e| e > i + 2) {
-                out.push_str(&plain(&c[i + 2..end].iter().collect::<String>()));
-                return end + 2;
-            }
-        }
-        '*' => {
-            if let Some(end) = close(i + 1, "*").filter(|&e| e > i + 1) {
-                out.push_str(&plain(&c[i + 1..end].iter().collect::<String>()));
-                return end + 1;
-            }
-        }
-        '&' => {
-            for (name, ch) in [
-                ("amp;", '&'),
-                ("lt;", '<'),
-                ("gt;", '>'),
-                ("quot;", '"'),
-                ("apos;", '\''),
-            ] {
-                if c[i + 1..].starts_with(&name.chars().collect::<Vec<_>>()) {
-                    out.push(ch);
-                    return i + 1 + name.len();
-                }
-            }
-        }
-        _ => {}
-    }
-    out.push(c[i]);
-    i + 1
-}
-
 /// `[label](target)` at `c[i]`: where the label ends (`]`) and the link
 /// (`)`). Balanced parentheses belong to the target (CommonMark).
 pub(super) fn link(c: &[char], i: usize) -> Option<(usize, usize)> {
@@ -707,21 +637,6 @@ mod tests {
         assert_eq!(blocks[0], para("intro"));
         assert!(matches!(blocks[1], Block::Item { .. }));
         assert!(matches!(blocks[2], Block::Table { .. }));
-    }
-
-    #[test]
-    fn plain_text_drops_inline_markup() {
-        assert_eq!(
-            plain(
-                "Quelle: `architecture.goals` **fett** *kursiv* [arc42](https://arc42.org/) a\\_b &amp; c"
-            ),
-            "Quelle: architecture.goals fett kursiv arc42 a_b & c"
-        );
-        assert_eq!(plain("2 * 3 and `"), "2 * 3 and `");
-        assert_eq!(
-            plain("[the spec](https://example.com/a_(b)) ![logo](img/logo.png)"),
-            "the spec logo"
-        );
     }
 
     #[test]

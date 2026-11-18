@@ -204,8 +204,6 @@ pub(super) fn toggle_diagram(
         }
         s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
-        // The next rewrite (a language switch) keeps it.
-        s.config.arc42.hidden_diagrams = s.hidden.clone();
     }
 }
 
@@ -302,36 +300,38 @@ pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<us
     };
 }
 
+/// The tab state of the small layered fixture `py-layers`; with `dir`, its
+/// analysis but the arc42 text of the project `dir`.
+#[cfg(test)]
+pub(super) fn fixture_state(dir: Option<&Path>) -> ArchitectureState {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/py-layers")
+        .canonicalize()
+        .expect("fixture");
+    let loaded = archguard_engine::load_config(None, &root).expect("config");
+    let run = archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+        .expect("analysis");
+    let calls = archguard_engine::analyze_calls(&root, &run.config);
+    build_from(
+        dir.unwrap_or(&root),
+        &run.config,
+        run.graph,
+        &run.report,
+        &calls,
+        DocLang::De,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use archguard_engine::report::diagram_section;
 
-    fn fixture() -> ArchitectureState {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        build_from(
-            &root,
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            DocLang::De,
-        )
-    }
-
     /// Two ticks in quick succession whose first write finishes last,
     /// another project tab active meanwhile, then a re-analysis.
     #[test]
     fn only_the_newest_rewrite_lands_in_its_document_active_or_not() {
-        let mut state = fixture();
+        let mut state = fixture_state(None);
         let (a, _) = documents::with_store(|s| s.open(&state.root));
         state.editor.doc = a;
         rewrite(&mut state, None);
@@ -357,7 +357,7 @@ mod tests {
         assert!(!deliver(a, older, written("older")), "older, finished last");
         assert_eq!(scope().as_deref(), Some("newer"));
         // A re-analysis builds the state again.
-        let mut rebuilt = fixture();
+        let mut rebuilt = fixture_state(None);
         rebuilt.editor.doc = a;
         documents::set_state(a, rebuilt);
         assert!(!deliver(a, newer, written("stale")), "started before it");
@@ -368,7 +368,7 @@ mod tests {
     /// the rewrite's document, written before the tick, arrives.
     #[test]
     fn a_rewrite_finished_after_a_tick_keeps_the_tick() {
-        let mut state = fixture();
+        let mut state = fixture_state(None);
         rewrite(&mut state, None);
         let number = state.write;
         let before = state.doc.clone().expect("document");

@@ -154,11 +154,9 @@ fn notes(texts: &Texts, chapter: i32) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use slint::{Model, ModelRc};
 
-    use super::super::state::build_from;
+    use super::super::state::fixture_state;
     use super::super::sync::keep;
     use super::*;
     use crate::ui::ArcBlock;
@@ -177,27 +175,6 @@ mod tests {
         let de = Texts::german();
         let level = notes(&de, 10);
         assert!(level.starts_with("ACD (Modulebene)"), "{level}");
-    }
-
-    /// The tab state of a small layered fixture of this repository.
-    fn state() -> ArchitectureState {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/py-layers")
-            .canonicalize()
-            .expect("fixture");
-        let loaded = archguard_engine::load_config(None, &root).expect("config");
-        let run =
-            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
-                .expect("analysis");
-        let calls = archguard_engine::analyze_calls(&root, &run.config);
-        build_from(
-            &root,
-            &run.config,
-            run.graph.clone(),
-            &run.report,
-            &calls,
-            archguard_engine::core::DocLang::De,
-        )
     }
 
     fn built(s: &ArchitectureState) -> ArchitectureModel {
@@ -230,7 +207,7 @@ mod tests {
     /// map lists) and leaves them equal to a fresh build of the new state.
     #[test]
     fn a_push_keeps_the_shown_models() {
-        let mut s = state();
+        let mut s = fixture_state(None);
         let old = built(&s);
         assert!(old.map.cards.row_count() > 0, "chapter 5 draws its map");
         let chapter5 = blocks(&old.blocks);
@@ -254,7 +231,7 @@ mod tests {
     /// The diagram view keeps its figures and their drawings across pushes.
     #[test]
     fn figures_keep_their_drawings() {
-        let mut s = state();
+        let mut s = fixture_state(None);
         s.catalogue = true;
         let old = built(&s);
         assert!(old.figures.row_count() > 1, "the catalogue lists diagrams");
