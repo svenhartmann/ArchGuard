@@ -6,7 +6,7 @@ use archguard_engine::core::{Finding, FindingKind, Report, Severity};
 /// The baseline reader `baseline diff` shares with the gate.
 pub(crate) use archguard_engine::read_baseline;
 use archguard_engine::report::{to_json, to_text};
-use archguard_engine::{LoadedConfig, apply_check_gate, compare_to_ref, read_trend};
+use archguard_engine::{LoadedConfig, check_gate_findings, compare_to_ref, gate_fails, read_trend};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -66,15 +66,13 @@ pub(crate) fn run(
             checked.findings.push(Finding {kind:FindingKind::MetricThreshold,id:"metric-acd-regression".into(),severity:Severity::Error,nodes:vec![],edge_count:0,cycles_sampled:0,sampling:None,suggested_cuts:vec![],evidence:vec![],message:Some(format!("ACD rose from {previous:.4} to {:.4}; allowed growth is {limit}%. This measures structural coupling, not elapsed build or runtime cost.",report.summary.acd))});
         }
     }
-    // ADR 0016: the `[licenses]` policy over the lockfiles, likewise about
-    // the current state; an unconfigured section reads no lockfile.
-    let policy = &loaded.config.licenses;
-    if policy.is_active() {
-        let sbom = archguard_engine::sbom(root, policy);
-        checked
-            .findings
-            .extend(archguard_engine::license_findings(&sbom, policy));
-    }
+    // R31/ADR 0016: the `[review]` KPI gates and the `[licenses]` policy
+    // join the finding list, so text, json and sarif all carry them. Like
+    // the ACD regression gate they speak about the current structure, so
+    // they are evaluated even when a comparison replaced the list.
+    checked
+        .findings
+        .extend(check_gate_findings(root, &loaded.config, report));
     let paths = if cli.format == crate::args::Format::Sarif {
         match archguard_engine::source_reference_paths(root, &loaded.config) {
             Ok(paths) => paths,
@@ -86,7 +84,6 @@ pub(crate) fn run(
     let baseline = baseline.map(|file| baseline_path(root, loaded, file));
     check(
         cli,
-        loaded,
         baseline.as_deref(),
         &checked,
         comparison.as_ref(),
@@ -118,7 +115,7 @@ fn precondition_error(
     archguard_engine::empty_analysis_error(root, graph).map(analysis_error)
 }
 
-/// Gate semantics ([`apply_check_gate`]): `check` fails (exit 1) as soon as one [`Finding`]
+/// Gate semantics ([`gate_fails`]): `check` fails (exit 1) as soon as one [`Finding`]
 /// has severity `Error` — the same rule that sets
 /// [`Report::summary`] to `Fail` (Kap. 5). With `--baseline <DATEI>`
 /// (default: [`baseline_path`]), **cycle** findings whose
@@ -130,7 +127,6 @@ fn precondition_error(
 /// or unparsable baseline file is an IO error (exit 3).
 pub(crate) fn check(
     cli: &Cli,
-    loaded: &LoadedConfig,
     baseline: Option<&Path>,
     report: &Report,
     comparison: Option<&archguard_engine::Comparison>,
@@ -149,12 +145,13 @@ pub(crate) fn check(
             Err(err) => return analysis_error(err),
         },
     };
-    // R31: the `[review]` KPI gates (R30) join the finding list, so text,
-    // json and sarif all carry them and any breach flips the gate to fail.
-    // Like the ACD regression gate they speak about the current structure,
-    // so they are evaluated even when a comparison replaced the list.
+    let fails = gate_fails(&report.findings, baseline.as_ref());
     let mut report = report.clone();
-    let fails = apply_check_gate(&mut report, &loaded.config, baseline.as_ref());
+    report.summary.status = if fails {
+        archguard_engine::core::Status::Fail
+    } else {
+        archguard_engine::core::Status::Pass
+    };
     if !cli.quiet {
         match cli.format {
             Format::Json => {

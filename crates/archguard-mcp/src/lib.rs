@@ -301,7 +301,9 @@ impl ArchguardTools {
                 tools::read_baseline(&path)
             })
             .transpose()?;
-        archguard_engine::apply_check_gate(&mut run.report, &run.loaded.config, baseline.as_ref());
+        let gates =
+            archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
+        run.report.findings.extend(gates);
         Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
     }
 
@@ -2147,6 +2149,35 @@ links = ["docs/adr/1.md"]
             .expect_err("node is required");
         assert_eq!(error.code, ErrorCode::INVALID_PARAMS, "{}", error.message);
         assert!(error.message.contains("`node`"), "{}", error.message);
+    }
+
+    /// Same gate as `archguard check` (ADR 0016): a denied licence in a
+    /// lockfile fails the MCP check too.
+    #[tokio::test]
+    async fn check_applies_the_licence_policy_like_the_cli() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.ts"), "export const a = 1;\n").unwrap();
+        std::fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"":{},"node_modules/gpl-thing":{"version":"2.0.0","license":"GPL-3.0-only"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("archguard.toml"),
+            "[licenses]\ndeny = ['GPL-3.0-only']\n",
+        )
+        .unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let value: Value = serde_json::from_str(
+            &handler
+                .check(Parameters(CheckParams::default()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["status"], "fail", "{value}");
+        assert_eq!(value["counts"]["license"], 1, "{value}");
     }
 
     /// Nothing analysed is no evidence of a clean architecture.

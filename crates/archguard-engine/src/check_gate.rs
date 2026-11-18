@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use archguard_analysis::{Baseline, cycle_hash};
-use archguard_core::{Config, Finding, FindingKind, Graph, Ref, Report, Severity, Status};
+use archguard_core::{Config, Finding, FindingKind, Graph, Ref, Report, Severity};
 
 /// Nothing analysed is no evidence of a clean architecture: a wrong path
 /// (e.g. the GitHub Action's `path:`) must not turn the gate green.
@@ -45,16 +45,21 @@ pub fn gate_fails(findings: &[Finding], baseline: Option<&Baseline>) -> bool {
         .any(|f| f.severity == Severity::Error && !accepted_by_baseline(baseline, f))
 }
 
-/// The gate itself: add the `[review]` KPI gate findings to `report`
-/// (evaluated on its KPI payload, so also when a comparison replaced the
-/// finding list) and set its status by [`gate_fails`]. Returns whether
-/// the gate fails.
-pub fn apply_check_gate(report: &mut Report, config: &Config, baseline: Option<&Baseline>) -> bool {
-    let gates = review_gate_findings(config, report);
-    report.findings.extend(gates);
-    let fails = gate_fails(&report.findings, baseline);
-    report.summary.status = if fails { Status::Fail } else { Status::Pass };
-    fails
+/// The gate findings `check` adds to the analysis findings: the `[review]`
+/// KPI gates on the report's KPI payload, then the `[licenses]` policy over
+/// the lockfiles under `root` (ADR 0016). Both speak about the current
+/// state, so they apply even when a comparison replaced the finding list;
+/// an unconfigured `[licenses]` section reads no lockfile.
+pub fn check_gate_findings(root: &Path, config: &Config, report: &Report) -> Vec<Finding> {
+    let mut findings = review_gate_findings(config, report);
+    let policy = &config.licenses;
+    if policy.is_active() {
+        findings.extend(crate::sbom::license_findings(
+            &crate::sbom::sbom(root, policy),
+            policy,
+        ));
+    }
+    findings
 }
 
 /// How many per-violation evidence strings a gate finding samples at most.
@@ -172,7 +177,7 @@ fn gate_finding(id: String, nodes: Vec<String>, evidence: Vec<Ref>, message: Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{PropagationCost, ReviewKpis, SdpViolation, Tangledness};
+    use archguard_core::{PropagationCost, ReviewKpis, SdpViolation, Status, Tangledness};
     use std::collections::BTreeMap;
 
     fn kpis() -> ReviewKpis {
@@ -300,13 +305,29 @@ mod tests {
     }
 
     #[test]
-    fn apply_check_gate_adds_breaches_and_sets_the_status() {
+    fn check_gate_findings_fail_the_gate_on_a_breach() {
         let mut config = Config::default();
         config.review.max_tangledness = Some(0.4);
-        let mut checked = report(Some(kpis()));
-        assert!(apply_check_gate(&mut checked, &config, None));
-        assert_eq!(checked.summary.status, Status::Fail);
-        assert_eq!(checked.findings[0].id, "metric-max-tangledness");
+        let dir = tempfile::tempdir().unwrap();
+        let findings = check_gate_findings(dir.path(), &config, &report(Some(kpis())));
+        assert_eq!(findings[0].id, "metric-max-tangledness");
+        assert!(gate_fails(&findings, None));
+    }
+
+    #[test]
+    fn check_gate_findings_add_licence_violations() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"":{},"node_modules/gpl-thing":{"version":"2.0.0","license":"GPL-3.0-only"}}}"#,
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.licenses.deny = vec!["GPL-3.0-only".into()];
+        let findings = check_gate_findings(dir.path(), &config, &report(None));
+        let kinds: Vec<FindingKind> = findings.iter().map(|f| f.kind).collect();
+        assert_eq!(kinds, [FindingKind::License], "{findings:?}");
+        assert!(gate_fails(&findings, None));
     }
 
     #[test]
