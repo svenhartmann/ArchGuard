@@ -230,11 +230,15 @@ impl Store {
         true
     }
 
-    /// `part` of document `id` has nothing unsaved; other parts keep theirs.
-    pub fn mark_clean(&mut self, id: DocId, part: &str) {
-        if let Some(doc) = self.get_mut(id) {
-            doc.unsaved.retain(|(p, _)| *p != part);
-        }
+    /// `part` of document `id` has nothing unsaved; other parts keep
+    /// theirs. False if nothing changed (already clean, or closed).
+    pub fn mark_clean(&mut self, id: DocId, part: &str) -> bool {
+        let Some(doc) = self.get_mut(id) else {
+            return false;
+        };
+        let before = doc.unsaved.len();
+        doc.unsaved.retain(|(p, _)| *p != part);
+        doc.unsaved.len() != before
     }
 
     /// Snapshot hooks and tests; the window asks [`Document::is_dirty`].
@@ -404,8 +408,10 @@ pub fn mark_dirty(doc: DocId, part: &'static str, what: &str) {
 
 /// `part` of the document has no unsaved changes any more.
 pub fn mark_clean(doc: DocId, part: &str) {
-    with_store(|s| s.mark_clean(doc, part));
-    dirty_changed();
+    // Every caret move marks a clean chapter clean: redraw only on a change.
+    if with_store(|s| s.mark_clean(doc, part)) {
+        dirty_changed();
+    }
 }
 
 /// Snapshot hooks (`settings_view_ui`) and tests.
@@ -718,6 +724,10 @@ mod tests {
         mark_clean(a, "config");
         mark_dirty(999, "config", "closed");
         assert_eq!(seen.get(), 2);
+        // A caret move marks a clean chapter clean again: nothing to redraw.
+        mark_clean(a, "config");
+        mark_clean(999, "config");
+        assert_eq!(seen.get(), 2, "already clean");
     }
 
     fn project(name: &str, path: &str, kind: &str) -> ServiceProject {
