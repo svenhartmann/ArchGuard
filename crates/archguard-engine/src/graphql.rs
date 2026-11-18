@@ -255,9 +255,12 @@ impl<'a> Parser<'a> {
         }
         Ok(out)
     }
-    fn type_ref(&mut self) -> R<String> {
+    fn type_ref(&mut self, depth: usize) -> R<String> {
+        if depth > MAX_DEPTH {
+            return self.fail("less nesting");
+        }
         let mut ty = if self.eat("[") {
-            let inner = self.type_ref()?;
+            let inner = self.type_ref(depth + 1)?;
             self.expect("]")?;
             format!("[{inner}]")
         } else {
@@ -275,7 +278,7 @@ impl<'a> Parser<'a> {
             self.description();
             let name = self.name()?.to_owned();
             self.expect(":")?;
-            let ty = self.type_ref()?;
+            let ty = self.type_ref(0)?;
             let default = self.eat("=");
             if default {
                 self.value()?;
@@ -390,7 +393,7 @@ fn object_fields(p: &mut Parser<'_>, doc: &mut Document, owner: &str) -> R<Vec<(
             vec![]
         };
         p.expect(":")?;
-        let ty = p.type_ref()?;
+        let ty = p.type_ref(0)?;
         let used = p.directives()?;
         record(doc, &format!("{owner}.{field}"), used);
         let args = args.into_iter().map(|(n, t, d, _)| (n, (t, d))).collect();
@@ -643,6 +646,23 @@ scalar Date @specifiedBy(url: "u")"#,
                 .types
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn deeply_nested_list_types_fail_instead_of_overflowing_the_stack() {
+        let deep = format!(
+            "type Q {{ f: {}Int{} }}",
+            "[".repeat(99_000),
+            "]".repeat(99_000)
+        );
+        let (_, message) = parse(&deep).unwrap_err();
+        assert!(message.contains("less nesting"), "{message}");
+        assert_eq!(
+            parse("type Q { f: [[Int!]!] }").unwrap().types[0].fields[0]
+                .1
+                .ty,
+            "[[Int!]!]"
         );
     }
 }

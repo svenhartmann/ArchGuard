@@ -105,22 +105,30 @@ fn root_type(roots: &BTreeMap<String, String>, kind: &str) -> String {
             .unwrap_or_default()
     })
 }
-/// The root type name a contract uses for `kind`, from its `schema` block
-/// or the default name.
-fn contract_root(c: &GraphqlContract, scan: &Scan, kind: &str) -> String {
-    let roots: BTreeMap<String, String> = scan
-        .sources
-        .iter()
-        .filter(|s| c.files.contains(&s.file) && s.owner == c.provider)
-        .flat_map(|s| s.doc.roots.clone())
-        .collect();
-    root_type(&roots, kind)
+/// Root type names each contract declares in a `schema` block, from the
+/// sources it was built from; computed once, not per operation.
+fn contract_roots(scan: &Scan, schemas: &[GraphqlContract]) -> Vec<BTreeMap<String, String>> {
+    let mut by_file: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, c) in schemas.iter().enumerate() {
+        for f in &c.files {
+            by_file.entry(f).or_default().push(i);
+        }
+    }
+    let mut roots = vec![BTreeMap::new(); schemas.len()];
+    for s in &scan.sources {
+        for &i in by_file.get(s.file.as_str()).into_iter().flatten() {
+            if s.owner == schemas[i].provider {
+                roots[i].extend(s.doc.roots.clone());
+            }
+        }
+    }
+    roots
 }
 
 /// The link for one operation, `Ok(None)` for a service's use of its own
 /// schema, or the reason it stays unresolved.
 fn link_one(
-    scan: &Scan,
+    roots: &[BTreeMap<String, String>],
     schemas: &[GraphqlContract],
     s: &Source,
     op: &graphql::Operation,
@@ -137,8 +145,9 @@ fn link_one(
     let fields: Vec<_> = op.root_fields.iter().cloned().collect();
     let candidates: Vec<(&GraphqlContract, String)> = schemas
         .iter()
-        .filter_map(|c| {
-            let root = contract_root(c, scan, &op.kind);
+        .zip(roots)
+        .filter_map(|(c, roots)| {
+            let root = root_type(roots, &op.kind);
             let t = c.types.get(&root)?;
             fields
                 .iter()
@@ -194,9 +203,10 @@ fn label(op: &graphql::Operation) -> String {
 }
 fn link(scan: &Scan, schemas: &[GraphqlContract]) -> (Vec<GraphqlLink>, Vec<GraphqlUnresolved>) {
     let (mut links, mut unresolved) = (vec![], vec![]);
+    let roots = contract_roots(scan, schemas);
     for s in &scan.sources {
         for op in &s.doc.operations {
-            match link_one(scan, schemas, s, op) {
+            match link_one(&roots, schemas, s, op) {
                 Ok(found) => links.extend(found),
                 Err(reason) => unresolved.push(GraphqlUnresolved {
                     consumer: s.owner.clone(),

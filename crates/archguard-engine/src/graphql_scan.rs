@@ -1,10 +1,9 @@
 //! Finds GraphQL documents (ADR 0014): schema files and `gql`/`graphql`
 //! tagged templates in TS/JS, each with the service whose scope holds it.
 use crate::graphql::{self, Document};
-use crate::services::support::{Discovery, relative};
+use crate::services::support::{Discovery, owners, relative, test_path};
 use archguard_core::ServiceTopology;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Relative path, file text, and each document with its byte offset.
@@ -28,42 +27,10 @@ pub(crate) struct Source {
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn test_path(rel: &str) -> bool {
-    rel.split('/')
-        .any(|p| matches!(p, "test" | "tests" | "__tests__" | "__mocks__"))
-        || rel.contains(".test.")
-        || rel.contains(".spec.")
-}
-/// The service whose source scope (build context or project path) is the
-/// deepest one containing `rel`; `None` when none or several tie.
+/// The one service whose source scope holds `rel`; `None` when none or several tie.
 fn owner(topology: &ServiceTopology, rel: &str) -> Option<String> {
-    let mut best: Option<(usize, BTreeSet<&str>)> = None;
-    for s in &topology.services {
-        let project = s
-            .project
-            .as_ref()
-            .and_then(|id| topology.projects.iter().find(|p| p.id == *id))
-            .map(|p| p.path.as_str());
-        for dir in s.build_context.as_deref().into_iter().chain(project) {
-            let dir = dir.trim_end_matches('/');
-            let depth = if dir == "." || dir.is_empty() {
-                0
-            } else if rel.starts_with(&format!("{dir}/")) {
-                dir.split('/').count()
-            } else {
-                continue;
-            };
-            match &mut best {
-                Some((d, ids)) if *d == depth => {
-                    ids.insert(&s.id);
-                }
-                Some((d, _)) if *d > depth => {}
-                _ => best = Some((depth, BTreeSet::from([s.id.as_str()]))),
-            }
-        }
-    }
-    best.filter(|(_, ids)| ids.len() == 1)
-        .and_then(|(_, ids)| ids.first().map(|s| s.to_string()))
+    let [one] = owners(topology, rel).try_into().ok()?;
+    Some(one)
 }
 fn tag_start(text: &str, at: usize) -> bool {
     !text[..at]
@@ -98,8 +65,10 @@ fn template_body(text: &str, start: usize) -> Option<String> {
             return Some(body);
         }
         if bytes[i] == b'\\' {
-            body.push_str("  ");
-            i += 2;
+            // The escaped character may be multibyte; spaces keep offsets aligned.
+            let n = 1 + text[i + 1..].chars().next().map_or(0, char::len_utf8);
+            body.extend(std::iter::repeat_n(' ', n));
+            i += n;
         } else if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'{') {
             i = skip_interpolation(bytes, i, &mut body);
         } else {
@@ -124,7 +93,7 @@ fn templates(text: &str) -> Vec<(usize, String)> {
     }
     out
 }
-fn line_starts(text: &str) -> Vec<usize> {
+pub(crate) fn line_starts(text: &str) -> Vec<usize> {
     std::iter::once(0)
         .chain(text.match_indices('\n').map(|(i, _)| i + 1))
         .collect()
@@ -224,6 +193,16 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found[0].1.starts_with("query A { a }\n    "));
         assert_eq!(found[1].1, "{ b }");
+    }
+
+    #[test]
+    fn escapes_before_multibyte_characters_keep_offsets_aligned() {
+        let text = "gql`query { search(q: \"Caf\\é\") }` gql`x\\";
+        let found = templates(text);
+        assert_eq!(found.len(), 1, "a backslash at the end closes nothing");
+        let (start, body) = &found[0];
+        assert_eq!(body.len(), text[*start..].find('`').unwrap());
+        assert!(body.contains("search(q: \"Caf   \")"), "{body}");
     }
 
     #[test]

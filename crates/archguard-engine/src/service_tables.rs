@@ -2,15 +2,18 @@
 //! `ToTable`, `CreateTable`), JPA and TypeORM entities, SQLAlchemy `__tablename__`
 //! and `CREATE/ALTER TABLE` in SQL files. Names that are not literals stay unknown
 //! and are reported as gaps; nothing is guessed from configuration.
-use super::support::{diagnostic, excluded, relative};
+use super::support::{Discovery, diagnostic, owners, relative, test_path};
+use crate::project_files::read_repo_file;
 use archguard_core::{
     ServiceDatastores, ServiceEvidence, ServiceTable, ServiceTopology, SharedDatastoreScope,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_BYTES: u64 = 1 << 20;
 const MAX_FILES: usize = 5_000;
+const SOURCES: [&str; 6] = ["cs", "java", "kt", "py", "ts", "sql"];
+const SAME_DIR: &str = "Several services build from the same source directory; tables named in this file are attributed to none of them.";
 const GAP: &str =
     "Table name is not a literal (constant, variable or placeholder); the table stays unknown.";
 const SEVERAL: &str =
@@ -41,34 +44,20 @@ struct Scan {
     overrides: BTreeMap<String, Option<String>>,
     /// EF Core `DbSet<T> Name`: (file, line, T, Name).
     sets: Vec<(String, u32, String, String)>,
+    /// Source files counted for the file limit.
+    files: usize,
 }
 
-pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
-    let dirs: Vec<(String, PathBuf)> = report
-        .services
-        .iter()
-        .filter_map(|s| {
-            let project = s
-                .project
-                .as_ref()
-                .and_then(|id| report.projects.iter().find(|p| &p.id == id))
-                .map(|p| &p.path);
-            let dir = s.build_context.as_ref().or(project)?;
-            Some((s.id.clone(), root.join(dir)))
-        })
-        .collect();
+pub(super) fn augment(root: &Path, discovery: &Discovery, report: &mut ServiceTopology) {
+    let (scans, skipped) = walk(root, discovery, report);
     let mut tables: BTreeMap<(String, String), Vec<ServiceEvidence>> = BTreeMap::new();
     let mut gaps = BTreeSet::new();
-    for (service, dir) in &dirs {
-        // A service's directory never includes another service nested below it.
-        let nested: Vec<&PathBuf> = dirs
-            .iter()
-            .map(|(_, d)| d)
-            .filter(|d| *d != dir && d.starts_with(dir))
-            .collect();
-        let mentions = scan_service(root, dir, &nested);
-        let short = service.rsplit(':').next().unwrap_or(service);
-        for (file, m) in mentions {
+    for (service, file, message) in skipped {
+        diagnostic(report, &file, Some(short(&service)), message);
+        gaps.insert(service);
+    }
+    for (service, scan) in scans {
+        for (file, m) in scan.finish() {
             let evidence = ServiceEvidence {
                 file: file.clone(),
                 pointer: m.pointer.into(),
@@ -81,8 +70,8 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
                     .or_default()
                     .push(evidence),
                 None => {
+                    diagnostic(report, &file, Some(short(&service)), GAP);
                     gaps.insert(service.clone());
-                    diagnostic(report, &file, Some(short), GAP);
                 }
             }
         }
@@ -103,29 +92,69 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
     refine(report, &gaps);
 }
 
-fn scan_service(root: &Path, dir: &Path, nested: &[&PathBuf]) -> Vec<(String, Mention)> {
-    let mut scan = Scan::default();
-    for path in files(root, dir) {
-        if nested.iter().any(|d| path.starts_with(d)) {
+fn short(service: &str) -> &str {
+    service.rsplit(':').next().unwrap_or(service)
+}
+
+/// Files a service's tables may be missing from: (service, file, reason).
+type Skipped = Vec<(String, String, String)>;
+
+/// Scans each source file once, for the one service whose source directory is the
+/// deepest holding it. Files several services share and files not read are skipped.
+fn walk(
+    root: &Path,
+    discovery: &Discovery,
+    report: &ServiceTopology,
+) -> (BTreeMap<String, Scan>, Skipped) {
+    let mut scans: BTreeMap<String, Scan> = BTreeMap::new();
+    let mut skipped = Skipped::new();
+    for entry in discovery.walk(root).flatten() {
+        let rel = relative(root, entry.path());
+        let ext = rel.rsplit('.').next().unwrap_or("");
+        if !entry.file_type().is_some_and(|t| t.is_file())
+            || !SOURCES.contains(&ext)
+            || test_path(&rel)
+        {
             continue;
         }
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            scan.file(&relative(root, &path), &text);
+        let owners = owners(report, &rel);
+        let mut skip = |message: String| {
+            let found = owners
+                .iter()
+                .map(|s| (s.clone(), rel.clone(), message.clone()));
+            skipped.extend(found);
+        };
+        if let [one] = owners.as_slice() {
+            let scan = scans.entry(one.clone()).or_default();
+            scan.files += 1;
+            if scan.files == MAX_FILES + 1 {
+                skip(format!(
+                    "Table scan of the service stopped after {MAX_FILES} files; tables in later files are unknown."
+                ));
+            }
+            if scan.files > MAX_FILES {
+                continue;
+            }
+        }
+        if owners.is_empty() {
+            continue;
+        }
+        let text = match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            Err(e) => {
+                skip(format!(
+                    "Source file not read ({e}; limit {MAX_BYTES} bytes); its tables are unknown."
+                ));
+                continue;
+            }
+        };
+        match owners.as_slice() {
+            [one] => scans.entry(one.clone()).or_default().file(&rel, &text),
+            _ if Scan::names_tables(&rel, &text) => skip(SAME_DIR.into()),
+            _ => {}
         }
     }
-    // A DbSet names the table only when no [Table] or ToTable overrides its entity.
-    for (file, line, entity, name) in scan.sets {
-        if !scan.overrides.contains_key(&entity) {
-            let mention = Mention {
-                name: table(&name),
-                line,
-                pointer: "DbSet",
-                description: "EF Core DbSet property; the table is named after it by convention.",
-            };
-            scan.mentions.push((file, mention));
-        }
-    }
-    scan.mentions
+    (scans, skipped)
 }
 
 /// Gives each service's tables to its datastore usage when that is the service's only
@@ -215,26 +244,31 @@ fn has_tables(d: &ServiceDatastores, id: &str) -> bool {
         .is_none_or(|e| !NO_TABLES.contains(&e))
 }
 
-/// Source and SQL files below `dir`, without tests, build output and vendored code.
-fn files(root: &Path, dir: &Path) -> Vec<PathBuf> {
-    ignore::WalkBuilder::new(dir)
-        .filter_entry(|e| !excluded(&e.file_name().to_string_lossy()))
-        .build()
-        .flatten()
-        // The walk does not follow links, so it never leaves the root.
-        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
-        .filter(|e| e.metadata().is_ok_and(|m| m.len() <= MAX_BYTES))
-        .map(|e| e.into_path())
-        .filter(|p| {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            matches!(ext, "cs" | "java" | "kt" | "py" | "ts" | "sql")
-                && !relative(root, p).to_ascii_lowercase().contains("test")
-        })
-        .take(MAX_FILES)
-        .collect()
-}
-
 impl Scan {
+    /// Whether a file names any table, without attributing it.
+    fn names_tables(file: &str, text: &str) -> bool {
+        let mut probe = Scan::default();
+        probe.file(file, text);
+        !probe.mentions.is_empty() || !probe.sets.is_empty()
+    }
+
+    /// The mentions; a DbSet names the table only when no [Table] or ToTable
+    /// overrides its entity.
+    fn finish(mut self) -> Vec<(String, Mention)> {
+        for (file, line, entity, name) in self.sets {
+            if !self.overrides.contains_key(&entity) {
+                let mention = Mention {
+                    name: table(&name),
+                    line,
+                    pointer: "DbSet",
+                    description: "EF Core DbSet property; the table is named after it by convention.",
+                };
+                self.mentions.push((file, mention));
+            }
+        }
+        self.mentions
+    }
+
     fn file(&mut self, file: &str, text: &str) {
         let ext = file.rsplit('.').next().unwrap_or("");
         let mut found = Vec::new();
@@ -261,7 +295,7 @@ impl Scan {
             let after = rest[close + 1..].trim_start();
             let name = ident(after);
             let next = after[name.len()..].trim_start();
-            if !name.is_empty() && (next.starts_with('{') || next.starts_with('=')) {
+            if !name.is_empty() && (next.starts_with('{') || next.starts_with("=>")) {
                 self.sets
                     .push((file.into(), line(text, at), entity, name.to_owned()));
             }
@@ -287,7 +321,7 @@ impl Scan {
             });
         }
         for (at, _) in text.match_indices("CreateTable(") {
-            let window = &text[at + 12..text.len().min(at + 300)];
+            let window = &text[at + 12..text.floor_char_boundary(at + 300)];
             found.push(Mention {
                 name: name_arg(window).ok().flatten().and_then(|n| table(&n)),
                 line: line(text, at),

@@ -102,7 +102,7 @@ pub(crate) fn analyze_services_with(
     let spring_datasources = service_spring::augment(&root, &mut report);
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
-    service_tables::augment(&root, &mut report);
+    service_tables::augment(&root, &discovery, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     crate::graphql_contracts::augment(&root, &discovery, &mut report);

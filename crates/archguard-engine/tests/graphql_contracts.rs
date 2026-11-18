@@ -188,3 +188,30 @@ fn removed_fields_and_stricter_arguments_are_breaking_against_the_saved_baseline
     assert_eq!(find("field_removed", "User.email")["severity"], "breaking");
     assert_eq!(find("type_removed", "Node")["severity"], "breaking");
 }
+
+#[test]
+fn many_schemas_and_operations_link_without_rescanning_every_source() {
+    // Linking used to rescan all sources per operation and schema: n³ steps.
+    let n = 1000;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut ops = String::new();
+    for i in 0..n {
+        fs::write(
+            root.join(format!("s{i}.graphql")),
+            format!("type Query {{ f{i}: Int }}\n"),
+        )
+        .unwrap();
+        ops.push_str(&format!("query Q{i} {{ f{i} }}\n"));
+    }
+    fs::write(root.join("ops.graphql"), ops).unwrap();
+    let start = std::time::Instant::now();
+    let report = graphql(root);
+    let elapsed = start.elapsed();
+    assert_eq!(report["schemas"].as_array().unwrap().len(), n);
+    assert_eq!(report["unresolved"].as_array().unwrap().len(), n);
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "linking took {elapsed:?}"
+    );
+}

@@ -1,7 +1,7 @@
 //! Table evidence from a service's own source (ADR 0012).
 use archguard_engine::{
     analyze_services,
-    core::{ServiceTopology, SharedDatastoreScope},
+    core::{ServiceTopology, SharedDatastore, SharedDatastoreScope},
 };
 use std::{fs, path::Path};
 
@@ -228,4 +228,131 @@ fn services_on_one_database_with_disjoint_tables_are_reported_as_disjoint() {
         .find(|s| s.scope == SharedDatastoreScope::Server)
         .unwrap();
     assert!(!server.disjoint_tables);
+}
+
+fn two_on_shop(a: &str, b: &str) -> String {
+    format!(
+        "services:
+  a:
+    build: {a}
+    environment: [DB_HOST=db, DB_NAME=shop]
+  b:
+    build: {b}
+    environment: [DB_HOST=db, DB_NAME=shop]
+  db:
+    image: postgres:16
+"
+    )
+}
+
+fn shop_share(report: &ServiceTopology) -> &SharedDatastore {
+    report
+        .datastores
+        .shared
+        .iter()
+        .find(|s| s.database.as_deref() == Some("shop"))
+        .unwrap()
+}
+
+#[test]
+fn a_migration_with_multibyte_text_near_create_table_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", COMPOSE);
+    // One of the two puts the 300-byte window end inside a two-byte `ü`.
+    let umlauts = "ü".repeat(200);
+    for (file, pad) in [("A", ""), ("B", " ")] {
+        put(
+            root,
+            &format!("orders/Migrations/{file}.cs"),
+            &format!("migrationBuilder.CreateTable({pad}name: \"Users\", // {umlauts}\n"),
+        );
+    }
+    let report = analyze_services(root).unwrap();
+    assert_eq!(tables(&report, "compose.yaml::orders"), ["users"]);
+}
+
+#[test]
+fn services_with_the_same_build_context_get_no_tables_and_no_false_sharing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", &two_on_shop(".", "."));
+    put(root, "schema.sql", "CREATE TABLE orders (id int);\n");
+    let report = analyze_services(root).unwrap();
+    assert!(tables(&report, "compose.yaml::a").is_empty());
+    assert!(tables(&report, "compose.yaml::b").is_empty());
+    let shop = shop_share(&report);
+    assert_eq!(shop.scope, SharedDatastoreScope::Database, "{shop:?}");
+    assert!(!shop.disjoint_tables);
+    for service in ["a", "b"] {
+        assert!(
+            report.diagnostics.iter().any(|d| d.file == "schema.sql"
+                && d.service.as_deref() == Some(service)
+                && d.message.contains("same source directory")),
+            "{service}: {:?}",
+            report.diagnostics
+        );
+    }
+}
+
+#[test]
+fn discovery_exclusions_and_ignores_apply_and_only_test_directories_are_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", &two_on_shop("./a", "./b"));
+    put(
+        root,
+        "archguard.toml",
+        "[project]\nexclude = [\"a/legacy/**\"]\n",
+    );
+    put(root, ".gitignore", "generated/\n");
+    let entity = |t: &str| format!("@Entity\n@Table(name = \"{t}\")\npublic class X {{}}\n");
+    put(root, "a/legacy/Old.java", &entity("legacy"));
+    put(root, "a/generated/Gen.java", &entity("generated"));
+    put(root, "a/latest-news/News.java", &entity("news"));
+    put(root, "a/Contest.java", &entity("contest"));
+    put(root, "a/test/Fake.java", &entity("fake"));
+    put(root, "a/Shop.Tests/Fake.java", &entity("fake_project"));
+    let report = analyze_services(root).unwrap();
+    assert_eq!(tables(&report, "compose.yaml::a"), ["contest", "news"]);
+}
+
+#[test]
+fn skipped_files_are_gaps_and_latin1_files_are_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", &two_on_shop("./a", "./b"));
+    put(root, "a/schema.sql", "create table alpha (id int);\n");
+    put(root, "b/schema.sql", "CREATE TABLE beta (id int);\n");
+    // Latin-1 `é` in a comment, as older SQL scripts have.
+    fs::write(
+        root.join("b/latin1.sql"),
+        b"-- caf\xe9\nCREATE TABLE gamma (id int);\n",
+    )
+    .unwrap();
+    put(root, "b/huge.sql", &"-- padding\n".repeat(100_000));
+    let report = analyze_services(root).unwrap();
+    assert_eq!(tables(&report, "compose.yaml::b"), ["beta", "gamma"]);
+    assert!(!shop_share(&report).disjoint_tables);
+    assert!(
+        report.diagnostics.iter().any(|d| d.file == "b/huge.sql"
+            && d.service.as_deref() == Some("b")
+            && d.message.contains("not read")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn a_local_dbset_variable_is_no_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", COMPOSE);
+    put(
+        root,
+        "orders/Data/Repository.cs",
+        "class Repository<TEntity> {\n    public void Add(TEntity e) {\n        DbSet<TEntity> dbSet = _context.Set<TEntity>();\n    }\n    public DbSet<Order> Orders => Set<Order>();\n}\n",
+    );
+    let report = analyze_services(root).unwrap();
+    assert_eq!(tables(&report, "compose.yaml::orders"), ["orders"]);
 }
