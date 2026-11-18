@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use archguard_engine::{Level, analyze_run_quiet, collect_review_sources, load_config};
 use slint::{ComponentHandle, SharedString};
@@ -219,7 +220,53 @@ fn analyze(
     Ok((analysis, projects))
 }
 
+/// Numbers analysis runs across all documents.
+static RUNS: AtomicU64 = AtomicU64::new(0);
+
+/// The newest analysis run started for a document; only its result is
+/// kept (a run started before the Rust index was done may finish last).
+struct Run(u64);
+
+impl Run {
+    /// Number a new analysis run of document `id`; it is now the newest.
+    fn start(id: DocId) -> u64 {
+        let run = RUNS.fetch_add(1, Ordering::Relaxed) + 1;
+        documents::set_state(id, Run(run));
+        run
+    }
+
+    /// Give analysis `run`'s result to document `id`; whether `id` is the
+    /// active document, `None` if the result was dropped.
+    fn land(
+        id: DocId,
+        run: u64,
+        result: Result<(Analysis, Vec<SubProject>), String>,
+    ) -> Option<bool> {
+        if documents::with_state(id, |r: &mut Run| r.0) != Some(run) {
+            return None;
+        }
+        Some(with_store(|s| {
+            let Some(doc) = s.get_mut(id) else {
+                return false;
+            };
+            match result {
+                Ok((analysis, projects)) => {
+                    if doc.analysis.is_some() {
+                        doc.forget_derived();
+                    }
+                    doc.analysis = Some(Arc::new(analysis));
+                    doc.projects = projects;
+                    doc.status = Status::Ready;
+                }
+                Err(e) => doc.status = Status::Failed(e),
+            }
+            s.active().is_some_and(|d| d.id == id)
+        }))
+    }
+}
+
 fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
+    let run = Run::start(id);
     let topology = Shared::<Topology>::new();
     documents::set_state(id, topology.clone());
     let weak = ui.as_weak();
@@ -229,7 +276,7 @@ fn spawn_analysis(ui: &AppWindow, id: DocId, root: PathBuf) {
         let result = guarded(work);
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                finished(&ui, id, result);
+                finished(&ui, id, run, result);
             }
         });
     });
@@ -241,24 +288,15 @@ fn guarded<T>(analyze: impl FnOnce() -> Result<T, String>) -> Result<T, String> 
     tab_support::catch(analyze).and_then(|r| r)
 }
 
-fn finished(ui: &AppWindow, id: DocId, result: Result<(Analysis, Vec<SubProject>), String>) {
-    let active = with_store(|s| {
-        let Some(doc) = s.get_mut(id) else {
-            return false;
-        };
-        match result {
-            Ok((analysis, projects)) => {
-                if doc.analysis.is_some() {
-                    doc.forget_derived();
-                }
-                doc.analysis = Some(Arc::new(analysis));
-                doc.projects = projects;
-                doc.status = Status::Ready;
-            }
-            Err(e) => doc.status = Status::Failed(e),
-        }
-        s.active().is_some_and(|d| d.id == id)
-    });
+fn finished(
+    ui: &AppWindow,
+    id: DocId,
+    run: u64,
+    result: Result<(Analysis, Vec<SubProject>), String>,
+) {
+    let Some(active) = Run::land(id, run, result) else {
+        return;
+    };
     if active {
         refresh(ui);
     } else {
@@ -408,6 +446,20 @@ mod tests {
     fn a_panicking_analysis_becomes_the_error() {
         let result: Result<(), String> = guarded(|| panic!("parser blew up"));
         assert_eq!(result, Err("parser blew up".to_string()));
+    }
+
+    /// The Rust index starts a second analysis while the first runs; the
+    /// first, without rust-analyzer data, finishes last.
+    #[test]
+    fn only_the_newest_analysis_lands_in_its_document() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (id, _) = with_store(|s| s.open(dir.path()));
+        let first = Run::start(id);
+        let second = Run::start(id);
+        assert_eq!(Run::land(id, second, Err("second".into())), Some(true));
+        assert_eq!(Run::land(id, first, Err("first".into())), None, "older run");
+        let status = with_store(|s| s.get_mut(id).map(|d| d.status.clone()));
+        assert_eq!(status, Some(Status::Failed("second".into())));
     }
 
     #[test]
