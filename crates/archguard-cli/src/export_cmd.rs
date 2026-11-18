@@ -6,7 +6,7 @@ use crate::output::{EXIT_FOUND, EXIT_OK, analysis_error, emit, usage};
 use archguard_engine::LoadedConfig;
 use archguard_engine::core::{Graph, Report};
 use archguard_engine::report::{markdown_to_asciidoc, markdown_to_docx};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The exports that run outside the shared analysis: usage errors for an
 /// export format outside its command (`structurizr` belongs to `graph`,
@@ -180,8 +180,10 @@ fn arc42_export(
         }
         return EXIT_OK;
     }
-    let name = if docx { "arc42.docx" } else { "arc42.adoc" };
-    let target = root.join(options.out.unwrap_or(Path::new(name)));
+    let target = match target(root, &options, docx) {
+        Ok(t) => t,
+        Err(code) => return code,
+    };
     if options.check {
         return check(cli, &target, &bytes);
     }
@@ -225,6 +227,39 @@ fn check(cli: &Cli, target: &Path, bytes: &[u8]) -> i32 {
         println!("arc42 export {state}: {}", target.display());
     }
     if current { EXIT_OK } else { EXIT_FOUND }
+}
+
+/// The file to write: `--out`, else the name the desktop uses
+/// (`export::arc42_file_name`); `Err` (exit code) for `arc42.md` itself,
+/// which the export only reads.
+fn target(root: &Path, options: &Arc42Export<'_>, docx: bool) -> Result<PathBuf, i32> {
+    let ext = if docx { "docx" } else { "adoc" };
+    let name = match options.chapter {
+        Some(n) => format!("arc42-{n:02}.{ext}"),
+        None => format!("arc42.{ext}"),
+    };
+    let target = root.join(options.out.unwrap_or(Path::new(&name)));
+    if same_file(&target, &root.join("arc42.md")) {
+        return Err(usage(
+            "the export would overwrite arc42.md, which it only reads; choose another --out",
+        ));
+    }
+    Ok(target)
+}
+
+/// Whether `a` and `b` are the same existing file, also through another
+/// spelling on a case-insensitive file system or a hard link.
+fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        matches!((std::fs::metadata(a), std::fs::metadata(b)),
+            (Ok(x), Ok(y)) if (x.dev(), x.ino()) == (y.dev(), y.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+    }
 }
 
 /// The text of a regular file, `None` if it does not exist; a symlink or

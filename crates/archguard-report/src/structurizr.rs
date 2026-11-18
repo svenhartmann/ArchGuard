@@ -4,7 +4,7 @@
 //! components. Relations carry their protocol and configuration evidence;
 //! nothing here is measured traffic.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use archguard_core::{Service, ServiceDependencyKind, ServiceEvidence, ServiceTopology};
@@ -46,9 +46,16 @@ pub fn to_structurizr(
     );
     let mut ids = Ids::new();
     let mut component_relations = String::new();
+    let repeated = repeated(t.services.iter().map(|s| s.name.as_str()));
     for (i, s) in t.services.iter().enumerate() {
         let id = format!("c{i}");
-        let _ = write!(out, "            {id} = {}", container(t, s));
+        // The DSL refuses two elements of one name: then the id names it.
+        let name = if repeated.contains(s.name.as_str()) {
+            &s.id
+        } else {
+            &s.name
+        };
+        let _ = write!(out, "            {id} = {}", container(t, s, name));
         if let Some(c) = components.filter(|c| c.service == s.id) {
             component_relations = write_components(&mut out, c);
         }
@@ -75,7 +82,7 @@ pub fn to_structurizr(
 
 /// `container name description technology tags` of service `s`; the
 /// technology is the datastore engine or the project runtime, if known.
-fn container(t: &ServiceTopology, s: &Service) -> String {
+fn container(t: &ServiceTopology, s: &Service, name: &str) -> String {
     let store = t
         .datastores
         .nodes
@@ -92,7 +99,7 @@ fn container(t: &ServiceTopology, s: &Service) -> String {
     let tags = if store.is_some() { "Database" } else { "" };
     format!(
         "container {} {} {} {}",
-        q(&s.name),
+        q(name),
         q(&s.compose_file),
         q(&technology),
         q(tags)
@@ -129,15 +136,20 @@ fn write_components(out: &mut String, c: &C4Components<'_>) -> String {
 
 /// Datastores without a service of their own are outside the system.
 fn external_datastores(out: &mut String, t: &ServiceTopology, ids: &mut Ids) {
-    for (i, d) in t
+    let external: Vec<_> = t
         .datastores
         .nodes
         .iter()
         .filter(|d| d.service.is_none())
-        .enumerate()
-    {
+        .collect();
+    let repeated = repeated(external.iter().filter_map(|d| d.host.as_deref()));
+    for (i, d) in external.into_iter().enumerate() {
         let id = format!("x{i}");
-        let name = d.host.clone().unwrap_or_else(|| d.id.clone());
+        let name = match (&d.host, d.port) {
+            (Some(h), Some(p)) if repeated.contains(h.as_str()) => format!("{h}:{p}"),
+            (Some(h), _) if !repeated.contains(h.as_str()) => h.clone(),
+            _ => d.id.clone(),
+        };
         let mut what = "Datastore outside the configuration".to_owned();
         if let Some(e) = &d.engine {
             let _ = write!(what, ": {e}");
@@ -202,9 +214,14 @@ fn properties(evidence: &[&ServiceEvidence]) -> String {
     if evidence.is_empty() {
         return "\n".into();
     }
-    let mut shown: Vec<String> = evidence.iter().take(EVIDENCE).map(|e| cite(e)).collect();
-    if evidence.len() > EVIDENCE {
-        shown.push(format!("+{} more", evidence.len() - EVIDENCE));
+    // Merged links repeat the same evidence.
+    let mut cited: Vec<String> = evidence.iter().map(|e| cite(e)).collect();
+    cited.sort();
+    cited.dedup();
+    let more = cited.len().saturating_sub(EVIDENCE);
+    let mut shown: Vec<String> = cited.into_iter().take(EVIDENCE).collect();
+    if more > 0 {
+        shown.push(format!("+{more} more"));
     }
     format!(
         " {{\n            properties {{\n                \"evidence\" {}\n            }}\n        }}\n",
@@ -222,6 +239,12 @@ fn kind(k: ServiceDependencyKind) -> (&'static str, &'static str) {
         ServiceDependencyKind::Event => ("event", "messaging"),
         ServiceDependencyKind::ConfiguredReference => ("configured reference", ""),
     }
+}
+
+/// The names that occur more than once.
+fn repeated<'a>(names: impl Iterator<Item = &'a str>) -> BTreeSet<&'a str> {
+    let mut seen = BTreeSet::new();
+    names.filter(|n| !seen.insert(*n)).collect()
 }
 
 fn cite(e: &ServiceEvidence) -> String {
@@ -396,5 +419,38 @@ mod tests {
         assert!(!dsl.contains("billing/x"), "{dsl}");
         assert!(dsl.contains("component c0 \"Components\""), "{dsl}");
         assert_eq!(dsl.matches('{').count(), dsl.matches('}').count(), "{dsl}");
+    }
+
+    #[test]
+    fn repeated_names_fall_back_to_ids_and_evidence_is_shown_once() {
+        let mut t = topology();
+        let mut other = service("orders");
+        other.id = "shop/compose.yaml::orders".into();
+        other.compose_file = "shop/compose.yaml".into();
+        t.services.push(other);
+        let mut cache = t.datastores.nodes[1].clone();
+        cache.id = "external:cache:6380".into();
+        cache.port = Some(6380);
+        t.datastores.nodes.push(cache);
+        let link = t.dependencies[0].clone();
+        t.dependencies.push(link);
+        let dsl = to_structurizr("shop", &t, None);
+        assert!(
+            dsl.contains("c0 = container \"compose.yaml::orders\""),
+            "{dsl}"
+        );
+        assert!(
+            dsl.contains("c3 = container \"shop/compose.yaml::orders\""),
+            "{dsl}"
+        );
+        assert!(dsl.contains("c1 = container \"billing\""), "{dsl}");
+        assert!(dsl.contains("x0 = softwareSystem \"cache:6379\""), "{dsl}");
+        assert!(dsl.contains("x1 = softwareSystem \"cache:6380\""), "{dsl}");
+        assert!(
+            dsl.contains(
+                "\"evidence\" \"compose.yaml:5 /services/orders/environment/BILLING_API\"\n"
+            ),
+            "{dsl}"
+        );
     }
 }

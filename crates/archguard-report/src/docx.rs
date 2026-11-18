@@ -46,6 +46,8 @@ struct Writer {
     italic: usize,
     /// Open lists: numbering instance id.
     lists: Vec<usize>,
+    /// The open list item already has its numbered paragraph.
+    numbered: bool,
     /// Numbering instances: `true` for ordered (each restarts at 1).
     nums: Vec<bool>,
     /// External link targets; relationship ids are `link{index}`.
@@ -73,11 +75,21 @@ impl Writer {
         if let Some(style) = self.style {
             let _ = write!(props, "<w:pStyle w:val=\"{style}\"/>");
         } else if let Some(&num) = self.lists.last() {
-            let _ = write!(
-                props,
-                "<w:pStyle w:val=\"ListParagraph\"/><w:numPr><w:ilvl w:val=\"{}\"/><w:numId w:val=\"{num}\"/></w:numPr>",
-                self.lists.len().min(9) - 1
-            );
+            let level = self.lists.len().min(9) - 1;
+            if self.numbered {
+                // A further paragraph of the item: indented, no bullet.
+                let _ = write!(
+                    props,
+                    "<w:pStyle w:val=\"ListParagraph\"/><w:ind w:left=\"{}\"/>",
+                    720 * (level + 1)
+                );
+            } else {
+                let _ = write!(
+                    props,
+                    "<w:pStyle w:val=\"ListParagraph\"/><w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"{num}\"/></w:numPr>"
+                );
+                self.numbered = true;
+            }
         }
         self.para = Some((props, String::new()));
     }
@@ -91,20 +103,21 @@ impl Writer {
 
     fn run(&mut self, text: &str, code: bool) {
         self.open();
+        // CT_RPr schema order: rStyle, rFonts, b, i.
         let mut props = String::new();
-        if self.bold > 0 || self.header {
-            props.push_str("<w:b/>");
-        }
-        if self.italic > 0 {
-            props.push_str("<w:i/>");
+        if self.link.is_some() {
+            props.push_str("<w:rStyle w:val=\"Hyperlink\"/>");
         }
         if code {
             props.push_str(
                 "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/>",
             );
         }
-        if self.link.is_some() {
-            props.push_str("<w:rStyle w:val=\"Hyperlink\"/>");
+        if self.bold > 0 || self.header {
+            props.push_str("<w:b/>");
+        }
+        if self.italic > 0 {
+            props.push_str("<w:i/>");
         }
         let run = format!(
             "<w:r><w:rPr>{props}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
@@ -151,7 +164,11 @@ impl Writer {
 
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph | Tag::Item => self.close(),
+            Tag::Paragraph => self.close(),
+            Tag::Item => {
+                self.close();
+                self.numbered = false;
+            }
             Tag::Heading { level, .. } => {
                 self.close();
                 const STYLES: [&str; 4] = ["Heading1", "Heading2", "Heading3", "Heading4"];
@@ -288,7 +305,7 @@ fn heading(n: u8, size: u8) -> String {
 
 fn styles() -> String {
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:cs=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after=\"120\"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/><w:qFormat/></w:style>{}{}{}{}<w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\"><w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"40\"/></w:pPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Code\"><w:name w:val=\"Code\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"0\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"18\"/></w:rPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Caption\"><w:name w:val=\"caption\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"40\"/></w:pPr><w:rPr><w:i/><w:sz w:val=\"18\"/></w:rPr></w:style><w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style><w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/><w:tblPr><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr></w:style></w:styles>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:cs=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after=\"120\"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/><w:qFormat/></w:style>{}{}{}{}<w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\"><w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"40\"/></w:pPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Code\"><w:name w:val=\"Code\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/><w:spacing w:after=\"0\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"18\"/></w:rPr></w:style><w:style w:type=\"paragraph\" w:styleId=\"Caption\"><w:name w:val=\"caption\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"40\"/></w:pPr><w:rPr><w:i/><w:sz w:val=\"18\"/></w:rPr></w:style><w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style><w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/><w:tblPr><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr></w:style></w:styles>",
         heading(1, 36),
         heading(2, 30),
         heading(3, 26),
@@ -457,5 +474,34 @@ mod tests {
     #[test]
     fn equal_input_gives_equal_bytes() {
         assert_eq!(markdown_to_docx(MD), markdown_to_docx(MD));
+    }
+
+    #[test]
+    fn properties_follow_the_schema_order() {
+        // CT_RPr: rStyle, rFonts, b, i; CT_PPrBase: shd before spacing.
+        let docx = markdown_to_docx("[***`x`***](https://a.org/)\n");
+        let doc = part(&docx, "word/document.xml");
+        assert!(
+            doc.contains("<w:rPr><w:rStyle w:val=\"Hyperlink\"/><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:b/><w:i/></w:rPr>"),
+            "{doc}"
+        );
+        let styles = part(&docx, "word/styles.xml");
+        assert!(
+            styles.contains("<w:pPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/><w:spacing w:after=\"0\"/></w:pPr>"),
+            "{styles}"
+        );
+    }
+
+    #[test]
+    fn a_second_paragraph_in_an_item_has_no_bullet_of_its_own() {
+        let doc = part(
+            &markdown_to_docx("- first point\n\n  second paragraph\n- next\n"),
+            "word/document.xml",
+        );
+        assert_eq!(doc.matches("<w:numPr>").count(), 2, "{doc}");
+        assert!(
+            doc.contains("<w:pPr><w:pStyle w:val=\"ListParagraph\"/><w:ind w:left=\"720\"/></w:pPr><w:r><w:rPr></w:rPr><w:t xml:space=\"preserve\">second paragraph</w:t>"),
+            "{doc}"
+        );
     }
 }

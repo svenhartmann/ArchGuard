@@ -159,3 +159,51 @@ fn export_formats_are_refused_outside_their_commands() {
         assert_eq!(output.status.code(), Some(2), "{command} --format {format}");
     }
 }
+
+#[test]
+fn arc42_export_never_overwrites_the_hand_written_arc42_md() {
+    let dir = project();
+    ok(&archguard(dir.path(), &["doc", "--arc42"]));
+    let md = dir.path().join("arc42.md");
+    let saved = fs::read(&md).unwrap();
+    let absolute = md.to_str().unwrap().to_owned();
+    let mut targets = vec!["arc42.md".to_owned(), "./arc42.md".to_owned(), absolute];
+    // A case-insensitive file system (macOS, Windows) reaches it as ARC42.MD too.
+    if dir.path().join("ARC42.MD").exists() {
+        targets.push("ARC42.MD".into());
+    }
+    for format in ["asciidoc", "docx"] {
+        for out in &targets {
+            let output = archguard(
+                dir.path(),
+                &["doc", "--arc42", "--format", format, "--out", out],
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{format} --out {out}: {stderr}"
+            );
+            assert!(stderr.contains("arc42.md"), "{stderr}");
+            assert_eq!(fs::read(&md).unwrap(), saved, "{format} --out {out}");
+        }
+    }
+}
+
+#[test]
+fn one_chapter_is_exported_to_its_own_file() {
+    let dir = project();
+    ok(&archguard(
+        dir.path(),
+        &["doc", "--arc42", "--format", "asciidoc"],
+    ));
+    let full = fs::read(dir.path().join("arc42.adoc")).unwrap();
+    for (format, name) in [("asciidoc", "arc42-05.adoc"), ("docx", "arc42-05.docx")] {
+        let chapter = ["doc", "--arc42", "--chapter", "5", "--format", format];
+        ok(&archguard(dir.path(), &chapter));
+        assert!(dir.path().join(name).is_file(), "{name}");
+        let check = archguard(dir.path(), &[&chapter[..], &["--check"]].concat());
+        assert_eq!(check.status.code(), Some(0), "{format} --check");
+    }
+    assert_eq!(fs::read(dir.path().join("arc42.adoc")).unwrap(), full);
+}
