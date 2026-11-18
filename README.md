@@ -69,6 +69,8 @@ Helm charts and Kustomize overlays are rendered only after you set `ARCHGUARD_RE
 
 The service topology also lists datastores. Compose services and Kubernetes workloads with well-known database images (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, SQL Server, Oracle, Cassandra, Elasticsearch and others) become datastore nodes. Connection URLs (`postgres://`, `mysql://`, `mongodb://`, `redis://`, `jdbc:…`), host/database settings such as `DB_HOST` with `DB_NAME` or `POSTGRES_DB`, and Spring `spring.datasource.url` link a service to such a node or to a configured external host. Only engine, host, port and database name are kept; credentials and URL options never appear. Two services with the same datastore and database name are reported as a **shared database**; the same server with different or unknown database names only as a **shared server**. Tables are not analyzed, and a configured datastore does not prove runtime use. Values from Secrets stay unknown and appear as analysis gaps.
 
+GraphQL schemas count as API contracts without an import ([ADR 0014](docs/adr/0014-graphql-contracts.md)). `*.graphql`, `*.graphqls` and `*.gql` files and `gql`/`graphql` tagged templates in TS/JS belong to the service whose build context or project directory contains them. ArchGuard reads types, fields, arguments, enum values and union members; directives such as federation `@key` are kept as text and not interpreted. An operation (`query`, `mutation`, `subscription`) in such a file or template links its service to the one service whose schema declares all its root fields; the link also becomes an HTTP connection of the topology. If no schema or several schemas match, or the document lies outside every service, the operation stays unresolved with the reason. A configured endpoint whose variable name or URL contains `graphql` links to the target service when that service has a schema. `archguard contracts . --graphql-baseline` saves the current schemas to `.archguard/graphql-contracts.json`; later runs report removed types and fields, removed arguments, new required arguments and arguments that became non-null as breaking, with the services whose linked operations use the changed root field. Nested selections are not checked against the schema.
+
 ## Languages and source metrics
 
 | Language | Import graph | Additional source analysis | Required external tools |
@@ -109,6 +111,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect cycles | `archguard cycles . --format json` |
 | Inspect compiler evidence | `archguard calls . --format json` |
 | Inspect service connections | `archguard services . --format json` |
+| Inspect API contracts (imported OpenAPI, GraphQL from the sources) | `archguard contracts . --format json` |
 | Inspect recorded runtime (requests, DB calls per request, slow and repeated queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
 | Compare with a Git revision | `archguard review . --base main --format html` |

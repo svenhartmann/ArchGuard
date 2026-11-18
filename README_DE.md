@@ -69,6 +69,8 @@ Helm-Charts und Kustomize-Overlays werden erst gerendert, wenn du `ARCHGUARD_REN
 
 Die Diensttopologie listet auch Datenspeicher. Compose-Services und Kubernetes-Workloads mit bekannten Datenbank-Images (PostgreSQL, MySQL, MariaDB, MongoDB, Redis, SQL Server, Oracle, Cassandra, Elasticsearch und weitere) werden zu Datenspeicher-Knoten. Verbindungs-URLs (`postgres://`, `mysql://`, `mongodb://`, `redis://`, `jdbc:…`), Host- und Datenbank-Einstellungen wie `DB_HOST` mit `DB_NAME` oder `POSTGRES_DB` sowie Spring `spring.datasource.url` verbinden einen Dienst mit einem solchen Knoten oder einem konfigurierten externen Host. Erhalten bleiben nur Engine, Host, Port und Datenbankname; Zugangsdaten und URL-Optionen erscheinen nie. Zwei Dienste mit demselben Datenspeicher und demselben Datenbanknamen gelten als **gemeinsame Datenbank**; derselbe Server mit unterschiedlichen oder unbekannten Datenbanknamen nur als **gemeinsamer Server**. Tabellen werden nicht analysiert, und ein konfigurierter Datenspeicher belegt keine Nutzung zur Laufzeit. Werte aus Secrets bleiben unbekannt und erscheinen als Analyselücken.
 
+GraphQL-Schemas gelten ohne Import als API-Verträge ([ADR 0014](docs/adr/0014-graphql-contracts.md)). Dateien `*.graphql`, `*.graphqls` und `*.gql` sowie `gql`/`graphql`-Tagged-Templates in TS/JS gehören dem Dienst, dessen Build-Kontext oder Projektverzeichnis sie enthält. ArchGuard liest Typen, Felder, Argumente, Enum-Werte und Union-Mitglieder; Direktiven wie das Federation-`@key` bleiben Text und werden nicht ausgewertet. Eine Operation (`query`, `mutation`, `subscription`) in einer solchen Datei oder einem Template verbindet ihren Dienst mit dem einen Dienst, dessen Schema alle ihre Root-Felder deklariert; die Verbindung erscheint auch als HTTP-Verbindung der Topologie. Passt kein Schema oder passen mehrere, oder liegt das Dokument in keinem Dienst, bleibt die Operation mit Begründung unaufgelöst. Ein konfigurierter Endpunkt, dessen Variablenname oder URL `graphql` enthält, verbindet mit dem Zieldienst, wenn dieser ein Schema hat. `archguard contracts . --graphql-baseline` speichert die aktuellen Schemas in `.archguard/graphql-contracts.json`; spätere Läufe melden entfernte Typen und Felder, entfernte Argumente, neue Pflichtargumente und Argumente, die non-null wurden, als breaking, zusammen mit den Diensten, deren verbundene Operationen das geänderte Root-Feld nutzen. Verschachtelte Selektionen werden nicht gegen das Schema geprüft.
+
 ## Sprachen und Quellmetriken
 
 | Sprache | Importgraph | Zusätzliche Quellanalyse | Benötigte externe Werkzeuge |
@@ -109,6 +111,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Zyklen untersuchen | `archguard cycles . --format json` |
 | Compilerbelege untersuchen | `archguard calls . --format json` |
 | Dienstverbindungen untersuchen | `archguard services . --format json` |
+| API-Verträge untersuchen (importiertes OpenAPI, GraphQL aus den Quellen) | `archguard contracts . --format json` |
 | Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
 | Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
