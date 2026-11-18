@@ -264,13 +264,29 @@ pub(crate) fn extraction_fingerprint(
 fn build_identity() -> &'static str {
     static ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let version = env!("CARGO_PKG_VERSION");
-        match std::env::current_exe().and_then(|exe| file_identity(&exe)) {
+        let debug = cfg!(debug_assertions);
+        match std::env::current_exe().and_then(|exe| exe_identity(&exe, debug)) {
             Ok(hash) => format!("{version} {hash:016x}"),
             // Unknown build: never match another run's entry.
             Err(_) => format!("{version} {:?}", std::time::SystemTime::now()),
         }
     });
     &ID
+}
+
+/// The identity of the executable at `path`. A debug build stamps it by
+/// size and modification time instead of hashing ~100 MB at every start:
+/// each rebuild writes a new file, and debug builds are never shared.
+fn exe_identity(path: &Path, debug: bool) -> std::io::Result<u64> {
+    if !debug {
+        return file_identity(path);
+    }
+    let FileStamp::Stamped { secs, nanos, len } = file_stamp(path) else {
+        return Err(std::io::Error::other("executable cannot be stat'ed"));
+    };
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(&(secs, nanos, len), &mut hasher);
+    Ok(std::hash::Hasher::finish(&hasher))
 }
 
 /// Streaming hash of a file's bytes. `DefaultHasher::new` has fixed keys, so
@@ -648,6 +664,25 @@ mod tests {
         fs::write(&c, &changed).unwrap();
         assert_eq!(file_identity(&a).unwrap(), file_identity(&b).unwrap());
         assert_ne!(file_identity(&a).unwrap(), file_identity(&c).unwrap());
+    }
+
+    /// Debug builds skip hashing their ~100 MB binary: every rebuild writes
+    /// a new file, so size and modification time tell builds apart.
+    #[test]
+    fn a_debug_build_is_told_apart_by_its_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("archguard");
+        fs::write(&exe, b"build one").unwrap();
+        let first = exe_identity(&exe, true).unwrap();
+        assert_eq!(exe_identity(&exe, true).unwrap(), first, "same file");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&exe, b"build one").unwrap();
+        assert_ne!(exe_identity(&exe, true).unwrap(), first, "relinked");
+        // A release build hashes the bytes: the rewrite keeps its identity.
+        assert_eq!(
+            exe_identity(&exe, false).unwrap(),
+            file_identity(&exe).unwrap()
+        );
     }
 
     #[test]
