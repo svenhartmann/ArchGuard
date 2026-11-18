@@ -120,7 +120,10 @@ impl Doc {
                     .any(|(d, _)| d.start < r.end && r.start < d.end)
             })
             .map(|(r, blocks)| {
-                let editable = editable(&blocks).filter(|_| !locked(&r));
+                // A quote without text gives no block: a part needs one
+                // for the caret.
+                let editable = editable(&blocks)
+                    .filter(|b| !b.is_empty() && !locked(&r) && !as_written(&md[r.clone()], &blocks));
                 (r, editable)
             })
             .collect();
@@ -324,6 +327,38 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
     faithful.then_some(out)
 }
 
+/// Whether chunk `source` holds Markdown its `blocks` lose: a comment
+/// outside fenced code (the reader drops it), or code, a setext heading
+/// or HTML the reader takes for a paragraph or list (an edit would write
+/// it on one line).
+fn as_written(source: &str, blocks: &[Md]) -> bool {
+    let code = matches!(blocks, [Md::Code { .. }]);
+    let indented = |l: &str| l.starts_with("    ") || l.starts_with('\t');
+    let not_prose = |l: &str| {
+        let t = l.trim();
+        indented(l)
+            || t.starts_with("~~~")
+            || t.starts_with('<')
+            || !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
+    };
+    !code && (source.contains("<!--") || source.contains("-->"))
+        || indented(source)
+        || matches!(blocks, [Md::Paragraph(_)]) && source.lines().any(not_prose)
+        || wider_than_header(source, blocks)
+}
+
+/// Whether a table row of chunk `source` has more cells than its header:
+/// the reader drops the extra cells.
+fn wider_than_header(source: &str, blocks: &[Md]) -> bool {
+    let [Md::Table { columns, .. }] = blocks else {
+        return false;
+    };
+    source
+        .lines()
+        .skip(2)
+        .any(|row| markdown::cells(row).len() > columns.len())
+}
+
 /// Whether `block`, read from `md`, writes it back (line breaks as
 /// spaces). Else `md` holds Markdown the editor does not model (reference
 /// links and definitions, footnotes, link titles, hard breaks, entities)
@@ -397,6 +432,22 @@ pub fn list_entries(blocks: &[Block]) -> Vec<Option<(usize, Option<u64>)>> {
         .collect()
 }
 
+/// The blocks of the table holding cell `b`: the cells around it up to
+/// the next table's first header cell.
+pub fn table_range(blocks: &[Block], b: usize) -> Range<usize> {
+    let cell = |i: usize| matches!(blocks[i].kind, Kind::Cell { .. });
+    let first = |i: usize| matches!(blocks[i].kind, Kind::Cell { row: 0, col: 0, .. });
+    let mut start = b;
+    while start > 0 && !first(start) && cell(start - 1) {
+        start -= 1;
+    }
+    let mut end = b + 1;
+    while end < blocks.len() && cell(end) && !first(end) {
+        end += 1;
+    }
+    start..end
+}
+
 /// The `| --- | ---: |` line under a header row of `header` cells.
 fn separator(header: &[Block]) -> String {
     let mut out = String::from("|");
@@ -416,6 +467,21 @@ fn separator(header: &[Block]) -> String {
     out
 }
 
+/// What `write` puts between a block of kind `prev` and one of `kind`.
+fn between(prev: Option<&Kind>, kind: &Kind) -> &'static str {
+    match (prev, kind) {
+        (None, _) => "",
+        (Some(Kind::Item { .. }), Kind::Item { .. }) => "\n",
+        (Some(Kind::Quote), Kind::Quote) => "\n>\n",
+        // A table's rows; a cell after another in its row. A header cell
+        // after a cell starts the next table.
+        (Some(Kind::Cell { .. }), Kind::Cell { row: 0, col: 0, .. }) => "\n\n",
+        (Some(Kind::Cell { .. }), Kind::Cell { col: 0, .. }) => "\n",
+        (Some(Kind::Cell { .. }), Kind::Cell { .. }) => "",
+        _ => "\n\n",
+    }
+}
+
 /// The Markdown of edited blocks; empty text blocks are dropped.
 fn write(blocks: &[Block]) -> String {
     let mut out = String::new();
@@ -426,15 +492,7 @@ fn write(blocks: &[Block]) -> String {
         if !written(b) {
             continue;
         }
-        out.push_str(match (prev, &b.kind) {
-            (None, _) => "",
-            (Some(Kind::Item { .. }), Kind::Item { .. }) => "\n",
-            (Some(Kind::Quote), Kind::Quote) => "\n>\n",
-            // A table's rows; a cell after another in its row.
-            (Some(Kind::Cell { .. }), Kind::Cell { col: 0, .. }) => "\n",
-            (Some(Kind::Cell { .. }), Kind::Cell { .. }) => "",
-            _ => "\n\n",
-        });
+        out.push_str(between(prev, &b.kind));
         let text = b.inline.to_markdown();
         match &b.kind {
             Kind::Paragraph => out.push_str(&text),
@@ -847,5 +905,80 @@ Ende.
             parts(d).iter().flat_map(|p| p.blocks().to_vec()).collect()
         };
         assert_eq!(blocks(&mut again), blocks(&mut doc), "{written}");
+    }
+
+    /// A quote without text (comments are no text) is no part without
+    /// blocks: the editor could not put its caret there.
+    #[test]
+    fn a_quote_without_text_stays_as_written() {
+        for md in ["---\n\n>\n\n---\n", "> <!-- Hinweis -->\n", "Text.\n\n>\n"] {
+            let mut doc = Doc::parse(md, &[]);
+            assert!(
+                parts(&mut doc).iter().all(|p| !p.blocks().is_empty()),
+                "{md}"
+            );
+            assert_eq!(doc.to_markdown(), md);
+        }
+    }
+
+    /// Edit the first part's first block; every other byte stays.
+    fn edit_first(md: &str) -> String {
+        let mut doc = Doc::parse(md, &[]);
+        assert_eq!(doc.to_markdown(), md, "untouched");
+        parts(&mut doc)[0].edit()[0].inline = Inline::plain("Neu.");
+        doc.to_markdown()
+    }
+
+    /// The reader drops comments; a block with a comment beside its text
+    /// stays as written, else an edit elsewhere in its part deletes it.
+    #[test]
+    fn comments_beside_text_survive_an_edit_elsewhere() {
+        let kept = [
+            "Ein Satz. <!-- TODO Quelle -->",
+            "- a <!-- x -->",
+            "### Titel <!-- {#a} -->",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n\nLetzter.\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        // The end of a comment begun on the line before stays too.
+        let md = "<!-- a\nb --> Text\n\nLetzter.\n";
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let last = all.last_mut().unwrap().edit().last_mut().unwrap();
+        last.inline = Inline::plain("Neu.");
+        assert_eq!(doc.to_markdown(), md.replace("Letzter.", "Neu."));
+    }
+
+    /// Code, setext headings and HTML the reader takes for a paragraph
+    /// (or a list) stay as written, not flattened onto one line.
+    #[test]
+    fn code_and_html_read_as_paragraphs_survive_an_edit_elsewhere() {
+        let kept = [
+            "~~~\nfn main() {}\n~~~",
+            "    eingerückter\n    Code",
+            "\tmit Tab",
+            "Titel\n=====",
+            "Titel\n--",
+            "<pre>\nZeile\n</pre>",
+            "dienste:\n    - web\n    - db",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+    }
+
+    /// Two tables with a blank line between are one part; edited, they
+    /// are still written as two tables.
+    #[test]
+    fn two_tables_in_a_part_stay_two() {
+        let md = "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n";
+        assert_eq!(edit_first(md), md.replacen("| a |", "| Neu. |", 1));
+    }
+
+    /// The reader drops cells beyond the header's; such a table stays as
+    /// written.
+    #[test]
+    fn a_row_wider_than_its_header_survives_an_edit_elsewhere() {
+        let md = "Erster Absatz.\n\n| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n";
+        assert_eq!(edit_first(md), md.replacen("Erster Absatz.", "Neu.", 1));
     }
 }
