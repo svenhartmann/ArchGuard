@@ -301,6 +301,7 @@ fn merge_unknown_databases(
             datastore,
             database,
             evidence: evidence.into_iter().collect(),
+            tables: Vec::new(),
         });
     }
     let named: BTreeSet<(String, String)> = out

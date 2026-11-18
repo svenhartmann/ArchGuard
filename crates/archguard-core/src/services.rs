@@ -230,6 +230,10 @@ pub struct DatastoreUsage {
     /// Database or schema name when configured literally.
     pub database: Option<String>,
     pub evidence: Vec<ServiceEvidence>,
+    /// The service's tables (see `ServiceDatastores::tables`) when this is its only
+    /// usage of a datastore with tables; otherwise empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

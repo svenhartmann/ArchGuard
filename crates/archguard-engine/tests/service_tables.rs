@@ -169,6 +169,22 @@ fn services_on_one_database_with_a_common_table_share_that_table() {
     assert_eq!(shared[0].scope, SharedDatastoreScope::Table);
     assert_eq!(shared[0].tables, ["orders", "payments"]);
     assert!(!shared[0].disjoint_tables);
+    // The tables go to the one relational datastore usage, never to the cache.
+    let usage = |store: &str| {
+        report
+            .datastores
+            .usages
+            .iter()
+            .find(|u| u.service == "compose.yaml::orders" && u.datastore == store)
+            .unwrap()
+            .tables
+            .clone()
+    };
+    assert_eq!(
+        usage("compose.yaml::db"),
+        ["audit_log", "customer", "orders", "payments"]
+    );
+    assert!(usage("compose.yaml::cache").is_empty());
 }
 
 #[test]

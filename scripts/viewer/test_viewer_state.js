@@ -631,6 +631,7 @@ fullscreenButton.click();assert.equal(fullscreenExited,1);assert.equal(fullscree
 const noFullscreen=launch(fixture);
 const noFsRoot=noFullscreen.document.documentElement;
 noFsRoot.requestFullscreen=undefined;noFullscreen.document.exitFullscreen=undefined;
+assert.equal(app.run("arc42CatalogueModel({kind:'deployment',elements:[{id:'e1',name:'db',kind:'database',technology:'postgresql',detail:'Tables: orders'}]}).nodes[0].detail"),'postgresql · Tables: orders','datastore details list their tables');
 noFullscreen.ids.get('toggle-fullscreen').click();
 assert.match(noFullscreen.ids.get('feedback').textContent,/fullscreen|vollbild/i,'a missing fullscreen API is reported, not thrown');
 const exported=launch({...fixture,nodes:[node(0,'A.ts'),node(1,'B.ts')],edges:[edge(0,1)],findings:[]});exported.click('simulation-mode');exported.run("recordOp(encodeCut('A.ts','B.ts'))");exported.click('export-ops');

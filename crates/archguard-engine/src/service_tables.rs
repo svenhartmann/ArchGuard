@@ -99,6 +99,7 @@ pub(super) fn augment(root: &Path, report: &mut ServiceTopology) {
             }
         })
         .collect();
+    attribute(report);
     refine(report, &gaps);
 }
 
@@ -127,29 +128,82 @@ fn scan_service(root: &Path, dir: &Path, nested: &[&PathBuf]) -> Vec<(String, Me
     scan.mentions
 }
 
+/// Gives each service's tables to its datastore usage when that is the service's only
+/// datastore with tables; with several, which table lives where stays unknown.
+fn attribute(report: &mut ServiceTopology) {
+    let d = &report.datastores;
+    let mut by_service: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for t in &d.tables {
+        by_service
+            .entry(&t.service)
+            .or_default()
+            .push(t.name.clone());
+    }
+    let relational: Vec<bool> = d
+        .usages
+        .iter()
+        .map(|u| has_tables(d, &u.datastore))
+        .collect();
+    let mut assigned = Vec::new();
+    let mut several = BTreeSet::new();
+    for (i, usage) in d.usages.iter().enumerate() {
+        let Some(names) = by_service.get(usage.service.as_str()) else {
+            continue;
+        };
+        let count = (0..d.usages.len())
+            .filter(|&j| relational[j] && d.usages[j].service == usage.service)
+            .count();
+        match count {
+            1 if relational[i] => assigned.push((i, names.clone())),
+            1 | 0 => {}
+            _ => {
+                several.insert(usage.service.clone());
+            }
+        }
+    }
+    for (i, names) in assigned {
+        report.datastores.usages[i].tables = names;
+    }
+    for service in several {
+        let short = service.rsplit(':').next().unwrap_or(&service).to_owned();
+        diagnostic(report, ".", Some(&short), SEVERAL);
+    }
+}
+
 /// Shared databases become shared tables when two services name the same table, or
 /// are marked disjoint when every service's tables are known and none repeats.
 fn refine(report: &mut ServiceTopology, gaps: &BTreeSet<String>) {
-    let d = &report.datastores;
-    let mut several = BTreeSet::new();
-    let updates: Vec<_> = d
-        .shared
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.scope == SharedDatastoreScope::Database && has_tables(d, &s.datastore))
-        .map(|(i, s)| (i, compare(d, gaps, &s.services, &mut several)))
-        .collect();
-    for (i, (common, all_known)) in updates {
-        let shared = &mut report.datastores.shared[i];
+    let usages = &report.datastores.usages;
+    for shared in &mut report.datastores.shared {
+        if shared.scope != SharedDatastoreScope::Database {
+            continue;
+        }
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut all_known = true;
+        for service in &shared.services {
+            let tables = usages
+                .iter()
+                .find(|u| {
+                    &u.service == service
+                        && u.datastore == shared.datastore
+                        && u.database == shared.database
+                })
+                .map_or(&[][..], |u| &u.tables[..]);
+            all_known &= !tables.is_empty() && !gaps.contains(service);
+            for name in tables {
+                *counts.entry(name).or_default() += 1;
+            }
+        }
+        let common: Vec<String> = counts
+            .into_iter()
+            .filter(|(_, n)| *n >= 2)
+            .map(|(t, _)| t.to_owned())
+            .collect();
         shared.disjoint_tables = all_known && common.is_empty();
         if !common.is_empty() {
             shared.scope = SharedDatastoreScope::Table;
             shared.tables = common;
         }
-    }
-    for service in several {
-        let short = service.rsplit(':').next().unwrap_or(&service).to_owned();
-        diagnostic(report, ".", Some(&short), SEVERAL);
     }
 }
 
@@ -159,48 +213,6 @@ fn has_tables(d: &ServiceDatastores, id: &str) -> bool {
         .find(|n| n.id == id)
         .and_then(|n| n.engine.as_deref())
         .is_none_or(|e| !NO_TABLES.contains(&e))
-}
-
-/// The tables two or more `services` name, and whether every service's tables are
-/// known. Tables count only for a service with exactly one relational datastore.
-fn compare(
-    d: &ServiceDatastores,
-    gaps: &BTreeSet<String>,
-    services: &[String],
-    several: &mut BTreeSet<String>,
-) -> (Vec<String>, bool) {
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut all_known = true;
-    for service in services {
-        let names: BTreeSet<&str> = d
-            .tables
-            .iter()
-            .filter(|t| &t.service == service)
-            .map(|t| t.name.as_str())
-            .collect();
-        let relational = d
-            .usages
-            .iter()
-            .filter(|u| &u.service == service && has_tables(d, &u.datastore))
-            .count();
-        if relational > 1 && !names.is_empty() {
-            several.insert(service.clone());
-        }
-        if names.is_empty() || relational != 1 {
-            all_known = false;
-            continue;
-        }
-        all_known &= !gaps.contains(service);
-        for name in names {
-            *counts.entry(name).or_default() += 1;
-        }
-    }
-    let common = counts
-        .into_iter()
-        .filter(|(_, n)| *n >= 2)
-        .map(|(t, _)| t.to_owned())
-        .collect();
-    (common, all_known)
 }
 
 /// Source and SQL files below `dir`, without tests, build output and vendored code.
