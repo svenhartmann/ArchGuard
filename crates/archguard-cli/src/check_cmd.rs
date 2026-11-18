@@ -169,7 +169,7 @@ pub(crate) fn check(
                     emit(&json);
                 }
             }
-            Format::Sarif => emit(&to_sarif(&report, source_paths)),
+            Format::Sarif => emit(&to_sarif(&report, source_paths, baseline.as_ref())),
             _ => emit(&to_text(&report)),
         }
     }

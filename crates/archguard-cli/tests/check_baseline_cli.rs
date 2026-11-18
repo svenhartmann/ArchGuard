@@ -131,3 +131,29 @@ fn configured_rules_baseline_is_the_default_file() {
     let out = archguard(dir.path(), &["baseline", "diff"]);
     assert_eq!(out.status.code(), Some(0), "diff: {}", report(&out));
 }
+
+/// SARIF agrees with the exit code: a baselined cycle is a note, not an
+/// error, while the cycle stays visible.
+#[test]
+fn sarif_reports_baselined_cycles_as_notes() {
+    let dir = tempdir().expect("tempdir");
+    cyclic(dir.path());
+    write(dir.path(), "archguard.toml", TOLERATE_SCC_SIZE);
+    let out = archguard(dir.path(), &["baseline", "write"]);
+    assert_eq!(out.status.code(), Some(0), "{}", report(&out));
+    let out = archguard(dir.path(), &["--format", "sarif", "check", "--baseline"]);
+    assert_eq!(out.status.code(), Some(0), "{}", report(&out));
+    let sarif: serde_json::Value = serde_json::from_slice(&out.stdout).expect("sarif json");
+    let cycles: Vec<&serde_json::Value> = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter(|r| r["ruleId"] == "archguard/cycle")
+        .collect();
+    assert!(!cycles.is_empty(), "{}", report(&out));
+    assert!(
+        cycles.iter().all(|r| r["level"] == "note"),
+        "{}",
+        report(&out)
+    );
+}
