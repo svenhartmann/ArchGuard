@@ -217,7 +217,8 @@ function cliHelpGroups(){return [
     ['quality',t('Import SARIF findings, read saved findings, or gate changed-code quality with --base and thresholds.','SARIF-Befunde importieren, gespeicherte Befunde lesen oder Qualität geänderten Codes mit --base und Grenzwerten prüfen.')],
     ['contracts',t('Import OpenAPI with --report and an exact --service ID; inspect saved contract comparisons.','OpenAPI mit --report und einer exakten --service-ID importieren; gespeicherte Vertragsvergleiche lesen.')],
     ['security',t('Run Trivy dependency-advisory scanning and save .archguard/security.json. Requires Trivy.','Mit Trivy Abhängigkeiten auf Sicherheitsmeldungen prüfen und .archguard/security.json speichern. Benötigt Trivy.')],
-    ['runtime',t('Read the runtime profile from recorded OTLP traces in .archguard/runtime. Does not run or instrument the application.','Laufzeitprofil aus aufgezeichneten OTLP-Traces in .archguard/runtime lesen. Startet oder instrumentiert die Anwendung nicht.')]
+    ['runtime',t('Read the runtime profile from recorded OTLP traces in .archguard/runtime. Does not run or instrument the application.','Laufzeitprofil aus aufgezeichneten OTLP-Traces in .archguard/runtime lesen. Startet oder instrumentiert die Anwendung nicht.')],
+    ['sbom',t('List third-party dependencies from lockfiles and manifests as CycloneDX 1.6, JSON or text; licences only where the files state them. Never fetches from a registry.','Fremdabhängigkeiten aus Lockfiles und Manifesten als CycloneDX 1.6, JSON oder Text auflisten; Lizenzen nur, wenn die Dateien sie angeben. Lädt nie etwas aus einer Registry.')]
   ]},
   {title:t('Architecture, services & documentation','Architektur, Services & Dokumentation'),commands:[
     ['architecture',t('Compare explicitly modeled components and allowed directions with actual imports.','Explizit modellierte Komponenten und erlaubte Richtungen mit tatsächlichen Imports vergleichen.')],
