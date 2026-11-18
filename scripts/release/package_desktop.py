@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Package the native desktop app as unsigned installers and verify the complete set.
+"""Package the native desktop app as installers and verify the complete set.
 
-macOS: ArchGuard.app (ad-hoc signed) in a .dmg. Windows: WiX .msi and a plain
-.zip. Linux (glibc): AppImage. No package carries a publisher signature.
+macOS: ArchGuard.app in a .dmg, ad-hoc signed, or with --sign-identity signed
+with a Developer ID (hardened runtime) and with --notary-profile notarized and
+stapled. Windows: WiX .msi and a plain .zip, with --sign-thumbprint the exe and
+the .msi Authenticode-signed. Linux (glibc): AppImage for x86_64 and aarch64.
+Credentials never reach this script: the release workflow imports them into a
+temporary keychain or certificate store and passes only names.
 """
 import argparse
 import os
@@ -30,9 +34,12 @@ KINDS = {
     # GitHub asset names ignore case, so the zip must not match the CLI archive's name.
     'x86_64-pc-windows-msvc': ('.msi', '-portable.zip'),
     'x86_64-unknown-linux-gnu': ('.AppImage',),
+    'aarch64-unknown-linux-gnu': ('.AppImage',),
 }
 TARGETS = tuple(KINDS)
 ZIP_DOCUMENTS = ('README.md', 'LICENSE-MIT', 'LICENSE-APACHE')
+# RFC 3161 timestamp server for Authenticode, so signatures outlive the certificate.
+TIMESTAMP_URL = 'http://timestamp.digicert.com'
 
 
 def packages(target):
@@ -160,33 +167,56 @@ def run(*command, env=None):
     subprocess.run([str(part) for part in command], check=True, env=env)
 
 
-def macos(binary, target, out, work):
+def macos(binary, target, out, work, identity=None, keychain=None, notary_profile=None):
+    if notary_profile and not identity:
+        raise ValueError('Notarization needs a Developer ID signature (--sign-identity)')
+    if identity and not keychain:
+        raise ValueError('Signing with an identity needs the --keychain that holds it')
     app = app_layout(binary, work / 'stage')
     iconset = work / 'ArchGuard.iconset'
     iconset.mkdir()
     for name, size in iconset_sizes():
         run('sips', '-z', size, size, ICON_PNG, '--out', iconset / name)
     run('iconutil', '-c', 'icns', iconset, '-o', app / 'Contents/Resources/ArchGuard.icns')
-    run('codesign', '--force', '--deep', '--sign', '-', app)
+    if identity:
+        # Notarization requires the hardened runtime and a secure timestamp.
+        run('codesign', '--force', '--options', 'runtime', '--timestamp',
+            '--keychain', keychain, '--sign', identity, app)
+    else:
+        run('codesign', '--force', '--deep', '--sign', '-', app)
     run('codesign', '--verify', '--deep', '--strict', '--verbose=2', app)
     (work / 'stage/Applications').symlink_to('/Applications')
     out.mkdir(parents=True, exist_ok=True)
     dmg = out / packages(target)[0]
     run('hdiutil', 'create', '-volname', 'ArchGuard ' + release.version(), '-srcfolder', work / 'stage',
         '-fs', 'HFS+', '-format', 'UDZO', '-ov', dmg)
+    if notary_profile:
+        run('xcrun', 'notarytool', 'submit', dmg, '--keychain-profile', notary_profile,
+            '--keychain', keychain, '--wait')
+        # Fails without an accepted ticket, so a rejected submission stops the release.
+        run('xcrun', 'stapler', 'staple', dmg)
+        run('xcrun', 'stapler', 'validate', dmg)
     return [dmg]
 
 
-def linux(binary, out, work, tool, runtime):
+def linux(binary, target, out, work, tool, runtime):
+    image = out / packages(target)[0]
     appdir = appdir_layout(binary, work / 'ArchGuard.AppDir')
     out.mkdir(parents=True, exist_ok=True)
-    image = out / packages('x86_64-unknown-linux-gnu')[0]
-    env = dict(os.environ, ARCH='x86_64', APPIMAGE_EXTRACT_AND_RUN='1')
+    env = dict(os.environ, ARCH=target.split('-')[0], APPIMAGE_EXTRACT_AND_RUN='1')
     run(tool, '--no-appstream', '--runtime-file', runtime, appdir, image, env=env)
     return [image]
 
 
-def windows(binary, out, work):
+def signtool(path, thumbprint):
+    run('signtool', 'sign', '/sha1', thumbprint, '/fd', 'SHA256',
+        '/tr', TIMESTAMP_URL, '/td', 'SHA256', path)
+    run('signtool', 'verify', '/pa', '/v', path)
+
+
+def windows(binary, out, work, thumbprint=None):
+    if thumbprint:
+        signtool(checked_binary(binary), thumbprint)  # before the .msi and .zip take copies
     source = work / 'ArchGuard.wxs'
     source.write_text(wxs(msi_version(release.version()), str(checked_binary(binary).resolve())), encoding='utf-8')
     out.mkdir(parents=True, exist_ok=True)
@@ -194,6 +224,8 @@ def windows(binary, out, work):
     # Built in work/ so WiX's .wixpdb next to it never reaches the release set.
     run('wix', 'build', '-arch', 'x64', '-o', work / msi.name, source)
     shutil.move(work / msi.name, msi)
+    if thumbprint:
+        signtool(msi, thumbprint)
     return [msi, windows_zip(binary, out)]
 
 
@@ -233,6 +265,10 @@ def main():
     parser.add_argument('--extract', type=Path, help='verify: empty directory for scannable contents')
     parser.add_argument('--appimagetool', type=Path)
     parser.add_argument('--runtime', type=Path)
+    parser.add_argument('--sign-identity', help='macos: Developer ID identity; default ad-hoc signature')
+    parser.add_argument('--keychain', help='macos: keychain with the identity and the notary profile')
+    parser.add_argument('--notary-profile', help='macos: notarytool keychain profile; notarize and staple')
+    parser.add_argument('--sign-thumbprint', help='windows: certificate in CurrentUser\\My for signtool')
     args = parser.parse_args()
     if args.action == 'verify':
         for path in verify(args.out, args.extract):
@@ -241,11 +277,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix='archguard-desktop-') as temporary:
         work = Path(temporary)
         if args.action == 'macos':
-            built = macos(args.binary, args.target, args.out, work)
+            built = macos(args.binary, args.target, args.out, work,
+                          args.sign_identity, args.keychain, args.notary_profile)
         elif args.action == 'linux':
-            built = linux(args.binary, args.out, work, args.appimagetool, args.runtime)
+            built = linux(args.binary, args.target, args.out, work, args.appimagetool, args.runtime)
         else:
-            built = windows(args.binary, args.out, work)
+            built = windows(args.binary, args.out, work, args.sign_thumbprint)
     for path in built:
         print(write_checksum(path), end='')
 

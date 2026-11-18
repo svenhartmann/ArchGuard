@@ -71,6 +71,7 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(desktop.packages('x86_64-pc-windows-msvc'),
                          (f'ArchGuard-{v}-x86_64-pc-windows-msvc.msi', f'ArchGuard-{v}-x86_64-pc-windows-msvc-portable.zip'))
         self.assertEqual(desktop.packages('x86_64-unknown-linux-gnu'), (f'ArchGuard-{v}-x86_64-unknown-linux-gnu.AppImage',))
+        self.assertEqual(desktop.packages('aarch64-unknown-linux-gnu'), (f'ArchGuard-{v}-aarch64-unknown-linux-gnu.AppImage',))
 
     def test_unknown_or_musl_target_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -138,6 +139,83 @@ class LayoutTests(unittest.TestCase):
         desktop.windows(self.binary, out, work)
         self.assertEqual({p.name for p in out.iterdir()}, set(desktop.packages('x86_64-pc-windows-msvc')))
 
+    def fake_tools(self):
+        """Records every command instead of running it; fakes the files tools would write."""
+        calls = []
+
+        def record(*command, env=None):
+            calls.append(([str(part) for part in command], env))
+            if command[0] == 'wix':
+                Path(command[command.index('-o') + 1]).write_bytes(b'msi fixture')
+            if command[0] == 'hdiutil':
+                Path(command[-1]).write_bytes(b'dmg fixture')
+            if command[0] == 'appimagetool':
+                Path(command[-1]).write_bytes(b'appimage fixture')
+        original, desktop.run = desktop.run, record
+        self.addCleanup(setattr, desktop, 'run', original)
+        work = self.root / 'work'
+        work.mkdir()
+        return calls, work
+
+    def test_macos_without_identity_keeps_the_ad_hoc_signature(self):
+        calls, work = self.fake_tools()
+        desktop.macos(self.binary, 'aarch64-apple-darwin', self.root / 'dist', work)
+        commands = [c for c, _ in calls]
+        self.assertIn(['--sign', '-'], [c[3:5] for c in commands if c[0] == 'codesign'])
+        self.assertFalse([c for c in commands if 'notarytool' in c or '--options' in c])
+
+    def test_macos_identity_signs_with_hardened_runtime_then_notarizes_and_staples_the_dmg(self):
+        calls, work = self.fake_tools()
+        dmg = str(desktop.macos(self.binary, 'aarch64-apple-darwin', self.root / 'dist', work,
+                                'Developer ID Application', '/k.keychain-db', 'notary')[0])
+        commands = [c for c, _ in calls]
+        sign = next(c for c in commands if c[0] == 'codesign' and '--sign' in c)
+        for flag in ('--options', 'runtime', '--timestamp', '--keychain', '/k.keychain-db'):
+            self.assertIn(flag, sign)
+        self.assertEqual(sign[sign.index('--sign') + 1], 'Developer ID Application')
+        self.assertNotIn('-', sign[sign.index('--sign') + 1:-1])
+        tail = commands[[c[0] for c in commands].index('hdiutil'):]
+        self.assertEqual([c[:3] for c in tail[1:]], [['xcrun', 'notarytool', 'submit'],
+                                                     ['xcrun', 'stapler', 'staple'],
+                                                     ['xcrun', 'stapler', 'validate']])
+        self.assertEqual(tail[1][3], dmg)
+        self.assertIn('--wait', tail[1])
+        self.assertEqual(tail[2][3], dmg)
+
+    def test_macos_notarization_without_identity_is_rejected(self):
+        calls, work = self.fake_tools()
+        with self.assertRaisesRegex(ValueError, 'Developer ID'):
+            desktop.macos(self.binary, 'aarch64-apple-darwin', self.root / 'dist', work, notary_profile='notary')
+        self.assertEqual(calls, [])
+
+    def test_windows_thumbprint_signs_the_exe_before_packaging_and_the_msi_after(self):
+        calls, work = self.fake_tools()
+        msi, archive = desktop.windows(self.binary, self.root / 'dist', work, 'ABC123')
+        commands = [c for c, _ in calls]
+        signs = [c for c in commands if c[:2] == ['signtool', 'sign']]
+        self.assertEqual([c[-1] for c in signs], [str(self.binary), str(msi)])
+        for sign in signs:
+            self.assertEqual(sign[sign.index('/sha1') + 1], 'ABC123')
+            self.assertEqual(sign[sign.index('/tr') + 1], desktop.TIMESTAMP_URL)
+            self.assertEqual(sign[sign.index('/td') + 1], 'SHA256')
+        programs = [c[0] + ' ' + c[1] for c in commands]
+        self.assertLess(programs.index('signtool sign'), programs.index('wix build'))
+        self.assertEqual(programs.count('signtool verify'), 2)
+
+    def test_windows_without_thumbprint_is_unsigned(self):
+        calls, work = self.fake_tools()
+        desktop.windows(self.binary, self.root / 'dist', work)
+        self.assertFalse([c for c, _ in calls if c[0] == 'signtool'])
+
+    def test_linux_builds_the_appimage_for_the_target_architecture(self):
+        calls, work = self.fake_tools()
+        for target, arch in (('x86_64-unknown-linux-gnu', 'x86_64'), ('aarch64-unknown-linux-gnu', 'aarch64')):
+            image, = desktop.linux(self.binary, target, self.root / 'dist', work / arch, 'appimagetool', 'runtime')
+            self.assertEqual(image.name, desktop.packages(target)[0])
+            command, env = calls[-1]
+            self.assertEqual(command[-1], str(image))
+            self.assertEqual(env['ARCH'], arch)
+
     def test_empty_binary_is_rejected(self):
         self.binary.write_bytes(b'')
         with self.assertRaises(ValueError):
@@ -164,8 +242,8 @@ class VerifyTests(unittest.TestCase):
 
     def test_complete_set_verifies_and_writes_sums(self):
         packages = desktop.verify(self.dist, self.root / 'scan')
-        self.assertEqual(len(packages), 5)
-        self.assertEqual(len((self.dist / desktop.SUMS).read_text().splitlines()), 5)
+        self.assertEqual(len(packages), 6)
+        self.assertEqual(len((self.dist / desktop.SUMS).read_text().splitlines()), 6)
         self.assertEqual(len(list((self.root / 'scan').rglob('archguard-desktop.exe'))), 1)
 
     def test_missing_package_blocks_release(self):

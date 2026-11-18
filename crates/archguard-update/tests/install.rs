@@ -276,5 +276,9 @@ fn package_names_match_the_packaging_script() {
         name("x86_64-unknown-linux-gnu").unwrap(),
         "ArchGuard-1.2.3-x86_64-unknown-linux-gnu.AppImage"
     );
-    assert_eq!(name("aarch64-unknown-linux-gnu"), None);
+    assert_eq!(
+        name("aarch64-unknown-linux-gnu").unwrap(),
+        "ArchGuard-1.2.3-aarch64-unknown-linux-gnu.AppImage"
+    );
+    assert_eq!(name("aarch64-unknown-linux-musl"), None);
 }

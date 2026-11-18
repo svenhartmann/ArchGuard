@@ -88,7 +88,7 @@ pub fn package_name(version: &str, target: &str) -> Option<String> {
     let suffix = match target {
         "aarch64-apple-darwin" | "x86_64-apple-darwin" => ".dmg",
         "x86_64-pc-windows-msvc" => ".msi",
-        "x86_64-unknown-linux-gnu" => ".AppImage",
+        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu" => ".AppImage",
         _ => return None,
     };
     Some(format!("ArchGuard-{version}-{target}{suffix}"))
