@@ -100,9 +100,19 @@ fn is_manifest(name: &str) -> bool {
 /// failures during the walk yield [`ArchguardError::Io`].
 pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, ArchguardError> {
     let excluded = build_excluder(excludes)?;
+    let pruned_dirs = build_dir_pruner(excludes);
+    let walk_root = root.to_path_buf();
     let mut files = Vec::new();
     let mut projects = std::collections::BTreeSet::new();
-    for entry in WalkBuilder::new(root).require_git(false).build() {
+    let walker = WalkBuilder::new(root)
+        .require_git(false)
+        .filter_entry(move |e| {
+            !(e.depth() > 0
+                && e.file_type().is_some_and(|t| t.is_dir())
+                && pruned_dirs.is_match(relative_path(&walk_root, e.path())))
+        })
+        .build();
+    for entry in walker {
         let entry = entry.map_err(|e| ArchguardError::Io(std::io::Error::other(e.to_string())))?;
         // Depth 0 is `root` itself; only plain files can be sources (entries
         // with unknown file type, e.g. broken links, are skipped as well).
@@ -145,6 +155,21 @@ fn nearest_project(rel_path: &str, projects: &std::collections::BTreeSet<String>
         dir = parent;
     }
     String::new()
+}
+
+/// A matcher for the directory part of every `dir/**` pattern: a directory
+/// it matches has every path below it excluded, so the walk skips it
+/// unentered. Other patterns may keep files below a matching directory, so
+/// they apply per file only; a prefix that does not compile on its own (e.g.
+/// a trailing escape) is left to the per-file check as well.
+fn build_dir_pruner(excludes: &[String]) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    for prefix in excludes.iter().filter_map(|p| p.strip_suffix("/**")) {
+        if let Ok(glob) = Glob::new(prefix) {
+            builder.add(glob);
+        }
+    }
+    builder.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
 /// Compile the `exclude` patterns into a single matcher.
@@ -321,6 +346,24 @@ mod tests {
 
         let files = walk_dir(dir.path(), &["**/generated/**", "**/*.spec.*"]).unwrap();
         assert_eq!(rel_paths(&files), ["src/app.ts", "src/main.rs"]);
+    }
+
+    /// An excluded directory is pruned, not entered: an unreadable
+    /// directory inside it does not fail the walk.
+    #[cfg(unix)]
+    #[test]
+    fn excluded_directories_are_not_entered() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "src/main.rs");
+        touch(dir.path(), "vendor/lib/a.rs");
+        let locked = dir.path().join("vendor/locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = walk_dir(dir.path(), &["vendor/**"]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(rel_paths(&result.unwrap()), ["src/main.rs"]);
     }
 
     #[test]
