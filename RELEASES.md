@@ -108,8 +108,8 @@ as one file. `archguard update` updates the CLI only, never the desktop app.
 ### Signing secrets
 
 The desktop job signs the macOS and Windows packages only when the repository
-(or the environment of the run) has these GitHub Actions secrets. Never put
-their values into files, logs or commits.
+has these GitHub Actions secrets. Never put their values into files, logs or
+commits.
 
 | Secret | Platform | Content |
 | --- | --- | --- |
@@ -129,8 +129,8 @@ Per platform the job needs **all or none** of its secrets:
   `codesign --options runtime --timestamp`, builds the `.dmg`, submits it with
   `xcrun notarytool submit --wait`, then runs `xcrun stapler staple` and
   `stapler validate` (a rejected submission has no ticket, so stapling fails the
-  job). The check step also runs `spctl --assess`. The keychain is deleted at
-  the end of the job, also after a failure.
+  job). The check step also runs `spctl --assess`. The keychain is deleted
+  right after packaging, also after a failure.
 - **All Windows secrets:** after the build, the `.pfx` is imported into
   `Cert:\CurrentUser\My` and deleted from disk; `package_desktop.py` signs
   `archguard-desktop.exe` (before the `.msi` and the portable `.zip` take their
@@ -138,7 +138,8 @@ Per platform the job needs **all or none** of its secrets:
   `signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256`
   (RFC 3161 timestamp) and checks each with `signtool verify /pa`. The check
   step requires a valid, timestamped signature on the `.msi` and on the exe
-  inside it. The certificate is removed from the store at the end of the job.
+  inside it. The certificate is removed from the store right after packaging, also
+  after a failure.
 - **None:** the packages are built as before, with a workflow warning: macOS
   gets only an ad-hoc signature, Windows none.
 - **Some but not all:** the desktop job fails and names the missing secrets,

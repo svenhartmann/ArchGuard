@@ -100,7 +100,7 @@ mv -f "$INSTALL_DIR/.$binary.new" "$INSTALL_DIR/$binary"
 
 echo "Installed $INSTALL_DIR/$binary"
 
-# Desktop app: unsigned packages from the same release, checked against SHA256SUMS-desktop.
+# Desktop app: packages from the same release, checked against SHA256SUMS-desktop.
 install_desktop() {
     case "$target" in
         *apple-darwin) package="ArchGuard-$version-$target.dmg" ;;

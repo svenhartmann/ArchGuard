@@ -187,8 +187,6 @@ jobs:
         run: |
           dotnet tool install --global wix --version "$WIX_VERSION"
           echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
-      - name: Build locked release desktop app
-        run: cargo build -p archguard-desktop --release --locked --target "$DESKTOP_TARGET"
       # All signing secrets of a platform, or none (unsigned, with a warning);
       # a partial set fails instead of silently shipping unsigned packages.
       - name: Decide whether to sign
@@ -223,6 +221,8 @@ jobs:
             echo "::error::Incomplete $PLATFORM signing secrets, missing:$missing"
             exit 1
           fi
+      - name: Build locked release desktop app
+        run: cargo build -p archguard-desktop --release --locked --target "$DESKTOP_TARGET"
       - name: Import Developer ID certificate into a temporary keychain
         if: matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
         env:
