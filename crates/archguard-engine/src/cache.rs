@@ -255,11 +255,37 @@ pub(crate) fn extraction_fingerprint(
     config: &Config,
 ) -> Result<String, ArchguardError> {
     let cpp_dirs = pipeline::cpp_include_dirs(root, files);
-    extraction_key(root, files, config, env!("CARGO_PKG_VERSION"), &cpp_dirs)
+    extraction_key(root, files, config, build_identity(), &cpp_dirs)
 }
 
-/// The cache key of one extraction. `version` is the archguard release, so
-/// a parser fix shipped by an update takes effect on an unchanged repo.
+/// The running archguard build: release plus the executable's path, length
+/// and mtime. Every rebuild relinks the binary, so a dev build or CI with a
+/// kept `.archguard/` never reads what an older build of the same release
+/// extracted; a reinstall of the same code merely rebuilds the cache once.
+fn build_identity() -> &'static str {
+    static ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let exe = std::env::current_exe().and_then(|path| Ok((fs::metadata(&path)?, path)));
+        match exe {
+            Ok((meta, path)) => format!(
+                "{} {} {} {:?}",
+                env!("CARGO_PKG_VERSION"),
+                path.display(),
+                meta.len(),
+                meta.modified().ok()
+            ),
+            // Unknown build: never match another run's entry.
+            Err(_) => format!(
+                "{} {:?}",
+                env!("CARGO_PKG_VERSION"),
+                std::time::SystemTime::now()
+            ),
+        }
+    });
+    &ID
+}
+
+/// The cache key of one extraction. `version` is [`build_identity`], so a
+/// parser fix takes effect on an unchanged repo, released or not.
 /// `cpp_dirs` comes from [`pipeline::cpp_include_dirs`].
 #[tracing::instrument(skip_all)]
 fn extraction_key(
@@ -405,7 +431,7 @@ pub(crate) fn extract_cached(
 ) -> Result<Extracted, ArchguardError> {
     // Read once: key, graph and the recheck below all use the same directories.
     let cpp_dirs = pipeline::cpp_include_dirs(root, files);
-    let key = || extraction_key(root, files, config, env!("CARGO_PKG_VERSION"), &cpp_dirs);
+    let key = || extraction_key(root, files, config, build_identity(), &cpp_dirs);
     let fp = key()?;
     if let Some(entry) = load_entry(root, &fp) {
         return Ok((entry.graph, entry.source_names, entry.warnings, true));
@@ -597,6 +623,31 @@ mod tests {
         let key = |version| extraction_key(dir.path(), &files, &Config::default(), version, &none);
         assert_eq!(key("0.2.1").unwrap(), key("0.2.1").unwrap());
         assert_ne!(key("0.2.1").unwrap(), key("0.2.2").unwrap());
+    }
+
+    #[test]
+    fn a_cache_of_another_build_of_the_same_version_is_not_used() {
+        let dir = fixture(&[("src/a.ts", "export const a = 1;\n")]);
+        let config = Config::default();
+        let files = pipeline::walk_files(dir.path(), &config).unwrap();
+        // An older binary of this release wrote an empty graph under its key.
+        let none = BTreeSet::new();
+        let old = extraction_key(
+            dir.path(),
+            &files,
+            &config,
+            env!("CARGO_PKG_VERSION"),
+            &none,
+        );
+        let stale = archguard_core::GraphBuilder::new().build("stale".into());
+        save_graph(dir.path(), &stale, &old.unwrap()).unwrap();
+
+        let (graph, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        assert!(!hit, "a result of another build must not be served");
+        assert_ne!(graph, stale);
+        let (warm, _, _, hit) = extract_cached(dir.path(), &files, &config).unwrap();
+        assert!(hit, "the same build reuses its own entry");
+        assert_eq!(warm, graph);
     }
 
     #[test]
