@@ -21,10 +21,10 @@ use std::path::{Path, PathBuf};
 
 // `use rmcp::schemars;` (not the derive directly): the JsonSchema derive
 // macro expands to `schemars::…` paths, so the module name must be in scope.
+use archguard_engine::Level;
 use archguard_engine::core::{
     Cut, Finding, FindingKind, Graph, NodeKind, Report, Severity, aggregate,
 };
-use archguard_engine::{Level, analyze_run};
 use rmcp::ErrorData;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ServiceExt, schemars, tool, tool_router, transport::stdio};
@@ -887,14 +887,13 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<ConfigViewParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, report) = (run.graph, run.report);
-        let value =
-            tools::config_view_value(&file_graph, &report, &loaded, params.section.as_deref())?;
+        let run = tools::analyze_run(&self.root, None)?;
+        let value = tools::config_view_value(
+            &run.file_graph,
+            &run.report,
+            &run.loaded,
+            params.section.as_deref(),
+        )?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -907,14 +906,10 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<GraphExpandParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
         let node = tools::required_str(&params.node, "node")?;
-        let value = tools::graph_expand_value(&file_graph, &loaded, node, &params.expanded)?;
+        let run = tools::analyze_run(&self.root, None)?;
+        let value =
+            tools::graph_expand_value(&run.file_graph, &run.loaded, node, &params.expanded)?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -924,15 +919,10 @@ impl ArchguardTools {
         description = "Dependency-structure matrix of the effective module view: {\"order\": [names], \"cells\": [[row, col, weight, cyclic]]}, sinks first, cycle members adjacent. Optional `expanded` zooms modules in first, `within` shows exactly the direct children of one module. Example: {\"within\": \"app\"}."
     )]
     async fn dsm(&self, Parameters(params): Parameters<DsmParams>) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
+        let run = tools::analyze_run(&self.root, None)?;
         let value = tools::dsm_value(
-            &file_graph,
-            &loaded,
+            &run.file_graph,
+            &run.loaded,
             &params.expanded,
             params.within.as_deref(),
         )?;
@@ -948,14 +938,9 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<SimulateParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
+        let run = tools::analyze_run(&self.root, None)?;
         let ops: Vec<_> = params.ops.iter().map(tools::SimOpWire::to_sim_op).collect();
-        let value = tools::simulate_value(&file_graph, &loaded, &ops)?;
+        let value = tools::simulate_value(&run.file_graph, &run.loaded, &ops)?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -2149,6 +2134,21 @@ links = ["docs/adr/1.md"]
         assert!(cuts["cuts"].to_string().contains("x.ts"), "{cuts}");
     }
 
+    /// A missing `node` is a parameter error before any scan: even an
+    /// unreadable config is not touched.
+    #[tokio::test]
+    async fn graph_expand_validates_node_before_scanning() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("archguard.toml"), "not = [valid").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let error = handler
+            .graph_expand(Parameters(GraphExpandParams::default()))
+            .await
+            .expect_err("node is required");
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS, "{}", error.message);
+        assert!(error.message.contains("`node`"), "{}", error.message);
+    }
+
     /// Nothing analysed is no evidence of a clean architecture.
     #[tokio::test]
     async fn check_refuses_a_directory_without_sources() {
@@ -2182,7 +2182,7 @@ links = ["docs/adr/1.md"]
                 let (graph, report) = handler.analyze(None, level).unwrap();
                 let root = dir.path().canonicalize().unwrap();
                 let loaded = load_config(None, &root).unwrap();
-                let shared = analyze_run(&root, &loaded, level).unwrap();
+                let shared = archguard_engine::analyze_run(&root, &loaded, level).unwrap();
                 assert_eq!(graph, shared.graph);
                 assert_eq!(report, shared.report);
                 assert_eq!(handler.analyze(None, level).unwrap(), (graph, report));

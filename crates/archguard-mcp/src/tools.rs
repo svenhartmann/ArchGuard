@@ -962,12 +962,7 @@ impl crate::server::ArchguardTools {
         ),
         rmcp::ErrorData,
     > {
-        let root = resolve_root(&self.root, path)?;
-        let loaded = archguard_engine::load_config(None, &root)
-            .map_err(|err| rmcp::ErrorData::internal_error(format!("config error: {err}"), None))?;
-        archguard_engine::analyze_run(&root, &loaded, level)
-            .map(|run| (run.graph, run.report))
-            .map_err(|err| rmcp::ErrorData::internal_error(format!("analysis failed: {err}"), None))
+        Run::at(&self.root, path, level).map(|run| (run.file_graph, run.report))
     }
 }
 
