@@ -92,6 +92,7 @@ mod service_flows;
 mod service_projects;
 mod services;
 mod snapshot;
+mod structurizr;
 mod target_architecture;
 mod test_coverage;
 mod test_evidence;
@@ -187,6 +188,7 @@ pub use snapshot::{
     write_snapshot,
 };
 pub use snapshot::{snapshot_scope, write_snapshot_with_scope};
+pub use structurizr::{c4_service, structurizr_workspace};
 pub use target_architecture::analyze_target_architecture;
 pub use test_coverage::{
     CoverageCounter, CoverageLine, TestCoverageFile, TestCoverageReport, import_test_coverage,

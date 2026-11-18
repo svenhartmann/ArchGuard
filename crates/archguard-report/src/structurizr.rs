@@ -116,7 +116,10 @@ fn write_components(out: &mut String, c: &C4Components<'_>) -> String {
             let _ = writeln!(
                 relations,
                 "        {a} -> {b} {} {}",
-                q(&format!("{n} source references")),
+                q(&format!(
+                    "{n} source reference{}",
+                    if *n == 1 { "" } else { "s" }
+                )),
                 q("import")
             );
         }
