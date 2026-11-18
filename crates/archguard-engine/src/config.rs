@@ -243,6 +243,11 @@ pub fn load_config(
     Ok(LoadedConfig { config, sources })
 }
 
+/// Language ids accepted in `project.languages`.
+const LANGUAGES: [&str; 14] = [
+    "auto", "rs", "ts", "js", "py", "java", "cs", "php", "go", "kt", "cpp", "swift", "rb", "scala",
+];
+
 /// Validate syntax and scalar values before any extraction, including
 /// programmatic inputs. Derived layer targets are resolved after merging.
 pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
@@ -301,10 +306,7 @@ pub fn validate_config(config: &Config) -> Result<(), ArchguardError> {
             .map_err(|err| invalid(&format!("project.exclude[{index}]"), err.to_string()))?;
     }
     for (index, language) in config.project.languages.iter().enumerate() {
-        if !matches!(
-            language.as_str(),
-            "auto" | "rs" | "ts" | "js" | "py" | "java" | "cs" | "php" | "go" | "kt" | "cpp" | "swift" | "rb"
-        ) {
+        if !LANGUAGES.contains(&language.as_str()) {
             return Err(invalid(
                 &format!("project.languages[{index}]"),
                 format!("unsupported language {language:?}"),

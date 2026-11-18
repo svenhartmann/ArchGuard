@@ -89,3 +89,5 @@ correctly. When the desktop app zoomed into one service, it found no module
     directories at level 1; below one, the wrapper chain is skipped.
   - Function apps no longer filter the services view on their own; they are
     only kept beside a Compose, Aspire or Spring deployment.
+- **2026-11-18:** `build.sbt` counts as a manifest as well, for Scala projects
+  (ADR 0020).

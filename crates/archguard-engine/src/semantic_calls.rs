@@ -7,8 +7,9 @@ use std::path::Path;
 mod cpp_calls;
 mod kotlin_calls;
 mod memo;
-mod swift_calls;
 mod ruby_calls;
+mod scala_calls;
+mod swift_calls;
 pub(crate) mod token_calls;
 
 /// Enrich the import graph before any SCC, gate or metric is calculated.
@@ -155,6 +156,7 @@ fn backend_report(lang: Lang, root: &Path, config: &Config) -> CallAnalysis {
         Lang::Cpp => cpp_calls::analyze_cpp_calls(root, config),
         Lang::Swift => swift_calls::analyze_swift_calls(root, config),
         Lang::Ruby => ruby_calls::analyze_ruby_calls(root, config),
+        Lang::Scala => scala_calls::analyze_scala_calls(root, config),
     }
 }
 
@@ -210,6 +212,7 @@ pub(crate) fn language_name(lang: Lang) -> &'static str {
         Lang::Cpp => "cpp",
         Lang::Swift => "swift",
         Lang::Ruby => "ruby",
+        Lang::Scala => "scala",
     }
 }
 

@@ -145,11 +145,12 @@ impl CallAnalyzer {
     pub const KOTLIN_TOKENS: &str = "Token-based analysis: classes, objects, functions, complexity and Halstead counts. Call targets are resolved statically from the package, imports (aliases; star imports with a single candidate), Kotlin classes, objects, companion objects, top-level functions, this, super and the project class hierarchy; calls on variables, properties and call results, extension functions, every call inside lambdas, local and extension functions, and Java classes without javac declarations stay unresolved; overloads are not told apart. Types are not resolved; abstractness is read from interface, abstract class and sealed declarations. Property accessors, constructors, init blocks and property initializers are not measured, and calls in them are not counted.";
     pub const CPP_TOKENS: &str = "Token-based analysis of C and C++ without a compiler or preprocessor: classes, structs, unions, functions, complexity and Halstead counts. Preprocessor directives are skipped and the code of every #if branch is measured as written; a file whose branches leave brackets unbalanced is not measured. Out-of-class definitions (A::f) belong to the class A that the project declares once. Calls and types are not resolved; a class counts as abstract when it declares a pure virtual function (= 0).";
     pub const RUBY_TOKENS: &str = "Token-based analysis: classes, modules, methods, complexity and Halstead counts. Call targets are resolved statically for Const.method and Const.new on project classes declared in exactly one file (lexical scope, innermost first), and for self.method, bare method calls and super along the class, its prepended and included project modules and its project superclasses; calls on variables and other receivers stay unresolved, and send, public_send, define_method, method_missing and other reflective calls stay unresolved as dynamic. Calls in class bodies and top-level code are not counted. Ruby has no abstract classes: abstractness does not apply.";
+    pub const SCALA_TOKENS: &str = "Token-based analysis: classes, traits, objects, defs, complexity and Halstead counts in Scala 2 and 3 syntax. Call targets are resolved statically from the package, imports (aliases; wildcards with a single candidate), Scala classes, case classes, objects and their apply methods, top-level defs, this, super and the project class hierarchy; calls on values and call results, implicits and givens, extension methods, calls inside extension blocks, parameterless and infix calls, and Java or Kotlin classes of the project stay unresolved; overloads are not told apart. Types are not resolved; abstractness is read from trait and abstract class declarations. Constructors and template statements are not measured, and calls in them are not counted.";
     pub const SWIFT_TOKENS: &str = "Token-based analysis: types, extensions, functions, initializers, complexity and Halstead counts. Extensions attach to the one project type of their name. Only Type(…), Type.init(…), Type.Nested(…) and Type.staticMethod(…) of a unique project type the calling target can see are resolved; calls on values, self and super, bare function calls, trailing closures and overloads stay unresolved. Types are not resolved; protocols count as abstract. Computed properties, accessors, property initializers and top-level statements are not measured, and calls in them are not counted.";
     pub const TYPESCRIPT_MISSING: &str = "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages.";
     pub const TYPESCRIPT_BLOCKED: &str = "A TypeScript compiler was found through this repository but not loaded, because running it would execute repository code. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for repositories you trust.";
     /// All of the notes above.
-    pub const NOTES: [&str; 11] = [
+    pub const NOTES: [&str; 12] = [
         Self::RUST_SYNTAX,
         Self::RUST_UNTRUSTED,
         Self::RUST_RESOLVED,
@@ -159,6 +160,7 @@ impl CallAnalyzer {
         Self::CPP_TOKENS,
         Self::SWIFT_TOKENS,
         Self::RUBY_TOKENS,
+        Self::SCALA_TOKENS,
         Self::TYPESCRIPT_MISSING,
         Self::TYPESCRIPT_BLOCKED,
     ];
