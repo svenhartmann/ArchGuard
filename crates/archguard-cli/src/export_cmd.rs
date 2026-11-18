@@ -193,7 +193,7 @@ fn arc42_export(
     match write_file(&target, &bytes) {
         Ok(()) => {
             if !cli.quiet {
-                println!("arc42 export written: {}", target.display());
+                outln!("arc42 export written: {}", target.display());
             }
             EXIT_OK
         }
@@ -227,7 +227,7 @@ fn check(cli: &Cli, target: &Path, bytes: &[u8]) -> i32 {
         } else {
             "is missing or outdated"
         };
-        println!("arc42 export {state}: {}", target.display());
+        outln!("arc42 export {state}: {}", target.display());
     }
     if current { EXIT_OK } else { EXIT_FOUND }
 }

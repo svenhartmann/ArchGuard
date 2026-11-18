@@ -148,13 +148,13 @@ pub(crate) fn run(cli: &Cli) -> i32 {
         });
         emit(&serde_json::to_string_pretty(&value).expect("doctor report serializes"));
     } else {
-        println!("Environment for full archguard features (OS: {os})");
+        outln!("Environment for full archguard features (OS: {os})");
         for tool in &tools {
             match &tool.version {
                 Some(version) => {
-                    println!("{}: available ({version}) — {}", tool.name, tool.feature)
+                    outln!("{}: available ({version}) — {}", tool.name, tool.feature)
                 }
-                None => println!(
+                None => outln!(
                     "{}: MISSING — {}; install: {}",
                     tool.name,
                     tool.feature,
@@ -162,7 +162,7 @@ pub(crate) fn run(cli: &Cli) -> i32 {
                 ),
             }
         }
-        println!("Missing optional tools only reduce analysis depth; archguard keeps working.");
+        outln!("Missing optional tools only reduce analysis depth; archguard keeps working.");
     }
     EXIT_OK
 }

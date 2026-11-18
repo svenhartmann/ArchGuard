@@ -34,13 +34,13 @@ pub(crate) fn run(cli: &Cli, root: &Path) -> i32 {
 }
 
 fn print_summary(sbom: &Sbom, policy_active: bool) {
-    println!(
+    outln!(
         "SBOM: {} third-party components from {} manifests (offline, from the files in the repository)",
         sbom.components.len(),
         sbom.manifests.len()
     );
     let join = |pairs: Vec<String>| pairs.join(" · ");
-    println!(
+    outln!(
         "{}",
         join(
             sbom.by_ecosystem
@@ -50,7 +50,7 @@ fn print_summary(sbom: &Sbom, policy_active: bool) {
         )
     );
     let states = serde_json::to_value(&sbom.license_states).expect("states serialize");
-    println!(
+    outln!(
         "Licences: {}",
         join(
             states
@@ -62,21 +62,21 @@ fn print_summary(sbom: &Sbom, policy_active: bool) {
         )
     );
     if policy_active {
-        println!(
+        outln!(
             "Licence policy violations: {} (gate: archguard check)",
             sbom.violations
         );
     } else {
-        println!("Licence policy: not configured ([licenses] allow/deny/unknown)");
+        outln!("Licence policy: not configured ([licenses] allow/deny/unknown)");
     }
     for manifest in &sbom.manifests {
-        println!(
+        outln!(
             "  {} ({}, {} components)",
             manifest.path, manifest.ecosystem, manifest.components
         );
     }
     for note in &sbom.notes {
-        println!("Note: {note}");
+        outln!("Note: {note}");
     }
-    println!("Unknown licences are not in the lockfiles; ArchGuard never fetches or guesses them.");
+    outln!("Unknown licences are not in the lockfiles; ArchGuard never fetches or guesses them.");
 }

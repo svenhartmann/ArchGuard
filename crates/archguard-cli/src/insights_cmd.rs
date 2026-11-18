@@ -10,7 +10,7 @@ fn output(cli: &Cli, value: serde_json::Value, label: &str) -> i32 {
     }
     if !cli.quiet {
         if cli.format == Format::Text {
-            println!("{label} · evidence and coverage");
+            outln!("{label} · evidence and coverage");
         }
         emit(&serde_json::to_string_pretty(&value).unwrap());
     }
@@ -27,7 +27,7 @@ pub(crate) fn calls(cli: &Cli, root: &Path, loaded: &LoadedConfig) -> i32 {
     if cli.format == Format::Json {
         emit(&serde_json::to_string_pretty(&calls).unwrap());
     } else {
-        println!(
+        outln!(
             "Semantic analysis: {} · {} files · {} types · {} methods · {} call sites",
             calls.status,
             calls.files,
@@ -36,7 +36,7 @@ pub(crate) fn calls(cli: &Cli, root: &Path, loaded: &LoadedConfig) -> i32 {
             calls.calls.len()
         );
         for analyzer in calls.analyzers {
-            println!(
+            outln!(
                 "{} / {}: {} · {} files{}",
                 analyzer.language,
                 analyzer.backend,
@@ -49,10 +49,10 @@ pub(crate) fn calls(cli: &Cli, root: &Path, loaded: &LoadedConfig) -> i32 {
                     .unwrap_or_default()
             );
             for diagnostic in analyzer.diagnostics {
-                println!("  {diagnostic}");
+                outln!("  {diagnostic}");
             }
         }
-        println!(
+        outln!(
             "Static declaration targets; runtime dispatch may differ. Use --format json for source evidence."
         );
     }
@@ -193,19 +193,19 @@ pub(crate) fn doc(
         return match std::fs::read_to_string(&target) {
             Ok(saved) if saved == document => {
                 if !cli.quiet {
-                    println!("Architecture document is current: {}", target.display());
+                    outln!("Architecture document is current: {}", target.display());
                 }
                 EXIT_OK
             }
             Ok(_) => {
                 if !cli.quiet {
-                    println!("Architecture document is outdated: {}", target.display());
+                    outln!("Architecture document is outdated: {}", target.display());
                 }
                 EXIT_FOUND
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if !cli.quiet {
-                    println!("Architecture document is missing: {}", target.display());
+                    outln!("Architecture document is missing: {}", target.display());
                 }
                 EXIT_FOUND
             }
@@ -215,7 +215,7 @@ pub(crate) fn doc(
     match write_document(&target, &document) {
         Ok(()) => {
             if !cli.quiet {
-                println!("Architecture document written: {}", target.display());
+                outln!("Architecture document written: {}", target.display());
             }
             EXIT_OK
         }
@@ -239,7 +239,7 @@ fn arc42_check(
 ) -> i32 {
     let Some(saved) = saved else {
         if !cli.quiet {
-            println!("arc42 document is missing: {}", target.display());
+            outln!("arc42 document is missing: {}", target.display());
         }
         return EXIT_FOUND;
     };
@@ -257,10 +257,10 @@ fn arc42_check(
     }
     if !cli.quiet {
         if stale.is_empty() {
-            println!("arc42 document is current: {}", target.display());
+            outln!("arc42 document is current: {}", target.display());
         } else {
             let list: Vec<_> = stale.iter().map(|n| format!("chapter {n}")).collect();
-            println!(
+            outln!(
                 "arc42 document is outdated: {} ({})",
                 target.display(),
                 list.join(", ")
@@ -415,7 +415,7 @@ fn arc42_doc(
     match result {
         Ok(()) => {
             if !cli.quiet {
-                println!("arc42 document updated: {}", target.display());
+                outln!("arc42 document updated: {}", target.display());
             }
             EXIT_OK
         }

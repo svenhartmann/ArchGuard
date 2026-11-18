@@ -8,8 +8,10 @@ use std::process::{Command, Stdio};
 
 use tempfile::tempdir;
 
-#[test]
-fn closed_stdout_pipe_keeps_the_commands_exit_code() {
+/// Run `archguard <args>` on a Python project with one import cycle, with
+/// the read end of stdout closed before the analysis prints anything.
+/// Returns the exit code and stderr.
+fn run_with_closed_stdout(args: &[&str]) -> (Option<i32>, String) {
     let dir = tempdir().expect("tempdir");
     fs::write(
         dir.path().join("pyproject.toml"),
@@ -22,7 +24,7 @@ fn closed_stdout_pipe_keeps_the_commands_exit_code() {
     fs::write(dir.path().join("mypkg/b.py"), "from mypkg import a\n").expect("b");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_archguard"))
-        .args(["check", ".", "--format", "json"])
+        .args(args)
         .current_dir(dir.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -38,6 +40,25 @@ fn closed_stdout_pipe_keeps_the_commands_exit_code() {
         .read_to_string(&mut stderr)
         .expect("stderr");
     let status = child.wait().expect("wait");
+    (status.code(), stderr)
+}
+
+#[test]
+fn closed_stdout_pipe_keeps_the_commands_exit_code() {
+    let (code, stderr) = run_with_closed_stdout(&["check", ".", "--format", "json"]);
     assert!(!stderr.contains("panicked"), "{stderr}");
-    assert_eq!(status.code(), Some(1), "cycle found, stderr: {stderr}");
+    assert_eq!(code, Some(1), "cycle found, stderr: {stderr}");
+}
+
+#[test]
+fn closed_stdout_pipe_does_not_panic_on_plain_text_lines() {
+    // Both print plain lines after (or instead of) one block of output.
+    for (args, expected) in [
+        (&["cycles", ".", "--verbose", "--fail-on-found"][..], 1),
+        (&["suggest", "."][..], 0),
+    ] {
+        let (code, stderr) = run_with_closed_stdout(args);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(code, Some(expected), "{args:?}, stderr: {stderr}");
+    }
 }

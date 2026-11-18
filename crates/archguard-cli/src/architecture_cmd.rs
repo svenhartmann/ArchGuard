@@ -38,18 +38,18 @@ pub(crate) fn patterns(
                 if cli.format == Format::Json {
                     emit(&serde_json::to_string_pretty(&report).unwrap());
                 } else {
-                    println!("Architecture pattern candidates · {}", report.definition);
+                    outln!("Architecture pattern candidates · {}", report.definition);
                     for p in report.assessments {
-                        println!(
+                        outln!(
                             "\n{} · {} · {} · basis: {}",
                             p.pattern, p.scope, p.status, p.basis
                         );
-                        println!(
+                        outln!(
                             "  Evidence: {} · counter-evidence: {}",
                             p.evidence_total, p.counter_evidence_total
                         );
                         for item in p.evidence.iter().chain(&p.counter_evidence) {
-                            println!(
+                            outln!(
                                 "  {}:{} {}",
                                 item.file.as_deref().unwrap_or("graph"),
                                 item.line.unwrap_or(0),
@@ -57,11 +57,11 @@ pub(crate) fn patterns(
                             );
                         }
                         for missing in p.missing_evidence {
-                            println!("  Missing: {missing}");
+                            outln!("  Missing: {missing}");
                         }
                     }
                     for note in report.limitations.into_iter().chain(report.diagnostics) {
-                        println!("\n{note}");
+                        outln!("\n{note}");
                     }
                 }
             }
@@ -85,25 +85,25 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
     if cli.format == Format::Json {
         emit(&serde_json::to_string_pretty(&report.map(|r|serde_json::to_value(r).unwrap()).unwrap_or_else(||serde_json::json!({"schema_version":1,"status":"not_configured","message":"Declare architecture.model in archguard.toml to evaluate logical boundaries."}))).unwrap());
     } else if let Some(report) = report {
-        println!(
+        outln!(
             "Target architecture: {} · {} coverage",
             report.name, report.status
         );
-        println!(
+        outln!(
             "Mapped sources: {}/{} · ambiguous: {} · unmapped: {}",
             report.mapped_nodes, report.source_nodes, report.ambiguous_nodes, report.unmapped_nodes
         );
-        println!(
+        outln!(
             "Forbidden component directions: {} · unclassified source dependencies: {}",
             report.violating_dependencies, report.unclassified_edges
         );
-        println!(
+        outln!(
             "Private source accesses: {} · Coupling limit violations: {}",
             report.violating_interfaces, report.coupling_violations
         );
         for component in &report.components {
             if let Some(public) = &component.public {
-                println!(
+                outln!(
                     "{} public interface: {}",
                     component.name,
                     if public.is_empty() {
@@ -126,7 +126,7 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
                 ),
             ] {
                 if let Some(limit) = limit {
-                    println!(
+                    outln!(
                         "{} {direction} components: {count} · limit: {limit}",
                         component.name
                     );
@@ -134,7 +134,7 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
             }
         }
         for dependency in report.dependencies {
-            println!(
+            outln!(
                 "{} → {}: {} · {} source dependencies · {}{} import references",
                 dependency.from,
                 dependency.to,
@@ -148,14 +148,14 @@ pub(crate) fn run(cli: &Cli, loaded: &LoadedConfig, graph: &Graph) -> i32 {
                 dependency.import_references
             );
             for access in dependency.private_accesses {
-                println!("  Private access: {} → {}", access.from, access.to);
+                outln!("  Private access: {} → {}", access.from, access.to);
             }
         }
-        println!(
+        outln!(
             "Coverage is classification of the configured source scope, not a conformance verdict. Use check for the gate and --format json for mappings and evidence."
         );
     } else {
-        println!(
+        outln!(
             "No target architecture configured. Declare architecture.model in archguard.toml."
         );
     }

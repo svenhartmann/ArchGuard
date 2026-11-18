@@ -153,7 +153,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, sources: bool, targets: &[String]) -> 
         _ => unreachable!(),
     };
     if !cli.quiet {
-        println!("{output}");
+        outln!("{output}");
     }
     EXIT_OK
 }

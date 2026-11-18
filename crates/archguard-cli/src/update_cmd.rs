@@ -34,14 +34,14 @@ fn report(format: Format, outcome: &Outcome) {
         });
         emit(&serde_json::to_string_pretty(&value).expect("update report serializes"));
     } else if outcome.updated {
-        println!("Updated archguard {CURRENT} → {}.", outcome.latest);
+        outln!("Updated archguard {CURRENT} → {}.", outcome.latest);
     } else if outcome.update_available {
-        println!(
+        outln!(
             "archguard {} is available (installed: {CURRENT}). Run `archguard update` to install it.",
             outcome.latest
         );
     } else {
-        println!(
+        outln!(
             "archguard {CURRENT} is up to date (latest release: {}).",
             outcome.latest
         );

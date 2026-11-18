@@ -22,7 +22,7 @@ pub(crate) fn run(cli: &Cli, root: &Path) -> i32 {
         (_, Format::Json) => {
             emit(&serde_json::to_string_pretty(&profile).expect("runtime profile serializes"))
         }
-        (None, _) => println!(
+        (None, _) => outln!(
             "No runtime input: expected OTLP JSON Lines in .archguard/runtime/**/*.jsonl or .archguard/otel-traces.json (see probes/CONVENTIONS.md)."
         ),
         (Some(p), _) => print_text(p),
@@ -37,7 +37,7 @@ fn print_text(p: &RuntimeProfile) {
         p.sampling.join(", ")
     };
     let state = if p.complete { "complete" } else { "incomplete" };
-    println!(
+    outln!(
         "Runtime profile: {} spans in {} traces · sampling {sampling} · {state}",
         p.spans, p.traces
     );
@@ -46,39 +46,39 @@ fn print_text(p: &RuntimeProfile) {
     print_endpoints(p);
     print_statements(p);
     if !p.diagnostics.is_empty() {
-        println!("\nDiagnostics:");
+        outln!("\nDiagnostics:");
         for d in &p.diagnostics {
             let at = match d.line {
                 Some(line) => format!("{} line {line}", d.file),
                 None => d.file.clone(),
             };
-            println!("  {at}: {}", d.message);
+            outln!("  {at}: {}", d.message);
         }
     }
-    println!("\nNote: {}", p.note);
+    outln!("\nNote: {}", p.note);
 }
 
 fn print_findings(p: &RuntimeProfile) {
-    println!("\nFindings ({}):", p.findings.len());
+    outln!("\nFindings ({}):", p.findings.len());
     if p.findings.is_empty() {
-        println!("  none at the [runtime] thresholds (a sample cannot prove absence)");
+        outln!("  none at the [runtime] thresholds (a sample cannot prove absence)");
     }
     for f in p.findings.iter().take(TOP) {
-        println!("  {} · {} · {}", f.kind, f.service, f.subject);
-        println!("    {}", f.message);
+        outln!("  {} · {} · {}", f.kind, f.service, f.subject);
+        outln!("    {}", f.message);
     }
     more(p.findings.len());
 }
 
 /// The newest requests, one line each; the span tree is in the JSON output.
 fn print_requests(p: &RuntimeProfile) {
-    println!(
+    outln!(
         "\nRecent requests ({} of {}):",
         p.requests.len().min(10),
         p.requests_total
     );
     for r in p.requests.iter().take(10) {
-        println!(
+        outln!(
             "  {} · {} · {:.1} ms · {} DB calls, {:.1} ms{} · trace {}",
             r.service,
             r.name,
@@ -89,12 +89,12 @@ fn print_requests(p: &RuntimeProfile) {
             r.trace_id
         );
         if let Some(s) = &r.samples {
-            println!(
+            outln!(
                 "    {} samples, interval {} ms, clock {} (statistical; samples × interval is a lower bound)",
                 s.samples, s.interval_ms, s.clock
             );
             for m in s.methods.iter().take(3) {
-                println!(
+                outln!(
                     "      self {} · on stack {} · {}",
                     m.self_samples, m.total_samples, m.function
                 );
@@ -110,9 +110,9 @@ fn print_endpoints(p: &RuntimeProfile) {
             .total_cmp(&a.db_time_ms)
             .then(b.requests.cmp(&a.requests))
     });
-    println!("\nEndpoints by DB time ({}):", endpoints.len());
+    outln!("\nEndpoints by DB time ({}):", endpoints.len());
     for e in endpoints.iter().take(TOP) {
-        println!(
+        outln!(
             "  {} · {} · {} requests, {} errors · p50 {:.1} ms, p95 {:.1} ms · DB calls/request mean {:.1}, max {:.0} · DB {:.1} ms",
             e.service,
             e.name,
@@ -139,13 +139,13 @@ fn print_statements(p: &RuntimeProfile) {
             .total_cmp(&total_ms(a))
             .then(b.calls.cmp(&a.calls))
     });
-    println!("\nStatements by DB time ({}):", statements.len());
+    outln!("\nStatements by DB time ({}):", statements.len());
     for s in statements.iter().take(TOP) {
         let read = s
             .read_ms_total
             .map(|r| format!(", read {r:.1} ms"))
             .unwrap_or_default();
-        println!(
+        outln!(
             "  {} · {} · {} calls, {} errors, max {} per request · mean {:.1} ms, max {:.1} ms{read}",
             s.service,
             s.db_system.as_deref().unwrap_or("db"),
@@ -155,7 +155,7 @@ fn print_statements(p: &RuntimeProfile) {
             s.exec_ms.mean,
             s.exec_ms.max
         );
-        println!("    {}", s.text.as_deref().unwrap_or(&s.key));
+        outln!("    {}", s.text.as_deref().unwrap_or(&s.key));
         for site in &s.call_sites {
             let location = match (&site.file, site.line) {
                 (Some(file), Some(line)) => format!(" ({file}:{line})"),
@@ -163,7 +163,7 @@ fn print_statements(p: &RuntimeProfile) {
                 _ => String::new(),
             };
             let function = site.function.as_deref().unwrap_or("?");
-            println!("    at {function}{location} × {}", site.calls);
+            outln!("    at {function}{location} × {}", site.calls);
         }
     }
     more(statements.len());
@@ -171,6 +171,6 @@ fn print_statements(p: &RuntimeProfile) {
 
 fn more(total: usize) {
     if total > TOP {
-        println!("  … {} more (use --format json)", total - TOP);
+        outln!("  … {} more (use --format json)", total - TOP);
     }
 }

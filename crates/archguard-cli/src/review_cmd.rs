@@ -44,24 +44,24 @@ pub(crate) fn run(
             value["truncated"] = (top < total).into();
             emit(&serde_json::to_string_pretty(&value).unwrap());
         } else {
-            println!(
+            outln!(
                 "Review priorities · {} of {total} candidates · score is a heuristic, not defect probability",
                 report.nodes.len()
             );
             for row in &report.nodes {
-                println!(
+                outln!(
                     "{:>3}. {:>3}/100 {:?} {}",
                     row.rank, row.score, row.priority, row.name
                 );
                 for reason in &row.reasons {
-                    println!("     {reason}");
+                    outln!("     {reason}");
                 }
             }
             if let Some(message) = &report.git.message {
-                println!("Git: {message}");
+                outln!("Git: {message}");
             }
             for limitation in &report.limitations {
-                println!("Note: {limitation}");
+                outln!("Note: {limitation}");
             }
         }
     }
@@ -119,7 +119,7 @@ pub(crate) fn pr_comment(cli: &Cli, root: &Path, base: Option<&str>, out: Option
                     return analysis_error(error);
                 }
                 if !cli.quiet {
-                    println!("Wrote {}", target.display());
+                    outln!("Wrote {}", target.display());
                 }
                 EXIT_OK
             }

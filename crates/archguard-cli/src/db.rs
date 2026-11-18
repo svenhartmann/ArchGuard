@@ -87,7 +87,7 @@ fn sync(cli: &crate::args::Cli, root: &Path, db_path: &Path) -> i32 {
         return analysis_error(err);
     }
     if !cli.quiet {
-        println!(
+        outln!(
             "synced {} modules and {} edges to {}",
             graph.nodes.len(),
             graph.edges.len(),
@@ -167,8 +167,8 @@ fn print_table(result: &QueryResult) {
         out.trim_end().to_string()
     };
     if !result.columns.is_empty() {
-        println!("{}", line(&result.columns));
-        println!(
+        outln!("{}", line(&result.columns));
+        outln!(
             "{}",
             widths
                 .iter()
@@ -178,10 +178,10 @@ fn print_table(result: &QueryResult) {
         );
     }
     for row in &rows {
-        println!("{}", line(row));
+        outln!("{}", line(row));
     }
     if result.truncated {
-        println!("[truncated: further rows existed; raise --limit]");
+        outln!("[truncated: further rows existed; raise --limit]");
     }
 }
 

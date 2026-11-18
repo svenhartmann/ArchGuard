@@ -90,10 +90,10 @@ pub(crate) fn run(
                 .expect("SimDelta is plain data and always serializable"),
         ),
         _ => {
-            println!("resolved:   {}", join_ids(&delta.resolved_findings));
-            println!("introduced: {}", join_ids(&delta.introduced_findings));
-            println!("ACD: {:.3} -> {:.3}", delta.acd_before, delta.acd_after);
-            println!(
+            outln!("resolved:   {}", join_ids(&delta.resolved_findings));
+            outln!("introduced: {}", join_ids(&delta.introduced_findings));
+            outln!("ACD: {:.3} -> {:.3}", delta.acd_before, delta.acd_after);
+            outln!(
                 "SCCs: {} -> {}",
                 delta.scc_count_before, delta.scc_count_after
             );

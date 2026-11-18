@@ -718,8 +718,7 @@ pub fn run(root: &Path, config: Option<&Path>, port: u16, depth: u32) -> io::Res
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     let address = listener.local_addr()?;
     let allowed_hosts = [address.to_string(), format!("localhost:{}", address.port())];
-    println!("http://{address}/");
-    io::stdout().flush()?;
+    outln!("http://{address}/");
     eprintln!(
         "Serving {} · live updates while visible, adaptive polling · Ctrl-C to stop",
         root.display()
