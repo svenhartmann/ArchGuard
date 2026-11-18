@@ -324,12 +324,20 @@ pub(crate) fn review_disposition(kind: DecisionKind) -> &'static str {
     }
 }
 /// The import replaces the review-bound entries; decisions recorded with
-/// `review-decision` or MCP stay in the register.
+/// `review-decision` or MCP stay in the register. The decision state must
+/// still match `expected_fingerprint` once the lock is held, so nothing
+/// recorded since review generation is overwritten.
 pub(crate) fn replace_review_decisions(
     root: &Path,
     decisions: &[ReviewDecision],
+    expected_fingerprint: &str,
 ) -> Result<(), ArchguardError> {
     let _lock = lock_register(root)?;
+    if decisions_fingerprint(root) != expected_fingerprint {
+        return Err(review_error(
+            "decisions changed since review generation; reload before importing",
+        ));
+    }
     let mut register = load_register(root)?;
     register
         .decisions
@@ -406,6 +414,27 @@ mod tests {
         }
         let register = load_register(&root).expect("load");
         assert_eq!(register.decisions.len(), 2 * PER_THREAD);
+    }
+
+    /// A decision recorded (e.g. via MCP) after the review fingerprint was
+    /// taken must make the import refuse instead of deleting it.
+    #[test]
+    fn import_refuses_when_register_changed_after_generation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let generated = decisions_fingerprint(dir.path());
+        let late = ReviewDecision {
+            finding_fingerprint: Some("fp".into()),
+            ..decision("late", "scc-1")
+        };
+        upsert_decision(dir.path(), late).expect("record between generation and import");
+        let err = replace_review_decisions(dir.path(), &[], &generated)
+            .expect_err("stale import must refuse");
+        assert!(
+            err.to_string()
+                .contains("decisions changed since review generation")
+        );
+        let register = load_register(dir.path()).expect("load");
+        assert!(register.decisions.iter().any(|d| d.id == "late"));
     }
 
     #[test]

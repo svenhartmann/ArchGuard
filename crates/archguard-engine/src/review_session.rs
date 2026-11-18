@@ -968,12 +968,11 @@ pub fn apply_review_decisions(
     validate_decisions(&document.decisions)?;
     document.check(&report.revision, &report.decision_fingerprint)?;
     stamp_and_check_new_decisions(report, &mut document.decisions, now)?;
-    if decisions_fingerprint(root) != report.decision_fingerprint {
-        return Err(error(
-            "decisions changed since review generation; reload before importing",
-        ));
-    }
-    crate::review_register::replace_review_decisions(root, &document.decisions)?;
+    crate::review_register::replace_review_decisions(
+        root,
+        &document.decisions,
+        &report.decision_fingerprint,
+    )?;
     report.decision_fingerprint = decisions_fingerprint(root);
     report.decisions = document.decisions;
     evaluate_decisions(report, now);
