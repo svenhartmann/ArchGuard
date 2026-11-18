@@ -1086,12 +1086,8 @@ fn capped_cuts(finding: &Finding, max: Option<usize>) -> &[archguard_engine::cor
 /// Write `json` (plus trailing newline) to `path`, creating parent
 /// directories; IO errors surface for the caller's exit-3 mapping.
 fn write_json_file(path: &Path, json: &str) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, format!("{json}\n"))
+    // Refuses symlinks, writes atomically: a committed link cannot redirect it.
+    insights_cmd::write_document(path, &format!("{json}\n"))
 }
 
 /// A copy of `report` carrying exactly the given (already capped) cycle
@@ -1148,5 +1144,21 @@ mod tests {
                 .measure_zones()
         );
         assert!(parse(&["archguard", "metrics", "--measure-zones"]).is_err());
+    }
+
+    /// A committed `.archguard/baseline.json -> ~/x` must not redirect the
+    /// baseline write onto the link target.
+    #[cfg(unix)]
+    #[test]
+    fn baseline_write_refuses_a_symlinked_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("victim.txt");
+        fs::write(&victim, "keep").expect("victim");
+        let link = dir.path().join(".archguard/baseline.json");
+        fs::create_dir_all(link.parent().expect("parent")).expect("dirs");
+        std::os::unix::fs::symlink(&victim, &link).expect("symlink");
+
+        assert!(write_json_file(&link, "{}").is_err());
+        assert_eq!(fs::read_to_string(&victim).expect("victim"), "keep");
     }
 }
