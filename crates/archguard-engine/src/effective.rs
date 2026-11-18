@@ -209,7 +209,8 @@ fn run_inner(
     // vanished since the walk is skipped, exactly like the extractor
     // skips files it cannot read. Attaching before the report is built
     // lets the report inherit them like `semantic` (R26).
-    let mut scanned: Vec<(String, archguard_extract::Lang, String)> = Vec::new();
+    // Scanned one file at a time: only per-file results stay, not texts.
+    let mut scans = crate::kpi_payload::FileScans::default();
     for file in &files {
         // Same scanned set as `build_graph`: only files with a
         // registered extractor became graph nodes, and the scans key
@@ -217,28 +218,18 @@ fn run_inner(
         if extractor_for(file.lang).is_none() {
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(&file.path) else {
+        let Ok(bytes) = std::fs::read(&file.path) else {
             continue;
         };
-        scanned.push((
-            strip_root(&file.rel_path, &config.project.source_roots),
-            file.lang,
-            content,
-        ));
+        scans.add(&crate::kpi_payload::ScannedSource {
+            path: &strip_root(&file.rel_path, &config.project.source_roots),
+            lang: file.lang,
+            // Decoded like the extraction pipeline, so non-UTF-8 files count too.
+            content: &String::from_utf8_lossy(&bytes),
+        });
     }
-    let kpi_sources: Vec<crate::kpi_payload::ScannedSource> = scanned
-        .iter()
-        .map(|(path, lang, content)| crate::kpi_payload::ScannedSource {
-            path,
-            lang: *lang,
-            content,
-        })
-        .collect();
-    graph.review_kpis = Some(crate::kpi_payload::compute_review_kpis(
-        root,
-        &config,
-        &graph,
-        &kpi_sources,
+    graph.review_kpis = Some(crate::kpi_payload::compute_review_kpis_from_scans(
+        root, &config, &graph, scans,
     )?);
 
     // ---- Kap. 6 steps 8–10: analyse and report with the effective config.

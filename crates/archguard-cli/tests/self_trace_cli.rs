@@ -84,7 +84,7 @@ fn a_probed_check_is_a_request_with_the_pipeline_phases() {
         "pipeline.build_graph_named",
         "extract ts",
         "pipeline.resolve_imports",
-        "kpi_payload.compute_review_kpis",
+        "kpi_payload.compute_review_kpis_from_scans",
         "pipeline.build_report",
         "scc.find_sccs",
         "layers.check_layers",
