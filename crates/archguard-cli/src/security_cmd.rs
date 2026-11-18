@@ -53,13 +53,13 @@ pub(crate) fn run(
 }
 
 fn print_report(report: &SecurityReport) {
-    println!(
+    outln!(
         "Dependency security: {} · {} packages · {} advisories",
         report.status,
         report.packages_scanned,
         report.findings.len()
     );
-    println!(
+    outln!(
         "Scanner: {} {} · scanned: {} · database: {}",
         report.scanner,
         report.scanner_version.as_deref().unwrap_or("unknown"),
@@ -69,7 +69,7 @@ fn print_report(report: &SecurityReport) {
             .as_deref()
             .unwrap_or("not available")
     );
-    println!(
+    outln!(
         "{}",
         ["critical", "high", "medium", "low", "unknown"]
             .map(|severity| format!(
@@ -83,13 +83,13 @@ fn print_report(report: &SecurityReport) {
             .join(" · ")
     );
     for target in &report.targets {
-        println!(
+        outln!(
             "  {} ({}, {} packages)",
             target.path, target.ecosystem, target.packages
         );
     }
     for finding in &report.findings {
-        println!(
+        outln!(
             "{} {} · {} {} · fix: {}",
             finding.severity.to_uppercase(),
             finding.id,
@@ -97,16 +97,16 @@ fn print_report(report: &SecurityReport) {
             finding.installed_version,
             finding.fixed_version.as_deref().unwrap_or("not reported")
         );
-        println!("  {}", finding.title);
-        println!("  {}", finding.targets.join(", "));
+        outln!("  {}", finding.title);
+        outln!("  {}", finding.targets.join(", "));
         if let Some(url) = &finding.url {
-            println!("  {url}");
+            outln!("  {url}");
         }
     }
     for diagnostic in &report.diagnostics {
-        println!("Note: {diagnostic}");
+        outln!("Note: {diagnostic}");
     }
-    println!(
+    outln!(
         "Known dependency advisories at the recorded database date; runtime exploitability and application code are not assessed."
     );
 }

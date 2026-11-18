@@ -59,7 +59,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAc
                 let id = decision.id.clone();
                 upsert_decision(root, decision)?;
                 if !cli.quiet {
-                    println!("recorded decision {id} for {finding}");
+                    outln!("recorded decision {id} for {finding}");
                 }
                 Ok(EXIT_OK)
             }
@@ -73,10 +73,10 @@ pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAc
                 }
                 if !cli.quiet {
                     if register.decisions.is_empty() {
-                        println!("no decisions recorded");
+                        outln!("no decisions recorded");
                     }
                     for decision in sorted(&register) {
-                        println!(
+                        outln!(
                             "{} · {} · {:?} · adr: {} · by {} at {}{}",
                             decision.id,
                             decision.finding_ref,
@@ -108,7 +108,7 @@ pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAc
                                 &serde_json::to_string_pretty(decision).expect("serializes"),
                             );
                         } else if !cli.quiet {
-                            println!(
+                            outln!(
                                 "id: {}\nfinding: {}\ndecision: {:?}\nadr: {}\nauthor: {}\nts: {}\nnote: {}",
                                 decision.id,
                                 decision.finding_ref,

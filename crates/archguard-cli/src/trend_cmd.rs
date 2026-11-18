@@ -117,11 +117,11 @@ fn print_table(rows: &[SnapshotRow]) {
         }
         out.trim_end().to_string()
     };
-    println!(
+    outln!(
         "{}",
         line(&headers.iter().map(|h| h.to_string()).collect::<Vec<_>>())
     );
-    println!(
+    outln!(
         "{}",
         widths
             .iter()
@@ -130,7 +130,7 @@ fn print_table(rows: &[SnapshotRow]) {
             .join("  ")
     );
     for row in &cells {
-        println!("{}", line(row));
+        outln!("{}", line(row));
     }
 }
 

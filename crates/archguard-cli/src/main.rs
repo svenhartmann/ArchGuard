@@ -29,8 +29,10 @@ use archguard_engine::{
 use clap::{CommandFactory, FromArgMatches};
 use serde_json::{Value, json};
 
-mod args;
+// First, so `outln!` is in scope for every module below.
+#[macro_use]
 mod output;
+mod args;
 use args::{BaselineAction, Cli, Command, Format, format_label};
 use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
@@ -532,7 +534,7 @@ fn scan(
             _ => emit(&to_text(report)),
         }
         if cli.verbose {
-            println!(
+            outln!(
                 "graph with {} nodes and {} edges written to {}",
                 graph.nodes.len(),
                 graph.edges.len(),
@@ -604,12 +606,12 @@ fn cycles(
             _ => {
                 emit(&to_text(&cycle_report(report, &shown)));
                 if shown.len() < total {
-                    println!("({} of {} cycles shown)", shown.len(), total);
+                    outln!("({} of {} cycles shown)", shown.len(), total);
                 }
             }
         }
         if cli.verbose {
-            println!("{total} cycle findings");
+            outln!("{total} cycle findings");
         }
     }
     if !fail_on_found {
@@ -691,7 +693,7 @@ fn metrics(
                 .max()
                 .unwrap_or(6)
                 .max(6);
-            println!(
+            outln!(
                 "{:<width$} {:>6} {:>7} {:>11} {:>9}",
                 "MODULE",
                 "FAN-IN",
@@ -701,7 +703,7 @@ fn metrics(
                 width = width
             );
             for (name, m) in rows {
-                println!(
+                outln!(
                     "{name:<width$} {:>6} {:>7} {:>11.2} {:>9}",
                     m.fan_in,
                     m.fan_out,
@@ -715,7 +717,7 @@ fn metrics(
             if let Some(kpis) = &report.review_kpis {
                 let baseline = archguard_engine::latest_snapshot(root).and_then(|s| s.review_kpis);
                 for line in insights_cmd::review_kpi_lines(kpis, baseline.as_ref()) {
-                    println!("{line}");
+                    outln!("{line}");
                 }
             }
         }
@@ -879,16 +881,16 @@ fn suggest(cli: &Cli, cycle: Option<&str>, max: Option<usize>, report: &Report) 
         emit(&to_pretty_json(&json!(out)));
     } else {
         for finding in &findings {
-            println!("{}:", finding.id);
+            outln!("{}:", finding.id);
             for cut in capped_cuts(finding, max) {
-                println!(
+                outln!(
                     "  {} -> {} (score {:.2}): {}",
                     cut.from, cut.to, cut.score, cut.reason
                 );
             }
         }
         if findings.is_empty() {
-            println!("no cycle findings");
+            outln!("no cycle findings");
         }
     }
     EXIT_OK
@@ -922,7 +924,7 @@ fn baseline(
                 return analysis_error(err);
             }
             if !cli.quiet {
-                println!(
+                outln!(
                     "wrote {} cycle hashes to {}",
                     cycle_hashes(report).len(),
                     file.display()
@@ -949,13 +951,13 @@ fn baseline(
                 .collect();
             if !cli.quiet {
                 for (id, hash) in &added {
-                    println!("ADDED {id} {hash}");
+                    outln!("ADDED {id} {hash}");
                 }
                 for hash in &removed {
-                    println!("REMOVED {hash}");
+                    outln!("REMOVED {hash}");
                 }
                 if added.is_empty() && removed.is_empty() {
-                    println!("baseline matches: {} cycles accepted", current.len());
+                    outln!("baseline matches: {} cycles accepted", current.len());
                 }
             }
             // Kap. 9: only NEW cycles block; resolved ones are reported.
@@ -1004,7 +1006,7 @@ fn init(cli: &Cli, root: &Path, defaults: bool) -> i32 {
         return analysis_error(err);
     }
     if !cli.quiet {
-        println!("wrote {}", target.display());
+        outln!("wrote {}", target.display());
     }
     EXIT_OK
 }
@@ -1036,7 +1038,7 @@ fn config(cli: &Cli, report: &Report, loaded: &LoadedConfig) -> i32 {
             &json!({ "config": &report.config, "effective": &loaded.config }),
         ));
     } else {
-        println!("effective config provenance (declared ⇐ derived ⇐ default):");
+        outln!("effective config provenance (declared ⇐ derived ⇐ default):");
         let width = report
             .config
             .keys()
@@ -1045,7 +1047,7 @@ fn config(cli: &Cli, report: &Report, loaded: &LoadedConfig) -> i32 {
             .unwrap_or(0)
             .max(7);
         for (section, source) in &report.config {
-            println!("{section:<width$}  {}", source_name(*source));
+            outln!("{section:<width$}  {}", source_name(*source));
         }
     }
     EXIT_OK

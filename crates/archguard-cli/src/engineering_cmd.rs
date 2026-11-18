@@ -11,7 +11,7 @@ fn format_allowed(cli: &Cli) -> bool {
 fn output(cli: &Cli, label: &str, value: Value) -> i32 {
     if !cli.quiet {
         if cli.format == Format::Text {
-            println!("{label} · measured evidence and limitations");
+            outln!("{label} · measured evidence and limitations");
         }
         emit(&serde_json::to_string_pretty(&value).expect("engineering evidence serializes"));
     }

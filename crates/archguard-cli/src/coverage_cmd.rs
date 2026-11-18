@@ -37,13 +37,13 @@ pub(crate) fn run(
             value["review"] = serde_json::to_value(&review).expect("coverage review serializes");
             emit(&serde_json::to_string_pretty(&value).unwrap());
         } else {
-            println!(
+            outln!(
                 "Test coverage: {} · {} mapped files · {} unmatched",
                 coverage.status,
                 coverage.files.len(),
                 coverage.unmatched_files
             );
-            println!(
+            outln!(
                 "Review index = uncovered line fraction × (1 + transitive file dependents); heuristic, not defect probability."
             );
             for row in &review.files {
@@ -66,7 +66,7 @@ pub(crate) fn run(
                         })
                         .unwrap_or_else(|| "unknown".into())
                 };
-                println!(
+                outln!(
                     "{} · lines {} · branches {} · dependents {} · index {} · {}",
                     row.node,
                     counter(&file.lines),
@@ -81,10 +81,10 @@ pub(crate) fn run(
                 );
             }
             for diagnostic in &coverage.diagnostics {
-                println!("Note: {diagnostic}");
+                outln!("Note: {diagnostic}");
             }
             if coverage.status == "not_imported" {
-                println!(
+                outln!(
                     "Import: archguard coverage <project> --report <jacoco.xml|cobertura.xml|clover.xml|lcov.info> [--source-root src/main/java]"
                 );
             }

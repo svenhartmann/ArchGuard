@@ -77,13 +77,13 @@ pub(crate) fn run(
             }
             emit(&serde_json::to_string_pretty(&value).expect("quality result serializes"));
         } else {
-            println!(
+            outln!(
                 "Imported quality: {} · {} findings",
                 report.status,
                 report.findings.len()
             );
             for finding in &report.findings {
-                println!(
+                outln!(
                     "{} / {} · {}{} · {}{} · {}",
                     finding.tool,
                     finding.rule_id,
@@ -100,21 +100,21 @@ pub(crate) fn run(
                         .unwrap_or_default(),
                     finding.message
                 );
-                println!("  Source status: {}", finding.status);
+                outln!("  Source status: {}", finding.status);
                 if let Some(state) = &finding.baseline_state {
-                    println!("  Producer baseline state: {state}");
+                    outln!("  Producer baseline state: {state}");
                 }
             }
             for diagnostic in &report.diagnostics {
-                println!("Note: {diagnostic}");
+                outln!("Note: {diagnostic}");
             }
             if report.status == "not_imported" {
-                println!(
+                outln!(
                     "Import: archguard quality <project> --report <results.sarif> [--source-root <path>]"
                 );
             }
             if let Some(gate) = &gate {
-                println!(
+                outln!(
                     "Changed-code quality: {} · base {} ({}) · {} changed source files / {} changed lines",
                     gate.status,
                     gate.base_ref,
@@ -123,7 +123,7 @@ pub(crate) fn run(
                     gate.changed_lines
                 );
                 if let Some(coverage) = &gate.coverage {
-                    println!(
+                    outln!(
                         "Changed executable lines: {}/{} covered · {} · {} unknown files",
                         coverage.covered_lines,
                         coverage.total_lines,
@@ -135,10 +135,10 @@ pub(crate) fn run(
                     );
                 }
                 for finding in &gate.findings {
-                    println!("{}: {}", finding.kind, finding.message);
+                    outln!("{}: {}", finding.kind, finding.message);
                 }
                 for diagnostic in &gate.diagnostics {
-                    println!("Note: {diagnostic}");
+                    outln!("Note: {diagnostic}");
                 }
             }
         }

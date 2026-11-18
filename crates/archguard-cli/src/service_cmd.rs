@@ -25,18 +25,18 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
         if cli.format == Format::Json {
             emit(&serde_json::to_string_pretty(&topology).expect("service topology serializes"));
         } else {
-            println!(
+            outln!(
                 "Services: {} · Compose files: {}",
                 topology.services.len(),
                 topology.compose_files.len()
             );
-            println!(
+            outln!(
                 "Monorepo: {} — {}",
                 topology.monorepo, topology.monorepo_reason
             );
-            println!("Projects: {}", topology.projects.len());
+            outln!("Projects: {}", topology.projects.len());
             for project in &topology.projects {
-                println!(
+                outln!(
                     "project [{}] {} · {} · {}{}",
                     project.kind,
                     project.name,
@@ -49,8 +49,8 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
                         .unwrap_or_default()
                 );
             }
-            println!("Configured HTTP cycle groups: {http_cycles}");
-            println!(
+            outln!("Configured HTTP cycle groups: {http_cycles}");
+            outln!(
                 "Startup cycle groups: {}",
                 topology
                     .cycles
@@ -58,15 +58,15 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
                     .filter(|cycle| cycle.kind == ServiceDependencyKind::Startup)
                     .count()
             );
-            println!(
+            outln!(
                 "HTTP edges are configured endpoints, not observed runtime calls. Startup edges are depends_on declarations."
             );
-            println!(
+            outln!(
                 "Supported static input coverage complete: {}",
                 topology.complete
             );
             for service in &topology.services {
-                println!(
+                outln!(
                     "service {}{}",
                     service.id,
                     service
@@ -78,9 +78,9 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
             }
             for edge in &topology.dependencies {
                 let kind = kind_label(edge.kind);
-                println!("{kind}: {} -> {}", edge.from, edge.to);
+                outln!("{kind}: {} -> {}", edge.from, edge.to);
                 for evidence in &edge.evidence {
-                    println!(
+                    outln!(
                         "  {}{} {}: {}",
                         evidence.file,
                         evidence
@@ -95,11 +95,11 @@ pub(crate) fn run(cli: &Cli, root: &Path, fail_on_found: bool) -> i32 {
             for cycle in &topology.cycles {
                 // These are SCC members, not a fabricated ordered cycle path.
                 let kind = kind_label(cycle.kind);
-                println!("{kind} cyclic group: {}", cycle.nodes.join(", "));
+                outln!("{kind} cyclic group: {}", cycle.nodes.join(", "));
             }
             print_datastores(&topology.datastores);
             for diagnostic in &topology.diagnostics {
-                println!(
+                outln!(
                     "coverage: {}{}: {}",
                     diagnostic.file,
                     diagnostic
@@ -135,20 +135,20 @@ fn print_datastores(datastores: &ServiceDatastores) {
     if datastores.nodes.is_empty() {
         return;
     }
-    println!(
+    outln!(
         "Datastores: {} · usages: {}",
         datastores.nodes.len(),
         datastores.usages.len()
     );
     for node in &datastores.nodes {
-        println!(
+        outln!(
             "datastore [{}] {}",
             node.engine.as_deref().unwrap_or("unknown"),
             node.id
         );
     }
     for usage in &datastores.usages {
-        println!(
+        outln!(
             "datastore usage: {} -> {}{}",
             usage.service,
             usage.datastore,
@@ -159,7 +159,7 @@ fn print_datastores(datastores: &ServiceDatastores) {
                 .unwrap_or_default()
         );
         for evidence in &usage.evidence {
-            println!(
+            outln!(
                 "  {} {}: {}",
                 evidence.file, evidence.pointer, evidence.description
             );
@@ -170,11 +170,11 @@ fn print_datastores(datastores: &ServiceDatastores) {
         tables.entry(&table.service).or_default().push(&table.name);
     }
     for (service, names) in tables {
-        println!("tables of {service}: {}", names.join(", "));
+        outln!("tables of {service}: {}", names.join(", "));
     }
     for shared in &datastores.shared {
         match shared.scope {
-            SharedDatastoreScope::Database => println!(
+            SharedDatastoreScope::Database => outln!(
                 "shared database{}: {} database {}: {}",
                 if shared.disjoint_tables {
                     " (disjoint tables)"
@@ -185,19 +185,19 @@ fn print_datastores(datastores: &ServiceDatastores) {
                 shared.database.as_deref().unwrap_or("?"),
                 shared.services.join(", ")
             ),
-            SharedDatastoreScope::Table => println!(
+            SharedDatastoreScope::Table => outln!(
                 "shared table: {} database {}, tables {}: {}",
                 shared.datastore,
                 shared.database.as_deref().unwrap_or("?"),
                 shared.tables.join(", "),
                 shared.services.join(", ")
             ),
-            SharedDatastoreScope::Server => println!(
+            SharedDatastoreScope::Server => outln!(
                 "shared server only (database names differ or are unknown): {}: {}",
                 shared.datastore,
                 shared.services.join(", ")
             ),
         }
     }
-    println!("{}", datastores.note);
+    outln!("{}", datastores.note);
 }
