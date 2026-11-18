@@ -22,6 +22,49 @@ pub(crate) fn relative(root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+/// Test code: a test directory, a dotted .NET test project (`Shop.Tests`) or a
+/// `.test.`/`.spec.` file.
+pub(crate) fn test_path(rel: &str) -> bool {
+    rel.split('/').any(|p| {
+        let p = p.to_ascii_lowercase();
+        matches!(p.as_str(), "test" | "tests" | "__tests__" | "__mocks__")
+            || p.ends_with(".tests")
+            || p.ends_with(".test")
+    }) || rel.contains(".test.")
+        || rel.contains(".spec.")
+}
+/// The services whose source scope (build context or project path) is the
+/// deepest one containing `rel`; several when their scopes tie.
+pub(crate) fn owners(topology: &ServiceTopology, rel: &str) -> Vec<String> {
+    let mut best: Option<(usize, std::collections::BTreeSet<&str>)> = None;
+    for s in &topology.services {
+        let project = s
+            .project
+            .as_ref()
+            .and_then(|id| topology.projects.iter().find(|p| p.id == *id))
+            .map(|p| p.path.as_str());
+        for dir in s.build_context.as_deref().into_iter().chain(project) {
+            let dir = dir.trim_end_matches('/');
+            let depth = if dir == "." || dir.is_empty() {
+                0
+            } else if rel.starts_with(&format!("{dir}/")) {
+                dir.split('/').count()
+            } else {
+                continue;
+            };
+            match &mut best {
+                Some((d, ids)) if *d == depth => {
+                    ids.insert(&s.id);
+                }
+                Some((d, _)) if *d > depth => {}
+                _ => best = Some((depth, std::collections::BTreeSet::from([s.id.as_str()]))),
+            }
+        }
+    }
+    best.map_or(vec![], |(_, ids)| {
+        ids.into_iter().map(str::to_owned).collect()
+    })
+}
 pub(crate) fn excluded(name: &str) -> bool {
     matches!(
         name,

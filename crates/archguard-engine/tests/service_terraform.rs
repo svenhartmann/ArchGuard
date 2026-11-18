@@ -160,3 +160,70 @@ fn terraform_values_that_are_not_literal_stay_unknown_and_secrets_are_never_read
             .contains("do-not-display")
     );
 }
+
+#[test]
+fn heredoc_container_definitions_are_read_as_literal_json() {
+    let r = fixture();
+    let shipping = "terraform:.:aws_ecs_service.shipping";
+    assert!(
+        !r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("aws_ecs_task_definition.shipping")),
+        "{:#?}",
+        r.diagnostics
+    );
+    let usage = r
+        .datastores
+        .usages
+        .iter()
+        .find(|u| u.service == shipping)
+        .unwrap_or_else(|| panic!("{:#?}", r.datastores.usages));
+    assert_eq!(usage.database.as_deref(), Some("shipping"), "{usage:#?}");
+}
+
+fn put(root: &Path, path: &str, text: &str) {
+    let p = root.join(path);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+#[test]
+fn module_nesting_beyond_the_limit_is_a_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "main.tf", "module \"m\" {\n  source = \"./m0\"\n}\n");
+    for i in 0..12 {
+        put(
+            root,
+            &format!("m{i}/main.tf"),
+            &format!("module \"m\" {{\n  source = \"../m{}\"\n}}\n", i + 1),
+        );
+    }
+    let r = analyze_services(root).unwrap();
+    assert!(!r.complete);
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("nested deeper than")),
+        "{:#?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn files_beyond_the_file_limit_are_a_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for i in 0..2001 {
+        put(root, &format!("f{i}.tf"), "");
+    }
+    let r = analyze_services(root).unwrap();
+    assert!(!r.complete);
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.message.contains("later .tf files are not read")),
+        "{:#?}",
+        r.diagnostics
+    );
+}

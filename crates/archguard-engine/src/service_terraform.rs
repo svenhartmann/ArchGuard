@@ -30,20 +30,21 @@ const WORKLOADS: [&str; 12] = [
 ];
 const K8S_SERVICES: [&str; 2] = ["kubernetes_service", "kubernetes_service_v1"];
 const MAX_FILES: usize = 2000;
+const MAX_ENTRIES: usize = 50_000;
 const MAX_MODULE_DEPTH: usize = 8;
 
 /// One parsed `.tf` file.
 struct TfFile {
     path: String,
-    text: String,
+    /// Byte offset of each line start.
+    line_at: Vec<usize>,
     body: Body,
 }
 
 impl TfFile {
     fn line(&self, span: Option<Range<usize>>) -> Option<u32> {
         let start = span?.start;
-        let lines = self.text.get(..start)?.matches('\n').count();
-        u32::try_from(lines + 1).ok()
+        u32::try_from(self.line_at.partition_point(|&s| s <= start)).ok()
     }
 }
 
@@ -111,7 +112,14 @@ pub(super) fn deployments(
     for dir in modules.keys().filter(|d| !called.contains(*d)) {
         let scope = format!("terraform:{}", if dir.is_empty() { "." } else { dir });
         let mut instances = Vec::new();
-        instance(&modules, dir, "", 0, &mut instances);
+        let mut deep = BTreeSet::new();
+        instance(&modules, dir, "", 0, &mut instances, &mut deep);
+        for file in deep {
+            let message = format!(
+                "Terraform modules are nested deeper than {MAX_MODULE_DEPTH} levels; the modules called below are not analyzed and their resources are unknown."
+            );
+            diagnostic(report, &file, None, message);
+        }
         for resources in &instances {
             module_instance(report, &scope, resources, &mut out);
         }
@@ -126,13 +134,24 @@ fn parse(
     report: &mut ServiceTopology,
 ) -> BTreeMap<String, Vec<TfFile>> {
     let mut modules: BTreeMap<String, Vec<TfFile>> = BTreeMap::new();
-    let files = discovery.walk(root).take(50_000).flatten().filter(|e| {
-        e.file_type().is_some_and(|t| t.is_file())
-            && e.path().extension().is_some_and(|x| x == "tf")
+    let mut count = 0;
+    for (index, entry) in discovery.walk(root).enumerate() {
+        let Ok(entry) = entry else { continue };
+        let tf = entry.file_type().is_some_and(|t| t.is_file())
+            && entry.path().extension().is_some_and(|x| x == "tf")
             // Remote modules downloaded by `terraform init` are not analyzed.
-            && !e.path().components().any(|c| c.as_os_str() == ".terraform")
-    });
-    for entry in files.take(MAX_FILES) {
+            && !entry.path().components().any(|c| c.as_os_str() == ".terraform");
+        count += usize::from(tf);
+        if index >= MAX_ENTRIES || count > MAX_FILES {
+            let message = format!(
+                "Terraform scan stopped after {MAX_ENTRIES} entries or {MAX_FILES} .tf files; later .tf files are not read and their resources are unknown."
+            );
+            diagnostic(report, ".", None, message);
+            break;
+        }
+        if !tf {
+            continue;
+        }
         let path = relative(root, entry.path());
         let parsed = read(root, entry.path()).map(|text| (parser::parse_body(&text), text));
         let Some((Ok(body), text)) = parsed else {
@@ -149,10 +168,12 @@ fn parse(
             .and_then(Path::to_str)
             .unwrap_or("")
             .to_owned();
-        modules
-            .entry(dir)
-            .or_default()
-            .push(TfFile { path, text, body });
+        let line_at = crate::graphql_scan::line_starts(&text);
+        modules.entry(dir).or_default().push(TfFile {
+            path,
+            line_at,
+            body,
+        });
     }
     modules
 }
@@ -228,13 +249,15 @@ fn module_call(
     }
 }
 
-/// The resources of the module in `dir` and, recursively, of the local modules it calls.
+/// The resources of the module in `dir` and, recursively, of the local modules it calls;
+/// `deep` collects the files whose module calls lie beyond the nesting limit.
 fn instance<'a>(
     modules: &'a BTreeMap<String, Vec<TfFile>>,
     dir: &str,
     prefix: &str,
     depth: usize,
     out: &mut Vec<Vec<Resource<'a>>>,
+    deep: &mut BTreeSet<String>,
 ) {
     let Some(files) = modules.get(dir) else {
         return;
@@ -253,13 +276,17 @@ fn instance<'a>(
                 });
             }
         }
-        for block in blocks(file, "module").filter(|_| depth < MAX_MODULE_DEPTH) {
+        for block in blocks(file, "module") {
+            if depth >= MAX_MODULE_DEPTH {
+                deep.insert(file.path.clone());
+                continue;
+            }
             let child = attr(&block.body, "source")
                 .and_then(literal)
                 .and_then(|s| local_source(dir, &s));
             if let (Some(child), [name]) = (child, block.labels.as_slice()) {
                 let prefix = format!("{prefix}module.{}.", name.as_str());
-                instance(modules, &child, &prefix, depth + 1, out);
+                instance(modules, &child, &prefix, depth + 1, out, deep);
             }
         }
     }
@@ -314,7 +341,8 @@ fn ecs_containers(resource: &Resource) -> Option<(Vec<Entry>, Vec<String>)> {
         }
         other => {
             // JSON is valid HCL expression syntax; its spans are relative to the string.
-            parsed = parser::parse_expr(&literal(other)?).ok()?;
+            // A heredoc ends with a newline, which `parse_expr` rejects.
+            parsed = parser::parse_expr(literal(other)?.trim()).ok()?;
             (&parsed, false)
         }
     };

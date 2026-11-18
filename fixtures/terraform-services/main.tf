@@ -64,3 +64,24 @@ module "network" {
 module "reports" {
   source = "./modules/reports"
 }
+
+# Literal JSON in a heredoc instead of jsonencode(...).
+resource "aws_ecs_task_definition" "shipping" {
+  family                = "shipping"
+  container_definitions = <<DEFS
+[
+  {
+    "name": "shipping",
+    "image": "example/shipping:1",
+    "environment": [
+      { "name": "DATABASE_URL", "value": "postgres://shipdb:5432/shipping" }
+    ]
+  }
+]
+DEFS
+}
+
+resource "aws_ecs_service" "shipping" {
+  name            = "shipping"
+  task_definition = aws_ecs_task_definition.shipping.arn
+}
