@@ -26,7 +26,13 @@ pub(crate) fn analyze_scala_calls(root: &Path, config: &Config) -> CallAnalysis 
             // The graph names a Scala file after its package, as the pipeline does.
             let declarations = ScalaExtractor.extract(path, content).declarations;
             let node = crate::pipeline::file_node_name(file, path, &declarations);
-            let found = scan_scala_structure(path, &node, content);
+            let mut found = scan_scala_structure(path, &node, content);
+            if !found.symbols.measured {
+                // The package still marks its imports as the project's own.
+                found.symbols.package = declarations
+                    .first()
+                    .map_or(String::new(), |d| d.module_path.replace('/', "."));
+            }
             scanned.borrow_mut().push((path.to_string(), found.symbols));
             (
                 found.classes,
@@ -40,8 +46,8 @@ pub(crate) fn analyze_scala_calls(root: &Path, config: &Config) -> CallAnalysis 
     if report.files == 0 {
         return report;
     }
-    // Only a fully scanned project can tell that a package is not its own.
-    let complete = files.len() == report.files && files.iter().all(|(_, f)| f.measured);
+    // Only a project whose files were all read can tell that a package is not its own.
+    let complete = files.len() == report.files;
     let jvm = jvm_packages(root, config).filter(|_| complete);
     report.calls = resolve::resolve(&files, &report.methods, jvm.as_ref());
     let coverage = coverage(&report.calls);
@@ -172,6 +178,22 @@ mod tests {
         let report = analyze_scala_calls(dir.path(), &Config::default());
         assert_eq!(resolution(&report, "Payment.make(2)"), "unresolved");
         assert_eq!(resolution(&report, "Payment(3)"), "unresolved");
+    }
+
+    #[test]
+    fn an_unrelated_broken_file_keeps_external_calls() {
+        let dir = project(&[
+            (
+                "src/shop/Cart.scala",
+                "package shop\n\nimport scala.collection.mutable.ListBuffer\n\nclass Cart {\n  def items() = ListBuffer.fill(3)(0)\n}\n",
+            ),
+            (
+                "other/Broken.scala",
+                "package other\n\nobject Broken {\n  def f() = { if (\n}\n",
+            ),
+        ]);
+        let report = analyze_scala_calls(dir.path(), &Config::default());
+        assert_eq!(resolution(&report, "ListBuffer.fill(3)"), "external");
     }
 
     #[test]
