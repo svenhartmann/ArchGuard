@@ -34,6 +34,28 @@ export struct RtHot {
     share: float,
 }
 
+export struct RtSampledRow {
+    name: string,
+    self-samples: int,
+    total-samples: int,
+    // Shares of the request's samples.
+    self-share: float,
+    total-share: float,
+}
+
+// Profiler samples of the selected request (probes/CONVENTIONS.md, "Samples").
+export struct RtSampled {
+    has: bool,
+    title: string,
+    samples: int,
+    interval: string,
+    // `cpu` or `wall`.
+    clock: string,
+    // samples × interval in ms.
+    lower-bound: string,
+    methods: [RtSampledRow],
+}
+
 export struct RtFlame {
     depth: int,
     label: string,
@@ -140,6 +162,37 @@ component HotRow inherits HorizontalLayout {
     }
 }
 
+component SampledRow inherits HorizontalLayout {
+    in property <RtSampledRow> m;
+    spacing: 8px;
+    height: 22px;
+    Small { text: m.name; font-family: Theme.mono-family; width: 38%; }
+    bar := Rectangle {
+        horizontal-stretch: 1;
+        Rectangle {
+            x: 0;
+            width: max(1px, m.total-share * bar.width);
+            height: 10px;
+            y: (bar.height - self.height) / 2;
+            border-radius: 2px;
+            background: Theme.dim;
+        }
+        Rectangle {
+            x: 0;
+            width: max(2px, m.self-share * bar.width);
+            height: 10px;
+            y: (bar.height - self.height) / 2;
+            border-radius: 2px;
+            background: Theme.accent;
+        }
+    }
+    Small {
+        width: 230px;
+        horizontal-alignment: right;
+        text: @tr("self {} · on stack {}", Fmt.int(m.self-samples), Fmt.int(m.total-samples));
+    }
+}
+
 // The flame graph of one request: depth from top to bottom, width is time.
 export component FlameGraph inherits Rectangle {
     in property <[RtFlame]> spans;
@@ -168,6 +221,7 @@ export component RuntimeTime inherits Rectangle {
     in property <[RtBreakdown]> breakdown;
     in property <[RtHot]> hot;
     in property <[int]> legend;
+    in property <RtSampled> sampled;
     ScrollView {
         VerticalLayout {
             width: parent.visible-width;
@@ -175,6 +229,14 @@ export component RuntimeTime inherits Rectangle {
             padding-top: 12px;
             spacing: 8px;
             alignment: start;
+            if sampled.has: SectionHeading { label: @tr("Sampled methods of {}", sampled.title); }
+            if sampled.has: Small {
+                muted: true;
+                wrap: word-wrap;
+                overflow: clip;
+                text: @tr("{0} samples, interval {1} ms, clock {2}. Statistical: a method with n samples is uncertain by about √n; {0} × {1} ms = {3} ms is a lower bound of the sampled time, as samplers skip rounds. Self: the method was the innermost frame (dark bar); on stack: it was anywhere on the stack (light bar).", Fmt.int(sampled.samples), sampled.interval, sampled.clock, sampled.lower-bound);
+            }
+            for m in sampled.methods: SampledRow { m: m; }
             Small { muted: true; wrap: word-wrap; overflow: clip; text: @tr("Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."); }
             Legend { categories: legend; }
             SectionHeading { label: @tr("Endpoints ({})", Fmt.int(breakdown.length)); }
@@ -182,6 +244,8 @@ export component RuntimeTime inherits Rectangle {
             SectionHeading { label: @tr("Methods by self time ({})", Fmt.int(hot.length)); }
             if hot.length == 0: Small { muted: true; text: @tr("No method spans recorded; probes record them at application boundaries."); }
             for h in hot: HotRow { h: h; }
+            if !sampled.has: SectionHeading { label: @tr("Sampled methods"); }
+            if !sampled.has: Small { muted: true; wrap: word-wrap; overflow: clip; text: @tr("No profiler samples for the selected request. Probes with a sampling profiler attach stack samples to the span that was running (probes/CONVENTIONS.md, \"Samples\")."); }
         }
     }
 }

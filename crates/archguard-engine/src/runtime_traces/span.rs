@@ -25,6 +25,8 @@ pub(super) struct Span {
     pub caller: Option<String>,
     /// `archguard.section.kind` of a method span.
     pub section: Option<String>,
+    /// Profiler samples owned by this span (`archguard.profile.*`).
+    pub profile: Option<Profile>,
     /// Input index and 1-based line, for evidence.
     pub input: usize,
     pub line: u32,
@@ -36,6 +38,20 @@ pub(super) struct Db {
     pub text: Option<String>,
     pub read_ms: Option<f64>,
 }
+
+/// Stack samples on one span (CONVENTIONS.md, "Samples").
+pub(super) struct Profile {
+    pub interval_ms: f64,
+    pub clock: String,
+    /// All samples of the span, also those of stacks the probe left out.
+    pub samples: u64,
+    /// Folded stacks: frames root first, and their sample count.
+    pub stacks: Vec<(Vec<String>, u64)>,
+}
+
+/// Bounds against oversized input; probes write at most 100 stacks of 64 frames.
+const MAX_STACKS: usize = 100;
+const MAX_FRAMES: usize = 64;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Site {
@@ -132,6 +148,7 @@ impl Span {
             site: site(value),
             caller: text(value, "archguard.caller.function", MAX_NAME),
             section: text(value, "archguard.section.kind", 32),
+            profile: profile(value),
             input,
             line,
         })
@@ -221,6 +238,36 @@ fn db(value: &Value) -> Option<Db> {
         key,
         text: normalized,
         read_ms: double(value, "archguard.db.read_ms"),
+    })
+}
+
+/// The span's samples; `None` without `archguard.profile.samples` and interval.
+fn profile(value: &Value) -> Option<Profile> {
+    let samples = integer(value, "archguard.profile.samples").filter(|n| *n > 0)?;
+    let interval_ms = double(value, "archguard.profile.interval_ms").filter(|i| *i > 0.0)?;
+    let stacks = attribute(value, "archguard.profile.stacks")
+        .and_then(|v| v.get("arrayValue")?.get("values")?.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.get("stringValue")?.as_str())
+        .filter_map(|folded| {
+            let (frames, count) = folded.trim().rsplit_once(' ')?;
+            let count: u64 = count.parse().ok().filter(|c| *c > 0)?;
+            let mut frames: Vec<String> = frames
+                .split(';')
+                .filter(|f| !f.is_empty())
+                .map(|f| bounded(f, MAX_NAME))
+                .collect();
+            frames.drain(..frames.len().saturating_sub(MAX_FRAMES));
+            (!frames.is_empty()).then_some((frames, count))
+        })
+        .take(MAX_STACKS)
+        .collect();
+    Some(Profile {
+        interval_ms,
+        clock: text(value, "archguard.profile.clock", 16).unwrap_or_else(|| "unknown".into()),
+        samples,
+        stacks,
     })
 }
 

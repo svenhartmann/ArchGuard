@@ -114,7 +114,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect compiler evidence | `archguard calls . --format json` |
 | Inspect service connections | `archguard services . --format json` |
 | Inspect API contracts (imported OpenAPI, GraphQL from the sources) | `archguard contracts . --format json` |
-| Inspect recorded runtime (requests, DB calls per request, slow and repeated queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
+| Inspect recorded runtime (requests, DB calls per request, slow and repeated queries, profiler samples per request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
 | Export arc42 as AsciiDoc or Word (for a Confluence import) | `archguard doc . --arc42 --format asciidoc` or `--format docx` |
 | Export the service topology as a Structurizr (C4) workspace | `archguard graph . --format structurizr [--service orders]` |

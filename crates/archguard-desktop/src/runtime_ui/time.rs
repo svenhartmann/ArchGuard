@@ -7,7 +7,7 @@ use archguard_engine::core::{RuntimeProfile, RuntimeRequest};
 use slint::{ModelRc, VecModel};
 
 use super::summary::{number, short_function, span_label};
-use crate::ui::{RtBreakdown, RtFlame, RtHot, RtPart};
+use crate::ui::{RtBreakdown, RtFlame, RtHot, RtPart, RtSampled, RtSampledRow};
 
 /// The engine's categories in the order of `RtTime` in the Slint file.
 const CATEGORIES: [&str; 9] = [
@@ -21,6 +21,9 @@ const CATEGORIES: [&str; 9] = [
     "other",
     "unattributed",
 ];
+
+/// Sampled methods shown per request; the CLI JSON holds up to 50.
+const SAMPLED_ROWS: usize = 12;
 
 fn index(category: &str) -> i32 {
     CATEGORIES.iter().position(|c| *c == category).unwrap_or(7) as i32
@@ -96,6 +99,36 @@ pub fn hot(p: &RuntimeProfile) -> ModelRc<RtHot> {
     )
 }
 
+/// Profiler samples of one request by method; empty when none were recorded.
+pub fn sampled(r: Option<&RuntimeRequest>) -> RtSampled {
+    let Some((r, s)) = r.and_then(|r| Some((r, r.samples.as_ref()?))) else {
+        return RtSampled::default();
+    };
+    let total = s.samples as f64;
+    let count = |n: u64| i32::try_from(n).unwrap_or(i32::MAX);
+    RtSampled {
+        has: true,
+        title: format!("{} · {}", r.service, r.name).into(),
+        samples: count(s.samples),
+        interval: number(s.interval_ms),
+        clock: s.clock.as_str().into(),
+        lower_bound: number(total * s.interval_ms),
+        methods: list(
+            s.methods
+                .iter()
+                .take(SAMPLED_ROWS)
+                .map(|m| RtSampledRow {
+                    name: short_function(&m.function).into(),
+                    self_samples: count(m.self_samples),
+                    total_samples: count(m.total_samples),
+                    self_share: share(m.self_samples as f64, total),
+                    total_share: share(m.total_samples as f64, total),
+                })
+                .collect(),
+        ),
+    }
+}
+
 /// The request's spans as flame graph blocks and the deepest level.
 pub fn flame(r: &RuntimeRequest) -> (ModelRc<RtFlame>, i32) {
     let total = r.duration_ms;
@@ -121,12 +154,16 @@ mod tests {
     use super::*;
 
     fn fixture() -> RuntimeProfile {
+        load("shop-dotnet.jsonl")
+    }
+
+    fn load(name: &str) -> RuntimeProfile {
         let dir = tempfile::tempdir().unwrap();
         let run = dir.path().join(".archguard/runtime/run");
         std::fs::create_dir_all(&run).unwrap();
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/runtime/shop-dotnet.jsonl"
+        let path = format!(
+            "{}/../../fixtures/runtime/{name}",
+            env!("CARGO_MANIFEST_DIR")
         );
         std::fs::copy(path, run.join("traces-0001.jsonl")).unwrap();
         archguard_engine::runtime_profile(dir.path(), None).unwrap()
@@ -188,5 +225,32 @@ mod tests {
         assert_eq!(depth, 4, "controller, service, repository, database");
         let db = blocks.iter().filter(|b| b.category == 0).count();
         assert_eq!(db, 7);
+    }
+
+    /// The Time page's sampled methods of the selected request, with the
+    /// numbers the honesty rules ask for: count, interval, clock.
+    #[test]
+    fn sampled_methods_of_the_selected_request() {
+        let p = load("shop-java-profile.jsonl");
+        let r = p
+            .requests
+            .iter()
+            .find(|r| r.name.contains("simulation"))
+            .unwrap();
+        let m = sampled(Some(r));
+        assert!(m.has);
+        assert_eq!(
+            (m.samples, m.interval.as_str(), m.clock.as_str()),
+            (35, "10", "cpu")
+        );
+        assert_eq!(m.lower_bound.as_str(), "350");
+        let first = m.methods.row_data(0).unwrap();
+        assert_eq!(first.name.as_str(), "PriceCalculator.simulatedTotal");
+        assert_eq!((first.self_samples, first.total_samples), (20, 35));
+        assert!((first.self_share - 20.0 / 35.0).abs() < 1e-6);
+        assert!((first.total_share - 1.0).abs() < 1e-6);
+        let none = sampled(fixture().requests.first());
+        assert!(!none.has && none.methods.row_count() == 0);
+        assert!(!sampled(None).has);
     }
 }

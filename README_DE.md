@@ -114,7 +114,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Compilerbelege untersuchen | `archguard calls . --format json` |
 | Dienstverbindungen untersuchen | `archguard services . --format json` |
 | API-Verträge untersuchen (importiertes OpenAPI, GraphQL aus den Quellen) | `archguard contracts . --format json` |
-| Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
+| Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries, Profiler-Samples pro Request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
 | arc42 als AsciiDoc oder Word exportieren (für einen Confluence-Import) | `archguard doc . --arc42 --format asciidoc` oder `--format docx` |
 | Diensttopologie als Structurizr-Workspace (C4) exportieren | `archguard graph . --format structurizr [--service orders]` |

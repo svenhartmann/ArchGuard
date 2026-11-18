@@ -282,7 +282,7 @@ Each step ends with tests; estimates are for one developer, not measurements.
 | 3 | .NET probe with EF package and sample app; golden fixtures | 1–2 weeks |
 | 4 | Java agent extension with sample app; golden fixtures | 1 week |
 | 5 | Join to the call model; `runtime_hotspot`; desktop overlay | 1–2 weeks |
-| 0b | Spike: sampling profiler attributed to requests, options 1 (Pyroscope, licence terms to check) and 3 (own sampler on EventPipe / JFR), on macOS and Linux | 3–5 days |
+| 0b | Spike: sampling profiler attributed to requests, options 1 (Pyroscope, licence terms to check) and 3 (own sampler on EventPipe / JFR), on macOS and Linux. Done 2026-11-18 on macOS: option 3 (History) | 3–5 days |
 | 2b | Requests in the profile (span tree per request, bounded); desktop tab "Runtime" with request list, timeline and live file watching; aggregate view moves there | 1–2 weeks |
 | 3b / 4b | Probe repositories `../hse-perf-net`, `../hse-perf-java` with the profiler chosen in 0b | with 3 / 4 |
 | 6 | Comparing two runs (before/after a refactoring), building on baseline diff | later |
@@ -464,3 +464,42 @@ Consequences for the design:
   with the real app: first open 28.4 s, second 4.4 s; Start 1060 → 306 ms,
   Architecture 2191 → 482 ms, Quality 1226 → 282 ms. Navigation and tab
   actions are recorded too; the live reload no longer records itself.
+- **2026-11-18:** Spike 0b decided: option 3, an own sampler in each probe
+  (no extra server, nothing that costs money). Option 1 (Pyroscope span
+  profiles) was checked against its documentation only: the .NET profiler
+  supports Linux (x86_64, aarch64) and Windows (preview), not macOS, and
+  both clients need a Pyroscope server to send to
+  (<https://grafana.com/docs/pyroscope/latest/configure-client/language-sdks/dotnet/>,
+  <https://github.com/grafana/otel-profiling-java>, Apache-2.0). Not run.
+  Option 3 implemented and run on macOS (Apple silicon) only; Linux and
+  Windows not tested:
+  - Java (hse-perf-java, branch `feat/sampling-profiler`, 94c4c90): in-process
+    JFR `RecordingStream` with `jdk.ExecutionSample` (default 10 ms, clock
+    `cpu`). A sample belongs to the innermost span that started on the
+    sampled thread and was open at that time; work handed to other threads
+    is not attributed. Ended spans are held until JFR delivered the samples
+    up to their end (at most 3 s), so files are written 1–2 s after a span
+    ends.
+  - .NET (hse-perf-net, branch `feat/sampling-profiler`, cda485d): EventPipe
+    session to the own process (Microsoft.Diagnostics.NETCore.Client and
+    TraceEvent, MIT) with the runtime's sample profiler (clock `wall`, fixed
+    1 ms interval) and `TraceLog.CreateFromEventPipeSession` for method
+    names. The current span per thread comes in-band from an own
+    EventSource; an own `AsyncLocal` mirroring `Activity.Current` reports
+    thread switches of async continuations (`Activity.CurrentChanged` alone
+    does not), so async hops are followed. Export waits up to 3 s for the
+    samples. Precompiled framework code first called after the session
+    started stays unnamed (`[native]`).
+  - Both deliver fewer samples than the interval suggests (.NET 1.8–3.7 ms
+    real gap; Java one per 26–53 ms on a heavily loaded machine), so
+    samples × interval is reported as a lower bound and shares of a
+    request's samples are the reading (CONVENTIONS.md, "Samples").
+    Overhead could not be measured reliably on the loaded machine; the .NET
+    sample app used about 130–145 MB more memory with the profiler.
+  - ArchGuard: samples per request and span with sampled methods (self and
+    on-stack samples) in the profile, `archguard runtime`, MCP
+    `runtime_profile` request rows and the desktop Runtime tab (samples per
+    span in the timeline; page "Time": sampled methods of the selected
+    request with count, interval and clock). Golden fixtures
+    `fixtures/runtime/shop-java-profile.jsonl` and
+    `shop-dotnet-profile.jsonl` from real sample-shop runs.

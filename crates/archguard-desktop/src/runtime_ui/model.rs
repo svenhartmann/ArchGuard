@@ -131,6 +131,7 @@ fn span_row(s: &RuntimeSpan, total: f64, repeated: bool) -> RtSpanRow {
         kind,
         error: s.error,
         repeated,
+        samples: i32::try_from(s.samples).unwrap_or(i32::MAX),
     }
 }
 
@@ -182,6 +183,7 @@ mod tests {
             caller: None,
             section: None,
             category: if db.is_some() { "database" } else { "other" }.into(),
+            samples: 0,
         }
     }
 
@@ -199,6 +201,7 @@ mod tests {
             spans,
             spans_truncated: false,
             evidence: Default::default(),
+            samples: None,
         }
     }
 
@@ -289,5 +292,14 @@ mod tests {
             span_row(&endpoint, 70.0, false).label,
             "GET /v1.2/orders.json"
         );
+    }
+
+    /// Profiler samples show next to the span that owns them.
+    #[test]
+    fn span_rows_carry_their_samples() {
+        let mut s = span(1, 0.0, 10.0, None, 1);
+        s.samples = 7;
+        let d = detail(&request_of(vec![s]), 5);
+        assert_eq!(slint::Model::row_data(&d.spans, 0).unwrap().samples, 7);
     }
 }
