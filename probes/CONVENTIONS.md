@@ -167,6 +167,40 @@ Rules:
   number (default 500, the importer's limit per request) and then set
   `archguard.sections.truncated = true` on the request span.
 
+### Samples (sampling profiler)
+
+Optional. A probe with a sampler takes stack samples of the application's
+threads at a fixed interval and attaches each sample to the span that was
+current on the sampled thread at that moment (the innermost one). A sample on
+a thread without a current span is dropped. Probes never write raw profiler
+files (JFR, nettrace, pprof); only these attributes, on the span that owns
+the samples:
+
+| Attribute | Type | Use |
+| --- | --- | --- |
+| `archguard.profile.interval_ms` | double | The sampler's configured interval |
+| `archguard.profile.clock` | string | `cpu`: only threads running code are sampled (Java JFR `jdk.ExecutionSample`); `wall`: running and waiting threads are sampled (.NET EventPipe sample profiler) |
+| `archguard.profile.samples` | int | Samples attributed to this span, including those of stacks left out below |
+| `archguard.profile.stacks` | string array | Folded stacks: frames root first, separated by `;`, then one space and the number of samples, e.g. `Shop.Orders.OrderController.Get;Shop.Pricing.PriceCalculator.Total 3` |
+
+Rules:
+
+- Frames use the `code.function.name` form (compiler-generated code mapped
+  back to the declared method, see "Call site"); a frame without a managed
+  method (native code, unknown) is `[native]`. Frames of framework and JDK
+  code stay: the leaf frame is where the time was spent.
+- At most 64 frames per stack, the ones nearest to the leaf.
+- At most 100 distinct stacks per span, the most frequent first; the samples
+  of the stacks left out still count in `archguard.profile.samples`.
+- A span without samples has none of these attributes.
+
+The importer derives per request and per span: sampled time = samples ×
+interval; a method's self samples (it is the leaf frame) and total samples
+(it is on the stack, counted once per stack). These numbers are statistical
+estimates: a method with *n* samples has an uncertainty of about √*n*
+samples, and work shorter than the interval can show no samples at all.
+Every surface shows the interval, the number of samples and the clock.
+
 ### Outgoing calls
 
 A CLIENT span named only by its HTTP method is shown as method and target:
@@ -221,3 +255,6 @@ A change that makes older input read differently needs a new
   identifiers in the normalization, absolute .NET paths cut below the
   project root, client identity, headers and exception text added to the
   privacy list.
+- 2026-11-18: optional samples of a sampling profiler on spans
+  (`archguard.profile.*`, folded stacks). Older input has none, so schema 1
+  stays.
