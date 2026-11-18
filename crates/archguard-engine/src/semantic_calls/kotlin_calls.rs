@@ -47,7 +47,12 @@ pub(crate) fn analyze_kotlin_calls(root: &Path, config: &Config) -> CallAnalysis
     let complete =
         java.is_some() && files.len() == report.files && files.iter().all(|(_, f)| f.measured);
     let java = java.unwrap_or_default();
-    let index = index::Index::new(&files, &report.methods, java, complete);
+    let declarations = if java.types.is_empty() {
+        index::JavaDeclarations::default()
+    } else {
+        java_declarations(root, config)
+    };
+    let index = index::Index::new(&files, &report.methods, java, &declarations, complete);
     report.calls = resolve::resolve(&index);
     let coverage = coverage(&report.calls);
     let at = report.diagnostics.len() - 1;
@@ -56,9 +61,60 @@ pub(crate) fn analyze_kotlin_calls(root: &Path, config: &Config) -> CallAnalysis
     report
 }
 
-/// Java types of the project, `package.FileStem`, and their packages.
-/// Kotlin calls to them stay unresolved, but they are never external.
-/// `None` when a Java file cannot be read.
+/// The Java classes and methods of the javac helper (cached, so the Java
+/// backend runs once per analysis); empty when no JDK is available.
+/// Local and anonymous classes cannot be named from Kotlin.
+fn java_declarations(root: &Path, config: &Config) -> index::JavaDeclarations {
+    let report = crate::java_calls::analyze_java_calls(root, config);
+    let ids: std::collections::HashSet<&str> =
+        report.classes.iter().map(|c| c.id.as_str()).collect();
+    let classes = report
+        .classes
+        .iter()
+        .filter(|c| !c.id.contains(['$', '@']))
+        .map(|c| {
+            let qualified = c.id.rsplit("::").next().unwrap_or(&c.id);
+            let bodiless = report
+                .methods
+                .iter()
+                .filter(|m| m.class_id == c.id && m.complexity.is_none())
+                .map(|m| m.name.clone())
+                .collect();
+            archguard_extract::kotlin::KotlinClassFacts {
+                id: c.id.clone(),
+                name: qualified.rsplit('.').next().unwrap_or(qualified).into(),
+                // A record is constructed like a class.
+                kind: if c.kind == "record" { "class" } else { &c.kind }.into(),
+                outer: c
+                    .id
+                    .rsplit_once('.')
+                    .map(|(outer, _)| outer)
+                    .filter(|outer| ids.contains(outer))
+                    .map(Into::into),
+                companion: false,
+                supertypes: c
+                    .supertypes
+                    .iter()
+                    .map(|s| s.rsplit("::").next().unwrap_or(s).into())
+                    .collect(),
+                modifiers: if c.is_abstract == Some(true) {
+                    vec!["abstract".into()]
+                } else {
+                    Vec::new()
+                },
+                bodiless,
+                values: Vec::new(),
+            }
+        })
+        .collect();
+    index::JavaDeclarations {
+        classes,
+        methods: report.methods,
+    }
+}
+
+/// Java types of the project, `package.FileStem`, and their packages:
+/// never external. `None` when a Java file cannot be read.
 fn java_types(root: &Path, config: &Config) -> Option<index::JavaTypes> {
     const SOURCE_LIMIT: u64 = 8 * 1024 * 1024;
     let mut java = index::JavaTypes::default();
@@ -86,7 +142,7 @@ fn java_types(root: &Path, config: &Config) -> Option<index::JavaTypes> {
 fn coverage(calls: &[MethodCall]) -> String {
     let count = |kind: &str| calls.iter().filter(|c| c.resolution == kind).count();
     format!(
-        "Calls: {} sites, {} project, {} external, {} unresolved (variables, properties, lambdas, extension functions, Java classes or unknown supertypes).",
+        "Calls: {} sites, {} project, {} external, {} unresolved (variables, properties, lambdas, extension functions, overloads, Java classes without javac declarations or unknown supertypes).",
         calls.len(),
         count("project"),
         count("external"),

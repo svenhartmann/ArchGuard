@@ -79,7 +79,9 @@ pub(super) fn supertypes<'i>(
         .iter()
         .map(|written| type_path(ix, written, class))
         .collect();
-    if class.facts.kind == "enum" {
+    // Every Java class inherits from `java.lang.Object`, whose members (and
+    // members generated outside the source) are unknown.
+    if class.facts.kind == "enum" || class.file.is_none() {
         out.push(None);
     }
     out
@@ -87,6 +89,10 @@ pub(super) fn supertypes<'i>(
 
 /// The class a supertype `written` in the header of `class` names.
 fn type_path<'i>(ix: &'i Index<'i>, written: &str, class: &ClassInfo) -> Option<&'i ClassInfo<'i>> {
+    // javac reports Java supertypes fully qualified.
+    let Some(file) = class.file else {
+        return unique_class(ix, written);
+    };
     let segments: Vec<&str> = written.split('.').collect();
     let mut scope = outer(ix, class);
     let mut head = None;
@@ -94,7 +100,7 @@ fn type_path<'i>(ix: &'i Index<'i>, written: &str, class: &ClassInfo) -> Option<
         head = nested(ix, k, segments[0]);
         scope = outer(ix, k);
     }
-    let head = head.or_else(|| match names::top(ix, segments[0], class.file) {
+    let head = head.or_else(|| match names::top(ix, segments[0], file) {
         Hit::Class(found) => Some(found),
         _ => None,
     });
