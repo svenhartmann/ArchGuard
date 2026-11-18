@@ -3,6 +3,7 @@
 //! scanner; dynamic loading, preprocessing and runtime resolution remain unsupported.
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::first_identifier;
 use crate::walk::Lang;
 
 /// Java scanner (T11). See the [module documentation](self) for the
@@ -170,6 +171,7 @@ fn dotted_segments(dotted: &str) -> Option<Vec<&str>> {
 
 /// `true` for a plain Java identifier (keywords with punctuation, digits
 /// up front and stray characters never match).
+// Own copy, not crate::ident: `$` is an identifier character in Java.
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some(c) if c.is_alphabetic() || matches!(c, '_' | '$'))
@@ -237,6 +239,7 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
 }
 
 /// The rest of the line after `keyword`, only when it is a whole word.
+// Own copy, not crate::ident: the keyword may touch punctuation or end the line, and `$` is a word character.
 fn strip_word<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(keyword)?;
     (!rest
@@ -244,20 +247,6 @@ fn strip_word<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
         .next()
         .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$')))
     .then_some(rest.trim_start())
-}
-
-/// First identifier token of `text`, `None` when there is none.
-fn first_identifier(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0usize;
-    while index < chars.len() && !(chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    let start = index;
-    while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    (index > start).then(|| chars[start..index].iter().collect())
 }
 
 #[cfg(test)]

@@ -178,6 +178,7 @@ fn split<'a, 'b>(words: &'b [&'a str], sep: &str) -> Vec<&'b [&'a str]> {
     out
 }
 
+// Own copy, not crate::ident: Scala allows backquoted names and `$` in identifiers.
 fn is_identifier(word: &str) -> bool {
     word.starts_with('`')
         || (word.starts_with(|c: char| c.is_alphabetic() || c == '_')

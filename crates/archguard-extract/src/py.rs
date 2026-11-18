@@ -3,6 +3,7 @@
 //! scanner; dynamic loading, preprocessing and runtime resolution remain unsupported.
 
 use crate::extract::{Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::{first_identifier, is_identifier};
 use crate::walk::Lang;
 
 /// Python scanner (T10). See the [module documentation](self) for the
@@ -165,14 +166,6 @@ fn dotted_segments(dotted: &str) -> Option<Vec<&str>> {
         .collect()
 }
 
-/// `true` for a plain Python identifier (attributes, calls and dotted
-/// specs outside their intended position never match).
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
-        && chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
 /// The first whitespace-separated token of `body` and the remainder of
 /// the line behind it, `None` when `body` has no content.
 fn split_first_token(body: &str) -> Option<(&str, &str)> {
@@ -244,20 +237,6 @@ fn top_level_names(lines: &[&str]) -> Vec<String> {
         }
     }
     names
-}
-
-/// First identifier token of `text`, `None` when there is none.
-fn first_identifier(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0usize;
-    while index < chars.len() && !(chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    let start = index;
-    while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    (index > start).then(|| chars[start..index].iter().collect())
 }
 
 #[cfg(test)]
