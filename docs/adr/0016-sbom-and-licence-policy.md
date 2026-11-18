@@ -58,7 +58,9 @@ do.
    `properties`. `sbom` itself never fails on licences.
 6. **Policy** in `[licenses]` (core `LicensesConfig`):
    `allow`/`deny` lists of SPDX ids (case-insensitive) and
-   `unknown = "allow" | "deny"` (default `allow`). States: `denied`,
+   `unknown = "allow" | "deny"` (default `allow`). The lists compare exact
+   ids, so deprecated forms a lockfile may state (`GPL-3.0`, `GPL-2.0+`)
+   must be listed too. States: `denied`,
    `not_allowed` (allow list set, licence not on it), `unlisted` (no list
    matches, no allow list), `allowed`, `unknown`. Expressions are
    evaluated: `OR` takes the best branch, `AND` the worst, `WITH` counts as
@@ -110,3 +112,17 @@ do.
   against the official `bom-1.6.schema.json` (with `spdx.schema.json`
   and `jsf-0.82.schema.json`) on 2026-11-18. There is no schema test in
   the build; the schema is not vendored.
+
+## History
+
+- **2026-11-18, review fixes.** First-party also covers poetry sources of
+  `type = "directory"`/`"file"`. npm aliases (`package-lock.json` entry
+  `name`, yarn `alias@npm:real@range`) are the real package. pypi purls
+  only lowercase and replace `_` (`zope.interface` keeps its dot). A
+  leading byte order mark in a lockfile is ignored. The manifest search
+  goes 12 directory levels deep (was 4) and does not follow symlinked
+  directories; when `[licenses]` is active and no lockfile was found or
+  the search hit that bound, `check` adds a `license-coverage` warning
+  instead of passing silently. MCP `sbom` always returns at least one
+  component; one whose manifest list does not fit the page keeps the first
+  manifests and states `manifests_total`.

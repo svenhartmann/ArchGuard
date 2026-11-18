@@ -15,7 +15,7 @@ use archguard_core::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::dep_inventory::manifest_deps;
+use crate::dep_inventory::{depth_note, manifest_deps};
 
 /// One third-party package, deduplicated by purl across manifests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -51,6 +51,8 @@ pub struct Sbom {
     /// Components that fail the `[licenses]` policy.
     pub violations: usize,
     pub notes: Vec<String>,
+    /// The manifest search hit its depth bound: deeper lockfiles are missing.
+    pub search_limited: bool,
 }
 
 /// Percent-encode one purl segment (RFC 3986 unreserved stay as is).
@@ -70,8 +72,8 @@ fn encode(segment: &str) -> String {
 /// composer, maven, nuget, golang).
 pub fn purl(ecosystem: &str, name: &str, version: Option<&str>) -> String {
     let name = match ecosystem {
-        // purl pypi: lowercase, `_` and `.` become `-` (PEP 503).
-        "pypi" => name.to_lowercase().replace(['_', '.'], "-"),
+        // purl spec, type pypi: lowercase, `_` becomes `-` (`.` stays).
+        "pypi" => name.to_lowercase().replace('_', "-"),
         "maven" => name.replacen(':', "/", 1),
         _ => name.to_string(),
     };
@@ -118,8 +120,15 @@ fn scope_rank(scope: Option<&str>) -> u8 {
 /// Build the SBOM for `root` and evaluate every component against `policy`.
 pub fn sbom(root: &Path, policy: &LicensesConfig) -> Sbom {
     let mut by_purl: BTreeMap<String, SbomComponent> = BTreeMap::new();
-    let mut result = Sbom::default();
-    for (ecosystem, path, deps) in manifest_deps(root) {
+    let (manifests, search_limited) = manifest_deps(root);
+    let mut result = Sbom {
+        search_limited,
+        ..Sbom::default()
+    };
+    if search_limited {
+        result.notes.push(depth_note());
+    }
+    for (ecosystem, path, deps) in manifests {
         let third_party: Vec<_> = deps.into_iter().filter(|d| !d.local).collect();
         if third_party.is_empty() {
             result.notes.push(format!(
@@ -181,8 +190,47 @@ pub fn sbom(root: &Path, policy: &LicensesConfig) -> Sbom {
     result
 }
 
-/// The `[licenses]` violations as `check` findings (one per component).
+fn finding(id: String, severity: Severity, message: String, evidence: Vec<Ref>) -> Finding {
+    Finding {
+        kind: FindingKind::License,
+        id,
+        severity,
+        message: Some(message),
+        evidence,
+        nodes: Vec::new(),
+        edge_count: 0,
+        cycles_sampled: 0,
+        sampling: None,
+        suggested_cuts: Vec::new(),
+    }
+}
+
+/// The `[licenses]` violations as `check` findings (one error per
+/// component), plus one warning when an active policy could not see every
+/// lockfile (none found, or the search hit its depth bound), so the gate
+/// never passes silently on nothing.
 pub fn license_findings(sbom: &Sbom, policy: &LicensesConfig) -> Vec<Finding> {
+    if !policy.is_active() {
+        return Vec::new();
+    }
+    let coverage = if sbom.manifests.is_empty() {
+        Some(
+            "[licenses] is configured but no supported lockfile or manifest was found; no licence was checked."
+                .to_string(),
+        )
+    } else if sbom.search_limited {
+        Some(format!("[licenses]: {}.", depth_note()))
+    } else {
+        None
+    };
+    let coverage = coverage.map(|message| {
+        finding(
+            "license-coverage".into(),
+            Severity::Warning,
+            message,
+            Vec::new(),
+        )
+    });
     sbom.components
         .iter()
         .filter(|c| policy.violates(c.license_state))
@@ -198,16 +246,14 @@ pub fn license_findings(sbom: &Sbom, policy: &LicensesConfig) -> Vec<Finding> {
                 LicenseState::NotAllowed => "is not on the allow list",
                 _ => "is not stated in the lockfile/manifest and [licenses] unknown = \"deny\"",
             };
-            Finding {
-                kind: FindingKind::License,
-                id: format!("license:{}", c.purl),
-                severity: Severity::Error,
-                message: Some(format!(
+            finding(
+                format!("license:{}", c.purl),
+                Severity::Error,
+                format!(
                     "{label}: licence {} {reason}.",
                     c.license.as_deref().unwrap_or("unknown")
-                )),
-                evidence: c
-                    .manifests
+                ),
+                c.manifests
                     .iter()
                     .map(|m| Ref {
                         file: m.clone(),
@@ -215,13 +261,9 @@ pub fn license_findings(sbom: &Sbom, policy: &LicensesConfig) -> Vec<Finding> {
                         raw: format!("{m}: {label}"),
                     })
                     .collect(),
-                nodes: Vec::new(),
-                edge_count: 0,
-                cycles_sampled: 0,
-                sampling: None,
-                suggested_cuts: Vec::new(),
-            }
+            )
         })
+        .chain(coverage)
         .collect()
 }
 
@@ -309,6 +351,11 @@ mod tests {
         assert_eq!(
             purl("pypi", "Typing_Extensions", Some("4.10.0")),
             "pkg:pypi/typing-extensions@4.10.0"
+        );
+        assert_eq!(
+            purl("pypi", "zope.interface", Some("6.0")),
+            "pkg:pypi/zope.interface@6.0",
+            "the purl spec lowercases and replaces `_` only"
         );
         assert_eq!(
             purl("maven", "com.google.guava:guava", Some("33.0.0-jre")),
@@ -477,6 +524,43 @@ mod tests {
         assert_eq!(
             cyclonedx_licenses("SEE LICENSE IN LICENSE"),
             json!([{ "license": { "name": "SEE LICENSE IN LICENSE" } }])
+        );
+    }
+
+    #[test]
+    fn an_active_policy_without_any_lockfile_warns_instead_of_passing_silently() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let policy = LicensesConfig {
+            deny: vec!["GPL-3.0-only".into()],
+            ..LicensesConfig::default()
+        };
+        let findings = license_findings(&sbom(dir.path(), &policy), &policy);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].severity, Severity::Warning);
+        assert_eq!(findings[0].id, "license-coverage");
+
+        let deep = dir.path().join(["d"; 13].join("/"));
+        std::fs::create_dir_all(&deep).expect("mkdir");
+        std::fs::write(
+            deep.join("package-lock.json"),
+            r#"{"packages":{"node_modules/x":{"version":"1.0.0","license":"MIT"}}}"#,
+        )
+        .expect("lock");
+        std::fs::write(dir.path().join("package-lock.json"), "{}").expect("lock");
+        let result = sbom(dir.path(), &policy);
+        assert!(result.search_limited);
+        let findings = license_findings(&result, &policy);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(
+            findings[0]
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("deeper than")),
+            "{findings:?}"
+        );
+        assert!(
+            license_findings(&result, &LicensesConfig::default()).is_empty(),
+            "no policy, no gate"
         );
     }
 

@@ -97,9 +97,21 @@ pub fn sbom_value(sbom: &Sbom, policy: &LicensesConfig, params: &SbomParams) -> 
     let mut returned = 0;
     for row in rows.into_iter().skip(offset).take(limit) {
         reply["components"].as_array_mut().unwrap().push(row);
-        if size(&reply) > crate::tools::MAX_RESPONSE_BYTES {
+        if size(&reply) > crate::tools::MAX_RESPONSE_BYTES && returned > 0 {
             reply["components"].as_array_mut().unwrap().pop();
             break;
+        }
+        // The first row always goes out, or the page would never advance:
+        // an oversized one keeps as many manifests as fit, with the total.
+        if size(&reply) > crate::tools::MAX_RESPONSE_BYTES {
+            let first = &mut reply["components"][0];
+            first["manifests_total"] = first["manifests"].as_array().map_or(0, Vec::len).into();
+            while size(&reply) > crate::tools::MAX_RESPONSE_BYTES
+                && reply["components"][0]["manifests"]
+                    .as_array_mut()
+                    .and_then(Vec::pop)
+                    .is_some()
+            {}
         }
         returned += 1;
     }
@@ -117,7 +129,7 @@ pub fn sbom_value(sbom: &Sbom, policy: &LicensesConfig, params: &SbomParams) -> 
 #[tool_router(router = sbom_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Software bill of materials of third-party dependencies, built offline from the lockfiles and manifests in the repository (Cargo.lock, package-lock.json, yarn.lock, pnpm-lock.yaml, packages.lock.json/*.csproj, pom.xml, gradle.lockfile, go.mod, poetry.lock, uv.lock, requirements*.txt, composer.lock). Returns ecosystem counts, licence states against the [licenses] policy (denied, not_allowed, unlisted, allowed, unknown) and paginated components with purl, version, scope, stated licence and the manifests (projects/services) that state them. Licences come only from the files; unknown is never fetched or guessed and is no violation unless [licenses] unknown = \"deny\". Full CycloneDX 1.6: archguard sbom <path> --format cyclonedx. 4 KiB pages."
+        description = "Software bill of materials of third-party dependencies, built offline from the lockfiles and manifests in the repository (Cargo.lock, package-lock.json, yarn.lock, pnpm-lock.yaml, packages.lock.json/*.csproj, pom.xml, gradle.lockfile, go.mod, poetry.lock, uv.lock, requirements*.txt, composer.lock). Returns ecosystem counts, licence states against the [licenses] policy (denied, not_allowed, unlisted, allowed, unknown) and paginated components with purl, version, scope, stated licence and the manifests (projects/services) that state them. Licences come only from the files; unknown is never fetched or guessed and is no violation unless [licenses] unknown = \"deny\". Full CycloneDX 1.6: archguard sbom <path> --format cyclonedx. 4 KiB pages; a component whose manifest list does not fit keeps the first manifests and states manifests_total."
     )]
     pub(crate) async fn sbom(
         &self,
@@ -182,6 +194,43 @@ mod tests {
                 Value::Null
             }
         );
+    }
+
+    #[test]
+    fn a_component_in_many_manifests_is_cut_instead_of_stalling_the_page() {
+        let policy = LicensesConfig::default();
+        let mut sbom = sbom(&fixture(), &policy);
+        for component in &mut sbom.components {
+            component.manifests = (0..120)
+                .map(|i| format!("services/service-{i:03}/package-lock.json"))
+                .collect();
+        }
+        let mut offset = 0;
+        let mut pages = 0;
+        loop {
+            let page = sbom_value(
+                &sbom,
+                &policy,
+                &SbomParams {
+                    offset: Some(offset),
+                    ..Default::default()
+                },
+            );
+            assert!(size(&page) <= crate::tools::MAX_RESPONSE_BYTES);
+            assert_eq!(page["returned"], 1, "{page}");
+            let row = &page["components"][0];
+            assert_eq!(row["manifests_total"], 120);
+            assert!(!row["manifests"].as_array().unwrap().is_empty());
+            pages += 1;
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    assert!(next as usize > offset);
+                    offset = next as usize;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(pages, 24);
     }
 
     #[test]
