@@ -75,6 +75,7 @@ mod rust_scip;
 mod rust_types;
 mod security;
 pub mod self_trace;
+mod swift_sources;
 // Declared here, not in their modules: a test file that imports its parent
 // back would close a file cycle.
 #[cfg(test)]

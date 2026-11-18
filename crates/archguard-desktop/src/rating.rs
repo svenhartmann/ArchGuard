@@ -101,6 +101,7 @@ pub fn language(file: &str) -> &'static str {
         "rs" => "rust",
         "php" => "php",
         "kt" => "kotlin",
+        "swift" => "swift",
         "py" => "python",
         _ => "unknown",
     }

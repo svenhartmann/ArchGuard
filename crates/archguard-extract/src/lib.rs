@@ -23,6 +23,7 @@ pub mod php_structure;
 pub mod py;
 pub mod resolve;
 pub mod rust;
+pub mod swift;
 pub mod ts;
 pub mod visibility;
 pub mod walk;
@@ -44,6 +45,7 @@ pub use php_structure::{
 pub use py::PyExtractor;
 pub use resolve::{DeclMap, SymbolTarget, resolve_relative, strip_root};
 pub use rust::RustExtractor;
+pub use swift::SwiftExtractor;
 pub use ts::TsExtractor;
 pub use visibility::{Visibility, scan_visibility};
 pub use walk::{Lang, SourceFile, walk};

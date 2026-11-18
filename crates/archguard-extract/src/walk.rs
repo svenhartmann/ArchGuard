@@ -24,6 +24,7 @@ pub enum Lang {
     Php,
     Go,
     Kotlin,
+    Swift,
 }
 
 impl Lang {
@@ -41,6 +42,7 @@ impl Lang {
             "go" => Some(Lang::Go),
             // Not `.kts`: those are mostly Gradle build scripts, not application code.
             "kt" => Some(Lang::Kotlin),
+            "swift" => Some(Lang::Swift),
             _ => None,
         }
     }
@@ -195,6 +197,7 @@ mod tests {
             ("cs", Lang::CSharp),
             ("php", Lang::Php),
             ("kt", Lang::Kotlin),
+            ("swift", Lang::Swift),
         ] {
             assert_eq!(Lang::from_extension(ext), Some(lang), "ext {ext}");
         }

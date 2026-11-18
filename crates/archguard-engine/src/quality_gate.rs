@@ -363,17 +363,7 @@ fn changed_sources(
         if count > MAX_CHANGED_LINES {
             return Err(error("more than one million changed lines"));
         }
-        let language = match source.lang {
-            archguard_extract::Lang::Java => "java",
-            archguard_extract::Lang::CSharp => "csharp",
-            archguard_extract::Lang::Ts => "typescript",
-            archguard_extract::Lang::Js => "javascript",
-            archguard_extract::Lang::Py => "python",
-            archguard_extract::Lang::Php => "php",
-            archguard_extract::Lang::Go => "go",
-            archguard_extract::Lang::Rust => "rust",
-            archguard_extract::Lang::Kotlin => "kotlin",
-        };
+        let language = crate::semantic_calls::language_name(source.lang);
         changes.push(ChangedSource {
             path: source.rel_path,
             language: language.into(),
