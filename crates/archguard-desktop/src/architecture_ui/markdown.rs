@@ -393,6 +393,51 @@ pub(super) fn link(c: &[char], i: usize) -> Option<(usize, usize)> {
     (c[end] == ')' && end > mid + 2).then_some((mid, end))
 }
 
+/// The tags that start an HTML block (CommonMark, kind 6).
+const BLOCK_TAGS: &str = "address article aside base basefont blockquote body caption \
+    center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame \
+    frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu \
+    menuitem nav noframes ol optgroup option p param search section summary table \
+    tbody td tfoot th thead title tr track ul";
+
+/// HTML elements used inline in Markdown.
+const INLINE_TAGS: &str = "a abbr b bdi bdo br cite code data del dfn em i img input ins kbd \
+    mark q s samp small span strong sub sup time u var wbr";
+
+/// Whether `text` holds a tag of an HTML element (`<kbd>`, `</kbd>`,
+/// `<br/>`, `<span class="x">`, any case); `List<String>` or `a < b` do not.
+pub(super) fn html_tag(text: &str) -> bool {
+    text.split('<').skip(1).any(|rest| {
+        let tag = rest.strip_prefix('/').unwrap_or(rest);
+        let len = tag.chars().take_while(char::is_ascii_alphanumeric).count();
+        let name = tag[..len].to_ascii_lowercase();
+        let after = &tag[len..];
+        (after.starts_with([' ', '\t', '\n', '>']) || after.starts_with("/>"))
+            && (INLINE_TAGS
+                .split_whitespace()
+                .chain(BLOCK_TAGS.split_whitespace()))
+            .any(|t| t == name)
+    })
+}
+
+/// Whether `line` (without its indent) starts an HTML block, as
+/// CommonMark reads it: `<pre>`, `<div>`, `<!…`, `<?…`, or a tag alone on
+/// its line. Inline HTML (`<kbd>Ctrl</kbd> drücken`) does not.
+pub(super) fn html_block(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('<') else {
+        return false;
+    };
+    let tag = rest.strip_prefix('/').unwrap_or(rest);
+    let len = tag.chars().take_while(char::is_ascii_alphanumeric).count();
+    let name = tag[..len].to_ascii_lowercase();
+    let after = &tag[len..];
+    let ends = after.is_empty() || after.starts_with([' ', '\t', '>']) || after.starts_with("/>");
+    rest.starts_with(['!', '?'])
+        || ["pre", "script", "style", "textarea"].contains(&name.as_str())
+        || ends && BLOCK_TAGS.split_whitespace().any(|t| t == name)
+        || line.trim_end().ends_with('>') && line.matches('<').count() == 1
+}
+
 /// Inline Markdown for `StyledText`: block syntax at a line start is
 /// escaped, so a cell "1. x" or "- x" stays text, not a list.
 pub fn inline_source(text: &str) -> String {
@@ -645,5 +690,40 @@ mod tests {
         assert_eq!(inline_source("- dash"), "\\- dash");
         assert_eq!(inline_source("# x"), "\\# x");
         assert_eq!(inline_source("**bold** text"), "**bold** text");
+    }
+
+    #[test]
+    fn html_blocks_start_with_block_tags_or_a_tag_alone() {
+        for line in [
+            "<pre>",
+            "<div class=\"x\">",
+            "</table>",
+            "<!DOCTYPE html>",
+            "<br>",
+            "<x-y />",
+        ] {
+            assert!(html_block(line), "{line}");
+        }
+        for line in [
+            "<kbd>Ctrl</kbd> drücken",
+            "<span>a</span> b",
+            "a <div>",
+            "<3 Rust",
+        ] {
+            assert!(!html_block(line), "{line}");
+        }
+        for text in [
+            "<kbd>x</kbd>",
+            "a</KBD>",
+            "Zeile<br>",
+            "<br/>",
+            "<a href=\"u\">",
+            "<Details>",
+        ] {
+            assert!(html_tag(text), "{text}");
+        }
+        for text in ["List<String>", "Map<K, V>", "a < b", "<br", "<3", "<abc>"] {
+            assert!(!html_tag(text), "{text}");
+        }
     }
 }
