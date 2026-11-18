@@ -41,6 +41,7 @@ function renderArchitecture() {
   let root=document.getElementById('architecture-content');hideMetricTooltip(root);root.textContent='';
   document.getElementById('tab-architecture').setAttribute('aria-label',t('Architecture documentation','Architekturdokumentation'));
   renderArc42Documentation(root);
+  renderQualityGoals(root);
   const model=architectureModel();
   if(!model){
     const setup=element('details',undefined,'context-note');setup.setAttribute('data-architecture-setup','true');setup.appendChild(element('summary',t('Optional: compare with a target model','Optional: mit einem Sollmodell vergleichen')));root.appendChild(setup);
