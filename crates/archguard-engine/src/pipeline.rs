@@ -182,6 +182,12 @@ pub(crate) fn build_graph_named(
             .or_default()
             .insert(parent_dir(&file.stripped).to_string());
     }
+    let swift_files = scanned.iter().filter(|file| file.lang == "swift");
+    let swift_modules = crate::swift_sources::modules(
+        root,
+        files,
+        swift_files.map(|file| (file.rel_path.as_str(), file.stripped.as_str())),
+    );
     let (rust_edges, mut warnings) = rust_imports::edges(root, &scanned)?;
     warnings.extend(merged);
     for (from, to, evidence) in rust_edges {
@@ -196,7 +202,7 @@ pub(crate) fn build_graph_named(
         ),
         None => cpp_includes::Includes::default(),
     };
-    let context = (&indexes, &go_packages, &node_of, &includes);
+    let context = (&indexes, &go_packages, &swift_modules, &node_of, &includes);
     resolve_imports(&scanned, context, &mut builder, &mut warnings)?;
     let full = builder.build(root.to_string_lossy().into_owned());
     let names = scanned
@@ -247,7 +253,7 @@ fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, Archg
 #[tracing::instrument(skip_all)]
 fn resolve_imports(
     scanned: &[ScannedFile],
-    (indexes, go_packages, node_of, includes): ImportContext<'_>,
+    (indexes, go_packages, swift_modules, node_of, includes): ImportContext<'_>,
     builder: &mut GraphBuilder,
     warnings: &mut Vec<String>,
 ) -> Result<(), ArchguardError> {
@@ -258,9 +264,14 @@ fn resolve_imports(
     for (file, raw_import) in imports {
         let family = import_family(file.lang);
         let index = indexes.global(family);
-        let resolved = if file.lang == "go" {
+        let packages = if file.lang == "swift" {
+            swift_modules
+        } else {
+            go_packages
+        };
+        let resolved = if matches!(file.lang, "go" | "swift") {
             match &raw_import.target {
-                TargetSpec::Symbol { path, .. } => go_packages
+                TargetSpec::Symbol { path, .. } => packages
                     .get(path)
                     .filter(|dirs| dirs.len() == 1)
                     .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
@@ -544,14 +555,16 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Go => "go",
         Lang::Kotlin => "kt",
         Lang::Cpp => "cpp",
+        Lang::Swift => "swift",
     }
 }
 
 /// Lookup tables [`resolve_imports`] reads: import indexes per family, Go
-/// package directories, the file node per stripped path and the C/C++
-/// include directories.
+/// package directories, Swift target directories, the file node per
+/// stripped path and the C/C++ include directories.
 type ImportContext<'a> = (
     &'a Indexes<'a>,
+    &'a BTreeMap<String, BTreeSet<String>>,
     &'a BTreeMap<String, BTreeSet<String>>,
     &'a HashMap<String, NodeId>,
     &'a cpp_includes::Includes,

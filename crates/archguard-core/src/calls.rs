@@ -144,10 +144,11 @@ impl CallAnalyzer {
     pub const PHP_TOKENS: &str = "Token-based analysis: classes, functions, complexity and Halstead counts. Call targets are resolved statically from namespaces, use imports, project classes, traits, $this, self, static (read as self) and parent; calls on other variables, dynamic names and $this inside closures stay unresolved; callables passed to call_user_func are not followed. Types are not resolved; abstractness is read from interface and abstract class declarations.";
     pub const KOTLIN_TOKENS: &str = "Token-based analysis: classes, objects, functions, complexity and Halstead counts. Call targets are resolved statically from the package, imports (aliases; star imports with a single candidate), Kotlin classes, objects, companion objects, top-level functions, this, super and the project class hierarchy; calls on variables, properties and call results, extension functions, every call inside lambdas, local and extension functions, and Java classes without javac declarations stay unresolved; overloads are not told apart. Types are not resolved; abstractness is read from interface, abstract class and sealed declarations. Property accessors, constructors, init blocks and property initializers are not measured, and calls in them are not counted.";
     pub const CPP_TOKENS: &str = "Token-based analysis of C and C++ without a compiler or preprocessor: classes, structs, unions, functions, complexity and Halstead counts. Preprocessor directives are skipped and the code of every #if branch is measured as written; a file whose branches leave brackets unbalanced is not measured. Out-of-class definitions (A::f) belong to the class A that the project declares once. Calls and types are not resolved; a class counts as abstract when it declares a pure virtual function (= 0).";
+    pub const SWIFT_TOKENS: &str = "Token-based analysis: types, extensions, functions, initializers, complexity and Halstead counts. Extensions attach to the one project type of their name. Only Type(…), Type.init(…), Type.Nested(…) and Type.staticMethod(…) of a unique project type the calling target can see are resolved; calls on values, self and super, bare function calls, trailing closures and overloads stay unresolved. Types are not resolved; protocols count as abstract. Computed properties, accessors, property initializers and top-level statements are not measured, and calls in them are not counted.";
     pub const TYPESCRIPT_MISSING: &str = "No installed TypeScript compiler found. Install TypeScript in the project or configure semantic.typescript.compiler; ArchGuard never downloads packages.";
     pub const TYPESCRIPT_BLOCKED: &str = "A TypeScript compiler was found through this repository but not loaded, because running it would execute repository code. Set ARCHGUARD_TRUST_PROJECT_COMPILER=1 for repositories you trust.";
     /// All of the notes above.
-    pub const NOTES: [&str; 9] = [
+    pub const NOTES: [&str; 10] = [
         Self::RUST_SYNTAX,
         Self::RUST_UNTRUSTED,
         Self::RUST_RESOLVED,
@@ -155,6 +156,7 @@ impl CallAnalyzer {
         Self::PHP_TOKENS,
         Self::KOTLIN_TOKENS,
         Self::CPP_TOKENS,
+        Self::SWIFT_TOKENS,
         Self::TYPESCRIPT_MISSING,
         Self::TYPESCRIPT_BLOCKED,
     ];

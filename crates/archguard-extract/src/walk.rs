@@ -26,6 +26,7 @@ pub enum Lang {
     Kotlin,
     /// C and C++ share one language: a `.h` header can be either (ADR 0017).
     Cpp,
+    Swift,
 }
 
 impl Lang {
@@ -44,6 +45,7 @@ impl Lang {
             // Not `.kts`: those are mostly Gradle build scripts, not application code.
             "kt" => Some(Lang::Kotlin),
             "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some(Lang::Cpp),
+            "swift" => Some(Lang::Swift),
             _ => None,
         }
     }
@@ -198,6 +200,7 @@ mod tests {
             ("cs", Lang::CSharp),
             ("php", Lang::Php),
             ("kt", Lang::Kotlin),
+            ("swift", Lang::Swift),
         ] {
             assert_eq!(Lang::from_extension(ext), Some(lang), "ext {ext}");
         }

@@ -8,6 +8,8 @@ pub(crate) enum Flavor {
     Js,
     Python,
     Php,
+    /// C-like with nested block comments, `\(…)` interpolation and `#"…"#` raw strings.
+    Swift,
 }
 /// The lexer flavor that shields a language's comments and strings.
 pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
@@ -19,6 +21,7 @@ pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
         Lang::Rust => Flavor::Rust,
         Lang::Php => Flavor::Php,
         Lang::Kotlin => Flavor::Kotlin,
+        Lang::Swift => Flavor::Swift,
     }
 }
 #[derive(Debug)]
@@ -155,7 +158,7 @@ impl Lexer<'_> {
 
     /// Skip `/* ... */`; Rust and Kotlin block comments nest.
     fn block_comment(&mut self) {
-        let nests = matches!(self.flavor, Flavor::Rust | Flavor::Kotlin);
+        let nests = matches!(self.flavor, Flavor::Rust | Flavor::Kotlin | Flavor::Swift);
         self.i += 2;
         let mut depth = 1usize;
         while self.i < self.chars.len() {
@@ -186,6 +189,8 @@ impl Lexer<'_> {
             && self.peek(2) == Some('<')
         {
             self.heredoc();
+        } else if self.flavor == Flavor::Swift && swift_string_start(self).is_some() {
+            swift_string(self);
         } else if self.at_quote() {
             self.quoted();
         } else if self.at_regex() {
@@ -424,6 +429,75 @@ fn kotlin_template(lexer: &mut Lexer) {
             }
             Some('{') => depth += 1,
             Some('}') => {
+                depth -= 1;
+                if depth == 0 {
+                    lexer.i += 1;
+                    return;
+                }
+            }
+            _ => {}
+        }
+        lexer.bump();
+    }
+}
+
+/// The number of `#` before a Swift string's opening quote, `None` when no
+/// string starts here.
+fn swift_string_start(lexer: &Lexer) -> Option<usize> {
+    let hashes = lexer.chars[lexer.i..]
+        .iter()
+        .take_while(|p| p.1 == '#')
+        .count();
+    (lexer.peek(hashes) == Some('"')).then_some(hashes)
+}
+
+/// Swift `"…"`, multiline `"""…"""` and raw `#"…"#`: a backslash followed by
+/// the string's hashes escapes, `\(…)` (`\#(…)` in raw strings) interpolates
+/// up to its matching `)`, strings nested in it included. A single-line
+/// string that is not closed ends at the line break.
+fn swift_string(lexer: &mut Lexer) {
+    let hashes = swift_string_start(lexer).expect("checked by the caller");
+    let quotes = |lexer: &Lexer| {
+        lexer.chars[lexer.i..]
+            .iter()
+            .take_while(|p| p.1 == '"')
+            .count()
+    };
+    lexer.i += hashes;
+    let width = if quotes(lexer) >= 3 { 3 } else { 1 };
+    lexer.i += width;
+    let hashes_at = |lexer: &Lexer, at: usize| (0..hashes).all(|n| lexer.peek(at + n) == Some('#'));
+    while lexer.i < lexer.chars.len() {
+        match lexer.peek(0) {
+            Some('\\') if hashes_at(lexer, 1) => {
+                lexer.i += 1 + hashes;
+                if lexer.peek(0) == Some('(') {
+                    swift_interpolation(lexer);
+                } else if lexer.i < lexer.chars.len() {
+                    lexer.bump();
+                }
+            }
+            Some('"') if quotes(lexer) >= width && hashes_at(lexer, width) => {
+                lexer.i += width + hashes;
+                return;
+            }
+            Some('\n') if width == 1 => return,
+            _ => lexer.bump(),
+        }
+    }
+}
+
+/// Skip a Swift `(…)` interpolation up to its matching `)`.
+fn swift_interpolation(lexer: &mut Lexer) {
+    let mut depth = 0usize;
+    while lexer.i < lexer.chars.len() {
+        if swift_string_start(lexer).is_some() {
+            swift_string(lexer);
+            continue;
+        }
+        match lexer.peek(0) {
+            Some('(') => depth += 1,
+            Some(')') => {
                 depth -= 1;
                 if depth == 0 {
                     lexer.i += 1;
