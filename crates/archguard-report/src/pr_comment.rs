@@ -20,7 +20,6 @@ use std::collections::BTreeSet;
 use archguard_core::{DecisionKind, ModuleReview, ReviewPriority, ReviewRegister, ReviewReport};
 
 use crate::arc42_text::cell;
-use crate::architecture_doc::md;
 
 /// User text on one line, Markdown-escaped, `@team` never a live mention.
 fn text(value: &str) -> String {
@@ -168,10 +167,7 @@ pub fn render_pr_comment(
         out.push_str("Keine akzeptierten Risiken registriert.\n");
     } else {
         for decision in accepted {
-            let adr = match decision.adr_link.as_deref() {
-                Some(link) if !link.is_empty() => format!("[ADR]({})", md(link)),
-                _ => "(kein ADR-Link)".to_string(),
-            };
+            let adr = adr(decision.adr_link.as_deref().unwrap_or_default());
             let note = if decision.note.is_empty() {
                 String::new()
             } else {
@@ -182,6 +178,19 @@ pub fn render_pr_comment(
     }
 
     out
+}
+
+/// The ADR link of an accepted risk. A target without space, brackets or
+/// backticks cannot leave the link; anything else is shown as escaped text.
+fn adr(link: &str) -> String {
+    let unsafe_char = |c: char| c.is_whitespace() || c.is_control() || "()<>[]`\\".contains(c);
+    if link.is_empty() {
+        "(kein ADR-Link)".to_string()
+    } else if link.chars().any(unsafe_char) {
+        format!("ADR: {}", text(link))
+    } else {
+        format!("[ADR]({link})")
+    }
 }
 
 #[cfg(test)]
@@ -327,7 +336,7 @@ mod tests {
              \n\
              ### Akzeptierte Risiken\n\
              \n\
-             - `scc-1` [ADR](docs\\/adr\\/004\\.md) — bewusst in Kauf genommen\n\
+             - `scc-1` [ADR](docs/adr/004.md) — bewusst in Kauf genommen\n\
              - `scc-2` (kein ADR-Link)\n"
         );
         // Deterministic: a second render is byte-identical.
