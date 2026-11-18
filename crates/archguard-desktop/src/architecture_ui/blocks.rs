@@ -4,6 +4,7 @@
 use slint::{SharedString, StyledText};
 
 use super::markdown::{self, Align, Block};
+use super::rich::inline::Inline;
 use crate::arc42_file::{heading_number, line_starts};
 use crate::tab_support::model;
 use crate::ui::ArcBlock;
@@ -49,9 +50,14 @@ fn drop_mermaid(text: &str) -> String {
     out
 }
 
+/// The text of inline Markdown without its markup.
+fn plain(text: &str) -> String {
+    Inline::parse(text).text
+}
+
 fn styled(text: &str) -> StyledText {
     StyledText::from_markdown(&markdown::inline_source(&alt_text(text)))
-        .unwrap_or_else(|_| StyledText::from_plain_text(&markdown::plain(text)))
+        .unwrap_or_else(|_| StyledText::from_plain_text(&plain(text)))
 }
 
 /// Images as their alt text (`StyledText` rejects images); code spans and
@@ -115,7 +121,7 @@ fn push_block(b: &Block, quote: bool, note: &str, out: &mut Vec<ArcBlock>) {
     match b {
         Block::Heading { level, text } => out.push(ArcBlock {
             level: *level as i32,
-            plain: markdown::plain(text).into(),
+            plain: plain(text).into(),
             open: text == "Offen zu ergänzen",
             ..base(0)
         }),
@@ -175,7 +181,7 @@ fn push_table(columns: &[String], align: &[Align], rows: &[Vec<String>], out: &m
         .collect();
     let widths = model(column_widths(columns, rows));
     out.push(ArcBlock {
-        heads: model(columns.iter().map(|c| markdown::plain(c).into())),
+        heads: model(columns.iter().map(|c| plain(c).into())),
         widths: widths.clone(),
         ..base(3)
     });
@@ -203,7 +209,7 @@ pub(super) fn column_widths(columns: &[String], rows: &[Vec<String>]) -> Vec<f32
     let weight = |i: usize| {
         std::iter::once(&columns[i])
             .chain(rows.iter().filter_map(|r| r.get(i)))
-            .map(|c| markdown::plain(c).chars().count())
+            .map(|c| plain(c).chars().count())
             .max()
             .unwrap_or(0)
             .clamp(6, 48) as f32
@@ -279,6 +285,18 @@ mod tests {
         assert!((head.iter().sum::<f32>() - 1.0).abs() < 1e-4);
         assert!(head[2] > head[0] && head[0] > head[1], "{head:?}");
         assert!(head[1] >= 0.08, "a short column keeps a minimum: {head:?}");
+    }
+
+    /// Headings and table heads show their text as the editor reads it:
+    /// marks, links and entities resolved, `_` and lone stars kept.
+    #[test]
+    fn headings_and_table_heads_show_text_without_markup() {
+        let text = "**b** `c` [l](u) ![i](p) a\\_b &amp; _x_ *a*b* 2 * 3 * 4";
+        let want = "b c l i a_b & _x_ ab* 2 * 3 * 4";
+        let md = format!("# {text}\n\n| {text} | y |\n| --- | --- |\n| 1 | 2 |\n");
+        let rows = ui_blocks(&markdown::parse(&md), "");
+        assert_eq!(rows[0].plain, want);
+        assert_eq!(rows[1].heads.row_data(0).unwrap(), want);
     }
 
     /// `StyledText` takes no images: one shows as its alt text, links stay.

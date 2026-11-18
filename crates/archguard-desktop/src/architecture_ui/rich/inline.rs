@@ -834,7 +834,6 @@ mod tests {
             let md = Inline::plain(text).to_markdown();
             assert_eq!(md, want);
             assert_eq!(Inline::parse(&md), Inline::plain(text), "{md}");
-            assert_eq!(markdown::plain(&md), text, "{md}");
         }
     }
 
