@@ -204,8 +204,6 @@ pub(super) fn toggle_diagram(
         }
         s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
-        // The next rewrite (a language switch) keeps it.
-        s.config.arc42.hidden_diagrams = s.hidden.clone();
     }
 }
 
