@@ -29,3 +29,22 @@ fn a_latin1_python_file_is_analysed_next_to_a_utf8_one() {
         "nodes: {names:?}"
     );
 }
+
+#[test]
+fn a_debt_marker_in_a_latin1_file_counts_in_debt_density() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let src = dir.path().join("src");
+    fs::create_dir_all(&src).expect("create src");
+    // `# TODO: café` in Latin-1: 0xE9 is not valid UTF-8.
+    fs::write(src.join("legacy.py"), b"# TODO: caf\xe9\nVALUE = 1\n").expect("write legacy.py");
+
+    let (graph, _report) =
+        analyze(dir.path(), &Config::default(), Level::Module).expect("analyze succeeds");
+
+    let debt = graph
+        .review_kpis
+        .and_then(|kpis| kpis.debt)
+        .expect("debt was scanned");
+    assert_eq!(debt.markers, 1, "debt: {debt:?}");
+    assert_eq!(debt.loc, 2, "debt: {debt:?}");
+}

@@ -217,13 +217,14 @@ fn run_inner(
         if extractor_for(file.lang).is_none() {
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(&file.path) else {
+        let Ok(bytes) = std::fs::read(&file.path) else {
             continue;
         };
         scanned.push((
             strip_root(&file.rel_path, &config.project.source_roots),
             file.lang,
-            content,
+            // Decoded like the extraction pipeline, so non-UTF-8 files count too.
+            String::from_utf8_lossy(&bytes).into_owned(),
         ));
     }
     let kpi_sources: Vec<crate::kpi_payload::ScannedSource> = scanned
