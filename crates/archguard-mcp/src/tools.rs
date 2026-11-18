@@ -113,7 +113,8 @@ pub struct Run {
     pub file_graph: Graph,
     /// Canonical root the analysis ran at.
     pub root: PathBuf,
-    /// Module view at `loaded.config.modules.depth` — the same cut the
+    /// The analysed view (module level at `loaded.config.modules.depth`
+    /// unless [`Run::at`] asked for files) — the same cut the
     /// pipeline used, so view node names match findings and metrics.
     pub view: Graph,
     /// The analysis report.
@@ -129,26 +130,33 @@ impl Run {
     pub fn named(&self) -> NamedGraph<'_> {
         (&self.file_graph, &self.source_names).into()
     }
+
+    /// Resolve the root, load the config and run the cached analysis at
+    /// `level`: at [`Level::File`] `view` and `report` are the file-level
+    /// ones `cycles_list{level:"file"}` lists.
+    pub fn at(server_root: &Path, path: Option<&str>, level: Level) -> Result<Run, ErrorData> {
+        let root = resolve_root(server_root, path)?;
+        let loaded = load_config_at(&root)?;
+        let run = engine_run(&root, &loaded, level)
+            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
+        let loaded = run.effective_config();
+        let view = run.view;
+        let report = run.report;
+        Ok(Run {
+            file_graph: run.graph,
+            root,
+            view,
+            report,
+            loaded,
+            source_names: run.source_names,
+        })
+    }
 }
 
-/// Resolve the root, load the config and run the cached module-level
-/// analysis (the `#[tool]` methods' shared first step).
+/// The cached module-level [`Run::at`] (the `#[tool]` methods' shared
+/// first step).
 pub fn analyze_run(server_root: &Path, path: Option<&str>) -> Result<Run, ErrorData> {
-    let root = resolve_root(server_root, path)?;
-    let loaded = load_config_at(&root)?;
-    let run = engine_run(&root, &loaded, Level::Module)
-        .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-    let loaded = run.effective_config();
-    let view = run.view;
-    let report = run.report;
-    Ok(Run {
-        file_graph: run.graph,
-        root,
-        view,
-        report,
-        loaded,
-        source_names: run.source_names,
-    })
+    Run::at(server_root, path, Level::Module)
 }
 
 /// Read and parse a baseline JSON (Kap. 7); a missing or unparsable file

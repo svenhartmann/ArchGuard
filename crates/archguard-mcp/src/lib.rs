@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 
 // `use rmcp::schemars;` (not the derive directly): the JsonSchema derive
 // macro expands to `schemars::…` paths, so the module name must be in scope.
-use archguard_engine::core::{Finding, FindingKind, Graph, NodeKind, Report, Severity};
+use archguard_engine::core::{
+    Cut, Finding, FindingKind, Graph, NodeKind, Report, Severity, aggregate,
+};
 use archguard_engine::{Level, analyze_run};
 use rmcp::ErrorData;
 use rmcp::handler::server::wrapper::Parameters;
@@ -251,16 +253,23 @@ impl ArchguardTools {
 
     /// SCC detail for one cycle (Kap. 10.2 `cycle_get`).
     #[tool(
-        description = "SCC detail for one cycle: member nodes, internal edges with their import-site refs (file, line, raw) and the suggested cuts. Example: {\"cycle_id\": \"scc-1\"}."
+        description = "SCC detail for one cycle: member nodes, internal edges with their import-site refs (file, line, raw) and the suggested cuts. Pass the `level` the id was listed at (default module). Example: {\"cycle_id\": \"scc-1\", \"level\": \"file\"}."
     )]
     async fn cycle_get(
         &self,
         Parameters(params): Parameters<CycleGetParams>,
     ) -> Result<String, ErrorData> {
         let cycle_id = tools::required_str(&params.cycle_id, "cycle_id")?;
-        let run = tools::analyze_run(&self.root, None)?;
+        let level = parse_level(params.level.as_deref())?;
+        let run = tools::Run::at(&self.root, None, level)?;
+        // `file-`/`module-` ids are the deny_cycles gate view of the other level.
+        let module_view;
         let graph = if cycle_id.starts_with("file-") {
             &run.file_graph
+        } else if cycle_id.starts_with("module-") && level == Level::File {
+            let depth = run.loaded.config.modules.depth as usize;
+            module_view = aggregate(&run.file_graph, &Cut::at_depth(&run.file_graph, depth));
+            &module_view
         } else {
             &run.view
         };
@@ -839,14 +848,15 @@ impl ArchguardTools {
 
     /// Ranked cut candidates for a cycle (Kap. 10.2 `suggest_cuts`).
     #[tool(
-        description = "Ranked edges to cut for one cycle, with score and reason (dependency-inversion hint). Example: {\"cycle_id\": \"scc-1\", \"max\": 3}."
+        description = "Ranked edges to cut for one cycle, with score and reason (dependency-inversion hint). Pass the `level` the id was listed at (default module). Example: {\"cycle_id\": \"scc-1\", \"max\": 3}."
     )]
     async fn suggest_cuts(
         &self,
         Parameters(params): Parameters<SuggestCutsParams>,
     ) -> Result<String, ErrorData> {
         let cycle_id = tools::required_str(&params.cycle_id, "cycle_id")?;
-        let run = tools::analyze_run(&self.root, None)?;
+        let level = parse_level(params.level.as_deref())?;
+        let run = tools::Run::at(&self.root, None, level)?;
         let value = tools::suggest_cuts_value(&run.report, cycle_id, params.max)?;
         Ok(tools::guarded(&value).to_string())
     }
@@ -1017,6 +1027,9 @@ impl rmcp::ServerHandler for ArchguardTools {}
 pub struct CycleGetParams {
     /// The `scc-N` id from `cycles_list`.
     pub cycle_id: Option<String>,
+    /// `"module"` (default) or `"file"`: the `cycles_list` level the id
+    /// comes from.
+    pub level: Option<String>,
 }
 
 /// Input of the `check` tool (Kap. 10.2: `{ path?, use_baseline? }`).
@@ -1185,6 +1198,9 @@ pub struct EdgeEvidenceParams {
 pub struct SuggestCutsParams {
     /// The `scc-N` id from `cycles_list`.
     pub cycle_id: Option<String>,
+    /// `"module"` (default) or `"file"`: the `cycles_list` level the id
+    /// comes from.
+    pub level: Option<String>,
     /// Maximum number of cuts; all by default.
     pub max: Option<usize>,
 }
@@ -2032,6 +2048,7 @@ links = ["docs/adr/1.md"]
         let detail = handler
             .cycle_get(Parameters(CycleGetParams {
                 cycle_id: Some("file-scc-1".into()),
+                level: None,
             }))
             .await
             .unwrap();
@@ -2069,6 +2086,67 @@ links = ["docs/adr/1.md"]
                 .any(|f| f["id"] == "metric-max-tangledness"),
             "{value}"
         );
+    }
+
+    /// `cycles_list{level:"file"}` ids are file-level ids: `cycle_get` and
+    /// `suggest_cuts` must look them up at the level they came from.
+    #[tokio::test]
+    async fn cycle_get_and_suggest_cuts_follow_the_requested_level() {
+        let dir = tempdir().unwrap();
+        write_cyclic_project(dir.path());
+        std::fs::create_dir_all(dir.path().join("src/core")).unwrap();
+        std::fs::write(dir.path().join("src/core/x.ts"), "import './y';\n").unwrap();
+        std::fs::write(dir.path().join("src/core/y.ts"), "import './x';\n").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let list: Value = serde_json::from_str(
+            &handler
+                .cycles_list(Parameters(CyclesListParams {
+                    level: Some("file".into()),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        // Every listed id resolves at its level, including the `module-`
+        // gate ids the file-level report carries next to its `scc-N`.
+        for cycle in list["cycles"].as_array().unwrap() {
+            let detail: Value = serde_json::from_str(
+                &handler
+                    .cycle_get(Parameters(CycleGetParams {
+                        cycle_id: Some(cycle["id"].as_str().unwrap().into()),
+                        level: Some("file".into()),
+                    }))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(detail["nodes"], cycle["sample_nodes"], "{detail}");
+        }
+        let id = list["cycles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| {
+                c["id"].as_str().unwrap().starts_with("scc-")
+                    && c["sample_nodes"].to_string().contains("x.ts")
+            })
+            .unwrap_or_else(|| panic!("file cycle x <-> y: {list}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let cuts: Value = serde_json::from_str(
+            &handler
+                .suggest_cuts(Parameters(SuggestCutsParams {
+                    cycle_id: Some(id),
+                    level: Some("file".into()),
+                    max: None,
+                }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(cuts["cuts"].to_string().contains("x.ts"), "{cuts}");
     }
 
     /// Nothing analysed is no evidence of a clean architecture.
