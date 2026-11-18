@@ -29,7 +29,7 @@ pub mod visibility;
 pub mod walk;
 
 pub use clones::{CloneGroup, CloneLocation, CloneOptions, CloneScan, find_clones};
-pub use cpp::CppExtractor;
+pub use cpp::{CppExtractor, CppStructure, scan_cpp_structure};
 pub use cs::CsExtractor;
 pub use debt::{DebtMarker, MarkerKind, scan_debt};
 pub use extract::{

@@ -22,7 +22,7 @@ pub enum Note {
     RustSyntax,
     /// Rust calls resolved with rust-analyzer, macros excepted.
     RustAnalyzer,
-    /// A token scanner (PHP, Kotlin): calls and types are not resolved.
+    /// A token scanner (PHP, Kotlin, C/C++): calls and types are not resolved.
     Tokens,
     /// Python calls resolved statically from syntax.
     PythonStatic,

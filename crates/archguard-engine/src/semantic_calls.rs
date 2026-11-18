@@ -4,6 +4,7 @@ use archguard_extract::Lang;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod cpp_calls;
 mod kotlin_calls;
 mod memo;
 pub(crate) mod token_calls;
@@ -149,6 +150,7 @@ fn backend_report(lang: Lang, root: &Path, config: &Config) -> CallAnalysis {
         Lang::Php => crate::php_calls::analyze_php_calls(root, config),
         Lang::Ts | Lang::Js => crate::typescript_calls::analyze_typescript_calls(root, config),
         Lang::Kotlin => kotlin_calls::analyze_kotlin_calls(root, config),
+        Lang::Cpp => cpp_calls::analyze_cpp_calls(root, config),
     }
 }
 
@@ -190,7 +192,7 @@ fn mark_unavailable(
 }
 
 /// The language name of call analyzers and their reports.
-fn language_name(lang: Lang) -> &'static str {
+pub(crate) fn language_name(lang: Lang) -> &'static str {
     match lang {
         Lang::Java => "java",
         Lang::CSharp => "csharp",
@@ -201,6 +203,7 @@ fn language_name(lang: Lang) -> &'static str {
         Lang::Php => "php",
         Lang::Go => "go",
         Lang::Kotlin => "kotlin",
+        Lang::Cpp => "cpp",
     }
 }
 

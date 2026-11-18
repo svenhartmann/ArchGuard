@@ -502,6 +502,8 @@ impl Scan<'_> {
         let start = self.header_start(qualified_start);
         let (class_id, is_static) = match self.scopes.last() {
             _ if !qualifier.is_empty() => {
+                // The fallback when the engine finds no unique class `owner`.
+                self.module();
                 let owner = join(&self.scope_path(), &qualifier.join("::"));
                 (format!("{}::{owner}", self.file), false)
             }
