@@ -323,6 +323,15 @@ impl Editor {
     fn split(&mut self) {
         let c = self.focus;
         let blocks = self.blocks_mut(c.piece);
+        if c.at == 0 && !blocks[c.block].inline.text.is_empty() {
+            // At its start: an empty paragraph above it, the block keeps its
+            // kind (a heading stays one, a list entry its number).
+            blocks.insert(c.block, Self::empty_cell());
+            return self.collapse(Caret {
+                block: c.block + 1,
+                ..c
+            });
+        }
         let rest = blocks[c.block].inline.split_off(c.at);
         let kind = match &blocks[c.block].kind {
             Kind::Heading(_) => Kind::Paragraph,
@@ -1579,6 +1588,24 @@ mod tests {
         one.place(at(&one, 0, 4), false);
         one.delete_forward();
         assert_eq!(one.markdown(), "Texteins\n");
+    }
+
+    /// Enter at the start of a block opens an empty line above it; the
+    /// block keeps its kind and the caret its start.
+    #[test]
+    fn enter_at_a_blocks_start_keeps_its_kind() {
+        for (md, want) in [
+            ("### Titel\n", "### Titel\n"),
+            ("1. eins\n2. zwei\n", "1. eins\n2. zwei\n"),
+            ("> Zitat\n", "> Zitat\n"),
+        ] {
+            let mut e = editor(md);
+            let last = e.blocks(e.focus.piece).len() - 1;
+            e.place(at(&e, last, 0), false);
+            e.enter();
+            assert_eq!(e.markdown(), want, "{md}");
+            assert_eq!((e.focus.block, e.focus.at), (last + 1, 0), "{md}");
+        }
     }
 
     #[test]
