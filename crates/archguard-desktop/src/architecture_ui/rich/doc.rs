@@ -120,7 +120,9 @@ impl Doc {
                     .any(|(d, _)| d.start < r.end && r.start < d.end)
             })
             .map(|(r, blocks)| {
-                let editable = editable(&blocks).filter(|_| !locked(&r));
+                // A quote without text gives no block: a part needs one
+                // for the caret.
+                let editable = editable(&blocks).filter(|b| !b.is_empty() && !locked(&r));
                 (r, editable)
             })
             .collect();
@@ -847,5 +849,19 @@ Ende.
             parts(d).iter().flat_map(|p| p.blocks().to_vec()).collect()
         };
         assert_eq!(blocks(&mut again), blocks(&mut doc), "{written}");
+    }
+
+    /// A quote without text (comments are no text) is no part without
+    /// blocks: the editor could not put its caret there.
+    #[test]
+    fn a_quote_without_text_stays_as_written() {
+        for md in ["---\n\n>\n\n---\n", "> <!-- Hinweis -->\n", "Text.\n\n>\n"] {
+            let mut doc = Doc::parse(md, &[]);
+            assert!(
+                parts(&mut doc).iter().all(|p| !p.blocks().is_empty()),
+                "{md}"
+            );
+            assert_eq!(doc.to_markdown(), md);
+        }
     }
 }

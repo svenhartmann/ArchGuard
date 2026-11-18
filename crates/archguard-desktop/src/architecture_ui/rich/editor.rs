@@ -1126,6 +1126,16 @@ mod tests {
         }
     }
 
+    /// A quote without text between rules is kept as written: the caret
+    /// goes to the empty part after it, not into a part without blocks.
+    #[test]
+    fn an_empty_quote_takes_no_caret() {
+        let mut e = editor("---\n\n>\n\n---\n");
+        e.place(at(&e, 0, 0), false);
+        assert_eq!(e.kind(), &Kind::Paragraph);
+        assert_eq!(e.markdown(), "---\n\n>\n\n---\n");
+    }
+
     #[test]
     fn typing_goes_on_in_the_marks_before_the_caret() {
         let mut e = editor("ein **fetter** Satz\n");
