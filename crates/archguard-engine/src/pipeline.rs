@@ -35,6 +35,8 @@
 #[path = "scanned_file.rs"]
 mod scanned_file;
 use scanned_file::ScannedFile;
+#[path = "ruby_imports.rs"]
+mod ruby_imports;
 #[path = "rust_imports.rs"]
 mod rust_imports;
 pub(crate) use rust_imports::{
@@ -239,6 +241,7 @@ fn resolve_imports(
     builder: &mut GraphBuilder,
     warnings: &mut Vec<String>,
 ) -> Result<(), ArchguardError> {
+    let ruby = ruby_imports::RubyImports::new(scanned);
     let imports = scanned
         .iter()
         .filter(|file| file.lang != "rs")
@@ -256,6 +259,9 @@ fn resolve_imports(
             }
         } else if file.lang == "py" {
             resolve_python(raw_import, &index.dirs, node_of, builder)
+        } else if file.lang == "rb" {
+            ruby.resolve(raw_import, file)
+                .and_then(|path| node_of.get(path).copied())
         } else if Indexes::logical(family) {
             indexes.resolve(raw_import, file, node_of, builder)
         } else {
@@ -525,6 +531,7 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Php => "php",
         Lang::Go => "go",
         Lang::Kotlin => "kt",
+        Lang::Ruby => "rb",
     }
 }
 

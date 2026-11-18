@@ -22,6 +22,7 @@ pub mod php;
 pub mod php_structure;
 pub mod py;
 pub mod resolve;
+pub mod ruby;
 pub mod rust;
 pub mod ts;
 pub mod visibility;
@@ -43,6 +44,7 @@ pub use php_structure::{
 };
 pub use py::PyExtractor;
 pub use resolve::{DeclMap, SymbolTarget, resolve_relative, strip_root};
+pub use ruby::RubyExtractor;
 pub use rust::RustExtractor;
 pub use ts::TsExtractor;
 pub use visibility::{Visibility, scan_visibility};

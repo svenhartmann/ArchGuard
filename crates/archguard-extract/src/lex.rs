@@ -1,4 +1,5 @@
 //! Lexical shielding for lightweight import scanners. This is not a compiler parser.
+mod ruby;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Flavor {
     C,
@@ -8,6 +9,7 @@ pub(crate) enum Flavor {
     Js,
     Python,
     Php,
+    Ruby,
 }
 /// The lexer flavor that shields a language's comments and strings.
 pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
@@ -19,6 +21,7 @@ pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
         Lang::Rust => Flavor::Rust,
         Lang::Php => Flavor::Php,
         Lang::Kotlin => Flavor::Kotlin,
+        Lang::Ruby => Flavor::Ruby,
     }
 }
 #[derive(Debug)]
@@ -31,6 +34,19 @@ pub(crate) struct Token {
     pub end: usize,
 }
 pub(crate) fn tokens(source: &str, flavor: Flavor) -> Vec<Token> {
+    if flavor == Flavor::Ruby {
+        return ruby::tokens(source)
+            .into_iter()
+            .map(|t| Token {
+                text: t.text,
+                literal: t.literal,
+                line: t.line,
+                end_line: t.end_line,
+                start: t.start,
+                end: t.end,
+            })
+            .collect();
+    }
     let mut lexer = Lexer {
         source,
         chars: source.char_indices().collect(),

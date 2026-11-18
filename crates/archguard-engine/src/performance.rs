@@ -455,6 +455,30 @@ fn provider_coverage(
                 == Some(source_files(needed))
     })
 }
+/// Why a scope has no abstractness, `None` when it is measurable.
+fn abstraction_reason(
+    full: &Graph,
+    calls: &CallAnalysis,
+    files: &BTreeSet<NodeId>,
+    types: &[&archguard_core::CallClass],
+) -> Option<String> {
+    let scope_nodes = || full.nodes.iter().filter(|node| files.contains(&node.id));
+    let scope_languages: BTreeSet<_> = scope_nodes().map(abstractness_language).collect();
+    // Ruby declares no abstract types: the question does not apply (ADR 0019).
+    if !files.is_empty() && scope_nodes().all(|node| node.lang.as_deref() == Some("rb")) {
+        Some("Ruby has no abstract classes: abstractness does not apply.".into())
+    } else if files.is_empty() || types.is_empty() {
+        Some("No compiler-backed types in this scope.".into())
+    } else if scope_languages.contains(&None) {
+        Some("This scope includes source languages without supported abstractness analysis.".into())
+    } else if !provider_coverage(full, calls, &scope_languages) {
+        Some("Complete compiler coverage is unavailable for this scope's source languages.".into())
+    } else if types.iter().any(|class| class.is_abstract.is_none()) {
+        Some("The call report has no complete abstractness metadata.".into())
+    } else {
+        None
+    }
+}
 fn abstraction_metric(
     full: &Graph,
     view: &Graph,
@@ -516,24 +540,7 @@ fn abstraction_metric(
     } else {
         outgoing.len() as f64 / (incoming.len() + outgoing.len()) as f64
     };
-    let scope_languages: BTreeSet<_> = full
-        .nodes
-        .iter()
-        .filter(|node| files.contains(&node.id))
-        .map(abstractness_language)
-        .collect();
-    let complete = provider_coverage(full, calls, &scope_languages);
-    let reason = if files.is_empty() || types.is_empty() {
-        Some("No compiler-backed types in this scope.".into())
-    } else if scope_languages.contains(&None) {
-        Some("This scope includes source languages without supported abstractness analysis.".into())
-    } else if !complete {
-        Some("Complete compiler coverage is unavailable for this scope's source languages.".into())
-    } else if types.iter().any(|class| class.is_abstract.is_none()) {
-        Some("The call report has no complete abstractness metadata.".into())
-    } else {
-        None
-    };
+    let reason = abstraction_reason(full, calls, &files, &types);
     let abstract_types = types
         .iter()
         .filter(|class| class.is_abstract == Some(true))
@@ -921,6 +928,55 @@ mod tests {
         assert!(
             metric(&analyze(&calls), "dotnet").abstractness.is_none(),
             "classes without a matching provider do not prove coverage"
+        );
+    }
+    #[test]
+    fn ruby_scopes_report_abstractness_as_not_applicable() {
+        use archguard_core::{CallClass, Cut, aggregate};
+        let root = tempfile::tempdir().unwrap();
+        let mut builder = archguard_core::GraphBuilder::new();
+        builder.ensure_path("shop/cart.rb", Some("rb"));
+        let full = builder.build("/fixture".into());
+        let view = aggregate(&full, &Cut::at_depth(&full, 0));
+        let calls = CallAnalysis {
+            status: "partial".into(),
+            files: 1,
+            classes: vec![CallClass {
+                language: Some("ruby".into()),
+                id: "shop/cart.rb::Cart".into(),
+                name: "Cart".into(),
+                package: "shop".into(),
+                file: "shop/cart.rb".into(),
+                graph_node: "shop/cart.rb".into(),
+                line: 1,
+                kind: "class".into(),
+                is_abstract: None,
+                visibility: None,
+                supertypes: vec![],
+                supertype_sites: None,
+                declaration_files: None,
+            }],
+            ..CallAnalysis::default()
+        };
+        let report = analyze_performance(
+            root.path(),
+            &Config::default(),
+            &full,
+            &view,
+            &ReviewSources::default(),
+            &calls,
+            &[],
+        )
+        .unwrap();
+        let shop = report
+            .abstractions
+            .iter()
+            .find(|row| row.name == "shop")
+            .unwrap();
+        assert_eq!(shop.abstractness, None);
+        assert_eq!(
+            shop.reason.as_deref(),
+            Some("Ruby has no abstract classes: abstractness does not apply.")
         );
     }
     #[test]

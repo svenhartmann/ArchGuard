@@ -34,8 +34,9 @@ fn language(value: &str) -> Result<&'static str, ErrorData> {
         "php" => Ok("php"),
         "go" | "golang" => Ok("go"),
         "kotlin" | "kt" => Ok("kotlin"),
+        "ruby" | "rb" => Ok("ruby"),
         _ => Err(ErrorData::invalid_params(
-            "language must be java, csharp, typescript, javascript, python, rust, php, go or kotlin",
+            "language must be java, csharp, typescript, javascript, python, rust, php, go, kotlin or ruby",
             None,
         )),
     }
