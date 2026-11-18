@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use archguard_core::CallMethod;
 use archguard_extract::kotlin::{KotlinClassFacts, KotlinFunctionFacts, KotlinSymbols};
 
-/// Java types of the project: Kotlin calls to them stay unresolved, but a
-/// name declared there is never external.
+/// Java files of the project by package and file name: a name declared
+/// there is never external, and calls to a type the javac helper did not
+/// report stay unresolved.
 #[derive(Debug, Default)]
 pub(super) struct JavaTypes {
     /// `package.FileStem`.
@@ -15,10 +16,19 @@ pub(super) struct JavaTypes {
     pub(super) packages: HashSet<String>,
 }
 
+/// Java classes and methods as the javac helper reported them, the classes
+/// in the shape of Kotlin facts so the same lookups walk them.
+#[derive(Debug, Default)]
+pub(super) struct JavaDeclarations {
+    pub(super) classes: Vec<KotlinClassFacts>,
+    pub(super) methods: Vec<CallMethod>,
+}
+
 /// A Kotlin class-like declaration with its file and qualified name.
 pub(super) struct ClassInfo<'a> {
     pub(super) facts: &'a KotlinClassFacts,
-    pub(super) file: usize,
+    /// The Kotlin file; `None` for a Java class.
+    pub(super) file: Option<usize>,
 }
 
 /// What a name binds to.
@@ -76,6 +86,7 @@ impl<'a> Index<'a> {
         files: &'a [(String, KotlinSymbols)],
         methods: &'a [CallMethod],
         java: JavaTypes,
+        declarations: &'a JavaDeclarations,
         complete: bool,
     ) -> Self {
         let mut index = Index {
@@ -84,7 +95,7 @@ impl<'a> Index<'a> {
             by_name: HashMap::new(),
             nested: HashMap::new(),
             methods: HashMap::new(),
-            method_ids: methods.iter().map(|m| (m.id.as_str(), m)).collect(),
+            method_ids: HashMap::new(),
             functions: HashMap::new(),
             values: HashSet::new(),
             declared: HashSet::new(),
@@ -92,14 +103,36 @@ impl<'a> Index<'a> {
             java,
             complete,
         };
-        for method in methods {
+        for method in methods.iter().chain(&declarations.methods) {
             let owner = index.methods.entry(method.class_id.as_str()).or_default();
             owner.push(method);
+            index.method_ids.insert(&method.id, method);
         }
         for (file, (_, symbols)) in files.iter().enumerate() {
             index.add_file(file, symbols);
         }
+        for class in &declarations.classes {
+            index.add_java(class);
+        }
         index
+    }
+
+    /// A Java class under its qualified name (without the project prefix
+    /// of a multi-project scan).
+    fn add_java(&mut self, class: &'a KotlinClassFacts) {
+        let name = class.id.rsplit("::").next().unwrap_or(&class.id);
+        self.by_name.entry(name.into()).or_default().push(&class.id);
+        if let Some(outer) = &class.outer {
+            self.nested.entry(outer).or_default().push(&class.id);
+        }
+        self.declared.insert(&class.name);
+        self.classes.insert(
+            &class.id,
+            ClassInfo {
+                facts: class,
+                file: None,
+            },
+        );
     }
 
     fn add_file(&mut self, file: usize, symbols: &'a KotlinSymbols) {
@@ -120,8 +153,13 @@ impl<'a> Index<'a> {
                 self.nested.entry(outer).or_default().push(&class.id);
             }
             self.declared.insert(&class.name);
-            self.classes
-                .insert(&class.id, ClassInfo { facts: class, file });
+            self.classes.insert(
+                &class.id,
+                ClassInfo {
+                    facts: class,
+                    file: Some(file),
+                },
+            );
         }
         for function in &symbols.functions {
             let name = qualify(&symbols.package, &function.name);

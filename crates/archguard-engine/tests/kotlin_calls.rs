@@ -409,8 +409,11 @@ fn names_declared_nowhere_in_the_project_are_external() {
         external(Some("org.lib.Mailer"))
     );
     assert_eq!(target(&report, "Math.max(1, 2)"), external(Some("Math")));
-    // A Java class of the same package: declared, but not resolved here.
-    assert_eq!(target(&report, "Legacy()"), unresolved());
+    // A Java class of the same package, declared by the javac helper.
+    assert_eq!(
+        target(&report, "Legacy()"),
+        project("constructor", "com.shop.app.Legacy", None)
+    );
     let analyzer = report
         .analyzers
         .iter()
@@ -421,6 +424,135 @@ fn names_declared_nowhere_in_the_project_are_external() {
         "{:?}",
         analyzer.diagnostics
     );
+}
+
+const JAVA_BASE: &str = r#"package com.shop.legacy;
+
+public class JavaBase {
+    public void save() {}
+    public static int count() { return 0; }
+    public void over(int a) {}
+    public void over(String a) {}
+}
+"#;
+
+const JAVA_UTIL: &str = r#"package com.shop.legacy;
+
+public final class Util {
+    public static String slug(String s) { return s; }
+    public String inst() { return ""; }
+    public static void twice(int a) {}
+    public static void twice(String a) {}
+    public static class Nested {}
+}
+"#;
+
+const JAVA_USER: &str = r#"package com.shop.app
+
+import com.shop.legacy.JavaBase
+import com.shop.legacy.Util
+import com.shop.legacy.Util.slug
+import com.shop.legacy.Shape
+
+class Plain {
+    fun run() {
+        Util()
+        Util.slug("a")
+        Util.Nested()
+        Util.inst()
+        Util.twice(1)
+        Util.missing()
+        slug("b")
+        Shape()
+    }
+}
+
+class Sub : JavaBase() {
+    fun run() {
+        Plain()
+        save()
+        count()
+        super.save()
+        over(1)
+        hashCode()
+    }
+}
+
+class Circle : Shape() {
+    override fun draw() = super.draw()
+}
+"#;
+
+/// Java declarations come from the javac helper (CI has a JDK).
+fn java_project() -> CallAnalysis {
+    analyze(&[
+        ("src/main/java/com/shop/legacy/JavaBase.java", JAVA_BASE),
+        ("src/main/java/com/shop/legacy/Util.java", JAVA_UTIL),
+        (
+            "src/main/java/com/shop/legacy/Shape.java",
+            "package com.shop.legacy;\n\npublic abstract class Shape {\n    public abstract void draw();\n}\n",
+        ),
+        ("src/main/kotlin/com/shop/app/Sub.kt", JAVA_USER),
+    ])
+}
+
+#[test]
+fn calls_into_java_classes_resolve_with_the_javac_declarations() {
+    let report = java_project();
+    let util = "com.shop.legacy.Util";
+    let base = "com.shop.legacy.JavaBase";
+    assert_eq!(
+        target(&report, "Util()"),
+        project("constructor", util, None)
+    );
+    // Java ids keep their javac identity in the combined report.
+    assert_eq!(call(&report, "Util()").to_class.as_deref(), Some(util));
+    assert_eq!(
+        target(&report, "Util.slug(\"a\")"),
+        project("static", util, Some("slug"))
+    );
+    assert_eq!(
+        target(&report, "slug(\"b\")"),
+        project("static", util, Some("slug"))
+    );
+    assert_eq!(
+        target(&report, "Util.Nested()"),
+        project("constructor", "com.shop.legacy.Util.Nested", None)
+    );
+    // Inherited from the Java superclass of a Kotlin class.
+    assert_eq!(
+        target(&report, "save()"),
+        project("instance", base, Some("save"))
+    );
+    assert_eq!(
+        target(&report, "super.save()"),
+        project("instance", base, Some("save"))
+    );
+    assert_eq!(
+        target(&report, "count()"),
+        project("static", base, Some("count"))
+    );
+    for code in [
+        // An instance method called on the class name.
+        "Util.inst()",
+        // Overloads are not told apart by argument types.
+        "Util.twice(1)",
+        "over(1)",
+        // Not declared in the Java source (Lombok, a library supertype):
+        // unknown, never external.
+        "Util.missing()",
+        // `java.lang.Object` is no project class.
+        "hashCode()",
+        // Annotation processors (Lombok) may add members to a Java class
+        // that javac without processors does not report.
+        "Plain()",
+        // An abstract class cannot be constructed.
+        "Shape()",
+        // An abstract Java method has no body to call.
+        "super.draw()",
+    ] {
+        assert_eq!(target(&report, code), unresolved(), "{code}");
+    }
 }
 
 #[test]

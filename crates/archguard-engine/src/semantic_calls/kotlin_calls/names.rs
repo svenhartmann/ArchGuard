@@ -6,7 +6,7 @@ use super::index::{Hit, Index, combine, qualify, unique_class};
 
 /// What the qualified `name` declares at the top level of the project.
 /// Extension functions, overloads, duplicates, properties, type aliases and
-/// Java types are unknown.
+/// Java types without javac declarations are unknown.
 pub(super) fn declared_at<'i>(ix: &'i Index<'i>, name: &str) -> Hit<'i> {
     let mut hits = Vec::new();
     match ix.by_name.get(name).map(Vec::as_slice) {
@@ -21,7 +21,9 @@ pub(super) fn declared_at<'i>(ix: &'i Index<'i>, name: &str) -> Hit<'i> {
         Some(_) => hits.push(Hit::Unknown),
         None => {}
     }
-    if ix.values.contains(name) || ix.java.types.contains(name) {
+    // A Java file the javac helper reported no class for.
+    let unreported = ix.java.types.contains(name) && !ix.by_name.contains_key(name);
+    if ix.values.contains(name) || unreported {
         hits.push(Hit::Unknown);
     }
     combine(hits)
@@ -50,8 +52,9 @@ fn imported<'i>(ix: &'i Index<'i>, path: &'i str) -> Hit<'i> {
     if !hit.is_missing() {
         return hit;
     }
-    // `import a.Obj.m` imports a member of an object; only one the object
-    // declares itself, once, is resolved.
+    // `import a.Obj.m` imports a member of an object, `import a.J.m` a
+    // static method of a Java class; only one the class declares itself,
+    // once, is resolved.
     if let Some((owner, name)) = path.rsplit_once('.')
         && let Some(class) = unique_class(ix, owner)
     {
@@ -68,7 +71,12 @@ fn imported<'i>(ix: &'i Index<'i>, path: &'i str) -> Hit<'i> {
             .chain(&facts.bodiless)
             .any(|v| v == name);
         return match (own.next(), own.next()) {
-            (Some(method), None) if facts.kind == "object" && !shadowed => Hit::Method(method),
+            (Some(method), None)
+                if !shadowed
+                    && (facts.kind == "object" || (class.file.is_none() && method.is_static)) =>
+            {
+                Hit::Method(method)
+            }
             _ => Hit::Unknown,
         };
     }

@@ -6,6 +6,7 @@
 //! same stem and runtime-loaded classes remain unresolved or module-level.
 
 mod calls;
+mod gradle;
 mod sites;
 mod structure;
 mod symbols;
@@ -13,6 +14,7 @@ mod tokens;
 
 use std::collections::BTreeSet;
 
+pub use gradle::{GradleRef, GradleScript, scan_gradle_script};
 pub use structure::{KotlinStructure, scan_kotlin_structure};
 pub use symbols::{
     KotlinCallSite, KotlinClassFacts, KotlinFunctionFacts, KotlinImport, KotlinSymbols,

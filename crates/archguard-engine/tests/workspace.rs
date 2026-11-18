@@ -184,6 +184,75 @@ fn npm_workspace_membership_version_and_name_are_checked() {
 }
 
 #[test]
+fn gradle_kotlin_dsl_project_dependencies_need_a_literal_include() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "settings.gradle.kts",
+        "rootProject.name = \"shop\"\ninclude(\":app\", \":core\")\ninclude(\":libs:util\")\n",
+    );
+    write(
+        root,
+        "app/build.gradle.kts",
+        "dependencies {\n    implementation(project(\":core\"))\n    testImplementation(project(\":libs:util\"))\n    // implementation(project(\":commented\"))\n    implementation(project(\":ghost\"))\n    implementation(project(name))\n}\n",
+    );
+    write(
+        root,
+        "core/build.gradle.kts",
+        "plugins { kotlin(\"jvm\") }\n",
+    );
+    write(root, "libs/util/build.gradle.kts", "");
+    write(root, "ghost/build.gradle.kts", "");
+    let report = analyze_workspace(root).unwrap();
+    let edges: Vec<_> = report
+        .dependencies
+        .iter()
+        .map(|d| {
+            (
+                d.from.as_str(),
+                d.to.as_str(),
+                d.scope.as_str(),
+                d.kind.as_str(),
+                d.evidence[0].line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        edges,
+        [
+            (
+                "project:app/build.gradle.kts",
+                "project:core/build.gradle.kts",
+                "compile",
+                "gradle_project",
+                Some(2)
+            ),
+            (
+                "project:app/build.gradle.kts",
+                "project:libs/util/build.gradle.kts",
+                "test",
+                "gradle_project",
+                Some(3)
+            ),
+        ]
+    );
+    // Not included in the settings, and a computed path.
+    let unresolved: Vec<_> = report
+        .unresolved
+        .iter()
+        .map(|u| u.target.as_str())
+        .collect();
+    assert_eq!(
+        unresolved,
+        ["(computed)", ":ghost"],
+        "{:?}",
+        report.unresolved
+    );
+    assert_eq!(report.status, "partial");
+}
+
+#[test]
 fn dotnet_project_references_keep_conditions_and_build_only_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

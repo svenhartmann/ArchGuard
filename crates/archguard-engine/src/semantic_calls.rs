@@ -1,7 +1,7 @@
 //! Shared call model and coverage across independent language backends.
 use archguard_core::{CallAnalysis, CallAnalyzer, Config};
 use archguard_extract::Lang;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 mod kotlin_calls;
@@ -215,11 +215,40 @@ pub fn semantic_fingerprints(root: &Path, config: &Config) -> Vec<Result<[u8; 32
     ]
 }
 
+/// The class and method ids of the Java report.
+fn java_ids(reports: &[(&str, CallAnalysis)]) -> HashSet<String> {
+    reports
+        .iter()
+        .filter(|(language, _)| *language == "java")
+        .flat_map(|(_, r)| {
+            r.classes
+                .iter()
+                .map(|c| &c.id)
+                .chain(r.methods.iter().map(|m| &m.id))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Keep legacy Java identities, also where Kotlin calls name a Java class.
+/// All additional providers have a stable language prefix, independent of
+/// which other providers are available.
+fn identity<'a>(language: &'a str, java_ids: &'a HashSet<String>) -> impl Fn(&str) -> String + 'a {
+    move |value| {
+        if language == "java" || (language == "kotlin" && java_ids.contains(value)) {
+            value.to_owned()
+        } else {
+            format!("{language}:{value}")
+        }
+    }
+}
+
 fn combine(reports: Vec<(&str, CallAnalysis)>) -> CallAnalysis {
     let mut result = CallAnalysis {
         java_release: 0,
         ..Default::default()
     };
+    let java_ids = java_ids(&reports);
     let mut complete = true;
     let mut usable = false;
     for (language, mut report) in reports {
@@ -250,15 +279,7 @@ fn combine(reports: Vec<(&str, CallAnalysis)>) -> CallAnalysis {
                 diagnostics: report.diagnostics.clone(),
             });
         }
-        // Keep legacy Java identities. All additional providers have a stable
-        // language prefix, independent of which other providers are available.
-        let identity = |value: &str| {
-            if language == "java" {
-                value.to_owned()
-            } else {
-                format!("{language}:{value}")
-            }
-        };
+        let identity = identity(language, &java_ids);
         for class in &mut report.classes {
             class.language.get_or_insert_with(|| language.into());
         }

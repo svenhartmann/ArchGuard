@@ -132,6 +132,13 @@ fn walk(ix: &Index, class: &ClassInfo, names: &[String]) -> Target {
     if let Some(inner) = nested(ix, current, last) {
         return constructor(ix, inner);
     }
+    if current.file.is_none() {
+        // `J.m(…)` on a Java class: a static method, possibly inherited.
+        return match member(ix, current, last, 0) {
+            Hit::Method(found) if found.is_static => function(found),
+            _ => UNRESOLVED,
+        };
+    }
     let owner = if current.facts.kind == "object" {
         Some(current)
     } else {
