@@ -187,6 +187,9 @@ fn arc42_export(
     if options.check {
         return check(cli, &target, &bytes);
     }
+    if let Err(code) = create_parent(root, &target) {
+        return code;
+    }
     match write_file(&target, &bytes) {
         Ok(()) => {
             if !cli.quiet {
@@ -240,11 +243,29 @@ fn target(root: &Path, options: &Arc42Export<'_>, docx: bool) -> Result<PathBuf,
     };
     let target = root.join(options.out.unwrap_or(Path::new(&name)));
     if same_file(&target, &root.join("arc42.md")) {
-        return Err(usage(
-            "the export would overwrite arc42.md, which it only reads; choose another --out",
-        ));
+        return Err(usage(OVERWRITES_ARC42));
     }
     Ok(target)
+}
+
+const OVERWRITES_ARC42: &str =
+    "the export would overwrite arc42.md, which it only reads; choose another --out";
+
+/// Creates the folder of `target`, then refuses `arc42.md` once more: a
+/// `..` after a new folder (`new/../arc42.md`) resolves only now. Folders
+/// created for a refused target are removed again.
+fn create_parent(root: &Path, target: &Path) -> Result<(), i32> {
+    let parent = target.parent().unwrap_or(root);
+    let created: Vec<&Path> = parent.ancestors().take_while(|p| !p.exists()).collect();
+    std::fs::create_dir_all(parent).map_err(analysis_error)?;
+    if same_file(target, &root.join("arc42.md")) {
+        for dir in created {
+            // Only empty folders go; `new/..` itself is never removed.
+            let _ = std::fs::remove_dir(dir);
+        }
+        return Err(usage(OVERWRITES_ARC42));
+    }
+    Ok(())
 }
 
 /// Whether `a` and `b` are the same existing file, also through another
@@ -277,8 +298,8 @@ fn read_regular(path: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
-/// Replace `target` as a whole through a new temporary file; a final
-/// symlink or other non-regular entry is refused, as `doc` does.
+/// Replace `target` (its folder exists) as a whole through a new temporary
+/// file; a final symlink or other non-regular entry is refused, as `doc` does.
 fn write_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind, Write};
     match std::fs::symlink_metadata(target) {
@@ -291,8 +312,6 @@ fn write_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
         Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
         _ => {}
     }
-    let parent = target.parent().ok_or(ErrorKind::InvalidInput)?;
-    std::fs::create_dir_all(parent)?;
     let temp = target.with_file_name(format!(".archguard-export-{}.tmp", std::process::id()));
     let result = (|| {
         // create_new: the temporary name can never be a planted symlink.

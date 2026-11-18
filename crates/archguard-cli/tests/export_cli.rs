@@ -167,7 +167,13 @@ fn arc42_export_never_overwrites_the_hand_written_arc42_md() {
     let md = dir.path().join("arc42.md");
     let saved = fs::read(&md).unwrap();
     let absolute = md.to_str().unwrap().to_owned();
-    let mut targets = vec!["arc42.md".to_owned(), "./arc42.md".to_owned(), absolute];
+    // `newdir` does not exist: `..` resolves only once it is created.
+    let mut targets = vec![
+        "arc42.md".to_owned(),
+        "./arc42.md".to_owned(),
+        "newdir/../arc42.md".to_owned(),
+        absolute,
+    ];
     // A case-insensitive file system (macOS, Windows) reaches it as ARC42.MD too.
     if dir.path().join("ARC42.MD").exists() {
         targets.push("ARC42.MD".into());
@@ -186,6 +192,7 @@ fn arc42_export_never_overwrites_the_hand_written_arc42_md() {
             );
             assert!(stderr.contains("arc42.md"), "{stderr}");
             assert_eq!(fs::read(&md).unwrap(), saved, "{format} --out {out}");
+            assert!(!dir.path().join("newdir").exists(), "{format} --out {out}");
         }
     }
 }

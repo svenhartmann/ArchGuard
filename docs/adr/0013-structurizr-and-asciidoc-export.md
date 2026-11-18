@@ -142,3 +142,12 @@ needs neither.
   - Word: run and paragraph properties follow the schema order (`rStyle`,
     `rFonts`, `b`, `i`; `shd` before `spacing`); a second paragraph in a
     list item is indented without its own bullet.
+- **2026-11-18, re-review fixes.** The `arc42.md` refusal is repeated
+  after the target's folder is created, so `--out new/../arc42.md` is
+  refused too; folders created for it are removed again. AsciiDoc:
+  trailing backslashes follow `pass:c[…]` as `{backslash}`; description
+  list markers (`::`, `;;` before a space or the line end) are broken as
+  `:{empty}:`, outside any passthrough; blocks inside a block quote of a
+  list item get no `+`; image text with `,` or `=` is wrapped in `++…++`;
+  two lists in a row are kept apart by a `//` line between blank lines.
+  Checked by rendering with Asciidoctor 2.0.26.
