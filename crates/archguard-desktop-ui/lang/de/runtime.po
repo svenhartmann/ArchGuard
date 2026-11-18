@@ -221,3 +221,26 @@ msgstr "Wartet auf Daten in .archguard/runtime/"
 
 msgid "Put OTLP JSON Lines into .archguard/runtime/ (one export per line, see probes/CONVENTIONS.md) or record a run with a probe. With Live on they appear here within about a second."
 msgstr "Lege OTLP-JSON-Lines in .archguard/runtime/ ab (ein Export pro Zeile, siehe probes/CONVENTIONS.md) oder zeichne einen Lauf mit einer Sonde auf. Mit Live an erscheinen sie hier nach etwa einer Sekunde."
+
+msgid "self {} · on stack {}"
+msgstr "selbst {} · auf dem Stack {}"
+
+msgid "Sampled methods of {}"
+msgstr "Gesampelte Methoden von {}"
+
+msgid "{0} samples, interval {1} ms, clock {2}. Statistical: a method with n samples is uncertain by about √n; {0} × {1} ms = {3} ms is a lower bound of the sampled time, as samplers skip rounds. Self: the method was the innermost frame (dark bar); on stack: it was anywhere on the stack (light bar)."
+msgstr "{0} Samples, Intervall {1} ms, Uhr {2}. Statistisch: Eine Methode mit n Samples ist um etwa √n unsicher; {0} × {1} ms = {3} ms ist eine Untergrenze der gesampelten Zeit, weil Sampler Runden auslassen. Selbst: Die Methode war der innerste Frame (dunkler Balken); auf dem Stack: Sie war irgendwo auf dem Stack (heller Balken)."
+
+msgid "{0} of these samples are on no span row: on the request span itself, on a database span folded into its driver span, or on spans past the row limit."
+msgstr "{0} dieser Samples stehen in keiner Span-Zeile: auf dem Request-Span selbst, auf einem Datenbank-Span, der in seinen Treiber-Span gefaltet ist, oder auf Spans jenseits der Zeilengrenze."
+
+msgid "Sampled methods"
+msgstr "Gesampelte Methoden"
+
+msgid "No profiler samples for the selected request. Probes with a sampling profiler attach stack samples to the span that was running (probes/CONVENTIONS.md, \"Samples\")."
+msgstr "Keine Profiler-Samples für den ausgewählten Request. Sonden mit Sampling-Profiler hängen Stack-Samples an den Span, der gerade lief (probes/CONVENTIONS.md, „Samples“)."
+
+msgid "{0} sample"
+msgid_plural "{0} samples"
+msgstr[0] "{0} Sample"
+msgstr[1] "{0} Samples"
