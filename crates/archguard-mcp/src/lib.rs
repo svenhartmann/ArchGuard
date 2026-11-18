@@ -767,15 +767,19 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Generate deterministic architecture Markdown without writing files. Default template: architecture. Use template=arc42 for twelve evidence-backed arc42 chapters, optionally chapter=1..12. Arc42 pages are lossless and bounded to 4 KiB: concatenate markdown while following next_offset (Unicode character offsets); limit=1..2000 characters. Declared intent, static observations and missing business context remain explicit."
+        description = "Generate deterministic architecture Markdown without writing files. Default template: architecture. Use template=arc42 for twelve evidence-backed arc42 chapters, optionally chapter=1..12 and format=asciidoc (key asciidoc instead of markdown); template=structurizr returns the C4 workspace DSL (key dsl) of the service topology, with service=<id or name> adding that service's packages as components. Arc42 and structurizr pages are lossless and bounded to 4 KiB: concatenate markdown while following next_offset (Unicode character offsets); limit=1..2000 characters. Declared intent, static observations and missing business context remain explicit."
     )]
     async fn architecture_document(
         &self,
         Parameters(params): Parameters<arc42_tools::DocumentParams>,
     ) -> Result<String, ErrorData> {
-        let arc42 = params.validate()?;
+        let template = params.validate()?;
         let run = tools::analyze_run(&self.root, params.path.as_deref())?;
-        if arc42 {
+        if template == arc42_tools::Template::Structurizr {
+            let dsl = arc42_tools::structurizr(&run, &params)?;
+            return Ok(arc42_tools::page(&dsl, &params)?.to_string());
+        }
+        if template == arc42_tools::Template::Arc42 {
             let doc = archguard_engine::arc42_document(
                 &run.root,
                 &run.loaded.config,
@@ -783,7 +787,8 @@ impl ArchguardTools {
                 &run.report,
             )
             .map_err(|e| tools::invalid_params(e.to_string()))?;
-            return Ok(arc42_tools::page(&doc.markdown(params.chapter), &params)?.to_string());
+            let text = arc42_tools::arc42_text(&doc, &params);
+            return Ok(arc42_tools::page(&text, &params)?.to_string());
         }
         let goals = archguard_engine::quality_goal_assessment(
             &run.root,
@@ -1415,6 +1420,48 @@ mod tests {
             json!({"template":"arc42","chapter":13}),
             json!({"template":"arc42","limit":0}),
             json!({"chapter":5}),
+        ] {
+            assert!(
+                review_tool(&handler, "architecture_document", params)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    /// ADR 0013: arc42 as AsciiDoc and the Structurizr workspace, paged as arc42.
+    #[tokio::test]
+    async fn architecture_document_exports_asciidoc_and_structurizr() {
+        let dir = tempdir().unwrap();
+        write_cyclic_project(dir.path());
+        let handler = ArchguardTools::new(dir.path().into());
+        let adoc = review_tool(
+            &handler,
+            "architecture_document",
+            json!({"template":"arc42","chapter":5,"format":"asciidoc","limit":2000}),
+        )
+        .await
+        .unwrap();
+        let text = adoc["asciidoc"].as_str().unwrap();
+        assert!(text.starts_with("= arc42"), "{text}");
+        assert!(text.contains("== 5. Building Block View"), "{text}");
+        let dsl = review_tool(
+            &handler,
+            "architecture_document",
+            json!({"template":"structurizr","limit":2000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dsl["template"], "structurizr");
+        assert!(
+            dsl["dsl"].as_str().unwrap().starts_with("workspace "),
+            "{dsl}"
+        );
+        for params in [
+            json!({"template":"arc42","format":"docx"}),
+            json!({"template":"structurizr","chapter":5}),
+            json!({"template":"arc42","service":"api"}),
+            json!({"template":"structurizr","service":"nope"}),
         ] {
             assert!(
                 review_tool(&handler, "architecture_document", params)

@@ -6,29 +6,58 @@ use serde_json::{Value, json};
 #[serde(default)]
 pub struct DocumentParams {
     pub path: Option<String>,
-    /// architecture (default), or arc42.
+    /// architecture (default), arc42, or structurizr (C4 workspace DSL).
     pub template: Option<String>,
     /// arc42 only: chapter 1..=12. Omit for the complete document.
     pub chapter: Option<u8>,
-    /// arc42 only: Unicode character offset. Follow next_offset.
+    /// arc42 only: markdown (default) or asciidoc.
+    pub format: Option<String>,
+    /// structurizr only: service id or unique name whose packages become components.
+    pub service: Option<String>,
+    /// arc42/structurizr: Unicode character offset. Follow next_offset.
     pub offset: Option<usize>,
-    /// arc42 only: 1..=2000 characters, additionally bounded by 4 KiB JSON.
+    /// arc42/structurizr: 1..=2000 characters, additionally bounded by 4 KiB JSON.
     pub limit: Option<usize>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Template {
+    Architecture,
+    Arc42,
+    Structurizr,
+}
+
 impl DocumentParams {
-    pub fn validate(&self) -> Result<bool, ErrorData> {
-        let arc42 = match self.template.as_deref().unwrap_or("architecture") {
-            "architecture" => false,
-            "arc42" => true,
+    pub fn validate(&self) -> Result<Template, ErrorData> {
+        let template = match self.template.as_deref().unwrap_or("architecture") {
+            "architecture" => Template::Architecture,
+            "arc42" => Template::Arc42,
+            "structurizr" => Template::Structurizr,
             _ => {
                 return Err(crate::tools::invalid_params(
-                    "template must be architecture or arc42",
+                    "template must be architecture, arc42 or structurizr",
                 ));
             }
         };
-        if !arc42 && (self.chapter.is_some() || self.offset.is_some() || self.limit.is_some()) {
+        let paged = template != Template::Architecture;
+        if !paged && (self.offset.is_some() || self.limit.is_some()) {
             return Err(crate::tools::invalid_params(
-                "chapter/offset/limit require template=arc42",
+                "offset/limit require template=arc42 or structurizr",
+            ));
+        }
+        if template != Template::Arc42 && (self.chapter.is_some() || self.format.is_some()) {
+            return Err(crate::tools::invalid_params(
+                "chapter/format require template=arc42",
+            ));
+        }
+        if !matches!(self.format.as_deref(), None | Some("markdown" | "asciidoc")) {
+            return Err(crate::tools::invalid_params(
+                "format must be markdown or asciidoc",
+            ));
+        }
+        if template != Template::Structurizr && self.service.is_some() {
+            return Err(crate::tools::invalid_params(
+                "service requires template=structurizr",
             ));
         }
         if self.chapter.is_some_and(|c| !(1..=12).contains(&c)) {
@@ -37,12 +66,49 @@ impl DocumentParams {
         if self.limit.is_some_and(|c| !(1..=2000).contains(&c)) {
             return Err(crate::tools::invalid_params("limit must be 1..=2000"));
         }
-        Ok(arc42)
+        Ok(template)
+    }
+
+    /// The JSON key of the paged text.
+    fn key(&self) -> &'static str {
+        match (self.template.as_deref(), self.format.as_deref()) {
+            (Some("structurizr"), _) => "dsl",
+            (_, Some("asciidoc")) => "asciidoc",
+            _ => "markdown",
+        }
     }
 }
 
-pub fn page(markdown: &str, p: &DocumentParams) -> Result<Value, ErrorData> {
-    let chars: Vec<_> = markdown.chars().collect();
+/// The arc42 document in the requested format.
+pub fn arc42_text(doc: &archguard_engine::report::Arc42Document, p: &DocumentParams) -> String {
+    let markdown = doc.markdown(p.chapter);
+    match p.format.as_deref() {
+        Some("asciidoc") => archguard_engine::report::markdown_to_asciidoc(&markdown),
+        _ => markdown,
+    }
+}
+
+/// The Structurizr workspace of `run`, with `service`'s components.
+pub fn structurizr(run: &crate::tools::Run, p: &DocumentParams) -> Result<String, ErrorData> {
+    let invalid = |e: String| crate::tools::invalid_params(e);
+    let topology =
+        archguard_engine::analyze_services(&run.root).map_err(|e| invalid(e.to_string()))?;
+    let service = match p.service.as_deref() {
+        Some(name) => Some(archguard_engine::c4_service(&topology, name).map_err(invalid)?),
+        None => None,
+    };
+    archguard_engine::structurizr_workspace(
+        &run.root,
+        &run.loaded.config,
+        &run.file_graph,
+        &topology,
+        service,
+    )
+    .map_err(|e| invalid(e.to_string()))
+}
+
+pub fn page(text: &str, p: &DocumentParams) -> Result<Value, ErrorData> {
+    let chars: Vec<_> = text.chars().collect();
     let offset = p.offset.unwrap_or(0);
     if offset > chars.len() {
         return Err(crate::tools::invalid_params(
@@ -51,7 +117,15 @@ pub fn page(markdown: &str, p: &DocumentParams) -> Result<Value, ErrorData> {
     }
     let mut low = 0;
     let mut high = p.limit.unwrap_or(1000).min(chars.len() - offset);
-    let value = |count: usize| json!({"template":"arc42","chapter":p.chapter,"offset":offset,"total_chars":chars.len(),"next_offset":(offset+count<chars.len()).then_some(offset+count),"markdown":chars[offset..offset+count].iter().collect::<String>()});
+    let template = p.template.as_deref().unwrap_or("arc42");
+    let value = |count: usize| {
+        let mut v = json!({"template":template,"chapter":p.chapter,"offset":offset,"total_chars":chars.len(),"next_offset":(offset+count<chars.len()).then_some(offset+count)});
+        v[p.key()] = chars[offset..offset + count]
+            .iter()
+            .collect::<String>()
+            .into();
+        v
+    };
     while low < high {
         let mid = low + (high - low).div_ceil(2);
         if value(mid).to_string().len() <= crate::tools::MAX_RESPONSE_BYTES {
