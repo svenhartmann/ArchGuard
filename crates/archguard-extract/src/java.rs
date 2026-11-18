@@ -204,15 +204,15 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
         } else {
             (line, false)
         };
-        // Non-visibility modifiers may precede the type keyword.
+        // Non-visibility modifiers may precede the type keyword, in any order.
         let mut body = body;
-        for modifier in [
+        while let Some(rest) = [
             "abstract", "final", "static", "sealed", "strictfp", "default",
-        ] {
-            if let Some(rest) = strip_word(body, modifier) {
-                body = rest;
-                break;
-            }
+        ]
+        .iter()
+        .find_map(|modifier| strip_word(body, modifier))
+        {
+            body = rest;
         }
         for keyword in ["class", "interface", "enum", "record"] {
             if let Some(rest) = strip_word(body, keyword) {
@@ -270,6 +270,17 @@ mod visibility_tests {
             visibility.internal.contains("Repository"),
             "package-private"
         );
+    }
+
+    #[test]
+    fn several_modifiers_before_the_type_keyword_are_all_skipped() {
+        let visibility = scan_visibility(
+            "public static final class Builder {}\npublic abstract static class X {}\npublic abstract sealed class Shape {}\nstatic final class Hidden {}\n",
+        );
+        for name in ["Builder", "X", "Shape"] {
+            assert!(visibility.exported.contains(name), "{name}");
+        }
+        assert!(visibility.internal.contains("Hidden"));
     }
 
     #[test]
