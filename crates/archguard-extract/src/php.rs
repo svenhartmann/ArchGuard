@@ -491,10 +491,11 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
 
 /// Drop remaining leading modifiers that carry no visibility meaning.
 fn strip_visibility_noise(mut body: &str) -> &str {
-    for modifier in ["final", "abstract", "static", "readonly"] {
-        while let Some(rest) = strip_word(body, modifier) {
-            body = rest;
-        }
+    while let Some(rest) = ["final", "abstract", "static", "readonly"]
+        .iter()
+        .find_map(|modifier| strip_word(body, modifier))
+    {
+        body = rest;
     }
     body
 }
@@ -554,6 +555,16 @@ mod visibility_tests {
             scan_visibility("class C {\n  public function _hidden() {}\n  private $_x = 1;\n}\n");
         assert!(visibility.internal.contains("hidden"));
         assert!(visibility.internal.contains("x"));
+    }
+
+    #[test]
+    fn class_modifiers_are_stripped_in_any_order() {
+        let visibility = scan_visibility(
+            "<?php\nreadonly final class X {}\nfinal readonly class Y {}\nabstract readonly class Z {}\n",
+        );
+        for name in ["X", "Y", "Z"] {
+            assert!(visibility.exported.contains(name), "{name}");
+        }
     }
 
     #[test]
