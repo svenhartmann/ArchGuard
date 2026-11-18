@@ -1160,14 +1160,12 @@ fn gather(
                     .push(escape_glob(&file.rel_path));
                 continue;
             }
-            let source = std::str::from_utf8(&bytes).map_err(|_| {
-                ArchguardError::Analysis(format!("Source {} is not UTF-8", file.rel_path))
-            })?;
+            let source = String::from_utf8_lossy(&bytes);
             let Some(extractor) = extractor_for(file.lang) else {
                 continue;
             };
             let stripped = strip_root(&file.rel_path, &input.config.project.source_roots);
-            let extraction = extractor.extract(&stripped, source);
+            let extraction = extractor.extract(&stripped, &source);
             let name = crate::pipeline::file_node_name(&file, &stripped, &extraction.declarations);
             input.named.push(NamedSource {
                 relative: file.rel_path.clone(),

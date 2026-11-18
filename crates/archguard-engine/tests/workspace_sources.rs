@@ -649,3 +649,17 @@ fn workspace_qualifies_type_uses_and_class_state_without_cross_project_collision
             .any(|m| m.class_id == usage.from_class && m.lcom4 == Some(1))
     );
 }
+
+#[test]
+fn a_non_utf8_source_file_does_not_abort_the_workspace() {
+    let dir = fixture();
+    let root = dir.path();
+    // Latin-1 "é" (0xE9) is not valid UTF-8.
+    fs::write(
+        root.join("app/src/main/java/app/Latin.java"),
+        b"package app; // caf\xe9\npublic class Latin {}\n",
+    )
+    .unwrap();
+    let report = analyze_workspace_sources(root, &workspace(root, &[])).unwrap();
+    assert_eq!(report.files.len(), 4, "the Latin-1 file is analyzed too");
+}
