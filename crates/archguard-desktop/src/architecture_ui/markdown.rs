@@ -274,7 +274,6 @@ pub(super) fn fence(line: &str) -> Option<(usize, &str)> {
         .then(|| (ticks, info.split_whitespace().next().unwrap_or("")))
 }
 
-
 /// `^(#{1,6})\s+(.+)$`
 pub(super) fn heading(line: &str) -> Option<(usize, &str)> {
     let level = line.chars().take_while(|&c| c == '#').count();
@@ -370,13 +369,23 @@ pub(super) fn cells(line: &str) -> Vec<String> {
 }
 
 /// The text of inline Markdown without markup (escapes, code, emphasis,
-/// links and the five entities resolved).
+/// links, images as their alt text and the five entities resolved).
+// shortcut: a second reader beside `rich::inline`, which uses this module's
+// block helpers (calling it is a file cycle); merge once those move out.
 pub fn plain(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
+    let c: Vec<char> = text.chars().collect();
     let mut i = 0;
-    while i < chars.len() {
-        i = plain_token(&chars, i, &mut out);
+    while i < c.len() {
+        // A link reads as its label, an image as its alt text.
+        let image = usize::from(c[i] == '!');
+        i = match link(&c, i + image) {
+            Some((mid, end)) => {
+                out.push_str(&plain(&c[i + 1 + image..mid].iter().collect::<String>()));
+                end + 1
+            }
+            None => plain_token(&c, i, &mut out),
+        };
     }
     out
 }
@@ -409,11 +418,6 @@ fn plain_token(c: &[char], i: usize, out: &mut String) -> usize {
                 return end + 1;
             }
         }
-        '[' => {
-            if let Some(n) = link(c, i, out) {
-                return n;
-            }
-        }
         '&' => {
             for (name, ch) in [
                 ("amp;", '&'),
@@ -434,18 +438,29 @@ fn plain_token(c: &[char], i: usize, out: &mut String) -> usize {
     i + 1
 }
 
-/// `[label](target)` → label.
-fn link(c: &[char], i: usize, out: &mut String) -> Option<usize> {
-    let mid = (i + 1..c.len()).find(|&k| c[k] == ']' || c[k] == '\n')?;
-    if c[mid] != ']' || mid == i + 1 || c.get(mid + 1) != Some(&'(') {
+/// `[label](target)` at `c[i]`: where the label ends (`]`) and the link
+/// (`)`). Balanced parentheses belong to the target (CommonMark).
+pub(super) fn link(c: &[char], i: usize) -> Option<(usize, usize)> {
+    if c.get(i) != Some(&'[') {
         return None;
     }
-    let end = (mid + 2..c.len()).find(|&k| c[k] == ')' || c[k].is_whitespace())?;
-    if c[end] != ')' || end == mid + 2 {
+    let mut mid = i + 1;
+    while mid < c.len() && c[mid] != ']' && c[mid] != '\n' {
+        mid += if c[mid] == '\\' { 2 } else { 1 };
+    }
+    if c.get(mid) != Some(&']') || mid == i + 1 || c.get(mid + 1) != Some(&'(') {
         return None;
     }
-    out.push_str(&plain(&c[i + 1..mid].iter().collect::<String>()));
-    Some(end + 1)
+    let mut depth = 0;
+    let end = (mid + 2..c.len()).find(|&k| {
+        depth += match c[k] {
+            '(' => 1,
+            ')' => -1,
+            _ => 0,
+        };
+        depth < 0 || c[k].is_whitespace()
+    })?;
+    (c[end] == ')' && end > mid + 2).then_some((mid, end))
 }
 
 /// Inline Markdown for `StyledText`: block syntax at a line start is
@@ -703,6 +718,10 @@ mod tests {
             "Quelle: architecture.goals fett kursiv arc42 a_b & c"
         );
         assert_eq!(plain("2 * 3 and `"), "2 * 3 and `");
+        assert_eq!(
+            plain("[the spec](https://example.com/a_(b)) ![logo](img/logo.png)"),
+            "the spec logo"
+        );
     }
 
     #[test]

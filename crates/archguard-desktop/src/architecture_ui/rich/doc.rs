@@ -1012,6 +1012,23 @@ Ende.
         );
     }
 
+    /// `_` emphasis and images, which the editor writes otherwise or not
+    /// at all, stay as written (the view renders them as CommonMark); a
+    /// link with parentheses in its target stays editable.
+    #[test]
+    fn underscore_emphasis_and_images_survive_an_edit_elsewhere() {
+        let kept = ["Ein _coffee_ bitte.", "![logo](img/logo.png)"];
+        let link = "Siehe [the spec](https://example.com/a_(b)).";
+        let md = format!("Erster Absatz.\n\n{}\n\n{link}\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        let mut doc = Doc::parse(&md, &[]);
+        let editable: Vec<String> = parts(&mut doc)
+            .iter()
+            .flat_map(|p| p.blocks().iter().map(|b| b.inline.text.clone()))
+            .collect();
+        assert_eq!(editable, ["Erster Absatz.", "Siehe the spec."]);
+    }
+
     /// Two tables with a blank line between are one part; edited, they
     /// are still written as two tables.
     #[test]

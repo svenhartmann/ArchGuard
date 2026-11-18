@@ -322,6 +322,10 @@ impl Inline {
             // What lasts longer opens outside; code always inside.
             new.sort_by_key(|m| (**m == Mark::Code, std::cmp::Reverse(self.end_of(m, from))));
             for m in new {
+                // `![` opens an image; text never escapes a `!`.
+                if matches!(m, Mark::Link(_)) && out.ends_with('!') {
+                    out.insert(out.len() - 1, '\\');
+                }
                 out.push_str(open(m));
                 stack.push(m);
             }
@@ -363,10 +367,20 @@ fn close(out: &mut String, m: &Mark) {
     match m {
         Mark::Link(url) => {
             out.push_str("](");
-            // The reader ends a target at whitespace or `)`.
+            // The reader ends a target at whitespace or an unbalanced `)`.
+            let mut depth = 0i32;
+            let balanced = url.chars().all(|c| {
+                depth += match c {
+                    '(' => 1,
+                    ')' => -1,
+                    _ => 0,
+                };
+                depth >= 0
+            }) && depth == 0;
             for c in url.chars() {
                 match c {
-                    ')' => out.push_str("%29"),
+                    '(' if !balanced => out.push_str("%28"),
+                    ')' if !balanced => out.push_str("%29"),
                     c if c.is_whitespace() => out.push_str("%20"),
                     c => out.push(c),
                 }
@@ -411,17 +425,25 @@ fn write_text(out: &mut String, text: &str, code: bool) {
                 continue;
             }
             out.push('\\');
-        } else if matches!(c, '\\' | '*' | '`' | '[' | ']')
-            || (c == '&' && ENTITIES.iter().any(|(n, _)| rest[1..].starts_with(n)))
-            // Raw HTML on GitHub: `<b`, `</`, `<!`, `<?`.
-            || (c == '<'
-                && rest[1..].starts_with(|n: char| n.is_ascii_alphabetic() || "/!?".contains(n)))
-        {
+        } else if escapes(c, &rest[c.len_utf8()..], out) {
             out.push('\\');
         }
         out.push(c);
         rest = &rest[c.len_utf8()..];
     }
+}
+
+/// Whether `c`, followed by `next` and written after `out`, needs a `\`
+/// to stay text.
+fn escapes(c: char, next: &str, out: &str) -> bool {
+    matches!(c, '\\' | '*' | '`' | '[' | ']')
+        || (c == '&' && ENTITIES.iter().any(|(n, _)| next.starts_with(n)))
+        // `_` emphasis on GitHub; never inside a word.
+        || (c == '_'
+            && !(out.chars().next_back().is_some_and(char::is_alphanumeric)
+                && next.starts_with(char::is_alphanumeric)))
+        // Raw HTML on GitHub: `<b`, `</`, `<!`, `<?`.
+        || (c == '<' && next.starts_with(|n: char| n.is_ascii_alphabetic() || "/!?".contains(n)))
 }
 
 fn starts_block(line: &str) -> bool {
@@ -487,14 +509,8 @@ fn scope(c: &[char]) -> Inline {
                     continue;
                 }
             }
-            '[' => {
-                if let Some((label, url, end)) = link(c, i) {
-                    let start = text.text.len();
-                    append(&mut text, scope(label));
-                    text.spans.push(Span {
-                        range: start..text.text.len(),
-                        mark: Mark::Link(url),
-                    });
+            '[' | '!' => {
+                if let Some(end) = linked(c, i, &mut text) {
                     i = end;
                     continue;
                 }
@@ -626,25 +642,28 @@ fn emphasis(delims: &mut [Delim]) -> Vec<(usize, usize, Mark)> {
     found
 }
 
-/// `[label](target)`: the label, the target and where the link ends.
-fn link(c: &[char], i: usize) -> Option<(&[char], String, usize)> {
-    let mut mid = i + 1;
-    while mid < c.len() && c[mid] != ']' && c[mid] != '\n' {
-        mid += if c[mid] == '\\' { 2 } else { 1 };
+/// A link at `c[i]` appended to `text`, or an image (`![alt](src)`) as
+/// its alt text: the editor has no images. Where it ends.
+fn linked(c: &[char], i: usize, text: &mut Inline) -> Option<usize> {
+    let image = usize::from(c[i] == '!');
+    let (mid, end) = markdown::link(c, i + image)?;
+    let label = scope(&c[i + 1 + image..mid]);
+    if image == 1 {
+        text.text.push_str(&label.text);
+        return Some(end + 1);
     }
-    if c.get(mid) != Some(&']') || mid == i + 1 || c.get(mid + 1) != Some(&'(') {
-        return None;
-    }
-    let end = (mid + 2..c.len()).find(|&k| c[k] == ')' || c[k].is_whitespace())?;
-    if c[end] != ')' || end == mid + 2 {
-        return None;
-    }
+    let start = text.text.len();
+    append(text, label);
     let url: String = c[mid + 2..end].iter().collect();
-    Some((
-        &c[i + 1..mid],
-        url.replace("%20", " ").replace("%29", ")"),
-        end + 1,
-    ))
+    let url = url
+        .replace("%20", " ")
+        .replace("%28", "(")
+        .replace("%29", ")");
+    text.spans.push(Span {
+        range: start..text.text.len(),
+        mark: Mark::Link(url),
+    });
+    Some(end + 1)
 }
 
 #[cfg(test)]
@@ -762,6 +781,45 @@ mod tests {
             assert_eq!(md, want);
             assert_eq!(Inline::parse(&md), Inline::plain(text), "{md}");
         }
+    }
+
+    /// Parentheses in a link target nest (CommonMark); unbalanced ones are
+    /// written as `%28`/`%29`.
+    #[test]
+    fn link_targets_keep_balanced_parentheses() {
+        let md = "[the spec](https://example.com/a_(b))";
+        let want = styled(
+            "the spec",
+            vec![span(0..8, Mark::Link("https://example.com/a_(b)".into()))],
+        );
+        assert_eq!(Inline::parse(md), want);
+        assert_eq!(want.to_markdown(), md);
+        let odd = styled("x", vec![span(0..1, Mark::Link("a(b".into()))]);
+        assert_eq!(odd.to_markdown(), "[x](a%28b)");
+        assert_eq!(Inline::parse(&odd.to_markdown()), odd);
+    }
+
+    /// The editor has no images: `![alt](src)` reads as its alt text, so
+    /// its block does not write back and stays as written.
+    #[test]
+    fn an_image_reads_as_its_alt_text() {
+        assert_eq!(
+            Inline::parse("![logo](img/logo.png) x"),
+            Inline::plain("logo x")
+        );
+        // A `!` typed before a link is no image.
+        let bang = styled("!x", vec![span(1..2, Mark::Link("u".into()))]);
+        assert_eq!(bang.to_markdown(), "\\![x](u)");
+        assert_eq!(Inline::parse(&bang.to_markdown()), bang);
+    }
+
+    /// `_` that could open or close emphasis on GitHub is escaped; one
+    /// inside a word cannot and stays.
+    #[test]
+    fn underscores_that_could_mark_emphasis_are_escaped() {
+        let md = Inline::plain("_x_ snake_case __init__").to_markdown();
+        assert_eq!(md, "\\_x\\_ snake_case \\_\\_init\\_\\_");
+        assert_eq!(Inline::parse(&md), Inline::plain("_x_ snake_case __init__"));
     }
 
     /// `<` before a letter, `/`, `!` or `?` would start raw HTML on GitHub
