@@ -333,6 +333,11 @@ impl Editor {
                 .map(|e| (e.chapter, e.draft.clone(), e.base.clone()))
         })?;
         let Some(files) = &mut self.files else {
+            // The project has arc42 text that could not be read: no new place.
+            if !self.files_error.is_empty() {
+                self.set_error(self.files_error.clone());
+                return None;
+            }
             self.with_open(|o| o.as_mut().map(|e| e.ask_location = true));
             return None;
         };
@@ -713,6 +718,26 @@ mod tests {
         assert_eq!(rebuilt.save(&new), Some(path.display().to_string()));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Mein Entwurf.") && !text.contains("Gepullter Text."));
+    }
+
+    /// An arc42.md that is not UTF-8 cannot be read: the save says why,
+    /// instead of asking where to create a file the project already has.
+    #[test]
+    fn an_unreadable_arc42_text_is_the_save_error_not_a_location_question() {
+        let d = tempfile::tempdir().expect("temp dir");
+        let path = d.path().join("arc42.md");
+        std::fs::write(&path, b"## 5. Bausteine\n\nGr\xfc\xdfe.\n").unwrap();
+        let (a, _) = documents::with_store(|s| s.open(d.path()));
+        let new = doc("Old");
+        let mut editor = Editor::new(a, d.path());
+        editor.start(&new, 5);
+        editor.edit("## 5. Bausteine\n\nNeu.\n");
+        assert_eq!(editor.save(&new), None);
+        let asked = editor.with_open(|o| o.as_ref().map(|e| e.ask_location));
+        assert_eq!(asked, Some(false), "no question where to create it");
+        let reason = editor.unsaved_reason();
+        assert!(reason.contains("arc42.md") && reason.contains("UTF-8"), "{reason}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"## 5. Bausteine\n\nGr\xfc\xdfe.\n");
     }
 
     /// A pull that changes only another chapter: refused once, then the
