@@ -13,7 +13,7 @@ pub(crate) enum Flavor {
 pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
     use crate::walk::Lang;
     match lang {
-        Lang::Java | Lang::CSharp | Lang::Go => Flavor::C,
+        Lang::Java | Lang::CSharp | Lang::Go | Lang::Cpp => Flavor::C,
         Lang::Py => Flavor::Python,
         Lang::Ts | Lang::Js => Flavor::Js,
         Lang::Rust => Flavor::Rust,
