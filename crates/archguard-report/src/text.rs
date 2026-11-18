@@ -295,7 +295,7 @@ fn kind_label(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "ownership rule violation",
         FindingKind::Orphan => "orphan candidate",
         FindingKind::TargetArchitecture => "target architecture violation",
-        FindingKind::License => "licence violation",
+        FindingKind::License => "licence finding",
     }
 }
 
@@ -511,6 +511,28 @@ mod tests {
             first_line,
             "PASS: 1 cycle, 1 layer violation, 2 metric thresholds, 1 unranked module \
              (142 modules, 519 edges)"
+        );
+    }
+
+    #[test]
+    fn a_licence_coverage_warning_is_no_violation_in_the_headline() {
+        let mut report = sample_report();
+        report.summary.status = Status::Pass;
+        report.findings = vec![finding(
+            FindingKind::License,
+            "license-coverage",
+            Severity::Warning,
+            &["."],
+            Vec::new(),
+        )];
+        let first_line = to_text(&report)
+            .lines()
+            .next()
+            .expect("summary line")
+            .to_string();
+        assert_eq!(
+            first_line,
+            "PASS: 1 licence finding (142 modules, 519 edges)"
         );
     }
 
