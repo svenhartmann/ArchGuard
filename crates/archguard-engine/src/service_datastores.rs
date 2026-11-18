@@ -17,7 +17,7 @@ pub(super) struct SpringDatasource {
     pub evidence: ServiceEvidence,
 }
 
-const NOTE: &str = "Datastore references come from static configuration (images, connection URLs, host/database settings); they do not prove runtime use. A shared database means the same configured database name, a shared server only the same configured server. Tables and queries are not analyzed.";
+const NOTE: &str = "Datastore references come from static configuration (images, connection URLs, host/database settings, Terraform datastore resources); they do not prove runtime use. A shared database means the same configured database name, a shared server only the same configured server. Tables and queries are not analyzed.";
 const IMAGE: &str = "Well-known datastore image; the datastore runs as this service.";
 const URL: &str = "Literal datastore connection URL; host, port and database name only. Credentials and options omitted.";
 const SETTING: &str = "Conventional datastore host/database setting; credentials are not read.";
@@ -190,6 +190,9 @@ impl Collector<'_> {
     }
 
     fn deployment(&mut self, d: &Deployment, all: &[Deployment]) {
+        for (datastore, evidence) in &d.store_links {
+            self.usage(&d.id, datastore.clone(), None, vec![evidence.clone()]);
+        }
         let scope: Vec<&Deployment> = all.iter().filter(|t| t.scope == d.scope).collect();
         for (reference, keys) in references(&d.datastore_env) {
             let Some(datastore) = self.resolve(&d.id, &d.file, &reference, &scope) else {
@@ -246,6 +249,14 @@ pub(super) fn augment(
     };
     let mut stores = BTreeSet::new();
     for d in deployments {
+        if let Some((engine, evidence)) = &d.store {
+            stores.insert(d.id.clone());
+            collector
+                .node(&d.id, *engine)
+                .evidence
+                .push(evidence.clone());
+            continue;
+        }
         let Some((image, engine)) = d
             .images
             .iter()

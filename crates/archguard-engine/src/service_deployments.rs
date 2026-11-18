@@ -15,7 +15,7 @@ use std::{
     path::{Component, Path},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct Deployment {
     pub id: String,
     pub scope: String,
@@ -28,6 +28,10 @@ pub(super) struct Deployment {
     pub images: Vec<(String, String)>,
     /// Datastore settings; values stay in memory and are parsed by `service_datastores`.
     pub datastore_env: Settings,
+    /// A datastore declared as a managed resource (Terraform): its engine, if literal, and evidence.
+    pub store: Option<(Option<&'static str>, ServiceEvidence)>,
+    /// Datastores referenced by resource address (Terraform): datastore id and evidence.
+    pub store_links: Vec<(String, ServiceEvidence)>,
 }
 pub(super) fn read(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
@@ -39,7 +43,7 @@ pub(super) fn read(root: &Path, path: &Path) -> Option<String> {
     }
     crate::project_files::read_manifest(root, relative).ok()
 }
-fn endpoint_key(key: &str) -> bool {
+pub(super) fn endpoint_key(key: &str) -> bool {
     let k = key.to_ascii_uppercase();
     ![
         "SECRET",
@@ -142,7 +146,7 @@ pub(super) fn add(
         });
     }
 }
-fn project_for(report: &ServiceTopology, image: &str, name: &str) -> Option<String> {
+pub(super) fn project_for(report: &ServiceTopology, image: &str, name: &str) -> Option<String> {
     let image = image
         .rsplit('/')
         .next()
@@ -211,15 +215,15 @@ fn config_map_origin(workload: &str, via: &str, file: &str, key: &str) -> Vec<Se
 }
 /// Endpoint environment of one workload and the evidence of values taken from ConfigMaps.
 #[derive(Default)]
-struct Env {
-    values: BTreeMap<String, String>,
-    origins: BTreeMap<String, Vec<ServiceEvidence>>,
-    datastore: Settings,
+pub(super) struct Env {
+    pub values: BTreeMap<String, String>,
+    pub origins: BTreeMap<String, Vec<ServiceEvidence>>,
+    pub datastore: Settings,
 }
 impl Env {
     /// Keeps only public endpoint values; a later entry replaces an earlier one.
     /// Datastore settings are kept separately for `service_datastores`.
-    fn insert(&mut self, key: String, value: &str, origin: Vec<ServiceEvidence>) {
+    pub(super) fn insert(&mut self, key: String, value: &str, origin: Vec<ServiceEvidence>) {
         self.origins.remove(&key);
         self.datastore.remove(&key);
         if datastores::relevant(&key, value) {
@@ -533,6 +537,7 @@ impl Deployments<'_> {
             aliases: BTreeSet::from([name.to_ascii_lowercase()]),
             images,
             datastore_env: compose_datastore_env(&value["environment"], vars),
+            ..Default::default()
         });
     }
     /// The source project holding the service's readable, in-root Dockerfile.
@@ -678,6 +683,7 @@ impl Deployments<'_> {
             aliases: workload.aliases(documents),
             images,
             datastore_env: env.datastore,
+            ..Default::default()
         });
     }
     /// Adds the workload as a service unless it is already known.
@@ -835,12 +841,14 @@ impl Deployments<'_> {
         }
     }
 }
-/// The deployments, and for evidence files of rendered documents how they were rendered.
+/// The deployments, including the given Terraform ones, and for evidence files of
+/// rendered documents how they were rendered.
 pub(super) fn augment(
     root: &Path,
     discovery: &super::support::Discovery,
     report: &mut ServiceTopology,
     tools: &Tools,
+    terraform: Vec<Deployment>,
 ) -> (Vec<Deployment>, BTreeMap<String, String>) {
     let compose_files = report.compose_files.clone();
     let mut deployments = Deployments {
@@ -855,6 +863,7 @@ pub(super) fn augment(
     // Workloads and selectors, never Secret reads or cluster queries.
     let documents = deployments.manifests(discovery, tools);
     deployments.workloads(&documents);
+    deployments.out.extend(terraform);
     deployments.drop_mapped_project_services();
     deployments.link();
     deployments.report.services.sort_by(|a, b| a.id.cmp(&b.id));
