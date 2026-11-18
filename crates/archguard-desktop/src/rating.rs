@@ -101,6 +101,7 @@ pub fn language(file: &str) -> &'static str {
         "rs" => "rust",
         "php" => "php",
         "kt" => "kotlin",
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
         "py" => "python",
         _ => "unknown",
     }
@@ -286,6 +287,8 @@ pub(crate) mod tests {
         assert_eq!(language("lib.rs"), "rust");
         assert_eq!(language("src/A.php"), "php");
         assert_eq!(language("A.kt"), "kotlin");
+        assert_eq!(language("src/order.cpp"), "cpp");
+        assert_eq!(language("include/order.h"), "cpp");
         // The engine skips `.kts` build scripts, so they get no cohort.
         assert_eq!(language("build.gradle.kts"), "unknown");
         assert_eq!(language("a/b.py"), "python");

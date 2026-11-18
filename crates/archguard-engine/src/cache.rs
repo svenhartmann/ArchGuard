@@ -280,6 +280,14 @@ fn extraction_key(
             .map(|file| file.rel_path.as_str()),
         &mut hash,
     );
+    // C/C++ include directories from compile_commands.json and CMakeLists.txt.
+    let cpp = files
+        .iter()
+        .filter(|file| file.lang == archguard_extract::Lang::Cpp);
+    if cpp.clone().next().is_some() {
+        let dirs = crate::pipeline::include_dirs(root, cpp.map(|file| file.rel_path.as_str()));
+        hash.update(serde_json::to_vec(&dirs).expect("include dirs serialize"));
+    }
     // PSR-4 mappings participate in resolution even for declared source roots.
     match fs::read(root.join("composer.json")) {
         Ok(bytes) => {

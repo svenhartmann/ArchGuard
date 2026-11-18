@@ -32,6 +32,9 @@
 //!   `Error` exactly when `rules.deny_cycles` names the analysed
 //!   [`Level`], `Warning` otherwise.
 
+#[path = "cpp_includes.rs"]
+mod cpp_includes;
+pub(crate) use cpp_includes::include_dirs;
 #[path = "scanned_file.rs"]
 mod scanned_file;
 use scanned_file::ScannedFile;
@@ -184,7 +187,16 @@ pub(crate) fn build_graph_named(
     for (from, to, evidence) in rust_edges {
         builder.edge(node_of[&from], node_of[&to], evidence)?;
     }
-    let context = (&indexes, &go_packages, &node_of);
+    let cpp = scanned.iter().filter(|file| file.lang == "cpp");
+    let includes = match cpp.clone().next() {
+        Some(_) => cpp_includes::Includes::read(
+            root,
+            cpp.map(|file| file.rel_path.as_str()),
+            &config.project.source_roots,
+        ),
+        None => cpp_includes::Includes::default(),
+    };
+    let context = (&indexes, &go_packages, &node_of, &includes);
     resolve_imports(&scanned, context, &mut builder, &mut warnings)?;
     let full = builder.build(root.to_string_lossy().into_owned());
     let names = scanned
@@ -235,7 +247,7 @@ fn scan(files: &[SourceFile], config: &Config) -> Result<Vec<ScannedFile>, Archg
 #[tracing::instrument(skip_all)]
 fn resolve_imports(
     scanned: &[ScannedFile],
-    (indexes, go_packages, node_of): ImportContext<'_>,
+    (indexes, go_packages, node_of, includes): ImportContext<'_>,
     builder: &mut GraphBuilder,
     warnings: &mut Vec<String>,
 ) -> Result<(), ArchguardError> {
@@ -254,6 +266,8 @@ fn resolve_imports(
                     .map(|dirs| builder.ensure_pseudo(dirs.first().unwrap())),
                 _ => None,
             }
+        } else if file.lang == "cpp" {
+            includes.resolve(raw_import, &file.rel_path, node_of)
         } else if file.lang == "py" {
             resolve_python(raw_import, &index.dirs, node_of, builder)
         } else if Indexes::logical(family) {
@@ -263,8 +277,12 @@ fn resolve_imports(
             resolve_target(raw_import, index, node_of, builder, file.lang, &same)
         };
         let Some(to) = resolved else {
-            // A dotted name in code may be a member access, not a dependency.
-            if !matches!(raw_import.target, TargetSpec::Qualified(_)) {
+            // A dotted name in code may be a member access, not a dependency;
+            // an angled C/C++ include outside the include directories is a
+            // system header.
+            let system =
+                file.lang == "cpp" && matches!(raw_import.target, TargetSpec::Symbol { .. });
+            if !system && !matches!(raw_import.target, TargetSpec::Qualified(_)) {
                 warnings.push(external_warning(raw_import));
             }
             continue;
@@ -525,15 +543,18 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Php => "php",
         Lang::Go => "go",
         Lang::Kotlin => "kt",
+        Lang::Cpp => "cpp",
     }
 }
 
 /// Lookup tables [`resolve_imports`] reads: import indexes per family, Go
-/// package directories and the file node per stripped path.
+/// package directories, the file node per stripped path and the C/C++
+/// include directories.
 type ImportContext<'a> = (
     &'a Indexes<'a>,
     &'a BTreeMap<String, BTreeSet<String>>,
     &'a HashMap<String, NodeId>,
+    &'a cpp_includes::Includes,
 );
 
 /// The import indexes of one run (ADR 0010): per family, and for

@@ -24,6 +24,8 @@ pub enum Lang {
     Php,
     Go,
     Kotlin,
+    /// C and C++ share one language: a `.h` header can be either (ADR 0017).
+    Cpp,
 }
 
 impl Lang {
@@ -41,6 +43,7 @@ impl Lang {
             "go" => Some(Lang::Go),
             // Not `.kts`: those are mostly Gradle build scripts, not application code.
             "kt" => Some(Lang::Kotlin),
+            "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some(Lang::Cpp),
             _ => None,
         }
     }
