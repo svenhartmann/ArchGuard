@@ -50,8 +50,38 @@ fn drop_mermaid(text: &str) -> String {
 }
 
 fn styled(text: &str) -> StyledText {
-    StyledText::from_markdown(&markdown::inline_source(text))
+    StyledText::from_markdown(&markdown::inline_source(&alt_text(text)))
         .unwrap_or_else(|_| StyledText::from_plain_text(&markdown::plain(text)))
+}
+
+/// Images as their alt text (`StyledText` rejects images); code spans and
+/// escapes stay as written.
+fn alt_text(text: &str) -> String {
+    let c: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < c.len() {
+        let skip = match c[i] {
+            '\\' => 2,
+            '`' => c[i + 1..]
+                .iter()
+                .position(|&k| k == '`')
+                .map_or(1, |n| n + 2),
+            '!' => match markdown::link(&c, i + 1) {
+                Some((mid, end)) => {
+                    out.extend(&c[i + 2..mid]);
+                    i = end + 1;
+                    continue;
+                }
+                None => 1,
+            },
+            _ => 1,
+        };
+        let to = (i + skip).min(c.len());
+        out.extend(&c[i..to]);
+        i = to;
+    }
+    out
 }
 
 fn base(kind: i32) -> ArcBlock {
@@ -249,5 +279,18 @@ mod tests {
         assert!((head.iter().sum::<f32>() - 1.0).abs() < 1e-4);
         assert!(head[2] > head[0] && head[0] > head[1], "{head:?}");
         assert!(head[1] >= 0.08, "a short column keeps a minimum: {head:?}");
+    }
+
+    /// `StyledText` takes no images: one shows as its alt text, links stay.
+    #[test]
+    fn images_show_as_alt_text_and_links_stay() {
+        let text = "See [the spec](https://example.com/a_(b)) and ![logo](img/logo.png).";
+        let source = alt_text(text);
+        assert_eq!(
+            source,
+            "See [the spec](https://example.com/a_(b)) and logo."
+        );
+        assert!(StyledText::from_markdown(&markdown::inline_source(&source)).is_ok());
+        assert_eq!(alt_text("`![a](b)` \\![c](d)"), "`![a](b)` \\![c](d)");
     }
 }
