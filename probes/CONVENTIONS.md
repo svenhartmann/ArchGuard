@@ -194,12 +194,18 @@ Rules:
   of the stacks left out still count in `archguard.profile.samples`.
 - A span without samples has none of these attributes.
 
-The importer derives per request and per span: sampled time = samples ×
-interval; a method's self samples (it is the leaf frame) and total samples
-(it is on the stack, counted once per stack). These numbers are statistical
+The importer derives per request and per span the number of samples, and
+per method its self samples (it is the leaf frame) and total samples (it is
+on the stack, counted once per stack). These numbers are statistical
 estimates: a method with *n* samples has an uncertainty of about √*n*
 samples, and work shorter than the interval can show no samples at all.
-Every surface shows the interval, the number of samples and the clock.
+Samples × interval is a lower bound of the sampled time, not an estimate:
+both probes measured longer real gaps than the configured interval (.NET's
+sample profiler, fixed at 1 ms, sleeps 1 ms after each round over all
+threads, measured 1.8–3.7 ms; Java JFR at 10 ms gave one sample per
+26–53 ms on a heavily loaded machine). Shares of a request's samples are
+the reliable reading. Every surface shows the interval, the number of
+samples and the clock.
 
 ### Outgoing calls
 

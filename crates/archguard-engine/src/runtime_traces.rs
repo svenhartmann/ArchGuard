@@ -6,13 +6,14 @@ mod findings;
 mod index;
 mod input;
 mod requests;
+mod samples;
 mod span;
 mod time;
 
 use archguard_core::{RuntimeConfig, RuntimeDiagnostic, RuntimeProfile};
 use std::{collections::HashSet, path::Path};
 
-const NOTE: &str = "Runtime numbers come from imported OTLP traces: a sample of the recorded runs, not complete traffic. Durations are client-side span durations (execution, network and pool wait). A pattern missing from the sample is not proven absent. Query texts keep placeholders; literal values are replaced by ?.";
+const NOTE: &str = "Runtime numbers come from imported OTLP traces: a sample of the recorded runs, not complete traffic. Durations are client-side span durations (execution, network and pool wait). A pattern missing from the sample is not proven absent. Query texts keep placeholders; literal values are replaced by ?. Profiler samples are statistical: a method with n samples is uncertain by about √n, and samples × interval is a lower bound of the sampled time because samplers skip rounds.";
 
 /// The runtime profile of the project at `root`, or `None` when it has no
 /// runtime input (`.archguard/runtime/**/*.jsonl`, `.archguard/otel-traces.json`).

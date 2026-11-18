@@ -43,8 +43,9 @@ mod rules;
 mod runtime;
 pub use runtime::{
     RuntimeBreakdown, RuntimeCallSite, RuntimeConfig, RuntimeDiagnostic, RuntimeEndpoint,
-    RuntimeEvidence, RuntimeFinding, RuntimeMethod, RuntimeProfile, RuntimeRequest, RuntimeSpan,
-    RuntimeStatement, RuntimeStats, RuntimeTimePart,
+    RuntimeEvidence, RuntimeFinding, RuntimeMethod, RuntimeProfile, RuntimeRequest,
+    RuntimeSampledMethod, RuntimeSamples, RuntimeSpan, RuntimeStatement, RuntimeStats,
+    RuntimeTimePart,
 };
 mod services;
 mod staged;

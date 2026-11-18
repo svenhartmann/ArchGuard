@@ -52,11 +52,13 @@ struct Walk {
     truncated: bool,
     db_calls: u64,
     db_time: f64,
+    samples: super::samples::Sampled,
 }
 
 fn request(index: &Index, inputs: &[String], e: usize) -> RuntimeRequest {
     let root = &index.spans[e];
     let mut walk = Walk::default();
+    walk.samples.add(root.profile.as_ref());
     descend(index, root, e, 1, &mut walk);
     RuntimeRequest {
         service: root.service.clone(),
@@ -74,6 +76,7 @@ fn request(index: &Index, inputs: &[String], e: usize) -> RuntimeRequest {
         },
         spans_truncated: walk.truncated,
         evidence: evidence(index.spans, inputs, e),
+        samples: walk.samples.finish(),
     }
 }
 
@@ -99,8 +102,12 @@ fn descend(index: &Index, root: &Span, parent: usize, depth: u32, walk: &mut Wal
             walk.db_calls += 1;
             walk.db_time += ms(span);
         }
+        let samples = walk.samples.add(span.profile.as_ref());
         if walk.spans.len() < MAX_SPANS {
-            walk.spans.push(node(index, root, span, depth));
+            walk.spans.push(RuntimeSpan {
+                samples,
+                ..node(index, root, span, depth)
+            });
         } else {
             walk.truncated = true;
         }
@@ -138,6 +145,7 @@ fn node(index: &Index, root: &Span, span: &Span, depth: u32) -> RuntimeSpan {
             span.section.as_deref(),
         )
         .into(),
+        samples: 0,
     }
 }
 

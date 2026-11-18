@@ -182,6 +182,7 @@ mod tests {
             caller: None,
             section: None,
             category: if db.is_some() { "database" } else { "other" }.into(),
+            samples: 0,
         }
     }
 
@@ -199,6 +200,7 @@ mod tests {
             spans,
             spans_truncated: false,
             evidence: Default::default(),
+            samples: None,
         }
     }
 

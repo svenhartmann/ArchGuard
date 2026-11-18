@@ -295,3 +295,71 @@ fn hot_methods_rank_self_time() {
             .any(|m| m.name == "OrderRepository.findLinesOneByOne")
     );
 }
+
+/// Stack samples of the probes' sampling profilers (CONVENTIONS.md, "Samples"),
+/// attributed to the request whose spans own them. Both fixtures hold a
+/// CPU-heavy request whose pricing method must lead its sampled methods.
+#[test]
+fn sampled_methods_of_a_request_come_from_the_probes_profilers() {
+    let cases = [
+        (
+            "shop-java-profile.jsonl",
+            "simulation",
+            "com.example.shop.PriceCalculator.simulatedTotal",
+            10.0,
+            "cpu",
+        ),
+        (
+            "shop-dotnet-profile.jsonl",
+            "price",
+            "Shop.Orders.OrderService.Price",
+            1.0,
+            "wall",
+        ),
+    ];
+    for (fixture, endpoint, method, interval, clock) in cases {
+        let p = profile(fixture);
+        assert!(p.complete, "{fixture}: {:#?}", p.diagnostics);
+        assert_clean(fixture);
+        let request = p
+            .requests
+            .iter()
+            .filter(|r| r.name.contains(endpoint))
+            .filter_map(|r| r.samples.as_ref().map(|s| (r, s)))
+            .max_by_key(|(_, s)| s.samples)
+            .unwrap_or_else(|| panic!("{fixture}: a sampled {endpoint} request"));
+        let (request, samples) = request;
+        assert_eq!(samples.interval_ms, interval, "{fixture}");
+        assert_eq!(samples.clock, clock, "{fixture}");
+        assert!(samples.samples >= 30, "{fixture}: {}", samples.samples);
+        let span_samples: u64 = request.spans.iter().map(|s| s.samples).sum();
+        assert!(span_samples <= samples.samples, "{fixture}");
+        let hot = samples
+            .methods
+            .iter()
+            .find(|m| m.function == method)
+            .unwrap_or_else(|| panic!("{fixture}: {method} in {:#?}", samples.methods));
+        assert!(
+            hot.total_samples * 2 >= samples.samples,
+            "{fixture}: {method} is on most stacks: {hot:?} of {}",
+            samples.samples
+        );
+        assert!(hot.self_samples <= hot.total_samples);
+        assert!(
+            samples
+                .methods
+                .windows(2)
+                .all(|w| w[0].self_samples >= w[1].self_samples),
+            "{fixture}: ordered by self samples"
+        );
+    }
+    // Input without samples has none: unknown, not zero.
+    for fixture in ["shop-java.jsonl", "shop-dotnet.jsonl"] {
+        assert!(
+            profile(fixture)
+                .requests
+                .iter()
+                .all(|r| r.samples.is_none())
+        );
+    }
+}

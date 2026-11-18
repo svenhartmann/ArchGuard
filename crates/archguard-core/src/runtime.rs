@@ -173,6 +173,34 @@ pub struct RuntimeRequest {
     /// More spans than kept.
     pub spans_truncated: bool,
     pub evidence: RuntimeEvidence,
+    /// Stack samples of a sampling profiler on the request's spans; `None`
+    /// when no probe sampled it (unknown, not zero).
+    #[serde(default)]
+    pub samples: Option<RuntimeSamples>,
+}
+
+/// Stack samples attributed to one request (probes/CONVENTIONS.md, "Samples").
+/// Statistical: a method with n samples is uncertain by about √n samples.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeSamples {
+    /// Samples on the request's spans, also those of stacks the probe left out.
+    pub samples: u64,
+    /// The sampler's configured interval. Samplers can skip rounds, so
+    /// samples × interval is a lower bound of the sampled time.
+    pub interval_ms: f64,
+    /// `cpu` (only running threads sampled) or `wall` (waiting ones too).
+    pub clock: String,
+    /// Methods by self samples (leaf frame), most first, with the samples
+    /// whose stack contains them; at most 50.
+    pub methods: Vec<RuntimeSampledMethod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSampledMethod {
+    /// `code.function.name` form, or `[native]`.
+    pub function: String,
+    pub self_samples: u64,
+    pub total_samples: u64,
 }
 
 /// A span inside a request, placed relative to the request's start.
@@ -206,6 +234,9 @@ pub struct RuntimeSpan {
     /// or `other` (see [`RuntimeBreakdown::parts`]).
     #[serde(default)]
     pub category: String,
+    /// Profiler samples owned by this span itself (not its children).
+    #[serde(default)]
+    pub samples: u64,
 }
 
 /// Where an endpoint's time goes: mean milliseconds per request by category.
