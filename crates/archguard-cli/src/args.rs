@@ -23,8 +23,9 @@ pub(crate) struct Cli {
     #[arg(long, global = true, value_name = "PFAD")]
     pub(crate) config: Option<PathBuf>,
     /// Output format. `mermaid` is only valid for `cycles`, `sarif`
-    /// only for `check`; `graph` has its own `--format` (dot, mermaid,
-    /// json, html, graphml, gexf).
+    /// only for `check`, `asciidoc` and `docx` only for `doc --arc42`;
+    /// `graph` has its own `--format` (dot, mermaid, json, html, graphml,
+    /// gexf, structurizr).
     #[arg(
         long,
         global = true,
@@ -64,6 +65,12 @@ pub(crate) enum Format {
     Table,
     /// Markdown PR comment against `review --base`.
     PrComment,
+    /// Structurizr DSL (C4) of `graph`.
+    Structurizr,
+    /// AsciiDoc of `doc --arc42`.
+    Asciidoc,
+    /// Word document of `doc --arc42`, e.g. for a Confluence import.
+    Docx,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -402,13 +409,14 @@ pub(crate) enum Command {
         /// File relative to the project root, or an absolute path.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Generate/update arc42.md with protected manual text and 12 evidence chapters.
+        /// Generate/update arc42.md with protected manual text and 12 evidence chapters;
+        /// with `--format asciidoc|docx` export it to arc42.adoc or arc42.docx instead.
         #[arg(long)]
         arc42: bool,
         /// Only update/export/check this arc42 chapter (1..=12).
         #[arg(long, requires = "arc42", value_parser = clap::value_parser!(u8).range(1..=12))]
         chapter: Option<u8>,
-        /// Print Markdown without writing a file.
+        /// Print the document without writing a file.
         #[arg(long, conflicts_with_all = ["check", "out"])]
         stdout: bool,
         /// Read-only comparison; exit 1 if the document is missing or outdated.
@@ -450,6 +458,9 @@ pub(crate) enum Command {
         /// these modules unfolded.
         #[arg(long, value_name = "MODULN", value_delimiter = ',')]
         expand: Vec<String>,
+        /// `structurizr` only: add this service's packages as components (id or unique name).
+        #[arg(long, value_name = "SERVICE")]
+        service: Option<String>,
     },
     /// Serve a live graph on localhost; source/config changes update the browser.
     Serve {
@@ -777,5 +788,8 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Gexf => "gexf",
         Format::Table => "table",
         Format::PrComment => "pr-comment",
+        Format::Structurizr => "structurizr",
+        Format::Asciidoc => "asciidoc",
+        Format::Docx => "docx",
     }
 }
