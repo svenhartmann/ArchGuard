@@ -27,6 +27,10 @@ mod service_deployments;
 mod service_spring;
 #[path = "service_tables.rs"]
 mod service_tables;
+#[path = "service_terraform.rs"]
+mod service_terraform;
+#[path = "service_terraform_hcl.rs"]
+mod service_terraform_hcl;
 #[path = "service_traces.rs"]
 mod service_traces;
 #[path = "service_support.rs"]
@@ -91,8 +95,9 @@ pub(crate) fn analyze_services_with(
     parsed.sort_by(|a, b| a.service.id.cmp(&b.service.id));
     compose_dependencies(parsed, &mut report);
     crate::service_projects::augment(&root, &discovery, &mut report)?;
+    let terraform = service_terraform::deployments(&root, &discovery, &mut report);
     let (deployments, rendered) =
-        service_deployments::augment(&root, &discovery, &mut report, tools);
+        service_deployments::augment(&root, &discovery, &mut report, tools, terraform);
     service_communications::augment(&root, &mut report);
     let spring_datasources = service_spring::augment(&root, &mut report);
     service_clients::augment(&root, &mut report, &deployments);
