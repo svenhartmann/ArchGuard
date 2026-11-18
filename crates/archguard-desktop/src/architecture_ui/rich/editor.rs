@@ -5,6 +5,8 @@
 
 use std::collections::BTreeSet;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use super::super::markdown::Align;
 use super::doc::{Block, Doc, Kind};
 use super::inline::{Inline, Mark};
@@ -144,14 +146,14 @@ impl Editor {
 
     fn checkpoint(&mut self, typing: bool) {
         if !(typing && self.typing) {
-            self.undo.push(State {
-                doc: self.doc.clone(),
-                anchor: self.anchor,
-                focus: self.focus,
-            });
-            if self.undo.len() > UNDO {
-                self.undo.remove(0);
-            }
+            keep(
+                &mut self.undo,
+                State {
+                    doc: self.doc.clone(),
+                    anchor: self.anchor,
+                    focus: self.focus,
+                },
+            );
         }
         self.redo.clear();
         self.typing = typing;
@@ -353,80 +355,17 @@ impl Editor {
     /// start a list entry, heading or quote becomes a paragraph first, a
     /// paragraph joins the block before.
     pub fn backspace(&mut self) {
-        self.checkpoint(self.selection().is_none() && self.focus.at > 0);
-        if self.delete_selection() {
-            return;
-        }
-        let c = self.focus;
-        if self.is_diagram(c.piece, c.block) {
-            return self.remove_block(c);
-        }
-        if c.at == 0 && c.block > 0 && self.is_diagram(c.piece, c.block - 1) {
-            return self.remove_block(Caret {
-                block: c.block - 1,
-                ..c
-            });
-        }
-        if c.at > 0 {
-            let text = &self.block(c).inline.text;
-            // shortcut: removes one char, not a grapheme cluster (é as e + ́ takes two).
-            let prev = text[..c.at].chars().next_back().map_or(0, char::len_utf8);
-            self.blocks_mut(c.piece)[c.block]
-                .inline
-                .delete(c.at - prev..c.at);
-            self.collapse(Caret {
-                at: c.at - prev,
-                ..c
-            });
-        } else if self.is_cell(c.piece, c.block) {
-            // Cells do not merge; Backspace at a cell's start goes to the one before.
-            if c.block > 0 && self.is_cell(c.piece, c.block - 1) {
-                let at = self.blocks(c.piece)[c.block - 1].inline.text.len();
-                self.collapse(Caret {
-                    block: c.block - 1,
-                    at,
-                    ..c
-                });
-            }
-        } else if !matches!(self.block(c).kind, Kind::Paragraph | Kind::Code { .. }) {
-            self.blocks_mut(c.piece)[c.block].kind = Kind::Paragraph;
-        } else if c.block > 0 && !self.is_cell(c.piece, c.block - 1) {
-            self.join(c.piece, c.block - 1);
-        }
+        step(
+            self,
+            self.selection().is_none() && self.focus.at > 0,
+            erase_back,
+        );
     }
 
     /// Delete: the selection, else the character after; at a block's end
     /// the next block joins this one.
     pub fn delete_forward(&mut self) {
-        self.checkpoint(false);
-        if self.delete_selection() {
-            return;
-        }
-        let c = self.focus;
-        if self.is_diagram(c.piece, c.block) {
-            return self.remove_block(c);
-        }
-        let len = self.block(c).inline.text.len();
-        if c.at == len && self.is_diagram(c.piece, c.block + 1) {
-            self.remove_block(Caret {
-                block: c.block + 1,
-                at: 0,
-                ..c
-            });
-            return self.collapse(c);
-        }
-        if c.at < len {
-            let text = &self.block(c).inline.text;
-            let next = text[c.at..].chars().next().map_or(0, char::len_utf8);
-            self.blocks_mut(c.piece)[c.block]
-                .inline
-                .delete(c.at..c.at + next);
-        } else if c.block + 1 < self.blocks(c.piece).len()
-            && !self.is_cell(c.piece, c.block)
-            && !self.is_cell(c.piece, c.block + 1)
-        {
-            self.join(c.piece, c.block);
-        }
+        step(self, false, erase_forward);
     }
 
     fn is_diagram(&self, piece: usize, block: usize) -> bool {
@@ -846,17 +785,22 @@ impl Editor {
 
     /// Tab and Shift+Tab: list entries one level deeper or out.
     pub fn indent(&mut self, deeper: bool) {
-        self.checkpoint(false);
-        let (piece, range) = self.touched();
-        for b in range {
-            if let Kind::Item { depth, .. } = &mut self.blocks_mut(piece)[b].kind {
-                *depth = if deeper {
-                    *depth + 1
-                } else {
-                    depth.saturating_sub(1)
-                };
+        step(self, false, |e| {
+            let (piece, range) = e.touched();
+            for b in range {
+                // Only list entries: `blocks_mut` marks the part edited.
+                if !matches!(e.blocks(piece)[b].kind, Kind::Item { .. }) {
+                    continue;
+                }
+                if let Kind::Item { depth, .. } = &mut e.blocks_mut(piece)[b].kind {
+                    *depth = if deeper {
+                        *depth + 1
+                    } else {
+                        depth.saturating_sub(1)
+                    };
+                }
             }
-        }
+        });
     }
 
     /// The touched block's kind (for the toolbar).
@@ -895,7 +839,7 @@ impl Editor {
                 at: if word {
                     word_start(text, c.at)
                 } else {
-                    c.at - text[..c.at].chars().next_back().map_or(0, char::len_utf8)
+                    c.at - prev_grapheme(text, c.at)
                 },
                 ..c
             }
@@ -919,7 +863,7 @@ impl Editor {
                 at: if word {
                     word_end(text, c.at)
                 } else {
-                    c.at + text[c.at..].chars().next().map_or(0, char::len_utf8)
+                    c.at + next_grapheme(text, c.at)
                 },
                 ..c
             }
@@ -1088,6 +1032,106 @@ impl Editor {
     }
 }
 
+/// Run `edit` on `e` as one undo step; an edit that changes nothing
+/// leaves undo and redo as they were.
+fn step(e: &mut Editor, typing: bool, edit: impl FnOnce(&mut Editor)) {
+    let before = State {
+        doc: e.doc.clone(),
+        anchor: e.anchor,
+        focus: e.focus,
+    };
+    let joins = typing && e.typing;
+    edit(e);
+    if e.doc == before.doc {
+        e.typing = false;
+        return;
+    }
+    if !joins {
+        keep(&mut e.undo, before);
+    }
+    e.redo.clear();
+    e.typing = typing;
+}
+
+fn keep(undo: &mut Vec<State>, state: State) {
+    undo.push(state);
+    if undo.len() > UNDO {
+        undo.remove(0);
+    }
+}
+
+fn erase_back(e: &mut Editor) {
+    if e.delete_selection() {
+        return;
+    }
+    let c = e.focus;
+    if e.is_diagram(c.piece, c.block) {
+        return e.remove_block(c);
+    }
+    if c.at == 0 && c.block > 0 && e.is_diagram(c.piece, c.block - 1) {
+        return e.remove_block(Caret {
+            block: c.block - 1,
+            ..c
+        });
+    }
+    if c.at > 0 {
+        let text = &e.block(c).inline.text;
+        let prev = prev_grapheme(text, c.at);
+        e.blocks_mut(c.piece)[c.block]
+            .inline
+            .delete(c.at - prev..c.at);
+        e.collapse(Caret {
+            at: c.at - prev,
+            ..c
+        });
+    } else if e.is_cell(c.piece, c.block) {
+        // Cells do not merge; Backspace at a cell's start goes to the one before.
+        if c.block > 0 && e.is_cell(c.piece, c.block - 1) {
+            let at = e.blocks(c.piece)[c.block - 1].inline.text.len();
+            e.collapse(Caret {
+                block: c.block - 1,
+                at,
+                ..c
+            });
+        }
+    } else if !matches!(e.block(c).kind, Kind::Paragraph | Kind::Code { .. }) {
+        e.blocks_mut(c.piece)[c.block].kind = Kind::Paragraph;
+    } else if c.block > 0 && !e.is_cell(c.piece, c.block - 1) {
+        e.join(c.piece, c.block - 1);
+    }
+}
+
+fn erase_forward(e: &mut Editor) {
+    if e.delete_selection() {
+        return;
+    }
+    let c = e.focus;
+    if e.is_diagram(c.piece, c.block) {
+        return e.remove_block(c);
+    }
+    let len = e.block(c).inline.text.len();
+    if c.at == len && e.is_diagram(c.piece, c.block + 1) {
+        e.remove_block(Caret {
+            block: c.block + 1,
+            at: 0,
+            ..c
+        });
+        return e.collapse(c);
+    }
+    if c.at < len {
+        let text = &e.block(c).inline.text;
+        let next = next_grapheme(text, c.at);
+        e.blocks_mut(c.piece)[c.block]
+            .inline
+            .delete(c.at..c.at + next);
+    } else if c.block + 1 < e.blocks(c.piece).len()
+        && !e.is_cell(c.piece, c.block)
+        && !e.is_cell(c.piece, c.block + 1)
+    {
+        e.join(c.piece, c.block);
+    }
+}
+
 /// `doc` with an empty part at its end if it ends in fixed text.
 fn with_trailing_part(mut doc: Doc) -> Doc {
     let last = doc.pieces.iter().rposition(|p| match p {
@@ -1128,6 +1172,17 @@ fn split_lines(blocks: &mut Vec<Block>, b: usize, carets: [&mut Caret; 2]) {
             c.at -= before.rfind('\n').map_or(0, |n| n + 1);
         }
     }
+}
+
+/// The bytes of the grapheme cluster before `at` (an emoji with its skin
+/// tone, a letter with its accent): one step for the caret.
+fn prev_grapheme(text: &str, at: usize) -> usize {
+    text[..at].graphemes(true).next_back().map_or(0, str::len)
+}
+
+/// The bytes of the grapheme cluster after `at`.
+fn next_grapheme(text: &str, at: usize) -> usize {
+    text[at..].graphemes(true).next().map_or(0, str::len)
 }
 
 fn word_start(text: &str, at: usize) -> usize {
@@ -1178,7 +1233,8 @@ mod tests {
     /// Of two tables in one part, the caret's table is its own rows only.
     #[test]
     fn the_table_at_the_caret_ends_at_the_next_table() {
-        let mut e = editor("| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n");
+        let mut e =
+            editor("| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n");
         e.place(at(&e, 5, 0), false);
         let (range, rows) = e.table().expect("in a table");
         assert_eq!(range, 4..8);
@@ -1304,6 +1360,26 @@ mod tests {
         );
         e.redo();
         assert_eq!(e.markdown(), "abcd\n");
+    }
+
+    /// Tab in a paragraph, Backspace at the start and Delete at the end
+    /// change nothing: no undo step, and redo stays.
+    #[test]
+    fn keys_that_change_nothing_leave_undo_and_redo_alone() {
+        let mut e = editor("eins\n");
+        e.place(at(&e, 0, 4), false);
+        e.type_text("x");
+        e.undo();
+        e.place(at(&e, 0, 0), false);
+        e.indent(true);
+        e.indent(false);
+        e.backspace();
+        e.place(at(&e, 0, 4), false);
+        e.delete_forward();
+        assert!(!e.can_undo(), "nothing to take back");
+        assert!(e.can_redo(), "the undone typing can come back");
+        e.redo();
+        assert_eq!(e.markdown(), "einsx\n");
     }
 
     #[test]
@@ -1605,6 +1681,27 @@ mod tests {
             e.enter();
             assert_eq!(e.markdown(), want, "{md}");
             assert_eq!((e.focus.block, e.focus.at), (last + 1, 0), "{md}");
+        }
+    }
+
+    /// Left, Right, Delete and Backspace take an emoji with its skin tone,
+    /// a family of joined emoji and a letter with its accent as one.
+    #[test]
+    fn keys_step_over_whole_grapheme_clusters() {
+        for g in ["👍🏽", "👨\u{200d}👩\u{200d}👧", "e\u{301}"] {
+            let text = format!("a{g}b");
+            let mut e = editor(&format!("{text}\n"));
+            e.place(at(&e, 0, 1), false);
+            e.right(false, false);
+            assert_eq!(e.focus.at, 1 + g.len(), "right over {g:?}");
+            e.left(false, false);
+            assert_eq!(e.focus.at, 1, "left over {g:?}");
+            e.delete_forward();
+            assert_eq!(e.markdown(), "ab\n", "delete {g:?}");
+            e.undo();
+            e.place(at(&e, 0, 1 + g.len()), false);
+            e.backspace();
+            assert_eq!(e.markdown(), "ab\n", "backspace {g:?}");
         }
     }
 

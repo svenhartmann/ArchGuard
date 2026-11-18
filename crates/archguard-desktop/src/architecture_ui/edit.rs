@@ -9,6 +9,7 @@ use archguard_engine::core::DiagramFormat;
 use archguard_engine::report::Arc42Document;
 use slint::ComponentHandle;
 
+use super::rich::editor::Caret;
 use super::rich::layout::Style;
 #[cfg(test)]
 use super::rich::view::Key;
@@ -59,6 +60,30 @@ struct Open {
     /// The formatted editor while the visual editor shows; made from the
     /// draft when it opens, and it writes the draft on every edit.
     rich: Option<Rich>,
+    /// The caret of the last formatted editor, for the next one.
+    caret: Caret,
+}
+
+impl Open {
+    /// Drop the formatted editor (Markdown shows, or it is drawn anew).
+    fn drop_rich(&mut self) {
+        if let Some(rich) = self.rich.take() {
+            self.caret = rich.editor.focus;
+        }
+    }
+
+    /// The formatted editor, made from the draft if there is none, with
+    /// the caret where the last one had it.
+    fn rich(&mut self) -> &mut Rich {
+        self.rich.get_or_insert_with(|| {
+            let mut rich = Rich::new(&self.draft);
+            // A draft edited in Markdown may no longer have that part.
+            if rich.editor.doc().part(self.caret.piece).is_some() {
+                rich.editor.place(self.caret, false);
+            }
+            rich
+        })
+    }
 }
 
 impl Editor {
@@ -185,6 +210,7 @@ impl Editor {
             original: text,
             base: self.files.as_ref().and_then(|f| f.saved(chapter)),
             rich: None,
+            caret: Caret::default(),
         };
         documents::set_state(self.doc, Some(open));
     }
@@ -214,16 +240,16 @@ impl Editor {
         let shown = self.with_open(|o| {
             let e = o.as_mut()?;
             if !visual && !reading {
-                e.rich = None;
+                e.drop_rich();
                 let body = blocks::chapter_body(&e.draft, e.chapter, false);
                 let rows = blocks::ui_blocks(&markdown::parse(&body), &note);
                 return Some((e.draft.clone(), Err(rows)));
             }
-            let rich = e.rich.get_or_insert_with(|| Rich::new(&e.draft));
+            let rich = e.rich();
             rich.set_style(style);
             rich.reading = reading;
-            let items = rich.items(&note, figure, own, drawn);
-            Some((e.draft.clone(), Ok((items, rich.tools()))))
+            let shown = Ok((rich.items(&note, figure, own, drawn), rich.tools()));
+            Some((e.draft.clone(), shown))
         });
         let Some((draft, shown)) = shown else {
             return;
@@ -243,7 +269,7 @@ impl Editor {
 
     /// Draw the chapter anew, its diagrams too (a tick changed them).
     pub fn redraw(&self) {
-        self.with_open(|o| o.as_mut().map(|e| e.rich = None));
+        self.with_open(|o| o.as_mut().map(Open::drop_rich));
     }
 
     /// Whether chapter `n` is in the project's arc42 text.
@@ -677,6 +703,43 @@ mod tests {
             rich.markdown()
         });
         assert_eq!(text, "## 5. Title\n\nAlles *neu*.\n");
+    }
+
+    /// Markdown and back, or a redraw, keep the caret where it was.
+    #[test]
+    fn the_caret_stays_when_markdown_shows_and_the_editor_is_drawn_anew() {
+        let (dir, a) = project();
+        let editor = Editor::new(a, dir.path());
+        editor.start(&doc("Old"), 5);
+        editor.edit("## 5. Title\n\neins\n\nzwei drei\n");
+        let caret = editor.with_open(|o| {
+            let e = o.as_mut().unwrap();
+            let rich = e.rich();
+            let c = rich.editor.focus;
+            rich.editor.place(
+                Caret {
+                    block: 1,
+                    at: 4,
+                    ..c
+                },
+                false,
+            );
+            let caret = rich.editor.focus;
+            e.drop_rich();
+            assert_eq!(e.rich().editor.focus, caret, "back from Markdown");
+            e.drop_rich();
+            Some(caret)
+        });
+        editor.redraw();
+        let back = editor.with_open(|o| Some(o.as_mut().unwrap().rich().editor.focus));
+        assert_eq!(back, caret, "after a redraw");
+        // A draft edited down to fewer blocks keeps the caret in it.
+        editor.edit("## 5. Title\n\neins\n");
+        let text = editor.with_open(|o| {
+            let rich = o.as_mut().unwrap().rich();
+            Some(rich.editor.block(rich.editor.focus).inline.text.clone())
+        });
+        assert_eq!(text.as_deref(), Some("eins"));
     }
 
     #[test]
