@@ -56,6 +56,8 @@ pub(crate) struct Operation {
     pub at: usize,
 }
 type R<T> = Result<T, (usize, String)>;
+/// Name, type, has a default value, directive uses.
+type InputValue = (String, String, bool, Vec<String>);
 /// Root fields and root-level fragment spreads of one selection set.
 #[derive(Default)]
 struct Selection {
@@ -267,7 +269,7 @@ impl<'a> Parser<'a> {
         Ok(ty)
     }
     /// `name: Type = default @dir` items up to `close`.
-    fn input_values(&mut self, close: &str) -> R<Vec<(String, String, bool, Vec<String>)>> {
+    fn input_values(&mut self, close: &str) -> R<Vec<InputValue>> {
         let mut out = vec![];
         while !self.eat(close) {
             self.description();

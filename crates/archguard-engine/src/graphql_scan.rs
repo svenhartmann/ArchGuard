@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
 
+/// Relative path, file text, and each document with its byte offset.
+type FileDocuments = (String, String, Vec<(usize, String)>);
 pub(crate) const MAX_BYTES: u64 = 1 << 20;
 const MAX_ENTRIES: usize = 50_000;
 const SCHEMA_FILES: [&str; 3] = ["graphql", "graphqls", "gql"];
@@ -138,10 +140,7 @@ pub(crate) struct Scan {
     pub diagnostics: Vec<String>,
 }
 /// GraphQL documents of one file: the whole schema file or each template.
-fn documents(
-    root: &Path,
-    entry: &ignore::DirEntry,
-) -> Result<(String, String, Vec<(usize, String)>), String> {
+fn documents(root: &Path, entry: &ignore::DirEntry) -> Result<FileDocuments, String> {
     let path = entry.path();
     let ext = path
         .extension()
