@@ -477,6 +477,10 @@ class Sub : JavaBase() {
         hashCode()
     }
 }
+
+class Circle : Shape() {
+    override fun draw() = super.draw()
+}
 "#;
 
 /// Java declarations come from the javac helper (CI has a JDK).
@@ -486,7 +490,7 @@ fn java_project() -> CallAnalysis {
         ("src/main/java/com/shop/legacy/Util.java", JAVA_UTIL),
         (
             "src/main/java/com/shop/legacy/Shape.java",
-            "package com.shop.legacy;\n\npublic abstract class Shape {}\n",
+            "package com.shop.legacy;\n\npublic abstract class Shape {\n    public abstract void draw();\n}\n",
         ),
         ("src/main/kotlin/com/shop/app/Sub.kt", JAVA_USER),
     ])
@@ -544,6 +548,8 @@ fn calls_into_java_classes_resolve_with_the_javac_declarations() {
         "Plain()",
         // An abstract class cannot be constructed.
         "Shape()",
+        // An abstract Java method has no body to call.
+        "super.draw()",
     ] {
         assert_eq!(target(&report, code), unresolved(), "{code}");
     }
