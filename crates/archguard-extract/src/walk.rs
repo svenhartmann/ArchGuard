@@ -24,6 +24,7 @@ pub enum Lang {
     Php,
     Go,
     Kotlin,
+    Scala,
 }
 
 impl Lang {
@@ -41,6 +42,8 @@ impl Lang {
             "go" => Some(Lang::Go),
             // Not `.kts`: those are mostly Gradle build scripts, not application code.
             "kt" => Some(Lang::Kotlin),
+            // Not `.sc`: worksheets and Ammonite scripts, not application code.
+            "scala" => Some(Lang::Scala),
             _ => None,
         }
     }
@@ -69,11 +72,11 @@ pub struct SourceFile {
 }
 
 /// Build manifests of the languages that name files after a declared
-/// package or namespace (Java, Kotlin, C#, PHP).
+/// package or namespace (Java, Kotlin, Scala, C#, PHP).
 fn is_manifest(name: &str) -> bool {
     matches!(
         name,
-        "pom.xml" | "build.gradle" | "build.gradle.kts" | "composer.json"
+        "pom.xml" | "build.gradle" | "build.gradle.kts" | "build.sbt" | "composer.json"
     ) || [".csproj", ".fsproj", ".vbproj"]
         .iter()
         .any(|ext| name.ends_with(ext))
@@ -195,11 +198,12 @@ mod tests {
             ("cs", Lang::CSharp),
             ("php", Lang::Php),
             ("kt", Lang::Kotlin),
+            ("scala", Lang::Scala),
         ] {
             assert_eq!(Lang::from_extension(ext), Some(lang), "ext {ext}");
         }
         assert_eq!(Lang::from_extension("txt"), None);
-        assert_eq!(Lang::from_extension("scala"), None);
+        assert_eq!(Lang::from_extension("sc"), None);
         assert_eq!(Lang::from_extension("kts"), None);
         assert_eq!(Lang::from_extension(""), None);
     }
@@ -209,12 +213,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for rel in [
             "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs", "j.php",
-            "k.kt",
+            "k.kt", "l.scala",
         ] {
             touch(dir.path(), rel);
         }
         touch(dir.path(), "notes.txt");
-        touch(dir.path(), "Other.scala");
+        touch(dir.path(), "Other.sc");
         touch(dir.path(), "noext");
 
         let files = walk_dir(dir.path(), &[]).unwrap();
@@ -222,7 +226,7 @@ mod tests {
             rel_paths(&files),
             [
                 "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs",
-                "j.php", "k.kt",
+                "j.php", "k.kt", "l.scala",
             ]
         );
         let langs: Vec<Lang> = files.iter().map(|f| f.lang).collect();
@@ -240,8 +244,18 @@ mod tests {
                 Lang::CSharp,
                 Lang::Php,
                 Lang::Kotlin,
+                Lang::Scala,
             ]
         );
+    }
+
+    #[test]
+    fn an_sbt_build_names_its_project() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "svc/build.sbt");
+        touch(dir.path(), "svc/src/main/scala/A.scala");
+        let files = walk_dir(dir.path(), &[]).unwrap();
+        assert_eq!(files[0].project, "svc");
     }
 
     #[test]

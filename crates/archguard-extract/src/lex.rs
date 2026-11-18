@@ -19,6 +19,10 @@ pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
         Lang::Rust => Flavor::Rust,
         Lang::Php => Flavor::Php,
         Lang::Kotlin => Flavor::Kotlin,
+        // shortcut: Scala shares Kotlin's nested comments, `${…}` templates and
+        // raw strings; Scala 2 symbol literals (`'sym`) and Scala 3 macro quotes
+        // (`'{…}`) are read as char literals, add a Scala flavor if they matter.
+        Lang::Scala => Flavor::Kotlin,
     }
 }
 #[derive(Debug)]
