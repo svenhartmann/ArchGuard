@@ -419,6 +419,22 @@ pub fn list_entries(blocks: &[Block]) -> Vec<Option<(usize, Option<u64>)>> {
         .collect()
 }
 
+/// The blocks of the table holding cell `b`: the cells around it up to
+/// the next table's first header cell.
+pub fn table_range(blocks: &[Block], b: usize) -> Range<usize> {
+    let cell = |i: usize| matches!(blocks[i].kind, Kind::Cell { .. });
+    let first = |i: usize| matches!(blocks[i].kind, Kind::Cell { row: 0, col: 0, .. });
+    let mut start = b;
+    while start > 0 && !first(start) && cell(start - 1) {
+        start -= 1;
+    }
+    let mut end = b + 1;
+    while end < blocks.len() && cell(end) && !first(end) {
+        end += 1;
+    }
+    start..end
+}
+
 /// The `| --- | ---: |` line under a header row of `header` cells.
 fn separator(header: &[Block]) -> String {
     let mut out = String::from("|");
@@ -438,6 +454,21 @@ fn separator(header: &[Block]) -> String {
     out
 }
 
+/// What `write` puts between a block of kind `prev` and one of `kind`.
+fn between(prev: Option<&Kind>, kind: &Kind) -> &'static str {
+    match (prev, kind) {
+        (None, _) => "",
+        (Some(Kind::Item { .. }), Kind::Item { .. }) => "\n",
+        (Some(Kind::Quote), Kind::Quote) => "\n>\n",
+        // A table's rows; a cell after another in its row. A header cell
+        // after a cell starts the next table.
+        (Some(Kind::Cell { .. }), Kind::Cell { row: 0, col: 0, .. }) => "\n\n",
+        (Some(Kind::Cell { .. }), Kind::Cell { col: 0, .. }) => "\n",
+        (Some(Kind::Cell { .. }), Kind::Cell { .. }) => "",
+        _ => "\n\n",
+    }
+}
+
 /// The Markdown of edited blocks; empty text blocks are dropped.
 fn write(blocks: &[Block]) -> String {
     let mut out = String::new();
@@ -448,15 +479,7 @@ fn write(blocks: &[Block]) -> String {
         if !written(b) {
             continue;
         }
-        out.push_str(match (prev, &b.kind) {
-            (None, _) => "",
-            (Some(Kind::Item { .. }), Kind::Item { .. }) => "\n",
-            (Some(Kind::Quote), Kind::Quote) => "\n>\n",
-            // A table's rows; a cell after another in its row.
-            (Some(Kind::Cell { .. }), Kind::Cell { col: 0, .. }) => "\n",
-            (Some(Kind::Cell { .. }), Kind::Cell { .. }) => "",
-            _ => "\n\n",
-        });
+        out.push_str(between(prev, &b.kind));
         let text = b.inline.to_markdown();
         match &b.kind {
             Kind::Paragraph => out.push_str(&text),
@@ -928,5 +951,13 @@ Ende.
         ];
         let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
         assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+    }
+
+    /// Two tables with a blank line between are one part; edited, they
+    /// are still written as two tables.
+    #[test]
+    fn two_tables_in_a_part_stay_two() {
+        let md = "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n";
+        assert_eq!(edit_first(md), md.replacen("| a |", "| Neu. |", 1));
     }
 }

@@ -226,16 +226,7 @@ impl Rich {
         let Kind::Cell { cols, .. } = blocks[b].kind else {
             return (b, vec![1.0]);
         };
-        let start = (0..=b)
-            .rev()
-            .take_while(|&i| self.is_cell(piece, i))
-            .last()
-            .unwrap_or(b);
-        let end = (b..blocks.len())
-            .take_while(|&i| self.is_cell(piece, i))
-            .last()
-            .unwrap_or(b)
-            + 1;
+        let std::ops::Range { start, end } = doc::table_range(blocks, b);
         let texts: Vec<String> = blocks[start..end]
             .iter()
             .map(|c| c.inline.text.clone())
@@ -929,6 +920,21 @@ mod tests {
         let mut r = Rich::new(md);
         r.set_width(400.0);
         r
+    }
+
+    /// Of two tables in one part, each gets the column widths of its own
+    /// cells, as if it stood alone.
+    #[test]
+    fn two_tables_in_a_part_have_their_own_columns() {
+        let first = "| eine sehr lange Zelle | b |\n| --- | --- |\n| 1 | 2 |\n";
+        let second = "| c | eine noch viel längere Zelle |\n| --- | --- |\n| 3 | 4 |\n";
+        let both = rich(&format!("{first}\n{second}"));
+        let alone = rich(second);
+        let piece = |r: &Rich| r.editor.focus.piece;
+        assert_eq!(
+            both.table_of(piece(&both), 5),
+            (4, alone.table_of(piece(&alone), 1).1)
+        );
     }
 
     #[test]

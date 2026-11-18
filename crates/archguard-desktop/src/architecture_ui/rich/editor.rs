@@ -536,14 +536,7 @@ impl Editor {
             return None;
         }
         let blocks = self.blocks(c.piece);
-        let start = (0..=c.block)
-            .rev()
-            .take_while(|&b| self.is_cell(c.piece, b))
-            .last()?;
-        let end = (c.block..blocks.len())
-            .take_while(|&b| self.is_cell(c.piece, b))
-            .last()?
-            + 1;
+        let std::ops::Range { start, end } = super::doc::table_range(blocks, c.block);
         let mut rows: Vec<Vec<Block>> = Vec::new();
         for b in &blocks[start..end] {
             if let Kind::Cell { col: 0, .. } = b.kind {
@@ -1134,6 +1127,18 @@ mod tests {
         e.place(at(&e, 0, 0), false);
         assert_eq!(e.kind(), &Kind::Paragraph);
         assert_eq!(e.markdown(), "---\n\n>\n\n---\n");
+    }
+
+    /// Of two tables in one part, the caret's table is its own rows only.
+    #[test]
+    fn the_table_at_the_caret_ends_at_the_next_table() {
+        let mut e = editor("| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n");
+        e.place(at(&e, 5, 0), false);
+        let (range, rows) = e.table().expect("in a table");
+        assert_eq!(range, 4..8);
+        assert_eq!(rows.len(), 2);
+        e.place(at(&e, 3, 0), false);
+        assert_eq!(e.table().expect("in a table").0, 0..4);
     }
 
     #[test]
