@@ -182,7 +182,8 @@ pub struct ServiceDiagnostic {
 }
 
 /// Datastore references read from static configuration. A reference is evidence of
-/// configuration, not of runtime use; tables and queries are never analyzed.
+/// configuration, not of runtime use. Tables come from the services' own source
+/// (ADR 0012); queries are never analyzed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceDatastores {
     pub nodes: Vec<Datastore>,
@@ -192,6 +193,18 @@ pub struct ServiceDatastores {
     /// Coverage note; empty when no datastore was found.
     #[serde(default)]
     pub note: String,
+    /// Tables a service's own source maps or migrates (entities, migrations, SQL).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<ServiceTable>,
+}
+
+/// A table named literally in a service's source; one entry per service and table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceTable {
+    pub service: String,
+    /// Lowercase table name without schema or quotes.
+    pub name: String,
+    pub evidence: Vec<ServiceEvidence>,
 }
 
 /// A database server, cache or broker used as a store.
@@ -226,14 +239,23 @@ pub enum SharedDatastoreScope {
     Database,
     /// Same datastore server; database names differ or are unknown.
     Server,
+    /// Same database, and two or more of the services name the same table.
+    Table,
 }
 
-/// Two or more services configured against the same datastore. Shared tables are never claimed.
+/// Two or more services configured against the same datastore. A shared table is claimed
+/// only when the services' source names it literally (ADR 0012).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedDatastore {
     pub datastore: String,
     pub scope: SharedDatastoreScope,
-    /// The shared database name for `Database`; `None` for `Server`.
+    /// The shared database name for `Database` and `Table`; `None` for `Server`.
     pub database: Option<String>,
     pub services: Vec<String>,
+    /// For `Table`: the tables two or more of the services name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<String>,
+    /// Same database, every service's tables are known and none is named twice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disjoint_tables: bool,
 }
