@@ -1,7 +1,8 @@
 //! A chapter as the rich-text editor holds it: the Markdown's top-level
 //! blocks ([`markdown::chunks`]) as parts of formatted blocks, and between
 //! them the text it keeps as written (blank lines, comments) along with
-//! the blocks it does not edit: rules, quotes holding more than text, the
+//! the blocks it does not edit: rules, quotes holding more than text, text
+//! it would not write back as read (reference links, footnotes), the
 //! chapter heading and generated `archguard:arc42` blocks (saving
 //! refreshes them). A table is one cell block per cell. A part nobody edited writes its source back
 //! unchanged, so opening and saving a chapter changes nothing.
@@ -211,10 +212,15 @@ pub fn generated(text: &str) -> Vec<Range<usize>> {
 /// The blocks the editor edits, or `None` for a chunk it keeps as written.
 fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
     let mut out = Vec::new();
+    let mut faithful = true;
     for b in blocks {
-        let block = |kind, text: &str| Block {
-            kind,
-            inline: one_line(text),
+        let mut block = |kind, text: &str| {
+            let block = Block {
+                kind,
+                inline: one_line(text),
+            };
+            faithful &= writes_back(&block, text);
+            block
         };
         match b {
             // The chapter heading (`## 5. Bausteinsicht`) names the chapter.
@@ -269,7 +275,19 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
             Md::Rule => return None,
         }
     }
-    Some(out)
+    faithful.then_some(out)
+}
+
+/// Whether `block`, read from `md`, writes it back (line breaks as
+/// spaces). Else `md` holds Markdown the editor does not model (reference
+/// links and definitions, footnotes, link titles, hard breaks, entities)
+/// and its chunk stays as written.
+fn writes_back(block: &Block, md: &str) -> bool {
+    let mut again = block.inline.to_markdown();
+    if matches!(block.kind, Kind::Cell { .. }) {
+        again = again.replace('|', "\\|");
+    }
+    again == md.replace('\n', " ") && !md.contains("  \n")
 }
 
 pub fn chapter_number(heading: &str) -> bool {
@@ -567,6 +585,30 @@ Ende.
             "{md}"
         );
         assert!(md.contains("> Zitat *kursiv*"), "{md}");
+    }
+
+    /// Markdown the editor does not model (reference links and their
+    /// definitions, footnotes, link titles, hard breaks) is not written
+    /// again when another paragraph is edited.
+    #[test]
+    fn text_the_editor_does_not_model_survives_an_edit_elsewhere() {
+        let kept = [
+            "Siehe [ADR][adr] und die Fußnote[^1].",
+            "[adr]: https://example.org/adr \"ADR\"",
+            "[^1]: Eine Fußnote.",
+            "Ein [Link](https://example.org \"Titel\").",
+            "Zeile eins  \nZeile zwei",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
+        let mut doc = Doc::parse(&md, &[]);
+        assert_eq!(doc.to_markdown(), md, "untouched");
+        parts(&mut doc)[0].edit()[0].inline = Inline::plain("Neu.");
+        let written = doc.to_markdown();
+        assert!(written.starts_with("Neu.\n\n"), "{written}");
+        assert!(
+            written.ends_with(&format!("{}\n", kept.join("\n\n"))),
+            "{written}"
+        );
     }
 
     #[test]
