@@ -150,7 +150,8 @@ pub(crate) fn build_graph_named(
 }
 
 /// [`build_graph_named`] over `cpp_dirs` read once by [`cpp_include_dirs`].
-#[tracing::instrument(skip_all)]
+/// Keeps the span name `build_graph_named` that self-traces already show.
+#[tracing::instrument(name = "build_graph_named", skip_all)]
 pub(crate) fn build_graph_included(
     root: &Path,
     files: &[SourceFile],
