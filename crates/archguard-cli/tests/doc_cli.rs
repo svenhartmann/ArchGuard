@@ -47,7 +47,14 @@ fn arc42_populates_twelve_chapters_and_preserves_manual_text_on_update() {
     fs::write(&target, &manual).unwrap();
     assert!(cli(&["doc", "--arc42", "--check"]).status.success());
     fs::write(root.join("c.ts"), "import './a';\n").unwrap();
-    assert_eq!(cli(&["doc", "--arc42", "--check"]).status.code(), Some(1));
+    let stale = cli(&["doc", "--arc42", "--check"]);
+    assert_eq!(stale.status.code(), Some(1));
+    // The author must learn which chapters to rework, not only that one is off.
+    assert!(
+        String::from_utf8_lossy(&stale.stdout).contains("chapter 5"),
+        "{}",
+        String::from_utf8_lossy(&stale.stdout)
+    );
     assert_eq!(fs::read_to_string(&target).unwrap(), manual);
     assert!(cli(&["doc", "--arc42"]).status.success());
     let updated = fs::read_to_string(&target).unwrap();
@@ -253,4 +260,37 @@ fn html_report_carries_the_arc42_diagram_catalogue() {
         .unwrap();
     assert_eq!(blocks["chapter"], 5);
     assert_eq!(blocks["shown"], true);
+}
+
+#[test]
+fn arc42_check_accepts_a_current_document_the_desktop_wrote_in_german() {
+    use archguard_engine::core::DocLang;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.ts"), "import './b';\n").unwrap();
+    fs::write(root.join("b.ts"), "export const b=1;\n").unwrap();
+    let loaded = archguard_engine::load_config(None, root).unwrap();
+    let run =
+        archguard_engine::analyze_run(root, &loaded, archguard_engine::Level::Module).unwrap();
+    let mut config = run.config.clone();
+    config.arc42.lang = DocLang::De;
+    let german = archguard_engine::arc42_document(root, &config, &run.graph, &run.report).unwrap();
+    let check = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_archguard"))
+            .current_dir(root)
+            .args(["doc", "--arc42", "--check"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    };
+    fs::write(root.join("arc42.md"), german.markdown(None)).unwrap();
+    check();
+    // ADR 0008: a German window saves one chapter into an English document.
+    let english = archguard_engine::arc42_document(root, &run.config, &run.graph, &run.report)
+        .unwrap()
+        .markdown(None);
+    let mixed = german.merge(&english, Some(5)).unwrap();
+    assert_ne!(mixed, english);
+    fs::write(root.join("arc42.md"), mixed).unwrap();
+    check();
 }

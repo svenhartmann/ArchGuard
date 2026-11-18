@@ -123,6 +123,19 @@ impl Arc42Document {
         }
         Ok(result)
     }
+    /// The chapters whose generated block in `saved` differs from this
+    /// document; an error if [`merge`](Self::merge) would refuse `saved`.
+    pub fn stale_chapters(&self, saved: &str, chapter: Option<u8>) -> Result<Vec<u8>, String> {
+        self.merge(saved, chapter)?;
+        Ok(self
+            .chapters
+            .iter()
+            .map(|c| c.number)
+            .filter(|&n| chapter.is_none_or(|c| c == n))
+            // A chapter without a block in `saved` is not checked.
+            .filter(|&n| self.merge(saved, Some(n)).is_ok_and(|m| m != saved))
+            .collect())
+    }
     pub fn markdown(&self, chapter: Option<u8>) -> String {
         let header = self.lang.pick(
             "# arc42 – Architecture Documentation\n\n{}\nAnalysed scope: **{}**. Static observations, declared intentions and imported measurements stay separate. No simulated graph changes. No statement about the completeness of the architecture.\n\nLists hold at most {} entries; long texts are visibly shortened. Your own explanations outside the archguard blocks are kept on updates.\n",
@@ -692,5 +705,16 @@ mod tests {
             "<!-- archguard:arc42:02:end -->"
         );
         assert!(old.merge(&nested, None).is_err());
+    }
+    #[test]
+    fn stale_chapters_names_only_the_changed_blocks() {
+        let old = document();
+        let mut new = old.clone();
+        new.chapters[4].markdown = "New evidence".into();
+        let saved = old.markdown(None);
+        assert_eq!(old.stale_chapters(&saved, None), Ok(vec![]));
+        assert_eq!(new.stale_chapters(&saved, None), Ok(vec![5]));
+        assert_eq!(new.stale_chapters(&saved, Some(9)), Ok(vec![]));
+        assert!(new.stale_chapters("no blocks", None).is_err());
     }
 }

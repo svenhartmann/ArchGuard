@@ -223,6 +223,57 @@ pub(crate) fn doc(
     }
 }
 
+/// `doc --arc42 --check`: exit 1 and name the chapters whose generated
+/// blocks no longer match the graph. ADR 0008: the desktop may have written
+/// German blocks while the CLI writes English, so `german` is tried as well.
+fn arc42_check(
+    cli: &Cli,
+    target: &Path,
+    saved: Option<String>,
+    chapter: Option<u8>,
+    document: &archguard_engine::report::Arc42Document,
+    german: impl FnOnce() -> Result<
+        archguard_engine::report::Arc42Document,
+        archguard_engine::core::ArchguardError,
+    >,
+) -> i32 {
+    let Some(saved) = saved else {
+        if !cli.quiet {
+            println!("arc42 document is missing: {}", target.display());
+        }
+        return EXIT_FOUND;
+    };
+    let mut stale = match document.stale_chapters(&saved, chapter) {
+        Ok(s) => s,
+        Err(e) => return usage(&e),
+    };
+    // Each chapter may be in either language (one window saves one chapter).
+    if !stale.is_empty() {
+        let german = match german() {
+            Ok(g) => g.stale_chapters(&saved, chapter).unwrap_or_default(),
+            Err(e) => return analysis_error(e),
+        };
+        stale.retain(|n| german.contains(n));
+    }
+    if !cli.quiet {
+        if stale.is_empty() {
+            println!("arc42 document is current: {}", target.display());
+        } else {
+            let list: Vec<_> = stale.iter().map(|n| format!("chapter {n}")).collect();
+            println!(
+                "arc42 document is outdated: {} ({})",
+                target.display(),
+                list.join(", ")
+            );
+        }
+    }
+    if stale.is_empty() {
+        EXIT_OK
+    } else {
+        EXIT_FOUND
+    }
+}
+
 /// Replace a generated document as a whole. A final symlink or other
 /// non-regular file is refused, as for arc42, so a committed
 /// `architecture.md -> ~/victim.txt` cannot redirect the write. The
@@ -307,6 +358,14 @@ fn arc42_doc(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return analysis_error(e),
     };
+    if options.check {
+        let german = || {
+            let mut config = loaded.config.clone();
+            config.arc42.lang = archguard_engine::core::DocLang::De;
+            archguard_engine::arc42_document(root, &config, graph, report)
+        };
+        return arc42_check(cli, &target, saved, options.chapter, &document, german);
+    }
     let next = match saved.as_deref() {
         Some(s) => match document.merge(s, options.chapter) {
             Ok(n) => n,
@@ -314,21 +373,6 @@ fn arc42_doc(
         },
         None => document.markdown(options.chapter),
     };
-    if options.check {
-        let current = saved.as_deref() == Some(next.as_str());
-        if !cli.quiet {
-            println!(
-                "arc42 document {}: {}",
-                if current {
-                    "is current"
-                } else {
-                    "is missing or outdated"
-                },
-                target.display()
-            );
-        }
-        return if current { EXIT_OK } else { EXIT_FOUND };
-    }
     if saved.as_deref() == Some(next.as_str()) {
         return EXIT_OK;
     }
