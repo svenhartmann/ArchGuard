@@ -234,12 +234,13 @@ impl Editor {
         if start.block == end.block {
             blocks[start.block].inline.delete(start.at..end.at);
         } else {
-            let mut last = blocks[end.block].inline.clone();
-            let tail = last.split_off(end.at);
-            let first = &mut blocks[start.block].inline;
-            first.split_off(start.at);
-            first.append(tail);
-            blocks.drain(start.block + 1..=end.block);
+            // What is left of the end block joins like Delete at a block's
+            // end: only its first line goes into text that is no code.
+            let last = &mut blocks[end.block].inline;
+            *last = last.split_off(end.at);
+            blocks[start.block].inline.split_off(start.at);
+            blocks.drain(start.block + 1..end.block);
+            self.join(start.piece, start.block);
         }
         self.collapse(start);
         true
@@ -1665,6 +1666,25 @@ mod tests {
         one.place(at(&one, 0, 4), false);
         one.delete_forward();
         assert_eq!(one.markdown(), "Texteins\n");
+    }
+
+    /// Deleting a selection from text into a code block joins only the rest
+    /// of the line it ends in; the lines after it stay code.
+    #[test]
+    fn deleting_into_a_code_block_takes_only_the_rest_of_its_line() {
+        let mut e = editor("Text hier\n\n```\neins\nzwei\ndrei\n```\n");
+        e.place(at(&e, 0, 4), false);
+        e.place(at(&e, 1, 7), true);
+        e.backspace();
+        no_break_outside_code(&e);
+        assert_eq!(e.markdown(), "Textei\n\n```\ndrei\n```\n");
+        assert_eq!((e.focus.block, e.focus.at), (0, 4));
+        // From code into text: the text's rest joins the code, without marks.
+        let mut c = editor("```\neins\nzwei\n```\n\nText **fett**\n");
+        c.place(at(&c, 0, 7), false);
+        c.place(at(&c, 1, 5), true);
+        c.backspace();
+        assert_eq!(c.markdown(), "```\neins\nzwfett\n```\n");
     }
 
     /// Enter at the start of a block opens an empty line above it; the
