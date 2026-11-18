@@ -398,6 +398,15 @@ mod tests {
     };
     use std::collections::HashSet;
 
+    #[test]
+    fn application_script_cannot_end_or_hide_its_own_script_element() {
+        // `<!--` in an inline script lets a later `<script` swallow the closing
+        // tag; the browser then runs nothing (unlike the Node test harness).
+        let js = super::APP_JS.to_ascii_lowercase();
+        assert!(!js.contains("<!--"), "write '\\x3C!--' in viewer JS");
+        assert!(!js.contains("</script"), "write '<\\/script' in viewer JS");
+    }
+
     fn module(id: u32, name: &str) -> Node {
         Node {
             id: NodeId(id),

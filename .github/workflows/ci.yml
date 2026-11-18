@@ -170,6 +170,7 @@ jobs:
           node scripts/viewer/test_viewer_compact_calls.js
           node scripts/viewer/test_viewer_performance.js
           node scripts/viewer/test_viewer_architecture.js
+          node scripts/viewer/test_viewer_goals.js
           node scripts/viewer/test_viewer_patterns.js
           node scripts/viewer/test_viewer_assessment.js
           node scripts/viewer/test_viewer_scenarios.js

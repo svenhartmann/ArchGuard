@@ -76,6 +76,41 @@ fn html_contains_source_review_evidence_and_configured_entry_points() {
 }
 
 #[test]
+fn html_payload_carries_the_quality_goal_assessment_for_the_viewer() {
+    let root = tempdir().unwrap();
+    fs::write(root.path().join("a.ts"), "export const a = 1;\n").unwrap();
+    fs::write(root.path().join("archguard.toml"),"derive_layers=false\n[project]\nsource_roots=[]\nlanguages=['ts']\n[[architecture.goals]]\nname='Changeable'\npriority='high'\nattribute='maintainability'\n[[architecture.goals]]\nname='Fast'\npriority='low'\nattribute='performance_efficiency'\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["graph", "--format", "html"])
+        .arg(root.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let page = String::from_utf8(output.stdout).unwrap();
+    let payload = page
+        .split("<script id=\"archguard-data\" type=\"application/json\">")
+        .nth(1)
+        .unwrap()
+        .split("</script>")
+        .next()
+        .unwrap();
+    let value: Value = serde_json::from_str(payload).unwrap();
+    let goals = &value["insights"]["architecture"]["goal_assessment"];
+    assert_eq!(goals[0]["goal"], "Changeable");
+    assert_eq!(goals[0]["status"], "no_findings");
+    assert_eq!(goals[1]["goal"], "Fast");
+    assert_eq!(
+        goals[1]["status"], "no_evidence",
+        "missing runs are not measured, not passed"
+    );
+    assert!(page.contains("function renderQualityGoals("));
+}
+
+#[test]
 fn expanded_html_preserves_full_sources_and_initial_cut_even_with_focus() {
     let root = tempdir().unwrap();
     for (path, source) in [

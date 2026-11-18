@@ -41,6 +41,7 @@ function renderArchitecture() {
   let root=document.getElementById('architecture-content');hideMetricTooltip(root);root.textContent='';
   document.getElementById('tab-architecture').setAttribute('aria-label',t('Architecture documentation','Architekturdokumentation'));
   renderArc42Documentation(root);
+  renderQualityGoals(root);
   const model=architectureModel();
   if(!model){
     const setup=element('details',undefined,'context-note');setup.setAttribute('data-architecture-setup','true');setup.appendChild(element('summary',t('Optional: compare with a target model','Optional: mit einem Sollmodell vergleichen')));root.appendChild(setup);
@@ -151,13 +152,13 @@ function arc42Diagram(parent,source) {
   for(const edge of edges)edge.cycle=membership.has(edge.from)&&membership.get(edge.from)===membership.get(edge.to);
   arc42Graph(parent,model,{all:true});return true;
 }
-// Removes <!-- --> outside code blocks; a fence inside an open comment is comment text. As markdown::strip_comments (desktop).
+// Removes HTML comments outside code blocks (never write the opener literally here: it breaks the inline <script>); a fence inside an open comment is comment text. As markdown::strip_comments (desktop).
 function arc42StripComments(text){
-  const strip=s=>s.replace(/<!--[\s\S]*?-->/g,'');let out='',prose='',fenced=false;
+  const strip=s=>s.replace(/\x3C!--[\s\S]*?-->/g,'');let out='',prose='',fenced=false;
   for(const line of text.split(/(?<=\n)/)){
     const bare=line.replace(/\n$/,'');
     if(fenced){out+=line;fenced=!/^\s*```\s*$/.test(bare);}
-    else if(/^\s*```[^`]*$/.test(bare)&&!strip(prose).includes('<!--')){out+=strip(prose)+line;prose='';fenced=true;}
+    else if(/^\s*```[^`]*$/.test(bare)&&!strip(prose).includes('\x3C!--')){out+=strip(prose)+line;prose='';fenced=true;}
     else prose+=line;
   }
   return out+strip(prose);
