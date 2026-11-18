@@ -226,7 +226,8 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
         } else {
             (line, false)
         };
-        for modifier in [
+        // Modifiers may come in any order (`new static class`).
+        while let Some(rest) = [
             "private",
             "internal",
             "protected",
@@ -239,10 +240,11 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
             "extern",
             "new",
             "file",
-        ] {
-            while let Some(rest) = strip_word(body, modifier) {
-                body = rest;
-            }
+        ]
+        .iter()
+        .find_map(|modifier| strip_word(body, modifier))
+        {
+            body = rest;
         }
         for keyword in ["class", "interface", "struct", "enum", "record"] {
             if let Some(rest) = strip_word(body, keyword) {
@@ -277,6 +279,14 @@ fn first_identifier(text: &str) -> Option<String> {
 #[cfg(test)]
 mod visibility_tests {
     use super::*;
+
+    #[test]
+    fn modifiers_in_any_order_before_the_type_keyword_are_all_skipped() {
+        let visibility =
+            scan_visibility("public unsafe partial struct X {}\nnew static class Y {}\n");
+        assert!(visibility.exported.contains("X"));
+        assert!(visibility.internal.contains("Y"));
+    }
 
     #[test]
     fn public_types_are_exported_the_rest_is_internal() {
