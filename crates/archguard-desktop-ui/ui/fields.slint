@@ -45,7 +45,10 @@ export component TextEdit inherits Rectangle {
     in property <TextWrap> wrap: word-wrap;
     in property <bool> enabled <=> input.enabled;
     out property <bool> has-focus: input.has-focus;
+    // The cursor as a byte of the text; `set-cursor` moves it there.
+    out property <int> cursor: input.cursor-position-byte-offset;
     callback edited(string);
+    public function set-cursor(offset: int) { input.set-selection-offsets(offset, offset); }
     // Room kept between the cursor and the edge when scrolling to it.
     property <length> edge: 12px;
     horizontal-stretch: 1;
