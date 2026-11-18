@@ -14,8 +14,9 @@ variants on native GitHub-hosted machines:
 Linux uses musl to avoid a dependency on the build runner's glibc version.
 The optional `db` feature is not included. Windows ARM64 is not built. Binaries
 are not Authenticode-signed or Apple Developer ID-signed/notarized; operating
-systems can therefore show an unrecognized-publisher warning. The unsigned
-desktop app packages are described in [Desktop app (unsigned)](#desktop-app-unsigned).
+systems can therefore show an unrecognized-publisher warning. The desktop app
+packages are described in [Desktop app](#desktop-app); they are signed only when
+the [signing secrets](#signing-secrets) are set.
 
 ## Build and security flow
 
@@ -75,7 +76,7 @@ see the viewer's help and `archguard doctor`.
 SHA-256 checksums verify consistency with the downloaded manifest; they are not
 a publisher signature. A successful malware scan is not a guarantee of safety.
 
-## Desktop app (unsigned)
+## Desktop app
 
 The same workflow packages the native desktop app (`crates/archguard-desktop`):
 
@@ -85,13 +86,14 @@ The same workflow packages the native desktop app (`crates/archguard-desktop`):
 | macOS Intel | `x86_64-apple-darwin` | macOS 15 Intel | `ArchGuard-<version>-x86_64-apple-darwin.dmg` |
 | Windows x64 | `x86_64-pc-windows-msvc` | Windows 2025 | `.msi` installer and a plain `-portable.zip` |
 | Linux x64 | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 x64 | `.AppImage` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | Ubuntu 24.04 ARM64 | `.AppImage` |
 
 `scripts/release/package_desktop.py` builds the packages; its unit tests cover
 the Info.plist, `.desktop` and WiX source, the file names and the complete-set
 check. The `.dmg` holds `ArchGuard.app` and an `/Applications` link. The `.msi`
 (WiX 5.0.2) installs to `Program Files\ArchGuard` with a Start menu shortcut. The
-AppImage is built with appimagetool 1.9.1 and type2 runtime 20251108, both
-pinned and checked by SHA-256. Linux uses glibc (Slint needs fontconfig), not
+AppImages are built with appimagetool 1.9.1 and type2 runtime 20251108 of the
+matching architecture, all pinned and checked by SHA-256. Linux uses glibc (Slint needs fontconfig), not
 musl: the AppImage needs glibc 2.39 or newer and the system's fontconfig.
 
 Each desktop job checks its package without starting the app: the `.dmg` is
@@ -103,8 +105,55 @@ over all packages and the extracted Windows ZIP. ClamAV unpacks the `.dmg` and
 `.msi` as far as it supports these formats; the AppImage's SquashFS is scanned
 as one file. `archguard update` updates the CLI only, never the desktop app.
 
-The desktop packages are **not signed**: there is no Apple Developer ID, no
-notarization and no Windows code-signing certificate. The macOS app has only an
+### Signing secrets
+
+The desktop job signs the macOS and Windows packages only when the repository
+(or the environment of the run) has these GitHub Actions secrets. Never put
+their values into files, logs or commits.
+
+| Secret | Platform | Content |
+| --- | --- | --- |
+| `APPLE_CERTIFICATE_P12` | macOS | Base64 of the "Developer ID Application" certificate with its private key, exported as `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | macOS | Password of that `.p12` |
+| `APPLE_ID` | macOS | Apple ID of the developer account, for `notarytool` |
+| `APPLE_TEAM_ID` | macOS | Team ID of the developer account |
+| `APPLE_APP_PASSWORD` | macOS | App-specific password of that Apple ID |
+| `WINDOWS_CERTIFICATE_PFX` | Windows | Base64 of the Authenticode code-signing certificate with its private key, exported as `.pfx` |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Windows | Password of that `.pfx` |
+
+Per platform the job needs **all or none** of its secrets:
+
+- **All macOS secrets:** after the build, the certificate goes into a temporary
+  keychain in `$RUNNER_TEMP` together with a `notarytool` profile;
+  `package_desktop.py` signs `ArchGuard.app` with
+  `codesign --options runtime --timestamp`, builds the `.dmg`, submits it with
+  `xcrun notarytool submit --wait`, then runs `xcrun stapler staple` and
+  `stapler validate` (a rejected submission has no ticket, so stapling fails the
+  job). The check step also runs `spctl --assess`. The keychain is deleted at
+  the end of the job, also after a failure.
+- **All Windows secrets:** after the build, the `.pfx` is imported into
+  `Cert:\CurrentUser\My` and deleted from disk; `package_desktop.py` signs
+  `archguard-desktop.exe` (before the `.msi` and the portable `.zip` take their
+  copies) and then the `.msi` with
+  `signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256`
+  (RFC 3161 timestamp) and checks each with `signtool verify /pa`. The check
+  step requires a valid, timestamped signature on the `.msi` and on the exe
+  inside it. The certificate is removed from the store at the end of the job.
+- **None:** the packages are built as before, with a workflow warning: macOS
+  gets only an ad-hoc signature, Windows none.
+- **Some but not all:** the desktop job fails and names the missing secrets,
+  so a misconfiguration never ships unsigned packages silently.
+
+The secrets reach only the import and packaging steps, never `cargo build`.
+The release notes say per platform whether the packages are signed. Linux
+AppImages are never signed. The `.dmg` itself is notarized and stapled, the app
+inside it is signed but carries no stapled ticket of its own: Gatekeeper looks
+its ticket up online on first start.
+
+### Unsigned packages
+
+Without the secrets the packages are **not signed**: no Apple Developer ID, no
+notarization, no Windows code-signing certificate. The macOS app has only an
 ad-hoc signature, which Apple Silicon needs to start it at all. On first start:
 
 - **macOS:** drag `ArchGuard.app` to Applications, then right-click it and choose
@@ -112,8 +161,8 @@ ad-hoc signature, which Apple Silicon needs to start it at all. On first start:
   `xattr -dr com.apple.quarantine /Applications/ArchGuard.app`.
 - **Windows:** when SmartScreen shows "Windows protected your PC", click
   **More info**, then **Run anyway**.
-- **Linux:** `chmod +x ArchGuard-<version>-x86_64-unknown-linux-gnu.AppImage` and
-  run it.
+- **Linux:** `chmod +x ArchGuard-<version>-<arch>-unknown-linux-gnu.AppImage`
+  (`x86_64` or `aarch64`) and run it.
 
 The app links Slint under the Slint Royalty-free License 2.0; the attribution it
 requires is shown in the app's About dialog.

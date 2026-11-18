@@ -104,8 +104,10 @@ jobs:
           retention-days: 3
           compression-level: 0
 
-  # Unsigned desktop app packages: no Apple Developer ID, no Authenticode
-  # certificate. macOS gets an ad-hoc signature only so it starts on Apple Silicon.
+  # Desktop app packages. Signed only when the signing secrets exist (see
+  # RELEASES.md): macOS Developer ID + notarization, Windows Authenticode.
+  # Without them macOS gets an ad-hoc signature so it starts on Apple Silicon.
+  # Secrets reach only the import and packaging steps, never the cargo build.
   desktop:
     name: Desktop / ${{ matrix.target }}
     needs: prepare
@@ -127,10 +129,21 @@ jobs:
             target: x86_64-apple-darwin
             platform: macos
             suffix: ''
+          # Pinned AppImage tools; the checksums are the GitHub release asset digests.
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             platform: linux
             suffix: ''
+            appimage_arch: x86_64
+            appimagetool_sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime_sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            suffix: ''
+            appimage_arch: aarch64
+            appimagetool_sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime_sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
     defaults:
       run:
         shell: bash
@@ -138,12 +151,12 @@ jobs:
       CARGO_TERM_COLOR: always
       DESKTOP_TARGET: ${{ matrix.target }}
       DESKTOP_BINARY: target/${{ matrix.target }}/release/archguard-desktop${{ matrix.suffix }}
-      # Pinned packaging tools; the checksums are the GitHub release asset digests.
       WIX_VERSION: 5.0.2
-      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
-      APPIMAGE_RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-      APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+      APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${{ matrix.appimage_arch }}.AppImage
+      APPIMAGETOOL_SHA256: ${{ matrix.appimagetool_sha256 }}
+      APPIMAGE_RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-${{ matrix.appimage_arch }}
+      APPIMAGE_RUNTIME_SHA256: ${{ matrix.runtime_sha256 }}
+      NOTARY_PROFILE: archguard-notary
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -176,11 +189,88 @@ jobs:
           echo "$USERPROFILE\\.dotnet\\tools" >> "$GITHUB_PATH"
       - name: Build locked release desktop app
         run: cargo build -p archguard-desktop --release --locked --target "$DESKTOP_TARGET"
+      # All signing secrets of a platform, or none (unsigned, with a warning);
+      # a partial set fails instead of silently shipping unsigned packages.
+      - name: Decide whether to sign
+        id: signing
+        env:
+          HAS_APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
+          HAS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+          HAS_APPLE_ID: ${{ secrets.APPLE_ID != '' }}
+          HAS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID != '' }}
+          HAS_APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD != '' }}
+          HAS_WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX != '' }}
+          HAS_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          case "$PLATFORM" in
+            macos) names='APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD' ;;
+            windows) names='WINDOWS_CERTIFICATE_PFX WINDOWS_CERTIFICATE_PASSWORD' ;;
+            *) echo 'enabled=false' >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          present='' missing=''
+          for name in $names; do
+            flag="HAS_$name"
+            if [ "${!flag}" = true ]; then present="$present $name"; else missing="$missing $name"; fi
+          done
+          if [ -z "$missing" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          elif [ -z "$present" ]; then
+            echo "::warning::No $PLATFORM signing secrets: the desktop package stays unsigned (see RELEASES.md)."
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Incomplete $PLATFORM signing secrets, missing:$missing"
+            exit 1
+          fi
+      - name: Import Developer ID certificate into a temporary keychain
+        if: matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          certificate="$RUNNER_TEMP/certificate.p12"
+          trap 'rm -f "$certificate"' EXIT
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$certificate"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # codesign and notarytool look identities and profiles up in the search list.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain" | grep -q 'Developer ID Application' \
+            || { echo '::error::APPLE_CERTIFICATE_P12 holds no Developer ID Application identity'; exit 1; }
+          xcrun notarytool store-credentials "$NOTARY_PROFILE" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
+          echo "DESKTOP_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Package .app and .dmg
         if: matrix.platform == 'macos'
-        run: python scripts/release/package_desktop.py macos --binary "$DESKTOP_BINARY" --target "$DESKTOP_TARGET" --out dist-desktop
+        env:
+          SIGN: ${{ steps.signing.outputs.enabled }}
+        run: |
+          set -euo pipefail
+          signing=()
+          if [ "$SIGN" = true ]; then
+            signing=(--sign-identity 'Developer ID Application' --keychain "$DESKTOP_KEYCHAIN" --notary-profile "$NOTARY_PROFILE")
+          fi
+          python scripts/release/package_desktop.py macos --binary "$DESKTOP_BINARY" --target "$DESKTOP_TARGET" --out dist-desktop ${signing[@]+"${signing[@]}"}
+      - name: Delete the temporary keychain
+        if: always() && matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          if [ -f "$keychain" ]; then security delete-keychain "$keychain"; fi
       - name: Check the .dmg contents and signature without starting the app
         if: matrix.platform == 'macos'
+        env:
+          SIGN: ${{ steps.signing.outputs.enabled }}
         run: |
           set -euo pipefail
           mount="$RUNNER_TEMP/dmg"
@@ -190,12 +280,53 @@ jobs:
           plutil -lint "$mount/ArchGuard.app/Contents/Info.plist"
           codesign --verify --deep --strict --verbose=2 "$mount/ArchGuard.app"
           file "$mount/ArchGuard.app/Contents/MacOS/archguard-desktop"
+          if [ "$SIGN" = true ]; then
+            xcrun stapler validate dist-desktop/*.dmg
+            spctl --assess --type execute --verbose=2 "$mount/ArchGuard.app"
+          fi
+      - name: Import the Authenticode certificate and find signtool
+        if: matrix.platform == 'windows' && steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'certificate.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password |
+              Where-Object HasPrivateKey | Select-Object -First 1
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $pfx
+          }
+          if (-not $cert) { throw 'WINDOWS_CERTIFICATE_PFX holds no certificate with a private key' }
+          "DESKTOP_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found in the Windows SDK' }
+          $signtool.DirectoryName >> $env:GITHUB_PATH
       - name: Package .msi and .zip
         if: matrix.platform == 'windows'
-        run: python scripts/release/package_desktop.py windows --binary "$DESKTOP_BINARY" --out dist-desktop
-      - name: Check the .msi contents with an administrative install
+        env:
+          SIGN: ${{ steps.signing.outputs.enabled }}
+        run: |
+          set -euo pipefail
+          signing=()
+          if [ "$SIGN" = true ]; then signing=(--sign-thumbprint "$DESKTOP_CERT_THUMBPRINT"); fi
+          python scripts/release/package_desktop.py windows --binary "$DESKTOP_BINARY" --out dist-desktop ${signing[@]+"${signing[@]}"}
+      - name: Remove the Authenticode certificate
+        if: always() && matrix.platform == 'windows' && steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          if ($env:DESKTOP_CERT_THUMBPRINT) {
+            Remove-Item -DeleteKey -ErrorAction SilentlyContinue "Cert:\CurrentUser\My\$env:DESKTOP_CERT_THUMBPRINT"
+          }
+      - name: Check the .msi contents and signatures with an administrative install
         if: matrix.platform == 'windows'
         shell: pwsh
+        env:
+          SIGN: ${{ steps.signing.outputs.enabled }}
         run: |
           $msi = (Get-ChildItem dist-desktop\*.msi | Select-Object -First 1).FullName
           $target = Join-Path $env:RUNNER_TEMP 'msi-check'
@@ -204,9 +335,17 @@ jobs:
           $exe = Get-ChildItem -Recurse -Path $target -Filter archguard-desktop.exe
           if (-not $exe) { throw 'archguard-desktop.exe missing from the MSI' }
           $exe.FullName
+          if ($env:SIGN -eq 'true') {
+            foreach ($file in @($msi, $exe.FullName)) {
+              $signature = Get-AuthenticodeSignature $file
+              if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+                throw "$file has no valid timestamped Authenticode signature: $($signature.StatusMessage)"
+              }
+            }
+          }
       - name: Package AppImage
         if: matrix.platform == 'linux'
-        run: python scripts/release/package_desktop.py linux --binary "$DESKTOP_BINARY" --out dist-desktop --appimagetool "$RUNNER_TEMP/appimage/appimagetool" --runtime "$RUNNER_TEMP/appimage/runtime"
+        run: python scripts/release/package_desktop.py linux --binary "$DESKTOP_BINARY" --target "$DESKTOP_TARGET" --out dist-desktop --appimagetool "$RUNNER_TEMP/appimage/appimagetool" --runtime "$RUNNER_TEMP/appimage/runtime"
       - name: Check the AppImage contents without starting the app
         if: matrix.platform == 'linux'
         run: |
@@ -375,20 +514,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          MACOS_SIGNED: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
+          WINDOWS_SIGNED: ${{ secrets.WINDOWS_CERTIFICATE_PFX != '' }}
         shell: bash
         run: |
           set -euo pipefail
-          printf 'ArchGuard %s\n\nCommit: %s\n\nFive native CLI builds passed smoke tests and ClamAV archive/binary scans. CI, RustSec advisories and secret scanning passed. Verify downloads with SHA256SUMS. See RELEASES.md for installation, unsigned binaries and optional tool requirements.\n' "$RELEASE_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.md"
+          printf 'ArchGuard %s\n\nCommit: %s\n\nFive native CLI builds passed smoke tests and ClamAV archive/binary scans. CI, RustSec advisories and secret scanning passed. Verify downloads with SHA256SUMS. See RELEASES.md for installation, signing and optional tool requirements.\n' "$RELEASE_VERSION" "$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.md"
           cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
 
-          ## Desktop app (unsigned)
+          ## Desktop app
 
-          Packages of the native desktop app: macOS `.dmg` (Apple Silicon and Intel), Windows `.msi` and `.zip`, Linux x64 `.AppImage`. Verify them with `SHA256SUMS-desktop`. They are **not signed** with an Apple Developer ID or a Windows code-signing certificate and are not notarized, so the system warns on first start:
+          Packages of the native desktop app: macOS `.dmg` (Apple Silicon and Intel), Windows `.msi` and `.zip`, Linux x64 and ARM64 `.AppImage`. Verify them with `SHA256SUMS-desktop`.
 
-          - macOS: drag ArchGuard.app to Applications, then right-click it and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/ArchGuard.app`.
-          - Windows: when SmartScreen blocks the installer or the exe, click **More info**, then **Run anyway**.
-          - Linux: `chmod +x` the AppImage and run it; it needs glibc 2.39 or newer and fontconfig.
           NOTES
+          # The desktop job fails on a partial secret set, so presence of the certificate means signed.
+          if [ "$MACOS_SIGNED" = true ]; then
+            echo '- macOS: signed with a Developer ID and notarized; drag ArchGuard.app to Applications.' >> "$RUNNER_TEMP/release-notes.md"
+          else
+            echo '- macOS: **not signed or notarized**. Drag ArchGuard.app to Applications, then right-click it and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/ArchGuard.app`.' >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          if [ "$WINDOWS_SIGNED" = true ]; then
+            echo '- Windows: the `.msi` and the exe are Authenticode-signed. SmartScreen can still warn while the certificate has little reputation.' >> "$RUNNER_TEMP/release-notes.md"
+          else
+            echo '- Windows: **not signed**. When SmartScreen blocks the installer or the exe, click **More info**, then **Run anyway**.' >> "$RUNNER_TEMP/release-notes.md"
+          fi
+          echo '- Linux: `chmod +x` the AppImage and run it; it needs glibc 2.39 or newer and fontconfig.' >> "$RUNNER_TEMP/release-notes.md"
           gh release create "$RELEASE_TAG" --verify-tag --draft \
             --title "ArchGuard $RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" \
             dist/*.zip dist/*.tar.gz dist/SHA256SUMS bundle/*.zip bundle/*.sha256 \
