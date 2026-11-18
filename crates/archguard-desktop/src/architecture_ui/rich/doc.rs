@@ -341,7 +341,8 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
 /// Whether chunk `source` holds Markdown its `blocks` lose: a comment
 /// outside fenced code (the reader drops it), or code, a setext heading
 /// or an HTML block the reader takes for a paragraph or list (an edit
-/// would write it on one line). Inline HTML (`<kbd>x</kbd> y`) is text.
+/// would write it on one line). Inline HTML (`<kbd>x</kbd> y`) is no
+/// HTML block; [`inline::unmodeled`] keeps it as written.
 fn as_written(source: &str, blocks: &[Md]) -> bool {
     let code = matches!(blocks, [Md::Code { .. }]);
     let indented = |l: &str| l.starts_with("    ") || l.starts_with('\t');
@@ -1144,14 +1145,14 @@ Ende.
     }
 
     /// Paragraphs the writer would only escape otherwise (`_` at a word
-    /// edge, inline HTML, `<`, `*`, entities) are editable; an edit of
-    /// another block of their part leaves them byte for byte.
+    /// edge, `<` before no HTML element, `*`, entities) are editable; an
+    /// edit of another block of their part leaves them byte for byte.
     #[test]
     fn paragraphs_the_writer_escapes_otherwise_are_editable() {
         let own = [
             "Die Spalte _id ist neu.",
-            "<kbd>Ctrl</kbd> drücken",
-            "List<String>, 2 * 3 &amp; a <br> b",
+            "Map<K, V> und List<String>",
+            "2 * 3 &amp; a < b",
         ];
         let md = format!("Erster Absatz.\n\n{}\n", own.join("\n\n"));
         let mut doc = Doc::parse(&md, &[]);
@@ -1164,8 +1165,8 @@ Ende.
             [
                 "Erster Absatz.",
                 "Die Spalte _id ist neu.",
-                "<kbd>Ctrl</kbd> drücken",
-                "List<String>, 2 * 3 & a <br> b"
+                "Map<K, V> und List<String>",
+                "2 * 3 & a < b"
             ]
         );
         assert_eq!(
@@ -1174,20 +1175,38 @@ Ende.
         );
     }
 
+    /// Inline HTML elements (`<kbd>`, `<br>`) stay as written: written
+    /// anew they would be escaped and GitHub would show the tags as text.
+    #[test]
+    fn inline_html_elements_stay_as_written() {
+        let kept = [
+            "<kbd>Ctrl</kbd> drücken",
+            "Zeile<br>Umbruch",
+            "a <BR/> b",
+            "<span class=\"x\">rot</span> c",
+            "H<sub>2</sub>O",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
+    }
+
     /// An edit rewrites only the block it changes, in the writer's escapes,
     /// which read back as the same text; the blocks around keep their bytes.
     #[test]
     fn an_edit_rewrites_only_the_block_it_changes() {
-        let md = "Die Spalte _id ist neu.\n\n<kbd>Ctrl</kbd> drücken\n\nList<String>\n";
+        let md = "Die Spalte _id ist neu.\n\n2 * 3 &amp; 4\n\nList<String>\n";
         let mut doc = Doc::parse(md, &[]);
         let mut all = parts(&mut doc);
         let blocks = all[0].edit();
-        let end = blocks[1].inline.text.len();
-        blocks[1].inline.insert(end, "!", &Default::default());
+        let end = blocks[2].inline.text.len();
+        blocks[2].inline.insert(end, "!", &Default::default());
         let written = doc.to_markdown();
         assert_eq!(
             written,
-            "Die Spalte _id ist neu.\n\n\\<kbd>Ctrl\\</kbd> drücken!\n\nList<String>\n"
+            "Die Spalte _id ist neu.\n\n2 * 3 &amp; 4\n\nList\\<String>!\n"
         );
         let mut again = Doc::parse(&written, &[]);
         assert_eq!(parts(&mut again)[0].blocks(), parts(&mut doc)[0].blocks());

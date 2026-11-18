@@ -400,6 +400,26 @@ const BLOCK_TAGS: &str = "address article aside base basefont blockquote body ca
     menuitem nav noframes ol optgroup option p param search section summary table \
     tbody td tfoot th thead title tr track ul";
 
+/// HTML elements used inline in Markdown.
+const INLINE_TAGS: &str = "a abbr b bdi bdo br cite code data del dfn em i img input ins kbd \
+    mark q s samp small span strong sub sup time u var wbr";
+
+/// Whether `text` holds a tag of an HTML element (`<kbd>`, `</kbd>`,
+/// `<br/>`, `<span class="x">`, any case); `List<String>` or `a < b` do not.
+pub(super) fn html_tag(text: &str) -> bool {
+    text.split('<').skip(1).any(|rest| {
+        let tag = rest.strip_prefix('/').unwrap_or(rest);
+        let len = tag.chars().take_while(char::is_ascii_alphanumeric).count();
+        let name = tag[..len].to_ascii_lowercase();
+        let after = &tag[len..];
+        (after.starts_with([' ', '\t', '\n', '>']) || after.starts_with("/>"))
+            && (INLINE_TAGS
+                .split_whitespace()
+                .chain(BLOCK_TAGS.split_whitespace()))
+            .any(|t| t == name)
+    })
+}
+
 /// Whether `line` (without its indent) starts an HTML block, as
 /// CommonMark reads it: `<pre>`, `<div>`, `<!…`, `<?…`, or a tag alone on
 /// its line. Inline HTML (`<kbd>Ctrl</kbd> drücken`) does not.
@@ -691,6 +711,19 @@ mod tests {
             "<3 Rust",
         ] {
             assert!(!html_block(line), "{line}");
+        }
+        for text in [
+            "<kbd>x</kbd>",
+            "a</KBD>",
+            "Zeile<br>",
+            "<br/>",
+            "<a href=\"u\">",
+            "<Details>",
+        ] {
+            assert!(html_tag(text), "{text}");
+        }
+        for text in ["List<String>", "Map<K, V>", "a < b", "<br", "<3", "<abc>"] {
+            assert!(!html_tag(text), "{text}");
         }
     }
 }

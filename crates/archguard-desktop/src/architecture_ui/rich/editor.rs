@@ -1368,7 +1368,7 @@ mod tests {
     /// the others keep their bytes (`_id`, not the writer's `\_id`).
     #[test]
     fn an_edit_leaves_the_other_blocks_as_written() {
-        let md = "Die Spalte _id ist neu.\n\n<kbd>Ctrl</kbd> drücken\n\nList<String>\n";
+        let md = "Die Spalte _id ist neu.\n\n2 * 3 &amp; 4\n\nList<String>\n";
         let mut e = editor(md);
         e.place(at(&e, 2, 12), false);
         e.type_text("!");

@@ -342,9 +342,10 @@ impl Inline {
 /// Whether inline Markdown `md`, read as `read`, holds what the reader
 /// does not model, so writing `read` anew would lose it: images, `` `` ``
 /// code, a `[` left as text (reference links, footnotes, link titles),
-/// autolinks (`<https://…>`) and `_` emphasis. Other differences to the
+/// autolinks (`<https://…>`), HTML elements (`<kbd>`, `<br>`: escaped,
+/// GitHub would show the tags) and `_` emphasis. Other differences to the
 /// writer's form are escapes that read the same (`_id`, `List<String>`,
-/// `2 * 3`, `&amp;`, inline HTML, which the editor shows as text).
+/// `2 * 3`, `&amp;`).
 pub fn unmodeled(md: &str, read: &Inline) -> bool {
     // The text outside code spans, which the writer escapes.
     let text: Vec<char> = read
@@ -368,6 +369,7 @@ pub fn unmodeled(md: &str, read: &Inline) -> bool {
         || md.contains("``")
         || plain.contains(['[', ']'])
         || autolink
+        || markdown::html_tag(&plain)
         || underscore_emphasis(&text)
 }
 
