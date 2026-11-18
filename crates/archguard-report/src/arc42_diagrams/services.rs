@@ -85,6 +85,7 @@ impl<'a> Builder<'a> {
         let detail = networks
             .chain(&s.profiles)
             .cloned()
+            .chain(store.and_then(|d| self.tables(&d.id)))
             .collect::<Vec<_>>()
             .join(" · ");
         self.push(
@@ -113,18 +114,39 @@ impl<'a> Builder<'a> {
             return Some(self.service(s, inside.then_some(s.compose_file.as_str()), false));
         }
         let name = d.host.clone().unwrap_or_else(|| d.id.clone());
-        Some(self.push(
-            id,
-            DiagramElement {
-                id: String::new(),
-                name,
-                kind: ElementKind::Database,
-                technology: d.engine.clone(),
-                detail: d.port.map(|p| format!("Port {p}")),
-                group: None,
-                cycle: false,
-            },
-        ))
+        Some(
+            self.push(
+                id,
+                DiagramElement {
+                    id: String::new(),
+                    name,
+                    kind: ElementKind::Database,
+                    technology: d.engine.clone(),
+                    detail: [d.port.map(|p| format!("Port {p}")), self.tables(id)]
+                        .into_iter()
+                        .flatten()
+                        .reduce(|a, b| format!("{a} · {b}")),
+                    group: None,
+                    cycle: false,
+                },
+            ),
+        )
+    }
+
+    /// The tables the services using datastore `id` name in their source (ADR 0012).
+    fn tables(&self, id: &str) -> Option<String> {
+        let names: BTreeSet<&str> = self
+            .t
+            .datastores
+            .usages
+            .iter()
+            .filter(|u| u.datastore == id)
+            .flat_map(|u| u.tables.iter().map(String::as_str))
+            .collect();
+        (!names.is_empty()).then(|| {
+            let names = names.into_iter().collect::<Vec<_>>().join(", ");
+            format!("{}: {names}", self.l.pick("Tables", "Tabellen"))
+        })
     }
 
     fn push(&mut self, key: &str, mut e: DiagramElement) -> String {
@@ -322,7 +344,7 @@ mod tests {
             "dependencies":[dep("orders","db","startup"),dep("orders","shipping","configured_http")],
             "cycles":[],"diagnostics":[],"complete":true,
             "datastores":{"nodes":[{"id":"pg","engine":"PostgreSQL","service":"db","host":null,"port":null,"evidence":[]}],
-                "usages":[{"service":"orders","datastore":"pg","database":"shop","evidence":[]}],
+                "usages":[{"service":"orders","datastore":"pg","database":"shop","evidence":[],"tables":["orders","payments"]}],
                 "shared":[],"note":""}
         }))
         .unwrap()
@@ -407,6 +429,16 @@ mod tests {
             .find(|d| d.id == "runtime-services")
             .unwrap();
         assert_eq!(c.unit, "configuration evidence");
+    }
+
+    #[test]
+    fn a_datastore_lists_the_tables_its_services_name() {
+        let all = diagrams(DocLang::En, &topology());
+        let db = all[0].elements.iter().find(|e| e.name == "db").unwrap();
+        assert_eq!(
+            db.detail.as_deref(),
+            Some("shop · Tables: orders, payments")
+        );
     }
 
     #[test]

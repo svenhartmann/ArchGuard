@@ -25,6 +25,8 @@ mod service_datastores;
 mod service_deployments;
 #[path = "service_spring.rs"]
 mod service_spring;
+#[path = "service_tables.rs"]
+mod service_tables;
 #[path = "service_traces.rs"]
 mod service_traces;
 #[path = "service_support.rs"]
@@ -95,6 +97,7 @@ pub(crate) fn analyze_services_with(
     let spring_datasources = service_spring::augment(&root, &mut report);
     service_clients::augment(&root, &mut report, &deployments);
     service_datastores::augment(&mut report, &deployments, &spring_datasources);
+    service_tables::augment(&root, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
     manifest_render::mark(&mut report, &rendered);

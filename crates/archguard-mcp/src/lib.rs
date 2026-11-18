@@ -414,7 +414,7 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared database (same datastore and database name) versus shared server only; configuration does not prove runtime use and tables are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
+        description = "Discover monorepo projects and applications from supported manifests alongside Docker Compose services, local build contexts and service-cycle groups without requiring an import graph. Project kinds distinguish applications, libraries and tooling; shared libraries or identical class names do not prove API connections. Distinguishes configured HTTP endpoints from depends_on startup dependencies; neither proves observed runtime calls. Lists statically configured datastores, which services point at them, and shared datastores: shared table (same database and a table both services' source names: EF Core, JPA, TypeORM, SQLAlchemy entities or SQL migrations), shared database (same datastore and database name; disjoint_tables when every service's tables are known and none repeats) versus shared server only; datastores.tables lists each service's tables with file and line. Table names from constants or configuration stay unknown and appear as diagnostics; configuration does not prove runtime use and queries are never analyzed. Includes sanitized source pointers and coverage diagnostics. Large responses contain partial lists with exact totals and truncated=true; the sampled graph must not be treated as complete."
     )]
     async fn service_topology(
         &self,
@@ -1054,6 +1054,7 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
         ("datastores", "/datastores/nodes"),
         ("datastore_usages", "/datastores/usages"),
         ("shared_datastores", "/datastores/shared"),
+        ("datastore_tables", "/datastores/tables"),
     ];
     value["totals"] = Value::Object(
         lists
@@ -1077,7 +1078,8 @@ fn service_topology_value(topology: &archguard_engine::core::ServiceTopology) ->
     };
     value["shared_datastore_counts"] = json!({
         "database": shared(SharedDatastoreScope::Database),
-        "server": shared(SharedDatastoreScope::Server)
+        "server": shared(SharedDatastoreScope::Server),
+        "table": shared(SharedDatastoreScope::Table)
     });
     value["project_counts"] = json!({
         "application":topology.projects.iter().filter(|project|project.kind=="application").count(),
@@ -2699,11 +2701,14 @@ links = ["docs/adr/1.md"]
             .map(|i| json!({"service":format!("compose.yaml::app{i}"),"datastore":"compose.yaml::db","database":"shop","evidence":evidence}))
             .collect();
         let services: Vec<_> = (0..400).map(|i| format!("compose.yaml::app{i}")).collect();
+        let tables: Vec<_> = (0..400)
+            .map(|i| json!({"service":format!("compose.yaml::app{i}"),"name":format!("t{i}"),"evidence":evidence}))
+            .collect();
         let topology = serde_json::from_value(json!({"schema_version":1,"root":"/project","monorepo":false,"monorepo_reason":"","compose_files":["compose.yaml"],"projects":[],"services":[],"dependencies":[],"cycles":[],"diagnostics":[],"complete":true,
             "datastores":{"nodes":[{"id":"compose.yaml::db","engine":"postgresql","service":"compose.yaml::db","host":null,"port":null,"evidence":evidence}],
             "usages":usages,
             "shared":[{"datastore":"compose.yaml::db","scope":"database","database":"shop","services":services}],
-            "note":"Datastore references come from static configuration."}})).unwrap();
+            "note":"Datastore references come from static configuration.","tables":tables}})).unwrap();
         let value = service_topology_value(&topology);
         assert!(value.to_string().len() <= tools::MAX_RESPONSE_BYTES);
         assert_eq!(value["truncated"], true);
@@ -2712,6 +2717,8 @@ links = ["docs/adr/1.md"]
         assert_eq!(value["totals"]["shared_datastores"], 1);
         assert_eq!(value["shared_datastore_counts"]["database"], 1);
         assert_eq!(value["shared_datastore_counts"]["server"], 0);
+        assert_eq!(value["shared_datastore_counts"]["table"], 0);
+        assert_eq!(value["totals"]["datastore_tables"], 400);
         assert!(value["datastores"]["usages"].as_array().unwrap().len() < 400);
         assert!(!value["datastores"]["note"].as_str().unwrap().is_empty());
     }

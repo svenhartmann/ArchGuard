@@ -17,7 +17,7 @@ pub(super) struct SpringDatasource {
     pub evidence: ServiceEvidence,
 }
 
-const NOTE: &str = "Datastore references come from static configuration (images, connection URLs, host/database settings); they do not prove runtime use. A shared database means the same configured database name, a shared server only the same configured server. Tables and queries are not analyzed.";
+const NOTE: &str = "Datastore references come from static configuration (images, connection URLs, host/database settings); they do not prove runtime use. A shared database means the same configured database name, a shared server only the same configured server. A shared table is a table the services' own source names literally (entities, migrations, SQL); queries are not analyzed.";
 const IMAGE: &str = "Well-known datastore image; the datastore runs as this service.";
 const URL: &str = "Literal datastore connection URL; host, port and database name only. Credentials and options omitted.";
 const SETTING: &str = "Conventional datastore host/database setting; credentials are not read.";
@@ -301,6 +301,7 @@ fn merge_unknown_databases(
             datastore,
             database,
             evidence: evidence.into_iter().collect(),
+            tables: Vec::new(),
         });
     }
     let named: BTreeSet<(String, String)> = out
@@ -347,6 +348,8 @@ fn shared(usages: &[DatastoreUsage]) -> Vec<SharedDatastore> {
                     scope: Scope::Database,
                     database: Some((*name).into()),
                     services: services.iter().map(|s| (*s).into()).collect(),
+                    tables: Vec::new(),
+                    disjoint_tables: false,
                 });
             }
         }
@@ -357,6 +360,8 @@ fn shared(usages: &[DatastoreUsage]) -> Vec<SharedDatastore> {
                 scope: Scope::Server,
                 database: None,
                 services: all.into_iter().map(str::to_owned).collect(),
+                tables: Vec::new(),
+                disjoint_tables: false,
             });
         }
     }

@@ -63,7 +63,7 @@ function arc42SectionOf(d){const chapter=data.insights.arc42.chapters?.find(c=>c
 function arc42CatalogueModel(d){
   const kinds={package:'package',remainder:'group',container:'container',database:'database',external:'external',person:'person'};
   return {c4:d.kind!=='packages'&&d.kind!=='sequence',kind:d.id,scope:d.title,unit:d.unit,
-    nodes:(d.elements||[]).map(e=>({id:e.id,name:e.name,label:e.name,kind:kinds[e.kind]||'package',technology:e.technology,group:e.group,cycle:!!e.cycle,detail:[e.technology,e.group].filter(Boolean).join(' · ')})),
+    nodes:(d.elements||[]).map(e=>({id:e.id,name:e.name,label:e.name,kind:kinds[e.kind]||'package',technology:e.technology,group:e.group,cycle:!!e.cycle,detail:[e.technology,e.group,e.detail].filter(Boolean).join(' · ')})),
     edges:(d.relations||[]).map(r=>({from:r.from,to:r.to,kind:r.kind,count:r.count,cycle:!!r.cycle,label:r.label}))};
 }
 function arc42C4Type(node){

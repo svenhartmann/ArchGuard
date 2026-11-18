@@ -1,5 +1,6 @@
 //! Project and service inventory remains separate from source-import analysis.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{ServiceDatastores, ServiceDependencyKind, SharedDatastoreScope};
@@ -164,12 +165,31 @@ fn print_datastores(datastores: &ServiceDatastores) {
             );
         }
     }
+    let mut tables: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for table in &datastores.tables {
+        tables.entry(&table.service).or_default().push(&table.name);
+    }
+    for (service, names) in tables {
+        println!("tables of {service}: {}", names.join(", "));
+    }
     for shared in &datastores.shared {
         match shared.scope {
             SharedDatastoreScope::Database => println!(
-                "shared database: {} database {}: {}",
+                "shared database{}: {} database {}: {}",
+                if shared.disjoint_tables {
+                    " (disjoint tables)"
+                } else {
+                    ""
+                },
                 shared.datastore,
                 shared.database.as_deref().unwrap_or("?"),
+                shared.services.join(", ")
+            ),
+            SharedDatastoreScope::Table => println!(
+                "shared table: {} database {}, tables {}: {}",
+                shared.datastore,
+                shared.database.as_deref().unwrap_or("?"),
+                shared.tables.join(", "),
                 shared.services.join(", ")
             ),
             SharedDatastoreScope::Server => println!(
