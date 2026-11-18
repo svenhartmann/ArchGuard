@@ -91,6 +91,7 @@ pub fn registry() -> Vec<Box<dyn Extractor>> {
         Box::new(crate::kotlin::KotlinExtractor),
         Box::new(crate::cpp::CppExtractor),
         Box::new(crate::swift::SwiftExtractor),
+        Box::new(crate::ruby::RubyExtractor),
     ]
 }
 
@@ -217,6 +218,7 @@ mod tests {
             Lang::Kotlin,
             Lang::Cpp,
             Lang::Swift,
+            Lang::Ruby,
         ] {
             let found = extractor_for(lang);
             assert_eq!(found.is_some(), registered.contains(&lang), "lang {lang:?}");

@@ -27,6 +27,7 @@ pub enum Lang {
     /// C and C++ share one language: a `.h` header can be either (ADR 0017).
     Cpp,
     Swift,
+    Ruby,
 }
 
 impl Lang {
@@ -46,6 +47,7 @@ impl Lang {
             "kt" => Some(Lang::Kotlin),
             "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Some(Lang::Cpp),
             "swift" => Some(Lang::Swift),
+            "rb" => Some(Lang::Ruby),
             _ => None,
         }
     }
@@ -201,6 +203,7 @@ mod tests {
             ("php", Lang::Php),
             ("kt", Lang::Kotlin),
             ("swift", Lang::Swift),
+            ("rb", Lang::Ruby),
         ] {
             assert_eq!(Lang::from_extension(ext), Some(lang), "ext {ext}");
         }
@@ -215,7 +218,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for rel in [
             "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs", "j.php",
-            "k.kt",
+            "k.kt", "l.rb",
         ] {
             touch(dir.path(), rel);
         }
@@ -228,7 +231,7 @@ mod tests {
             rel_paths(&files),
             [
                 "a.rs", "b.ts", "c.tsx", "d.js", "e.jsx", "f.mjs", "g.py", "h.java", "i.cs",
-                "j.php", "k.kt",
+                "j.php", "k.kt", "l.rb",
             ]
         );
         let langs: Vec<Lang> = files.iter().map(|f| f.lang).collect();
@@ -246,6 +249,7 @@ mod tests {
                 Lang::CSharp,
                 Lang::Php,
                 Lang::Kotlin,
+                Lang::Ruby,
             ]
         );
     }

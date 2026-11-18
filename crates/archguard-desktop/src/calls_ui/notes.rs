@@ -22,7 +22,7 @@ pub enum Note {
     RustSyntax,
     /// Rust calls resolved with rust-analyzer, macros excepted.
     RustAnalyzer,
-    /// A token scanner (PHP, Kotlin, C/C++): calls and types are not resolved.
+    /// A token scanner (PHP, Kotlin, C/C++, Ruby): calls and types are not resolved.
     Tokens,
     /// Python calls resolved statically from syntax.
     PythonStatic,
@@ -149,6 +149,7 @@ mod tests {
             ),
             (("php", "archguard tokens", "partial"), Note::Tokens),
             (("kotlin", "archguard tokens", "partial"), Note::Tokens),
+            (("ruby", "archguard tokens", "partial"), Note::Tokens),
             (("cobol", "none", "unavailable"), Note::Unavailable),
             (("cobol", "none", "partial"), Note::Partial),
         ];

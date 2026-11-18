@@ -71,7 +71,7 @@ fn comment_text(line: &str, lang: Lang) -> Option<&str> {
     let trimmed = line.trim_start();
     let hash = || trimmed.split_once('#').map(|(_, rest)| rest);
     match lang {
-        Lang::Py => hash(),
+        Lang::Py | Lang::Ruby => hash(),
         // Both are suffixes of the line, so the longer one starts first.
         Lang::Php => [c_comment(trimmed), hash()]
             .into_iter()

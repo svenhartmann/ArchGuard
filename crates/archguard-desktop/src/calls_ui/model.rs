@@ -259,6 +259,7 @@ pub fn language_label(code: &str, l: &Labels) -> String {
         "js" | "javascript" => "JavaScript",
         "py" | "python" => "Python",
         "php" => "PHP",
+        "ruby" => "Ruby",
         "rust" => "Rust",
         "" => return l.unreported_language.clone(),
         other => other,
