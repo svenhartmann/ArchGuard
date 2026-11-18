@@ -49,6 +49,19 @@ export component TextEdit inherits Rectangle {
     out property <int> cursor: input.cursor-position-byte-offset;
     callback edited(string);
     public function set-cursor(offset: int) { input.set-selection-offsets(offset, offset); }
+    // The cursor's top in the window.
+    out property <length> cursor-screen: input.absolute-position.y + root.cursor-y;
+    property <length> cursor-y;
+    // Scroll the cursor's line to window y `at`, as far as the text and
+    // the field allow; the rest, for the page to scroll.
+    public function scroll-cursor-to(at: length) -> length {
+        let top = scroll.absolute-position.y + root.edge;
+        let target = max(top, min(at, top + scroll.visible-height - 2 * root.edge - 2 * root.font-size));
+        let was = scroll.content-y;
+        let now = root.cursor-screen;
+        scroll.content-y = max(min(was + target - now, 0px), scroll.visible-height - input.height);
+        return at - now - (scroll.content-y - was);
+    }
     // Room kept between the cursor and the edge when scrolling to it.
     property <length> edge: 12px;
     horizontal-stretch: 1;
@@ -91,6 +104,7 @@ export component TextEdit inherits Rectangle {
             edited => { root.edited(self.text); }
             // Keep the cursor in view, as the std-widgets TextEdit does.
             cursor-position-changed(c) => {
+                root.cursor-y = c.y;
                 if (c.x + scroll.content-x < root.edge) {
                     scroll.content-x = min(0px, max(scroll.visible-width - self.width, root.edge - c.x));
                 } else if (c.x + scroll.content-x > scroll.visible-width - root.edge) {

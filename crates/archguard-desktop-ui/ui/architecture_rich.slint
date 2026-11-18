@@ -104,6 +104,13 @@ export global RichData {
     in-out property <length> caret-in-y;
     // Counts up when the page should scroll the caret into view now.
     in-out property <int> reveal;
+    // The caret's (or the Markdown field's cursor's) top in the window. On
+    // a switch between them (`switched`) the next one goes there: it
+    // scrolls itself and asks the page to scroll by `keep-by` (`keep` counts up).
+    in-out property <length> caret-screen;
+    in-out property <bool> switched;
+    in-out property <length> keep-by;
+    in-out property <int> keep;
     // A named key (left, right, up, down, home, end, backspace, delete,
     // enter, tab, backtab) or shortcut letter; true when handled.
     callback key(string, bool, bool, bool) -> bool;
@@ -618,7 +625,8 @@ export component RichEditor inherits FocusScope {
         }
     }
     // Made while editing (back from the Markdown field): once laid out,
-    // the keys come here and the page scrolls to the caret.
+    // the keys come here and the page scrolls the caret to where the
+    // field's cursor was (else into view).
     property <bool> back;
     init => { root.back = !RichData.reading; }
     Timer {
@@ -628,7 +636,19 @@ export component RichEditor inherits FocusScope {
             root.back = false;
             ime.focus();
             RichData.focused = ime.has-focus;
-            RichData.reveal += 1;
+            if (RichData.switched) {
+                RichData.switched = false;
+                RichData.keep-by = RichData.caret-screen - ime.absolute-position.y;
+                RichData.keep += 1;
+            } else {
+                RichData.reveal += 1;
+            }
+        }
+    }
+    property <length> caret-screen: ime.absolute-position.y;
+    changed caret-screen => {
+        if (!RichData.switched) {
+            RichData.caret-screen = self.caret-screen;
         }
     }
     property <bool> linking: RichData.linking;

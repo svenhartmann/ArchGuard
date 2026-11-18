@@ -98,6 +98,34 @@ export global ArchitectureData {
     callback choose-location(int);
 }
 
+// The chapter's Markdown, opened at the formatted editor's caret, its
+// line where the caret was in the window.
+component DraftField inherits TextEdit {
+    font-size: Theme.font-small;
+    text <=> ArchitectureData.draft;
+    edited(t) => { ArchitectureData.draft-changed(t); }
+    init => { self.set-cursor(ArchitectureData.draft-cursor); self.focus(); }
+    changed cursor => { ArchitectureData.draft-cursor = self.cursor; }
+    // Once laid out (before, the cursor's line is not known yet).
+    property <bool> placed;
+    Timer {
+        interval: 1ms;
+        running: !root.placed;
+        triggered => {
+            root.placed = true;
+            root.set-cursor(ArchitectureData.draft-cursor);
+            RichData.switched = false;
+            RichData.keep-by = root.scroll-cursor-to(RichData.caret-screen);
+            RichData.keep += 1;
+        }
+    }
+    changed cursor-screen => {
+        if (!RichData.switched) {
+            RichData.caret-screen = self.cursor-screen;
+        }
+    }
+}
+
 // Visual: the chapter as formatted text to type in. Markdown: the source
 // on the left, the chapter on the right; one above the other in a narrow
 // pane.
@@ -116,6 +144,7 @@ component ChapterEditor inherits VerticalLayout {
                 compact: true;
                 text: ArchitectureData.visual ? @tr("Edit Markdown") : @tr("Edit in the text");
                 clicked => {
+                    RichData.switched = true;
                     ArchitectureData.visual = !ArchitectureData.visual;
                     ArchitectureData.visual-changed(ArchitectureData.visual);
                 }
@@ -125,15 +154,10 @@ component ChapterEditor inherits VerticalLayout {
     if ArchitectureData.visual || RichData.reading: RichEditor {}
     if !ArchitectureData.visual && !RichData.reading && !root.narrow: HorizontalLayout {
         spacing: 18px;
-        TextEdit {
+        DraftField {
             preferred-width: 100px;
             horizontal-stretch: 1;
             height: 620px;
-            font-size: Theme.font-small;
-            text <=> ArchitectureData.draft;
-            edited(t) => { ArchitectureData.draft-changed(t); }
-            init => { self.set-cursor(ArchitectureData.draft-cursor); self.focus(); }
-            changed cursor => { ArchitectureData.draft-cursor = self.cursor; }
         }
         Rectangle {
             preferred-width: 100px;
@@ -151,13 +175,8 @@ component ChapterEditor inherits VerticalLayout {
     }
     if !ArchitectureData.visual && !RichData.reading && root.narrow: VerticalLayout {
         spacing: 12px;
-        TextEdit {
+        DraftField {
             height: 360px;
-            font-size: Theme.font-small;
-            text <=> ArchitectureData.draft;
-            edited(t) => { ArchitectureData.draft-changed(t); }
-            init => { self.set-cursor(ArchitectureData.draft-cursor); self.focus(); }
-            changed cursor => { ArchitectureData.draft-cursor = self.cursor; }
         }
         Text { text: @tr("Preview"); color: Theme.muted; font-size: Theme.font-caption; }
         for b in ArchitectureData.preview: ArcBlockView { block: b; }
@@ -442,6 +461,10 @@ export component ArchitectureView inherits Rectangle {
                 changed caret => { self.show-caret(); }
                 property <int> reveal: RichData.reveal;
                 changed reveal => { self.show-caret(); }
+                property <int> keep: RichData.keep;
+                changed keep => {
+                    self.content-y = max(min(self.content-y + RichData.keep-by, 0px), self.visible-height - self.content-height);
+                }
                 function show-caret() {
                     if (!RichData.focused) {
                         return;
