@@ -7,9 +7,9 @@ import { Theme } from "theme.slint";
 import { Button, Badge, EmptyState, SectionHeading } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { RuntimeSummary, RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite } from "runtime_summary.slint";
-import { RuntimeTime, FlameGraph, RtBreakdown, RtPart, RtHot, RtFlame } from "runtime_time.slint";
+import { RuntimeTime, FlameGraph, RtBreakdown, RtPart, RtHot, RtFlame, RtSampled, RtSampledRow } from "runtime_time.slint";
 
-export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite, RtBreakdown, RtPart, RtHot, RtFlame }
+export { RtSummary, RtFinding, RtEndpoint, RtStatement, RtSite, RtBreakdown, RtPart, RtHot, RtFlame, RtSampled, RtSampledRow }
 
 export struct RtRequest {
     // UTC time of day.
@@ -44,6 +44,8 @@ export struct RtSpanRow {
     error: bool,
     // Part of a repeated statement at or above the N+1 threshold.
     repeated: bool,
+    // Profiler samples this span owns itself (0: none recorded).
+    samples: int,
 }
 
 export struct RtDetail {
@@ -77,6 +79,8 @@ export struct RuntimeModel {
     summary: RtSummary,
     breakdown: [RtBreakdown],
     hot: [RtHot],
+    // Profiler samples of the selected request.
+    sampled: RtSampled,
 }
 
 export global RuntimeData {
@@ -160,6 +164,7 @@ component SpanRow inherits Rectangle {
             alignment: center;
             Small { text: @tr("{} ms", s.duration); horizontal-alignment: right; }
             if s.has-self: Small { text: @tr("self {} ms", s.self-time); muted: true; horizontal-alignment: right; }
+            if s.samples > 0: Small { text: @tr("{0} sample" | "{0} samples" % s.samples, Fmt.int(s.samples)); muted: true; horizontal-alignment: right; }
         }
     }
 }
@@ -264,7 +269,7 @@ export component RuntimeView inherits Rectangle {
                 : @tr("Send a request to the application; with Live on it appears here within about a second.");
         }
         if m.state == 1 && m.page == 1: RuntimeSummary { vertical-stretch: 1; data: m.summary; }
-        if m.state == 1 && m.page == 2: RuntimeTime { vertical-stretch: 1; breakdown: m.breakdown; hot: m.hot; }
+        if m.state == 1 && m.page == 2: RuntimeTime { vertical-stretch: 1; breakdown: m.breakdown; hot: m.hot; sampled: m.sampled; }
         if m.state == 1 && m.page == 0 && m.requests.length > 0: HorizontalLayout {
             vertical-stretch: 1;
             ScrollView {

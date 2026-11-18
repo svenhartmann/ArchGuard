@@ -274,6 +274,7 @@ fn build(s: &RuntimeState) -> RuntimeModel {
         summary,
         breakdown: time::breakdown(p),
         hot: time::hot(p),
+        sampled: time::sampled(p.requests.get(chosen)),
         error: Default::default(),
     }
 }
