@@ -108,6 +108,8 @@ fn walk(
 ) -> (BTreeMap<String, Scan>, Skipped) {
     let mut scans: BTreeMap<String, Scan> = BTreeMap::new();
     let mut skipped = Skipped::new();
+    // Services already told that tables in their shared directory are not attributed.
+    let mut same_dir: BTreeSet<String> = BTreeSet::new();
     for entry in discovery.walk(root).flatten() {
         let rel = relative(root, entry.path());
         let ext = rel.rsplit('.').next().unwrap_or("");
@@ -118,43 +120,62 @@ fn walk(
             continue;
         }
         let owners = owners(report, &rel);
-        let mut skip = |message: String| {
-            let found = owners
-                .iter()
-                .map(|s| (s.clone(), rel.clone(), message.clone()));
-            skipped.extend(found);
-        };
-        if let [one] = owners.as_slice() {
-            let scan = scans.entry(one.clone()).or_default();
-            scan.files += 1;
-            if scan.files == MAX_FILES + 1 {
-                skip(format!(
-                    "Table scan of the service stopped after {MAX_FILES} files; tables in later files are unknown."
-                ));
-            }
-            if scan.files > MAX_FILES {
-                continue;
-            }
-        }
-        if owners.is_empty() {
+        let below = count(&mut scans, &mut skipped, &owners, &rel);
+        let unflagged: Vec<String> = owners
+            .iter()
+            .filter(|s| !same_dir.contains(*s))
+            .cloned()
+            .collect();
+        if !below || (owners.len() > 1 && unflagged.is_empty()) {
             continue;
         }
         let text = match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-            Err(e) => {
-                skip(format!(
-                    "Source file not read ({e}; limit {MAX_BYTES} bytes); its tables are unknown."
-                ));
+            Err(_) => {
+                let message = "Source file not read: larger than 1 MiB, not a regular file or not readable; its tables are unknown.";
+                skipped.extend(
+                    owners
+                        .iter()
+                        .map(|s| (s.clone(), rel.clone(), message.into())),
+                );
                 continue;
             }
         };
         match owners.as_slice() {
             [one] => scans.entry(one.clone()).or_default().file(&rel, &text),
-            _ if Scan::names_tables(&rel, &text) => skip(SAME_DIR.into()),
+            _ if Scan::names_tables(&rel, &text) => {
+                for owner in unflagged {
+                    skipped.push((owner.clone(), rel.clone(), SAME_DIR.into()));
+                    same_dir.insert(owner);
+                }
+            }
             _ => {}
         }
     }
     (scans, skipped)
+}
+
+/// Counts a file against each owner's limit and reports owners that pass it; true
+/// while one owner is still below, so a shared file's reads stay bounded per service.
+fn count(
+    scans: &mut BTreeMap<String, Scan>,
+    skipped: &mut Skipped,
+    owners: &[String],
+    rel: &str,
+) -> bool {
+    let mut below = false;
+    for owner in owners {
+        let scan = scans.entry(owner.clone()).or_default();
+        scan.files += 1;
+        if scan.files == MAX_FILES + 1 {
+            let message = format!(
+                "Table scan of the service stopped after {MAX_FILES} files; tables in later files are unknown."
+            );
+            skipped.push((owner.clone(), rel.to_owned(), message));
+        }
+        below |= scan.files <= MAX_FILES;
+    }
+    below
 }
 
 /// Gives each service's tables to its datastore usage when that is the service's only

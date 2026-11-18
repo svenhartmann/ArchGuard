@@ -313,8 +313,84 @@ fn discovery_exclusions_and_ignores_apply_and_only_test_directories_are_tests() 
     put(root, "a/Contest.java", &entity("contest"));
     put(root, "a/test/Fake.java", &entity("fake"));
     put(root, "a/Shop.Tests/Fake.java", &entity("fake_project"));
+    for (path, table) in [
+        ("a/Shop.UnitTests/Fake.java", "unit"),
+        ("a/Shop.IntegrationTests/Fake.java", "integration"),
+        ("a/src/integrationTest/java/Fake.java", "gradle_integration"),
+        ("a/src/testFixtures/java/Fake.java", "fixtures"),
+        // Production code whose names merely contain "test".
+        ("a/latest/Latest.java", "latest"),
+        ("a/Testimonials/Quote.java", "testimonials"),
+        ("a/Attestation/Proof.java", "attestation"),
+    ] {
+        put(root, path, &entity(table));
+    }
+    let model = |t: &str| format!("class M(Base):\n    __tablename__ = \"{t}\"\n");
+    put(root, "a/test_models.py", &model("pytest_prefix"));
+    put(root, "a/models_test.py", &model("pytest_suffix"));
+    // A fake DbContext in each service's unit test project names no shared table.
+    let fake = "class Fake : DbContext {\n    public DbSet<Order> Orders { get; set; }\n}\n";
+    put(root, "a/Shop.UnitTests/Fake.cs", fake);
+    put(root, "b/Shop.UnitTests/Fake.cs", fake);
     let report = analyze_services(root).unwrap();
-    assert_eq!(tables(&report, "compose.yaml::a"), ["contest", "news"]);
+    assert_eq!(
+        tables(&report, "compose.yaml::a"),
+        ["attestation", "contest", "latest", "news", "testimonials"]
+    );
+    assert_eq!(shop_share(&report).scope, SharedDatastoreScope::Database);
+}
+
+#[test]
+fn files_beyond_the_per_service_file_limit_are_a_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", &two_on_shop("./a", "./b"));
+    for i in 0..5_001 {
+        put(
+            root,
+            &format!("a/t{i}.sql"),
+            &format!("create table t{i} (id int);\n"),
+        );
+    }
+    put(root, "b/schema.sql", "CREATE TABLE beta (id int);\n");
+    let report = analyze_services(root).unwrap();
+    assert_eq!(tables(&report, "compose.yaml::a").len(), 5_000);
+    assert!(!shop_share(&report).disjoint_tables);
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.service.as_deref() == Some("a")
+                && d.message.contains("stopped after 5000 files")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn shared_build_context_files_count_against_each_service_and_report_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(root, "compose.yaml", &two_on_shop(".", "."));
+    for i in 0..5_002 {
+        put(
+            root,
+            &format!("t{i}.sql"),
+            &format!("create table t{i} (id int);\n"),
+        );
+    }
+    let report = analyze_services(root).unwrap();
+    for service in ["a", "b"] {
+        let mine = |text: &str| {
+            report
+                .diagnostics
+                .iter()
+                .filter(|d| d.service.as_deref() == Some(service) && d.message.contains(text))
+                .count()
+        };
+        assert_eq!(mine("same source directory"), 1, "{service}");
+        assert_eq!(mine("stopped after 5000 files"), 1, "{service}");
+    }
 }
 
 #[test]
@@ -337,7 +413,8 @@ fn skipped_files_are_gaps_and_latin1_files_are_read() {
     assert!(
         report.diagnostics.iter().any(|d| d.file == "b/huge.sql"
             && d.service.as_deref() == Some("b")
-            && d.message.contains("not read")),
+            && d.message.contains("not read: larger than 1 MiB")
+            && !d.message.contains("dependency")),
         "{:?}",
         report.diagnostics
     );
