@@ -55,7 +55,9 @@ pub fn write(root: &Path, key: &str, ids: &[String]) -> Result<(), String> {
     editor
         .set(&format!("arc42.{key}"), FieldValue::List(ids.to_vec()))
         .map_err(|e| e.to_string())?;
-    editor.save().map(drop).map_err(|e| e.to_string())
+    editor.save().map_err(|e| e.to_string())?;
+    crate::settings_view_ui::file_written(root);
+    Ok(())
 }
 
 /// The document as `archguard doc --arc42` writes it with `hidden`: the
