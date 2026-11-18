@@ -401,6 +401,7 @@ fn kind_name(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "ownership_rule",
         FindingKind::Orphan => "orphan",
         FindingKind::TargetArchitecture => "target_architecture",
+        FindingKind::License => "license",
     }
 }
 

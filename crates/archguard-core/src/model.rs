@@ -189,6 +189,8 @@ pub enum FindingKind {
     OwnershipRule,
     Orphan,
     TargetArchitecture,
+    /// A third-party dependency fails the `[licenses]` policy (ADR 0016).
+    License,
 }
 
 /// A recommendation to break a cycle: cutting the dependency `from` → `to`

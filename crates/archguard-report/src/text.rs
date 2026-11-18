@@ -190,6 +190,7 @@ fn summary_line(r: &Report) -> String {
         FindingKind::OwnershipRule,
         FindingKind::Orphan,
         FindingKind::TargetArchitecture,
+        FindingKind::License,
     ]
     .into_iter()
     .filter_map(|kind| {
@@ -279,6 +280,7 @@ fn kind_token(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "ownership_rule",
         FindingKind::Orphan => "orphan",
         FindingKind::TargetArchitecture => "target_architecture",
+        FindingKind::License => "license",
     }
 }
 
@@ -293,6 +295,7 @@ fn kind_label(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "ownership rule violation",
         FindingKind::Orphan => "orphan candidate",
         FindingKind::TargetArchitecture => "target architecture violation",
+        FindingKind::License => "licence violation",
     }
 }
 

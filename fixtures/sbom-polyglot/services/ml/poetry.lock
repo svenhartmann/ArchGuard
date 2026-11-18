@@ -1,0 +1,14 @@
+[[package]]
+name = "numpy"
+version = "1.26.4"
+description = "Fundamental package for array computing in Python"
+optional = false
+python-versions = ">=3.9"
+
+[[package]]
+name = "pytest"
+version = "8.1.1"
+description = "pytest"
+optional = false
+python-versions = ">=3.8"
+category = "dev"
