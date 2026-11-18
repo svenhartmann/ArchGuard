@@ -373,45 +373,7 @@ impl Rich {
         for (p, piece) in pieces.into_iter().enumerate() {
             let blocks = match piece {
                 Err(text) => {
-                    let generated = !doc::generated(&text).is_empty();
-                    for part in split_drawn(&text, drawn) {
-                        let segment = match part {
-                            Ok(segment) => segment,
-                            Err(id) => {
-                                if !self.figures.contains_key(&id)
-                                    && let Some(f) = figure(&id)
-                                {
-                                    self.figures.insert(id.clone(), f);
-                                }
-                                out.push(RichItem {
-                                    figure: self.figures.get(&id).cloned().unwrap_or_default(),
-                                    piece: p as i32,
-                                    block: -1,
-                                    kind: 7,
-                                    top: 14.0,
-                                    generated,
-                                    ..Default::default()
-                                });
-                                continue;
-                            }
-                        };
-                        // The chapter heading shows above the editor.
-                        let shown: Vec<markdown::Block> = markdown::parse(&segment)
-                            .into_iter()
-                            .filter(|b| {
-                                !matches!(b, markdown::Block::Heading { level: 2, text } if doc::chapter_heading(text))
-                            })
-                            .collect();
-                        if !shown.is_empty() {
-                            out.push(RichItem {
-                                fixed: model(blocks::ui_blocks(&shown, note)),
-                                piece: p as i32,
-                                block: -1,
-                                generated,
-                                ..Default::default()
-                            });
-                        }
-                    }
+                    fixed_items(&mut self.figures, &mut out, p, &text, note, figure, drawn);
                     continue;
                 }
                 Ok(blocks) => blocks,
@@ -927,6 +889,73 @@ fn clipboard_get() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
+/// Rows for kept text `text` of piece `p`: its own and generated
+/// sections, diagram sections drawn in their place.
+fn fixed_items(
+    figures: &mut HashMap<String, ArcFigure>,
+    out: &mut Vec<RichItem>,
+    p: usize,
+    text: &str,
+    note: &str,
+    figure: &dyn Fn(&str) -> Option<ArcFigure>,
+    drawn: &[(String, String)],
+) {
+    for (generated, text) in own_and_generated(text) {
+        for part in split_drawn(text, drawn) {
+            let segment = match part {
+                Ok(segment) => segment,
+                Err(id) => {
+                    if !figures.contains_key(&id)
+                        && let Some(f) = figure(&id)
+                    {
+                        figures.insert(id.clone(), f);
+                    }
+                    out.push(RichItem {
+                        figure: figures.get(&id).cloned().unwrap_or_default(),
+                        piece: p as i32,
+                        block: -1,
+                        kind: 7,
+                        top: 14.0,
+                        generated,
+                        ..Default::default()
+                    });
+                    continue;
+                }
+            };
+            // The chapter heading shows above the editor.
+            let shown: Vec<markdown::Block> = markdown::parse(&segment)
+                .into_iter()
+                .filter(|b| {
+                    !matches!(b, markdown::Block::Heading { level: 2, text } if doc::chapter_heading(text))
+                })
+                .collect();
+            if !shown.is_empty() {
+                out.push(RichItem {
+                    fixed: model(blocks::ui_blocks(&shown, note)),
+                    piece: p as i32,
+                    block: -1,
+                    generated,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+}
+
+/// Kept `text` cut at its generated blocks: (generated, section) in order;
+/// own text kept as written gets no generated bar.
+fn own_and_generated(text: &str) -> Vec<(bool, &str)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    for r in doc::generated(text) {
+        out.push((false, &text[pos..r.start]));
+        out.push((true, &text[r.clone()]));
+        pos = r.end;
+    }
+    out.push((false, &text[pos..]));
+    out
+}
+
 /// `text` cut at the diagram sections of `drawn` (id, Markdown): the text
 /// between them, and each section's id in its place.
 fn split_drawn(text: &str, drawn: &[(String, String)]) -> Vec<Result<String, String>> {
@@ -1193,6 +1222,33 @@ mod tests {
             split_drawn("abc", &[("x".into(), "zz".into())]),
             [Ok("abc".to_string())]
         );
+    }
+
+    /// Own text kept as written (a fence with ``` inside, a paragraph with
+    /// an image) has no generated bar, even right before a generated block.
+    #[test]
+    fn own_text_kept_as_written_is_not_generated() {
+        use slint::Model;
+        let md = "## 1. Ziele\n\n```rust\nfn main() { println!(\"```\"); }\n```\n\nSee [the spec](https://example.com/a_(b)) and ![logo](img/logo.png).\n\n<!-- archguard:arc42:01:start -->\nErzeugt.\n<!-- archguard:arc42:01:end -->\n";
+        let mut r = rich(md);
+        r.reading = true;
+        let items = r.items("", &|_| None, &|_| None, &[]);
+        let shape: Vec<(Vec<String>, bool)> = items
+            .iter()
+            .map(|i| {
+                let plain = i.fixed.iter().map(|b| b.plain.to_string()).collect();
+                (plain, i.generated)
+            })
+            .collect();
+        assert_eq!(
+            shape.iter().filter(|(_, g)| *g).count(),
+            1,
+            "only the marked block is generated: {shape:?}"
+        );
+        let code = shape
+            .iter()
+            .find(|(plain, _)| plain.first().is_some_and(|t| t.contains("println")));
+        assert_eq!(code.map(|(_, g)| *g), Some(false), "{shape:?}");
     }
 
     #[test]
