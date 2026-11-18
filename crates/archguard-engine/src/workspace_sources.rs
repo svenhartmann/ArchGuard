@@ -1114,20 +1114,7 @@ fn gather(
         };
         for file in found {
             if input.files.len() >= MAX_PROJECT_FILES || total_files >= MAX_FILES {
-                if !input
-                    .diagnostics
-                    .iter()
-                    .any(|s| s.contains("Source file limit"))
-                {
-                    input
-                        .diagnostics
-                        .push("Source file limit reached; remaining files omitted.".into());
-                }
-                input
-                    .config
-                    .project
-                    .exclude
-                    .push(escape_glob(&file.rel_path));
+                omit_once(&mut input, &file.rel_path, "Source file limit");
                 continue;
             }
             let bytes = match crate::project_files::read_repo_file(
@@ -1150,14 +1137,7 @@ fn gather(
                 }
             };
             if total_bytes + bytes.len() > MAX_SOURCE_BYTES {
-                input
-                    .diagnostics
-                    .push("Source byte limit reached; remaining files omitted.".into());
-                input
-                    .config
-                    .project
-                    .exclude
-                    .push(escape_glob(&file.rel_path));
+                omit_once(&mut input, &file.rel_path, "Source byte limit");
                 continue;
             }
             let source = String::from_utf8_lossy(&bytes);
@@ -1189,6 +1169,14 @@ fn gather(
         inputs.push(input);
     }
     Ok((inputs, diagnostics))
+}
+/// Exclude a file past a source limit and report that limit once per project.
+fn omit_once(input: &mut Input, rel_path: &str, limit: &str) {
+    let message = format!("{limit} reached; remaining files omitted.");
+    if !input.diagnostics.contains(&message) {
+        input.diagnostics.push(message);
+    }
+    input.config.project.exclude.push(escape_glob(rel_path));
 }
 fn visibility(workspace: &WorkspaceReport, project: &str, tests: bool) -> BTreeSet<String> {
     let mut visible = BTreeSet::from([project.to_owned()]);
