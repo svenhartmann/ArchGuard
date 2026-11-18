@@ -229,7 +229,7 @@ fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show
 
 /// Show the editor with the chapter's diagrams drawn in place: inserted
 /// diagram blocks and the diagram sections of generated text.
-fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
+fn show_editor(s: &mut ArchitectureState, ui: &AppWindow) {
     let Ok(doc) = &s.doc else { return };
     let texts = Texts::of(ui);
     let figure = |id: &str| {
@@ -247,13 +247,31 @@ fn show_editor(s: &ArchitectureState, ui: &AppWindow) {
         })
         .collect();
     s.editor.show(ui, &figure, &own, &drawn);
-    // Keys change only the editor; the save bar follows its first change.
+    // Keys change only the editor; the save bar follows the draft.
     let d = ui.global::<ArchitectureData>();
     let mut m = d.get_model();
-    if m.dirty != s.editor.is_dirty() {
-        m.dirty = !m.dirty;
+    if follow_draft(s, &mut m) {
         d.set_model(m);
     }
+}
+
+/// The save bar of the draft: unsaved after its first change, a refused
+/// save's error until the text changes, and no "Saved …" once it changed
+/// again (exports report there too, so the line stays). True if `m` changed.
+fn follow_draft(s: &mut ArchitectureState, m: &mut ArchitectureModel) -> bool {
+    let mut now = ArchitectureModel::default();
+    s.editor.fill(&mut now);
+    if now.dirty {
+        s.saved.clear();
+    }
+    let shown = (m.dirty, &m.edit_error, m.saved.as_str());
+    if shown == (now.dirty, &now.edit_error, s.saved.as_str()) {
+        return false;
+    }
+    m.dirty = now.dirty;
+    m.edit_error = now.edit_error;
+    m.saved = s.saved.as_str().into();
+    true
 }
 
 /// The Save button: write the open draft and remember the path. `Err`
@@ -703,6 +721,38 @@ mod tests {
         assert!(config.arc42.hidden_diagrams.contains(&d.id), "{config:?}");
         documents::with_state(a, |s: &mut ArchitectureState| {
             assert!(s.hidden.contains(&d.id));
+        });
+    }
+
+    /// After a save the bar says "Saved …"; typing again drops that line,
+    /// and a refused save's error goes once the text changes.
+    #[test]
+    fn the_save_bar_follows_the_draft_after_a_save_or_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, mut state, _, _) = ticking_state(dir.path());
+        std::fs::write(dir.path().join("arc42.md"), "## 5. Bausteine\n\nAlt.\n").unwrap();
+        state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
+        state.chapter = 5;
+        documents::set_state(a, state);
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            open_editor(s);
+            s.editor.edit("## 5. Bausteine\n\nNeu.\n");
+            assert_eq!(save_draft(s), Ok(()));
+            // The save puts the chapter's shown diagrams in.
+            let saved = s.editor.chapter(s.doc.as_ref().unwrap(), 5);
+            let mut m = window::model(s, &Texts::default());
+            assert!(!m.saved.is_empty() && !m.dirty);
+            assert!(!follow_draft(s, &mut m), "nothing changed");
+            s.editor.edit("## 5. Bausteine\n\nNeuer.\n");
+            assert!(follow_draft(s, &mut m));
+            assert!(m.dirty && m.saved.is_empty(), "no stale \"Saved\"");
+            s.editor.edit("Ohne Kopf.\n");
+            assert!(save_draft(s).is_err());
+            m = window::model(s, &Texts::default());
+            assert!(!m.edit_error.is_empty());
+            s.editor.edit(&saved);
+            assert!(follow_draft(s, &mut m));
+            assert!(m.edit_error.is_empty() && !m.dirty, "the bar closes");
         });
     }
 

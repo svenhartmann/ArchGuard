@@ -287,7 +287,12 @@ impl Editor {
     fn change(&self, f: impl FnOnce(&mut Open)) {
         let changed = self.with_open(|o| {
             o.as_mut().map(|e| {
+                let old = e.draft.clone();
                 f(e);
+                // A refused save's reason holds until the text changes.
+                if e.draft != old {
+                    e.error.clear();
+                }
                 (e.chapter, e.draft != e.original)
             })
         });
@@ -511,6 +516,13 @@ mod tests {
         (d, id)
     }
 
+    /// Why the open draft's last save failed, as the save bar shows it.
+    fn error(editor: &Editor) -> String {
+        let mut m = ArchitectureModel::default();
+        editor.fill(&mut m);
+        m.edit_error.to_string()
+    }
+
     #[test]
     fn each_document_keeps_its_own_draft() {
         let ((a_dir, a), (b_dir, b)) = (project(), project());
@@ -718,6 +730,29 @@ mod tests {
         assert_eq!(rebuilt.save(&new), Some(path.display().to_string()));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Mein Entwurf.") && !text.contains("Gepullter Text."));
+    }
+
+    /// A refused save shows why until the text changes: fixed, or back to
+    /// the chapter as opened, the message goes; a caret move keeps it.
+    #[test]
+    fn a_save_error_clears_when_the_text_changes() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        let original = editor.chapter(&new, 5);
+        editor.edit("Kein Kapitelkopf.\n");
+        assert_eq!(editor.save(&new), None, "a chapter without heading");
+        assert!(!error(&editor).is_empty());
+        editor.with_open(|o| {
+            let e = o.as_mut().unwrap();
+            e.rich = Some(Rich::new(&e.draft));
+        });
+        editor.rich(|r| r.key("end", false, false, false));
+        assert!(!error(&editor).is_empty(), "a caret move keeps it");
+        editor.edit(&original);
+        assert_eq!(error(&editor), "", "the fixed text drops it");
+        assert!(!editor.is_dirty());
     }
 
     /// An arc42.md that is not UTF-8 cannot be read: the save says why,
