@@ -53,3 +53,4 @@ assert.equal(app.run("classMetricAssessment({file:'api.go',dit:{value:null,obser
 assert.equal(app.run("classMetricLanguage({file:'src/a.mts'})"),'typescript');
 assert.equal(app.run("classMetricLanguage({file:'src/a.cts'})"),'typescript');
 assert.equal(app.run("classMetricLanguage({file:'build.gradle.kts'})"),'unknown');
+assert.equal(app.run("classMetricLanguage({file:'app/models/invoice.rb'})"),'ruby');

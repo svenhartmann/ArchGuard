@@ -8,13 +8,13 @@ app.run('kpiHelpUi.action.click()');
 assert.equal(app.run('kpiHelpUi.dialog.open'),true);
 assert.equal(app.run('kpiHelpUi.language'),'java','start with a language present in the report');
 const languages=JSON.parse(app.run('JSON.stringify(kpiLanguageHelp().map(row=>row.id))'));
-assert.deepEqual([...languages].sort(),['csharp','go','java','js','kt','php','py','rs','ts']);
+assert.deepEqual([...languages].sort(),['csharp','go','java','js','kt','php','py','rb','rs','ts']);
 for(const id of languages){
  app.run(`kpiHelpUi.language='${id}';renderKpiHelp()`);
  const text=app.run('kpiHelpUi.detail.textContent');
  assert.match(text,/archguard coverage \. --report/,'every supported language has an import example');
  if(id==='rs')assert.match(text,/abstractness and implemented traits.*rust-analyzer.*ARCHGUARD_TRUST_PROJECT_COMPILER=1.*CBO and RFC stay partial.*DIT and NOC are not applicable/is,'Rust names syntax types, the opt-in resolution and what stays partial');
- else if(['kt','php','py'].includes(id))assert.match(text,/call targets are resolved statically.*CBO, RFC, DIT and NOC stay partial/is,'statically resolved languages state what stays partial');
+ else if(['kt','php','py','rb'].includes(id))assert.match(text,/call targets are resolved statically.*CBO, RFC, DIT and NOC stay partial/is,'statically resolved languages state what stays partial');
  else assert.match(text,/archguard calls \. --format json/);
 }
 assert.doesNotMatch(app.run('kpiHelpUi.dialog.textContent'),/Kotlin[^.]*not currently supported/,'Kotlin is a supported language');

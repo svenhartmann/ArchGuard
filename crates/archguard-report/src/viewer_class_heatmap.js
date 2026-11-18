@@ -7,7 +7,7 @@ function classMetricValue(row,key){
 }
 function classMetricLanguage(row){
   const ext=(row.file||'').split('.').pop().toLowerCase();
-  return ({go:'go',java:'java',cs:'csharp',ts:'typescript',tsx:'typescript',mts:'typescript',cts:'typescript',js:'javascript',jsx:'javascript',mjs:'javascript',cjs:'javascript',rs:'rust',php:'php',kt:'kotlin',py:'python'})[ext]||'unknown';
+  return ({go:'go',java:'java',cs:'csharp',ts:'typescript',tsx:'typescript',mts:'typescript',cts:'typescript',js:'javascript',jsx:'javascript',mjs:'javascript',cjs:'javascript',rs:'rust',php:'php',kt:'kotlin',rb:'ruby',py:'python'})[ext]||'unknown';
 }
 function classMetricCohorts(){
   const source=engineeringData('code_metrics');if(classHeatmapUi.source===source)return classHeatmapUi.cohorts;
