@@ -928,6 +928,16 @@ pub(crate) mod tests {
         assert_eq!(headings(text).count(), 2);
     }
 
+    /// `## 05.` is chapter 5 as the file names and markers count it, and a
+    /// bare `## 5.` closing a file without a newline is still its heading.
+    #[test]
+    fn a_leading_zero_and_a_heading_at_the_end_name_the_chapter() {
+        assert_eq!(heading_number("## 05. Bausteinsicht"), Some(5));
+        assert_eq!(heading_number("## 5."), Some(5));
+        let text = "## 4. Lösung\n\nx\n\n## 05.";
+        assert_eq!(section(text, 5), Some(text.find("## 05.").unwrap()..text.len()));
+    }
+
     #[test]
     fn a_file_changed_on_disk_refuses_the_save_and_keeps_the_change() {
         let d = dir();
