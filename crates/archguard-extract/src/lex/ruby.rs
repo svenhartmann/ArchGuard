@@ -237,7 +237,12 @@ impl Lexer<'_> {
 
     /// `/`, `%` and `<<` here start a literal, not an operator.
     fn operand_expected(&self) -> bool {
-        !self.after_operand() || self.command_argument()
+        // After `def` or a dot comes a method name: `def /(other)`, `x.%(y)`.
+        let method_name = self
+            .out
+            .last()
+            .is_some_and(|t| matches!(t.text.as_str(), "def" | "." | "&."));
+        !method_name && (!self.after_operand() || self.command_argument())
     }
 
     /// A body up to `close`, nesting `open`/`close` pairs when they differ;
@@ -249,6 +254,9 @@ impl Lexer<'_> {
             let c = self.at(0);
             if c == b'\\' {
                 self.i += 1;
+                if self.i == self.bytes.len() {
+                    break;
+                }
             } else if interpolates && c == b'#' && self.at(1) == b'{' {
                 self.interpolation();
                 continue;
@@ -395,12 +403,24 @@ impl Lexer<'_> {
         true
     }
 
+    /// The `@`, `@@` or `$` of a variable; true if a punctuation global
+    /// (`$"`, `$'`, `$/`) is complete with its one character.
+    fn sigils(&mut self) -> bool {
+        let global = self.at(0) == b'$';
+        while matches!(self.at(0), b'@' | b'$') {
+            self.i += 1;
+        }
+        let punctuation = global && self.at(0).is_ascii_punctuation() && self.at(0) != b'_';
+        self.i += usize::from(punctuation);
+        punctuation
+    }
+
     /// An identifier, constant, `@ivar`, `@@cvar`, `$global` or number, with
     /// a trailing `?`/`!` of a method name and the colon of a label.
     fn word(&mut self) {
         let number = self.at(0).is_ascii_digit();
-        while matches!(self.at(0), b'@' | b'$') {
-            self.i += 1;
+        if self.sigils() {
+            return;
         }
         while self.i < self.bytes.len()
             && (is_word(self.at(0))
@@ -477,6 +497,32 @@ mod tests {
             ]
         );
         assert_eq!(code("t = a ? b : c\n"), ["t", "=", "a", "?", "b", ":", "c"]);
+    }
+
+    #[test]
+    fn a_backslash_at_the_end_of_an_open_literal_ends_the_input() {
+        for source in [
+            "class A\n  def f\n    x = \"abc\\",
+            "x = :\"a\\",
+            "x = %w[a\\",
+        ] {
+            let last = tokens(source).pop().unwrap();
+            assert!(last.literal && last.end == source.len(), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn operator_method_names_and_punctuation_globals_are_no_literals() {
+        assert_eq!(
+            code("def /(other)\nend\ndef self.%(x)\nend\n"),
+            [
+                "def", "/", "(", "other", ")", "end", "def", "self", ".", "%", "(", "x", ")", "end"
+            ]
+        );
+        assert_eq!(
+            code("puts $\", $', $/, $:\n"),
+            ["puts", "$\"", ",", "$'", ",", "$/", ",", "$:"]
+        );
     }
 
     #[test]
