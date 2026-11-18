@@ -196,10 +196,17 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
         } else {
             "•".to_string()
         };
+        // Lines that start no block continue the entry's text.
+        let mut text = text.to_string();
+        while j < lines.len() && !starts_block(lines, j) {
+            text.push('\n');
+            text.push_str(lines[j].trim_start());
+            j += 1;
+        }
         out.push(Block::Item {
             depth,
             marker,
-            text: text.to_string(),
+            text,
         });
     }
     j
@@ -561,6 +568,28 @@ mod tests {
             items,
             want.map(|(d, m, t)| (d, m.to_string(), t.to_string()))
         );
+    }
+
+    /// Lines after an entry that start no block go on its text, as a
+    /// lazy or indented continuation does in CommonMark.
+    #[test]
+    fn continuation_lines_belong_to_their_entry() {
+        let item = |depth, marker: &str, text: &str| Block::Item {
+            depth,
+            marker: marker.into(),
+            text: text.into(),
+        };
+        assert_eq!(
+            parse("- Punkt\nweiter\n- zwei\n\n1. Schritt\n   Details\n\nDanach"),
+            vec![
+                item(0, "•", "Punkt\nweiter"),
+                item(0, "•", "zwei"),
+                item(0, "1.", "Schritt\nDetails"),
+                para("Danach"),
+            ]
+        );
+        // A block start ends the entry.
+        assert_eq!(parse("- a\n# H").len(), 2);
     }
 
     #[test]

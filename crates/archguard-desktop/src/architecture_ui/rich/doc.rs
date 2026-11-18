@@ -1000,6 +1000,18 @@ Ende.
         assert_eq!(again.to_markdown(), written);
     }
 
+    /// A continuation line stays in its entry when the part is edited: it
+    /// is not written as a paragraph of its own or a loose list.
+    #[test]
+    fn continuation_lines_stay_in_their_entry() {
+        let md = "Erster Absatz.\n\n- Punkt\nweiter\n\n1. Schritt\n   Details\n2. Zwei\n";
+        let written = edit_first(md);
+        assert_eq!(
+            written,
+            "Neu.\n\n- Punkt weiter\n1. Schritt Details\n2. Zwei\n"
+        );
+    }
+
     /// Two tables with a blank line between are one part; edited, they
     /// are still written as two tables.
     #[test]
