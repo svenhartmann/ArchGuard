@@ -305,6 +305,12 @@ msgstr "Ungespeicherte Änderungen in {}"
 msgid "Discard"
 msgstr "Verwerfen"
 
+msgid "Discard changes to chapter {}?"
+msgstr "Änderungen an Kapitel {} verwerfen?"
+
+msgid "Keep"
+msgstr "Behalten"
+
 msgid "Save or discard the changes to this chapter first."
 msgstr "Zuerst die Änderungen an diesem Kapitel speichern oder verwerfen."
 

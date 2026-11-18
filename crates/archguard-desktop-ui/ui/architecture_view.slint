@@ -196,9 +196,12 @@ component SaveBar inherits Rectangle {
         padding-bottom: 8px;
         spacing: 8px;
         if ArchitectureData.model.dirty: HorizontalLayout {
+            // Discard asks once before the draft is dropped.
+            property <bool> confirm;
             spacing: 10px;
             Text {
-                text: ArchitectureData.model.file != "" ? @tr("Unsaved changes in {}", ArchitectureData.model.file) : @tr("Unsaved changes");
+                text: confirm ? @tr("Discard changes to chapter {}?", ArchitectureData.model.chapter)
+                    : ArchitectureData.model.file != "" ? @tr("Unsaved changes in {}", ArchitectureData.model.file) : @tr("Unsaved changes");
                 color: Theme.text;
                 font-size: Theme.font-body;
                 font-weight: Theme.weight-strong;
@@ -206,7 +209,18 @@ component SaveBar inherits Rectangle {
                 horizontal-stretch: 1;
                 wrap: word-wrap;
             }
-            Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Discard"); clicked => { ArchitectureData.cancel-edit(); } }
+            Button {
+                y: (parent.height - self.height) / 2;
+                compact: true;
+                text: @tr("Discard");
+                clicked => {
+                    if confirm {
+                        ArchitectureData.cancel-edit();
+                    }
+                    confirm = true;
+                }
+            }
+            if confirm: Button { y: (parent.height - self.height) / 2; compact: true; text: @tr("Keep"); clicked => { confirm = false; } }
         }
         if ArchitectureData.model.edit-error != "": Fit {
             Text {
