@@ -2,14 +2,14 @@
 //! Markdown and JSON for the views with an export snapshot, arc42 and PNG
 //! for every view, SVG in Graph → Tree and Services only.
 
-use crate::export::{Format, View};
+use crate::export::{Arc42Format, Format, View};
 
 /// An entry of File → Export (the `format` the Slint menu passes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
     Markdown,
     Json,
-    Arc42,
+    Arc42(Arc42Format),
     Svg,
     Png,
 }
@@ -19,7 +19,9 @@ impl Choice {
         Some(match format.trim() {
             "markdown" | "md" => Choice::Markdown,
             "json" => Choice::Json,
-            "arc42" => Choice::Arc42,
+            "arc42" => Choice::Arc42(Arc42Format::Markdown),
+            "arc42-adoc" => Choice::Arc42(Arc42Format::Asciidoc),
+            "arc42-docx" => Choice::Arc42(Arc42Format::Docx),
             "svg" => Choice::Svg,
             "png" => Choice::Png,
             _ => return None,
@@ -28,7 +30,7 @@ impl Choice {
 
     pub fn format(self) -> Format {
         match self {
-            Choice::Markdown | Choice::Arc42 => Format::Markdown,
+            Choice::Markdown | Choice::Arc42(_) => Format::Markdown,
             Choice::Json => Format::Json,
             Choice::Svg => Format::Svg,
             Choice::Png => Format::Png,
@@ -61,7 +63,7 @@ pub fn view(kind: &str) -> Option<View> {
 /// Whether a view of `kind` at Graph `display` (0 tree) offers `choice`.
 pub fn check(kind: &str, display: i32, choice: Choice) -> Result<(), Hint> {
     match choice {
-        Choice::Arc42 | Choice::Png => Ok(()),
+        Choice::Arc42(_) | Choice::Png => Ok(()),
         Choice::Markdown | Choice::Json if view(kind).is_some() => Ok(()),
         Choice::Markdown | Choice::Json => Err(Hint::Data),
         Choice::Svg if kind == "services" || (kind == "graph" && display == 0) => Ok(()),
@@ -73,7 +75,7 @@ pub fn check(kind: &str, display: i32, choice: Choice) -> Result<(), Hint> {
 /// `archguard-<view>.png` for a view without an export snapshot.
 pub fn file_name(kind: &str, choice: Choice) -> String {
     match (choice, view(kind)) {
-        (Choice::Arc42, _) => crate::export::arc42_file_name(None),
+        (Choice::Arc42(f), _) => crate::export::arc42_file_name(None, f),
         (_, Some(v)) => crate::export::file_name(v, choice.format()),
         (_, None) => format!("archguard-{kind}.{}", choice.format().extension()),
     }
@@ -107,7 +109,7 @@ mod tests {
         assert_eq!(check("dsm", 0, Choice::Svg), Err(Hint::Svg));
         for kind in ["start", "file", "dsm", "security"] {
             assert_eq!(check(kind, 2, Choice::Png), Ok(()));
-            assert_eq!(check(kind, 2, Choice::Arc42), Ok(()));
+            assert_eq!(check(kind, 2, Choice::Arc42(Arc42Format::Docx)), Ok(()));
         }
         assert_eq!(Choice::parse("svg"), Some(Choice::Svg));
         assert_eq!(Choice::parse("pdf"), None);
@@ -118,6 +120,13 @@ mod tests {
         assert_eq!(file_name("graph", Choice::Svg), "archguard-graph.svg");
         assert_eq!(file_name("dsm", Choice::Markdown), "archguard-dsm.md");
         assert_eq!(file_name("start", Choice::Png), "archguard-start.png");
-        assert_eq!(file_name("file", Choice::Arc42), "arc42.md");
+        let arc42 = |f| file_name("file", Choice::Arc42(f));
+        assert_eq!(arc42(Arc42Format::Markdown), "arc42.md");
+        assert_eq!(
+            Choice::parse("arc42-adoc"),
+            Some(Choice::Arc42(Arc42Format::Asciidoc))
+        );
+        assert_eq!(arc42(Arc42Format::Asciidoc), "arc42.adoc");
+        assert_eq!(arc42(Arc42Format::Docx), "arc42.docx");
     }
 }

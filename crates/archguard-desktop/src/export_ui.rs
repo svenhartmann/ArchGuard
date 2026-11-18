@@ -105,7 +105,7 @@ pub fn run(ui: &AppWindow, format: &str, path: Option<PathBuf>) -> Option<PathBu
     let tab = layout.view(layout.focus)?.clone();
     // One arc42 export at a time; a request meanwhile does nothing.
     let busy = match choice {
-        Choice::Arc42 => Some(Busy::begin()?),
+        Choice::Arc42(_) => Some(Busy::begin()?),
         _ => None,
     };
     let prepared = match prepare(ui, &tab, layout.focus, choice) {
@@ -198,8 +198,12 @@ fn prepare(ui: &AppWindow, tab: &Tab, pane: usize, choice: Choice) -> Result<Pre
         Choice::Markdown => (Bytes::Now(data(ui, tab)?.1.markdown().into_bytes()), DONE),
         Choice::Json => (Bytes::Now(data(ui, tab)?.1.json().into_bytes()), DONE),
         Choice::Svg => (Bytes::Now(svg(ui, tab)?.into_bytes()), DONE),
-        Choice::Arc42 => (
-            Bytes::Later(arc42_job(active_analysis()?, Texts::of(ui).doc_lang())),
+        Choice::Arc42(format) => (
+            Bytes::Later(arc42_job(
+                active_analysis()?,
+                Texts::of(ui).doc_lang(),
+                format,
+            )),
             DONE_ARC42,
         ),
         Choice::Png => (Bytes::Now(image(ui, pane)?), DONE_IMAGE),
@@ -281,10 +285,14 @@ fn active_analysis() -> Result<Arc<Analysis>, Failure> {
 
 /// The arc42 document of `analysis`, made by a worker: the engine's arc42
 /// analysis runs compiler-backed calls, services and coverage.
-fn arc42_job(analysis: Arc<Analysis>, lang: archguard_engine::core::DocLang) -> Job {
+fn arc42_job(
+    analysis: Arc<Analysis>,
+    lang: archguard_engine::core::DocLang,
+    format: export::Arc42Format,
+) -> Job {
     Box::new(move || {
         export::arc42(&analysis.root, &analysis.run, None, lang)
-            .map(String::into_bytes)
+            .map(|markdown| format.bytes(markdown))
             .map_err(Failure::Error)
     })
 }
@@ -353,7 +361,7 @@ mod tests {
             run,
             sources: Default::default(),
         });
-        let job = arc42_job(analysis, Default::default());
+        let job = arc42_job(analysis, Default::default(), export::Arc42Format::Markdown);
         let caller = std::thread::current().id();
         let (bytes, worker) = std::thread::spawn(move || (job(), std::thread::current().id()))
             .join()

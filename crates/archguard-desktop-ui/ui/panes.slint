@@ -116,6 +116,14 @@ component ViewTabChip inherits Rectangle {
                     activated => { root.export("arc42"); }
                 }
                 MenuItem {
+                    title: @tr("arc42 as AsciiDoc");
+                    activated => { root.export("arc42-adoc"); }
+                }
+                MenuItem {
+                    title: @tr("arc42 as Word (.docx)");
+                    activated => { root.export("arc42-docx"); }
+                }
+                MenuItem {
                     title: @tr("SVG diagram");
                     enabled: root.tab.kind == "graph" || root.tab.kind == "services";
                     activated => { root.export("svg"); }
