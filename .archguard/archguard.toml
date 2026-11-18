@@ -93,4 +93,4 @@ max_propagation_cost = 0.20
 adr_required_on_accept_risk = true
 
 [arc42]
-shown_diagrams = ["building-blocks@archguard-desktop/src"]
+shown_diagrams = ["building-blocks@archguard-desktop/src", "building-blocks@archguard-analysis/src"]
