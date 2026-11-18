@@ -18,6 +18,12 @@ thread_local! {
     static FONTS: RefCell<Fonts> = RefCell::new(Fonts::default());
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tables measured for column widths and blocks laid out (tests count work).
+    static WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Space a code block's background reaches below its text (as in the view).
 const CODE_PAD: f32 = 8.0;
 /// Space around a table cell's text.
@@ -42,8 +48,9 @@ pub struct Rich {
     pub editor: Editor,
     width: f32,
     pub style: Style,
-    /// Each block's layout with the block and width it was made for.
-    laid: HashMap<(usize, usize), (Block, f32, Laid)>,
+    /// Layouts by block text: the block and width each was made for and
+    /// whether a row used it since the last `items`.
+    laid: HashMap<String, Vec<(Block, f32, Laid, bool)>>,
     /// The x the caret keeps over moves up and down.
     goal: Option<f32>,
     /// The drawings of the diagram blocks, by diagram id.
@@ -53,6 +60,52 @@ pub struct Rich {
     drawn: Vec<(String, String)>,
     /// Read only: no caret or selection, every own diagram drawn.
     pub reading: bool,
+}
+
+/// What a part's blocks take from the blocks around them, made once per
+/// pass (made per block, it cost the square of a part's or table's size):
+/// each block's list entry and each cell's left edge and width.
+struct Frame {
+    entries: Vec<Option<(usize, Option<u64>)>>,
+    cells: Vec<(f32, f32)>,
+}
+
+fn frame(blocks: &[Block], width: f32) -> Frame {
+    let mut cells = vec![(0.0, width); blocks.len()];
+    let mut b = 0;
+    while b < blocks.len() {
+        let Kind::Cell { cols, .. } = blocks[b].kind else {
+            b += 1;
+            continue;
+        };
+        let table = doc::table_range(blocks, b);
+        let shares = shares(&blocks[table.clone()], cols);
+        for (c, block) in blocks.iter().enumerate().take(table.end).skip(b) {
+            if let Kind::Cell { col, .. } = block.kind {
+                let x = shares[..col.min(shares.len())].iter().sum::<f32>() * width;
+                cells[c] = (x, shares.get(col).copied().unwrap_or(1.0) * width);
+            }
+        }
+        b = table.end;
+    }
+    Frame {
+        entries: doc::list_entries(blocks),
+        cells,
+    }
+}
+
+/// The column widths of a table's `cells` as shares of the editor's
+/// width (as the reader's).
+fn shares(cells: &[Block], cols: usize) -> Vec<f32> {
+    #[cfg(test)]
+    WORK.with(|w| w.set((w.get().0 + 1, w.get().1)));
+    let texts: Vec<String> = cells.iter().map(|c| c.inline.text.clone()).collect();
+    let head = cols.min(texts.len());
+    let rows: Vec<Vec<String>> = texts[head..]
+        .chunks(cols.max(1))
+        .map(<[String]>::to_vec)
+        .collect();
+    blocks::column_widths(&texts[..head], &rows)
 }
 
 /// Space above a block and the left edge of its text.
@@ -206,10 +259,14 @@ impl Rich {
         self.editor.doc().part(piece).map_or(&[], |p| p.blocks())
     }
 
+    /// The frame of `piece`'s blocks at the editor's width.
+    fn frame(&self, piece: usize) -> Frame {
+        frame(self.blocks(piece), self.width)
+    }
+
     /// Space above block `b` of `piece` and its text's left edge.
-    fn place(&self, piece: usize, b: usize) -> (f32, f32) {
-        let blocks = self.blocks(piece);
-        geometry(blocks, b, &doc::list_entries(blocks))
+    fn place(&self, f: &Frame, piece: usize, b: usize) -> (f32, f32) {
+        geometry(self.blocks(piece), b, &f.entries)
     }
 
     fn is_cell(&self, piece: usize, b: usize) -> bool {
@@ -217,36 +274,6 @@ impl Rich {
             self.blocks(piece).get(b).map(|x| &x.kind),
             Some(Kind::Cell { .. })
         )
-    }
-
-    /// The first block of the table around cell `b` and its column widths
-    /// as shares of the editor's width (as the reader's).
-    fn table_of(&self, piece: usize, b: usize) -> (usize, Vec<f32>) {
-        let blocks = self.blocks(piece);
-        let Kind::Cell { cols, .. } = blocks[b].kind else {
-            return (b, vec![1.0]);
-        };
-        let std::ops::Range { start, end } = doc::table_range(blocks, b);
-        let texts: Vec<String> = blocks[start..end]
-            .iter()
-            .map(|c| c.inline.text.clone())
-            .collect();
-        let head = cols.min(texts.len());
-        let rows: Vec<Vec<String>> = texts[head..]
-            .chunks(cols.max(1))
-            .map(<[String]>::to_vec)
-            .collect();
-        (start, blocks::column_widths(&texts[..head], &rows))
-    }
-
-    /// Left edge and width of cell `b` in its row.
-    fn cell_box(&self, piece: usize, b: usize) -> (f32, f32) {
-        let Kind::Cell { col, .. } = self.blocks(piece)[b].kind else {
-            return (0.0, self.width);
-        };
-        let (_, shares) = self.table_of(piece, b);
-        let x = shares[..col.min(shares.len())].iter().sum::<f32>() * self.width;
-        (x, shares.get(col).copied().unwrap_or(1.0) * self.width)
     }
 
     /// The first cell of the row of cell `b`, and the row's column count.
@@ -258,48 +285,53 @@ impl Rich {
     }
 
     /// A table row's height: its tallest cell and the space around it.
-    fn row_height(&mut self, piece: usize, first: usize) -> f32 {
+    fn row_height(&mut self, f: &Frame, piece: usize, first: usize) -> f32 {
         let (_, cols) = self.row_of(piece, first);
         let end = (first + cols).min(self.blocks(piece).len());
         let tallest = (first..end)
-            .map(|c| self.laid(piece, c).height())
+            .map(|c| self.laid(f, piece, c).height())
             .fold(0.0, f32::max);
         tallest + 2.0 * CELL_Y
     }
 
     /// The height of the row block `b` is in: a table row, or the block.
-    fn unit_height(&mut self, piece: usize, b: usize) -> f32 {
+    fn unit_height(&mut self, f: &Frame, piece: usize, b: usize) -> f32 {
         if matches!(self.blocks(piece)[b].kind, Kind::Diagram { .. }) {
             return DIAGRAM_H;
         }
         if self.is_cell(piece, b) {
             let (first, _) = self.row_of(piece, b);
-            self.row_height(piece, first)
+            self.row_height(f, piece, first)
         } else {
-            self.laid(piece, b).height() + self.pad(piece, b)
+            self.laid(f, piece, b).height() + self.pad(piece, b)
         }
     }
 
-    /// Block `b` of `piece` laid out at the editor's width (cached).
-    fn laid(&mut self, piece: usize, b: usize) -> &Laid {
+    /// Block `b` of `piece` laid out at the editor's width, cached by its
+    /// content: a block moved by an edit before it keeps its layout.
+    fn laid(&mut self, f: &Frame, piece: usize, b: usize) -> &Laid {
         let block = self.blocks(piece)[b].clone();
-        let (_, indent) = self.place(piece, b);
+        let (_, indent) = self.place(f, piece, b);
         let width = match block.kind {
             Kind::Code { .. } => self.width - indent - 12.0,
-            Kind::Cell { .. } => self.cell_box(piece, b).1 - 2.0 * CELL_X,
+            Kind::Cell { .. } => f.cells[b].1 - 2.0 * CELL_X,
             _ => self.width - indent,
         }
         .max(40.0);
         let style = &self.style;
-        let stale = self
-            .laid
-            .get(&(piece, b))
-            .is_none_or(|(old, w, _)| *old != block || *w != width);
-        if stale {
-            let laid = FONTS.with(|f| f.borrow_mut().lay_out(&block, width, style));
-            self.laid.insert((piece, b), (block, width, laid));
-        }
-        &self.laid[&(piece, b)].2
+        let made = self.laid.entry(block.inline.text.clone()).or_default();
+        let i = match made.iter().position(|m| m.0 == block && m.1 == width) {
+            Some(i) => i,
+            None => {
+                #[cfg(test)]
+                WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
+                let laid = FONTS.with(|f| f.borrow_mut().lay_out(&block, width, style));
+                made.push((block, width, laid, true));
+                made.len() - 1
+            }
+        };
+        made[i].3 = true;
+        &made[i].2
     }
 
     /// The rows the view draws; `note` is the reader's text under a
@@ -384,12 +416,12 @@ impl Rich {
                 }
                 Ok(blocks) => blocks,
             };
-            let entries = doc::list_entries(&blocks);
+            let f = frame(&blocks, self.width);
             for (b, block) in blocks.iter().enumerate() {
-                let (top, indent) = geometry(&blocks, b, &entries);
-                if let Kind::Cell { row, col, cols, .. } = block.kind {
+                let (top, indent) = geometry(&blocks, b, &f.entries);
+                if let Kind::Cell { col, .. } = block.kind {
                     if col == 0 {
-                        out.push(self.table_row(p, b, row, cols, top, selection, focus));
+                        out.push(self.table_row(&f, p, b, top, selection, focus));
                     }
                     continue;
                 }
@@ -401,10 +433,6 @@ impl Rich {
                     }
                     let here = focus.piece == p && focus.block == b;
                     out.push(RichItem {
-                        fixed: model(Vec::new()),
-                        cells: model(Vec::new()),
-                        runs: model(Vec::new()),
-                        selection: model(Vec::new()),
                         figure: self.figures.get(id).cloned().unwrap_or_default(),
                         piece: p as i32,
                         block: b as i32,
@@ -431,12 +459,12 @@ impl Rich {
                     });
                     continue;
                 }
-                let laid = self.laid(p, b);
+                let laid = self.laid(&f, p, b);
                 let len = block.inline.text.len();
                 let runs = runs(laid, 0.0, 0.0);
                 let selected = selected(laid, selection, p, b, len, 0.0, 0.0);
                 let first = laid.caret(0);
-                let marker = match entries[b] {
+                let marker = match f.entries[b] {
                     Some((_, Some(n))) => format!("{n}."),
                     Some((depth, None)) if depth % 2 == 1 => "◦".into(),
                     Some(_) => "•".into(),
@@ -469,6 +497,11 @@ impl Rich {
                 });
             }
         }
+        // Layouts no row used are of text that is gone.
+        self.laid.retain(|_, made| {
+            made.retain_mut(|m| std::mem::take(&mut m.3));
+            !made.is_empty()
+        });
         out
     }
 
@@ -488,35 +521,31 @@ impl Rich {
 
     /// One table row as one row of the view: its cells' runs, selection
     /// and caret in row coordinates, and the cells' places for the grid.
-    #[allow(clippy::too_many_arguments)]
     fn table_row(
         &mut self,
+        f: &Frame,
         p: usize,
         first: usize,
-        row: usize,
-        cols: usize,
         top: f32,
         selection: Option<(Caret, Caret)>,
         focus: Caret,
     ) -> RichItem {
+        let (_, cols) = self.row_of(p, first);
+        let header = matches!(self.blocks(p)[first].kind, Kind::Cell { row: 0, .. });
         let end = (first + cols).min(self.blocks(p).len());
         let (mut all_runs, mut sel, mut cells) = (Vec::new(), Vec::new(), Vec::new());
         let mut caret = None;
         for c in first..end {
-            let (x, w) = self.cell_box(p, c);
+            let (x, w) = f.cells[c];
             let (dx, dy) = (x + CELL_X, CELL_Y);
             let len = self.blocks(p)[c].inline.text.len();
-            let laid = self.laid(p, c);
+            let laid = self.laid(f, p, c);
             all_runs.extend(runs(laid, dx, dy));
             sel.extend(selected(laid, selection, p, c, len, dx, dy));
             if focus.piece == p && focus.block == c {
                 caret = Some(moved(laid.caret(focus.at), dx, dy));
             }
-            cells.push(RichCell {
-                x,
-                w,
-                header: row == 0,
-            });
+            cells.push(RichCell { x, w, header });
         }
         RichItem {
             fixed: model(Vec::new()),
@@ -527,7 +556,7 @@ impl Rich {
             block: first as i32,
             kind: 5,
             top,
-            height: self.row_height(p, first),
+            height: self.row_height(f, p, first),
             indent: 0.0,
             marker: Default::default(),
             marker_y: 0.0,
@@ -692,42 +721,48 @@ impl Rich {
     /// Home or End of the caret's line.
     fn line_end(&mut self, end: bool, extend: bool) {
         let c = self.editor.focus;
-        let r = self.laid(c.piece, c.block).line_range(c.at);
+        let f = self.frame(c.piece);
+        let r = self.laid(&f, c.piece, c.block).line_range(c.at);
         let at = if end { r.end } else { r.start };
         self.editor.place(Caret { at, ..c }, extend);
     }
 
     /// The left edge of block `b`'s text in its row (a cell's in its table row).
-    fn text_left(&self, piece: usize, b: usize) -> f32 {
+    fn text_left(&self, f: &Frame, piece: usize, b: usize) -> f32 {
         if self.is_cell(piece, b) {
-            self.cell_box(piece, b).0 + CELL_X
+            f.cells[b].0 + CELL_X
         } else {
-            self.place(piece, b).1
+            self.place(f, piece, b).1
         }
     }
 
     /// One line up (-1) or down (+1), keeping the x the moves started at.
     fn vertical(&mut self, delta: isize, extend: bool) {
         let c = self.editor.focus;
-        let left = self.text_left(c.piece, c.block);
+        let f = self.frame(c.piece);
+        let left = self.text_left(&f, c.piece, c.block);
         let x = match self.goal {
             Some(x) => x,
-            None => self.laid(c.piece, c.block).caret(c.at).x + left,
+            None => self.laid(&f, c.piece, c.block).caret(c.at).x + left,
         };
         self.goal = Some(x);
-        if let Some(at) = self.laid(c.piece, c.block).line_at(c.at, delta, x - left) {
+        if let Some(at) = self
+            .laid(&f, c.piece, c.block)
+            .line_at(c.at, delta, x - left)
+        {
             return self.editor.place(Caret { at, ..c }, extend);
         }
         // Just above or below this row: the block or table row there.
         let (first, cols) = self.row_of(c.piece, c.block);
         let len = self.blocks(c.piece).len();
-        let indent = self.place(c.piece, first).1;
+        let indent = self.place(&f, c.piece, first).1;
         let to = if delta < 0 && first > 0 {
             // Above the space over this row: the last line of the row before.
-            let top = self.place(c.piece, first).0;
+            let top = self.place(&f, c.piece, first).0;
             Some(self.locate(c.piece, first, x - indent, -top - 1.0))
         } else if delta > 0 && first + cols < len {
-            let below = self.unit_height(c.piece, first) + self.place(c.piece, first + cols).0;
+            let below =
+                self.unit_height(&f, c.piece, first) + self.place(&f, c.piece, first + cols).0;
             Some(self.locate(c.piece, first, x - indent, below + 0.5))
         } else if delta < 0 {
             // The last row of the part before.
@@ -739,8 +774,9 @@ impl Rich {
                 })
                 .map(|n| {
                     let (u, _) = self.row_of(n.piece, n.block);
-                    let h = self.unit_height(n.piece, u);
-                    let indent = self.place(n.piece, u).1;
+                    let g = self.frame(n.piece);
+                    let h = self.unit_height(&g, n.piece, u);
+                    let indent = self.place(&g, n.piece, u).1;
                     self.locate(n.piece, u, x - indent, h - CODE_PAD.min(h) - 0.5)
                 })
         } else {
@@ -749,7 +785,7 @@ impl Rich {
                 ..c
             };
             self.editor.next_block(last).map(|n| {
-                let indent = self.place(n.piece, n.block).1;
+                let indent = self.place(&self.frame(n.piece), n.piece, n.block).1;
                 self.locate(n.piece, n.block, x - indent, 0.5)
             })
         };
@@ -772,14 +808,15 @@ impl Rich {
         if len == 0 {
             return self.editor.focus;
         }
+        let f = self.frame(piece);
         let (mut u, _) = self.row_of(piece, b.min(len - 1));
         loop {
-            let (top, indent) = self.place(piece, u);
-            let height = self.unit_height(piece, u);
+            let (top, indent) = self.place(&f, piece, u);
+            let height = self.unit_height(&f, piece, u);
             if y < 0.0 && u > 0 {
                 let (prev, _) = self.row_of(piece, u - 1);
-                let prev_indent = self.place(piece, prev).1;
-                y += top + self.unit_height(piece, prev);
+                let prev_indent = self.place(&f, piece, prev).1;
+                y += top + self.unit_height(&f, piece, prev);
                 x += indent - prev_indent;
                 u = prev;
                 continue;
@@ -788,12 +825,12 @@ impl Rich {
             // The space above a row belongs to the row before (as `y < 0`
             // above), so a point in it does not go back and forth.
             let next_top = if next < len {
-                self.place(piece, next).0
+                self.place(&f, piece, next).0
             } else {
                 0.0
             };
             if y > height + next_top && next < len {
-                let next_indent = self.place(piece, next).1;
+                let next_indent = self.place(&f, piece, next).1;
                 y -= height + next_top;
                 x += indent - next_indent;
                 u = next;
@@ -811,12 +848,12 @@ impl Rich {
                 let end = (first + cols).min(len);
                 let c = (first..end)
                     .find(|&c| {
-                        let (cx, cw) = self.cell_box(piece, c);
+                        let (cx, cw) = f.cells[c];
                         x < cx + cw
                     })
                     .unwrap_or(end - 1);
-                let left = self.text_left(piece, c);
-                let laid = self.laid(piece, c);
+                let left = self.text_left(&f, piece, c);
+                let laid = self.laid(&f, piece, c);
                 let local = (y - CELL_Y).clamp(0.0, (laid.height() - 0.5).max(0.0));
                 let at = laid.hit(x - left, local);
                 return Caret {
@@ -825,7 +862,7 @@ impl Rich {
                     at,
                 };
             }
-            let laid = self.laid(piece, u);
+            let laid = self.laid(&f, piece, u);
             let at = match () {
                 () if y < 0.0 => 0,
                 () if y > laid.height() => self.blocks(piece)[u].inline.text.len(),
@@ -930,11 +967,56 @@ mod tests {
         let second = "| c | eine noch viel längere Zelle |\n| --- | --- |\n| 3 | 4 |\n";
         let both = rich(&format!("{first}\n{second}"));
         let alone = rich(second);
-        let piece = |r: &Rich| r.editor.focus.piece;
-        assert_eq!(
-            both.table_of(piece(&both), 5),
-            (4, alone.table_of(piece(&alone), 1).1)
+        let cells = |r: &Rich| r.frame(r.editor.focus.piece).cells;
+        assert_eq!(cells(&both)[4..], cells(&alone)[..]);
+    }
+
+    /// List numbers and column widths as the reader's: the numbers count
+    /// on, the cells share the width by their text.
+    #[test]
+    fn rows_number_lists_and_size_columns() {
+        use slint::Model;
+        let md = "1. eins\n1. zwei\n\n| eine sehr lange Zelle | b |\n| --- | --- |\n| 1 | 2 |\n";
+        let mut r = rich(md);
+        let items = r.items("", &|_| None, &|_| None, &[]);
+        let markers: Vec<String> = items.iter().map(|i| i.marker.to_string()).collect();
+        assert_eq!(markers[..2], ["1.", "2."]);
+        let shares = blocks::column_widths(
+            &["eine sehr lange Zelle".into(), "b".into()],
+            &[vec!["1".into(), "2".into()]],
         );
+        for row in &items[2..4] {
+            let cells: Vec<(f32, f32)> = row.cells.iter().map(|c| (c.x, c.w)).collect();
+            assert_eq!(
+                cells,
+                [
+                    (0.0, shares[0] * 400.0),
+                    (shares[0] * 400.0, shares[1] * 400.0)
+                ]
+            );
+        }
+    }
+
+    /// A pass measures each table once, and an edit lays out again only
+    /// the blocks it changed, also where it moved the blocks after it.
+    #[test]
+    fn a_pass_does_work_by_the_size_of_the_text() {
+        let work = || WORK.with(|w| w.replace((0, 0)));
+        let row = "| 1 | 2 | 3 | 4 |\n";
+        let table = format!(
+            "| a | b | c | d |\n| --- | --- | --- | --- |\n{}",
+            row.repeat(100)
+        );
+        let mut r = rich(&table);
+        work();
+        r.items("", &|_| None, &|_| None, &[]);
+        assert_eq!(work().0, 1, "one table, measured once");
+        let mut r = rich(&"Absatz\n\n".repeat(100));
+        r.items("", &|_| None, &|_| None, &[]);
+        r.key("enter", false, false, false);
+        work();
+        r.items("", &|_| None, &|_| None, &[]);
+        assert_eq!(work().1, 1, "only the new empty paragraph");
     }
 
     #[test]
@@ -1132,7 +1214,7 @@ mod tests {
         assert!(r.editor.in_table(), "back into the last row");
         // A drag into the space between table and text ends in the table,
         // below that space in the text.
-        let height = r.row_height(piece, 2);
+        let height = r.row_height(&r.frame(piece), piece, 2);
         r.drag(piece, 2, 10.0, height + 5.0);
         assert!(r.editor.in_table(), "the space belongs to the row above");
         r.drag(piece, 2, 10.0, height + 15.0);
@@ -1175,7 +1257,8 @@ mod tests {
         let mut r = rich("eins\n\nzwei\n");
         r.items("", &|_| None, &|_| None, &[]);
         r.press(r.editor.focus.piece, Some(0), 0.0, 5.0, false);
-        let below = r.laid(r.editor.focus.piece, 0).height() + 15.0;
+        let piece = r.editor.focus.piece;
+        let below = r.laid(&r.frame(piece), piece, 0).height() + 15.0;
         r.drag(r.editor.focus.piece, 0, 200.0, below);
         assert_eq!(r.editor.selected_text(), "eins\nzwei");
         r.word(r.editor.focus.piece, 1, 5.0, 5.0);

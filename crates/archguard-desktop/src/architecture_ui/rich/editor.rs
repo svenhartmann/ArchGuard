@@ -323,6 +323,15 @@ impl Editor {
     fn split(&mut self) {
         let c = self.focus;
         let blocks = self.blocks_mut(c.piece);
+        if c.at == 0 && !blocks[c.block].inline.text.is_empty() {
+            // At its start: an empty paragraph above it, the block keeps its
+            // kind (a heading stays one, a list entry its number).
+            blocks.insert(c.block, Self::empty_cell());
+            return self.collapse(Caret {
+                block: c.block + 1,
+                ..c
+            });
+        }
         let rest = blocks[c.block].inline.split_off(c.at);
         let kind = match &blocks[c.block].kind {
             Kind::Heading(_) => Kind::Paragraph,
@@ -713,16 +722,23 @@ impl Editor {
         true
     }
 
-    /// Append block `block + 1` to `block`; the caret at the join.
+    /// Append block `block + 1` to `block`; the caret at the join. Into
+    /// text that is no code goes only the first line of code; the other
+    /// lines stay code.
     fn join(&mut self, piece: usize, block: usize) {
         let blocks = self.blocks_mut(piece);
-        let next = blocks.remove(block + 1);
-        let into = &mut blocks[block];
-        let at = into.inline.text.len();
-        if matches!(into.kind, Kind::Code { .. }) {
-            into.inline.text.push_str(&next.inline.text);
+        let mut next = blocks.remove(block + 1);
+        let at = blocks[block].inline.text.len();
+        if matches!(blocks[block].kind, Kind::Code { .. }) {
+            blocks[block].inline.text.push_str(&next.inline.text);
         } else {
-            into.inline.append(next.inline);
+            if let Some(n) = next.inline.text.find('\n') {
+                let rest = next.inline.split_off(n + 1);
+                next.inline.delete(n..n + 1);
+                let kind = next.kind.clone();
+                blocks.insert(block + 1, Block { kind, inline: rest });
+            }
+            blocks[block].inline.append(next.inline);
         }
         self.collapse(Caret { piece, block, at });
     }
@@ -790,7 +806,8 @@ impl Editor {
     }
 
     /// Make the touched blocks `kind`; if they all are, paragraphs again.
-    /// Code drops the marks; a list entry keeps its depth.
+    /// Code drops the marks; a list entry keeps its depth; code left is a
+    /// block per line.
     pub fn set_kind(&mut self, kind: Kind) {
         self.checkpoint(false);
         let (piece, range) = self.touched();
@@ -804,7 +821,8 @@ impl Editor {
         let all = range
             .clone()
             .all(|b| same(&self.blocks(piece)[b].kind, &kind));
-        for b in range {
+        // From the last on: a split block moves only the blocks after it.
+        for b in range.rev() {
             let block = &mut self.blocks_mut(piece)[b];
             if matches!(block.kind, Kind::Cell { .. } | Kind::Diagram { .. }) {
                 continue;
@@ -819,6 +837,9 @@ impl Editor {
             };
             if matches!(block.kind, Kind::Code { .. }) {
                 block.inline = Inline::plain(&block.inline.text);
+            } else if block.inline.text.contains('\n') {
+                let blocks = self.doc.part_mut(piece).expect("a caret is in a part");
+                split_lines(blocks.edit(), b, [&mut self.anchor, &mut self.focus]);
             }
         }
     }
@@ -1082,6 +1103,31 @@ fn with_trailing_part(mut doc: Doc) -> Doc {
 /// The byte where piece `i` starts in the Markdown `doc` writes.
 fn piece_start(doc: &Doc, i: usize) -> usize {
     (0..i).map(|p| doc.piece_markdown(p).len()).sum()
+}
+
+/// Block `b` as a block of its kind per line of its text, the carets on
+/// their lines: only code holds line breaks (others are written as one line).
+fn split_lines(blocks: &mut Vec<Block>, b: usize, carets: [&mut Caret; 2]) {
+    let text = blocks[b].inline.text.clone();
+    let kind = blocks[b].kind.clone();
+    let lines: Vec<Block> = text
+        .split('\n')
+        .map(|line| Block {
+            kind: kind.clone(),
+            inline: Inline::plain(line),
+        })
+        .collect();
+    let more = lines.len() - 1;
+    blocks.splice(b..=b, lines);
+    for c in carets {
+        if c.block > b {
+            c.block += more;
+        } else if c.block == b {
+            let before = &text[..c.at];
+            c.block += before.matches('\n').count();
+            c.at -= before.rfind('\n').map_or(0, |n| n + 1);
+        }
+    }
 }
 
 fn word_start(text: &str, at: usize) -> usize {
@@ -1495,6 +1541,71 @@ mod tests {
             format!("nur Text\n\n{block}\n\nweiter\n"),
             "a paragraph follows a diagram at the end"
         );
+    }
+
+    /// Text that is no code holds no line break: written, it would be one
+    /// line after reopening (a heading only its first).
+    fn no_break_outside_code(e: &Editor) {
+        for b in e.blocks(e.focus.piece) {
+            if !matches!(b.kind, Kind::Code { .. }) {
+                assert!(!b.inline.text.contains('\n'), "{b:?}");
+            }
+        }
+    }
+
+    /// Leaving code by the toolbar makes one block per line, the caret
+    /// on its line.
+    #[test]
+    fn a_code_block_made_text_is_one_block_per_line() {
+        let md = "```mermaid\nflowchart LR\n  A --> B\n```\n";
+        let mut e = editor(md);
+        e.place(at(&e, 0, 15), false);
+        e.set_kind(Kind::Paragraph);
+        no_break_outside_code(&e);
+        assert_eq!(e.markdown(), "flowchart LR\n\n  A --> B\n");
+        assert_eq!((e.focus.block, e.focus.at), (1, 2));
+        let mut h = editor(md);
+        h.set_kind(Kind::Heading(3));
+        assert_eq!(h.markdown(), "### flowchart LR\n\n###   A --> B\n");
+    }
+
+    /// Backspace at a code block's start and Delete before it take its
+    /// first line into the text before; the other lines stay code.
+    #[test]
+    fn joining_a_code_block_into_text_takes_its_first_line() {
+        let md = "Text\n\n```\neins\nzwei\n```\n";
+        let mut e = editor(md);
+        e.place(at(&e, 1, 0), false);
+        e.backspace();
+        no_break_outside_code(&e);
+        assert_eq!(e.markdown(), "Texteins\n\n```\nzwei\n```\n");
+        assert_eq!((e.focus.block, e.focus.at), (0, 4));
+        let mut d = editor(md);
+        d.place(at(&d, 0, 4), false);
+        d.delete_forward();
+        assert_eq!(d.markdown(), "Texteins\n\n```\nzwei\n```\n");
+        let mut one = editor("Text\n\n```\neins\n```\n");
+        one.place(at(&one, 0, 4), false);
+        one.delete_forward();
+        assert_eq!(one.markdown(), "Texteins\n");
+    }
+
+    /// Enter at the start of a block opens an empty line above it; the
+    /// block keeps its kind and the caret its start.
+    #[test]
+    fn enter_at_a_blocks_start_keeps_its_kind() {
+        for (md, want) in [
+            ("### Titel\n", "### Titel\n"),
+            ("1. eins\n2. zwei\n", "1. eins\n2. zwei\n"),
+            ("> Zitat\n", "> Zitat\n"),
+        ] {
+            let mut e = editor(md);
+            let last = e.blocks(e.focus.piece).len() - 1;
+            e.place(at(&e, last, 0), false);
+            e.enter();
+            assert_eq!(e.markdown(), want, "{md}");
+            assert_eq!((e.focus.block, e.focus.at), (last + 1, 0), "{md}");
+        }
     }
 
     #[test]
