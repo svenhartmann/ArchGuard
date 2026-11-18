@@ -24,7 +24,7 @@
 //! without a version can never be marked stale either: there is nothing
 //! to compare against.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -330,9 +330,27 @@ fn load_meta(root: &Path, notes: &mut Vec<String>) -> Option<BTreeMap<(String, S
 
 /// Build the inventory from the lockfiles and manifests below `root`.
 /// Deterministic: dependencies sorted, notes in manifest order.
+/// PEP 503 normalised PyPI name: lowercase, runs of `-`, `_` and `.` become one `-`.
+/// uv.lock and newer poetry.lock write it, older locks the display name.
+pub(crate) fn pep503(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            if !out.ends_with('-') {
+                out.push('-');
+            }
+        } else {
+            out.extend(c.to_lowercase());
+        }
+    }
+    out
+}
+
 pub fn dependency_inventory(root: &Path) -> DependencyInventory {
     let mut notes = Vec::new();
-    let mut seen: BTreeSet<(String, String, Option<String>)> = BTreeSet::new();
+    // Keyed by the PEP 503 name for PyPI (`zope.interface` = `zope-interface`);
+    // the value keeps the first spelling seen.
+    let mut seen: BTreeMap<(String, String, Option<String>), String> = BTreeMap::new();
 
     for (eco, relative, entries) in manifest_deps(root) {
         if entries.is_empty() {
@@ -342,19 +360,24 @@ pub fn dependency_inventory(root: &Path) -> DependencyInventory {
             continue;
         }
         for Dep { name, version, .. } in entries {
-            seen.insert((eco.clone(), name, version));
+            let key = if eco == "pypi" {
+                pep503(&name)
+            } else {
+                name.clone()
+            };
+            seen.entry((eco.clone(), key, version)).or_insert(name);
         }
         notes.push(format!("{relative}: {eco}"));
     }
     // One pass over the deduplicated set: the same package pinned in two
     // lockfiles counts once, `total` and `by_ecosystem` cannot drift.
     let mut by_ecosystem: BTreeMap<String, usize> = BTreeMap::new();
-    for (eco, _, _) in &seen {
+    for (eco, _, _) in seen.keys() {
         *by_ecosystem.entry(eco.clone()).or_default() += 1;
     }
     let mut dependencies: Vec<ExternalDependency> = Vec::new();
     let meta = load_meta(root, &mut notes);
-    for (ecosystem, name, version) in &seen {
+    for ((ecosystem, _, version), name) in &seen {
         let stale = meta.as_ref().and_then(|meta| {
             let latest = meta.get(&(ecosystem.clone(), name.clone()))?;
             version.as_ref().map(|version| version != latest)
@@ -462,6 +485,21 @@ version = "1.0.219"
         let inventory = dependency_inventory(dir.path());
         assert_eq!(inventory.dependencies[0].name, "express");
         assert_eq!(inventory.dependencies[0].version.as_deref(), Some("4.19.2"));
+    }
+
+    #[test]
+    fn pypi_spellings_of_one_package_count_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "a/requirements.txt", "zope.interface==6.0\n");
+        write(dir.path(), "b/requirements.txt", "zope-interface==6.0\n");
+        let inventory = dependency_inventory(dir.path());
+        assert_eq!(
+            inventory.dependencies.len(),
+            1,
+            "{:?}",
+            inventory.dependencies
+        );
+        assert_eq!(inventory.dependencies[0].name, "zope.interface");
     }
 
     #[test]

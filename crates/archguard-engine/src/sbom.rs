@@ -15,7 +15,7 @@ use archguard_core::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::dep_inventory::manifest_deps;
+use crate::dep_inventory::{manifest_deps, pep503};
 
 /// One third-party package, deduplicated by purl across manifests (pypi:
 /// by PEP 503 name, the first spelling found names it).
@@ -106,22 +106,6 @@ fn license_expression(licenses: &[String]) -> Option<String> {
                 .join(" OR "),
         ),
     }
-}
-
-/// PEP 503 normalised name: lowercase, runs of `-_.` become one `-`.
-/// uv.lock and newer poetry.lock write it, older locks the display name.
-fn pep503(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if matches!(c, '-' | '_' | '.') {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
-        } else {
-            out.extend(c.to_lowercase());
-        }
-    }
-    out
 }
 
 fn scope_rank(scope: Option<&str>) -> u8 {
