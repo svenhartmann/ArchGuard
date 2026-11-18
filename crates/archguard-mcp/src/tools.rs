@@ -113,7 +113,8 @@ pub struct Run {
     pub file_graph: Graph,
     /// Canonical root the analysis ran at.
     pub root: PathBuf,
-    /// Module view at `loaded.config.modules.depth` — the same cut the
+    /// The analysed view (module level at `loaded.config.modules.depth`
+    /// unless [`Run::at`] asked for files) — the same cut the
     /// pipeline used, so view node names match findings and metrics.
     pub view: Graph,
     /// The analysis report.
@@ -129,40 +130,39 @@ impl Run {
     pub fn named(&self) -> NamedGraph<'_> {
         (&self.file_graph, &self.source_names).into()
     }
+
+    /// Resolve the root, load the config and run the cached analysis at
+    /// `level`: at [`Level::File`] `view` and `report` are the file-level
+    /// ones `cycles_list{level:"file"}` lists.
+    pub fn at(server_root: &Path, path: Option<&str>, level: Level) -> Result<Run, ErrorData> {
+        let root = resolve_root(server_root, path)?;
+        let loaded = load_config_at(&root)?;
+        let run = engine_run(&root, &loaded, level)
+            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
+        let loaded = run.effective_config();
+        let view = run.view;
+        let report = run.report;
+        Ok(Run {
+            file_graph: run.graph,
+            root,
+            view,
+            report,
+            loaded,
+            source_names: run.source_names,
+        })
+    }
 }
 
-/// Resolve the root, load the config and run the cached module-level
-/// analysis (the `#[tool]` methods' shared first step).
+/// The cached module-level [`Run::at`] (the `#[tool]` methods' shared
+/// first step).
 pub fn analyze_run(server_root: &Path, path: Option<&str>) -> Result<Run, ErrorData> {
-    let root = resolve_root(server_root, path)?;
-    let loaded = load_config_at(&root)?;
-    let run = engine_run(&root, &loaded, Level::Module)
-        .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-    let loaded = run.effective_config();
-    let view = run.view;
-    let report = run.report;
-    Ok(Run {
-        file_graph: run.graph,
-        root,
-        view,
-        report,
-        loaded,
-        source_names: run.source_names,
-    })
+    Run::at(server_root, path, Level::Module)
 }
 
 /// Read and parse a baseline JSON (Kap. 7); a missing or unparsable file
 /// is an invalid-params error for the calling tool.
 pub fn read_baseline(path: &Path) -> Result<Baseline, ErrorData> {
-    let text = std::fs::read_to_string(path).map_err(|err| {
-        invalid_params(format!("baseline {} not readable: {err}", path.display()))
-    })?;
-    serde_json::from_str(&text).map_err(|err| {
-        invalid_params(format!(
-            "baseline {}: invalid baseline JSON: {err}",
-            path.display()
-        ))
-    })
+    archguard_engine::read_baseline(path).map_err(invalid_params)
 }
 
 // -------------------------------------------------------------- size guard
@@ -339,20 +339,14 @@ pub(crate) fn semantic_coverage_value(report: &Report) -> Value {
 /// cycle findings whose [`cycle_hash`] is accepted do not fail the gate
 /// (same rule as `archguard check --baseline`).
 pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
-    let accepted = |finding: &Finding| match (baseline, finding.kind) {
-        (Some(baseline), FindingKind::Cycle) => {
-            baseline.hashes.contains(&cycle_hash(&finding.nodes))
-        }
-        _ => false,
-    };
-    // Not `any(…)` — that short-circuits and would leave `counts`
-    // incomplete once one Error fails the gate.
+    let accepted = |finding: &Finding| archguard_engine::accepted_by_baseline(baseline, finding);
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-    let mut fails = false;
     for finding in &report.findings {
-        *counts.entry(kind_name(finding.kind)).or_default() += 1;
-        fails |= finding.severity == archguard_engine::core::Severity::Error && !accepted(finding);
+        *counts
+            .entry(archguard_engine::core::finding_kind_name(finding.kind))
+            .or_default() += 1;
     }
+    let fails = archguard_engine::gate_fails(&report.findings, baseline);
     let findings: Vec<Value> = report
         .findings
         .iter()
@@ -387,22 +381,6 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
         "counts": counts,
         "findings": findings,
     })
-}
-
-/// The `snake_case` wire name of a [`FindingKind`] (its serde rename),
-/// used as the key of the `check` counts map.
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
-    }
 }
 
 // ------------------------------------------------------------------ metrics
@@ -984,12 +962,7 @@ impl crate::server::ArchguardTools {
         ),
         rmcp::ErrorData,
     > {
-        let root = resolve_root(&self.root, path)?;
-        let loaded = archguard_engine::load_config(None, &root)
-            .map_err(|err| rmcp::ErrorData::internal_error(format!("config error: {err}"), None))?;
-        archguard_engine::analyze_run(&root, &loaded, level)
-            .map(|run| (run.graph, run.report))
-            .map_err(|err| rmcp::ErrorData::internal_error(format!("analysis failed: {err}"), None))
+        Run::at(&self.root, path, level).map(|run| (run.file_graph, run.report))
     }
 }
 

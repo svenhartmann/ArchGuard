@@ -13,6 +13,7 @@ mod architecture;
 mod cache;
 mod change_context;
 mod change_context_graph;
+mod check_gate;
 mod class_cohesion;
 mod code_metrics;
 mod graphql;
@@ -119,6 +120,10 @@ pub use archguard_extract::strip_root;
 pub use architecture::architecture_context;
 pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint};
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
+pub use check_gate::{
+    accepted_by_baseline, check_gate_findings, empty_analysis_error, gate_fails, read_baseline,
+    review_gate_findings,
+};
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{
     CohesionBoundary, CohesionGroup, CohesionPackage, CohesionReport, analyze_cohesion,
