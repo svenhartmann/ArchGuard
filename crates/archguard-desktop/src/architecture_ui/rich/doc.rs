@@ -347,6 +347,8 @@ fn as_written(source: &str, blocks: &[Md]) -> bool {
         || indented(source)
         || matches!(blocks, [Md::Paragraph(_)]) && source.lines().any(not_prose)
         || wider_than_header(source, blocks)
+        // Shown as level 2, written back as `##`.
+        || markdown::heading(source).is_some_and(|(level, _)| level == 1)
 }
 
 /// Whether a table row of chunk `source` has more cells than its header:
@@ -950,6 +952,18 @@ Ende.
         let last = all.last_mut().unwrap().edit().last_mut().unwrap();
         last.inline = Inline::plain("Neu.");
         assert_eq!(doc.to_markdown(), md.replace("Letzter.", "Neu."));
+    }
+
+    /// The editor shows an own `#` heading as level 2 (the page has its
+    /// title); an edit elsewhere in its part must not write it back as `##`.
+    #[test]
+    fn a_level_one_heading_survives_an_edit_elsewhere() {
+        let md = "# Eigene Überschrift\n\nErster Absatz.\n";
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let last = all.last_mut().unwrap().edit().last_mut().unwrap();
+        last.inline = Inline::plain("Neu.");
+        assert_eq!(doc.to_markdown(), md.replace("Erster Absatz.", "Neu."));
     }
 
     /// Code, setext headings and HTML the reader takes for a paragraph

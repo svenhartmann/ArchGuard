@@ -1260,7 +1260,8 @@ mod tests {
 
     #[test]
     fn enter_splits_and_backspace_joins() {
-        let mut e = editor("# Titel\n\nAbsatz eins\n");
+        // A `#` heading stays as written (doc.rs); `##` is the editable one.
+        let mut e = editor("## Titel\n\nAbsatz eins\n");
         e.place(at(&e, 1, 6), false);
         e.enter();
         assert_eq!(e.markdown(), "## Titel\n\nAbsatz\n\n eins\n");
