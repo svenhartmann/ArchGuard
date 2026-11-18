@@ -331,7 +331,7 @@ fn starts_block(lines: &[&str], i: usize) -> bool {
 }
 
 /// Table cells; `\|` does not split.
-fn cells(line: &str) -> Vec<String> {
+pub(super) fn cells(line: &str) -> Vec<String> {
     let t = line.trim();
     let t = t.strip_prefix('|').unwrap_or(t);
     let t = t.strip_suffix('|').unwrap_or(t);

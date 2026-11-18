@@ -344,6 +344,19 @@ fn as_written(source: &str, blocks: &[Md]) -> bool {
     !code && (source.contains("<!--") || source.contains("-->"))
         || indented(source)
         || matches!(blocks, [Md::Paragraph(_)]) && source.lines().any(not_prose)
+        || wider_than_header(source, blocks)
+}
+
+/// Whether a table row of chunk `source` has more cells than its header:
+/// the reader drops the extra cells.
+fn wider_than_header(source: &str, blocks: &[Md]) -> bool {
+    let [Md::Table { columns, .. }] = blocks else {
+        return false;
+    };
+    source
+        .lines()
+        .skip(2)
+        .any(|row| markdown::cells(row).len() > columns.len())
 }
 
 /// Whether `block`, read from `md`, writes it back (line breaks as
@@ -959,5 +972,13 @@ Ende.
     fn two_tables_in_a_part_stay_two() {
         let md = "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n";
         assert_eq!(edit_first(md), md.replacen("| a |", "| Neu. |", 1));
+    }
+
+    /// The reader drops cells beyond the header's; such a table stays as
+    /// written.
+    #[test]
+    fn a_row_wider_than_its_header_survives_an_edit_elsewhere() {
+        let md = "Erster Absatz.\n\n| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n";
+        assert_eq!(edit_first(md), md.replacen("Erster Absatz.", "Neu.", 1));
     }
 }
