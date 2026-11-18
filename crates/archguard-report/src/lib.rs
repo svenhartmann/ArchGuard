@@ -18,6 +18,8 @@ mod arc42_goals;
 mod arc42_quality;
 mod arc42_text;
 mod architecture_doc;
+mod asciidoc;
+mod docx;
 mod dot;
 mod dsm;
 mod gexf;
@@ -29,6 +31,7 @@ mod mermaid;
 mod pr_comment;
 mod render;
 mod staged;
+mod structurizr;
 mod text;
 pub use staged::{branch_diff_html, staged_diff_html};
 
@@ -40,6 +43,8 @@ pub use arc42_diagrams::{
     section as diagram_section,
 };
 pub use architecture_doc::render_architecture_doc;
+pub use asciidoc::markdown_to_asciidoc;
+pub use docx::markdown_to_docx;
 pub use dot::to_dot;
 pub use dsm::{to_dsm_json, to_dsm_text};
 pub use gexf::to_gexf;
@@ -50,4 +55,5 @@ pub use html::{
 pub use json::to_json;
 pub use mermaid::to_mermaid;
 pub use pr_comment::render_pr_comment;
+pub use structurizr::{C4Components, to_structurizr};
 pub use text::to_text;
