@@ -372,7 +372,10 @@ fn insert_findings(conn: &Connection<'_>, r: &Report) -> Result<(), ArchguardErr
             &mut finding_stmt,
             vec![
                 ("id", Value::String(finding.id.clone())),
-                ("kind", Value::String(kind_name(finding.kind).to_string())),
+                (
+                    "kind",
+                    Value::String(archguard_core::finding_kind_name(finding.kind).to_string()),
+                ),
                 (
                     "severity",
                     Value::String(severity_name(finding.severity).to_string()),
@@ -533,21 +536,6 @@ fn cyclic_edge_pairs(r: &Report) -> HashSet<(String, String)> {
         }
     }
     pairs
-}
-
-/// Stable, machine-readable finding kind name (matches the core serde names).
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
-    }
 }
 
 /// Stable severity name (matches the core serde names).

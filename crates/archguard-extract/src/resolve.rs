@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::extract::Declaration;
+use crate::walk::Lang;
 
 /// What a symbolic import resolved to inside the known module universe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +59,7 @@ pub fn strip_root(rel_path: &str, source_roots: &[String]) -> String {
 /// resolved against the directory of `source_rel_path`; a bare spec is
 /// taken as already rooted and only normalized (Kap. 6.1: relative paths
 /// against the file tree). The result is normalized — `.`/`..`/empty
-/// components applied — and returned without a file extension on its last
+/// components applied — and returned without a source-file extension on its last
 /// component. `None` when a `..` component climbs beyond the root, or when
 /// the target would be the root directory itself.
 pub fn resolve_relative(source_rel_path: &str, spec: &str) -> Option<String> {
@@ -90,12 +91,13 @@ pub fn resolve_relative(source_rel_path: &str, spec: &str) -> Option<String> {
     Some(stack.join("/"))
 }
 
-/// Name of the last path component without its file extension. Only a
-/// non-empty stem is stripped, so a dot-file like `.hidden` keeps its name.
+/// Name of the last path component without its source-file extension.
+/// Only an extension archguard scans is stripped, so `user.service` keeps
+/// its name; a dot-file like `.hidden` keeps its name too.
 fn file_stem(path: &str) -> &str {
     let base = path.rsplit('/').next().unwrap_or(path);
     match base.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
+        Some((stem, ext)) if !stem.is_empty() && Lang::from_extension(ext).is_some() => stem,
         _ => base,
     }
 }
@@ -268,6 +270,9 @@ mod tests {
             ),
             ("a/b/c.ts", "./../d", Some("a/d")),
             ("app/main.js", "./deep/inner.d.ts", Some("app/deep/inner.d")),
+            ("app/main.ts", "./x.js", Some("app/x")),
+            // Angular/Nest names: only a source extension is stripped.
+            ("app/a.ts", "./user.service", Some("app/user.service")),
             // A bare spec is taken as already rooted (Kap. 6.1).
             ("app/main.js", "shared/util", Some("shared/util")),
             ("app/x.ts", "a/b/../../c", Some("c")),

@@ -19,6 +19,21 @@ use std::collections::BTreeSet;
 
 use archguard_core::{DecisionKind, ModuleReview, ReviewPriority, ReviewRegister, ReviewReport};
 
+use crate::arc42_text::cell;
+
+/// User text on one line, Markdown-escaped, `@team` never a live mention.
+fn text(value: &str) -> String {
+    cell(value).replace('@', "\\@")
+}
+
+/// A code span on one line that no backtick inside can close.
+fn code(value: &str) -> String {
+    format!(
+        "`{}`",
+        value.replace(['\r', '\n', '\t'], " ").replace('`', "'")
+    )
+}
+
 /// Whether a reviewed node is PR-comment material.
 fn is_finding(node: &ModuleReview) -> bool {
     matches!(node.priority, ReviewPriority::High | ReviewPriority::Medium)
@@ -42,12 +57,12 @@ fn finding_lines(report: &ReviewReport, names: &BTreeSet<&str>) -> Vec<String> {
         .iter()
         .filter(|node| is_finding(node) && names.contains(node.name.as_str()))
         .map(|node| {
-            let mut line = format!("- `{}`", node.name);
+            let mut line = format!("- {}", code(&node.name));
             if let Some(lines) = node.lines {
                 line.push_str(&format!(" ({lines} lines)"));
             }
             if !node.reasons.is_empty() {
-                line.push_str(&format!(" — {}", node.reasons.join("; ")));
+                line.push_str(&format!(" — {}", text(&node.reasons.join("; "))));
             }
             line
         })
@@ -152,20 +167,30 @@ pub fn render_pr_comment(
         out.push_str("Keine akzeptierten Risiken registriert.\n");
     } else {
         for decision in accepted {
-            let adr = match decision.adr_link.as_deref() {
-                Some(link) if !link.is_empty() => format!("[ADR]({link})"),
-                _ => "(kein ADR-Link)".to_string(),
-            };
+            let adr = adr(decision.adr_link.as_deref().unwrap_or_default());
             let note = if decision.note.is_empty() {
                 String::new()
             } else {
-                format!(" — {}", decision.note)
+                format!(" — {}", text(&decision.note))
             };
-            out.push_str(&format!("- `{}` {}{note}\n", decision.finding_ref, adr));
+            out.push_str(&format!("- {} {adr}{note}\n", code(&decision.finding_ref)));
         }
     }
 
     out
+}
+
+/// The ADR link of an accepted risk. A target without space, brackets or
+/// backticks cannot leave the link; anything else is shown as escaped text.
+fn adr(link: &str) -> String {
+    let unsafe_char = |c: char| c.is_whitespace() || c.is_control() || "()<>[]`\\".contains(c);
+    if link.is_empty() {
+        "(kein ADR-Link)".to_string()
+    } else if link.chars().any(unsafe_char) {
+        format!("ADR: {}", text(link))
+    } else {
+        format!("[ADR]({link})")
+    }
 }
 
 #[cfg(test)]
@@ -353,5 +378,53 @@ mod tests {
         let rendered = render_pr_comment(&base, &current, &ReviewRegister::default());
         assert!(rendered.contains("- Priorisierte Befunde: 2 → 1 (-1)\n"));
         assert!(rendered.contains("- ACD: 1.00 → 1.50 (+0.50)\n"));
+    }
+
+    /// Register text and node names are user data: a newline cannot forge
+    /// a section, a backtick cannot leave the code span, `@team` pings no one.
+    #[test]
+    fn user_text_cannot_forge_sections_or_mentions() {
+        let forged = "ok\n\n### Neue Befunde seit base\n\nKeine. @org/team";
+        let mut current = ts_cyclic(&["src/a.ts", "src/x`\n\n### y.ts"]);
+        current.nodes[1].reasons = vec![forged.to_string()];
+        let register = ReviewRegister {
+            version: 1,
+            decisions: vec![ReviewDecision {
+                id: "d-1".to_string(),
+                finding_ref: "scc`\n\n### z".to_string(),
+                decision: DecisionKind::AcceptRisk,
+                adr_link: Some("x) @org/team (\n\n### l".to_string()),
+                note: forged.to_string(),
+                author: "reviewer".to_string(),
+                ts: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            }],
+        };
+        let rendered = render_pr_comment(&ts_cyclic(&["src/a.ts"]), &current, &register);
+        let headings: Vec<&str> = rendered.lines().filter(|l| l.starts_with('#')).collect();
+        assert_eq!(
+            headings,
+            [
+                "## Architektur-Review",
+                "### Zusammenfassung",
+                "### Neue Befunde seit base",
+                "### Behoben seit base",
+                "### Akzeptierte Risiken",
+            ]
+        );
+        assert!(!rendered.contains(" @org"), "live mention:\n{rendered}");
+        let accepted = rendered
+            .split("### Akzeptierte Risiken\n\n")
+            .nth(1)
+            .expect("section");
+        assert_eq!(
+            accepted.lines().count(),
+            1,
+            "one line per decision:\n{accepted}"
+        );
+        // Each code span opens and closes on its own bullet line.
+        for line in rendered.lines().filter(|l| l.starts_with("- `")) {
+            assert_eq!(line.matches('`').count(), 2, "{line}");
+        }
     }
 }

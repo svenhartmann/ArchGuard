@@ -21,8 +21,10 @@ use std::path::{Path, PathBuf};
 
 // `use rmcp::schemars;` (not the derive directly): the JsonSchema derive
 // macro expands to `schemars::…` paths, so the module name must be in scope.
-use archguard_engine::core::{Finding, FindingKind, Graph, NodeKind, Report, Severity};
-use archguard_engine::{Level, analyze_run};
+use archguard_engine::Level;
+use archguard_engine::core::{
+    Cut, Finding, FindingKind, Graph, NodeKind, Report, Severity, aggregate,
+};
 use rmcp::ErrorData;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ServiceExt, schemars, tool, tool_router, transport::stdio};
@@ -251,16 +253,23 @@ impl ArchguardTools {
 
     /// SCC detail for one cycle (Kap. 10.2 `cycle_get`).
     #[tool(
-        description = "SCC detail for one cycle: member nodes, internal edges with their import-site refs (file, line, raw) and the suggested cuts. Example: {\"cycle_id\": \"scc-1\"}."
+        description = "SCC detail for one cycle: member nodes, internal edges with their import-site refs (file, line, raw) and the suggested cuts. Pass the `level` the id was listed at (default module). Example: {\"cycle_id\": \"scc-1\", \"level\": \"file\"}."
     )]
     async fn cycle_get(
         &self,
         Parameters(params): Parameters<CycleGetParams>,
     ) -> Result<String, ErrorData> {
         let cycle_id = tools::required_str(&params.cycle_id, "cycle_id")?;
-        let run = tools::analyze_run(&self.root, None)?;
+        let level = parse_level(params.level.as_deref())?;
+        let run = tools::Run::at(&self.root, None, level)?;
+        // `file-`/`module-` ids are the deny_cycles gate view of the other level.
+        let module_view;
         let graph = if cycle_id.starts_with("file-") {
             &run.file_graph
+        } else if cycle_id.starts_with("module-") && level == Level::File {
+            let depth = run.loaded.config.modules.depth as usize;
+            module_view = aggregate(&run.file_graph, &Cut::at_depth(&run.file_graph, depth));
+            &module_view
         } else {
             &run.view
         };
@@ -276,7 +285,10 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<CheckParams>,
     ) -> Result<String, ErrorData> {
-        let run = tools::analyze_run(&self.root, params.path.as_deref())?;
+        let mut run = tools::analyze_run(&self.root, params.path.as_deref())?;
+        if let Some(message) = archguard_engine::empty_analysis_error(&run.root, &run.file_graph) {
+            return Err(tools::invalid_params(message));
+        }
         let baseline = params
             .use_baseline
             .unwrap_or(false)
@@ -289,6 +301,9 @@ impl ArchguardTools {
                 tools::read_baseline(&path)
             })
             .transpose()?;
+        let gates =
+            archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
+        run.report.findings.extend(gates);
         Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
     }
 
@@ -835,14 +850,15 @@ impl ArchguardTools {
 
     /// Ranked cut candidates for a cycle (Kap. 10.2 `suggest_cuts`).
     #[tool(
-        description = "Ranked edges to cut for one cycle, with score and reason (dependency-inversion hint). Example: {\"cycle_id\": \"scc-1\", \"max\": 3}."
+        description = "Ranked edges to cut for one cycle, with score and reason (dependency-inversion hint). Pass the `level` the id was listed at (default module). Example: {\"cycle_id\": \"scc-1\", \"max\": 3}."
     )]
     async fn suggest_cuts(
         &self,
         Parameters(params): Parameters<SuggestCutsParams>,
     ) -> Result<String, ErrorData> {
         let cycle_id = tools::required_str(&params.cycle_id, "cycle_id")?;
-        let run = tools::analyze_run(&self.root, None)?;
+        let level = parse_level(params.level.as_deref())?;
+        let run = tools::Run::at(&self.root, None, level)?;
         let value = tools::suggest_cuts_value(&run.report, cycle_id, params.max)?;
         Ok(tools::guarded(&value).to_string())
     }
@@ -873,14 +889,13 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<ConfigViewParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, report) = (run.graph, run.report);
-        let value =
-            tools::config_view_value(&file_graph, &report, &loaded, params.section.as_deref())?;
+        let run = tools::analyze_run(&self.root, None)?;
+        let value = tools::config_view_value(
+            &run.file_graph,
+            &run.report,
+            &run.loaded,
+            params.section.as_deref(),
+        )?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -893,14 +908,10 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<GraphExpandParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
         let node = tools::required_str(&params.node, "node")?;
-        let value = tools::graph_expand_value(&file_graph, &loaded, node, &params.expanded)?;
+        let run = tools::analyze_run(&self.root, None)?;
+        let value =
+            tools::graph_expand_value(&run.file_graph, &run.loaded, node, &params.expanded)?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -910,15 +921,10 @@ impl ArchguardTools {
         description = "Dependency-structure matrix of the effective module view: {\"order\": [names], \"cells\": [[row, col, weight, cyclic]]}, sinks first, cycle members adjacent. Optional `expanded` zooms modules in first, `within` shows exactly the direct children of one module. Example: {\"within\": \"app\"}."
     )]
     async fn dsm(&self, Parameters(params): Parameters<DsmParams>) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
+        let run = tools::analyze_run(&self.root, None)?;
         let value = tools::dsm_value(
-            &file_graph,
-            &loaded,
+            &run.file_graph,
+            &run.loaded,
             &params.expanded,
             params.within.as_deref(),
         )?;
@@ -934,14 +940,9 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<SimulateParams>,
     ) -> Result<String, ErrorData> {
-        let root = tools::resolve_root(&self.root, None)?;
-        let loaded = tools::load_config_at(&root)?;
-        let run = analyze_run(&root, &loaded, Level::Module)
-            .map_err(|err| ErrorData::internal_error(format!("analysis failed: {err}"), None))?;
-        let loaded = run.effective_config();
-        let (file_graph, _report) = (run.graph, run.report);
+        let run = tools::analyze_run(&self.root, None)?;
         let ops: Vec<_> = params.ops.iter().map(tools::SimOpWire::to_sim_op).collect();
-        let value = tools::simulate_value(&file_graph, &loaded, &ops)?;
+        let value = tools::simulate_value(&run.file_graph, &run.loaded, &ops)?;
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -1013,6 +1014,9 @@ impl rmcp::ServerHandler for ArchguardTools {}
 pub struct CycleGetParams {
     /// The `scc-N` id from `cycles_list`.
     pub cycle_id: Option<String>,
+    /// `"module"` (default) or `"file"`: the `cycles_list` level the id
+    /// comes from.
+    pub level: Option<String>,
 }
 
 /// Input of the `check` tool (Kap. 10.2: `{ path?, use_baseline? }`).
@@ -1181,6 +1185,9 @@ pub struct EdgeEvidenceParams {
 pub struct SuggestCutsParams {
     /// The `scc-N` id from `cycles_list`.
     pub cycle_id: Option<String>,
+    /// `"module"` (default) or `"file"`: the `cycles_list` level the id
+    /// comes from.
+    pub level: Option<String>,
     /// Maximum number of cuts; all by default.
     pub max: Option<usize>,
 }
@@ -2028,11 +2035,166 @@ links = ["docs/adr/1.md"]
         let detail = handler
             .cycle_get(Parameters(CycleGetParams {
                 cycle_id: Some("file-scc-1".into()),
+                level: None,
             }))
             .await
             .unwrap();
         let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
         assert_eq!(detail["edges"].as_array().unwrap().len(), 2);
+    }
+
+    /// Same gate as `archguard check`: a breached `[review]` KPI gate fails
+    /// even when the cycle itself is tolerated.
+    #[tokio::test]
+    async fn check_applies_the_review_kpi_gates_like_the_cli() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.ts"), "import './b';\n").unwrap();
+        std::fs::write(dir.path().join("src/b.ts"), "import './a';\n").unwrap();
+        std::fs::write(
+            dir.path().join("archguard.toml"),
+            "[rules]\ndeny_cycles = 'off'\nmax_scc_size = 100\n[review]\nmax_tangledness = 0.0\n",
+        )
+        .unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let value: Value = serde_json::from_str(
+            &handler
+                .check(Parameters(CheckParams::default()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["status"], "fail", "{value}");
+        assert!(
+            value["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["id"] == "metric-max-tangledness"),
+            "{value}"
+        );
+    }
+
+    /// `cycles_list{level:"file"}` ids are file-level ids: `cycle_get` and
+    /// `suggest_cuts` must look them up at the level they came from.
+    #[tokio::test]
+    async fn cycle_get_and_suggest_cuts_follow_the_requested_level() {
+        let dir = tempdir().unwrap();
+        write_cyclic_project(dir.path());
+        std::fs::create_dir_all(dir.path().join("src/core")).unwrap();
+        std::fs::write(dir.path().join("src/core/x.ts"), "import './y';\n").unwrap();
+        std::fs::write(dir.path().join("src/core/y.ts"), "import './x';\n").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let list: Value = serde_json::from_str(
+            &handler
+                .cycles_list(Parameters(CyclesListParams {
+                    level: Some("file".into()),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        // Every listed id resolves at its level, including the `module-`
+        // gate ids the file-level report carries next to its `scc-N`.
+        for cycle in list["cycles"].as_array().unwrap() {
+            let detail: Value = serde_json::from_str(
+                &handler
+                    .cycle_get(Parameters(CycleGetParams {
+                        cycle_id: Some(cycle["id"].as_str().unwrap().into()),
+                        level: Some("file".into()),
+                    }))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(detail["nodes"], cycle["sample_nodes"], "{detail}");
+        }
+        let id = list["cycles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| {
+                c["id"].as_str().unwrap().starts_with("scc-")
+                    && c["sample_nodes"].to_string().contains("x.ts")
+            })
+            .unwrap_or_else(|| panic!("file cycle x <-> y: {list}"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let cuts: Value = serde_json::from_str(
+            &handler
+                .suggest_cuts(Parameters(SuggestCutsParams {
+                    cycle_id: Some(id),
+                    level: Some("file".into()),
+                    max: None,
+                }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(cuts["cuts"].to_string().contains("x.ts"), "{cuts}");
+    }
+
+    /// A missing `node` is a parameter error before any scan: even an
+    /// unreadable config is not touched.
+    #[tokio::test]
+    async fn graph_expand_validates_node_before_scanning() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("archguard.toml"), "not = [valid").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let error = handler
+            .graph_expand(Parameters(GraphExpandParams::default()))
+            .await
+            .expect_err("node is required");
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS, "{}", error.message);
+        assert!(error.message.contains("`node`"), "{}", error.message);
+    }
+
+    /// Same gate as `archguard check` (ADR 0016): a denied licence in a
+    /// lockfile fails the MCP check too.
+    #[tokio::test]
+    async fn check_applies_the_licence_policy_like_the_cli() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.ts"), "export const a = 1;\n").unwrap();
+        std::fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"":{},"node_modules/gpl-thing":{"version":"2.0.0","license":"GPL-3.0-only"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("archguard.toml"),
+            "[licenses]\ndeny = ['GPL-3.0-only']\n",
+        )
+        .unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let value: Value = serde_json::from_str(
+            &handler
+                .check(Parameters(CheckParams::default()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["status"], "fail", "{value}");
+        assert_eq!(value["counts"]["license"], 1, "{value}");
+    }
+
+    /// Nothing analysed is no evidence of a clean architecture.
+    #[tokio::test]
+    async fn check_refuses_a_directory_without_sources() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "no code here\n").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let error = handler
+            .check(Parameters(CheckParams::default()))
+            .await
+            .expect_err("an empty analysis must not pass");
+        assert!(
+            error.message.contains("no source files found"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -2051,7 +2213,7 @@ links = ["docs/adr/1.md"]
                 let (graph, report) = handler.analyze(None, level).unwrap();
                 let root = dir.path().canonicalize().unwrap();
                 let loaded = load_config(None, &root).unwrap();
-                let shared = analyze_run(&root, &loaded, level).unwrap();
+                let shared = archguard_engine::analyze_run(&root, &loaded, level).unwrap();
                 assert_eq!(graph, shared.graph);
                 assert_eq!(report, shared.report);
                 assert_eq!(handler.analyze(None, level).unwrap(), (graph, report));

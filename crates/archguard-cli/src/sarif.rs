@@ -1,6 +1,7 @@
 //! Minimal SARIF 2.1.0 rendering of a report's findings for `check --format sarif`.
 use std::collections::BTreeMap;
 
+use archguard_engine::analysis::Baseline;
 use archguard_engine::core::{FindingKind, Report, Severity};
 use serde_json::{Value, json};
 
@@ -10,8 +11,13 @@ use crate::output::to_pretty_json;
 /// (T25 — deliberately hand-rolled, no third-party SARIF crate): one
 /// run, one driver rule per distinct [`FindingKind`], one result per
 /// finding. Findings name modules, not files, so members become
-/// `logicalLocations` rather than physical artifact locations.
-pub(crate) fn to_sarif(report: &Report, source_paths: &BTreeMap<String, String>) -> String {
+/// `logicalLocations` rather than physical artifact locations. Cycles the
+/// `baseline` accepts are reported as `note`: they no longer fail the gate.
+pub(crate) fn to_sarif(
+    report: &Report,
+    source_paths: &BTreeMap<String, String>,
+    baseline: Option<&Baseline>,
+) -> String {
     let mut rule_ids: Vec<&'static str> = Vec::new();
     let results: Vec<Value> = report
         .findings
@@ -28,12 +34,16 @@ pub(crate) fn to_sarif(report: &Report, source_paths: &BTreeMap<String, String>)
             if locations.is_empty(){locations=finding.nodes.iter().map(|node|json!({"logicalLocations":[{"name":node,"kind":"module"}]})).collect();}
             json!({
                 "ruleId": id,
-                "level": sarif_level(finding.severity),
+                "level": if archguard_engine::accepted_by_baseline(baseline, finding) {
+                    "note"
+                } else {
+                    sarif_level(finding.severity)
+                },
                 "message": {
                     "text": finding.message.clone().unwrap_or_else(||format!(
                         "{} {}: {}",
                         finding.id,
-                        kind_name(finding.kind),
+                        archguard_engine::core::finding_kind_name(finding.kind),
                         finding.nodes.join(", "),
                     )),
                 },
@@ -94,20 +104,5 @@ fn sarif_level(severity: Severity) -> &'static str {
         Severity::Error => "error",
         Severity::Warning => "warning",
         Severity::Info => "note",
-    }
-}
-
-/// The snake_case name of a finding kind (as in the report JSON).
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
     }
 }

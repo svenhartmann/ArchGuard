@@ -226,6 +226,17 @@ impl Arc42Files {
         if !edited.ends_with('\n') {
             edited.push('\n');
         }
+        // One file finds chapters by heading: without its own, the text
+        // would join the chapter before and chapter N be written twice.
+        if let Target::File(_) = self.target {
+            let own = matches!(headings(&edited).collect::<Vec<_>>()[..],
+                [(i, m)] if m == n && edited[..i].trim().is_empty());
+            if !own {
+                return Err(format!(
+                    "The chapter must start with its heading \"## {n}. …\" and contain no other chapter heading; it was not saved"
+                ));
+            }
+        }
         let path = self.path_of(n);
         let on_disk = read(&path)?;
         if on_disk != *base {
@@ -814,6 +825,42 @@ pub(crate) mod tests {
             std::fs::read_to_string(&path)
                 .unwrap()
                 .contains("Nur eigener Text.")
+        );
+    }
+
+    /// In one file a chapter is found by its `## N.` heading: an edit
+    /// without it would land in the chapter before and duplicate chapter N
+    /// on the next save. The save is refused; the file and its base stay.
+    #[test]
+    fn a_file_refuses_a_chapter_without_its_own_heading() {
+        let d = dir();
+        let path = d.path().join("arc42.md");
+        let saved = doc("Old").markdown(None);
+        std::fs::write(&path, &saved).unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        let new = doc("New");
+        let five = files.chapter(&new, 5) + "Eigener Text.\n";
+        let cases = [
+            ("deleted", five.replacen("## 5. Title\n", "", 1)),
+            ("dotless", five.replacen("## 5. Title", "## 5 Title", 1)),
+            ("renumbered", five.replacen("## 5. Title", "## 6. Title", 1)),
+            ("text before", format!("Vorab.\n\n{five}")),
+            ("two chapters", five.clone() + "\n## 6. Title\n"),
+        ];
+        for (case, edited) in cases {
+            let mut base = files.saved(5);
+            let err = files
+                .save_chapter(&new, 5, &edited, &mut base)
+                .expect_err(case);
+            assert!(err.contains("## 5."), "{case}: {err}");
+            assert_eq!(base, files.saved(5), "{case}: base kept");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), saved, "{case}");
+        }
+        assert!(
+            files
+                .save_chapter(&new, 5, &five, &mut files.saved(5))
+                .is_ok(),
+            "its own heading saves"
         );
     }
 
