@@ -11,10 +11,10 @@ pub fn source_reference_paths(
     let mut candidates = BTreeMap::<String, Vec<String>>::new();
     for file in crate::pipeline::walk_files(root, config)? {
         let stripped = archguard_extract::strip_root(&file.rel_path, &config.project.source_roots);
-        // Java, Kotlin, C# and PHP nodes are named after their package (ADR 0010).
+        // Java, Kotlin, Scala, C# and PHP nodes are named after their package (ADR 0010).
         let logical = matches!(
             file.lang,
-            Lang::Java | Lang::Kotlin | Lang::CSharp | Lang::Php
+            Lang::Java | Lang::Kotlin | Lang::Scala | Lang::CSharp | Lang::Php
         );
         if logical
             && let Some(name) = crate::pipeline::source_node_name(&file, &stripped, None, None)?

@@ -525,6 +525,7 @@ pub(crate) fn lang_name(lang: Lang) -> &'static str {
         Lang::Php => "php",
         Lang::Go => "go",
         Lang::Kotlin => "kt",
+        Lang::Scala => "scala",
     }
 }
 
@@ -681,8 +682,8 @@ impl ImportIndex {
 fn import_family(lang: &str) -> &str {
     match lang {
         "ts" => "js",
-        // Kotlin and Java share the JVM package namespace and import each other.
-        "kt" => "java",
+        // Kotlin, Scala and Java share the JVM package namespace and import each other.
+        "kt" | "scala" => "java",
         _ => lang,
     }
 }
