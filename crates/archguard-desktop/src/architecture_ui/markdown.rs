@@ -79,8 +79,8 @@ fn parse_block(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
     if line.trim().is_empty() {
         return i + 1;
     }
-    if let Some(lang) = fence(line) {
-        return code(lines, i, lang, out);
+    if let Some((ticks, lang)) = fence(line) {
+        return code(lines, i, ticks, lang, out);
     }
     if let Some((level, text)) = heading(line) {
         out.push(Block::Heading {
@@ -119,10 +119,12 @@ fn parse_block(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
     j
 }
 
-fn code(lines: &[&str], i: usize, lang: &str, out: &mut Vec<Block>) -> usize {
+fn code(lines: &[&str], i: usize, ticks: usize, lang: &str, out: &mut Vec<Block>) -> usize {
     let mut j = i + 1;
     let mut body = Vec::new();
-    while j < lines.len() && fence(lines[j]) != Some("") {
+    // A bare fence at least as long closes it.
+    let closes = |l: &str| fence(l).is_some_and(|(n, lang)| n >= ticks && lang.is_empty());
+    while j < lines.len() && !closes(lines[j]) {
         body.push(lines[j]);
         j += 1;
     }
@@ -208,17 +210,21 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
 fn strip_comments(text: &str, lines: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut prose = String::new();
-    let mut fenced = false;
+    // The open fence's length.
+    let mut fenced = None;
     for line in text.split_inclusive('\n') {
         let bare = line.trim_end_matches('\n');
-        if fenced {
+        if let Some(ticks) = fenced {
             out.push_str(line);
-            fenced = fence(bare) != Some("");
-        } else if fence(bare).is_some() && !strip_prose(&prose, false).contains("<!--") {
+            let closes = fence(bare).is_some_and(|(n, lang)| n >= ticks && lang.is_empty());
+            fenced = (!closes).then_some(ticks);
+        } else if let Some((ticks, _)) =
+            fence(bare).filter(|_| !strip_prose(&prose, false).contains("<!--"))
+        {
             out.push_str(&strip_prose(&prose, lines));
             prose.clear();
             out.push_str(line);
-            fenced = true;
+            fenced = Some(ticks);
         } else {
             prose.push_str(line);
         }
@@ -250,12 +256,17 @@ fn strip_prose(text: &str, lines: bool) -> String {
     out
 }
 
-/// `^\s*```([^`]*)$`; the language is the info string's first word, so a
-/// closing fence (only whitespace after ```) gives `Some("")`.
-pub(super) fn fence(line: &str) -> Option<&str> {
-    let info = line.trim_start().strip_prefix("```")?;
-    (!info.contains('`')).then(|| info.split_whitespace().next().unwrap_or(""))
+/// `^\s*(`{3,})([^`]*)$`: the fence's length and language (the info
+/// string's first word), so a closing fence (only whitespace after) gives
+/// `(n, "")`.
+pub(super) fn fence(line: &str) -> Option<(usize, &str)> {
+    let body = line.trim_start();
+    let ticks = body.len() - body.trim_start_matches('`').len();
+    let info = &body[ticks..];
+    (ticks >= 3 && !info.contains('`'))
+        .then(|| (ticks, info.split_whitespace().next().unwrap_or("")))
 }
+
 
 /// `^(#{1,6})\s+(.+)$`
 pub(super) fn heading(line: &str) -> Option<(usize, &str)> {
@@ -586,9 +597,34 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(fence("```c#"), Some("c#"));
-        assert_eq!(fence("```shell-session"), Some("shell-session"));
+        assert_eq!(fence("```c#"), Some((3, "c#")));
+        assert_eq!(fence("````shell-session"), Some((4, "shell-session")));
         assert_eq!(fence("```a`b"), None);
+    }
+
+    /// A longer fence closes only on a bare fence at least as long.
+    #[test]
+    fn a_longer_fence_holds_shorter_ones() {
+        let md = "````md\n```\nx\n```\n````\nprose";
+        assert_eq!(
+            parse(md),
+            vec![
+                Block::Code {
+                    lang: "md".into(),
+                    text: "```\nx\n```".into()
+                },
+                para("prose"),
+            ]
+        );
+        assert_eq!(&md[chunks(md)[0].0.clone()], "````md\n```\nx\n```\n````");
+        // A comment inside it is code, not a comment.
+        assert_eq!(
+            parse("````\n```\n<!-- c -->\n````"),
+            vec![Block::Code {
+                lang: String::new(),
+                text: "```\n<!-- c -->".into()
+            }]
+        );
     }
 
     #[test]

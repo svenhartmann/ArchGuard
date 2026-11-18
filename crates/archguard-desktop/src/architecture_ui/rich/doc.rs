@@ -342,6 +342,8 @@ fn as_written(source: &str, blocks: &[Md]) -> bool {
             || !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
     };
     !code && (source.contains("<!--") || source.contains("-->"))
+        // An info string beyond the language, an indent, another closing fence.
+        || matches!(blocks, [Md::Code { lang, text }] if source != fenced(lang, text))
         || indented(source)
         || matches!(blocks, [Md::Paragraph(_)]) && source.lines().any(not_prose)
         || wider_than_header(source, blocks)
@@ -482,6 +484,15 @@ fn between(prev: Option<&Kind>, kind: &Kind) -> &'static str {
     }
 }
 
+/// A fenced code block; the fence is longer than any run of three or more
+/// backticks in `code`, so no line of it ends the block.
+fn fenced(lang: &str, code: &str) -> String {
+    let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(if longest >= 3 { longest + 1 } else { 3 });
+    let end = if code.is_empty() { "" } else { "\n" };
+    format!("{fence}{lang}\n{code}{end}{fence}")
+}
+
 /// The Markdown of edited blocks; empty text blocks are dropped.
 fn write(blocks: &[Block]) -> String {
     let mut out = String::new();
@@ -530,15 +541,7 @@ fn write(blocks: &[Block]) -> String {
                 }
             }
             Kind::Diagram { source, .. } => out.push_str(source),
-            Kind::Code { lang } => {
-                // shortcut: a line of three backticks inside the code ends it
-                // early; write a longer fence once the reader knows them.
-                out.push_str("```");
-                out.push_str(lang);
-                out.push('\n');
-                out.push_str(&b.inline.text);
-                out.push_str("\n```");
-            }
+            Kind::Code { lang } => out.push_str(&fenced(lang, &b.inline.text)),
         }
         prev = Some(&b.kind);
     }
@@ -964,6 +967,37 @@ Ende.
         ];
         let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
         assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+    }
+
+    /// A fence with more than a language after it, or indented under a
+    /// list entry, stays as written: the editor writes `` ```lang ``.
+    #[test]
+    fn fences_the_editor_does_not_write_survive_an_edit_elsewhere() {
+        let kept = [
+            "```js title=\"x\"\nlet b;\n```",
+            "```{.python linenos}\nx = 1\n```",
+            "- Punkt\n\n  ```\n  code\n  ```",
+            "```rust\nfn a() {}\n```  ",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+    }
+
+    /// Code holding a line of three backticks gets a longer fence, so the
+    /// line does not end the block when it is read again.
+    #[test]
+    fn code_with_a_fence_inside_reads_back_whole() {
+        let md = "```md\nalt\n```\n";
+        let mut doc = Doc::parse(md, &[]);
+        let code = "a\n```\nb ```` c";
+        parts(&mut doc)[0].edit()[0].inline = Inline::plain(code);
+        let written = doc.to_markdown();
+        assert_eq!(written, format!("`````md\n{code}\n`````\n"));
+        let mut again = Doc::parse(&written, &[]);
+        let blocks = parts(&mut again)[0].blocks().to_vec();
+        assert_eq!(blocks.len(), 1, "{written}");
+        assert_eq!(blocks[0].inline.text, code);
+        assert_eq!(again.to_markdown(), written);
     }
 
     /// Two tables with a blank line between are one part; edited, they
