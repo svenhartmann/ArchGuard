@@ -393,9 +393,14 @@ fn write_text(out: &mut String, text: &str, code: bool) {
         return;
     }
     let mut rest = text;
-    while let Some(c) = rest.chars().next() {
+    while let Some(mut c) = rest.chars().next() {
         let line_start = out.is_empty() || out.ends_with('\n');
         if line_start && starts_block(rest) {
+            // The spaces first: `\ ` is no escape.
+            let body = rest.trim_start_matches([' ', '\t']);
+            out.push_str(&rest[..rest.len() - body.len()]);
+            rest = body;
+            c = rest.chars().next().expect("a block start has a marker");
             let digits = rest.chars().take_while(char::is_ascii_digit).count();
             if digits > 0 {
                 // `1\. x`: the number stays, the list marker does not.
@@ -408,6 +413,9 @@ fn write_text(out: &mut String, text: &str, code: bool) {
             out.push('\\');
         } else if matches!(c, '\\' | '*' | '`' | '[' | ']')
             || (c == '&' && ENTITIES.iter().any(|(n, _)| rest[1..].starts_with(n)))
+            // Raw HTML on GitHub: `<b`, `</`, `<!`, `<?`.
+            || (c == '<'
+                && rest[1..].starts_with(|n: char| n.is_ascii_alphabetic() || "/!?".contains(n)))
         {
             out.push('\\');
         }
@@ -738,6 +746,37 @@ mod tests {
             let md = Inline::plain(text).to_markdown();
             assert_eq!(Inline::parse(&md), Inline::plain(text), "{md}");
             assert!(starts_block(text) && !starts_block(&md), "{md}");
+        }
+    }
+
+    /// Spaces before a block marker come first, the escape after them:
+    /// `\ ` is no escape and would read as a backslash.
+    #[test]
+    fn spaces_before_a_block_start_stay_before_the_escape() {
+        for (text, want) in [
+            (" - schneller", " \\- schneller"),
+            (" > 5", " \\> 5"),
+            ("  1. x", "  1\\. x"),
+        ] {
+            let md = Inline::plain(text).to_markdown();
+            assert_eq!(md, want);
+            assert_eq!(Inline::parse(&md), Inline::plain(text), "{md}");
+        }
+    }
+
+    /// `<` before a letter, `/`, `!` or `?` would start raw HTML on GitHub
+    /// (`List<String>` loses `<String>`); it is escaped, other `<` not.
+    #[test]
+    fn a_less_than_that_would_start_html_is_escaped() {
+        for (text, want) in [
+            ("List<String>", "List\\<String>"),
+            ("a </b> <!x <?y", "a \\</b> \\<!x \\<?y"),
+            ("a < b <3", "a < b <3"),
+        ] {
+            let md = Inline::plain(text).to_markdown();
+            assert_eq!(md, want);
+            assert_eq!(Inline::parse(&md), Inline::plain(text), "{md}");
+            assert_eq!(markdown::plain(&md), text, "{md}");
         }
     }
 
