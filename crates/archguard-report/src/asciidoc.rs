@@ -12,6 +12,7 @@ pub fn markdown_to_asciidoc(md: &str) -> String {
     let mut w = Writer {
         out: vec![String::new()],
         lists: Vec::new(),
+        item: 0,
         code: None,
         cell: false,
         links: Vec::new(),
@@ -38,6 +39,8 @@ struct Writer {
     out: Vec<String>,
     /// Open lists: `true` for ordered.
     lists: Vec<bool>,
+    /// Output length right after the marker of the open list item.
+    item: usize,
     /// Open fenced block: its closing delimiter.
     code: Option<&'static str>,
     cell: bool,
@@ -52,7 +55,14 @@ impl Writer {
         if self.text.is_empty() {
             return;
         }
-        let text = literal(&std::mem::take(&mut self.text));
+        let raw = std::mem::take(&mut self.text);
+        // In link text a visible `=` turns the text into an attribute list.
+        let mut text = literal(&raw, !self.links.is_empty());
+        let top = self.top();
+        let line_start = top.is_empty() || top.ends_with('\n');
+        if self.out.len() == 1 && line_start && text == raw && block_syntax(&raw) {
+            text.insert_str(0, "{empty}");
+        }
         let text = if self.cell {
             text.replace('|', "\\|")
         } else {
@@ -80,16 +90,34 @@ impl Writer {
         }
     }
 
+    /// Starts a block: after a blank line, or inside a list item as a list
+    /// continuation (`+`). A paragraph that opens its item needs neither.
+    fn block(&mut self, paragraph: bool) {
+        if self.lists.is_empty() {
+            return self.block_start();
+        }
+        let empty = self.top().len() == self.item;
+        if empty && paragraph {
+            return;
+        }
+        if empty {
+            self.top().push_str("{empty}");
+        }
+        self.line_start();
+        self.top().push_str("+\n");
+    }
+
     fn event(&mut self, event: Event<'_>) {
         match event {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
             Event::Text(t) => self.top().push_str(&t),
             Event::Code(c) => {
+                // Unconstrained, so a letter or `*` next to it does not matter.
                 let code = if c.contains('+') {
-                    format!("`pass:c[{}]`", c.replace(']', "\\]"))
+                    format!("``pass:c[{}]``", c.replace(']', "\\]"))
                 } else {
-                    format!("`+{c}+`")
+                    format!("``+{c}+``")
                 };
                 let code = if self.cell {
                     code.replace('|', "\\|")
@@ -101,7 +129,7 @@ impl Writer {
             // Lines of an HTML block, collected until its end.
             Event::Html(h) => self.top().push_str(&h),
             Event::InlineHtml(h) if !h.starts_with("<!--") => {
-                let text = literal(&h);
+                let text = literal(&h, !self.links.is_empty());
                 self.top().push_str(&text);
             }
             Event::InlineHtml(h) => self.html(&h),
@@ -120,14 +148,14 @@ impl Writer {
 
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph if self.lists.is_empty() && !self.cell => self.block_start(),
+            Tag::Paragraph if !self.cell => self.block(true),
             Tag::Heading { level, .. } => {
                 self.block_start();
                 let marker = "=".repeat(level as usize) + " ";
                 self.top().push_str(&marker);
             }
             Tag::BlockQuote(_) => {
-                self.block_start();
+                self.block(false);
                 self.top().push_str("____\n");
             }
             Tag::CodeBlock(kind) => self.code_start(kind),
@@ -146,6 +174,7 @@ impl Writer {
                 };
                 let marker = ch.repeat(self.lists.len()) + " ";
                 self.top().push_str(&marker);
+                self.item = self.top().len();
             }
             Tag::Table(aligns) => self.table_start(&aligns),
             Tag::TableCell => {
@@ -175,7 +204,7 @@ impl Writer {
 
     /// Mermaid and PlantUML as Asciidoctor Diagram literal blocks.
     fn code_start(&mut self, kind: CodeBlockKind<'_>) {
-        self.block_start();
+        self.block(false);
         let lang = match kind {
             CodeBlockKind::Fenced(l) => l.split_whitespace().next().unwrap_or("").to_owned(),
             CodeBlockKind::Indented => String::new(),
@@ -190,7 +219,7 @@ impl Writer {
     }
 
     fn table_start(&mut self, aligns: &[Alignment]) {
-        self.block_start();
+        self.block(false);
         let cols: Vec<&str> = aligns
             .iter()
             .map(|a| match a {
@@ -245,7 +274,8 @@ impl Writer {
             TagEnd::Link | TagEnd::Image => {
                 let text = self.out.pop().unwrap_or_default();
                 let target = self.links.pop().unwrap_or_default();
-                let link = format!("{target}[{}]", text.replace(']', "\\]"));
+                // Every `]` of the text is inside a passthrough already.
+                let link = format!("{target}[{text}]");
                 self.top().push_str(&link);
             }
             _ => {}
@@ -270,16 +300,28 @@ impl Writer {
     }
 }
 
-/// Text that contains AsciiDoc markup characters, wrapped as literal.
-fn literal(t: &str) -> String {
+/// Text that contains AsciiDoc markup characters, wrapped as literal;
+/// `link`: also `=`, for link text.
+fn literal(t: &str, link: bool) -> String {
     const MARKUP: &[char] = &[
         '*', '_', '`', '#', '^', '~', '{', '}', '[', ']', '<', '>', '+', '\\', '\'', '"', '&',
     ];
-    if t.contains(MARKUP) && !t.contains("++") {
+    if t.contains("++") {
+        // `++…++` cannot hold `++`.
+        format!("pass:c[{}]", t.replace(']', "\\]"))
+    } else if t.contains(MARKUP) || (link && t.contains('=')) {
         format!("++{t}++")
     } else {
         t.to_owned()
     }
+}
+
+/// Whether a line starting with `t` could be read as a block title,
+/// comment, attribute entry, admonition, list item or delimiter; a
+/// leading `{empty}` keeps it text and renders as nothing.
+fn block_syntax(t: &str) -> bool {
+    let word = t.split_whitespace().next().unwrap_or("");
+    !t.starts_with(char::is_alphanumeric) || word.ends_with(['.', ')', ':', ';'])
 }
 
 #[cfg(test)]
@@ -293,7 +335,7 @@ mod tests {
         );
         assert_eq!(
             a,
-            "= Title\n\nSome **bold**, __it__ and `+code+`.\n\n== 1. Chapter\n\n=== Sub\n\ntext\n"
+            "= Title\n\nSome **bold**, __it__ and ``+code+``.\n\n== 1. Chapter\n\n=== Sub\n\ntext\n"
         );
     }
 
@@ -321,7 +363,7 @@ mod tests {
         let a = adoc("| Source | Files |\n| --- | ---: |\n| a\\|b | 3 |\n| `x` | 4 |\n");
         assert_eq!(
             a,
-            "[%header,cols=\"<1,>1\"]\n|===\n| Source | Files \n| a\\|b | 3 \n| `+x+` | 4 \n|===\n"
+            "[%header,cols=\"<1,>1\"]\n|===\n| Source | Files \n| a\\|b | 3 \n| ``+x+`` | 4 \n|===\n"
         );
     }
 
@@ -345,5 +387,65 @@ mod tests {
     fn markup_characters_in_text_stay_literal() {
         let a = adoc("env SHIPPING\\_API and {id} *x*\n");
         assert_eq!(a, "++env SHIPPING_API and {id} ++__x__\n");
+    }
+
+    #[test]
+    fn line_starts_with_block_syntax_stay_text() {
+        assert_eq!(adoc(".NET 8 runs here.\n"), "{empty}.NET 8 runs here.\n");
+        assert_eq!(adoc("// not a comment\n"), "{empty}// not a comment\n");
+        assert_eq!(adoc(":attr: value\n"), "{empty}:attr: value\n");
+        for label in ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"] {
+            assert_eq!(
+                adoc(&format!("{label}: read this\n")),
+                format!("{{empty}}{label}: read this\n")
+            );
+        }
+        assert_eq!(adoc("a\n.NET\n"), "a\n{empty}.NET\n");
+        assert_eq!(adoc("Use .NET 8.\n"), "Use .NET 8.\n");
+    }
+
+    #[test]
+    fn text_with_double_plus_is_passed_through() {
+        assert_eq!(
+            adoc("C++ and {product-name} and #tag#\n"),
+            "pass:c[C++ and {product-name} and #tag#]\n"
+        );
+        assert_eq!(adoc("a ++ b\\]\n"), "pass:c[a ++ b\\]]\n");
+    }
+
+    #[test]
+    fn link_text_keeps_commas_and_equals_signs() {
+        assert_eq!(
+            adoc("[docs, version=2](https://a.org)\n"),
+            "link:https://a.org[++docs, version=2++]\n"
+        );
+        assert_eq!(
+            adoc("[a\\]b](https://a.org)\n"),
+            "link:https://a.org[++a]b++]\n"
+        );
+    }
+
+    #[test]
+    fn code_spans_are_unconstrained() {
+        assert_eq!(
+            adoc("a `x`s and *`y`* and `a+b`\n"),
+            "a ``+x+``s and __``+y+``__ and ``pass:c[a+b]``\n"
+        );
+    }
+
+    #[test]
+    fn blocks_inside_list_items_are_continued() {
+        assert_eq!(
+            adoc("- first point\n\n  second paragraph\n- next\n"),
+            "* first point\n+\nsecond paragraph\n* next\n"
+        );
+        let code = "\n   ```\n   code\n   ```\n2. next\n";
+        for start in ["1. step\n", "1. step\n\n"] {
+            assert_eq!(
+                adoc(&format!("{start}{code}")),
+                ". step\n+\n----\ncode\n----\n. next\n",
+                "{start:?}"
+            );
+        }
     }
 }

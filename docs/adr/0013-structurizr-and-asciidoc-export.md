@@ -115,3 +115,30 @@ needs neither.
   their levels, all six tables, all five diagram blocks.
 - Components depend on the module cut: a deeper `modules.depth` gives
   finer components.
+
+## History
+
+- **2026-11-18, review fixes.**
+  - `doc --arc42 --format asciidoc|docx` refuses (exit 2) a target that is
+    the same file as `<root>/arc42.md` (same device and inode, so also
+    `ARC42.MD` on a case-insensitive file system), since `arc42.md` is
+    only read. With `--chapter N` the default file is `arc42-NN.adoc`/
+    `arc42-NN.docx`, as in the desktop, so a chapter no longer replaces
+    the full export and `--check` compares like with like.
+  - Structurizr: a service name that occurs more than once becomes its
+    id (`compose.yaml::api`), a repeated external datastore host becomes
+    `host:port`, since the DSL refuses two elements of one name. Evidence
+    is sorted and deduplicated before the first three are shown.
+  - AsciiDoc: a line that starts with a non-alphanumeric character or
+    whose first word ends in `.`, `)`, `:` or `;` gets a leading
+    `{empty}` (no block title, comment, attribute entry, admonition or
+    list); text containing `++` is wrapped in `pass:c[…]`; code spans are
+    unconstrained (``` ``+x+`` ```); in link text `=` is passed through
+    too, so `[docs, version=2]` is not read as attributes (quoting the
+    text, `["…"]`, shows the quotes in Asciidoctor 2.0.26 when it has no
+    `=`). A second paragraph or a block inside a list item is attached
+    with a list continuation (`+`). Checked by rendering with
+    Asciidoctor 2.0.26.
+  - Word: run and paragraph properties follow the schema order (`rStyle`,
+    `rFonts`, `b`, `i`; `shd` before `spacing`); a second paragraph in a
+    list item is indented without its own bullet.
