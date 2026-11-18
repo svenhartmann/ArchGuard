@@ -21,12 +21,17 @@ pub(crate) fn to_pretty_json(value: &Value) -> String {
     format!("{json}\n")
 }
 
-/// Print `text` to stdout, guaranteeing a trailing newline.
+/// Print `text` to stdout, guaranteeing a trailing newline. A reader that
+/// closed the pipe (`| head`) is not an error: the command keeps its exit
+/// code. Any other write failure is an IO error (exit 3).
 pub(crate) fn emit(text: &str) {
-    if text.ends_with('\n') {
-        print!("{text}");
-    } else {
-        println!("{text}");
+    use std::io::Write;
+    let newline = if text.ends_with('\n') { "" } else { "\n" };
+    let mut out = std::io::stdout().lock();
+    match write!(out, "{text}{newline}").and_then(|()| out.flush()) {
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(err) => std::process::exit(analysis_error(format!("writing stdout: {err}"))),
+        Ok(()) => {}
     }
 }
 

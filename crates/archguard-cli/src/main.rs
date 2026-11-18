@@ -612,11 +612,12 @@ fn cycles(
             println!("{total} cycle findings");
         }
     }
-    if fail_on_found && total > 0 {
-        EXIT_FOUND
-    } else {
-        EXIT_OK
+    if !fail_on_found {
+        return EXIT_OK;
     }
+    // A gate like `check`: an analysis without source files is no pass.
+    let found = if total > 0 { EXIT_FOUND } else { EXIT_OK };
+    archguard_engine::empty_analysis_error(root, graph).map_or(found, analysis_error)
 }
 
 /// The CI command (Kap. 9): the full report plus the quality gate.

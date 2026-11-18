@@ -47,15 +47,15 @@ pub fn validate(params: &PrCommentParams) -> Result<(), ErrorData> {
 }
 
 /// Split the rendered Markdown into deterministic, contiguous line blocks:
-/// the document is cut at newlines and chunked into consecutive groups of
+/// the document is cut after each newline (kept in its line) and chunked into consecutive groups of
 /// at most [`BLOCK_LINES`] lines, so concatenating the blocks of all pages
 /// in order reproduces the renderer output byte for byte.
 fn line_blocks(markdown: &str) -> Vec<String> {
     markdown
-        .split('\n')
+        .split_inclusive('\n')
         .collect::<Vec<&str>>()
         .chunks(BLOCK_LINES)
-        .map(|chunk| chunk.join("\n"))
+        .map(|chunk| chunk.concat())
         .collect()
 }
 
@@ -82,7 +82,7 @@ pub fn comment_value(
         "status": "ok",
         "base": base,
         "source": source_command(params, base),
-        "coverage_scope": "Markdown comes from render_pr_comment (R25) over the current working-tree analysis and the compare_to_ref base report computed on an isolated base checkout under the current effective policy — the same engine calls as the CLI (R27). Findings are the High/Medium priority review entries diffed by node name. A missing register is an empty register: 'Keine akzeptierten Risiken registriert.' is a fact, not an error, and nothing is invented for it. The base snapshot carries no git history, so base-side churn evidence is absent. Blocks are contiguous groups of up to 20 lines; joining page blocks in order reproduces the document.",
+        "coverage_scope": "Markdown comes from render_pr_comment (R25) over the current working-tree analysis and the compare_to_ref base report computed on an isolated base checkout under the current effective policy — the same engine calls as the CLI (R27). Findings are the High/Medium priority review entries diffed by node name. A missing register is an empty register: 'Keine akzeptierten Risiken registriert.' is a fact, not an error, and nothing is invented for it. The base snapshot carries no git history, so base-side churn evidence is absent. Blocks are contiguous groups of up to 20 lines; concatenating page blocks in order reproduces the document byte for byte (each line keeps its newline).",
         "total_blocks": total, "offset": offset, "returned": 0, "processed": 0,
         "next_offset": null, "truncated": false, "blocks": [],
     });
@@ -364,13 +364,10 @@ mod tests {
         }
         assert_eq!(seen.len(), total);
         assert_eq!(unique.len(), total, "every block appears exactly once");
-        let joined = seen.join("\n");
+        let joined = seen.concat();
         assert_eq!(
             joined,
-            full.iter()
-                .map(|b| b.as_str().unwrap())
-                .collect::<Vec<_>>()
-                .join("\n"),
+            full.iter().map(|b| b.as_str().unwrap()).collect::<String>(),
             "paging must reproduce the whole document"
         );
         // The R25 renderer sections the CLI golden asserts are present.
@@ -424,6 +421,26 @@ mod tests {
     }
 
     #[test]
+    fn concatenated_blocks_reproduce_the_markdown_byte_for_byte() {
+        for markdown in [
+            (0..45).map(|i| format!("line {i}\n")).collect::<String>(),
+            (0..BLOCK_LINES)
+                .map(|i| format!("l{i}\n"))
+                .collect::<String>(),
+            "## a\n\n- b\n\nno trailing newline".to_string(),
+        ] {
+            let page = comment_value(&markdown, "HEAD", &params(None, Some(200))).unwrap();
+            let blocks = page["blocks"].as_array().unwrap();
+            assert_eq!(
+                page["total_blocks"],
+                markdown.lines().count().div_ceil(BLOCK_LINES)
+            );
+            let joined: String = blocks.iter().map(|b| b.as_str().unwrap()).collect();
+            assert_eq!(joined, markdown);
+        }
+    }
+
+    #[test]
     fn oversized_blocks_omit_explicitly_and_the_cursor_advances() {
         let big = "x".repeat(10_000);
         // A single oversized document: the block is omitted explicitly and
@@ -466,7 +483,7 @@ mod tests {
         assert!(page.to_string().len() <= crate::tools::MAX_RESPONSE_BYTES);
         assert_eq!(page["returned"], 1);
         assert_eq!(page["processed"], 1);
-        assert_eq!(page["blocks"][0], small_block);
+        assert_eq!(page["blocks"][0], format!("{small_block}\n"));
         assert_eq!(page["next_offset"], 1);
         assert_eq!(page["truncated"], true);
         // Offsets beyond the document clamp to the end without error. The
