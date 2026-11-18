@@ -217,13 +217,12 @@ fn lex(src: &str) -> Result<Vec<Tok<'_>>, ArchguardError> {
                         i += 2;
                     }
                     Some(&quote) if quote == byte => {
-                        // Doubled quote is an escape for the quote itself.
-                        i += if bytes.get(i + 1) == Some(&byte) {
-                            2
-                        } else {
-                            1
-                        };
-                        break;
+                        i += 1;
+                        // Doubled quote is an escape: the string goes on.
+                        if bytes.get(i) != Some(&byte) {
+                            break;
+                        }
+                        i += 1;
                     }
                     Some(_) => i += 1,
                 }
@@ -647,6 +646,12 @@ mod tests {
             ),
             // Bare RETURN also passes the start rule and gets a LIMIT.
             ("RETURN 1", 10, "RETURN 1 LIMIT 10"),
+            // A doubled quote escapes the quote; the string goes on after it.
+            (
+                "MATCH (m:Module) RETURN 'a'' b'",
+                100,
+                "MATCH (m:Module) RETURN 'a'' b' LIMIT 100",
+            ),
             // Lowercase match/return accepted.
             ("match (n) return n", 25, "match (n) return n LIMIT 25"),
             // Leading/trailing whitespace trimmed before appending.
@@ -882,6 +887,8 @@ mod tests {
             "MATCH (n) RETURN n UNION MATCH (m) RETURN m",
             "MATCH (n) RETURN n ATTACH '/tmp/x' AS y",
             "MATCH (n) RETURN n; ATTACH '/tmp/x' AS y RETURN n",
+            // A doubled quote must not end the string: the rest is still literal.
+            "MATCH (m:Module) RETURN 'a'' ' ; LOAD FROM '/etc/passwd' RETURN *; //'",
             "LOAD CSV FROM 'x' AS row RETURN row",
             "MATCH (n) RETURN n CHECKPOINT",
             // F04: unsupported characters, params and unterminated literals.
