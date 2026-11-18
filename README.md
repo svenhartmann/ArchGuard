@@ -111,12 +111,16 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect service connections | `archguard services . --format json` |
 | Inspect recorded runtime (requests, DB calls per request, slow and repeated queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
+| Export arc42 as AsciiDoc or Word (for a Confluence import) | `archguard doc . --arc42 --format asciidoc` or `--format docx` |
+| Export the service topology as a Structurizr (C4) workspace | `archguard graph . --format structurizr [--service orders]` |
 | Compare with a Git revision | `archguard review . --base main --format html` |
 | Inspect effective configuration | `archguard config . --format json` |
 
 Use `archguard --help` and `archguard <command> --help` for the complete command reference. The viewer also includes CLI help and natural-language MCP examples.
 
 Arc42 generation updates explicitly marked evidence blocks. Your text outside those blocks remains unchanged. Generated architecture observations do not replace team decisions or establish a complete runtime architecture.
+
+`--format asciidoc` writes `arc42.adoc` and `--format docx` writes `arc42.docx` (or `--out`). Both convert the arc42 Markdown and include your own text from an existing `arc42.md`, which they only read; `--chapter N` exports that chapter's generated text. AsciiDoc diagrams are `[mermaid]`/`[plantuml]` blocks for Asciidoctor Diagram. Word headings use the Heading 1–3 styles, so Confluence's "Import Word document" builds its table of contents from them; tables are Word tables, and diagrams stay Mermaid or PlantUML source, because the document has no rendered images. `graph --format structurizr` writes `.archguard/reports/graph.dsl`: one software system, the deployment services as containers, datastores outside the configuration as external systems, relations with protocol and configuration evidence, and with `--service` that service's packages as components. Mapping and limits: [ADR 0013](docs/adr/0013-structurizr-and-asciidoc-export.md). The desktop app offers the same arc42 files under File → Export, the MCP tool `architecture_document` returns AsciiDoc (`format=asciidoc`) and the workspace (`template=structurizr`).
 
 ### Compare findings with an expert assessment
 
