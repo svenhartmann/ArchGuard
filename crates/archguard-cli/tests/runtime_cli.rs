@@ -103,3 +103,26 @@ fn runtime_text_shows_findings_at_configured_thresholds() {
     assert!(text.contains("n_plus_one · orders"), "{text}");
     assert!(text.contains("OrderService.LoadLines"), "{text}");
 }
+
+/// Profiler samples (CONVENTIONS.md, "Samples"): each sampled request names
+/// its sample count, interval and clock and its methods with the most samples.
+#[test]
+fn runtime_text_shows_sampled_methods_of_a_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = dir.path().join(".archguard/runtime/run-1");
+    fs::create_dir_all(&run).unwrap();
+    fs::write(
+        run.join("traces-0001.jsonl"),
+        include_str!("../../../fixtures/runtime/shop-java-profile.jsonl"),
+    )
+    .unwrap();
+    let output = archguard(&dir, "text");
+    assert_eq!(output.status.code(), Some(0));
+    let text = String::from_utf8(output.stdout).unwrap();
+    for expected in [
+        "35 samples, interval 10 ms, clock cpu (statistical; samples × interval is a lower bound)",
+        "self 20 · on stack 35 · com.example.shop.PriceCalculator.simulatedTotal",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+    }
+}
