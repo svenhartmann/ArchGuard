@@ -36,6 +36,8 @@ Language and live integration tests can require a built CLI, language SDKs or a 
 
 `scripts/hooks/pre-commit` runs the CI gate `archguard check` on the staged files: cycles, layer rules and the `[review]` ceilings in [`.archguard/archguard.toml`](../.archguard/archguard.toml). Unstaged changes are ignored. It uses `$ARCHGUARD_BIN`, else `target/release`, `target/debug`, then `archguard` on `PATH`.
 
+Every staged Markdown file with generated `archguard:arc42` blocks must still match the staged code: the hook runs `archguard doc --arc42 --check --out <file>` and names the outdated chapters. To fix, run `archguard doc --arc42 --out <file>`, review the diff and stage it. Text outside the generated blocks is kept. Measurements under `.archguard/` that git does not track (traces, coverage, …) are taken from the working tree, as `archguard doc` sees them.
+
 It then runs [`hooks/compact_metrics.py`](hooks/compact_metrics.py), which compares method and class metrics of `HEAD` and the staged tree: lines, cyclomatic and cognitive complexity, nesting, parameters and methods per class. New methods and classes must stay under the ceilings at the top of that script; existing outliers may stay or shrink, but not grow.
 
 ```sh

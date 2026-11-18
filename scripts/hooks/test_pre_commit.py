@@ -3,6 +3,7 @@
 Usage: python3 scripts/hooks/test_pre_commit.py [path/to/archguard]
 The binary defaults to target/release/archguard, then target/debug/archguard.
 """
+import json
 import os
 from pathlib import Path
 import shutil
@@ -101,6 +102,52 @@ class PreCommitTests(unittest.TestCase):
         self.stage("a.rs", "pub struct A;\n" + long_fn("legacy", 80))
         self.commit()
         self.stage("a.rs", "pub struct A;\n" + long_fn("legacy", 70))
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def write_arc42(self, name="arc42.md"):
+        subprocess.run([str(BINARY), "doc", str(self.repo), "--arc42", f"--out={name}"], check=True, capture_output=True)
+        git(self.repo, "add", ".")
+
+    def test_current_arc42_passes(self):
+        self.write_arc42("docs/arc42.md")
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_stale_arc42_blocks_commit(self):
+        self.write_arc42("docs/arc42.md")
+        self.commit()
+        self.stage("lib.rs", ACYCLIC["lib.rs"] + "pub mod c;\n")
+        self.stage("c.rs", "use crate::b::B;\npub struct C(B);\n")
+        self.assert_blocked(self.run_hook(), "docs/arc42.md", "chapter", "doc --arc42")
+
+    def test_arc42_naming_the_repository_passes(self):
+        # Chapter 3 names the system after the checkout's directory.
+        self.stage("a.rs", 'pub struct A;\npub fn v() { std::process::Command::new("git"); }\n')
+        self.write_arc42()
+        self.assertIn(self.repo.name, (self.repo / "arc42.md").read_text())
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_arc42_citing_ignored_measurements_passes(self):
+        (self.repo / ".gitignore").write_text(".archguard/measurement-runs.json\n")
+        run = {"run_id": "r1", "kind": "test", "name": "unit", "revision": "a" * 40, "environment": "ci",
+               "producer": "pytest", "timestamp": 1, "outcome": "passed", "duration_seconds": 1.5}
+        (self.repo / ".archguard/measurement-runs.json").write_text(json.dumps({"schema_version": 1, "runs": [run]}))
+        self.write_arc42()
+        self.assertIn("pytest", (self.repo / "arc42.md").read_text())
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_arc42_with_unusual_file_names_passes(self):
+        self.write_arc42("döcs/arc42.md")
+        self.write_arc42("-a.md")
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_markdown_only_mentioning_the_marker_passes(self):
+        (self.repo / "NOTES.md").write_text("Blocks start with `<!-- archguard:arc42:05:start -->`.\n")
+        git(self.repo, "add", ".")
         result = self.run_hook()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

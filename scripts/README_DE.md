@@ -36,6 +36,8 @@ Sprach- und Live-Integrationstests benötigen teilweise eine gebaute CLI, Sprach
 
 `scripts/hooks/pre-commit` führt das CI-Gate `archguard check` auf den gestagten Dateien aus: Zyklen, Schichtregeln und die `[review]`-Obergrenzen aus [`.archguard/archguard.toml`](../.archguard/archguard.toml). Nicht gestagte Änderungen bleiben unberücksichtigt. Verwendet wird `$ARCHGUARD_BIN`, sonst `target/release`, `target/debug`, zuletzt `archguard` im `PATH`.
 
+Jede gestagte Markdown-Datei mit generierten `archguard:arc42`-Blöcken muss noch zum gestagten Code passen: Der Hook ruft `archguard doc --arc42 --check --out <datei>` auf und nennt die veralteten Kapitel. Zum Nacharbeiten `archguard doc --arc42 --out <datei>` ausführen, den Diff prüfen und stagen. Text außerhalb der generierten Blöcke bleibt erhalten. Messdaten unter `.archguard/`, die git nicht verfolgt (Traces, Coverage, …), kommen aus dem Arbeitsverzeichnis, so wie `archguard doc` sie sieht.
+
 Danach läuft [`hooks/compact_metrics.py`](hooks/compact_metrics.py) und vergleicht Methoden- und Klassenmetriken von `HEAD` und dem gestagten Stand: Zeilen, zyklomatische und kognitive Komplexität, Verschachtelung, Parameter und Methoden pro Klasse. Neue Methoden und Klassen müssen unter den Grenzwerten oben in diesem Skript bleiben; bestehende Ausreißer dürfen bleiben oder schrumpfen, aber nicht wachsen.
 
 ```sh
