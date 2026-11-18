@@ -34,7 +34,10 @@
 
 #[path = "cpp_includes.rs"]
 mod cpp_includes;
-pub(crate) use cpp_includes::include_dirs;
+pub(crate) use cpp_includes::cpp_include_dirs;
+#[path = "pipeline_paths.rs"]
+mod paths;
+use paths::{join_module, parent_dir, stem_path};
 #[path = "scanned_file.rs"]
 mod scanned_file;
 use scanned_file::ScannedFile;
@@ -138,11 +141,21 @@ pub(crate) fn build_graph(
 }
 
 /// [`build_graph`] plus the [`SourceNames`] of the extracted files.
-#[tracing::instrument(skip_all)]
 pub(crate) fn build_graph_named(
     root: &Path,
     files: &[SourceFile],
     config: &Config,
+) -> Result<(Graph, SourceNames, Vec<String>), ArchguardError> {
+    build_graph_included(root, files, config, cpp_include_dirs(root, files))
+}
+
+/// [`build_graph_named`] over `cpp_dirs` read once by [`cpp_include_dirs`].
+#[tracing::instrument(skip_all)]
+pub(crate) fn build_graph_included(
+    root: &Path,
+    files: &[SourceFile],
+    config: &Config,
+    cpp_dirs: BTreeSet<String>,
 ) -> Result<(Graph, SourceNames, Vec<String>), ArchguardError> {
     // ---- Kap. 6 step 4: extract every file against its stripped path.
     let scanned = scan(files, config)?;
@@ -195,15 +208,7 @@ pub(crate) fn build_graph_named(
     for (from, to, evidence) in rust_edges {
         builder.edge(node_of[&from], node_of[&to], evidence)?;
     }
-    let cpp = scanned.iter().filter(|file| file.lang == "cpp");
-    let includes = match cpp.clone().next() {
-        Some(_) => cpp_includes::Includes::read(
-            root,
-            cpp.map(|file| file.rel_path.as_str()),
-            &config.project.source_roots,
-        ),
-        None => cpp_includes::Includes::default(),
-    };
+    let includes = cpp_includes::Includes::new(cpp_dirs, &config.project.source_roots);
     let context = (&indexes, &go_packages, &swift_modules, &node_of, &includes);
     resolve_imports(&scanned, context, &mut builder, &mut warnings)?;
     let full = builder.build(root.to_string_lossy().into_owned());
@@ -893,39 +898,6 @@ fn psr4_declarations(
     Ok(declarations)
 }
 
-/// `prefix/rest` with empty halves collapsed (the root namespace has an
-/// empty prefix).
-fn join_module(prefix: &str, rest: &str) -> String {
-    match (prefix.is_empty(), rest.is_empty()) {
-        (true, _) => rest.to_string(),
-        (_, true) => prefix.to_string(),
-        (false, false) => format!("{prefix}/{rest}"),
-    }
-}
-
-/// The directory part of a `/`-joined path; `""` for a path with no
-/// directory component.
-fn parent_dir(path: &str) -> &str {
-    path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("")
-}
-
-/// The path as `resolve_relative` returns it: the last component
-/// without its file extension (a leading-dot file keeps its name).
-fn stem_path(path: &str) -> String {
-    let (dir, last) = match path.rsplit_once('/') {
-        Some((dir, last)) => (Some(dir), last),
-        None => (None, path),
-    };
-    let stem = match last.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
-        _ => last,
-    };
-    match dir {
-        Some(dir) => format!("{dir}/{stem}"),
-        None => stem.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,22 +974,6 @@ mod tests {
             file_node_name(&unstripped, "svc/a/Order.java", declared),
             "svc/a/com/example/Order.java"
         );
-    }
-
-    #[test]
-    fn stem_path_strips_only_the_last_extension() {
-        assert_eq!(stem_path("a/b/util.ts"), "a/b/util");
-        assert_eq!(stem_path("a/main.d.ts"), "a/main.d");
-        assert_eq!(stem_path("script"), "script");
-        assert_eq!(stem_path(".hidden"), ".hidden");
-    }
-
-    #[test]
-    fn join_module_collapses_empty_halves() {
-        assert_eq!(join_module("App", "Model"), "App/Model");
-        assert_eq!(join_module("", "Model"), "Model");
-        assert_eq!(join_module("App", ""), "App");
-        assert_eq!(join_module("", ""), "");
     }
 }
 

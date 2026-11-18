@@ -28,6 +28,7 @@
 //! cheap and always rerun on a hit, so a changed `archguard.toml` never
 //! requires cache invalidation.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -210,7 +211,6 @@ fn load_entry(dir: &Path, fp: &str) -> Option<CacheEntry> {
 /// Only canonical hierarchical extraction graphs are trusted as cache input.
 fn valid_graph(graph: &Graph) -> bool {
     use archguard_core::NodeKind;
-    use std::collections::BTreeSet;
     if graph.schema_version != 1 {
         return false;
     }
@@ -247,22 +247,27 @@ fn valid_graph(graph: &Graph) -> bool {
     })
 }
 
-#[tracing::instrument(skip_all)]
+/// [`extraction_key`] of this release; reads the C/C++ include directories itself.
+#[cfg(test)]
 pub(crate) fn extraction_fingerprint(
     root: &Path,
     files: &[SourceFile],
     config: &Config,
 ) -> Result<String, ArchguardError> {
-    extraction_key(root, files, config, env!("CARGO_PKG_VERSION"))
+    let cpp_dirs = pipeline::cpp_include_dirs(root, files);
+    extraction_key(root, files, config, env!("CARGO_PKG_VERSION"), &cpp_dirs)
 }
 
 /// The cache key of one extraction. `version` is the archguard release, so
 /// a parser fix shipped by an update takes effect on an unchanged repo.
+/// `cpp_dirs` comes from [`pipeline::cpp_include_dirs`].
+#[tracing::instrument(skip_all)]
 fn extraction_key(
     root: &Path,
     files: &[SourceFile],
     config: &Config,
     version: &str,
+    cpp_dirs: &BTreeSet<String>,
 ) -> Result<String, ArchguardError> {
     let mut hash = Sha256::new();
     hash.update(CACHE_SCHEMA.to_le_bytes());
@@ -281,12 +286,11 @@ fn extraction_key(
         &mut hash,
     );
     // C/C++ include directories from compile_commands.json and CMakeLists.txt.
-    let cpp = files
+    if files
         .iter()
-        .filter(|file| file.lang == archguard_extract::Lang::Cpp);
-    if cpp.clone().next().is_some() {
-        let dirs = crate::pipeline::include_dirs(root, cpp.map(|file| file.rel_path.as_str()));
-        hash.update(serde_json::to_vec(&dirs).expect("include dirs serialize"));
+        .any(|file| file.lang == archguard_extract::Lang::Cpp)
+    {
+        hash.update(serde_json::to_vec(cpp_dirs).expect("include dirs serialize"));
     }
     // PSR-4 mappings participate in resolution even for declared source roots.
     match fs::read(root.join("composer.json")) {
@@ -399,13 +403,17 @@ pub(crate) fn extract_cached(
     files: &[SourceFile],
     config: &Config,
 ) -> Result<Extracted, ArchguardError> {
-    let fp = extraction_fingerprint(root, files, config)?;
+    // Read once: key, graph and the recheck below all use the same directories.
+    let cpp_dirs = pipeline::cpp_include_dirs(root, files);
+    let key = || extraction_key(root, files, config, env!("CARGO_PKG_VERSION"), &cpp_dirs);
+    let fp = key()?;
     if let Some(entry) = load_entry(root, &fp) {
         return Ok((entry.graph, entry.source_names, entry.warnings, true));
     }
-    let (full, names, mut warnings) = pipeline::build_graph_named(root, files, config)?;
+    let (full, names, mut warnings) =
+        pipeline::build_graph_included(root, files, config, cpp_dirs.clone())?;
     // A source changing during extraction must not be saved under an old key.
-    if extraction_fingerprint(root, files, config)? != fp {
+    if key()? != fp {
         warnings.insert(
             0,
             "sources changed during extraction; cache was not written".into(),
@@ -585,7 +593,8 @@ mod tests {
     fn another_archguard_version_gives_another_extraction_key() {
         let dir = fixture(&[("src/a.ts", "export const a = 1;\n")]);
         let files = pipeline::walk_files(dir.path(), &Config::default()).unwrap();
-        let key = |version| extraction_key(dir.path(), &files, &Config::default(), version);
+        let none = BTreeSet::new();
+        let key = |version| extraction_key(dir.path(), &files, &Config::default(), version, &none);
         assert_eq!(key("0.2.1").unwrap(), key("0.2.1").unwrap());
         assert_ne!(key("0.2.1").unwrap(), key("0.2.2").unwrap());
     }
