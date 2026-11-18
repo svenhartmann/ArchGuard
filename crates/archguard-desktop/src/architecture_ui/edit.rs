@@ -46,6 +46,9 @@ struct Open {
     /// No arc42 text in the project yet: the user is asked where to put it.
     ask_location: bool,
     error: String,
+    /// `error` says the file changed on disk: it stays until a save,
+    /// as the next save replaces that change.
+    on_disk: bool,
     /// The edited Markdown.
     draft: String,
     /// The chapter as the editor opened it: an equal draft is unsaved nothing.
@@ -177,6 +180,7 @@ impl Editor {
             chapter,
             ask_location: false,
             error: String::new(),
+            on_disk: false,
             draft: text.clone(),
             original: text,
             base: self.files.as_ref().and_then(|f| f.saved(chapter)),
@@ -289,8 +293,9 @@ impl Editor {
             o.as_mut().map(|e| {
                 let old = e.draft.clone();
                 f(e);
-                // A refused save's reason holds until the text changes.
-                if e.draft != old {
+                // A refused save's reason holds until the text changes;
+                // a change on disk until the next save.
+                if e.draft != old && !e.on_disk {
                     e.error.clear();
                 }
                 (e.chapter, e.draft != e.original)
@@ -360,14 +365,20 @@ impl Editor {
                         e.rich = None;
                     }
                     (e.original, e.base, e.error) = (e.draft.clone(), base, String::new());
+                    e.on_disk = false;
                     Some(())
                 });
                 self.mark(chapter, false);
                 Some(path.display().to_string())
             }
-            Err(e) => {
-                self.with_open(|o| o.as_mut().map(|o| o.base = base));
-                self.set_error(e);
+            Err(error) => {
+                self.with_open(|o| {
+                    let e = o.as_mut()?;
+                    // A refusal over a change on disk loaded the file's new text.
+                    e.on_disk = e.base != base;
+                    (e.base, e.error) = (base, error);
+                    Some(())
+                });
                 None
             }
         }
@@ -773,6 +784,34 @@ mod tests {
         let reason = editor.unsaved_reason();
         assert!(reason.contains("arc42.md") && reason.contains("UTF-8"), "{reason}");
         assert_eq!(std::fs::read(&path).unwrap(), b"## 5. Bausteine\n\nGr\xfc\xdfe.\n");
+    }
+
+    /// A save refused because the chapter changed on disk keeps its
+    /// warning while the user types: the next save replaces the pulled
+    /// text, so that must never happen silently.
+    #[test]
+    fn a_changed_on_disk_warning_stays_while_typing() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let path = dir.path().join("arc42.md");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        let draft = editor.chapter(&new, 5) + "Mein Entwurf.\n";
+        editor.edit(&draft);
+        let pulled = std::fs::read_to_string(&path).unwrap().replace(
+            "<!-- Eigene Erläuterungen zu Kapitel 5 hier ergänzen. -->",
+            "Gepullter Text.",
+        );
+        std::fs::write(&path, &pulled).unwrap();
+        assert_eq!(editor.save(&new), None, "refused");
+        editor.edit(&(draft + "x"));
+        assert!(
+            error(&editor).contains("saving again replaces that change"),
+            "{}",
+            error(&editor)
+        );
+        assert!(editor.save(&new).is_some());
+        assert_eq!(error(&editor), "", "a save clears it");
     }
 
     /// A pull that changes only another chapter: refused once, then the
