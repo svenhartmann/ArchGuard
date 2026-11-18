@@ -258,30 +258,35 @@ pub(crate) fn extraction_fingerprint(
     extraction_key(root, files, config, build_identity(), &cpp_dirs)
 }
 
-/// The running archguard build: release plus the executable's path, length
-/// and mtime. Every rebuild relinks the binary, so a dev build or CI with a
-/// kept `.archguard/` never reads what an older build of the same release
-/// extracted; a reinstall of the same code merely rebuilds the cache once.
+/// The running archguard build: release plus a hash of the executable's
+/// bytes. The same binary gives the same identity wherever it lies (CI
+/// downloads it fresh each run); any rebuild that changes code changes it.
 fn build_identity() -> &'static str {
     static ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let exe = std::env::current_exe().and_then(|path| Ok((fs::metadata(&path)?, path)));
-        match exe {
-            Ok((meta, path)) => format!(
-                "{} {} {} {:?}",
-                env!("CARGO_PKG_VERSION"),
-                path.display(),
-                meta.len(),
-                meta.modified().ok()
-            ),
+        let version = env!("CARGO_PKG_VERSION");
+        match std::env::current_exe().and_then(|exe| file_identity(&exe)) {
+            Ok(hash) => format!("{version} {hash:016x}"),
             // Unknown build: never match another run's entry.
-            Err(_) => format!(
-                "{} {:?}",
-                env!("CARGO_PKG_VERSION"),
-                std::time::SystemTime::now()
-            ),
+            Err(_) => format!("{version} {:?}", std::time::SystemTime::now()),
         }
     });
     &ID
+}
+
+/// Streaming hash of a file's bytes. `DefaultHasher::new` has fixed keys, so
+/// it is stable for one binary, which is all a build identity needs.
+fn file_identity(path: &Path) -> std::io::Result<u64> {
+    use std::hash::Hasher;
+    use std::io::Read;
+    let mut file = fs::File::open(path)?;
+    let mut hasher = std::hash::DefaultHasher::new();
+    let mut buf = vec![0; 64 * 1024];
+    loop {
+        match file.read(&mut buf)? {
+            0 => return Ok(hasher.finish()),
+            n => hasher.write(&buf[..n]),
+        }
+    }
 }
 
 /// The cache key of one extraction. `version` is [`build_identity`], so a
@@ -623,6 +628,26 @@ mod tests {
         let key = |version| extraction_key(dir.path(), &files, &Config::default(), version, &none);
         assert_eq!(key("0.2.1").unwrap(), key("0.2.1").unwrap());
         assert_ne!(key("0.2.1").unwrap(), key("0.2.2").unwrap());
+    }
+
+    #[test]
+    fn a_copied_binary_keeps_its_identity_and_a_changed_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b, c) = (
+            dir.path().join("a"),
+            dir.path().join("b"),
+            dir.path().join("c"),
+        );
+        // Longer than one read chunk, so the streaming loop runs more than once.
+        let bytes: Vec<u8> = (0..200_000_u32).map(|i| i as u8).collect();
+        fs::write(&a, &bytes).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&b, &bytes).unwrap();
+        let mut changed = bytes.clone();
+        changed[150_000] ^= 1;
+        fs::write(&c, &changed).unwrap();
+        assert_eq!(file_identity(&a).unwrap(), file_identity(&b).unwrap());
+        assert_ne!(file_identity(&a).unwrap(), file_identity(&c).unwrap());
     }
 
     #[test]
