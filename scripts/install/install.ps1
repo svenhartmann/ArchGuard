@@ -54,7 +54,7 @@ $ProgressPreference = 'SilentlyContinue'
         Copy-Item $binary (Join-Path $installDir 'archguard.exe') -Force
         Write-Host "Installed $installDir\archguard.exe"
 
-        # Desktop app: unsigned ZIP from the same release, checked against SHA256SUMS-desktop.
+        # Desktop app: ZIP from the same release, checked against SHA256SUMS-desktop.
         if ($env:ARCHGUARD_DESKTOP -ne '0') {
             $package = "ArchGuard-$version-$target.zip"
             try {
