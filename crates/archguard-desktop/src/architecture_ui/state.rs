@@ -202,6 +202,7 @@ pub(super) fn toggle_diagram(
         if let Ok(doc) = &mut s.doc {
             catalogue::rebase(doc, &hidden, s.format);
         }
+        s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
         // The next rewrite (a language switch) keeps it.
         s.config.arc42.hidden_diagrams = s.hidden.clone();
@@ -283,6 +284,10 @@ fn deliver(doc: DocId, number: u64, result: Result<Arc42Document, String>) -> bo
         let took = st.write == number;
         if took {
             st.doc = result;
+            // A tick since the rewrite started is in `hidden`, not in its document.
+            if let Ok(doc) = &mut st.doc {
+                catalogue::rebase(doc, &st.hidden, st.format);
+            }
         }
         took
     })
@@ -300,6 +305,7 @@ pub(super) fn open_scope(s: &mut ArchitectureState, kind: Kind, scope: Option<us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archguard_engine::report::diagram_section;
 
     fn fixture() -> ArchitectureState {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -356,5 +362,38 @@ mod tests {
         documents::set_state(a, rebuilt);
         assert!(!deliver(a, newer, written("stale")), "started before it");
         assert_ne!(scope().as_deref(), Some("stale"));
+    }
+
+    /// A rewrite (language switch) starts, a diagram is ticked off, then
+    /// the rewrite's document, written before the tick, arrives.
+    #[test]
+    fn a_rewrite_finished_after_a_tick_keeps_the_tick() {
+        let mut state = fixture();
+        rewrite(&mut state, None);
+        let number = state.write;
+        let before = state.doc.clone().expect("document");
+        let diagram = before
+            .diagrams
+            .iter()
+            .find(|d| d.shown && Arc42Config::level_of(&d.id).is_none())
+            .expect("a shown catalogue diagram")
+            .clone();
+        // The tick writes archguard.toml: not into the fixture.
+        let dir = tempfile::tempdir().expect("temp dir");
+        state.root = dir.path().to_path_buf();
+        let (a, _) = documents::with_store(|s| s.open(dir.path()));
+        state.editor.doc = a;
+        toggle_diagram(&mut state, None, &diagram.id, false);
+        assert_eq!(state.figure_error, "");
+        documents::set_state(a, state);
+        assert!(deliver(a, number, Ok(before)), "newest rewrite");
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            let doc = s.doc.as_ref().expect("document");
+            let d = doc.diagrams.iter().find(|d| d.id == diagram.id).unwrap();
+            assert!(!d.shown, "{} shown again", d.id);
+            let section = diagram_section(&diagram, s.format);
+            assert!(doc.chapters.iter().all(|c| !c.markdown.contains(&section)));
+        })
+        .expect("state");
     }
 }
