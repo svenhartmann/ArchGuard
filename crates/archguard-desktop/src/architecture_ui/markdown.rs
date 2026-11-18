@@ -79,8 +79,8 @@ fn parse_block(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
     if line.trim().is_empty() {
         return i + 1;
     }
-    if let Some(lang) = fence(line) {
-        return code(lines, i, lang, out);
+    if let Some((ticks, lang)) = fence(line) {
+        return code(lines, i, ticks, lang, out);
     }
     if let Some((level, text)) = heading(line) {
         out.push(Block::Heading {
@@ -119,10 +119,12 @@ fn parse_block(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
     j
 }
 
-fn code(lines: &[&str], i: usize, lang: &str, out: &mut Vec<Block>) -> usize {
+fn code(lines: &[&str], i: usize, ticks: usize, lang: &str, out: &mut Vec<Block>) -> usize {
     let mut j = i + 1;
     let mut body = Vec::new();
-    while j < lines.len() && fence(lines[j]) != Some("") {
+    // A bare fence at least as long closes it.
+    let closes = |l: &str| fence(l).is_some_and(|(n, lang)| n >= ticks && lang.is_empty());
+    while j < lines.len() && !closes(lines[j]) {
         body.push(lines[j]);
         j += 1;
     }
@@ -194,10 +196,17 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
         } else {
             "•".to_string()
         };
+        // Lines that start no block continue the entry's text.
+        let mut text = text.to_string();
+        while j < lines.len() && !starts_block(lines, j) {
+            text.push('\n');
+            text.push_str(lines[j].trim_start());
+            j += 1;
+        }
         out.push(Block::Item {
             depth,
             marker,
-            text: text.to_string(),
+            text,
         });
     }
     j
@@ -208,17 +217,21 @@ fn list(lines: &[&str], i: usize, out: &mut Vec<Block>) -> usize {
 fn strip_comments(text: &str, lines: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut prose = String::new();
-    let mut fenced = false;
+    // The open fence's length.
+    let mut fenced = None;
     for line in text.split_inclusive('\n') {
         let bare = line.trim_end_matches('\n');
-        if fenced {
+        if let Some(ticks) = fenced {
             out.push_str(line);
-            fenced = fence(bare) != Some("");
-        } else if fence(bare).is_some() && !strip_prose(&prose, false).contains("<!--") {
+            let closes = fence(bare).is_some_and(|(n, lang)| n >= ticks && lang.is_empty());
+            fenced = (!closes).then_some(ticks);
+        } else if let Some((ticks, _)) =
+            fence(bare).filter(|_| !strip_prose(&prose, false).contains("<!--"))
+        {
             out.push_str(&strip_prose(&prose, lines));
             prose.clear();
             out.push_str(line);
-            fenced = true;
+            fenced = Some(ticks);
         } else {
             prose.push_str(line);
         }
@@ -250,11 +263,15 @@ fn strip_prose(text: &str, lines: bool) -> String {
     out
 }
 
-/// `^\s*```([^`]*)$`; the language is the info string's first word, so a
-/// closing fence (only whitespace after ```) gives `Some("")`.
-pub(super) fn fence(line: &str) -> Option<&str> {
-    let info = line.trim_start().strip_prefix("```")?;
-    (!info.contains('`')).then(|| info.split_whitespace().next().unwrap_or(""))
+/// `^\s*(`{3,})([^`]*)$`: the fence's length and language (the info
+/// string's first word), so a closing fence (only whitespace after) gives
+/// `(n, "")`.
+pub(super) fn fence(line: &str) -> Option<(usize, &str)> {
+    let body = line.trim_start();
+    let ticks = body.len() - body.trim_start_matches('`').len();
+    let info = &body[ticks..];
+    (ticks >= 3 && !info.contains('`'))
+        .then(|| (ticks, info.split_whitespace().next().unwrap_or("")))
 }
 
 /// `^(#{1,6})\s+(.+)$`
@@ -352,13 +369,23 @@ pub(super) fn cells(line: &str) -> Vec<String> {
 }
 
 /// The text of inline Markdown without markup (escapes, code, emphasis,
-/// links and the five entities resolved).
+/// links, images as their alt text and the five entities resolved).
+// shortcut: a second reader beside `rich::inline`, which uses this module's
+// block helpers (calling it is a file cycle); merge once those move out.
 pub fn plain(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
+    let c: Vec<char> = text.chars().collect();
     let mut i = 0;
-    while i < chars.len() {
-        i = plain_token(&chars, i, &mut out);
+    while i < c.len() {
+        // A link reads as its label, an image as its alt text.
+        let image = usize::from(c[i] == '!');
+        i = match link(&c, i + image) {
+            Some((mid, end)) => {
+                out.push_str(&plain(&c[i + 1 + image..mid].iter().collect::<String>()));
+                end + 1
+            }
+            None => plain_token(&c, i, &mut out),
+        };
     }
     out
 }
@@ -391,11 +418,6 @@ fn plain_token(c: &[char], i: usize, out: &mut String) -> usize {
                 return end + 1;
             }
         }
-        '[' => {
-            if let Some(n) = link(c, i, out) {
-                return n;
-            }
-        }
         '&' => {
             for (name, ch) in [
                 ("amp;", '&'),
@@ -416,18 +438,29 @@ fn plain_token(c: &[char], i: usize, out: &mut String) -> usize {
     i + 1
 }
 
-/// `[label](target)` → label.
-fn link(c: &[char], i: usize, out: &mut String) -> Option<usize> {
-    let mid = (i + 1..c.len()).find(|&k| c[k] == ']' || c[k] == '\n')?;
-    if c[mid] != ']' || mid == i + 1 || c.get(mid + 1) != Some(&'(') {
+/// `[label](target)` at `c[i]`: where the label ends (`]`) and the link
+/// (`)`). Balanced parentheses belong to the target (CommonMark).
+pub(super) fn link(c: &[char], i: usize) -> Option<(usize, usize)> {
+    if c.get(i) != Some(&'[') {
         return None;
     }
-    let end = (mid + 2..c.len()).find(|&k| c[k] == ')' || c[k].is_whitespace())?;
-    if c[end] != ')' || end == mid + 2 {
+    let mut mid = i + 1;
+    while mid < c.len() && c[mid] != ']' && c[mid] != '\n' {
+        mid += if c[mid] == '\\' { 2 } else { 1 };
+    }
+    if c.get(mid) != Some(&']') || mid == i + 1 || c.get(mid + 1) != Some(&'(') {
         return None;
     }
-    out.push_str(&plain(&c[i + 1..mid].iter().collect::<String>()));
-    Some(end + 1)
+    let mut depth = 0;
+    let end = (mid + 2..c.len()).find(|&k| {
+        depth += match c[k] {
+            '(' => 1,
+            ')' => -1,
+            _ => 0,
+        };
+        depth < 0 || c[k].is_whitespace()
+    })?;
+    (c[end] == ')' && end > mid + 2).then_some((mid, end))
 }
 
 /// Inline Markdown for `StyledText`: block syntax at a line start is
@@ -552,6 +585,28 @@ mod tests {
         );
     }
 
+    /// Lines after an entry that start no block go on its text, as a
+    /// lazy or indented continuation does in CommonMark.
+    #[test]
+    fn continuation_lines_belong_to_their_entry() {
+        let item = |depth, marker: &str, text: &str| Block::Item {
+            depth,
+            marker: marker.into(),
+            text: text.into(),
+        };
+        assert_eq!(
+            parse("- Punkt\nweiter\n- zwei\n\n1. Schritt\n   Details\n\nDanach"),
+            vec![
+                item(0, "•", "Punkt\nweiter"),
+                item(0, "•", "zwei"),
+                item(0, "1.", "Schritt\nDetails"),
+                para("Danach"),
+            ]
+        );
+        // A block start ends the entry.
+        assert_eq!(parse("- a\n# H").len(), 2);
+    }
+
     #[test]
     fn code_quote_and_rule() {
         let md = "```mermaid\nflowchart LR\n  a --> b\n```\n> quoted\n> more\n\n---\ntext";
@@ -586,9 +641,34 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(fence("```c#"), Some("c#"));
-        assert_eq!(fence("```shell-session"), Some("shell-session"));
+        assert_eq!(fence("```c#"), Some((3, "c#")));
+        assert_eq!(fence("````shell-session"), Some((4, "shell-session")));
         assert_eq!(fence("```a`b"), None);
+    }
+
+    /// A longer fence closes only on a bare fence at least as long.
+    #[test]
+    fn a_longer_fence_holds_shorter_ones() {
+        let md = "````md\n```\nx\n```\n````\nprose";
+        assert_eq!(
+            parse(md),
+            vec![
+                Block::Code {
+                    lang: "md".into(),
+                    text: "```\nx\n```".into()
+                },
+                para("prose"),
+            ]
+        );
+        assert_eq!(&md[chunks(md)[0].0.clone()], "````md\n```\nx\n```\n````");
+        // A comment inside it is code, not a comment.
+        assert_eq!(
+            parse("````\n```\n<!-- c -->\n````"),
+            vec![Block::Code {
+                lang: String::new(),
+                text: "```\n<!-- c -->".into()
+            }]
+        );
     }
 
     #[test]
@@ -638,6 +718,10 @@ mod tests {
             "Quelle: architecture.goals fett kursiv arc42 a_b & c"
         );
         assert_eq!(plain("2 * 3 and `"), "2 * 3 and `");
+        assert_eq!(
+            plain("[the spec](https://example.com/a_(b)) ![logo](img/logo.png)"),
+            "the spec logo"
+        );
     }
 
     #[test]
