@@ -9,7 +9,7 @@ use archguard_core::{
     ArchguardError, Finding, FindingKind, Graph, NodeId, NodeKind, OwnershipRule, Ref,
     ReviewSources,
 };
-use globset::{GlobBuilder, GlobMatcher};
+use globset::{GlobBuilder, GlobMatcher, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -154,6 +154,12 @@ pub fn analyze_ownership(
         ));
         return Ok(report);
     }
+    if assign_owners(&mut report.assignments, &patterns, &prefix).is_err() {
+        report
+            .warnings
+            .push("CODEOWNERS patterns could not be compiled; ownership was not evaluated.".into());
+        return Ok(report);
+    }
     report.status = OwnershipStatus::Available;
     report.complete = warnings.is_empty() && report.mapped_files == report.total_files;
     report.warnings.extend(warnings);
@@ -161,23 +167,6 @@ pub fn analyze_ownership(
         report.warnings.push(
             "Some graph files lack a unique physical source path; their owners are unknown.".into(),
         );
-    }
-    for file in &mut report.assignments {
-        let Some(path) = &file.path else { continue };
-        let path = if prefix.is_empty() {
-            path.clone()
-        } else {
-            format!("{prefix}/{path}")
-        };
-        if let Some(pattern) = patterns.iter().rev().find(|pattern| {
-            pattern
-                .matchers
-                .iter()
-                .any(|matcher| matcher.is_match(&path))
-        }) {
-            file.owners = pattern.owners.clone();
-            file.rule_line = Some(pattern.line);
-        }
     }
     report.owned_files = report
         .assignments
@@ -336,6 +325,43 @@ fn valid_owner(owner: &str) -> bool {
     }
 }
 
+/// Assign each file the owners of its last matching rule (CODEOWNERS).
+/// All rule globs form one set, so a file is matched once, not per rule.
+fn assign_owners(
+    assignments: &mut [OwnerAssignment],
+    patterns: &[OwnerPattern],
+    prefix: &str,
+) -> Result<(), globset::Error> {
+    let mut builder = GlobSetBuilder::new();
+    let mut rule_of = Vec::new();
+    for (index, pattern) in patterns.iter().enumerate() {
+        for matcher in &pattern.matchers {
+            builder.add(matcher.glob().clone());
+            rule_of.push(index);
+        }
+    }
+    let set = builder.build()?;
+    for file in assignments {
+        let Some(path) = &file.path else { continue };
+        let path = if prefix.is_empty() {
+            path.clone()
+        } else {
+            format!("{prefix}/{path}")
+        };
+        // Glob order follows rule order: the highest match is the last rule.
+        if let Some(pattern) = set
+            .matches(&path)
+            .into_iter()
+            .max()
+            .map(|i| &patterns[rule_of[i]])
+        {
+            file.owners = pattern.owners.clone();
+            file.rule_line = Some(pattern.line);
+        }
+    }
+    Ok(())
+}
+
 fn owner_matchers(pattern: &str) -> Result<Vec<GlobMatcher>, String> {
     let directory = pattern.ends_with('/');
     let trimmed = pattern.trim_matches('/');
@@ -483,6 +509,46 @@ mod tests {
             assert_eq!(finding.evidence[0].file, "ui/Button.ts");
             assert!(finding.id.starts_with("ownership-"));
         }
+    }
+
+    #[test]
+    fn last_matching_rule_wins_across_overlapping_rules() {
+        let (dir, graph, sources) = fixture();
+        write(
+            dir.path(),
+            ".github/CODEOWNERS",
+            "*.ts @org/a\n/src/ @org/b\n*.ts @org/c\n/src/ui/ @org/d\n/src/ui/Local.ts @org/e\n/src/ @org/f\n",
+        );
+        let result = analyze_ownership(dir.path(), &graph, &sources, &[]).unwrap();
+        let assignment = |name: &str| {
+            result
+                .assignments
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+        };
+        // Every file matches the trailing /src/ rule, so it wins everywhere.
+        for name in ["ui/Button.ts", "ui/Local.ts", "storage/Db.ts"] {
+            assert_eq!(assignment(name).owners, vec!["@org/f"], "{name}");
+            assert_eq!(assignment(name).rule_line, Some(6), "{name}");
+        }
+        write(
+            dir.path(),
+            ".github/CODEOWNERS",
+            "*.ts @org/a\n/src/ @org/b\n*.ts @org/c\n/src/ui/ @org/d\n/src/ui/Local.ts @org/e\n",
+        );
+        let result = analyze_ownership(dir.path(), &graph, &sources, &[]).unwrap();
+        let line = |name: &str| {
+            let entry = result
+                .assignments
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap();
+            (entry.owners.clone(), entry.rule_line)
+        };
+        assert_eq!(line("ui/Local.ts"), (vec!["@org/e".into()], Some(5)));
+        assert_eq!(line("ui/Button.ts"), (vec!["@org/d".into()], Some(4)));
+        assert_eq!(line("storage/Db.ts"), (vec!["@org/c".into()], Some(3)));
     }
 
     #[test]

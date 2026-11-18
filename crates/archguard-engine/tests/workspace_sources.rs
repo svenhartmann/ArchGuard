@@ -649,3 +649,44 @@ fn workspace_qualifies_type_uses_and_class_state_without_cross_project_collision
             .any(|m| m.class_id == usage.from_class && m.lcom4 == Some(1))
     );
 }
+
+#[test]
+fn a_non_utf8_source_file_does_not_abort_the_workspace() {
+    let dir = fixture();
+    let root = dir.path();
+    // Latin-1 "é" (0xE9) is not valid UTF-8.
+    fs::write(
+        root.join("app/src/main/java/app/Latin.java"),
+        b"package app; // caf\xe9\npublic class Latin {}\n",
+    )
+    .unwrap();
+    let report = analyze_workspace_sources(root, &workspace(root, &[])).unwrap();
+    assert_eq!(report.files.len(), 4, "the Latin-1 file is analyzed too");
+}
+
+#[test]
+fn source_byte_limit_is_reported_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    put(
+        root,
+        "app/pom.xml",
+        "<project><groupId>x</groupId><artifactId>app</artifactId><version>1</version></project>",
+    );
+    // 10 files of 7.5 MiB exceed the 64 MiB budget after 8; two are omitted.
+    let body = format!("/*{}*/\n", "x".repeat(7 * 1024 * 1024 + 512 * 1024));
+    for index in 0..10 {
+        put(
+            root,
+            &format!("app/src/main/java/p/F{index}.java"),
+            &format!("package p; class F{index} {{}}\n{body}"),
+        );
+    }
+    let report = analyze_workspace_sources(root, &workspace(root, &[])).unwrap();
+    let hits = report
+        .diagnostics
+        .iter()
+        .filter(|message| message.contains("Source byte limit"))
+        .count();
+    assert_eq!(hits, 1, "{:?}", report.diagnostics);
+}
