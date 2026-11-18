@@ -286,6 +286,18 @@ msgstr "Anzahl Re-Exporte, ab der eine Datei als Barrel gilt; mindestens 1."
 msgid "Share (0 to 1) of re-exporting lines from which a file counts as a barrel."
 msgstr "Anteil (0 bis 1) re-exportierender Zeilen, ab dem eine Datei als Barrel gilt."
 
+msgid "Licence policy for third-party dependencies; checked by archguard check (ADR 0016)."
+msgstr "Lizenzregeln für Fremdabhängigkeiten; geprüft von archguard check (ADR 0016)."
+
+msgid "Allowed SPDX licence ids; when set, every other stated licence is a violation."
+msgstr "Erlaubte SPDX-Lizenz-IDs; ist die Liste gesetzt, verstößt jede andere angegebene Lizenz."
+
+msgid "SPDX licence ids that are always a violation, even when also allowed."
+msgstr "SPDX-Lizenz-IDs, die immer verstoßen, auch wenn sie zugleich erlaubt sind."
+
+msgid "Whether a dependency whose files state no licence is a violation (deny) or only reported (allow)."
+msgstr "Ob eine Abhängigkeit, deren Dateien keine Lizenz angeben, verstößt (deny) oder nur gemeldet wird (allow)."
+
 msgid "Thresholds of the runtime findings from recorded traces."
 msgstr "Schwellen der Laufzeit-Befunde aus aufgezeichneten Traces."
 
@@ -589,6 +601,18 @@ msgstr "Datenbankaufrufe eines gesprächigen Endpunkts"
 msgctxt "Settings"
 msgid "Slow statement (ms)"
 msgstr "Langsame Anweisung (ms)"
+
+msgctxt "Settings"
+msgid "Allowed licences"
+msgstr "Erlaubte Lizenzen"
+
+msgctxt "Settings"
+msgid "Denied licences"
+msgstr "Verbotene Lizenzen"
+
+msgctxt "Settings"
+msgid "Dependencies without licence"
+msgstr "Abhängigkeiten ohne Lizenz"
 
 msgctxt "Settings"
 msgid "Quality goals"

@@ -310,6 +310,30 @@ pub const FIELDS: &[Field] = &[
         G::Rules,
         "Gate for the instability (0 to 1) of bottom-layer modules; 0 disables it.",
     ),
+    f(
+        "licenses",
+        K::Table,
+        G::Rules,
+        "Licence policy for third-party dependencies; checked by archguard check (ADR 0016).",
+    ),
+    f(
+        "licenses.allow",
+        K::List,
+        G::Rules,
+        "Allowed SPDX licence ids; when set, every other stated licence is a violation.",
+    ),
+    f(
+        "licenses.deny",
+        K::List,
+        G::Rules,
+        "SPDX licence ids that are always a violation, even when also allowed.",
+    ),
+    f(
+        "licenses.unknown",
+        K::Enum(&["allow", "deny"]),
+        G::Rules,
+        "Whether a dependency whose files state no licence is a violation (deny) or only reported (allow).",
+    ),
     // Review
     f(
         "review",
