@@ -761,6 +761,27 @@ end
         assert!(!found.symbols.measured);
     }
 
+    #[test]
+    fn bare_return_with_a_modifier_and_operator_methods_are_measured() {
+        let found = scan(
+            "class A\n  def g(a)\n    return if a\n    next unless a\n    raise \"x\" unless a\n    return a if a\n  end\n\n  def /(other)\n    puts $\", $'\n  end\nend\n",
+        );
+        assert!(found.diagnostics.is_empty(), "{:?}", found.diagnostics);
+        assert_eq!(complexity(&found, "g").0, 5);
+        assert_eq!(complexity(&found, "/").0, 1);
+        let only_return = scan("def g(a)\n  return if a\nend\n");
+        assert_eq!(complexity(&only_return, "g").0, 2);
+    }
+
+    #[test]
+    fn a_backslash_at_the_end_of_an_open_literal_is_no_panic() {
+        // The open `class` and `def` never close; the other two are balanced.
+        let unbalanced = |source: &str| !scan(source).diagnostics.is_empty();
+        assert!(unbalanced("class A\n  def f\n    x = \"abc\\"));
+        assert!(!unbalanced("x = :\"a\\"));
+        assert!(!unbalanced("x = %w[a\\"));
+    }
+
     // Call sites and constant references (`super::sites`).
 
     /// (label, target) of every site in the source.

@@ -141,7 +141,6 @@ impl<'a> Code<'a> {
                 | "or"
                 | "not"
                 | "!"
-                | "return"
                 | "then"
                 | "do"
                 | "else"
