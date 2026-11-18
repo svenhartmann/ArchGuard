@@ -328,10 +328,22 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
 }
 
 /// Whether chunk `source` holds Markdown its `blocks` lose: a comment
-/// outside fenced code (the reader drops it).
+/// outside fenced code (the reader drops it), or code, a setext heading
+/// or HTML the reader takes for a paragraph or list (an edit would write
+/// it on one line).
 fn as_written(source: &str, blocks: &[Md]) -> bool {
     let code = matches!(blocks, [Md::Code { .. }]);
+    let indented = |l: &str| l.starts_with("    ") || l.starts_with('\t');
+    let not_prose = |l: &str| {
+        let t = l.trim();
+        indented(l)
+            || t.starts_with("~~~")
+            || t.starts_with('<')
+            || !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
+    };
     !code && (source.contains("<!--") || source.contains("-->"))
+        || indented(source)
+        || matches!(blocks, [Md::Paragraph(_)]) && source.lines().any(not_prose)
 }
 
 /// Whether `block`, read from `md`, writes it back (line breaks as
@@ -899,5 +911,22 @@ Ende.
         let last = all.last_mut().unwrap().edit().last_mut().unwrap();
         last.inline = Inline::plain("Neu.");
         assert_eq!(doc.to_markdown(), md.replace("Letzter.", "Neu."));
+    }
+
+    /// Code, setext headings and HTML the reader takes for a paragraph
+    /// (or a list) stay as written, not flattened onto one line.
+    #[test]
+    fn code_and_html_read_as_paragraphs_survive_an_edit_elsewhere() {
+        let kept = [
+            "~~~\nfn main() {}\n~~~",
+            "    eingerückter\n    Code",
+            "\tmit Tab",
+            "Titel\n=====",
+            "Titel\n--",
+            "<pre>\nZeile\n</pre>",
+            "dienste:\n    - web\n    - db",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
+        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
     }
 }
