@@ -53,6 +53,19 @@ pub(crate) fn contracts(
         Ok(v) => v,
         Err(e) => return analysis_error(e),
     };
+    if matches!(
+        cli.command,
+        Command::Contracts {
+            graphql_baseline: true,
+            ..
+        }
+    ) {
+        let saved = archguard_engine::save_graphql_baseline(root, &topology)
+            .and_then(|_| ignore(root).map_err(Into::into));
+        if let Err(e) = saved {
+            return analysis_error(e);
+        }
+    }
     let report = if let Some(path) = report {
         match archguard_engine::import_api_contract(
             root,

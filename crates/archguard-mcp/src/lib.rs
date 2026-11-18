@@ -643,7 +643,7 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Read explicitly imported OpenAPI contracts, changes against the previous import and declared consumers. Configured HTTP callers remain distinct from operation usage and runtime observations. No import or network request is made. Flattened paginated records preserve freshness/coverage limits within 4 KiB."
+        description = "Read explicitly imported OpenAPI contracts, changes against the previous import and declared consumers. GraphQL schemas found in the sources, operation documents linked to the one provider whose schema declares their root fields (others unresolved with a reason) and schema changes against the saved GraphQL baseline are included. Configured HTTP callers remain distinct from operation usage and runtime observations. No import or network request is made. Flattened paginated records preserve freshness/coverage limits within 4 KiB."
     )]
     async fn api_contracts(
         &self,

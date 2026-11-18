@@ -16,7 +16,7 @@ pub(super) fn diagnostic(
         message: message.into(),
     });
 }
-pub(super) fn relative(root: &Path, path: &Path) -> String {
+pub(crate) fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -51,7 +51,7 @@ pub(crate) struct Discovery {
     excludes: globset::GlobSet,
 }
 impl Discovery {
-    pub(super) fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
+    pub(crate) fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
         // Only explicit discovery exclusions apply here. Import defaults (e.g.
         // tests/**), source roots and semantic settings do not constrain inventory.
         let mut patterns = Vec::new();

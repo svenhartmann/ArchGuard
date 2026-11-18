@@ -105,6 +105,7 @@ pub(crate) fn analyze_services_with(
     service_tables::augment(&root, &mut report);
     service_traces::augment(&root, &mut report);
     crate::service_flows::augment(&root, &mut report);
+    crate::graphql_contracts::augment(&root, &discovery, &mut report);
     manifest_render::mark(&mut report, &rendered);
     if report
         .projects
