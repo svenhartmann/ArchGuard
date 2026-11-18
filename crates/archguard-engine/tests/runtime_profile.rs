@@ -478,3 +478,35 @@ fn marked_internal_root_spans_are_requests() {
     assert_eq!(p.requests[0].spans[0].name, "pipeline.extract");
     assert_eq!(p.endpoints.len(), 1);
 }
+
+/// Samples on a wrapper span (EF Core around Npgsql) count for the request,
+/// although the wrapper is folded into its driver span.
+#[test]
+fn samples_of_a_wrapper_span_count_for_the_request() {
+    let mut first: serde_json::Value = serde_json::from_str(SHOP.lines().next().unwrap()).unwrap();
+    let wrapper = first["resourceSpans"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|r| r["scopeSpans"].as_array_mut().unwrap().iter_mut())
+        .flat_map(|s| s["spans"].as_array_mut().unwrap().iter_mut())
+        .find(|s| s["spanId"] == "2222222222222225")
+        .unwrap();
+    wrapper["attributes"].as_array_mut().unwrap().extend([
+        serde_json::json!({"key":"archguard.profile.samples","value":{"intValue":"9"}}),
+        serde_json::json!({"key":"archguard.profile.interval_ms","value":{"doubleValue":1.0}}),
+        serde_json::json!({"key":"archguard.profile.stacks","value":{"arrayValue":{"values":[
+            {"stringValue":"Shop.Orders.OrderService.Load;EF.Compile 9"}]}}}),
+    ]);
+    let dir = project(&[(
+        ".archguard/runtime/run-1/traces-0.jsonl",
+        &first.to_string(),
+    )]);
+    let p = runtime_profile(dir.path(), None).unwrap();
+    let a = p
+        .requests
+        .iter()
+        .find(|r| r.service == "orders" && r.trace_id == "a".repeat(32))
+        .unwrap();
+    assert_eq!(a.samples.as_ref().map(|s| s.samples), Some(9));
+}

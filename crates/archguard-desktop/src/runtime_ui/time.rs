@@ -113,6 +113,12 @@ pub fn sampled(r: Option<&RuntimeRequest>) -> RtSampled {
         interval: number(s.interval_ms),
         clock: s.clock.as_str().into(),
         lower_bound: number(total * s.interval_ms),
+        // The engine adds root and wrapper span samples to the total only.
+        unlisted: count(
+            r.spans
+                .iter()
+                .fold(s.samples, |n, span| n.saturating_sub(span.samples)),
+        ),
         methods: list(
             s.methods
                 .iter()
@@ -249,6 +255,18 @@ mod tests {
         assert_eq!((first.self_samples, first.total_samples), (20, 35));
         assert!((first.self_share - 20.0 / 35.0).abs() < 1e-6);
         assert!((first.total_share - 1.0).abs() < 1e-6);
+        assert_eq!(m.unlisted, 0, "all samples are on span rows");
+        let quote = load("shop-dotnet-profile.jsonl");
+        let quote = quote
+            .requests
+            .iter()
+            .find(|r| r.name == "GET /carrier/quote");
+        let quote = sampled(quote);
+        assert_eq!(
+            (quote.samples, quote.unlisted),
+            (8, 8),
+            "on the request span itself"
+        );
         let none = sampled(fixture().requests.first());
         assert!(!none.has && none.methods.row_count() == 0);
         assert!(!sampled(None).has);

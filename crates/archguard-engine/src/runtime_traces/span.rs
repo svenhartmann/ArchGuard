@@ -400,6 +400,29 @@ mod tests {
         assert_eq!(&hash[..16], "5acbd1b5486068b4");
     }
 
+    /// Folded stacks are bounded like the probes write them; bad lines are
+    /// skipped while the declared samples still count.
+    #[test]
+    fn folded_stacks_are_bounded_and_bad_lines_skipped() {
+        let deep: Vec<String> = (0..70).map(|i| format!("f{i}")).collect();
+        let mut stacks = vec![format!("{} 1", deep.join(";"))];
+        stacks.extend(["a;b x", "a;b 0", "a;b"].map(String::from));
+        stacks.extend((0..101).map(|i| format!("s;m{i} 1")));
+        let values: Vec<Value> = stacks.iter().map(|s| json!({"stringValue": s})).collect();
+        let span = json!({"attributes":[
+            {"key":"archguard.profile.samples","value":{"intValue":"500"}},
+            {"key":"archguard.profile.interval_ms","value":{"doubleValue":10.0}},
+            {"key":"archguard.profile.stacks","value":{"arrayValue":{"values":values}}}]});
+        let p = profile(&span).unwrap();
+        assert_eq!(p.samples, 500, "declared samples count");
+        assert_eq!(p.stacks.len(), MAX_STACKS);
+        let (frames, _) = &p.stacks[0];
+        assert_eq!(frames.len(), MAX_FRAMES);
+        assert_eq!((frames[0].as_str(), frames[63].as_str()), ("f6", "f69"));
+        assert_eq!(p.stacks[1].0, ["s", "m0"], "bad lines are skipped");
+        assert_eq!(p.stacks[99].0, ["s", "m98"]);
+    }
+
     #[test]
     fn long_text_is_bounded_on_a_char_boundary() {
         let s = "ä".repeat(10);

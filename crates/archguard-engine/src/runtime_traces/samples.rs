@@ -21,18 +21,21 @@ impl Sampled {
     /// Adds a span's samples; returns how many the span owns.
     pub fn add(&mut self, profile: Option<&Profile>) -> u64 {
         let Some(p) = profile else { return 0 };
-        let listed: u64 = p.stacks.iter().map(|(_, c)| c).sum();
+        // Counts come from the input file: saturate instead of overflowing.
+        let listed = p.stacks.iter().fold(0u64, |n, (_, c)| n.saturating_add(*c));
         let samples = p.samples.max(listed);
-        self.samples += samples;
+        self.samples = self.samples.saturating_add(samples);
         self.first
             .get_or_insert_with(|| (p.interval_ms, p.clock.clone()));
         for (frames, count) in &p.stacks {
             if let Some(leaf) = frames.last() {
-                self.methods.entry(leaf.clone()).or_default().0 += count;
+                let m = self.methods.entry(leaf.clone()).or_default();
+                m.0 = m.0.saturating_add(*count);
             }
             let mut seen = HashSet::new();
             for f in frames.iter().filter(|f| seen.insert(f.as_str())) {
-                self.methods.entry(f.clone()).or_default().1 += count;
+                let m = self.methods.entry(f.clone()).or_default();
+                m.1 = m.1.saturating_add(*count);
             }
         }
         samples
@@ -95,6 +98,19 @@ mod tests {
         assert_eq!((m("b").self_samples, m("b").total_samples), (3, 3));
         assert_eq!((m("a").self_samples, m("a").total_samples), (0, 5));
         assert_eq!(r.methods[0].function, "b");
+    }
+
+    /// Counts come from the input file: huge ones saturate instead of overflowing.
+    #[test]
+    fn huge_counts_saturate() {
+        let mut s = Sampled::default();
+        let huge = profile(1, &[("x;a", u64::MAX), ("x;b", 1)]);
+        assert_eq!(s.add(Some(&huge)), u64::MAX);
+        assert_eq!(s.add(Some(&huge)), u64::MAX);
+        let r = s.finish().unwrap();
+        assert_eq!(r.samples, u64::MAX);
+        let x = r.methods.iter().find(|m| m.function == "x").unwrap();
+        assert_eq!((x.self_samples, x.total_samples), (0, u64::MAX));
     }
 
     #[test]
