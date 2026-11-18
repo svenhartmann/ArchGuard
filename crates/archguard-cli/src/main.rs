@@ -45,6 +45,7 @@ mod doctor_cmd;
 mod dsm_cmd;
 mod engineering_cmd;
 mod evaluate_cmd;
+mod export_cmd;
 mod insights_cmd;
 mod project_files;
 mod quality_cmd;
@@ -358,27 +359,7 @@ fn run(cli: &Cli) -> i32 {
         Command::Patterns { .. } => {
             architecture_cmd::patterns(cli, &root, &loaded, &graph, &report)
         }
-        Command::Doc {
-            out,
-            check,
-            arc42,
-            chapter,
-            stdout,
-            ..
-        } => insights_cmd::doc(
-            cli,
-            &root,
-            &loaded,
-            &graph,
-            &report,
-            insights_cmd::DocOptions {
-                out: out.as_deref(),
-                check: *check,
-                arc42: *arc42,
-                chapter: *chapter,
-                stdout: *stdout,
-            },
-        ),
+        Command::Doc { .. } => export_cmd::doc(cli, &root, &loaded, &graph, &report),
         Command::Graph {
             format,
             focus,
@@ -478,6 +459,9 @@ fn review_command(cli: &Cli, root: &Path) -> Option<i32> {
 /// Commands that need neither an import graph nor archguard.toml
 /// (Compose-only repositories, recorded runtime traces, manifests).
 fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
+    if let Some(code) = export_cmd::standalone(cli, root) {
+        return Some(code);
+    }
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
@@ -770,7 +754,7 @@ fn graph_export(
             | Format::Gexf
     ) {
         return usage(format!(
-            "invalid value '{}' for '--format': graph supports dot, mermaid, json, html, graphml and gexf",
+            "invalid value '{}' for '--format': graph supports dot, mermaid, json, html, graphml, gexf and structurizr",
             format_label(format)
         ));
     }

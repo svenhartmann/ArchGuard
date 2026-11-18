@@ -116,11 +116,41 @@ pub fn file_name(view: View, format: Format) -> String {
     format!("archguard-{}.{}", view.workspace(), format.extension())
 }
 
+/// The file type of the arc42 export (ADR 0013): the Markdown of
+/// `doc --arc42`, or that Markdown as AsciiDoc or Word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arc42Format {
+    Markdown,
+    Asciidoc,
+    Docx,
+}
+
+impl Arc42Format {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Arc42Format::Markdown => "md",
+            Arc42Format::Asciidoc => "adoc",
+            Arc42Format::Docx => "docx",
+        }
+    }
+
+    /// The file content of the arc42 `markdown`.
+    pub fn bytes(self, markdown: String) -> Vec<u8> {
+        use archguard_engine::report::{markdown_to_asciidoc, markdown_to_docx};
+        match self {
+            Arc42Format::Markdown => markdown.into_bytes(),
+            Arc42Format::Asciidoc => markdown_to_asciidoc(&markdown).into_bytes(),
+            Arc42Format::Docx => markdown_to_docx(&markdown),
+        }
+    }
+}
+
 /// The arc42 file name: `arc42.md`, or `arc42-05.md` for one chapter.
-pub fn arc42_file_name(chapter: Option<u8>) -> String {
+pub fn arc42_file_name(chapter: Option<u8>, format: Arc42Format) -> String {
+    let ext = format.extension();
     match chapter {
-        Some(n) => format!("arc42-{n:02}.md"),
-        None => "arc42.md".into(),
+        Some(n) => format!("arc42-{n:02}.{ext}"),
+        None => format!("arc42.{ext}"),
     }
 }
 
@@ -158,8 +188,13 @@ mod tests {
             file_name(View::Quality, Format::Png),
             "archguard-quality.png"
         );
-        assert_eq!(arc42_file_name(None), "arc42.md");
-        assert_eq!(arc42_file_name(Some(5)), "arc42-05.md");
+        assert_eq!(arc42_file_name(None, Arc42Format::Markdown), "arc42.md");
+        assert_eq!(
+            arc42_file_name(Some(5), Arc42Format::Markdown),
+            "arc42-05.md"
+        );
+        assert_eq!(arc42_file_name(None, Arc42Format::Asciidoc), "arc42.adoc");
+        assert_eq!(arc42_file_name(None, Arc42Format::Docx), "arc42.docx");
     }
 
     /// The same text as the CLI: `arc42_document(..).markdown(None)` on
@@ -179,5 +214,14 @@ mod tests {
         assert!(text.contains("arc42"), "{text}");
         let chapter = arc42(&root, &run, Some(5), Default::default()).expect("chapter 5");
         assert!(chapter.len() < text.len());
+        let adoc = Arc42Format::Asciidoc.bytes(text.clone());
+        assert!(
+            adoc.starts_with(b"= arc42"),
+            "the AsciiDoc of the same text"
+        );
+        assert!(
+            Arc42Format::Docx.bytes(text).starts_with(b"PK"),
+            "a .docx package"
+        );
     }
 }

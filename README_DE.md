@@ -116,6 +116,8 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | API-Verträge untersuchen (importiertes OpenAPI, GraphQL aus den Quellen) | `archguard contracts . --format json` |
 | Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
+| arc42 als AsciiDoc oder Word exportieren (für einen Confluence-Import) | `archguard doc . --arc42 --format asciidoc` oder `--format docx` |
+| Diensttopologie als Structurizr-Workspace (C4) exportieren | `archguard graph . --format structurizr [--service orders]` |
 | Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |
 | SBOM der Fremdabhängigkeiten (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
@@ -123,6 +125,8 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 `archguard --help` und `archguard <command> --help` liefern die vollständige Befehlsreferenz. Der Viewer enthält zusätzlich CLI-Hilfe und natürlichsprachliche MCP-Beispiele.
 
 Die arc42-Erzeugung aktualisiert ausdrücklich markierte Belegblöcke. Eigene Texte außerhalb dieser Blöcke bleiben unverändert. Erzeugte Architekturbeobachtungen ersetzen keine Teamentscheidungen und belegen keine vollständige Laufzeitarchitektur.
+
+`--format asciidoc` schreibt `arc42.adoc`, `--format docx` schreibt `arc42.docx` (oder `--out`). Beide wandeln das arc42-Markdown um und übernehmen eigene Texte aus einer vorhandenen `arc42.md`, die sie nur lesen; `--chapter N` exportiert den erzeugten Text dieses Kapitels. Diagramme stehen in AsciiDoc als `[mermaid]`/`[plantuml]`-Blöcke für Asciidoctor Diagram. Word-Überschriften nutzen die Formatvorlagen Überschrift 1–3, daher baut Confluences „Word-Dokument importieren" daraus das Inhaltsverzeichnis; Tabellen sind Word-Tabellen, Diagramme bleiben Mermaid- oder PlantUML-Quelltext, weil das Dokument keine gerenderten Bilder hat. `graph --format structurizr` schreibt `.archguard/reports/graph.dsl`: ein Softwaresystem, die Deployment-Dienste als Container, Datenspeicher außerhalb der Konfiguration als externe Systeme, Beziehungen mit Protokoll und Konfigurationsbeleg und mit `--service` die Pakete dieses Dienstes als Komponenten. Abbildung und Grenzen: [ADR 0013](docs/adr/0013-structurizr-and-asciidoc-export.md). Die Desktop-App bietet dieselben arc42-Dateien unter Datei → Exportieren an, das MCP-Werkzeug `architecture_document` liefert AsciiDoc (`format=asciidoc`) und den Workspace (`template=structurizr`).
 
 ### Befunde mit einer Expertenbewertung vergleichen
 

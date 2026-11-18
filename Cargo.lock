@@ -420,9 +420,11 @@ name = "archguard-report"
 version = "0.3.5"
 dependencies = [
  "archguard-core",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "tracing",
+ "zip",
 ]
 
 [[package]]
