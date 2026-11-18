@@ -46,6 +46,8 @@ mod dep_inventory;
 mod duplicates;
 mod effective;
 mod evaluation;
+mod lockfiles;
+mod sbom;
 pub use evaluation::{
     DEFAULT_ASSESSMENT_PATH, EvaluatedFinding, Evaluation, MatchedExpectation, MissedExpectation,
     Ratio, assessment_template, evaluate, evaluate_project, finding_id, init_assessment,
@@ -186,6 +188,7 @@ pub use review_sources::collect_review_sources;
 pub use risk_gap::risk_coverage_gaps;
 pub use runtime_traces::runtime_profile;
 pub use rust_scip::background::index_rust_in_background;
+pub use sbom::{Sbom, SbomComponent, SbomManifest, license_findings, purl, sbom, to_cyclonedx};
 pub use security::{
     SecurityFinding, SecurityReport, SecurityScanOptions, SecurityTarget, read_security,
     scan_security, security_fingerprint,

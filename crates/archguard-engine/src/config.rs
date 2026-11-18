@@ -20,7 +20,7 @@ const CONFIG_FILE_NAME: &str = "archguard.toml";
 
 /// The configuration keys whose provenance [`load_config`] records: the
 /// five sections of Kap. 11 plus the top-level `derive_layers` switch.
-const SECTION_KEYS: [&str; 14] = [
+const SECTION_KEYS: [&str; 15] = [
     "project",
     "modules",
     "layers",
@@ -34,6 +34,7 @@ const SECTION_KEYS: [&str; 14] = [
     "semantic",
     "store",
     "arc42",
+    "licenses",
     "derive_layers",
 ];
 

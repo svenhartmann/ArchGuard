@@ -84,6 +84,7 @@ fn rule_id(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "archguard/ownership-rule",
         FindingKind::Orphan => "archguard/orphan",
         FindingKind::TargetArchitecture => "archguard/target-architecture",
+        FindingKind::License => "archguard/license",
     }
 }
 
@@ -107,5 +108,6 @@ fn kind_name(kind: FindingKind) -> &'static str {
         FindingKind::OwnershipRule => "ownership_rule",
         FindingKind::Orphan => "orphan",
         FindingKind::TargetArchitecture => "target_architecture",
+        FindingKind::License => "license",
     }
 }

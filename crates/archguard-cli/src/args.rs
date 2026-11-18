@@ -64,6 +64,8 @@ pub(crate) enum Format {
     Table,
     /// Markdown PR comment against `review --base`.
     PrComment,
+    /// CycloneDX 1.6 JSON, only for `sbom`.
+    Cyclonedx,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -175,6 +177,12 @@ pub(crate) enum Command {
         /// Exit 1 for advisories; exit 3 if the scan is missing, stale or incomplete.
         #[arg(long)]
         fail_on_found: bool,
+    },
+    /// Third-party dependencies from the lockfiles (offline) as CycloneDX
+    /// 1.6 (`--format cyclonedx`), JSON or text summary with licence states.
+    Sbom {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
     },
     /// Coupling metrics per module.
     Metrics {
@@ -687,6 +695,7 @@ impl Command {
             | Command::Check { path, .. }
             | Command::Metrics { path, .. }
             | Command::Security { path, .. }
+            | Command::Sbom { path }
             | Command::Hotspots { path, .. }
             | Command::CoChange { path, .. }
             | Command::Ownership { path, .. }
@@ -780,5 +789,6 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Gexf => "gexf",
         Format::Table => "table",
         Format::PrComment => "pr-comment",
+        Format::Cyclonedx => "cyclonedx",
     }
 }

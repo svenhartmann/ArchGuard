@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::architecture::ArchitectureConfig;
 use crate::calls::SemanticConfig;
 use crate::diagrams::Arc42Config;
+use crate::licenses::LicensesConfig;
 use crate::performance::PerformanceConfig;
 use crate::review::ReviewConfig;
 use crate::rules::{DependencyRule, OwnershipRule};
@@ -40,6 +41,8 @@ pub struct Config {
     pub store: StoreConfig,
     /// `[arc42]`: which catalogue diagrams the document shows (ADR 0006).
     pub arc42: Arc42Config,
+    /// `[licenses]`: licence policy of third-party dependencies (ADR 0016).
+    pub licenses: LicensesConfig,
 }
 
 impl Default for Config {
@@ -59,6 +62,7 @@ impl Default for Config {
             semantic: SemanticConfig::default(),
             store: StoreConfig::default(),
             arc42: Arc42Config::default(),
+            licenses: LicensesConfig::default(),
         }
     }
 }

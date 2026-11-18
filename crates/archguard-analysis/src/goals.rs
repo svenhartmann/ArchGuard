@@ -24,6 +24,9 @@ pub fn finding_attribute(kind: FindingKind) -> QualityAttribute {
         | FindingKind::TargetArchitecture
         | FindingKind::MetricThreshold
         | FindingKind::Orphan => QualityAttribute::Maintainability,
+        // Licence findings exist only in `check` output (ADR 0016); a
+        // dependency's licence is a maintenance fact of the dependency set.
+        FindingKind::License => QualityAttribute::Maintainability,
     }
 }
 

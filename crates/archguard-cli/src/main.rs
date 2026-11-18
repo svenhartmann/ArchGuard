@@ -52,6 +52,7 @@ mod review_cmd;
 mod review_session_cmd;
 mod runtime_cmd;
 mod sarif;
+mod sbom_cmd;
 mod security_cmd;
 mod serve_cmd;
 mod service_cmd;
@@ -435,16 +436,13 @@ fn run(cli: &Cli) -> i32 {
         | Command::Workspace { .. }
         | Command::Contracts { .. }
         | Command::Security { .. }
+        | Command::Sbom { .. }
         | Command::Diff { .. }
         | Command::Serve { .. }
         | Command::Doctor
         | Command::Update { .. }
         | Command::Evaluate { .. }
-        | Command::ReviewDecision { .. } => {
-            unreachable!(
-                "init, mcp, db, trend, services, runtime, security, serve, evaluate, review-decision, doctor and update are handled before the analysis"
-            )
-        }
+        | Command::ReviewDecision { .. } => unreachable!("handled before the analysis"),
     }
 }
 
@@ -483,6 +481,7 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::Sbom { .. } => sbom_cmd::run(cli, root),
         Command::Workspace {
             sources, target, ..
         } => workspace_cmd::run(cli, root, *sources, target),

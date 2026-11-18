@@ -1,8 +1,12 @@
 //! External dependency inventory (R22).
 //!
 //! Counts external dependencies from lockfiles and manifests found under
-//! the project root: `Cargo.lock`, `package-lock.json`,
-//! `requirements*.txt` / `pyproject.toml`, `composer.json`, `pom.xml`.
+//! the project root: `Cargo.lock`, `package-lock.json` / `yarn.lock` /
+//! `pnpm-lock.yaml`, `requirements*.txt` / `pyproject.toml` /
+//! `poetry.lock` / `uv.lock`, `composer.json` / `composer.lock`,
+//! `pom.xml` / `gradle.lockfile`, `*.csproj` / `packages.lock.json`,
+//! `go.mod`. A lockfile supersedes its manifest in the same directory.
+//! The same parse feeds the SBOM (ADR 0016).
 //! `version` is `Some` only where the file pins one (lockfiles, `==`
 //! pins, explicit `<version>`); constraint-only manifests keep `None` —
 //! a constraint is not a resolved version.
@@ -24,6 +28,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use crate::lockfiles::{Dep, csproj_deps, dep, lockfile_deps, scope};
 
 /// The inventory types live in core (the `Graph` payload field needs
 /// them there); re-exported so engine consumers keep a single import site.
@@ -51,19 +57,31 @@ struct MetaFile {
 
 const META_REL_PATH: &str = ".archguard/dep-meta.json";
 
-/// Directories that never contain first-party manifests.
+/// Directories that never contain first-party manifests; `fixtures` is
+/// test data and `.claude` holds agent worktrees (copies of the project).
 const SKIP_DIRS: &[&str] = &[
     ".archguard",
+    ".claude",
     ".git",
     ".hg",
     ".venv",
     "build",
     "dist",
+    "fixtures",
     "node_modules",
     "out",
     "target",
     "vendor",
     "venv",
+];
+
+/// Manifests that a lockfile in the same directory supersedes: the lock
+/// has the resolved versions, the manifest only constraints.
+const SUPERSEDED_BY: &[(&str, &[&str])] = &[
+    ("composer.json", &["composer.lock"]),
+    ("pyproject.toml", &["poetry.lock", "uv.lock"]),
+    ("requirements", &["poetry.lock", "uv.lock"]),
+    (".csproj", &["packages.lock.json"]),
 ];
 
 /// Find every manifest below `root` (bounded depth, build artifacts and
@@ -72,13 +90,22 @@ fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
     fn known(name: &str) -> Option<&'static str> {
         match name {
             "Cargo.lock" => Some("cargo"),
-            "package-lock.json" => Some("npm"),
-            "pyproject.toml" => Some("pypi"),
-            "composer.json" => Some("composer"),
-            "pom.xml" => Some("maven"),
+            "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml" => Some("npm"),
+            "pyproject.toml" | "poetry.lock" | "uv.lock" => Some("pypi"),
+            "composer.json" | "composer.lock" => Some("composer"),
+            "pom.xml" | "gradle.lockfile" => Some("maven"),
+            "packages.lock.json" => Some("nuget"),
+            "go.mod" => Some("golang"),
+            other if other.ends_with(".csproj") => Some("nuget"),
             other if other.starts_with("requirements") && other.ends_with(".txt") => Some("pypi"),
             _ => None,
         }
+    }
+    fn superseded(path: &Path, name: &str) -> bool {
+        SUPERSEDED_BY.iter().any(|(manifest, locks)| {
+            (name.starts_with(manifest) || name.ends_with(manifest))
+                && locks.iter().any(|lock| path.with_file_name(lock).is_file())
+        })
     }
     fn walk(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
         if depth > 4 {
@@ -97,7 +124,9 @@ fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
                 if !SKIP_DIRS.contains(&name) {
                     dirs.push(path);
                 }
-            } else if let Some(eco) = known(name) {
+            } else if let Some(eco) = known(name)
+                && !superseded(&path, name)
+            {
                 out.push((eco.to_string(), path));
             }
         }
@@ -112,67 +141,10 @@ fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
-/// Collect `(name, version)` pairs from one `Cargo.lock`.
-fn cargo_lock_deps(text: &str) -> Vec<(String, Option<String>)> {
-    let Ok(table) = text.parse::<toml::Table>() else {
-        return Vec::new();
-    };
-    table
-        .get("package")
-        .and_then(toml::Value::as_array)
-        .map(|packages| {
-            packages
-                .iter()
-                .filter_map(|package| {
-                    let name = package.get("name")?.as_str()?.to_string();
-                    let version = package
-                        .get("version")
-                        .and_then(toml::Value::as_str)
-                        .map(str::to_string);
-                    Some((name, version))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Collect `(name, version)` pairs from a `package-lock.json` (v2/v3
-/// `packages` map preferred, v1 `dependencies` as fallback). The root
-/// package entry (`""`) is not a dependency of the project.
-fn package_lock_deps(text: &str) -> Vec<(String, Option<String>)> {
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
-    };
-    let mut deps = Vec::new();
-    if let Some(packages) = root.get("packages").and_then(serde_json::Value::as_object) {
-        for (key, entry) in packages {
-            // v3 keys are paths; only `…/node_modules/<name>` entries are
-            // third-party — the root `""` and workspace entries are us.
-            let Some((_, tail)) = key.rsplit_once("node_modules/") else {
-                continue;
-            };
-            if tail.is_empty() {
-                continue;
-            }
-            let version = entry.get("version").and_then(serde_json::Value::as_str);
-            deps.push((tail.to_string(), version.map(str::to_string)));
-        }
-    } else if let Some(dependencies) = root
-        .get("dependencies")
-        .and_then(serde_json::Value::as_object)
-    {
-        for (name, entry) in dependencies {
-            let version = entry.get("version").and_then(serde_json::Value::as_str);
-            deps.push((name.clone(), version.map(str::to_string)));
-        }
-    }
-    deps
-}
-
 /// Split a PEP 508 requirement like `requests[oauth]>=2.28,<3` into
 /// name and (for `==` pins) exact version. Constraints are not resolved
 /// versions, so only `==` yields `Some`.
-fn requirement_split(line: &str) -> Option<(String, Option<String>)> {
+fn requirement_split(line: &str) -> Option<Dep> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
         return None;
@@ -194,14 +166,14 @@ fn requirement_split(line: &str) -> Option<(String, Option<String>)> {
                 .to_string()
         })
         .filter(|v| !v.is_empty());
-    Some((name.to_string(), version))
+    Some(dep(name, version))
 }
 
-fn requirements_txt_deps(text: &str) -> Vec<(String, Option<String>)> {
+fn requirements_txt_deps(text: &str) -> Vec<Dep> {
     text.lines().filter_map(requirement_split).collect()
 }
 
-fn pyproject_deps(text: &str) -> Vec<(String, Option<String>)> {
+fn pyproject_deps(text: &str) -> Vec<Dep> {
     let Ok(table) = text.parse::<toml::Table>() else {
         return Vec::new();
     };
@@ -222,7 +194,7 @@ fn pyproject_deps(text: &str) -> Vec<(String, Option<String>)> {
 /// `composer.json` `require` map; platform requirements (`php`, `ext-*`)
 /// are environment facts, not dependencies. Constraints are not
 /// resolved versions → `version: None`.
-fn composer_deps(text: &str) -> Vec<(String, Option<String>)> {
+fn composer_deps(text: &str) -> Vec<Dep> {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(text) else {
         return Vec::new();
     };
@@ -232,7 +204,7 @@ fn composer_deps(text: &str) -> Vec<(String, Option<String>)> {
             require
                 .keys()
                 .filter(|name| !PLATFORM_PREFIXES.iter().any(|p| name.starts_with(p)))
-                .map(|name| (name.clone(), None))
+                .map(|name| dep(name.clone(), None))
                 .collect()
         })
         .unwrap_or_default()
@@ -240,8 +212,8 @@ fn composer_deps(text: &str) -> Vec<(String, Option<String>)> {
 
 /// `pom.xml` `<dependencies>/<dependency>` entries. `dependencyManagement`
 /// and plugin dependencies are excluded — they do not ship with the
-/// artifact.
-fn pom_deps(text: &str) -> Vec<(String, Option<String>)> {
+/// artifact. `<scope>test</scope>` is optional.
+fn pom_deps(text: &str) -> Vec<Dep> {
     let Ok(document) = roxmltree::Document::parse(text) else {
         return Vec::new();
     };
@@ -268,13 +240,16 @@ fn pom_deps(text: &str) -> Vec<(String, Option<String>)> {
             let (Some(group), Some(artifact)) = (child("groupId"), child("artifactId")) else {
                 continue;
             };
-            deps.push((format!("{group}:{artifact}"), child("version")));
+            deps.push(Dep {
+                scope: scope(child("scope").as_deref() == Some("test")),
+                ..dep(format!("{group}:{artifact}"), child("version"))
+            });
         }
     }
     deps
 }
 
-fn deps_for(eco: &str, path: &Path) -> Vec<(String, Option<String>)> {
+fn deps_for(eco: &str, path: &Path) -> Vec<Dep> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -282,15 +257,34 @@ fn deps_for(eco: &str, path: &Path) -> Vec<(String, Option<String>)> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
+    if let Some(deps) = lockfile_deps(name, &text) {
+        return deps;
+    }
     match (eco, name) {
-        ("cargo", _) => cargo_lock_deps(&text),
-        ("npm", _) => package_lock_deps(&text),
         ("pypi", file) if file.starts_with("requirements") => requirements_txt_deps(&text),
         ("pypi", _) => pyproject_deps(&text),
         ("composer", _) => composer_deps(&text),
         ("maven", _) => pom_deps(&text),
+        ("nuget", _) => csproj_deps(&text),
         _ => Vec::new(),
     }
+}
+
+/// Every supported manifest below `root` with its project-relative path
+/// and the dependencies it states, in path order.
+pub(crate) fn manifest_deps(root: &Path) -> Vec<(String, String, Vec<Dep>)> {
+    find_manifests(root)
+        .into_iter()
+        .map(|(eco, path)| {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let deps = deps_for(&eco, &path);
+            (eco, relative, deps)
+        })
+        .collect()
 }
 
 /// Read the imported registry metadata; `None` when absent. A corrupt
@@ -337,20 +331,14 @@ pub fn dependency_inventory(root: &Path) -> DependencyInventory {
     let mut notes = Vec::new();
     let mut seen: BTreeSet<(String, String, Option<String>)> = BTreeSet::new();
 
-    for (eco, path) in find_manifests(root) {
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .display()
-            .to_string();
-        let entries = deps_for(&eco, &path);
+    for (eco, relative, entries) in manifest_deps(root) {
         if entries.is_empty() {
             notes.push(format!(
                 "{relative}: no dependencies counted (empty or unparseable)"
             ));
             continue;
         }
-        for (name, version) in entries {
+        for Dep { name, version, .. } in entries {
             seen.insert((eco.clone(), name, version));
         }
         notes.push(format!("{relative}: {eco}"));
@@ -377,7 +365,7 @@ pub fn dependency_inventory(root: &Path) -> DependencyInventory {
     }
     if seen.is_empty() {
         notes.push(
-            "no supported manifest or lockfile found (cargo, npm, pypi, composer, maven)"
+            "no supported manifest or lockfile found (cargo, npm, pypi, composer, maven, nuget, golang)"
                 .to_string(),
         );
     }
@@ -619,6 +607,15 @@ version = "1.0.219"
         let inventory = DependencyInventory::default();
         assert_eq!(inventory.total, 0);
         assert_eq!(inventory.stale_count, None, "staleness unknown, not zero");
+    }
+
+    #[test]
+    fn test_fixtures_and_agent_worktrees_are_not_dependencies() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry\"\n";
+        write(dir.path(), "fixtures/demo/Cargo.lock", lock);
+        write(dir.path(), ".claude/worktrees/a/Cargo.lock", lock);
+        assert_eq!(dependency_inventory(dir.path()).total, 0);
     }
 
     #[test]

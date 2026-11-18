@@ -586,6 +586,11 @@ hidden_diagrams = []        # catalogue ids left out: building-blocks, runtime-c
                             # runtime-services, deployment-<file>, cycles
 shown_diagrams = []         # package map levels put in: <map>@<package>,
                             # e.g. building-blocks@app/core
+
+[licenses]                  # default: no policy (ADR 0016)
+allow = []                  # SPDX ids; non-empty = every other licence violates
+deny = []                   # SPDX ids that always violate
+unknown = "allow"           # "deny": no stated licence violates
 ```
 
 `archguard init` writes the inferred values and measured thresholds as

@@ -52,6 +52,7 @@ mod review_decision_tools;
 mod review_kpi_tools;
 mod review_tools;
 mod runtime_tools;
+mod sbom_tools;
 mod security_tools;
 mod semantic_tools;
 mod test_coverage_tools;
@@ -66,6 +67,7 @@ pub use quality_tools::QualityFindingsParams;
 pub use review_decision_tools::ReviewDecisionParams;
 pub use review_kpi_tools::ReviewKpiParams;
 pub use review_tools::ReviewContextParams;
+pub use sbom_tools::SbomParams;
 pub use security_tools::SecurityFindingsParams;
 pub use semantic_tools::SemanticModelParams;
 pub use test_coverage_tools::TestCoverageParams;
@@ -988,6 +990,7 @@ impl ArchguardTools {
         router.merge(Self::pr_comment_router());
         router.merge(Self::evaluation_router());
         router.merge(Self::runtime_router());
+        router.merge(Self::sbom_router());
         #[cfg(feature = "db")]
         router.merge(Self::db_router());
         router
@@ -2820,7 +2823,7 @@ links = ["docs/adr/1.md"]
     fn graph_query_is_registered_only_with_the_db_feature() {
         let tools = ArchguardTools::full_router().list_all();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-        let expected = if cfg!(feature = "db") { 49 } else { 48 };
+        let expected = if cfg!(feature = "db") { 50 } else { 49 };
         assert_eq!(tools.len(), expected, "registered tools: {names:?}");
         assert_eq!(names.contains(&"graph_query"), cfg!(feature = "db"));
         for name in [
@@ -2859,6 +2862,7 @@ links = ["docs/adr/1.md"]
             names.contains(&"security_findings"),
             "dependency security tool is missing"
         );
+        assert!(names.contains(&"sbom"), "sbom tool is missing");
     }
 
     #[test]

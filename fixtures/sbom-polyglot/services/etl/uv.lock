@@ -1,0 +1,12 @@
+version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "etl"
+version = "0.1.0"
+source = { editable = "." }
+
+[[package]]
+name = "Typing_Extensions"
+version = "4.10.0"
+source = { registry = "https://pypi.org/simple" }

@@ -118,6 +118,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
 | Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |
+| SBOM der Fremdabhängigkeiten (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
 
 `archguard --help` und `archguard <command> --help` liefern die vollständige Befehlsreferenz. Der Viewer enthält zusätzlich CLI-Hilfe und natürlichsprachliche MCP-Beispiele.
 
@@ -126,6 +127,21 @@ Die arc42-Erzeugung aktualisiert ausdrücklich markierte Belegblöcke. Eigene Te
 ### Befunde mit einer Expertenbewertung vergleichen
 
 `archguard evaluate --init .` schreibt `.archguard/assessment.toml` mit jedem aktuellen Befund als unbewertetem Eintrag; eine vorhandene Datei wird nie überschrieben. Eine Expertin trägt die Probleme ein, die sie sieht (`[[expected]]`, mit Art und Knoten-Globs), und bewertet Befunde (`verdict = "true_positive"` oder `"false_positive"`; leer heißt unbewertet). `archguard evaluate . [--assessment DATEI] [--format json]` meldet dann Recall (gefundene erwartete Probleme / erwartete Probleme), Precision (echte Treffer / bewertete aktuelle Befunde), unbewertete Befunde, nicht gefundene erwartete Probleme mit Grund und veraltete Bewertungen und warnt, wenn die Revision der Bewertung nicht `HEAD` ist. Eine Kennzahl ohne gezählte Fälle ist „nicht gemessen", nie 0. ArchGuard schreibt selbst keine Bewertungen, und `evaluate` ist kein Gate. Das MCP-Tool `evaluation` liefert dasselbe Ergebnis. Format und Zuordnungsregeln: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).
+
+### SBOM und Lizenzrichtlinie
+
+`archguard sbom .` listet die Fremdabhängigkeiten, die die Lock- und Manifestdateien im Repository nennen: `Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `packages.lock.json` (sonst `*.csproj` `PackageReference`), `pom.xml`, `gradle.lockfile`, `go.mod`, `poetry.lock`, `uv.lock` (sonst `requirements*.txt` / `pyproject.toml`) und `composer.lock` (sonst `composer.json`). Es fragt keine Registry und braucht kein Netz. `--format cyclonedx` schreibt CycloneDX-1.6-JSON mit purl, Version, Scope und den Manifesten (Projekte/Dienste) jeder Komponente; `--format json` und Text liefern eine Zusammenfassung. Lizenzen stammen nur aus Dateien, die sie nennen (`package-lock.json`, `composer.lock`); jede andere Lizenz ist `unknown` und wird nie nachgeladen oder geraten. Workspace-Mitglieder und Pfad-/Editable-/Projektverweise sind eigene Pakete und fehlen in der Liste; `fixtures/` sind Testdaten und werden übersprungen.
+
+Eine Lizenzrichtlinie in `.archguard/archguard.toml` lässt `archguard check` scheitern (Exit 1, ein `license`-Befund je Komponente, auch in SARIF):
+
+```toml
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause"]  # SPDX-IDs; nicht leer = alles andere verstößt
+deny = ["GPL-3.0-only"]                         # verstößt immer
+unknown = "allow"                               # "deny": eine Abhängigkeit ohne genannte Lizenz verstößt
+```
+
+SPDX-Ausdrücke werden ausgewertet (`OR`: ein erlaubter Zweig genügt, `AND`: alle Zweige müssen bestehen). `unknown` ist ein eigener Zustand und nur mit `unknown = "deny"` ein Verstoß. Das MCP-Tool `sbom` liefert dieselben Daten seitenweise. Entscheidung: [ADR 0016](docs/adr/0016-sbom-and-licence-policy.md).
 
 ## Konfiguration und Projektdaten
 

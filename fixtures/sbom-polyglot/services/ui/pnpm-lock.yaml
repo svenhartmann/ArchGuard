@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      vue:
+        specifier: ^3.4.0
+        version: 3.4.21
+
+packages:
+
+  '@vue/shared@3.4.21':
+    resolution: {integrity: sha512-x}
+
+  vue@3.4.21(typescript@5.4.2):
+    resolution: {integrity: sha512-y}
+
+snapshots:
+
+  vue@3.4.21(typescript@5.4.2):
+    dependencies:
+      '@vue/shared': 3.4.21
