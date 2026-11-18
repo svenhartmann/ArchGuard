@@ -53,6 +53,8 @@ export struct RtSampled {
     clock: string,
     // samples × interval in ms.
     lower-bound: string,
+    // Samples on no span row: on the request span itself or a folded wrapper span.
+    unlisted: int,
     methods: [RtSampledRow],
 }
 
@@ -235,6 +237,12 @@ export component RuntimeTime inherits Rectangle {
                 wrap: word-wrap;
                 overflow: clip;
                 text: @tr("{0} samples, interval {1} ms, clock {2}. Statistical: a method with n samples is uncertain by about √n; {0} × {1} ms = {3} ms is a lower bound of the sampled time, as samplers skip rounds. Self: the method was the innermost frame (dark bar); on stack: it was anywhere on the stack (light bar).", Fmt.int(sampled.samples), sampled.interval, sampled.clock, sampled.lower-bound);
+            }
+            if sampled.has && sampled.unlisted > 0: Small {
+                muted: true;
+                wrap: word-wrap;
+                overflow: clip;
+                text: @tr("{0} of these samples are on no span row: on the request span itself, on a database span folded into its driver span, or on spans past the row limit.",Fmt.int(sampled.unlisted));
             }
             for m in sampled.methods: SampledRow { m: m; }
             Small { muted: true; wrap: word-wrap; overflow: clip; text: @tr("Mean time per request by category: the self time of every span (its duration minus its children), so the parts add up to the request. Built from the kept requests."); }

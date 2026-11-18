@@ -7,7 +7,7 @@ function goalStatusLabel(status) {
 }
 function goalMeasured(goal) { return goal.status==='findings'||goal.status==='no_findings'; }
 function renderQualityGoals(root) {
-  const goals=data.insights?.architecture?.goal_assessment;
+  const goals=data.insights?.architecture?.goal_assessment??data.insights?.review_session?.report?.architecture?.goal_assessment;
   if(!Array.isArray(goals))return;
   const section=element('section',undefined,'architecture-section');section.setAttribute('data-quality-goals','true');root.appendChild(section);
   const heading=element('h3',t('Quality goals','Qualitätsziele'));section.appendChild(heading);

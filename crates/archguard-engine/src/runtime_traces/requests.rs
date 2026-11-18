@@ -95,6 +95,7 @@ fn descend(index: &Index, root: &Span, parent: usize, depth: u32, walk: &mut Wal
             continue;
         }
         if index.wrappers.contains(&c) {
+            walk.samples.add(span.profile.as_ref());
             descend(index, root, c, depth, walk);
             continue;
         }
