@@ -4,13 +4,14 @@
 //! the blocks it does not edit: rules, quotes holding more than text, text
 //! it would not write back as read (reference links, footnotes), the
 //! chapter heading and generated `archguard:arc42` blocks (saving
-//! refreshes them). A table is one cell block per cell. A part nobody edited writes its source back
-//! unchanged, so opening and saving a chapter changes nothing.
+//! refreshes them). A table is one cell block per cell. A top-level block
+//! nobody edited writes its source back unchanged, so opening and saving a
+//! chapter changes nothing and an edit changes only the blocks it touches.
 
 use std::ops::Range;
 
 use super::super::markdown::{self, Align, Block as Md};
-use super::inline::Inline;
+use super::inline::{self, Inline};
 pub use crate::arc42_file::{diagram_block, diagram_ranges};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,12 +53,20 @@ pub struct Block {
     pub inline: Inline,
 }
 
+/// A top-level block of a part as read: its Markdown, the blank lines
+/// before it and what it was read as.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Part {
-    /// The Markdown it was read from.
+struct Unit {
+    gap: String,
     source: String,
     blocks: Vec<Block>,
-    edited: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Part {
+    /// What it was read from, in order; empty for a new part.
+    units: Vec<Unit>,
+    blocks: Vec<Block>,
 }
 
 impl Part {
@@ -65,30 +74,25 @@ impl Part {
         &self.blocks
     }
 
-    /// The blocks to change; from now on the part writes them, not its source.
+    /// The blocks to change. Blocks still as read write their source, the
+    /// others are written anew ([`write`]).
     pub fn edit(&mut self) -> &mut Vec<Block> {
-        self.edited = true;
         &mut self.blocks
     }
 
     /// A part the chapter did not have: one empty paragraph to type in.
     fn new() -> Part {
         Part {
-            source: String::new(),
+            units: Vec::new(),
             blocks: vec![Block {
                 kind: Kind::Paragraph,
                 inline: Inline::default(),
             }],
-            edited: true,
         }
     }
 
     fn markdown(&self) -> String {
-        if self.edited {
-            write(&self.blocks)
-        } else {
-            self.source.clone()
-        }
+        write(&self.blocks, &self.units)
     }
 }
 
@@ -122,8 +126,9 @@ impl Doc {
             .map(|(r, blocks)| {
                 // A quote without text gives no block: a part needs one
                 // for the caret.
-                let editable = editable(&blocks)
-                    .filter(|b| !b.is_empty() && !locked(&r) && !as_written(&md[r.clone()], &blocks));
+                let editable = editable(&blocks).filter(|b| {
+                    !b.is_empty() && !locked(&r) && !as_written(&md[r.clone()], &blocks)
+                });
                 (r, editable)
             })
             .collect();
@@ -150,21 +155,27 @@ impl Doc {
             keep(&mut pieces, &md[pos..range.start]);
             let source = &md[range.clone()];
             match editable {
-                // Parts with only blank lines between are one: Backspace
-                // joins paragraphs across them.
-                Some(blocks) => match pieces.as_mut_slice() {
-                    [.., Piece::Part(last), Piece::Fixed(gap)] if gap.trim().is_empty() => {
-                        last.source.push_str(gap);
-                        last.source.push_str(source);
-                        last.blocks.extend(blocks);
-                        pieces.pop();
-                    }
-                    _ => pieces.push(Piece::Part(Part {
+                Some(blocks) => {
+                    let mut unit = Unit {
+                        gap: String::new(),
                         source: source.to_string(),
                         blocks,
-                        edited: false,
-                    })),
-                },
+                    };
+                    match pieces.as_mut_slice() {
+                        // Parts with only blank lines between are one:
+                        // Backspace joins paragraphs across them.
+                        [.., Piece::Part(last), Piece::Fixed(gap)] if gap.trim().is_empty() => {
+                            unit.gap = std::mem::take(gap);
+                            last.blocks.extend(unit.blocks.iter().cloned());
+                            last.units.push(unit);
+                            pieces.pop();
+                        }
+                        _ => pieces.push(Piece::Part(Part {
+                            blocks: unit.blocks.clone(),
+                            units: vec![unit],
+                        })),
+                    }
+                }
                 None => keep(&mut pieces, source),
             }
             pos = range.end;
@@ -210,7 +221,7 @@ impl Doc {
                 Piece::Part(part) => {
                     let text = part.markdown();
                     // A new part starts a block of its own and ends its line.
-                    if part.source.is_empty() && !text.is_empty() {
+                    if part.units.is_empty() && !text.is_empty() {
                         while !out.is_empty() && !out.ends_with("\n\n") {
                             out.push('\n');
                         }
@@ -329,8 +340,8 @@ fn editable(blocks: &[Md]) -> Option<Vec<Block>> {
 
 /// Whether chunk `source` holds Markdown its `blocks` lose: a comment
 /// outside fenced code (the reader drops it), or code, a setext heading
-/// or HTML the reader takes for a paragraph or list (an edit would write
-/// it on one line).
+/// or an HTML block the reader takes for a paragraph or list (an edit
+/// would write it on one line). Inline HTML (`<kbd>x</kbd> y`) is text.
 fn as_written(source: &str, blocks: &[Md]) -> bool {
     let code = matches!(blocks, [Md::Code { .. }]);
     let indented = |l: &str| l.starts_with("    ") || l.starts_with('\t');
@@ -338,7 +349,7 @@ fn as_written(source: &str, blocks: &[Md]) -> bool {
         let t = l.trim();
         indented(l)
             || t.starts_with("~~~")
-            || t.starts_with('<')
+            || markdown::html_block(t)
             || !t.is_empty() && (t.chars().all(|c| c == '=') || t.chars().all(|c| c == '-'))
     };
     !code && (source.contains("<!--") || source.contains("-->"))
@@ -363,27 +374,17 @@ fn wider_than_header(source: &str, blocks: &[Md]) -> bool {
         .any(|row| markdown::cells(row).len() > columns.len())
 }
 
-/// Whether `block`, read from `md`, writes it back (line breaks as
-/// spaces). Else `md` holds Markdown the editor does not model (reference
-/// links and definitions, footnotes, link titles, hard breaks, entities)
-/// and its chunk stays as written.
+/// Whether `block`, read from `md`, is written anew as the same text (line
+/// breaks as spaces): as `md`, or escaped otherwise only (`\_id`, `1\.`,
+/// `\<b>`). Else `md` holds Markdown the editor does not model
+/// ([`inline::unmodeled`], hard breaks) and its chunk stays as written.
 fn writes_back(block: &Block, md: &str) -> bool {
     let mut again = block.inline.to_markdown();
     if matches!(block.kind, Kind::Cell { .. }) {
         again = again.replace('|', "\\|");
     }
-    let flat = md.replace('\n', " ");
-    let same = again == flat
-        // After `### `, `- ` or `| ` the text starts no block: `1. x`
-        // needs no `1\. x`. A paragraph does need it.
-        || matches!(block.kind, Kind::Heading(_) | Kind::Item { .. } | Kind::Cell { .. }) && {
-            let digits = again.chars().take_while(char::is_ascii_digit).count();
-            again[digits..].starts_with('\\') && {
-                again.remove(digits);
-                again == flat
-            }
-        };
-    same && !md.contains("  \n")
+    let hard_break = md.contains("  \n") || md.contains("\\\n");
+    !hard_break && (again == md.replace('\n', " ") || !inline::unmodeled(md, &block.inline))
 }
 
 /// Whether a level-2 heading with this text names the chapter.
@@ -495,17 +496,88 @@ fn fenced(lang: &str, code: &str) -> String {
     format!("{fence}{lang}\n{code}{end}{fence}")
 }
 
-/// The Markdown of edited blocks; empty text blocks are dropped.
-fn write(blocks: &[Block]) -> String {
+/// The Markdown of a part's `blocks`: a run of them still as one of its
+/// `units` was read writes that unit's source, the other blocks are
+/// written anew; empty text blocks are dropped.
+fn write(blocks: &[Block], units: &[Unit]) -> String {
+    let texts = each(blocks);
+    let kept = kept(blocks, units, &texts);
     let mut out = String::new();
+    // The unit written last, if it was kept, and the kind of its last block.
+    let mut last: Option<(Option<usize>, &Kind)> = None;
+    let mut i = 0;
+    while i < blocks.len() {
+        let (end, unit, text) = match kept.iter().find(|(r, _)| r.start == i) {
+            Some((r, k)) => (r.end, Some(*k), units[*k].source.as_str()),
+            None => match &texts[i] {
+                Some(text) => (i + 1, None, text.as_str()),
+                None => {
+                    i += 1;
+                    continue;
+                }
+            },
+        };
+        out.push_str(match (last, unit) {
+            // Units next to each other as read keep the lines between.
+            (Some((Some(p), _)), Some(k)) if p + 1 == k => &units[k].gap,
+            _ => between(last.map(|(_, kind)| kind), &blocks[i].kind),
+        });
+        out.push_str(text);
+        last = Some((unit, &blocks[end - 1].kind));
+        i = end;
+    }
+    out
+}
+
+/// The runs of `blocks` still as a unit was read (in order), with their
+/// unit. A run next to a block written anew must be a block of its own
+/// there (a blank line between): else the block would join its list,
+/// quote or table, which is then written anew as a whole.
+fn kept(blocks: &[Block], units: &[Unit], texts: &[Option<String>]) -> Vec<(Range<usize>, usize)> {
+    let mut kept: Vec<(Range<usize>, usize)> = Vec::new();
+    let (mut i, mut u) = (0, 0);
+    while i < blocks.len() {
+        match (u..units.len()).find(|&k| blocks[i..].starts_with(&units[k].blocks)) {
+            Some(k) => {
+                let end = i + units[k].blocks.len();
+                kept.push((i..end, k));
+                (i, u) = (end, k + 1);
+            }
+            None => i += 1,
+        }
+    }
+    let unit_at = |kept: &[(Range<usize>, usize)], j: usize| {
+        kept.iter().find(|(r, _)| r.contains(&j)).map(|(_, k)| *k)
+    };
+    let fits = |kept: &[(Range<usize>, usize)], (r, k): &(Range<usize>, usize)| {
+        let apart = |a: usize, b: usize| between(Some(&blocks[a].kind), &blocks[b].kind) == "\n\n";
+        // The written blocks around the run.
+        let before = (0..r.start).rev().find(|&j| texts[j].is_some());
+        let after = (r.end..blocks.len()).find(|&j| texts[j].is_some());
+        before.is_none_or(|j| {
+            k.checked_sub(1)
+                .is_some_and(|p| unit_at(kept, j) == Some(p))
+                || apart(j, r.start)
+        }) && after.is_none_or(|j| unit_at(kept, j) == Some(k + 1) || apart(r.end - 1, j))
+    };
+    while let Some(m) = kept.iter().position(|run| !fits(&kept, run)) {
+        kept.remove(m);
+    }
+    kept
+}
+
+/// Each block's Markdown as written anew, without what goes between
+/// blocks; `None` for one not written.
+fn each(blocks: &[Block]) -> Vec<Option<String>> {
     // Per list depth: the marker width, for the indent below it.
     let mut widths: Vec<usize> = Vec::new();
-    let mut prev: Option<&Kind> = None;
+    let mut all = Vec::with_capacity(blocks.len());
     for (i, (b, entry)) in blocks.iter().zip(list_entries(blocks)).enumerate() {
         if !written(b) {
+            all.push(None);
             continue;
         }
-        out.push_str(between(prev, &b.kind));
+        let mut out = String::new();
         let text = b.inline.to_markdown();
         match &b.kind {
             Kind::Paragraph => out.push_str(&text),
@@ -545,9 +617,9 @@ fn write(blocks: &[Block]) -> String {
             Kind::Diagram { source, .. } => out.push_str(source),
             Kind::Code { lang } => out.push_str(&fenced(lang, &b.inline.text)),
         }
-        prev = Some(&b.kind);
+        all.push(Some(out));
     }
-    out
+    all
 }
 
 #[cfg(test)]
@@ -703,9 +775,7 @@ Ende.
     #[test]
     fn edited_parts_write_markdown_that_reads_back_the_same() {
         let mut doc = Doc::parse(CHAPTER, &chapter_five(CHAPTER));
-        for part in parts(&mut doc) {
-            part.edit();
-        }
+        rewrite_all(&mut doc);
         let md = doc.to_markdown();
         let mut again = Doc::parse(&md, &chapter_five(&md));
         let blocks = |d: &mut Doc| -> Vec<Vec<Block>> {
@@ -721,8 +791,8 @@ Ende.
     }
 
     /// Markdown the editor does not model (reference links and their
-    /// definitions, footnotes, link titles, hard breaks) is not written
-    /// again when another paragraph is edited.
+    /// definitions, footnotes, link titles, hard breaks, autolinks, double
+    /// backtick code) is not editable: writing it again would lose it.
     #[test]
     fn text_the_editor_does_not_model_survives_an_edit_elsewhere() {
         let kept = [
@@ -731,16 +801,15 @@ Ende.
             "[^1]: Eine Fußnote.",
             "Ein [Link](https://example.org \"Titel\").",
             "Zeile eins  \nZeile zwei",
+            "Zeile eins\\\nZeile zwei",
+            "Siehe <https://example.org> oder <a@b.de>.",
+            "Code ``a`b`` hier.",
+            "Ein __fettes__ Wort.",
         ];
         let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
-        let mut doc = Doc::parse(&md, &[]);
-        assert_eq!(doc.to_markdown(), md, "untouched");
-        parts(&mut doc)[0].edit()[0].inline = Inline::plain("Neu.");
-        let written = doc.to_markdown();
-        assert!(written.starts_with("Neu.\n\n"), "{written}");
-        assert!(
-            written.ends_with(&format!("{}\n", kept.join("\n\n"))),
-            "{written}"
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
         );
     }
 
@@ -864,9 +933,7 @@ Ende.
             ]
         );
         assert_eq!(doc.to_markdown(), md);
-        for part in parts(&mut doc) {
-            part.edit();
-        }
+        rewrite_all(&mut doc);
         let written = doc.to_markdown();
         let mut again = Doc::parse(&written, &[]);
         let texts = |d: &mut Doc| -> Vec<Vec<Block>> {
@@ -901,9 +968,12 @@ Ende.
         assert_eq!(all[1].blocks().len(), 7, "{:?}", all[1].blocks());
         all[0].edit()[0].inline = Inline::plain("Neu.");
         assert_eq!(doc.to_markdown(), format!("Neu.\n\n---\n\n{own}"));
-        parts(&mut doc)[1].edit();
+        parts(&mut doc)[1].units.clear();
         let written = doc.to_markdown();
-        assert!(written.contains("- 1\\. Schritt\n- 2\\. Punkt"), "{written}");
+        assert!(
+            written.contains("- 1\\. Schritt\n- 2\\. Punkt"),
+            "{written}"
+        );
         assert!(written.contains("\n\n1990\\. war ein Jahr."), "{written}");
         let mut again = Doc::parse(&written, &[]);
         let blocks = |d: &mut Doc| -> Vec<Block> {
@@ -926,10 +996,25 @@ Ende.
         }
     }
 
-    /// Edit the first part's first block; every other byte stays.
-    fn edit_first(md: &str) -> String {
+    /// Every editable block written anew, as if each one were edited.
+    fn rewrite_all(doc: &mut Doc) {
+        for part in parts(doc) {
+            part.units.clear();
+        }
+    }
+
+    /// Edit the first part's first block; every other byte stays. `kept`
+    /// stays even when every editable block is written anew: an edit of
+    /// its own block cannot lose it.
+    fn edit_first(md: &str, kept: &[&str]) -> String {
         let mut doc = Doc::parse(md, &[]);
         assert_eq!(doc.to_markdown(), md, "untouched");
+        let mut all = doc.clone();
+        rewrite_all(&mut all);
+        let all = all.to_markdown();
+        for k in kept {
+            assert!(all.contains(k), "lost: {k}\n{all}");
+        }
         parts(&mut doc)[0].edit()[0].inline = Inline::plain("Neu.");
         doc.to_markdown()
     }
@@ -944,7 +1029,10 @@ Ende.
             "### Titel <!-- {#a} -->",
         ];
         let md = format!("Erster Absatz.\n\n{}\n\nLetzter.\n", kept.join("\n\n"));
-        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
         // The end of a comment begun on the line before stays too.
         let md = "<!-- a\nb --> Text\n\nLetzter.\n";
         let mut doc = Doc::parse(md, &[]);
@@ -980,7 +1068,10 @@ Ende.
             "dienste:\n    - web\n    - db",
         ];
         let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
-        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
     }
 
     /// A fence with more than a language after it, or indented under a
@@ -994,7 +1085,10 @@ Ende.
             "```rust\nfn a() {}\n```  ",
         ];
         let md = format!("Erster Absatz.\n\n{}\n", kept.join("\n\n"));
-        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
     }
 
     /// Code holding a line of three backticks gets a longer fence, so the
@@ -1019,10 +1113,13 @@ Ende.
     #[test]
     fn continuation_lines_stay_in_their_entry() {
         let md = "Erster Absatz.\n\n- Punkt\nweiter\n\n1. Schritt\n   Details\n2. Zwei\n";
-        let written = edit_first(md);
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let last = all[0].edit().last_mut().unwrap();
+        last.inline = Inline::plain("Neu.");
         assert_eq!(
-            written,
-            "Neu.\n\n- Punkt weiter\n1. Schritt Details\n2. Zwei\n"
+            doc.to_markdown(),
+            "Erster Absatz.\n\n- Punkt weiter\n1. Schritt Details\n2. Neu.\n"
         );
     }
 
@@ -1034,7 +1131,10 @@ Ende.
         let kept = ["Ein _coffee_ bitte.", "![logo](img/logo.png)"];
         let link = "Siehe [the spec](https://example.com/a_(b)).";
         let md = format!("Erster Absatz.\n\n{}\n\n{link}\n", kept.join("\n\n"));
-        assert_eq!(edit_first(&md), md.replacen("Erster Absatz.", "Neu.", 1));
+        assert_eq!(
+            edit_first(&md, &kept),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
         let mut doc = Doc::parse(&md, &[]);
         let editable: Vec<String> = parts(&mut doc)
             .iter()
@@ -1043,12 +1143,76 @@ Ende.
         assert_eq!(editable, ["Erster Absatz.", "Siehe the spec."]);
     }
 
+    /// Paragraphs the writer would only escape otherwise (`_` at a word
+    /// edge, inline HTML, `<`, `*`, entities) are editable; an edit of
+    /// another block of their part leaves them byte for byte.
+    #[test]
+    fn paragraphs_the_writer_escapes_otherwise_are_editable() {
+        let own = [
+            "Die Spalte _id ist neu.",
+            "<kbd>Ctrl</kbd> drücken",
+            "List<String>, 2 * 3 &amp; a <br> b",
+        ];
+        let md = format!("Erster Absatz.\n\n{}\n", own.join("\n\n"));
+        let mut doc = Doc::parse(&md, &[]);
+        let texts: Vec<String> = parts(&mut doc)
+            .iter()
+            .flat_map(|p| p.blocks().iter().map(|b| b.inline.text.clone()))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                "Erster Absatz.",
+                "Die Spalte _id ist neu.",
+                "<kbd>Ctrl</kbd> drücken",
+                "List<String>, 2 * 3 & a <br> b"
+            ]
+        );
+        assert_eq!(
+            edit_first(&md, &[]),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
+    }
+
+    /// An edit rewrites only the block it changes, in the writer's escapes,
+    /// which read back as the same text; the blocks around keep their bytes.
+    #[test]
+    fn an_edit_rewrites_only_the_block_it_changes() {
+        let md = "Die Spalte _id ist neu.\n\n<kbd>Ctrl</kbd> drücken\n\nList<String>\n";
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let blocks = all[0].edit();
+        let end = blocks[1].inline.text.len();
+        blocks[1].inline.insert(end, "!", &Default::default());
+        let written = doc.to_markdown();
+        assert_eq!(
+            written,
+            "Die Spalte _id ist neu.\n\n\\<kbd>Ctrl\\</kbd> drücken!\n\nList<String>\n"
+        );
+        let mut again = Doc::parse(&written, &[]);
+        assert_eq!(parts(&mut again)[0].blocks(), parts(&mut doc)[0].blocks());
+    }
+
+    /// A block that joins a list as read makes it one list written anew,
+    /// not the list as read with an entry in another form after it.
+    #[test]
+    fn an_entry_added_to_a_list_writes_the_list_anew() {
+        let md = "Text.\n\n* eins\n* zwei\n";
+        let mut doc = Doc::parse(md, &[]);
+        let mut all = parts(&mut doc);
+        let blocks = all[0].edit();
+        let mut new = blocks[2].clone();
+        new.inline = Inline::plain("drei");
+        blocks.push(new);
+        assert_eq!(doc.to_markdown(), "Text.\n\n- eins\n- zwei\n- drei\n");
+    }
+
     /// Two tables with a blank line between are one part; edited, they
     /// are still written as two tables.
     #[test]
     fn two_tables_in_a_part_stay_two() {
         let md = "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n| c | d |\n| --- | --- |\n| 3 | 4 |\n";
-        assert_eq!(edit_first(md), md.replacen("| a |", "| Neu. |", 1));
+        assert_eq!(edit_first(md, &[]), md.replacen("| a |", "| Neu. |", 1));
     }
 
     /// The reader drops cells beyond the header's; such a table stays as
@@ -1056,6 +1220,9 @@ Ende.
     #[test]
     fn a_row_wider_than_its_header_survives_an_edit_elsewhere() {
         let md = "Erster Absatz.\n\n| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n";
-        assert_eq!(edit_first(md), md.replacen("Erster Absatz.", "Neu.", 1));
+        assert_eq!(
+            edit_first(md, &["| 1 | 2 | 3 |"]),
+            md.replacen("Erster Absatz.", "Neu.", 1)
+        );
     }
 }

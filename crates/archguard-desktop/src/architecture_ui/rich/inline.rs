@@ -339,6 +339,54 @@ impl Inline {
     }
 }
 
+/// Whether inline Markdown `md`, read as `read`, holds what the reader
+/// does not model, so writing `read` anew would lose it: images, `` `` ``
+/// code, a `[` left as text (reference links, footnotes, link titles),
+/// autolinks (`<https://…>`) and `_` emphasis. Other differences to the
+/// writer's form are escapes that read the same (`_id`, `List<String>`,
+/// `2 * 3`, `&amp;`, inline HTML, which the editor shows as text).
+pub fn unmodeled(md: &str, read: &Inline) -> bool {
+    // The text outside code spans, which the writer escapes.
+    let text: Vec<char> = read
+        .text
+        .char_indices()
+        .filter(|(i, _)| {
+            !read
+                .spans
+                .iter()
+                .any(|s| s.mark == Mark::Code && s.range.contains(i))
+        })
+        .map(|(_, c)| c)
+        .collect();
+    let plain: String = text.iter().collect();
+    let autolink = plain.split('<').skip(1).any(|rest| {
+        rest.split_once('>').is_some_and(|(inside, _)| {
+            !inside.contains(char::is_whitespace) && inside.contains([':', '@'])
+        })
+    });
+    md.contains("![")
+        || md.contains("``")
+        || plain.contains(['[', ']'])
+        || autolink
+        || underscore_emphasis(&text)
+}
+
+/// Whether a `_` that may open emphasis comes before one that may close
+/// it (CommonMark: not inside a word, touching the text it marks).
+fn underscore_emphasis(c: &[char]) -> bool {
+    let word = |x: Option<&char>| x.is_some_and(|c| c.is_alphanumeric());
+    let space = |x: Option<&char>| x.is_none_or(|c| c.is_whitespace());
+    let mut open = false;
+    for (i, _) in c.iter().enumerate().filter(|(_, c)| **c == '_') {
+        let (before, after) = (i.checked_sub(1).and_then(|k| c.get(k)), c.get(i + 1));
+        if open && !space(before) && !word(after) {
+            return true;
+        }
+        open |= !space(after) && !word(before);
+    }
+    false
+}
+
 /// `l` without `range`: up to two pieces.
 fn cut(l: Span, range: &Range<usize>) -> Vec<Span> {
     if l.range.end <= range.start || range.end <= l.range.start {

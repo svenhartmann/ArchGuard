@@ -1364,6 +1364,28 @@ mod tests {
         assert_eq!(e.markdown(), "abcd\n");
     }
 
+    /// Typing, Enter and a kind change rewrite only the blocks they change;
+    /// the others keep their bytes (`_id`, not the writer's `\_id`).
+    #[test]
+    fn an_edit_leaves_the_other_blocks_as_written() {
+        let md = "Die Spalte _id ist neu.\n\n<kbd>Ctrl</kbd> drücken\n\nList<String>\n";
+        let mut e = editor(md);
+        e.place(at(&e, 2, 12), false);
+        e.type_text("!");
+        assert_eq!(e.markdown(), md.replace("List<String>", "List\\<String>!"));
+        e.enter();
+        e.set_kind(Kind::Heading(3));
+        e.type_text("Neu");
+        assert_eq!(
+            e.markdown(),
+            md.replace("List<String>", "List\\<String>!\n\n### Neu")
+        );
+        while e.can_undo() {
+            e.undo();
+        }
+        assert_eq!(e.markdown(), md);
+    }
+
     /// Tab in a paragraph, Backspace at the start and Delete at the end
     /// change nothing: no undo step, and redo stays.
     #[test]

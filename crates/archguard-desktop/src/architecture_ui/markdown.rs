@@ -393,6 +393,31 @@ pub(super) fn link(c: &[char], i: usize) -> Option<(usize, usize)> {
     (c[end] == ')' && end > mid + 2).then_some((mid, end))
 }
 
+/// The tags that start an HTML block (CommonMark, kind 6).
+const BLOCK_TAGS: &str = "address article aside base basefont blockquote body caption \
+    center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame \
+    frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu \
+    menuitem nav noframes ol optgroup option p param search section summary table \
+    tbody td tfoot th thead title tr track ul";
+
+/// Whether `line` (without its indent) starts an HTML block, as
+/// CommonMark reads it: `<pre>`, `<div>`, `<!…`, `<?…`, or a tag alone on
+/// its line. Inline HTML (`<kbd>Ctrl</kbd> drücken`) does not.
+pub(super) fn html_block(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('<') else {
+        return false;
+    };
+    let tag = rest.strip_prefix('/').unwrap_or(rest);
+    let len = tag.chars().take_while(char::is_ascii_alphanumeric).count();
+    let name = tag[..len].to_ascii_lowercase();
+    let after = &tag[len..];
+    let ends = after.is_empty() || after.starts_with([' ', '\t', '>']) || after.starts_with("/>");
+    rest.starts_with(['!', '?'])
+        || ["pre", "script", "style", "textarea"].contains(&name.as_str())
+        || ends && BLOCK_TAGS.split_whitespace().any(|t| t == name)
+        || line.trim_end().ends_with('>') && line.matches('<').count() == 1
+}
+
 /// Inline Markdown for `StyledText`: block syntax at a line start is
 /// escaped, so a cell "1. x" or "- x" stays text, not a list.
 pub fn inline_source(text: &str) -> String {
@@ -645,5 +670,27 @@ mod tests {
         assert_eq!(inline_source("- dash"), "\\- dash");
         assert_eq!(inline_source("# x"), "\\# x");
         assert_eq!(inline_source("**bold** text"), "**bold** text");
+    }
+
+    #[test]
+    fn html_blocks_start_with_block_tags_or_a_tag_alone() {
+        for line in [
+            "<pre>",
+            "<div class=\"x\">",
+            "</table>",
+            "<!DOCTYPE html>",
+            "<br>",
+            "<x-y />",
+        ] {
+            assert!(html_block(line), "{line}");
+        }
+        for line in [
+            "<kbd>Ctrl</kbd> drücken",
+            "<span>a</span> b",
+            "a <div>",
+            "<3 Rust",
+        ] {
+            assert!(!html_block(line), "{line}");
+        }
     }
 }
