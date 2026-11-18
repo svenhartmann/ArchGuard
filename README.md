@@ -113,6 +113,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
 | Compare with a Git revision | `archguard review . --base main --format html` |
 | Inspect effective configuration | `archguard config . --format json` |
+| SBOM of third-party dependencies (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
 
 Use `archguard --help` and `archguard <command> --help` for the complete command reference. The viewer also includes CLI help and natural-language MCP examples.
 
@@ -121,6 +122,21 @@ Arc42 generation updates explicitly marked evidence blocks. Your text outside th
 ### Compare findings with an expert assessment
 
 `archguard evaluate --init .` writes `.archguard/assessment.toml` with every current finding as an unjudged stub; it never overwrites an existing file. An expert records the problems they see (`[[expected]]`, with kind and node globs) and judges findings (`verdict = "true_positive"` or `"false_positive"`; empty means not judged). `archguard evaluate . [--assessment FILE] [--format json]` then reports recall (matched expected problems / expected problems), precision (true positives / judged current findings), unjudged findings, missed expected problems with reason and stale verdicts, and warns when the assessment revision is not `HEAD`. A metric with nothing counted is "not measured", never 0. ArchGuard never writes verdicts itself, and `evaluate` is not a gate. The MCP tool `evaluation` returns the same result. Format and matching rules: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).
+
+### SBOM and licence policy
+
+`archguard sbom .` lists the third-party dependencies that the lockfiles and manifests in the repository state: `Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `packages.lock.json` (else `*.csproj` `PackageReference`), `pom.xml`, `gradle.lockfile`, `go.mod`, `poetry.lock`, `uv.lock` (else `requirements*.txt` / `pyproject.toml`) and `composer.lock` (else `composer.json`). It reads no registry and needs no network. `--format cyclonedx` writes CycloneDX 1.6 JSON with purl, version, scope and the manifests (projects/services) of each component; `--format json` and text give a summary. Licences come only from files that state them (`package-lock.json`, `composer.lock`); every other licence is `unknown`, never fetched or guessed. Workspace members and path/editable/project references are first-party and not listed; `fixtures/` is test data and skipped.
+
+A licence policy in `.archguard/archguard.toml` makes `archguard check` fail (exit 1, one `license` finding per component, also in SARIF):
+
+```toml
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause"]  # SPDX ids; non-empty = everything else violates
+deny = ["GPL-3.0-only"]                         # always violates
+unknown = "allow"                               # "deny": a dependency without stated licence violates
+```
+
+SPDX expressions are evaluated (`OR`: one allowed branch is enough, `AND`: all branches must pass). `unknown` is its own state and only a violation with `unknown = "deny"`. The MCP tool `sbom` returns the same data in pages. Decision: [ADR 0016](docs/adr/0016-sbom-and-licence-policy.md).
 
 ## Configuration and project data
 
