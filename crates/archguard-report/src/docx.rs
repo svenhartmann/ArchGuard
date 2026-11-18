@@ -52,6 +52,8 @@ struct Writer {
     links: Vec<String>,
     link: Option<usize>,
     code: Option<String>,
+    /// The lines of an open HTML block.
+    html: Option<String>,
 }
 
 impl Writer {
@@ -141,9 +143,8 @@ impl Writer {
             }
             // Comments are editing hints of the Markdown file; other HTML
             // (e.g. a type like `List<T>` in prose) is kept as text.
-            Event::Html(h) | Event::InlineHtml(h) if !h.trim_start().starts_with("<!--") => {
-                self.run(h.trim_end_matches('\n'), false)
-            }
+            Event::Html(h) => self.html.get_or_insert_default().push_str(&h),
+            Event::InlineHtml(h) if !h.starts_with("<!--") => self.run(&h, false),
             _ => {}
         }
     }
@@ -186,6 +187,15 @@ impl Writer {
         }
     }
 
+    /// An HTML block other than a comment is kept as text.
+    fn html_end(&mut self) {
+        let html = self.html.take().unwrap_or_default();
+        if !html.trim_start().starts_with("<!--") {
+            self.run(html.trim_end(), false);
+            self.close();
+        }
+    }
+
     fn code_start(&mut self, kind: CodeBlockKind<'_>) {
         self.close();
         if let CodeBlockKind::Fenced(lang) = kind
@@ -202,6 +212,7 @@ impl Writer {
     fn end(&mut self, tag: TagEnd) {
         match tag {
             TagEnd::Paragraph | TagEnd::Item => self.close(),
+            TagEnd::HtmlBlock => self.html_end(),
             TagEnd::Heading(_) => {
                 self.close();
                 self.style = None;
@@ -383,7 +394,7 @@ mod tests {
         text
     }
 
-    const MD: &str = "# arc42\n\nScope **cs** & <x>.\n\n## 1. Intro\n\n<!-- archguard:arc42:01:start -->\n### Goals\n\n- one\n- [two](https://arc42.org/)\n\n| Source | Files |\n| --- | ---: |\n| a\\|b | 3 |\n\n```mermaid\nflowchart LR\n  e0[\"a\"]\n```\n\n1. first\n";
+    const MD: &str = "# arc42\n\nScope **cs** & <x>.\n\n## 1. Intro\n\n<!-- archguard:arc42:01:start -->\n### Goals\n\n<!-- multi\nline note -->\n\n- one\n- [two](https://arc42.org/)\n\n| Source | Files |\n| --- | ---: |\n| a\\|b | 3 |\n\n```mermaid\nflowchart LR\n  e0[\"a\"]\n```\n\n1. first\n";
 
     #[test]
     fn headings_use_word_heading_styles() {
@@ -416,6 +427,10 @@ mod tests {
         assert!(
             !doc.contains("archguard:arc42"),
             "comments are dropped: {doc}"
+        );
+        assert!(
+            !doc.contains("line note"),
+            "multi-line comments are dropped: {doc}"
         );
         assert_eq!(doc.matches("<w:numId w:val=\"1\"/>").count(), 2, "{doc}");
         assert_eq!(doc.matches("<w:numId w:val=\"2\"/>").count(), 1, "{doc}");

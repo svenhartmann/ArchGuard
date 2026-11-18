@@ -98,7 +98,8 @@ impl Writer {
                 };
                 self.top().push_str(&code);
             }
-            Event::Html(h) => self.html(&h),
+            // Lines of an HTML block, collected until its end.
+            Event::Html(h) => self.top().push_str(&h),
             Event::InlineHtml(h) if !h.starts_with("<!--") => {
                 let text = literal(&h);
                 self.top().push_str(&text);
@@ -151,6 +152,7 @@ impl Writer {
                 self.cell = true;
                 self.out.push(String::new());
             }
+            Tag::HtmlBlock => self.out.push(String::new()),
             tag => self.start_inline(tag),
         }
     }
@@ -227,6 +229,11 @@ impl Writer {
                 let text = self.out.pop().unwrap_or_default();
                 self.top().push_str(&format!("| {} ", text.trim()));
             }
+            TagEnd::HtmlBlock => {
+                let html = self.out.pop().unwrap_or_default();
+                self.block_start();
+                self.html(&html);
+            }
             tag => self.end_inline(tag),
         }
     }
@@ -301,7 +308,12 @@ mod tests {
         );
         assert!(a.contains("// archguard:arc42:01:start\n"), "{a}");
         assert!(a.contains("* one\n* two\n.. nested\n"), "{a}");
-        assert!(a.contains("// archguard:arc42:01:end\n"), "{a}");
+        assert!(
+            a.contains("two\n.. nested\n\n// archguard:arc42:01:end\n"),
+            "{a}"
+        );
+        let multi = adoc("text\n\n<!-- first\nsecond -->\n\nmore\n");
+        assert_eq!(multi, "text\n\n////\nfirst\nsecond\n////\n\nmore\n");
     }
 
     #[test]

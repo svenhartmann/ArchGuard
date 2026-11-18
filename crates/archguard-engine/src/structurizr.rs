@@ -18,6 +18,9 @@ pub fn c4_service<'t>(t: &'t ServiceTopology, name: &str) -> Result<&'t Service,
     let named: Vec<&Service> = t.services.iter().filter(|s| s.name == name).collect();
     match named.as_slice() {
         [s] => Ok(s),
+        [] if t.services.is_empty() => Err(format!(
+            "unknown service '{name}'; no services were found in the deployment configuration"
+        )),
         [] => Err(format!(
             "unknown service '{name}'; known: {}",
             ids(t.services.iter())
@@ -94,6 +97,12 @@ fn components<'s>(
             package.insert(file.id, package_of(file, &cut, &by_id).name.clone());
         }
     }
+    if package.is_empty() {
+        return Err(ArchguardError::Config(format!(
+            "no analysed source file lies in '{dir}' of service '{}'; its components are unknown",
+            s.id
+        )));
+    }
     let mut relations = BTreeMap::new();
     for e in &graph.edges {
         if let (Some(a), Some(b)) = (package.get(&e.from), package.get(&e.to))
@@ -168,6 +177,15 @@ mod tests {
         assert!(!dsl.contains("component \"app"), "{dsl}");
         assert!(dsl.contains("\"1 source reference\" \"import\""), "{dsl}");
         assert!(dsl.contains("\"HTTP, configured\" \"HTTP\""), "{dsl}");
+        let billing = c4_service(&t, "compose.yaml::billing").unwrap();
+        let mut elsewhere = billing.clone();
+        elsewhere.build_context = Some("docs".into());
+        let err = structurizr_workspace(root, &run.config, &run.graph, &t, Some(&elsewhere));
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("components are unknown")
+        );
         assert!(
             c4_service(&t, "nope")
                 .unwrap_err()
