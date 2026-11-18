@@ -207,7 +207,13 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
         // Non-visibility modifiers may precede the type keyword, in any order.
         let mut body = body;
         while let Some(rest) = [
-            "abstract", "final", "static", "sealed", "strictfp", "default",
+            "abstract",
+            "final",
+            "static",
+            "sealed",
+            "non-sealed",
+            "strictfp",
+            "default",
         ]
         .iter()
         .find_map(|modifier| strip_word(body, modifier))
@@ -290,6 +296,15 @@ mod visibility_tests {
         assert!(visibility.internal.contains("Helper"));
         assert!(visibility.internal.contains("Base"));
         assert!(visibility.exported.is_empty());
+    }
+
+    #[test]
+    fn non_sealed_types_are_recorded() {
+        let visibility = scan_visibility(
+            "public non-sealed class Open extends Shape {}\nnon-sealed interface Inner extends Api {}\n",
+        );
+        assert!(visibility.exported.contains("Open"));
+        assert!(visibility.internal.contains("Inner"));
     }
 
     #[test]
