@@ -4,6 +4,7 @@
 //! strings, nested comments and raw-string bodies never create symbols.
 
 use crate::extract::{Extraction, Extractor};
+use crate::ident::first_identifier_with_dollar;
 use crate::walk::Lang;
 
 /// Rust scanner (T08), registered so the walk keeps Rust files.
@@ -78,9 +79,9 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
                     .rsplit_once(" as ")
                     .map(|(_, alias)| alias)
                     .unwrap_or(tail.rsplit("::").next().unwrap_or(tail));
-                first_identifier(tail)
+                first_identifier_with_dollar(tail)
             } else {
-                first_identifier(after)
+                first_identifier_with_dollar(after)
             };
             if let Some(name) = name {
                 if exported {
@@ -96,6 +97,7 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
 }
 
 /// The rest of the line after `keyword`, only when it is a whole word.
+// Own copy, not crate::ident: the keyword may touch punctuation (`pub(crate)`) or end the line.
 fn strip_word<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(keyword)?;
     (!rest
@@ -103,26 +105,6 @@ fn strip_word<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
         .next()
         .is_some_and(|c| c.is_alphanumeric() || c == '_'))
     .then_some(rest.trim_start())
-}
-
-/// First identifier token of `text`, `None` when there is none.
-fn first_identifier(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0usize;
-    while index < chars.len()
-        && !chars[index].is_alphanumeric()
-        && chars[index] != '_'
-        && chars[index] != '$'
-    {
-        index += 1;
-    }
-    let start = index;
-    while index < chars.len()
-        && (chars[index].is_alphanumeric() || chars[index] == '_' || chars[index] == '$')
-    {
-        index += 1;
-    }
-    (index > start).then(|| chars[start..index].iter().collect())
 }
 
 #[cfg(test)]

@@ -311,6 +311,7 @@ impl<'a> Code<'a> {
     }
 }
 
+// Own copy, not crate::ident: checks only the first character of an already lexed token.
 fn is_identifier(word: &str) -> bool {
     word.starts_with(|c: char| c.is_alphabetic() || c == '_')
 }

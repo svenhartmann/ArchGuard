@@ -3,6 +3,7 @@
 //! scanner; dynamic loading, preprocessing and runtime resolution remain unsupported.
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::{is_identifier, strip_word};
 use crate::walk::Lang;
 use serde_json::Value;
 
@@ -310,15 +311,6 @@ fn symbol(segments: &[&str], stem: Option<&str>) -> Option<TargetSpec> {
     })
 }
 
-/// The remainder of `code` after the whole word `word` (followed by
-/// whitespace) and its trailing whitespace, `None` when `code` does not
-/// open with that word plus a non-empty remainder.
-fn strip_word<'a>(code: &'a str, word: &str) -> Option<&'a str> {
-    let rest = code.strip_prefix(word)?;
-    let trimmed = rest.trim_start();
-    (!trimmed.is_empty() && trimmed.len() != rest.len()).then_some(trimmed)
-}
-
 /// The name part of a spec with an optional ` as Alias` suffix, `None` for
 /// a malformed alias. The alias itself carries no module information.
 fn strip_alias(spec: &str) -> Option<&str> {
@@ -354,14 +346,6 @@ fn ns_segments(spec: &str) -> Option<Vec<&str>> {
     spec.split('\\')
         .map(|segment| is_identifier(segment).then_some(segment))
         .collect()
-}
-
-/// `true` for a plain PHP identifier (digits up front, namespaces
-/// separators and stray characters never match).
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
-        && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// The PSR-4 mappings of a `composer.json` document, as pairs of
@@ -491,10 +475,11 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
 
 /// Drop remaining leading modifiers that carry no visibility meaning.
 fn strip_visibility_noise(mut body: &str) -> &str {
-    for modifier in ["final", "abstract", "static", "readonly"] {
-        while let Some(rest) = strip_word(body, modifier) {
-            body = rest;
-        }
+    while let Some(rest) = ["final", "abstract", "static", "readonly"]
+        .iter()
+        .find_map(|modifier| strip_word(body, modifier))
+    {
+        body = rest;
     }
     body
 }
@@ -511,6 +496,7 @@ fn member_or_fn_name(body: &str) -> Option<String> {
 
 /// First identifier token of `text` (ignoring a leading `$`), `None`
 /// when there is none.
+// Own copy, not crate::ident: `$` belongs to the token but is dropped from the name.
 fn first_identifier(text: &str) -> Option<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut index = 0usize;
@@ -554,6 +540,16 @@ mod visibility_tests {
             scan_visibility("class C {\n  public function _hidden() {}\n  private $_x = 1;\n}\n");
         assert!(visibility.internal.contains("hidden"));
         assert!(visibility.internal.contains("x"));
+    }
+
+    #[test]
+    fn class_modifiers_are_stripped_in_any_order() {
+        let visibility = scan_visibility(
+            "<?php\nreadonly final class X {}\nfinal readonly class Y {}\nabstract readonly class Z {}\n",
+        );
+        for name in ["X", "Y", "Z"] {
+            assert!(visibility.exported.contains(name), "{name}");
+        }
     }
 
     #[test]

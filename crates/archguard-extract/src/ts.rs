@@ -3,6 +3,7 @@
 //! expressions remain unresolved. No project code or package installation is executed.
 
 use crate::extract::{Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::first_identifier_with_dollar;
 use crate::walk::Lang;
 
 /// TypeScript/JavaScript scanner (T09).
@@ -179,7 +180,7 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
         } else {
             for keyword in ["function", "class", "const", "let", "var"] {
                 if let Some(rest) = strip_keyword(line, keyword) {
-                    if let Some(name) = first_identifier(rest) {
+                    if let Some(name) = first_identifier_with_dollar(rest) {
                         visibility.internal.insert(name);
                     }
                     break;
@@ -187,7 +188,7 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
             }
             continue;
         };
-        if let Some(name) = first_identifier(is_member) {
+        if let Some(name) = first_identifier_with_dollar(is_member) {
             visibility.internal.insert(name);
         }
     }
@@ -204,7 +205,7 @@ fn collect_exported(rest: &str, visibility: &mut archguard_core::Visibility) {
             let name = part.split(" as ").next().unwrap_or(part).trim();
             if !name.is_empty()
                 && !name.starts_with("type ")
-                && let Some(name) = first_identifier(name)
+                && let Some(name) = first_identifier_with_dollar(name)
             {
                 visibility.exported.insert(name);
             }
@@ -230,14 +231,14 @@ fn collect_exported(rest: &str, visibility: &mut archguard_core::Visibility) {
         "namespace",
     ] {
         if let Some(inner) = strip_keyword(rest, keyword) {
-            if let Some(name) = first_identifier(inner) {
+            if let Some(name) = first_identifier_with_dollar(inner) {
                 visibility.exported.insert(name);
             }
             return;
         }
     }
     // `export Foo;` (re-export of a binding).
-    if let Some(name) = first_identifier(rest) {
+    if let Some(name) = first_identifier_with_dollar(rest) {
         visibility.exported.insert(name);
     }
 }
@@ -251,20 +252,6 @@ fn strip_keyword<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
 /// True when the next character continues the keyword identifier.
 fn is_ident_continuation(rest: &str) -> bool {
     rest.chars().next().is_some_and(is_ident_char)
-}
-
-/// First identifier token of `text`, `None` when there is none.
-fn first_identifier(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0usize;
-    while index < chars.len() && !is_ident_char(chars[index]) && chars[index] != '$' {
-        index += 1;
-    }
-    let start = index;
-    while index < chars.len() && (is_ident_char(chars[index]) || chars[index] == '$') {
-        index += 1;
-    }
-    (index > start).then(|| chars[start..index].iter().collect())
 }
 
 #[cfg(test)]

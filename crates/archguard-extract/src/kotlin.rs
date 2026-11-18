@@ -22,6 +22,7 @@ pub use symbols::{
 };
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::is_identifier;
 use crate::lex::Flavor;
 use crate::walk::Lang;
 
@@ -156,11 +157,6 @@ fn import_target(words: &[&str]) -> Option<TargetSpec> {
         path: path.join("/"),
         stem,
     })
-}
-
-fn is_identifier(word: &str) -> bool {
-    word.starts_with(|c: char| c.is_alphabetic() || c == '_')
-        && word.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

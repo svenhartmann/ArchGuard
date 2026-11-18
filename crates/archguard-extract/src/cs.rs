@@ -3,6 +3,7 @@
 //! scanner; dynamic loading, preprocessing and runtime resolution remain unsupported.
 
 use crate::extract::{Declaration, Extraction, Extractor, RawImport, TargetSpec};
+use crate::ident::{first_identifier, is_identifier, strip_word};
 use crate::walk::Lang;
 
 /// C# scanner (T42). See the [module documentation](self) for the emitted
@@ -168,15 +169,6 @@ fn symbol(segments: &[&str], stem: Option<&str>) -> Option<TargetSpec> {
     })
 }
 
-/// The remainder of `code` after the whole word `word` (followed by
-/// whitespace) and its trailing whitespace, `None` when `code` does not
-/// open with that word plus a non-empty remainder.
-fn strip_word<'a>(code: &'a str, word: &str) -> Option<&'a str> {
-    let rest = code.strip_prefix(word)?;
-    let trimmed = rest.trim_start();
-    (!trimmed.is_empty() && trimmed.len() != rest.len()).then_some(trimmed)
-}
-
 /// The segments of a dotted namespace path `A.B.C` (whitespace around the
 /// dots is tolerated, as C# itself allows), `None` when the string is not a
 /// sequence of non-empty identifier segments.
@@ -193,14 +185,6 @@ fn dotted_segments(dotted: &str) -> Option<Vec<&str>> {
             is_identifier(segment).then_some(segment)
         })
         .collect()
-}
-
-/// `true` for a plain C# identifier (keywords with punctuation, digits up
-/// front, `::` qualifiers and stray characters never match).
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
-        && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Exported/internal symbol split of one file (WP-02).
@@ -262,20 +246,6 @@ pub fn scan_visibility(content: &str) -> archguard_core::Visibility {
     visibility
 }
 
-/// First identifier token of `text`, `None` when there is none.
-fn first_identifier(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut index = 0usize;
-    while index < chars.len() && !(chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    let start = index;
-    while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
-        index += 1;
-    }
-    (index > start).then(|| chars[start..index].iter().collect())
-}
-
 #[cfg(test)]
 mod visibility_tests {
     use super::*;
@@ -286,6 +256,15 @@ mod visibility_tests {
             scan_visibility("public unsafe partial struct X {}\nnew static class Y {}\n");
         assert!(visibility.exported.contains("X"));
         assert!(visibility.internal.contains("Y"));
+    }
+
+    #[test]
+    fn access_modifier_pairs_are_skipped() {
+        let visibility = scan_visibility(
+            "protected internal class Shared {}\ninternal unsafe partial class Native {}\n",
+        );
+        assert!(visibility.internal.contains("Shared"));
+        assert!(visibility.internal.contains("Native"));
     }
 
     #[test]
