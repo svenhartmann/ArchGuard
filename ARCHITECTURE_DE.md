@@ -312,7 +312,7 @@ Kanten nur zwischen `file`-Knoten. Alle Listen stabil sortiert.
 
 1. **Deklaration laden:** die Projektconfig nach der [Dateipriorität](README_DE.md#konfiguration-und-projektdaten) lesen — nicht geschriebene Abschnitte und Werte erhalten ihren dokumentierten Default (Kap. 11); ein Abschnittskopf ohne Werte deklariert nichts. Auflösung: `deklariert ⇐ abgeleitet ⇐ Default`.
 2. **Vorarbeit ableiten:** `[project]` nicht deklariert → Source-Roots + Sprachen aus Manifesten (PSR-4, `Cargo.toml`, tsconfig, pyproject) und Endungs-Statistik (Kap. 7, „Projekt-Ableitung").
-3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs.
+3. **Walken:** `ignore`-Crate (respektiert `.gitignore`), Filter nach bekannten Endungen + `exclude`-Globs (an der Wurzel verankert; ein getroffenes Verzeichnis fällt samt Inhalt weg, ein abschließendes `/` trifft nur Verzeichnisse; eine Regel in `archguard_extract::Excludes`).
 4. **Extrahieren:** je Datei der passende Scanner → Importe (`RawImport` mit `TargetSpec::Path` für relative Pfade oder `TargetSpec::Symbol` für Paket-/Namespace-Importe) **und** Deklarationen (`package`/`namespace` der Datei).
 5. **Auflösen (zweistufig):** Pfad-Specs gegen den Dateibaum; Symbol-Specs gegen die **Deklarations-Map** (Modulpfad → deklarierende Dateien, bei PHP ergänzt um das PSR-4-Mapping aus `composer.json`). Eindeutige Datei → Datei-Kante; nur Paket bekannt → Pseudoknoten `paket/*`; nichts gefunden → extern, Warnung, keine Kante.
 6. **Graph bauen:** `GraphBuilder` legt je Datei den Knoten **samt Verzeichnis-Vorfahrenkette** an (`ensure_path`); Kanten nur Datei → Datei (Interning, Dedup, Selbstkanten verwerfen).

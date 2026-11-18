@@ -163,6 +163,8 @@ SPDX-Ausdrücke werden ausgewertet (`OR`: ein erlaubter Zweig genügt, `AND`: al
 
 Die Konfiguration wird in dieser Reihenfolge gewählt: ausdrückliches `--config`, `.archguard/archguard.toml`, bisherige `archguard.toml`, danach abgeleitete Werte und Defaults. Relative Quellpfade beziehen sich auf das Projektverzeichnis. Eine fehlerhafte Konfiguration wird gemeldet und nicht stillschweigend ersetzt.
 
+`project.exclude` enthält Globs über Pfade relativ zum Projektverzeichnis, verankert an dessen Wurzel: `vendor` meint `./vendor`, nicht `a/vendor`; `**/vendor` trifft jede Tiefe. Wie in `.gitignore` schließt ein Muster, das ein Verzeichnis trifft, alles darunter aus, und das Verzeichnis wird nicht betreten: `vendor`, `vendor/`, `vendor/**` und `**/generated` schließen ganze Verzeichnisse aus. Ein abschließendes `/` trifft nur Verzeichnisse, nie eine gleichnamige Datei. Negation (`!`) gibt es nicht. Dieselbe Regel gilt für den Quell-Walk, die Diensterkennung und die Abhängigkeitssuche.
+
 Für ein Projekt ohne vorhandene Konfiguration:
 
 ```sh

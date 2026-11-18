@@ -163,6 +163,8 @@ SPDX expressions are evaluated (`OR`: one allowed branch is enough, `AND`: all b
 
 Configuration precedence is: explicit `--config`, `.archguard/archguard.toml`, legacy `archguard.toml`, then derived values and defaults. Relative source paths are resolved against the project root. An invalid configuration is reported as an error rather than silently replaced.
 
+`project.exclude` holds globs over paths relative to the project root, anchored at the root: `vendor` means `./vendor`, not `a/vendor`; use `**/vendor` for any depth. As in `.gitignore`, a pattern that matches a directory excludes everything below it and the directory is not entered: `vendor`, `vendor/`, `vendor/**` and `**/generated` all exclude whole directories. A trailing `/` matches directories only, never a file of that name. Negation (`!`) is not supported. The same rule applies to the source walk, service discovery and dependency discovery.
+
 For a project without an existing configuration:
 
 ```sh

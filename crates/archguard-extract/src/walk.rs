@@ -99,17 +99,18 @@ fn is_manifest(name: &str) -> bool {
 /// An invalid exclude glob yields [`ArchguardError::Config`]; filesystem
 /// failures during the walk yield [`ArchguardError::Io`].
 pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, ArchguardError> {
-    let excluded = build_excluder(excludes)?;
-    let pruned_dirs = build_dir_pruner(excludes);
+    let excluded = Excludes::new(excludes)?;
     let walk_root = root.to_path_buf();
     let mut files = Vec::new();
     let mut projects = std::collections::BTreeSet::new();
     let walker = WalkBuilder::new(root)
         .require_git(false)
         .filter_entry(move |e| {
-            !(e.depth() > 0
-                && e.file_type().is_some_and(|t| t.is_dir())
-                && pruned_dirs.is_match(relative_path(&walk_root, e.path())))
+            e.depth() == 0
+                || !excluded.is_match(
+                    &relative_path(&walk_root, e.path()),
+                    e.file_type().is_some_and(|t| t.is_dir()),
+                )
         })
         .build();
     for entry in walker {
@@ -127,13 +128,9 @@ pub fn walk(root: &Path, excludes: &[String]) -> Result<Vec<SourceFile>, Archgua
         let Some(lang) = Lang::from_path(path) else {
             continue;
         };
-        let rel_path = relative_path(root, path);
-        if excluded.is_match(Path::new(&rel_path)) {
-            continue;
-        }
         files.push(SourceFile {
             path: path.to_path_buf(),
-            rel_path,
+            rel_path: relative_path(root, path),
             lang,
             project: String::new(),
         });
@@ -157,33 +154,58 @@ fn nearest_project(rel_path: &str, projects: &std::collections::BTreeSet<String>
     String::new()
 }
 
-/// A matcher for the directory part of every `dir/**` pattern: a directory
-/// it matches has every path below it excluded, so the walk skips it
-/// unentered. Other patterns may keep files below a matching directory, so
-/// they apply per file only; a prefix that does not compile on its own (e.g.
-/// a trailing escape) is left to the per-file check as well.
-fn build_dir_pruner(excludes: &[String]) -> GlobSet {
-    let mut builder = GlobSetBuilder::new();
-    for prefix in excludes.iter().filter_map(|p| p.strip_suffix("/**")) {
-        if let Ok(glob) = Glob::new(prefix) {
-            builder.add(glob);
-        }
-    }
-    builder.build().unwrap_or_else(|_| GlobSet::empty())
+/// The `project.exclude` rule, shared by every walk that applies it.
+///
+/// Patterns are globs over `/`-joined root-relative paths, anchored at the
+/// root (`vendor` is `vendor`, not `a/vendor`). A directory a pattern matches
+/// is excluded with everything below it, as in `.gitignore`: `vendor`,
+/// `vendor/`, `vendor/**` and `**/generated` all prune their directory. A
+/// trailing `/` matches directories only, never a file of that name.
+#[derive(Debug, Clone)]
+pub struct Excludes {
+    /// Patterns that match files and directories.
+    any: GlobSet,
+    /// Patterns that match directories only: `dir/` and the `dir` of `dir/**`.
+    dirs: GlobSet,
 }
 
-/// Compile the `exclude` patterns into a single matcher.
-fn build_excluder(excludes: &[String]) -> Result<GlobSet, ArchguardError> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in excludes {
-        let glob = Glob::new(pattern).map_err(|e| {
-            ArchguardError::Config(format!("invalid exclude glob `{pattern}`: {e}"))
-        })?;
-        builder.add(glob);
+impl Excludes {
+    /// Compile `patterns`; an invalid glob is an [`ArchguardError::Config`].
+    pub fn new(patterns: &[String]) -> Result<Self, ArchguardError> {
+        let (mut any, mut dirs) = (GlobSetBuilder::new(), GlobSetBuilder::new());
+        for pattern in patterns {
+            let invalid = |e: globset::Error| {
+                ArchguardError::Config(format!("invalid exclude glob `{pattern}`: {e}"))
+            };
+            if let Some(dir) = pattern.strip_suffix('/') {
+                dirs.add(Glob::new(dir).map_err(invalid)?);
+                continue;
+            }
+            any.add(Glob::new(pattern).map_err(invalid)?);
+            // `dir/**` excludes the directory itself too, so the walk skips it
+            // unentered; a prefix that does not compile alone (a trailing
+            // escape) keeps the per-entry meaning.
+            if let Some(Ok(dir)) = pattern.strip_suffix("/**").map(Glob::new) {
+                dirs.add(dir);
+            }
+        }
+        let build = |set: GlobSetBuilder| {
+            set.build().map_err(|e| {
+                ArchguardError::Config(format!("could not build exclude matcher: {e}"))
+            })
+        };
+        Ok(Self {
+            any: build(any)?,
+            dirs: build(dirs)?,
+        })
     }
-    builder
-        .build()
-        .map_err(|e| ArchguardError::Config(format!("could not build exclude matcher: {e}")))
+
+    /// Whether the entry at root-relative `rel_path` is excluded. Only the
+    /// entry itself is tested: a walk must prune a matching directory
+    /// (e.g. `ignore::WalkBuilder::filter_entry`) so nothing below it is seen.
+    pub fn is_match(&self, rel_path: &str, is_dir: bool) -> bool {
+        self.any.is_match(rel_path) || (is_dir && self.dirs.is_match(rel_path))
+    }
 }
 
 /// `path` relative to `root`, joined with `/` on every platform.
@@ -364,6 +386,47 @@ mod tests {
         let result = walk_dir(dir.path(), &["vendor/**"]);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(rel_paths(&result.unwrap()), ["src/main.rs"]);
+    }
+
+    /// `dir` and `dir/` exclude a directory like `.gitignore` does, and a
+    /// glob that matches a directory prunes it too: nothing below is
+    /// walked, and an unreadable directory inside does not fail the walk.
+    #[cfg(unix)]
+    #[test]
+    fn directory_patterns_exclude_and_prune_the_whole_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        for (pattern, excluded_dir) in [
+            ("vendor/", "vendor"),
+            ("vendor", "vendor"),
+            ("**/generated", "src/deep/generated"),
+            ("src/generated", "src/generated"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            touch(dir.path(), "src/main.rs");
+            touch(dir.path(), &format!("{excluded_dir}/a.rs"));
+            touch(dir.path(), &format!("{excluded_dir}/lib/b.py"));
+            let locked = dir.path().join(excluded_dir).join("locked");
+            std::fs::create_dir_all(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+            let result = walk_dir(dir.path(), &[pattern]);
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(rel_paths(&result.unwrap()), ["src/main.rs"], "{pattern}");
+        }
+    }
+
+    /// A trailing `/` names a directory only; without it a file matches too.
+    #[test]
+    fn trailing_slash_never_matches_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "gen.rs");
+        touch(dir.path(), "src/gen.rs/inner.rs");
+        let files = walk_dir(dir.path(), &["gen.rs/"]).unwrap();
+        assert_eq!(rel_paths(&files), ["gen.rs", "src/gen.rs/inner.rs"]);
+        let files = walk_dir(dir.path(), &["src/gen.rs/"]).unwrap();
+        assert_eq!(rel_paths(&files), ["gen.rs"]);
+        let files = walk_dir(dir.path(), &["gen.rs"]).unwrap();
+        assert_eq!(rel_paths(&files), ["src/gen.rs/inner.rs"]);
     }
 
     #[test]

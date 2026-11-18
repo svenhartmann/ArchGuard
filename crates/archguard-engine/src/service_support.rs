@@ -105,7 +105,7 @@ pub(crate) fn excluded(name: &str) -> bool {
 /// Shared discovery bounds for manifests and deployment declarations.
 /// Samples remain analyzable when explicitly selected as the analysis root.
 pub(crate) struct Discovery {
-    excludes: globset::GlobSet,
+    excludes: archguard_extract::Excludes,
 }
 impl Discovery {
     pub(crate) fn new(root: &Path, report: &mut ServiceTopology) -> Result<Self, ArchguardError> {
@@ -153,16 +153,8 @@ impl Discovery {
             }
             break;
         }
-        let mut builder = globset::GlobSetBuilder::new();
-        for pattern in &patterns {
-            builder.add(globset::Glob::new(pattern).map_err(|error| {
-                ArchguardError::Config(format!("invalid discovery exclude: {error}"))
-            })?);
-        }
         Ok(Self {
-            excludes: builder.build().map_err(|error| {
-                ArchguardError::Config(format!("invalid discovery exclusions: {error}"))
-            })?,
+            excludes: archguard_extract::Excludes::new(&patterns)?,
         })
     }
     pub(crate) fn walk(&self, root: &Path) -> ignore::Walk {
@@ -183,9 +175,8 @@ impl Discovery {
                 let path = relative(&scope_root, entry.path());
                 !excluded(&name)
                     && !matches!(name.as_ref(), "bin" | "obj")
-                    && !excludes.is_match(&path)
-                    && !(entry.file_type().is_some_and(|kind| kind.is_dir())
-                        && excludes.is_match(format!("{path}/")))
+                    && !excludes
+                        .is_match(&path, entry.file_type().is_some_and(|kind| kind.is_dir()))
             })
             .build()
     }
