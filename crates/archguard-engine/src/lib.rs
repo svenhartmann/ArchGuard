@@ -15,6 +15,11 @@ mod change_context;
 mod change_context_graph;
 mod class_cohesion;
 mod code_metrics;
+mod graphql;
+mod graphql_changes;
+mod graphql_contracts;
+mod graphql_model;
+mod graphql_scan;
 mod knowledge_metrics;
 mod measurement_runs;
 pub use code_metrics::{
@@ -126,6 +131,11 @@ pub use duplicates::{
 pub use effective::{
     AnalysisRun, analyze, analyze_cached, analyze_effective, analyze_run, analyze_run_quiet,
     derive_project_hints, effective_config_string,
+};
+pub use graphql_contracts::save_graphql_baseline;
+pub use graphql_model::{
+    GraphqlArgument, GraphqlChange, GraphqlContract, GraphqlField, GraphqlLink, GraphqlReport,
+    GraphqlType, GraphqlUnresolved,
 };
 pub use java_calls::analyze_java_calls;
 pub use kpi_payload::ReviewKpis;

@@ -21,6 +21,10 @@ pub struct ApiContractReport {
     pub contracts: Vec<ApiContract>,
     pub diagnostics: Vec<String>,
     pub limitations: Vec<String>,
+    /// GraphQL schemas and operation links read from the sources (ADR 0014);
+    /// never stored in the OpenAPI snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql: Option<crate::graphql_model::GraphqlReport>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiContract {
@@ -76,7 +80,7 @@ fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn empty() -> ApiContractReport {
-    ApiContractReport {schema_version:1,status:"not_imported".into(),contracts:vec![],diagnostics:vec![],limitations:vec![
+    ApiContractReport {schema_version:1,status:"not_imported".into(),contracts:vec![],diagnostics:vec![],graphql:None,limitations:vec![
         "OpenAPI 3.x HTTP operation/parameter/request/response projection, not a complete compatibility proof. Schema changes need review; authentication, callbacks, webhooks and runtime behavior are not compared.".into(),
         "Consumer usage is explicitly declared. Configured HTTP callers do not prove use of an operation. Comparison uses the previous explicit import, not a Git merge base.".into(),
         "Document hashes detect changes since import; producer/source revision is unverified. Local references only; no network access.".into(),
@@ -202,6 +206,17 @@ fn valid_snapshot(report: &ApiContractReport) -> bool {
         })
 }
 pub fn read_api_contracts(root: &Path, topology: &ServiceTopology) -> ApiContractReport {
+    with_graphql(read_snapshot(root, topology), root, topology)
+}
+fn with_graphql(
+    mut report: ApiContractReport,
+    root: &Path,
+    topology: &ServiceTopology,
+) -> ApiContractReport {
+    report.graphql = crate::graphql_contracts::read(root, topology);
+    report
+}
+fn read_snapshot(root: &Path, topology: &ServiceTopology) -> ApiContractReport {
     let mut report =
         match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return empty(),
@@ -611,7 +626,7 @@ pub fn import_api_contract(
         notes.insert("Webhook contracts are not analyzed.".into());
     }
     let operations = operations(&doc, &mut notes)?;
-    let mut saved = read_api_contracts(root, topology);
+    let mut saved = read_snapshot(root, topology);
     if saved.status == "error" {
         return Err(error(
             "Existing contract snapshot is invalid; it was preserved",
@@ -712,5 +727,5 @@ pub fn import_api_contract(
         return Err(error("Contract snapshot exceeds 8 MiB"));
     }
     crate::project_files::write_project_file(root, Path::new("contracts.json"), &bytes, true)?;
-    Ok(saved)
+    Ok(with_graphql(saved, root, topology))
 }

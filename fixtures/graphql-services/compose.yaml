@@ -1,0 +1,12 @@
+# Static example only. No containers are started by archguard.
+services:
+  users:
+    build: ./users
+  products:
+    build: ./products
+  web:
+    build: ./web
+    environment:
+      USERS_URL: http://users:4000/graphql
+  admin:
+    build: ./admin
