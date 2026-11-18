@@ -335,8 +335,9 @@ fn writes_back(block: &Block, md: &str) -> bool {
     }
     let flat = md.replace('\n', " ");
     let same = again == flat
-        // After `### ` the text starts no block: `1. x` needs no `1\. x`.
-        || matches!(block.kind, Kind::Heading(_)) && {
+        // After `### `, `- ` or `| ` the text starts no block: `1. x`
+        // needs no `1\. x`. A paragraph does need it.
+        || matches!(block.kind, Kind::Heading(_) | Kind::Item { .. } | Kind::Cell { .. }) && {
             let digits = again.chars().take_while(char::is_ascii_digit).count();
             again[digits..].starts_with('\\') && {
                 again.remove(digits);
@@ -820,5 +821,31 @@ Ende.
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].blocks()[0].kind, Kind::Heading(2));
         assert_eq!(all[0].blocks()[0].inline.text, "5.1 Whitebox");
+    }
+
+    /// List entries and cells may start with `1.` as written: the editor
+    /// writes `1\.` but the block reads the same. A paragraph needs the
+    /// escape (else it is a list) and is written with it.
+    #[test]
+    fn numbered_entries_and_cells_stay_editable() {
+        let own = "- 1. Schritt\n* 2. Punkt\n\n| Nr | Was |\n| --- | --- |\n| 1. a | b |\n\n1990\\. war ein Jahr.\n";
+        let md = format!("Vorne.\n\n---\n\n{own}");
+        let mut doc = Doc::parse(&md, &[]);
+        assert_eq!(doc.to_markdown(), md);
+        let mut all = parts(&mut doc);
+        assert_eq!(all.len(), 2);
+        // Two entries, four cells, the paragraph.
+        assert_eq!(all[1].blocks().len(), 7, "{:?}", all[1].blocks());
+        all[0].edit()[0].inline = Inline::plain("Neu.");
+        assert_eq!(doc.to_markdown(), format!("Neu.\n\n---\n\n{own}"));
+        parts(&mut doc)[1].edit();
+        let written = doc.to_markdown();
+        assert!(written.contains("- 1\\. Schritt\n- 2\\. Punkt"), "{written}");
+        assert!(written.contains("\n\n1990\\. war ein Jahr."), "{written}");
+        let mut again = Doc::parse(&written, &[]);
+        let blocks = |d: &mut Doc| -> Vec<Block> {
+            parts(d).iter().flat_map(|p| p.blocks().to_vec()).collect()
+        };
+        assert_eq!(blocks(&mut again), blocks(&mut doc), "{written}");
     }
 }
