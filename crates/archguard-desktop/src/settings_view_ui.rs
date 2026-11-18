@@ -29,6 +29,7 @@ use crate::panes::{Layout, SETTINGS};
 use crate::panes_ui;
 use crate::tab_support::{Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, SettingsData, SettingsEdit, SettingsModel};
+pub(crate) use session::file_written;
 use session::SettingsState;
 
 type Typed = Coalesce<(SharedString, SharedString)>;
@@ -179,6 +180,7 @@ fn show(ui: &AppWindow) {
         if s.effective.is_none() {
             s.effective = effective.clone();
         }
+        s.refresh();
         push(ui, s);
     });
 }

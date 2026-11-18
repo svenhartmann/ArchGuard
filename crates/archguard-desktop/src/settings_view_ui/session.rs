@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use archguard_engine::core::Config;
@@ -84,6 +84,25 @@ impl SettingsState {
         let loaded = ConfigEditor::load(&self.root);
         self.install(loaded);
         documents::mark_clean(self.doc, config_editor::PART);
+    }
+
+    /// Read the file again if it changed on disk and nothing here is
+    /// unsaved (a diagram tick in the Architecture tab, git). With edits,
+    /// Save reports the change and offers Reload or Overwrite.
+    pub fn refresh(&mut self) {
+        let typed = self.drafts.values().any(|d| d.error.is_some());
+        if self.is_dirty() || typed || self.text_draft.is_some() {
+            return;
+        }
+        let loaded = ConfigEditor::load(&self.root);
+        let same = match (&loaded, &self.editor) {
+            (Ok(new), Ok(rc)) => new.text() == rc.borrow().text(),
+            (Err(new), Err(old)) => new == old,
+            _ => false,
+        };
+        if !same {
+            self.install(loaded);
+        }
     }
 
     /// Use `loaded` as the editor, keeping the `Rc` the save hook holds.
@@ -232,6 +251,15 @@ impl SettingsState {
         self.baseline = baseline;
         documents::mark_dirty(self.doc, config_editor::PART, "Configuration text");
         self.save();
+    }
+}
+
+/// `archguard.toml` of the project at `root` was written outside the
+/// Settings view: its clean Settings state takes the file over.
+pub(crate) fn file_written(root: &Path) {
+    let doc = documents::with_store(|s| s.docs().iter().find(|d| d.root == root).map(|d| d.id));
+    if let Some(doc) = doc {
+        documents::with_state(doc, SettingsState::refresh);
     }
 }
 
