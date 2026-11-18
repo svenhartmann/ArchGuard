@@ -12,6 +12,8 @@ pub fn markdown_to_asciidoc(md: &str) -> String {
     let mut w = Writer {
         out: vec![String::new()],
         lists: Vec::new(),
+        list_end: None,
+        quotes: Vec::new(),
         item: 0,
         code: None,
         cell: false,
@@ -39,6 +41,10 @@ struct Writer {
     out: Vec<String>,
     /// Open lists: `true` for ordered.
     lists: Vec<bool>,
+    /// Output length right after the last top-level list.
+    list_end: Option<usize>,
+    /// Open block quotes: the list depth each one started at.
+    quotes: Vec<usize>,
     /// Output length right after the marker of the open list item.
     item: usize,
     /// Open fenced block: its closing delimiter.
@@ -56,11 +62,20 @@ impl Writer {
             return;
         }
         let raw = std::mem::take(&mut self.text);
-        // In link text a visible `=` turns the text into an attribute list.
-        let mut text = literal(&raw, !self.links.is_empty());
+        let extra = self.extra_markup();
+        // `API:: def` would start a description list, even inside `++…++`.
+        let mut text = String::new();
+        let mut rest = raw.as_str();
+        while let Some(i) = dlist_marker(rest) {
+            text += &literal(&rest[..=i], extra);
+            text += "{empty}";
+            rest = &rest[i + 1..];
+        }
+        text += &literal(rest, extra);
         let top = self.top();
         let line_start = top.is_empty() || top.ends_with('\n');
-        if self.out.len() == 1 && line_start && text == raw && block_syntax(&raw) {
+        let wrapped = text.starts_with("++") || text.starts_with("pass:c[");
+        if self.out.len() == 1 && line_start && !wrapped && block_syntax(&raw) {
             text.insert_str(0, "{empty}");
         }
         let text = if self.cell {
@@ -69,6 +84,16 @@ impl Writer {
             text
         };
         self.top().push_str(&text);
+    }
+
+    /// In link text a visible `=` turns the text into an attribute list;
+    /// in image text a `,` too.
+    fn extra_markup(&self) -> &'static [char] {
+        match self.links.last() {
+            Some(l) if l.starts_with("image:") => &['=', ','],
+            Some(_) => &['='],
+            None => &[],
+        }
     }
 
     fn top(&mut self) -> &mut String {
@@ -91,9 +116,10 @@ impl Writer {
     }
 
     /// Starts a block: after a blank line, or inside a list item as a list
-    /// continuation (`+`). A paragraph that opens its item needs neither.
+    /// continuation (`+`). A paragraph that opens its item needs neither,
+    /// nor does a block inside a quote of the item.
     fn block(&mut self, paragraph: bool) {
-        if self.lists.is_empty() {
+        if self.lists.is_empty() || self.quotes.last() == Some(&self.lists.len()) {
             return self.block_start();
         }
         let empty = self.top().len() == self.item;
@@ -115,7 +141,7 @@ impl Writer {
             Event::Code(c) => {
                 // Unconstrained, so a letter or `*` next to it does not matter.
                 let code = if c.contains('+') {
-                    format!("``pass:c[{}]``", c.replace(']', "\\]"))
+                    format!("``{}``", pass(&c))
                 } else {
                     format!("``+{c}+``")
                 };
@@ -129,7 +155,7 @@ impl Writer {
             // Lines of an HTML block, collected until its end.
             Event::Html(h) => self.top().push_str(&h),
             Event::InlineHtml(h) if !h.starts_with("<!--") => {
-                let text = literal(&h, !self.links.is_empty());
+                let text = literal(&h, self.extra_markup());
                 self.top().push_str(&text);
             }
             Event::InlineHtml(h) => self.html(&h),
@@ -157,11 +183,18 @@ impl Writer {
             Tag::BlockQuote(_) => {
                 self.block(false);
                 self.top().push_str("____\n");
+                self.quotes.push(self.lists.len());
             }
             Tag::CodeBlock(kind) => self.code_start(kind),
             Tag::List(start) => {
                 if self.lists.is_empty() {
+                    let len = self.top().len();
+                    let adjacent = self.list_end == Some(len);
                     self.block_start();
+                    if adjacent {
+                        // Two lists in a row would merge or nest.
+                        self.top().push_str("//\n\n");
+                    }
                 }
                 self.lists.push(start.is_some());
             }
@@ -237,6 +270,7 @@ impl Writer {
             TagEnd::Paragraph if self.lists.is_empty() && !self.cell => self.top().push('\n'),
             TagEnd::Heading(_) | TagEnd::TableHead | TagEnd::TableRow => self.top().push('\n'),
             TagEnd::BlockQuote(_) => {
+                self.quotes.pop();
                 self.line_start();
                 self.top().push_str("____\n");
             }
@@ -250,6 +284,7 @@ impl Writer {
                 self.lists.pop();
                 if self.lists.is_empty() {
                     self.top().push('\n');
+                    self.list_end = Some(self.top().len());
                 }
             }
             TagEnd::Table => self.top().push_str("|===\n"),
@@ -300,20 +335,40 @@ impl Writer {
     }
 }
 
-/// Text that contains AsciiDoc markup characters, wrapped as literal;
-/// `link`: also `=`, for link text.
-fn literal(t: &str, link: bool) -> String {
+/// Text that contains AsciiDoc markup characters or one of `extra`,
+/// wrapped as literal.
+fn literal(t: &str, extra: &[char]) -> String {
     const MARKUP: &[char] = &[
         '*', '_', '`', '#', '^', '~', '{', '}', '[', ']', '<', '>', '+', '\\', '\'', '"', '&',
     ];
     if t.contains("++") {
         // `++…++` cannot hold `++`.
-        format!("pass:c[{}]", t.replace(']', "\\]"))
-    } else if t.contains(MARKUP) || (link && t.contains('=')) {
+        pass(t)
+    } else if t.contains(MARKUP) || t.contains(extra) {
         format!("++{t}++")
     } else {
         t.to_owned()
     }
+}
+
+/// `t` as a `pass:c[…]` macro; trailing backslashes follow it as
+/// `{backslash}`: one before `]` would escape it, a bare one the next markup.
+fn pass(t: &str) -> String {
+    let body = t.trim_end_matches('\\');
+    let tail = "{backslash}".repeat(t.len() - body.len());
+    format!("pass:c[{}]{tail}", body.replace(']', "\\]"))
+}
+
+/// Index of the first character of a description list marker (`::` or
+/// `;;` before a space or the end) in `t`.
+fn dlist_marker(t: &str) -> Option<usize> {
+    let b = t.as_bytes();
+    (1..b.len())
+        .find(|&i| {
+            matches!(&b[i - 1..=i], b"::" | b";;")
+                && b.get(i + 1).is_none_or(u8::is_ascii_whitespace)
+        })
+        .map(|i| i - 1)
 }
 
 /// Whether a line starting with `t` could be read as a block title,
@@ -447,5 +502,52 @@ mod tests {
                 "{start:?}"
             );
         }
+    }
+
+    #[test]
+    fn trailing_backslashes_stay_outside_passthrough_macros() {
+        assert_eq!(
+            adoc("`c+\\` and *b*\n"),
+            "``pass:c[c+]{backslash}`` and __b__\n"
+        );
+        assert_eq!(adoc("a ++ b\\\\*x*\n"), "pass:c[a ++ b]{backslash}__x__\n");
+    }
+
+    #[test]
+    fn description_list_markers_are_broken() {
+        // The leading `{empty}` comes from `block_syntax` (a word ending in `:`).
+        assert_eq!(adoc("API:: def\n"), "{empty}API:{empty}: def\n");
+        assert_eq!(adoc("Hint;; x\n"), "{empty}Hint;{empty}; x\n");
+        assert_eq!(adoc("Foo bar::\n"), "Foo bar:{empty}:\n");
+        assert_eq!(adoc("a::: b\n"), "{empty}a::{empty}: b\n");
+        assert_eq!(adoc("API:: {x}\n"), "{empty}API:{empty}++: {x}++\n");
+        assert_eq!(
+            adoc("C++ and Rust:: ok\n"),
+            "pass:c[C++ and Rust:]{empty}: ok\n"
+        );
+        assert_eq!(adoc("a::b and c ::\n"), "a::b and c :{empty}:\n");
+    }
+
+    #[test]
+    fn block_quotes_in_list_items_have_no_inner_continuation() {
+        assert_eq!(
+            adoc("1. step\n\n   > quoted in item\n   >\n   > second\n2. after\n"),
+            ". step\n+\n____\n\nquoted in item\n\nsecond\n____\n. after\n"
+        );
+        assert_eq!(adoc("> - a\n>\n> - b\n"), "____\n\n* a\n* b\n____\n");
+    }
+
+    #[test]
+    fn image_text_with_commas_stays_alt_text() {
+        assert_eq!(
+            adoc("![Context, overview](ctx.png)\n"),
+            "image:ctx.png[++Context, overview++]\n"
+        );
+    }
+
+    #[test]
+    fn adjacent_lists_stay_apart() {
+        assert_eq!(adoc("- a\n\n1. b\n"), "* a\n\n//\n\n. b\n");
+        assert_eq!(adoc("- a\n\ntext\n\n1. b\n"), "* a\n\ntext\n\n. b\n");
     }
 }
