@@ -404,11 +404,15 @@ impl Lexer<'_> {
     }
 
     /// The `@`, `@@` or `$` of a variable; true if a punctuation global
-    /// (`$"`, `$'`, `$/`) is complete with its one character.
+    /// (`$"`, `$'`, `$/`, `$$`) is complete with its one character.
     fn sigils(&mut self) -> bool {
         let global = self.at(0) == b'$';
-        while matches!(self.at(0), b'@' | b'$') {
+        if global {
             self.i += 1;
+        } else {
+            while self.at(0) == b'@' {
+                self.i += 1;
+            }
         }
         let punctuation = global && self.at(0).is_ascii_punctuation() && self.at(0) != b'_';
         self.i += usize::from(punctuation);
@@ -522,6 +526,14 @@ mod tests {
         assert_eq!(
             code("puts $\", $', $/, $:\n"),
             ["puts", "$\"", ",", "$'", ",", "$/", ",", "$:"]
+        );
+        // `$$` (process id) is one global; the punctuation after it is not.
+        assert_eq!(
+            code("Process.kill(:TERM, $$)\n[1].each { |x| puts $$}\n$$.to_s\n"),
+            [
+                "Process", ".", "kill", "(", ",", "$$", ")", "[", "1", "]", ".", "each", "{", "|",
+                "x", "|", "puts", "$$", "}", "$$", ".", "to_s",
+            ]
         );
     }
 
