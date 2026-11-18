@@ -42,6 +42,9 @@ assert.match(none.ids.get('architecture-content').textContent,/No quality goals 
 // Older reports without the field: nothing is invented.
 const legacy=launch({...fixture,insights:{}});legacy.run("showTab('architecture')");
 assert.ok(!legacy.ids.get('architecture-content').querySelectorAll('section').some(s=>s.getAttribute('data-quality-goals')),'reports without goal_assessment show no goal section');
+// `archguard assessment --format html` nests the report in the review session.
+const session=launch({...fixture,insights:{review_session:{report:{architecture:{goal_assessment:goals,observed:{}}}}}});session.run("showTab('architecture')");
+assert.match(session.ids.get('architecture-content').textContent,/2 measured · 3 not measured/,'goals of an assessment report show too');
 // Many findings stay bounded.
 const many=launch({...fixture,insights:{architecture:{goal_assessment:[goal('Big',"findings",{findings:Array.from({length:45},(_,i)=>'f-'+i)})],observed:{}}}});many.run("showTab('architecture')");
 assert.match(many.ids.get('architecture-content').textContent,/and 15 more/);
