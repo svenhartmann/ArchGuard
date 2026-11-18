@@ -226,7 +226,7 @@ fn finding_block(finding: &Finding) -> String {
         "[{}] {} {}\n  members: {}\n",
         finding.id,
         severity,
-        kind_token(finding.kind),
+        archguard_core::finding_kind_name(finding.kind),
         member_list(&finding.nodes),
     );
     if let Some(message) = &finding.message {
@@ -267,21 +267,6 @@ fn member_list(nodes: &[String]) -> String {
         shown.push("…");
     }
     shown.join(", ")
-}
-
-/// Machine-stable kind token, identical to the canonical JSON name.
-fn kind_token(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
-    }
 }
 
 /// English summary wording for `kind`, singular, pluralized by `n`.

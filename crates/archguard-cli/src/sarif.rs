@@ -43,7 +43,7 @@ pub(crate) fn to_sarif(
                     "text": finding.message.clone().unwrap_or_else(||format!(
                         "{} {}: {}",
                         finding.id,
-                        kind_name(finding.kind),
+                        archguard_engine::core::finding_kind_name(finding.kind),
                         finding.nodes.join(", "),
                     )),
                 },
@@ -104,20 +104,5 @@ fn sarif_level(severity: Severity) -> &'static str {
         Severity::Error => "error",
         Severity::Warning => "warning",
         Severity::Info => "note",
-    }
-}
-
-/// The snake_case name of a finding kind (as in the report JSON).
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
     }
 }

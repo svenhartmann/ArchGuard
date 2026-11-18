@@ -334,7 +334,9 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
     let accepted = |finding: &Finding| archguard_engine::accepted_by_baseline(baseline, finding);
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     for finding in &report.findings {
-        *counts.entry(kind_name(finding.kind)).or_default() += 1;
+        *counts
+            .entry(archguard_engine::core::finding_kind_name(finding.kind))
+            .or_default() += 1;
     }
     let fails = archguard_engine::gate_fails(&report.findings, baseline);
     let findings: Vec<Value> = report
@@ -371,22 +373,6 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
         "counts": counts,
         "findings": findings,
     })
-}
-
-/// The `snake_case` wire name of a [`FindingKind`] (its serde rename),
-/// used as the key of the `check` counts map.
-fn kind_name(kind: FindingKind) -> &'static str {
-    match kind {
-        FindingKind::Cycle => "cycle",
-        FindingKind::LayerViolation => "layer_violation",
-        FindingKind::MetricThreshold => "metric_threshold",
-        FindingKind::LayerUnranked => "layer_unranked",
-        FindingKind::DependencyRule => "dependency_rule",
-        FindingKind::OwnershipRule => "ownership_rule",
-        FindingKind::Orphan => "orphan",
-        FindingKind::TargetArchitecture => "target_architecture",
-        FindingKind::License => "license",
-    }
 }
 
 // ------------------------------------------------------------------ metrics
