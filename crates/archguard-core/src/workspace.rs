@@ -23,7 +23,7 @@ pub struct WorkspaceDependency {
     pub to: String,
     /// compile, runtime, test, build, provided, optional, or peer.
     pub scope: String,
-    /// maven_dependency, npm_workspace, npm_file, dotnet_project_reference, cargo_path.
+    /// maven_dependency, npm_workspace, npm_file, dotnet_project_reference, cargo_path, gradle_project.
     pub kind: String,
     pub evidence: Vec<ServiceEvidence>,
 }

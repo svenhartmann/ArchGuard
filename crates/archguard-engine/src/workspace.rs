@@ -1,7 +1,7 @@
 //! Explicit local build-project dependencies. Never runs build tools or fetches packages.
 use archguard_core::{
     ArchguardError, GraphBuilder, Ref, ServiceEvidence, ServiceProject, ServiceTopology,
-    WorkspaceDependency, WorkspaceReport, WorkspaceUnresolved,
+    WorkspaceReport,
 };
 use roxmltree::{Document, Node};
 use serde_json::Value;
@@ -10,8 +10,12 @@ use std::{
     path::{Component, Path},
 };
 
+mod gradle;
+mod record;
+
+use record::{MAX_DECLARATIONS, dependency, evidence, unresolved};
+
 const MAX_MANIFEST: u64 = 1024 * 1024;
-const MAX_DECLARATIONS: usize = 20_000;
 
 pub fn analyze_workspace(root: &Path) -> Result<WorkspaceReport, ArchguardError> {
     let topology = crate::services::analyze_services(root)?;
@@ -32,49 +36,13 @@ pub fn analyze_workspace_with_topology(
             "Maven uses statically resolved coordinates, properties and local parents; profiles, imported BOMs, settings, relocation and external parent models are not evaluated. Registry-only npm/Cargo references are not assumed local.".into(),
             "npm workspace links require package.json workspace membership; pnpm-only workspace configuration and complex workspace version ranges are unresolved. Cargo features/platform conditions and MSBuild conditions are not executed; optional, test and build declarations retain their scopes.".into(),
             "Cycles include all resolved declared scopes, including optional/test/build edges, and are SCC groups rather than observed runtime paths. Path dependencies do not prove build-tool version compatibility.".into(),
+            "Gradle reads only Kotlin DSL `<configuration>(project(\":a:b\"))` with a string literal that a literal include of the nearest settings.gradle.kts names; Groovy scripts, typesafe `projects.a` accessors, computed paths and moved project directories are not evaluated.".into(),
         ],
     };
     if !topology.complete {
         report.status = "partial".into();
     }
-    let mut sources = BTreeMap::new();
-    let mut total = 0usize;
-    for project in &topology.projects {
-        match crate::project_files::read_repo_file(
-            &root,
-            Path::new(&project.manifest),
-            MAX_MANIFEST,
-        ) {
-            Ok(bytes) => {
-                total += bytes.len();
-                if total > 32 * 1024 * 1024 {
-                    report
-                        .diagnostics
-                        .push("Workspace manifest input limit reached (32 MiB).".into());
-                    report.status = "partial".into();
-                    break;
-                }
-                match String::from_utf8(bytes) {
-                    Ok(s) => {
-                        sources.insert(project.id.clone(), s);
-                    }
-                    Err(_) => {
-                        report
-                            .diagnostics
-                            .push(format!("{}: manifest is not UTF-8", project.manifest));
-                        report.status = "partial".into();
-                    }
-                }
-            }
-            Err(_) => {
-                report.diagnostics.push(format!(
-                    "{}: manifest cannot be read safely",
-                    project.manifest
-                ));
-                report.status = "partial".into();
-            }
-        }
-    }
+    let sources = read_sources(&root, topology, &mut report);
     let mut maven = BTreeMap::new();
     let mut npm = BTreeMap::new();
     let mut cargo = BTreeMap::new();
@@ -97,6 +65,7 @@ pub fn analyze_workspace_with_topology(
                 })
                 .map_err(|_| "Invalid Cargo TOML".into()),
             "dotnet" => Ok(()),
+            "gradle" if project.manifest.ends_with(".kts") => Ok(()),
             _ => Err("Unsupported manifest ecosystem".into()),
         };
         if let Err(message) = result {
@@ -133,6 +102,13 @@ pub fn analyze_workspace_with_topology(
             "dotnet" => {
                 if let Some(source) = sources.get(&project.id) {
                     resolve_dotnet(&root, project, source, &mut report);
+                }
+            }
+            "gradle" => {
+                if let Some(source) = sources.get(&project.id)
+                    && project.manifest.ends_with(".kts")
+                {
+                    resolve_gradle(&root, project, source, &mut report);
                 }
             }
             _ => {}
@@ -182,85 +158,74 @@ pub fn analyze_workspace_with_topology(
     Ok(report)
 }
 
-fn evidence(
-    project: &ServiceProject,
-    pointer: &str,
-    line: Option<u32>,
-    description: &str,
-) -> ServiceEvidence {
-    ServiceEvidence {
-        file: project.manifest.clone(),
-        pointer: pointer.into(),
-        line,
-        description: description.into(),
-    }
-}
-fn unresolved(
+/// The UTF-8 manifest of each project by id, within the input limit.
+fn read_sources(
+    root: &Path,
+    topology: &ServiceTopology,
     report: &mut WorkspaceReport,
-    project: &ServiceProject,
-    target: &str,
-    reason: &str,
-    evidence: ServiceEvidence,
-) {
-    report.status = "partial".into();
-    if report.unresolved.len() + report.dependencies.len() >= MAX_DECLARATIONS {
-        if !report
-            .diagnostics
-            .iter()
-            .any(|s| s.starts_with("Workspace declaration limit"))
+) -> BTreeMap<String, String> {
+    let mut sources = BTreeMap::new();
+    let mut total = 0usize;
+    for project in &topology.projects {
+        match crate::project_files::read_repo_file(root, Path::new(&project.manifest), MAX_MANIFEST)
         {
-            report.diagnostics.push(
-                "Workspace declaration limit reached; additional dependencies were not analyzed."
-                    .into(),
-            );
+            Ok(bytes) => {
+                total += bytes.len();
+                if total > 32 * 1024 * 1024 {
+                    report
+                        .diagnostics
+                        .push("Workspace manifest input limit reached (32 MiB).".into());
+                    report.status = "partial".into();
+                    break;
+                }
+                match String::from_utf8(bytes) {
+                    Ok(s) => {
+                        sources.insert(project.id.clone(), s);
+                    }
+                    Err(_) => {
+                        report
+                            .diagnostics
+                            .push(format!("{}: manifest is not UTF-8", project.manifest));
+                        report.status = "partial".into();
+                    }
+                }
+            }
+            Err(_) => {
+                report.diagnostics.push(format!(
+                    "{}: manifest cannot be read safely",
+                    project.manifest
+                ));
+                report.status = "partial".into();
+            }
         }
-        return;
     }
-    report.unresolved.push(WorkspaceUnresolved {
-        project: project.id.clone(),
-        target: target.chars().take(1024).collect(),
-        reason: reason.into(),
-        evidence: vec![evidence],
-    });
+    sources
 }
-fn dependency(
-    report: &mut WorkspaceReport,
+fn resolve_gradle(
+    root: &Path,
     project: &ServiceProject,
-    target: &str,
-    scope: &str,
-    kind: &str,
-    evidence: ServiceEvidence,
+    source: &str,
+    report: &mut WorkspaceReport,
 ) {
-    if target == project.id {
-        unresolved(
-            report,
+    let Some(found) = gradle::gradle_dependencies(root, &project.path, source, &report.projects)
+    else {
+        report
+            .diagnostics
+            .push(format!("{}: unbalanced brackets", project.manifest));
+        report.status = "partial".into();
+        return;
+    };
+    for dep in found {
+        let ev = evidence(
             project,
-            target,
-            "self dependency does not identify a separate local project",
-            evidence,
+            "/dependencies",
+            Some(dep.line),
+            "Gradle Kotlin DSL project(…) dependency.",
         );
-        return;
-    }
-    if report.dependencies.len() + report.unresolved.len() >= MAX_DECLARATIONS {
-        unresolved(report, project, target, "declaration limit", evidence);
-        return;
-    }
-    if let Some(existing) = report
-        .dependencies
-        .iter_mut()
-        .find(|d| d.from == project.id && d.to == target && d.scope == scope && d.kind == kind)
-    {
-        if !existing.evidence.contains(&evidence) {
-            existing.evidence.push(evidence);
+        match dep.target {
+            Ok((to, scope)) => dependency(report, project, &to, scope, "gradle_project", ev),
+            Err(reason) => unresolved(report, project, &dep.written, reason, ev),
         }
-    } else {
-        report.dependencies.push(WorkspaceDependency {
-            from: project.id.clone(),
-            to: target.into(),
-            scope: scope.into(),
-            kind: kind.into(),
-            evidence: vec![evidence],
-        });
     }
 }
 fn literal(s: &str) -> bool {
