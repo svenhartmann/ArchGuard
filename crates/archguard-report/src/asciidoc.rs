@@ -526,6 +526,9 @@ mod tests {
             "pass:c[C++ and Rust:]{empty}: ok\n"
         );
         assert_eq!(adoc("a::b and c ::\n"), "a::b and c :{empty}:\n");
+        // A code span or link before the marker: the marker is in the text after it.
+        assert_eq!(adoc("`api`:: def\n"), "``+api+``:{empty}: def\n");
+        assert_eq!(adoc("[api](u):: def\n"), "link:u[api]:{empty}: def\n");
     }
 
     #[test]
