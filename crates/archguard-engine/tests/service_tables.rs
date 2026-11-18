@@ -322,6 +322,7 @@ fn discovery_exclusions_and_ignores_apply_and_only_test_directories_are_tests() 
         ("a/latest/Latest.java", "latest"),
         ("a/Testimonials/Quote.java", "testimonials"),
         ("a/Attestation/Proof.java", "attestation"),
+        ("a/ABTest/Variant.java", "abtest"),
     ] {
         put(root, path, &entity(table));
     }
@@ -335,7 +336,14 @@ fn discovery_exclusions_and_ignores_apply_and_only_test_directories_are_tests() 
     let report = analyze_services(root).unwrap();
     assert_eq!(
         tables(&report, "compose.yaml::a"),
-        ["attestation", "contest", "latest", "news", "testimonials"]
+        [
+            "abtest",
+            "attestation",
+            "contest",
+            "latest",
+            "news",
+            "testimonials"
+        ]
     );
     assert_eq!(shop_share(&report).scope, SharedDatastoreScope::Database);
 }

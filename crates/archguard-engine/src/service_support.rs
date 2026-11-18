@@ -35,7 +35,9 @@ pub(crate) fn test_path(rel: &str) -> bool {
             || lower.ends_with(".tests")
             || lower.ends_with(".test")
             || p.ends_with("Tests")
-            || p.ends_with("Test")
+            // Singular `Test` only for camelCase Gradle source sets (`integrationTest`)
+            // and dotted projects (`Shop.Test`), so a feature folder like `ABTest/` stays code.
+            || (tail.ends_with("Test") && (p.contains('.') || tail.starts_with(|c: char| c.is_ascii_lowercase())))
             || [p, tail].iter().any(|s| {
                 s.strip_prefix("test")
                     .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()))
