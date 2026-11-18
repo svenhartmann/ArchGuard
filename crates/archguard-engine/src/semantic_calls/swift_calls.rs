@@ -6,7 +6,7 @@
 //! else stays unresolved, and nothing is claimed external. Types stay
 //! unresolved, so the report is `partial`.
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use archguard_core::{CallAnalysis, CallClass, CallMethod, Config, MethodCall};
@@ -110,11 +110,12 @@ fn resolve(
         .iter()
         .map(|m| (m.id.as_str(), m.class_id.as_str()))
         .collect();
+    let index = Index::new(classes, methods);
     let mut calls = Vec::new();
     for (path, file) in files {
         for site in &file.sites {
             let (resolution, dispatch, to_class, to_method) =
-                target(files, file, classes, methods, &site.target);
+                target(files, file, &index, &site.target);
             calls.push(MethodCall {
                 // An extension's members belong to the type it extends.
                 from_class: owner
@@ -136,25 +137,48 @@ fn resolve(
     calls
 }
 
+/// Types and static methods looked up once instead of per call site.
+struct Index<'a> {
+    /// Non-extension types by their path after `::` (`Outer.Inner`).
+    types: HashMap<&'a str, Vec<&'a CallClass>>,
+    /// Static methods by class id and name.
+    statics: HashMap<(&'a str, &'a str), Vec<&'a CallMethod>>,
+}
+
+impl<'a> Index<'a> {
+    fn new(classes: &'a [CallClass], methods: &'a [CallMethod]) -> Self {
+        let mut types: HashMap<_, Vec<_>> = HashMap::new();
+        for class in classes.iter().filter(|class| class.kind != "extension") {
+            if let Some((_, path)) = class.id.split_once("::") {
+                types.entry(path).or_default().push(class);
+            }
+        }
+        let mut statics: HashMap<_, Vec<_>> = HashMap::new();
+        for method in methods.iter().filter(|m| m.is_static) {
+            let key = (method.class_id.as_str(), method.name.as_str());
+            statics.entry(key).or_default().push(method);
+        }
+        Index { types, statics }
+    }
+}
+
 fn target(
     files: &BTreeMap<String, File>,
     caller: &File,
-    classes: &[CallClass],
-    methods: &[CallMethod],
+    index: &Index,
     target: &SwiftTarget,
 ) -> Target {
     // The one type at `path` (`Outer.Inner` for nested types) the caller sees.
     let unique = |path: &str| {
-        let mut found = classes.iter().filter(|class| {
-            class.id.split_once("::").map(|(_, p)| p) == Some(path)
-                && class.kind != "extension"
-                && files.get(&class.file).is_some_and(|file| {
-                    file.module == caller.module
-                        || file
-                            .module
-                            .as_ref()
-                            .is_some_and(|m| caller.imports.contains(m))
-                })
+        let candidates = index.types.get(path).into_iter().flatten().copied();
+        let mut found = candidates.filter(|class| {
+            files.get(&class.file).is_some_and(|file| {
+                file.module == caller.module
+                    || file
+                        .module
+                        .as_ref()
+                        .is_some_and(|m| caller.imports.contains(m))
+            })
         });
         match (found.next(), found.next()) {
             (Some(class), None) => Some(class),
@@ -174,9 +198,8 @@ fn target(
             if let Some(nested) = unique(&format!("{owner}.{name}")) {
                 return construct(nested);
             }
-            let mut found = methods
-                .iter()
-                .filter(|m| m.class_id == class.id && &m.name == name && m.is_static);
+            let key = (class.id.as_str(), name.as_str());
+            let mut found = index.statics.get(&key).into_iter().flatten();
             match (found.next(), found.next()) {
                 (Some(method), None) => (
                     "project",

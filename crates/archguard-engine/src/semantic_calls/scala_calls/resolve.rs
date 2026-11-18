@@ -59,8 +59,8 @@ struct Index<'a> {
     methods: HashMap<&'a str, Vec<&'a CallMethod>>,
     /// Qualified top-level def name to its overloads.
     top: HashMap<String, Vec<&'a CallMethod>>,
-    /// Scala, Java and Kotlin packages of the project; `None` when the Java
-    /// and Kotlin packages are unknown.
+    /// Scala, Java and Kotlin packages of the project and all their parent
+    /// packages; `None` when the Java and Kotlin packages are unknown.
     packages: Option<HashSet<String>>,
 }
 
@@ -96,6 +96,9 @@ impl<'a> Index<'a> {
             for facts in &symbols.classes {
                 ix.add(file, facts);
             }
+        }
+        if let Some(packages) = &mut ix.packages {
+            *packages = with_parents(packages);
         }
         ix
     }
@@ -205,7 +208,11 @@ impl<'a> Index<'a> {
         };
         match found {
             Some(qualified) => self.constructor(&qualified).unwrap_or(UNRESOLVED),
-            None => self.external(file, &segments[0], &segments[1..segments.len() - 1]),
+            // `new T(…)` has no receiver segments.
+            None => {
+                let receiver = segments.get(1..segments.len() - 1).unwrap_or_default();
+                self.external(file, &segments[0], receiver)
+            }
         }
     }
 
@@ -364,10 +371,7 @@ impl<'a> Index<'a> {
             return UNRESOLVED;
         };
         let package = import.path.rsplit_once('.').map_or("", |(p, _)| p);
-        let project = packages
-            .iter()
-            .any(|p| p == package || p.starts_with(&format!("{package}.")));
-        if project {
+        if packages.contains(package) {
             return UNRESOLVED;
         }
         let name = std::iter::once(import.path.clone())
@@ -376,6 +380,20 @@ impl<'a> Index<'a> {
             .join(".");
         ("external", "unknown", Some(name), None)
     }
+}
+
+/// Each package and every prefix of it that ends before a `.`.
+fn with_parents(packages: &HashSet<String>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for package in packages {
+        out.extend(
+            package
+                .match_indices('.')
+                .map(|(i, _)| package[..i].to_string()),
+        );
+        out.insert(package.clone());
+    }
+    out
 }
 
 /// A unique def; overloads are not told apart.
