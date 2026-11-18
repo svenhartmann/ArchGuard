@@ -140,6 +140,23 @@ fn fingerprint_covers_dependency_bytes_additions_deletions_and_excludes_not_sour
 }
 
 #[test]
+fn directory_excludes_drop_dependency_inputs_below_them() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), "vendor/pom.xml", b"vendored");
+    put(dir.path(), "Cargo.lock", b"own");
+    for pattern in ["vendor/", "vendor", "**/vendor"] {
+        let mut config = Config::default();
+        config.project.exclude = vec![pattern.into()];
+        let files = collect_inputs(dir.path(), &config).unwrap().files;
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            ["Cargo.lock"],
+            "{pattern}"
+        );
+    }
+}
+
+#[test]
 fn snapshot_reader_never_scans_and_marks_changed_dependencies_stale() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config::default();

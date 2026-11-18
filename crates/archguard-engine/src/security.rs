@@ -183,13 +183,7 @@ pub(crate) fn collect_inputs(root: &Path, config: &Config) -> Result<Inputs, Arc
     if !root.is_dir() {
         return Err(error("a project directory is required"));
     }
-    let mut builder = globset::GlobSetBuilder::new();
-    for pattern in &config.project.exclude {
-        builder.add(
-            globset::Glob::new(pattern).map_err(|e| error(format!("exclude {pattern:?}: {e}")))?,
-        );
-    }
-    let excludes = builder.build().map_err(error)?;
+    let excludes = archguard_extract::Excludes::new(&config.project.exclude).map_err(error)?;
     let walk_root = root.to_path_buf();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
@@ -203,10 +197,12 @@ pub(crate) fn collect_inputs(root: &Path, config: &Config) -> Result<Inputs, Arc
             let name = entry.file_name();
             name != ".git"
                 && name != ".archguard"
-                && !entry
-                    .path()
-                    .strip_prefix(&walk_root)
-                    .is_ok_and(|path| excludes.is_match(path))
+                && !entry.path().strip_prefix(&walk_root).is_ok_and(|path| {
+                    excludes.is_match(
+                        &path.to_string_lossy().replace('\\', "/"),
+                        entry.file_type().is_some_and(|kind| kind.is_dir()),
+                    )
+                })
         })
         .build();
     let mut files = std::collections::BTreeMap::new();
