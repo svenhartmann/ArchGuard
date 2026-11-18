@@ -196,7 +196,10 @@ impl Arc42Files {
                 .whole
                 .as_deref()
                 .and_then(|w| section(w, n).map(|r| w[r].to_string())),
-            Target::Folder(_) => self.chapters.get(&n).map(|(_, t)| t.clone()),
+            Target::Folder(_) => self
+                .chapters
+                .get(&n)
+                .map(|(_, t)| t.trim_start_matches(BOM).to_string()),
         };
         // LF, as the diagram sections the text is compared with.
         match saved.map(|t| t.replace("\r\n", "\n")) {
@@ -345,6 +348,7 @@ impl Arc42Files {
                 put_section(&whole.replace("\r\n", "\n"), n, &chapter)
             }
             (Target::File(_), None) => put_section(&doc.markdown(None), n, &chapter),
+            (Target::Folder(_), Some(old)) if old.starts_with(BOM) => format!("{BOM}{chapter}"),
             (Target::Folder(_), _) => chapter,
         };
         if old.is_some_and(|o| o.contains("\r\n")) {
@@ -497,8 +501,18 @@ pub fn generated(doc: &Arc42Document, n: u8) -> String {
     }
 }
 
+/// A UTF-8 byte order mark some editors put before the first line.
+const BOM: char = '\u{feff}';
+
+/// Where `text`'s lines start; the first after a byte order mark, so
+/// `\u{feff}## 1.` is chapter 1 and saving it keeps the mark.
 pub(crate) fn line_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
-    std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1))
+    let first = if text.starts_with(BOM) {
+        BOM.len_utf8()
+    } else {
+        0
+    };
+    std::iter::once(first).chain(text.match_indices('\n').map(|(i, _)| i + 1))
 }
 
 /// The chapter number of a `## N.` heading line.
@@ -547,7 +561,7 @@ fn put_section(text: &str, n: u8, chapter: &str) -> String {
         .find(|&(_, m)| m > n)
         .map_or(text.len(), |(i, _)| i);
     let mut out = text[..at].to_string();
-    if !out.is_empty() && !out.ends_with("\n\n") {
+    if !out.trim_start_matches(BOM).is_empty() && !out.ends_with("\n\n") {
         out.push_str(if out.ends_with('\n') { "\n" } else { "\n\n" });
     }
     out.push_str(&chapter);
@@ -954,6 +968,44 @@ pub(crate) mod tests {
         assert!(written.starts_with("## 9. Title") && written.contains("New 9"));
         assert!(written.ends_with("Entscheidung A.\n"));
         assert!(!written.contains("## 10."));
+    }
+
+    /// A file that starts with a UTF-8 BOM right before `## 1.`: chapter 1
+    /// is the project's, a save replaces it and the BOM stays.
+    #[test]
+    fn a_byte_order_mark_before_chapter_one_is_kept() {
+        let d = dir();
+        let path = d.path().join("arc42.md");
+        let saved = "\u{feff}## 1. Einführung\n\nAlt.\n\n## 2. Rand\n\nZwei.\n";
+        std::fs::write(&path, saved).unwrap();
+        let mut files = Arc42Files::load(Target::File(path.clone())).unwrap();
+        let new = doc("New");
+        assert!(files.has_chapter(1));
+        assert_eq!(files.chapter(&new, 1), "## 1. Einführung\n\nAlt.\n\n");
+        let edited = "## 1. Einführung\n\nNeu.\n";
+        assert_eq!(
+            files.save_chapter(&new, 1, edited, &mut files.saved(1)),
+            Ok(path.clone())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "\u{feff}## 1. Einführung\n\nNeu.\n\n## 2. Rand\n\nZwei.\n"
+        );
+        // A chapter file of a folder keeps its BOM too.
+        let folder = d.path().join("arc42");
+        std::fs::create_dir(&folder).unwrap();
+        let one = folder.join("01_einfuehrung.md");
+        std::fs::write(&one, "\u{feff}## 1. Einführung\n\nAlt.\n").unwrap();
+        let mut files = Arc42Files::load(Target::Folder(folder)).unwrap();
+        assert_eq!(files.chapter(&new, 1), "## 1. Einführung\n\nAlt.\n");
+        assert_eq!(
+            files.save_chapter(&new, 1, edited, &mut files.saved(1)),
+            Ok(one.clone())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&one).unwrap(),
+            "\u{feff}## 1. Einführung\n\nNeu.\n"
+        );
     }
 
     #[test]
