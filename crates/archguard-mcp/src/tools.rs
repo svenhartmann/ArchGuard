@@ -154,15 +154,7 @@ pub fn analyze_run(server_root: &Path, path: Option<&str>) -> Result<Run, ErrorD
 /// Read and parse a baseline JSON (Kap. 7); a missing or unparsable file
 /// is an invalid-params error for the calling tool.
 pub fn read_baseline(path: &Path) -> Result<Baseline, ErrorData> {
-    let text = std::fs::read_to_string(path).map_err(|err| {
-        invalid_params(format!("baseline {} not readable: {err}", path.display()))
-    })?;
-    serde_json::from_str(&text).map_err(|err| {
-        invalid_params(format!(
-            "baseline {}: invalid baseline JSON: {err}",
-            path.display()
-        ))
-    })
+    archguard_engine::read_baseline(path).map_err(invalid_params)
 }
 
 // -------------------------------------------------------------- size guard
@@ -339,20 +331,12 @@ pub(crate) fn semantic_coverage_value(report: &Report) -> Value {
 /// cycle findings whose [`cycle_hash`] is accepted do not fail the gate
 /// (same rule as `archguard check --baseline`).
 pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
-    let accepted = |finding: &Finding| match (baseline, finding.kind) {
-        (Some(baseline), FindingKind::Cycle) => {
-            baseline.hashes.contains(&cycle_hash(&finding.nodes))
-        }
-        _ => false,
-    };
-    // Not `any(…)` — that short-circuits and would leave `counts`
-    // incomplete once one Error fails the gate.
+    let accepted = |finding: &Finding| archguard_engine::accepted_by_baseline(baseline, finding);
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-    let mut fails = false;
     for finding in &report.findings {
         *counts.entry(kind_name(finding.kind)).or_default() += 1;
-        fails |= finding.severity == archguard_engine::core::Severity::Error && !accepted(finding);
     }
+    let fails = archguard_engine::gate_fails(&report.findings, baseline);
     let findings: Vec<Value> = report
         .findings
         .iter()

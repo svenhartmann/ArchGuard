@@ -276,7 +276,10 @@ impl ArchguardTools {
         &self,
         Parameters(params): Parameters<CheckParams>,
     ) -> Result<String, ErrorData> {
-        let run = tools::analyze_run(&self.root, params.path.as_deref())?;
+        let mut run = tools::analyze_run(&self.root, params.path.as_deref())?;
+        if let Some(message) = archguard_engine::empty_analysis_error(&run.root, &run.file_graph) {
+            return Err(tools::invalid_params(message));
+        }
         let baseline = params
             .use_baseline
             .unwrap_or(false)
@@ -289,6 +292,7 @@ impl ArchguardTools {
                 tools::read_baseline(&path)
             })
             .transpose()?;
+        archguard_engine::apply_check_gate(&mut run.report, &run.loaded.config, baseline.as_ref());
         Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
     }
 
@@ -2033,6 +2037,55 @@ links = ["docs/adr/1.md"]
             .unwrap();
         let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
         assert_eq!(detail["edges"].as_array().unwrap().len(), 2);
+    }
+
+    /// Same gate as `archguard check`: a breached `[review]` KPI gate fails
+    /// even when the cycle itself is tolerated.
+    #[tokio::test]
+    async fn check_applies_the_review_kpi_gates_like_the_cli() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.ts"), "import './b';\n").unwrap();
+        std::fs::write(dir.path().join("src/b.ts"), "import './a';\n").unwrap();
+        std::fs::write(
+            dir.path().join("archguard.toml"),
+            "[rules]\ndeny_cycles = 'off'\nmax_scc_size = 100\n[review]\nmax_tangledness = 0.0\n",
+        )
+        .unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let value: Value = serde_json::from_str(
+            &handler
+                .check(Parameters(CheckParams::default()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["status"], "fail", "{value}");
+        assert!(
+            value["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["id"] == "metric-max-tangledness"),
+            "{value}"
+        );
+    }
+
+    /// Nothing analysed is no evidence of a clean architecture.
+    #[tokio::test]
+    async fn check_refuses_a_directory_without_sources() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "no code here\n").unwrap();
+        let handler = ArchguardTools::new(dir.path().into());
+        let error = handler
+            .check(Parameters(CheckParams::default()))
+            .await
+            .expect_err("an empty analysis must not pass");
+        assert!(
+            error.message.contains("no source files found"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
