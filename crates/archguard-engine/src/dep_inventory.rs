@@ -57,8 +57,9 @@ struct MetaFile {
 
 const META_REL_PATH: &str = ".archguard/dep-meta.json";
 
-/// Directories that never contain first-party manifests; `fixtures` is
-/// test data and `.claude` holds agent worktrees (copies of the project).
+/// Directories that never contain first-party manifests; `fixtures` and
+/// `testdata` (Go) are test data and `.claude` holds agent worktrees
+/// (copies of the project). `src/test` is skipped in [`find_manifests`].
 const SKIP_DIRS: &[&str] = &[
     ".archguard",
     ".claude",
@@ -71,6 +72,7 @@ const SKIP_DIRS: &[&str] = &[
     "node_modules",
     "out",
     "target",
+    "testdata",
     "vendor",
     "venv",
 ];
@@ -84,15 +86,10 @@ const SUPERSEDED_BY: &[(&str, &[&str])] = &[
     (".csproj", &["packages.lock.json"]),
 ];
 
-/// Directory levels below the root searched for manifests: deep enough for
-/// monorepos (`apps/<group>/<service>/…`), bounded for huge trees.
-pub(crate) const MAX_DEPTH: usize = 12;
-
-/// Find every manifest below `root` (at most [`MAX_DEPTH`] levels, build
-/// artifacts and dependency caches skipped, symlinked directories not
-/// followed), deterministic order by path. `true` when a directory deeper
-/// than the bound was left unread.
-fn find_manifests(root: &Path) -> (Vec<(String, PathBuf)>, bool) {
+/// Find every manifest below `root` (build artifacts, dependency caches and
+/// test data skipped, symlinked directories not followed, so the walk
+/// cannot loop), deterministic order by path.
+fn find_manifests(root: &Path) -> Vec<(String, PathBuf)> {
     fn known(name: &str) -> Option<&'static str> {
         match name {
             "Cargo.lock" => Some("cargo"),
@@ -113,11 +110,7 @@ fn find_manifests(root: &Path) -> (Vec<(String, PathBuf)>, bool) {
                 && locks.iter().any(|lock| path.with_file_name(lock).is_file())
         })
     }
-    fn walk(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>, limited: &mut bool) {
-        if depth > MAX_DEPTH {
-            *limited = true;
-            return;
-        }
+    fn walk(dir: &Path, out: &mut Vec<(String, PathBuf)>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -128,7 +121,9 @@ fn find_manifests(root: &Path) -> (Vec<(String, PathBuf)>, bool) {
                 continue;
             };
             if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                if !SKIP_DIRS.contains(&name) {
+                // Maven/Gradle test sources (`src/test/resources/…`) are test data.
+                let test_sources = name == "test" && dir.ends_with("src");
+                if !SKIP_DIRS.contains(&name) && !test_sources {
                     dirs.push(path);
                 }
             } else if let Some(eco) = known(name)
@@ -139,14 +134,13 @@ fn find_manifests(root: &Path) -> (Vec<(String, PathBuf)>, bool) {
         }
         dirs.sort();
         for sub in dirs {
-            walk(&sub, depth + 1, out, limited);
+            walk(&sub, out);
         }
     }
     let mut found = Vec::new();
-    let mut limited = false;
-    walk(root, 0, &mut found, &mut limited);
+    walk(root, &mut found);
     found.sort();
-    (found, limited)
+    found
 }
 
 /// Split a PEP 508 requirement like `requests[oauth]>=2.28,<3` into
@@ -280,11 +274,9 @@ fn deps_for(eco: &str, path: &Path) -> Vec<Dep> {
 }
 
 /// Every supported manifest below `root` with its project-relative path
-/// and the dependencies it states, in path order; `true` when the search
-/// hit [`MAX_DEPTH`].
-pub(crate) fn manifest_deps(root: &Path) -> (Vec<(String, String, Vec<Dep>)>, bool) {
-    let (found, limited) = find_manifests(root);
-    let deps = found
+/// and the dependencies it states, in path order.
+pub(crate) fn manifest_deps(root: &Path) -> Vec<(String, String, Vec<Dep>)> {
+    find_manifests(root)
         .into_iter()
         .map(|(eco, path)| {
             let relative = path
@@ -295,15 +287,7 @@ pub(crate) fn manifest_deps(root: &Path) -> (Vec<(String, String, Vec<Dep>)>, bo
             let deps = deps_for(&eco, &path);
             (eco, relative, deps)
         })
-        .collect();
-    (deps, limited)
-}
-
-/// The note for a search that hit [`MAX_DEPTH`].
-pub(crate) fn depth_note() -> String {
-    format!(
-        "directories deeper than {MAX_DEPTH} levels were not searched; lockfiles there are not counted"
-    )
+        .collect()
 }
 
 /// Read the imported registry metadata; `None` when absent. A corrupt
@@ -350,11 +334,7 @@ pub fn dependency_inventory(root: &Path) -> DependencyInventory {
     let mut notes = Vec::new();
     let mut seen: BTreeSet<(String, String, Option<String>)> = BTreeSet::new();
 
-    let (manifests, limited) = manifest_deps(root);
-    if limited {
-        notes.push(depth_note());
-    }
-    for (eco, relative, entries) in manifests {
+    for (eco, relative, entries) in manifest_deps(root) {
         if entries.is_empty() {
             notes.push(format!(
                 "{relative}: no dependencies counted (empty or unparseable)"
@@ -664,24 +644,39 @@ version = "1.0.219"
     }
 
     #[test]
-    fn monorepo_depth_is_searched_and_the_limit_is_reported() {
+    fn deep_monorepo_lockfiles_are_found_without_a_bound() {
         let dir = tempfile::tempdir().expect("tempdir");
         let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry\"\n";
-        write(dir.path(), "a/b/c/d/e/Cargo.lock", lock);
-        let (found, limited) = manifest_deps(dir.path());
-        assert_eq!(found.len(), 1);
-        assert!(!limited);
-        let deep = format!("{}/Cargo.lock", ["d"; MAX_DEPTH + 1].join("/"));
-        write(dir.path(), &deep, lock);
-        let (found, limited) = manifest_deps(dir.path());
-        assert_eq!(found.len(), 1, "beyond the bound stays unread");
-        assert!(limited);
-        assert!(
-            dependency_inventory(dir.path())
-                .notes
-                .iter()
-                .any(|n| n.contains("deeper than")),
+        write(
+            dir.path(),
+            &format!("{}/Cargo.lock", ["d"; 20].join("/")),
+            lock,
         );
+        let inventory = dependency_inventory(dir.path());
+        assert_eq!(inventory.total, 1, "{:?}", inventory.notes);
+        assert!(
+            !inventory.notes.iter().any(|n| n.contains("deeper than")),
+            "{:?}",
+            inventory.notes
+        );
+    }
+
+    #[test]
+    fn go_testdata_and_maven_test_sources_are_not_dependencies() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(
+            dir.path(),
+            "pkg/loader/testdata/mods/broken/go.mod",
+            "module broken\n\nrequire github.com/x/y v1.0.0\n",
+        );
+        let pom = r#"<project><dependencies>
+<dependency><groupId>g</groupId><artifactId>fixture</artifactId><version>1.0</version></dependency>
+</dependencies></project>"#;
+        write(dir.path(), "src/test/resources/projects/case1/pom.xml", pom);
+        assert_eq!(dependency_inventory(dir.path()).total, 0);
+        // `src/main/resources` is production and stays searched.
+        write(dir.path(), "src/main/resources/pom.xml", pom);
+        assert_eq!(dependency_inventory(dir.path()).total, 1);
     }
 
     #[test]

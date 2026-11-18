@@ -33,7 +33,8 @@ pub(crate) fn scope(optional: bool) -> Option<&'static str> {
 /// `[[package]]` entries of a TOML lockfile (`Cargo.lock`, `poetry.lock`,
 /// `uv.lock`). Cargo: no `source` = workspace/path crate. uv: an
 /// editable/virtual/directory/path source is the project itself; Poetry:
-/// a `directory`/`file` source `type`. Poetry `category = "dev"` (lock
+/// a `directory` source `type` (a `file` source is a vendored third-party
+/// wheel/sdist and stays a component). Poetry `category = "dev"` (lock
 /// format 1.x) marks dev-only packages.
 fn toml_lock_deps(text: &str, eco: &str) -> Vec<Dep> {
     let Ok(table) = text.parse::<toml::Table>() else {
@@ -59,7 +60,7 @@ fn toml_lock_deps(text: &str, eco: &str) -> Vec<Dep> {
                         .any(|k| s.contains_key(*k))
                         || matches!(
                             s.get("type").and_then(toml::Value::as_str),
-                            Some("directory" | "file")
+                            Some("directory")
                         )
                 }),
             };
@@ -118,7 +119,16 @@ fn package_lock_deps(text: &str) -> Vec<Dep> {
         .and_then(serde_json::Value::as_object)
     {
         for (name, entry) in dependencies {
-            deps.push(entry_dep(name, entry));
+            let mut dep = entry_dep(name, entry);
+            // v1 alias: `"alias": {"version": "npm:real@1.0.0"}`.
+            if let Some(real) = dep.version.clone()
+                && let Some(real) = real.strip_prefix("npm:")
+            {
+                let real_name = npm_spec_name(real);
+                dep.version = real.get(real_name.len() + 1..).map(str::to_string);
+                dep.name = real_name.to_string();
+            }
+            deps.push(dep);
         }
     }
     deps
@@ -126,7 +136,8 @@ fn package_lock_deps(text: &str) -> Vec<Dep> {
 
 /// Split an npm spec like `@scope/pkg@^1.0` or `pkg@npm:^1.0` into its
 /// name (the `@` at index 0 belongs to the scope). An alias
-/// `alias@npm:real@^1.0` installs `real`, so that is the name.
+/// `alias@npm:real@^1.0` or `alias@npm:real` installs `real`, so that is
+/// the name; `pkg@npm:^1.0` (a range after `npm:`) names `pkg`.
 fn npm_spec_name(spec: &str) -> &str {
     let spec = spec.trim().trim_matches('"').trim_matches('\'');
     let skip = usize::from(spec.starts_with('@'));
@@ -134,14 +145,21 @@ fn npm_spec_name(spec: &str) -> &str {
         return spec;
     };
     match spec[at + 1..].strip_prefix("npm:") {
-        Some(real) if npm_spec_name(real).len() < real.len() => npm_spec_name(real),
+        Some(real)
+            if npm_spec_name(real).len() < real.len()
+                || real.starts_with(|c: char| c.is_ascii_alphabetic() || c == '@') =>
+        {
+            npm_spec_name(real)
+        }
         _ => &spec[..at],
     }
 }
 
 /// `yarn.lock` v1 and berry: an unindented header lists the specs, the
 /// indented `version` line holds the resolved version. Berry
-/// `@workspace:`/`@link:`/`@portal:` entries are the project itself.
+/// `@workspace:`/`@link:`/`@portal:` entries are the project itself; its
+/// `resolution` line names the installed package (berry writes `npm:` on
+/// every spec, so a tag like `pkg@npm:latest` is not an alias).
 fn yarn_lock_deps(text: &str) -> Vec<Dep> {
     let mut deps = Vec::new();
     let mut current: Option<Dep> = None;
@@ -170,6 +188,10 @@ fn yarn_lock_deps(text: &str) -> Vec<Dep> {
         {
             let version = rest.trim_start_matches(':').trim().trim_matches('"');
             entry.version = (!version.is_empty()).then(|| version.to_string());
+        } else if let Some(entry) = current.as_mut()
+            && let Some(resolution) = line.strip_prefix("  resolution: ")
+        {
+            entry.name = npm_spec_name(resolution).to_string();
         }
     }
     deps.extend(current);
@@ -394,6 +416,16 @@ mod tests {
             r#"{"packages":{"node_modules/string-width-cjs":{"name":"string-width","version":"4.2.3"}}}"#,
         );
         assert_eq!(names(&lock), [("string-width", Some("4.2.3"), false)]);
+        let v1 = package_lock_deps(
+            r#"{"dependencies":{"string-width-cjs":{"version":"npm:string-width@4.2.3"}}}"#,
+        );
+        assert_eq!(names(&v1), [("string-width", Some("4.2.3"), false)]);
+        let rangeless = yarn_lock_deps("\"foo@npm:bar\":\n  version \"2.0.0\"\n");
+        assert_eq!(names(&rangeless), [("bar", Some("2.0.0"), false)]);
+        let berry_tag = yarn_lock_deps(
+            "\"foo@npm:latest\":\n  version: 4.0.0\n  resolution: \"foo@npm:4.0.0\"\n",
+        );
+        assert_eq!(names(&berry_tag), [("foo", Some("4.0.0"), false)]);
         let yarn = yarn_lock_deps(
             "\"string-width-cjs@npm:string-width@^4.2.0\":\n  version \"4.2.3\"\n\n\"@a/b-alias@npm:@a/b@^1\":\n  version \"1.0.0\"\n",
         );
@@ -407,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn poetry_directory_and_file_sources_are_first_party() {
+    fn poetry_directory_sources_are_first_party_vendored_files_are_not() {
         let deps = toml_lock_deps(
             "[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n[package.source]\ntype = \"directory\"\nurl = \"../mylib\"\n\n[[package]]\nname = \"wheel-dep\"\nversion = \"1.0\"\n[package.source]\ntype = \"file\"\nurl = \"dist/w.whl\"\n\n[[package]]\nname = \"gitdep\"\nversion = \"2.0\"\n[package.source]\ntype = \"git\"\nurl = \"https://example.org/g.git\"\n",
             "pypi",
@@ -416,7 +448,7 @@ mod tests {
             names(&deps),
             [
                 ("mylib", Some("0.1.0"), true),
-                ("wheel-dep", Some("1.0"), true),
+                ("wheel-dep", Some("1.0"), false),
                 ("gitdep", Some("2.0"), false)
             ]
         );

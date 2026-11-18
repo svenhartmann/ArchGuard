@@ -126,3 +126,15 @@ do.
   instead of passing silently. MCP `sbom` always returns at least one
   component; one whose manifest list does not fit the page keeps the first
   manifests and states `manifests_total`.
+- **2026-11-18, re-review fixes.** The manifest search has no depth bound
+  any more (symlinked directories are not followed, so it cannot loop);
+  the depth note, `search_limited` and the depth `license-coverage`
+  warning are gone, the warning remains for "no manifest found". Go
+  `testdata/` and Maven/Gradle `src/test/` are skipped as test data
+  (`src/main/resources` stays searched). A poetry `type = "file"` source
+  is a vendored third-party package again; only `"directory"` is
+  first-party. pypi components are deduplicated on the PEP 503 name plus
+  version (`zope.interface` and `zope-interface` are one component; the
+  first spelling names it). npm aliases without a range (`foo@npm:bar`),
+  package-lock v1 aliases (`"version": "npm:real@1.0.0"`) and berry
+  entries (by their `resolution`) name the installed package.

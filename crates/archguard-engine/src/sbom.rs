@@ -15,9 +15,10 @@ use archguard_core::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::dep_inventory::{depth_note, manifest_deps};
+use crate::dep_inventory::manifest_deps;
 
-/// One third-party package, deduplicated by purl across manifests.
+/// One third-party package, deduplicated by purl across manifests (pypi:
+/// by PEP 503 name, the first spelling found names it).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SbomComponent {
     pub ecosystem: String,
@@ -51,8 +52,6 @@ pub struct Sbom {
     /// Components that fail the `[licenses]` policy.
     pub violations: usize,
     pub notes: Vec<String>,
-    /// The manifest search hit its depth bound: deeper lockfiles are missing.
-    pub search_limited: bool,
 }
 
 /// Percent-encode one purl segment (RFC 3986 unreserved stay as is).
@@ -109,6 +108,22 @@ fn license_expression(licenses: &[String]) -> Option<String> {
     }
 }
 
+/// PEP 503 normalised name: lowercase, runs of `-_.` become one `-`.
+/// uv.lock and newer poetry.lock write it, older locks the display name.
+fn pep503(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            if !out.ends_with('-') {
+                out.push('-');
+            }
+        } else {
+            out.extend(c.to_lowercase());
+        }
+    }
+    out
+}
+
 fn scope_rank(scope: Option<&str>) -> u8 {
     match scope {
         Some("optional") => 0,
@@ -120,15 +135,8 @@ fn scope_rank(scope: Option<&str>) -> u8 {
 /// Build the SBOM for `root` and evaluate every component against `policy`.
 pub fn sbom(root: &Path, policy: &LicensesConfig) -> Sbom {
     let mut by_purl: BTreeMap<String, SbomComponent> = BTreeMap::new();
-    let (manifests, search_limited) = manifest_deps(root);
-    let mut result = Sbom {
-        search_limited,
-        ..Sbom::default()
-    };
-    if search_limited {
-        result.notes.push(depth_note());
-    }
-    for (ecosystem, path, deps) in manifests {
+    let mut result = Sbom::default();
+    for (ecosystem, path, deps) in manifest_deps(root) {
         let third_party: Vec<_> = deps.into_iter().filter(|d| !d.local).collect();
         if third_party.is_empty() {
             result.notes.push(format!(
@@ -141,20 +149,23 @@ pub fn sbom(root: &Path, policy: &LicensesConfig) -> Sbom {
             components: third_party.len(),
         });
         for dep in third_party {
+            // pypi: one package under several spellings is one component.
+            let key = match ecosystem.as_str() {
+                "pypi" => purl(&ecosystem, &pep503(&dep.name), dep.version.as_deref()),
+                _ => purl(&ecosystem, &dep.name, dep.version.as_deref()),
+            };
             let purl = purl(&ecosystem, &dep.name, dep.version.as_deref());
             let license = license_expression(&dep.licenses);
-            let component = by_purl
-                .entry(purl.clone())
-                .or_insert_with(|| SbomComponent {
-                    ecosystem: ecosystem.clone(),
-                    name: dep.name.clone(),
-                    version: dep.version.clone(),
-                    purl,
-                    license: None,
-                    license_state: LicenseState::Unknown,
-                    scope: dep.scope.map(str::to_string),
-                    manifests: Vec::new(),
-                });
+            let component = by_purl.entry(key).or_insert_with(|| SbomComponent {
+                ecosystem: ecosystem.clone(),
+                name: dep.name.clone(),
+                version: dep.version.clone(),
+                purl,
+                license: None,
+                license_state: LicenseState::Unknown,
+                scope: dep.scope.map(str::to_string),
+                manifests: Vec::new(),
+            });
             // The first manifest that states a licence wins.
             if component.license.is_none() {
                 component.license = license;
@@ -206,28 +217,18 @@ fn finding(id: String, severity: Severity, message: String, evidence: Vec<Ref>) 
 }
 
 /// The `[licenses]` violations as `check` findings (one error per
-/// component), plus one warning when an active policy could not see every
-/// lockfile (none found, or the search hit its depth bound), so the gate
-/// never passes silently on nothing.
+/// component), plus one warning when an active policy found no lockfile or
+/// manifest at all, so the gate never passes silently on nothing.
 pub fn license_findings(sbom: &Sbom, policy: &LicensesConfig) -> Vec<Finding> {
     if !policy.is_active() {
         return Vec::new();
     }
-    let coverage = if sbom.manifests.is_empty() {
-        Some(
-            "[licenses] is configured but no supported lockfile or manifest was found; no licence was checked."
-                .to_string(),
-        )
-    } else if sbom.search_limited {
-        Some(format!("[licenses]: {}.", depth_note()))
-    } else {
-        None
-    };
-    let coverage = coverage.map(|message| {
+    let coverage = sbom.manifests.is_empty().then(|| {
         finding(
             "license-coverage".into(),
             Severity::Warning,
-            message,
+            "[licenses] is configured but no supported lockfile or manifest was found; no licence was checked."
+                .to_string(),
             Vec::new(),
         )
     });
@@ -539,29 +540,57 @@ mod tests {
         assert_eq!(findings[0].severity, Severity::Warning);
         assert_eq!(findings[0].id, "license-coverage");
 
+        // A deep source tree without manifests is no coverage gap; a
+        // lockfile however deep is gated.
+        let java = dir
+            .path()
+            .join("services/orders/src/main/java/com/acme/shop/order/infrastructure/persistence/jpa/entity");
+        std::fs::create_dir_all(&java).expect("mkdir");
+        std::fs::write(java.join("E.java"), "class E {}").expect("java");
+        std::fs::write(dir.path().join("package-lock.json"), "{}").expect("lock");
+        let result = sbom(dir.path(), &policy);
+        assert!(
+            license_findings(&result, &policy).is_empty(),
+            "{:?}",
+            result.notes
+        );
         let deep = dir.path().join(["d"; 13].join("/"));
         std::fs::create_dir_all(&deep).expect("mkdir");
         std::fs::write(
             deep.join("package-lock.json"),
-            r#"{"packages":{"node_modules/x":{"version":"1.0.0","license":"MIT"}}}"#,
+            r#"{"packages":{"node_modules/x":{"version":"1.0.0","license":"GPL-3.0-only"}}}"#,
         )
         .expect("lock");
-        std::fs::write(dir.path().join("package-lock.json"), "{}").expect("lock");
         let result = sbom(dir.path(), &policy);
-        assert!(result.search_limited);
-        let findings = license_findings(&result, &policy);
-        assert_eq!(findings.len(), 1, "{findings:?}");
-        assert!(
-            findings[0]
-                .message
-                .as_deref()
-                .is_some_and(|m| m.contains("deeper than")),
-            "{findings:?}"
-        );
+        let ids: Vec<String> = license_findings(&result, &policy)
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        assert_eq!(ids, ["license:pkg:npm/x@1.0.0"]);
         assert!(
             license_findings(&result, &LicensesConfig::default()).is_empty(),
             "no policy, no gate"
         );
+    }
+
+    #[test]
+    fn pypi_spellings_of_one_package_are_one_component() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("poetry.lock"),
+            "[[package]]\nname = \"zope.interface\"\nversion = \"6.0\"\n",
+        )
+        .expect("poetry");
+        std::fs::create_dir(dir.path().join("svc")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("svc/uv.lock"),
+            "[[package]]\nname = \"zope-interface\"\nversion = \"6.0\"\nsource = { registry = \"https://pypi.org/simple\" }\n",
+        )
+        .expect("uv");
+        let sbom = sbom(dir.path(), &LicensesConfig::default());
+        let purls: Vec<&str> = sbom.components.iter().map(|c| c.purl.as_str()).collect();
+        assert_eq!(purls, ["pkg:pypi/zope.interface@6.0"]);
+        assert_eq!(sbom.components[0].manifests, ["poetry.lock", "svc/uv.lock"]);
     }
 
     #[test]
