@@ -143,8 +143,13 @@ fn parse(
             && !entry.path().components().any(|c| c.as_os_str() == ".terraform");
         count += usize::from(tf);
         if index >= MAX_ENTRIES || count > MAX_FILES {
+            let none = if count == 0 {
+                " (no .tf file found before the limit)"
+            } else {
+                ""
+            };
             let message = format!(
-                "Terraform scan stopped after {MAX_ENTRIES} entries or {MAX_FILES} .tf files; later .tf files are not read and their resources are unknown."
+                "Terraform scan stopped after {MAX_ENTRIES} entries or {MAX_FILES} .tf files{none}; later .tf files are not read and their resources are unknown."
             );
             diagnostic(report, ".", None, message);
             break;
@@ -787,5 +792,24 @@ mod tests {
         );
         assert_eq!(local_source("", "../outside"), None);
         assert_eq!(local_source("", "git::https://example.org/m.git"), None);
+    }
+
+    #[test]
+    fn the_entry_limit_without_any_tf_file_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..MAX_ENTRIES {
+            std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+        }
+        let mut report = ServiceTopology::default();
+        let discovery = Discovery::new(dir.path(), &mut report).unwrap();
+        assert!(parse(dir.path(), &discovery, &mut report).is_empty());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("no .tf file found before the limit")),
+            "{:?}",
+            report.diagnostics
+        );
     }
 }

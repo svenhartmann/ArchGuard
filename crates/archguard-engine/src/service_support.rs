@@ -22,15 +22,27 @@ pub(crate) fn relative(root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
-/// Test code: a test directory, a dotted .NET test project (`Shop.Tests`) or a
-/// `.test.`/`.spec.` file.
+/// Test code: a test directory, a .NET test project (`Shop.Tests`, `Shop.UnitTests`),
+/// a Gradle test source set (`integrationTest`, `testFixtures`), a pytest file
+/// (`test_x.py`, `x_test.py`) or a `.test.`/`.spec.` file. The camel-case checks are
+/// case-sensitive so `Contest`, `latest` and `Testimonials` stay production code.
 pub(crate) fn test_path(rel: &str) -> bool {
+    let file = rel.rsplit('/').next().unwrap_or(rel);
     rel.split('/').any(|p| {
-        let p = p.to_ascii_lowercase();
-        matches!(p.as_str(), "test" | "tests" | "__tests__" | "__mocks__")
-            || p.ends_with(".tests")
-            || p.ends_with(".test")
-    }) || rel.contains(".test.")
+        let tail = p.rsplit('.').next().unwrap_or(p);
+        let lower = p.to_ascii_lowercase();
+        matches!(lower.as_str(), "test" | "tests" | "__tests__" | "__mocks__")
+            || lower.ends_with(".tests")
+            || lower.ends_with(".test")
+            || p.ends_with("Tests")
+            || p.ends_with("Test")
+            || [p, tail].iter().any(|s| {
+                s.strip_prefix("test")
+                    .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()))
+            })
+    }) || file.starts_with("test_")
+        || file.ends_with("_test.py")
+        || rel.contains(".test.")
         || rel.contains(".spec.")
 }
 /// The services whose source scope (build context or project path) is the
