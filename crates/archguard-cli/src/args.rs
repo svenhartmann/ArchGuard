@@ -311,7 +311,7 @@ pub(crate) enum Command {
         #[arg(long, requires = "scan")]
         replace: bool,
     },
-    /// Import an OpenAPI contract for an exact service ID, or read saved comparisons.
+    /// Import an OpenAPI contract for an exact service ID, or read saved comparisons and GraphQL schemas.
     Contracts {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
@@ -321,6 +321,9 @@ pub(crate) enum Command {
         service: Option<String>,
         #[arg(long, requires = "report", value_name = "JSON")]
         usage: Option<PathBuf>,
+        /// Save the current GraphQL schemas as the baseline that later changes are compared against.
+        #[arg(long, conflicts_with = "report")]
+        graphql_baseline: bool,
     },
     /// Import test coverage, or read its saved snapshot and change-impact ranking.
     Coverage {

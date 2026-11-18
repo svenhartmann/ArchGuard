@@ -496,7 +496,7 @@ pub fn mutations_value(r: &MutationReport, p: &EngineeringParams) -> Result<Valu
         },
     )
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ContractRow<'a> {
     Contract(&'a archguard_engine::ApiContract),
     Operation(
@@ -517,6 +517,55 @@ enum ContractRow<'a> {
         &'a archguard_engine::ApiChange,
         &'a str,
     ),
+    /// A GraphQL schema, link, unresolved operation or change: record and search text.
+    Graphql(Value, String),
+}
+fn row_matches(q: &str, row: &ContractRow<'_>) -> bool {
+    match row {
+        ContractRow::Contract(c) => matches(q, [&c.provider, &c.source_path]),
+        ContractRow::Operation(c, o) => matches(
+            q,
+            [
+                c.provider.as_str(),
+                &o.id,
+                o.operation_id.as_deref().unwrap_or(""),
+            ],
+        ),
+        ContractRow::Usage(c, u) => matches(q, [&c.provider, &u.consumer, &u.operation]),
+        ContractRow::Caller(c, t) => matches(q, [c.provider.as_str(), t]),
+        ContractRow::Change(c, m) => matches(q, [&c.provider, &m.operation, &m.kind, &m.message]),
+        ContractRow::Consumer(c, m, t) => matches(q, [c.provider.as_str(), &m.operation, t]),
+        ContractRow::Graphql(_, text) => matches(q, [text]),
+    }
+}
+/// GraphQL records (ADR 0014); schema type maps stay out to keep pages small.
+fn graphql_rows(r: &ApiContractReport) -> Vec<ContractRow<'static>> {
+    let Some(g) = &r.graphql else { return vec![] };
+    let schemas = g.schemas.iter().map(|s| {
+        let provider = s.provider.as_deref().unwrap_or("unowned");
+        let row = json!({"kind":"graphql_schema","provider":s.provider,"files":s.files,"sha256":s.sha256,"operations":s.operations,"types":s.types.len(),"directives":s.directives});
+        ContractRow::Graphql(row, format!("{provider} {}", s.files.join(" ")))
+    });
+    let links = g.links.iter().map(|l| {
+        let text = format!("{} {} {} {}", l.consumer, l.provider, l.operation, l.file);
+        ContractRow::Graphql(
+            json!({"kind":"graphql_link","link":l,"proves_runtime_call":false}),
+            text,
+        )
+    });
+    let unresolved = g.unresolved.iter().map(|u| {
+        let text = format!("{} {} {}", u.operation, u.file, u.reason);
+        ContractRow::Graphql(json!({"kind":"graphql_unresolved","operation":u}), text)
+    });
+    let changes = g.changes.iter().map(|c| {
+        let text = format!("{} {} {}", c.operation, c.kind, c.consumers.join(" "));
+        ContractRow::Graphql(json!({"kind":"graphql_change","change":c}), text)
+    });
+    schemas
+        .chain(links)
+        .chain(unresolved)
+        .chain(changes)
+        .collect()
 }
 pub fn contracts_value(r: &ApiContractReport, p: &EngineeringParams) -> Result<Value, ErrorData> {
     let mut rows = Vec::new();
@@ -539,24 +588,11 @@ pub fn contracts_value(r: &ApiContractReport, p: &EngineeringParams) -> Result<V
         }
     }
     let q = query(p);
-    let filtered = rows.iter().filter(|row| match row {
-        ContractRow::Contract(c) => matches(&q, [&c.provider, &c.source_path]),
-        ContractRow::Operation(c, o) => matches(
-            &q,
-            [
-                c.provider.as_str(),
-                &o.id,
-                o.operation_id.as_deref().unwrap_or(""),
-            ],
-        ),
-        ContractRow::Usage(c, u) => matches(&q, [&c.provider, &u.consumer, &u.operation]),
-        ContractRow::Caller(c, t) => matches(&q, [c.provider.as_str(), t]),
-        ContractRow::Change(c, m) => matches(&q, [&c.provider, &m.operation, &m.kind, &m.message]),
-        ContractRow::Consumer(c, m, t) => matches(&q, [c.provider.as_str(), &m.operation, t]),
-    });
+    rows.extend(graphql_rows(r));
+    let filtered = rows.iter().filter(|row| row_matches(&q, row));
     page(
         &r.status,
-        json!({"contracts_total":r.contracts.len(),"operations_total":r.contracts.iter().map(|c|c.operations.len()).sum::<usize>(),"changes_total":r.contracts.iter().map(|c|c.changes.len()).sum::<usize>(),"diagnostics":r.diagnostics.iter().take(2).collect::<Vec<_>>(),"diagnostics_total":r.diagnostics.len(),"limitations":r.limitations.iter().take(3).collect::<Vec<_>>(),"limitations_total":r.limitations.len(),"usage_evidence":"Declared operation usages remain distinct from configured HTTP callers; neither proves observed runtime calls.","comparison_base":"previous explicit import"}),
+        json!({"contracts_total":r.contracts.len(),"operations_total":r.contracts.iter().map(|c|c.operations.len()).sum::<usize>(),"changes_total":r.contracts.iter().map(|c|c.changes.len()).sum::<usize>(),"diagnostics":r.diagnostics.iter().take(2).collect::<Vec<_>>(),"diagnostics_total":r.diagnostics.len(),"limitations":r.limitations.iter().take(3).collect::<Vec<_>>(),"limitations_total":r.limitations.len(),"usage_evidence":"Declared operation usages remain distinct from configured HTTP callers; neither proves observed runtime calls.","comparison_base":"previous explicit import","graphql":r.graphql.as_ref().map(|g|json!({"status":g.status,"schemas":g.schemas.len(),"links":g.links.len(),"unresolved":g.unresolved.len(),"changes":g.changes.len(),"comparison_status":g.comparison_status,"comparison_base":"saved GraphQL baseline"}))}),
         filtered,
         p,
         |row| match row {
@@ -578,6 +614,7 @@ pub fn contracts_value(r: &ApiContractReport, p: &EngineeringParams) -> Result<V
             ContractRow::Consumer(c, m, t) => {
                 json!({"kind":"affected_consumer","provider":c.provider,"operation":m.operation,"change":m.kind,"consumer":t,"evidence":"explicit declared usage"})
             }
+            ContractRow::Graphql(v, _) => v.clone(),
         },
     )
 }
@@ -786,5 +823,29 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn graphql_links_and_changes_are_paged_with_the_contracts() {
+        let report: ApiContractReport = serde_json::from_value(json!({"schema_version":1,"status":"not_imported","contracts":[],"diagnostics":[],"limitations":[],
+            "graphql":{"status":"ready","comparison_status":"compared","diagnostics":[],"limitations":[],
+                "schemas":[{"provider":"api","files":["api/schema.graphql"],"sha256":"x","operations":["Query.user"],"types":{},"directives":[]}],
+                "links":[{"consumer":"web","provider":"api","operation":"query GetUser","root_fields":["Query.user"],"file":"web/a.ts","line":3,"evidence":"operation_document"}],
+                "unresolved":[{"consumer":"web","operation":"query Node","file":"web/a.ts","line":9,"reason":"The root fields match 2 schemas"}],
+                "changes":[{"operation":"Query.user(id:)","kind":"argument_removed","severity":"breaking","message":"m","consumers":["web"]}]}})).unwrap();
+        let page = contracts_value(&report, &EngineeringParams::default()).unwrap();
+        assert_eq!(page["total"], 4);
+        assert_eq!(page["metadata"]["graphql"]["links"], 1);
+        let found = contracts_value(
+            &report,
+            &EngineeringParams {
+                query: Some("GetUser".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(found["total"], 1);
+        assert_eq!(found["items"][0]["kind"], "graphql_link");
+        assert_eq!(found["items"][0]["proves_runtime_call"], false);
     }
 }
