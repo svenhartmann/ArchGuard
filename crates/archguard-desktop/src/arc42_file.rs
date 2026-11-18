@@ -240,21 +240,7 @@ impl Arc42Files {
         let path = self.path_of(n);
         let on_disk = read(&path)?;
         if on_disk != *base {
-            // Load the new text, so saving again writes the chapter into it.
-            base.clone_from(&on_disk);
-            match (&self.target, on_disk) {
-                (Target::File(_), text) => self.whole = text,
-                (Target::Folder(_), Some(text)) => {
-                    self.chapters.insert(n, (path.clone(), text));
-                }
-                (Target::Folder(_), None) => {
-                    self.chapters.remove(&n);
-                }
-            }
-            return Err(format!(
-                "{} changed on disk while this chapter was edited; its new text is loaded, save again to write this chapter into it",
-                path.display()
-            ));
+            return Err(self.reload(n, &path, on_disk, base));
         }
         let text = self.compose(doc, n, on_disk.as_deref(), edited);
         if let Some(dir) = path.parent() {
@@ -269,6 +255,44 @@ impl Arc42Files {
         }
         self.dropped = dropped;
         Ok(path)
+    }
+
+    /// The file at `path` changed on disk: load its new text, so saving
+    /// again writes the chapter into it, and say why the save was refused.
+    /// If chapter `n` itself changed, saving again replaces that change.
+    fn reload(
+        &mut self,
+        n: u8,
+        path: &Path,
+        on_disk: Option<String>,
+        base: &mut Option<String>,
+    ) -> String {
+        let own = |file: Option<&str>| match self.target {
+            Target::File(_) => file.and_then(|w| section(w, n).map(|r| w[r].to_string())),
+            Target::Folder(_) => file.map(str::to_string),
+        };
+        let itself = own(base.as_deref()) != own(on_disk.as_deref());
+        base.clone_from(&on_disk);
+        match (&self.target, on_disk) {
+            (Target::File(_), text) => self.whole = text,
+            (Target::Folder(_), Some(text)) => {
+                self.chapters.insert(n, (path.to_path_buf(), text));
+            }
+            (Target::Folder(_), None) => {
+                self.chapters.remove(&n);
+            }
+        }
+        if itself {
+            format!(
+                "Chapter {n} itself was changed in {} while you edited it; saving again replaces that change. Copy your text, Discard, and reopen to see the new version.",
+                path.display()
+            )
+        } else {
+            format!(
+                "{} changed on disk while this chapter was edited; its new text is loaded, save again to write this chapter into it",
+                path.display()
+            )
+        }
     }
 
     /// Whether a file holds chapter `n`.

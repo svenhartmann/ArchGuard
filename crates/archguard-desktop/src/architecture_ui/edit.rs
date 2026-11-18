@@ -700,15 +700,45 @@ mod tests {
             pulled,
             "not written"
         );
+        // The pulled change is in this very chapter: the message says that
+        // saving again replaces it, so the second save is a conscious choice.
         let reason = rebuilt.unsaved_reason();
         assert!(
-            reason.contains("changed on disk") && reason.contains("save again"),
+            reason.contains("Chapter 5 itself was changed")
+                && reason.contains("saving again replaces that change"),
             "{reason}"
         );
         assert!(rebuilt.is_open(), "the draft stays");
-        // Refused once, the new text is loaded: saving again writes the draft.
+        // Saving again anyway writes the draft over the pulled chapter.
         assert_eq!(rebuilt.save(&new), Some(path.display().to_string()));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("Mein Entwurf.") && !text.contains("Gepullter Text."));
+    }
+
+    /// A pull that changes only another chapter: refused once, then the
+    /// draft is saved into the new file and the other change stays.
+    #[test]
+    fn a_pull_into_another_chapter_is_kept_by_saving_again() {
+        let (dir, a) = project();
+        let new = doc("Old");
+        let path = dir.path().join("arc42.md");
+        let mut editor = Editor::new(a, dir.path());
+        editor.start(&new, 5);
+        editor.edit(&(editor.chapter(&new, 5) + "Mein Entwurf.\n"));
+        let pulled = std::fs::read_to_string(&path).unwrap().replace(
+            "<!-- Eigene Erläuterungen zu Kapitel 9 hier ergänzen. -->",
+            "Gepullter Text.",
+        );
+        std::fs::write(&path, &pulled).unwrap();
+        assert_eq!(editor.save(&new), None, "refused");
+        let reason = editor.unsaved_reason();
+        assert!(
+            reason.contains("save again to write this chapter into it")
+                && !reason.contains("itself"),
+            "{reason}"
+        );
+        assert_eq!(editor.save(&new), Some(path.display().to_string()));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("Mein Entwurf.") && text.contains("Gepullter Text."));
     }
 }
