@@ -371,20 +371,13 @@ fn save(ui: &AppWindow, name: &str, content: &str) -> Option<String> {
     let mut dialog = rfd::FileDialog::new()
         .set_title(ui.get_export_title().as_str())
         .set_file_name(name);
-    if let Some(dir) = start_dir(std::env::home_dir().as_deref()) {
+    if let Some(dir) = crate::export_ui::start_dir(std::env::home_dir().as_deref()) {
         dialog = dialog.set_directory(dir);
     }
     let path = dialog.save_file()?;
     write(&path, content)
         .map_err(|e| crate::export_ui::failed(ui, &e))
         .ok()
-}
-
-/// Where the save dialog starts: the user's Downloads folder if it exists,
-/// else `None` (the dialog chooses). Never the project, where Enter would
-/// replace its own arc42.md with the generated text.
-fn start_dir(home: Option<&Path>) -> Option<std::path::PathBuf> {
-    Some(home?.join("Downloads")).filter(|d| d.is_dir())
 }
 
 /// Write `content` in one step; the path written, or the error.
@@ -507,19 +500,5 @@ mod tests {
         let error = result.expect_err("a read-only folder is not written");
         assert!(error.starts_with("Could not write"), "{error}");
         assert!(!d.path().join("a.puml").exists());
-    }
-
-    /// The save dialog never starts in the project, where Enter would
-    /// replace its own arc42.md: Downloads, else the dialog's choice.
-    #[test]
-    fn a_download_starts_in_the_downloads_folder_or_where_the_dialog_likes() {
-        let home = tempfile::tempdir().expect("temp dir");
-        assert_eq!(start_dir(Some(home.path())), None, "no Downloads folder");
-        assert_eq!(start_dir(None), None, "no home folder");
-        std::fs::create_dir(home.path().join("Downloads")).unwrap();
-        assert_eq!(
-            start_dir(Some(home.path())),
-            Some(home.path().join("Downloads"))
-        );
     }
 }
