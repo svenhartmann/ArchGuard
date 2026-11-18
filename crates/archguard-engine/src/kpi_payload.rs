@@ -1,6 +1,6 @@
 //! Review-KPI payload (R23).
 //!
-//! [`compute_review_kpis`] aggregates the review KPIs the pipeline
+//! [`compute_review_kpis_from_scans`] aggregates the review KPIs the pipeline
 //! embeds into the analysis payload — the optional `review_kpis` field
 //! of [`Graph`] that every consumer (CLI, reports, MCP, dashboard)
 //! reads from one place. The engine glue is deliberately thin: all
@@ -47,33 +47,46 @@ const API_TOP: usize = 5;
 /// Top-N risk gaps kept in the payload.
 const RISK_TOP: usize = 10;
 
+/// Per-file scan results, filled one source at a time so the caller
+/// never holds the text of every file at once.
+#[derive(Default)]
+pub struct FileScans {
+    visibility: Vec<Visibility>,
+    markers: Vec<DebtMarker>,
+    loc: usize,
+}
+
+impl FileScans {
+    /// Scan one source; its text can be dropped afterwards.
+    pub fn add(&mut self, source: &ScannedSource<'_>) {
+        self.visibility
+            .push(scan_visibility(source.path, source.content, source.lang));
+        self.markers
+            .extend(scan_debt(source.path, source.content, source.lang));
+        self.loc += source.content.lines().count();
+    }
+}
+
 /// Compute the full review-KPI payload for a freshly built graph.
 ///
 /// Module-view KPIs (propagation cost, SDP, tangledness, hubs, layer
 /// drift, health) run on the configured `[modules].depth` view; file
-/// KPIs (visibility, debt, leaks, risk gaps) run on the full graph.
+/// KPIs (visibility, debt, leaks, risk gaps) run on the full graph and
+/// the per-file [`FileScans`].
 /// `zones` stays `None` here: it needs compiler abstractness, which only
 /// callers that run the call analysis add via `review_zones`.
 #[tracing::instrument(skip_all)]
-pub fn compute_review_kpis(
+pub fn compute_review_kpis_from_scans(
     root: &Path,
     config: &Config,
     full: &Graph,
-    sources: &[ScannedSource<'_>],
+    scans: FileScans,
 ) -> Result<ReviewKpis, ArchguardError> {
-    // ---- file-level scans over the sources the pipeline just read.
-    let visibility: Vec<Visibility> = sources
-        .iter()
-        .map(|source| scan_visibility(source.path, source.content, source.lang))
-        .collect();
-    let markers: Vec<DebtMarker> = sources
-        .iter()
-        .flat_map(|source| scan_debt(source.path, source.content, source.lang))
-        .collect();
-    let loc = sources
-        .iter()
-        .map(|source| source.content.lines().count())
-        .sum();
+    let FileScans {
+        visibility,
+        markers,
+        loc,
+    } = scans;
 
     // ---- module view for the graph KPIs.
     let view = aggregate(full, &Cut::at_depth(full, config.modules.depth as usize));
@@ -302,8 +315,13 @@ mod tests {
     #[test]
     fn compute_over_an_empty_graph_reports_unknowns_not_failures() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let kpis = compute_review_kpis(dir.path(), &Config::default(), &empty_graph(), &[])
-            .expect("empty project computes");
+        let kpis = compute_review_kpis_from_scans(
+            dir.path(),
+            &Config::default(),
+            &empty_graph(),
+            FileScans::default(),
+        )
+        .expect("empty project computes");
         assert!(kpis.propagation_cost.is_empty());
         assert!(kpis.zones.is_none(), "no compiler evidence, no zones");
         assert!(kpis.dependencies.is_none(), "no manifests → not measured");
@@ -312,6 +330,34 @@ mod tests {
             kpis.layer_drift.is_none(),
             "no declared layers → no drift claim"
         );
+    }
+
+    #[test]
+    fn file_scans_accumulate_per_file_so_texts_can_be_dropped() {
+        let mut scans = FileScans::default();
+        for (path, text) in [
+            ("src/app/a.ts", "// TODO: split\nexport const A = 1;\n"),
+            ("src/app/b.ts", "export function b() {}\n"),
+        ] {
+            // Each text lives only for its own `add` call.
+            let content = text.to_string();
+            scans.add(&ScannedSource {
+                path,
+                lang: Lang::Ts,
+                content: &content,
+            });
+        }
+        let kpis = compute_review_kpis_from_scans(
+            tempfile::tempdir().expect("tempdir").path(),
+            &Config::default(),
+            &empty_graph(),
+            scans,
+        )
+        .expect("computes");
+        let debt = kpis.debt.expect("scan ran");
+        assert_eq!((debt.markers, debt.loc), (1, 3), "{debt:?}");
+        let surface = &kpis.api_surface[0];
+        assert_eq!((surface.exported_symbols, surface.files), (2, 2));
     }
 
     #[test]
