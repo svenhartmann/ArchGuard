@@ -176,6 +176,11 @@ fn fail(ui: &AppWindow, f: Failure) {
     }
 }
 
+/// "Could not export: {error}" in the notice bar.
+pub(crate) fn failed(ui: &AppWindow, error: &str) {
+    notice(ui, FAILED, error);
+}
+
 fn notice(ui: &AppWindow, kind: i32, text: &str) {
     ui.set_notice_kind(kind);
     // A space keeps the bar open for hints without a text of their own.
@@ -325,8 +330,8 @@ fn image(ui: &AppWindow, pane: usize) -> Result<Vec<u8>, Failure> {
     export::png(&shot, rect).map_err(|e| Failure::Error(e.to_string()))
 }
 
-/// The save dialog, in the project folder with the default name. Never
-/// in headless runs, which pass their path.
+/// The save dialog with the default name. Never in headless runs, which
+/// pass their path.
 fn ask(ui: &AppWindow, name: &str) -> Option<PathBuf> {
     if crate::context::headless_run() {
         return None;
@@ -334,10 +339,17 @@ fn ask(ui: &AppWindow, name: &str) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new()
         .set_title(ui.get_export_title().as_str())
         .set_file_name(name);
-    if let Some(dir) = with_store(|s| s.active().map(|d| d.root.clone())) {
+    if let Some(dir) = start_dir(std::env::home_dir().as_deref()) {
         dialog = dialog.set_directory(dir);
     }
     dialog.save_file()
+}
+
+/// Where a save dialog for an export starts: the user's Downloads folder
+/// if it exists, else `None` (the dialog chooses). Never the project,
+/// where Enter would replace its own arc42.md with the generated text.
+pub(crate) fn start_dir(home: Option<&std::path::Path>) -> Option<PathBuf> {
+    Some(home?.join("Downloads")).filter(|d| d.is_dir())
 }
 
 #[cfg(test)]
@@ -378,5 +390,19 @@ mod tests {
         assert!(Busy::begin().is_none(), "second export while one runs");
         drop(first);
         assert!(Busy::begin().is_some(), "free again after the first");
+    }
+
+    /// The save dialog never starts in the project, where Enter would
+    /// replace its own arc42.md: Downloads, else the dialog's choice.
+    #[test]
+    fn a_download_starts_in_the_downloads_folder_or_where_the_dialog_likes() {
+        let home = tempfile::tempdir().expect("temp dir");
+        assert_eq!(start_dir(Some(home.path())), None, "no Downloads folder");
+        assert_eq!(start_dir(None), None, "no home folder");
+        std::fs::create_dir(home.path().join("Downloads")).unwrap();
+        assert_eq!(
+            start_dir(Some(home.path())),
+            Some(home.path().join("Downloads"))
+        );
     }
 }
