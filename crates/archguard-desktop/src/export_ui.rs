@@ -176,6 +176,11 @@ fn fail(ui: &AppWindow, f: Failure) {
     }
 }
 
+/// "Could not export: {error}" in the notice bar.
+pub(crate) fn failed(ui: &AppWindow, error: &str) {
+    notice(ui, FAILED, error);
+}
+
 fn notice(ui: &AppWindow, kind: i32, text: &str) {
     ui.set_notice_kind(kind);
     // A space keeps the bar open for hints without a text of their own.

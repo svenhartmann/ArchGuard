@@ -362,7 +362,8 @@ fn plantuml(s: &mut ArchitectureState, ui: &AppWindow, unit: &str) {
 }
 
 /// Write an export where the save dialog points (never in headless
-/// runs); `None` when cancelled.
+/// runs); the path written, `None` when cancelled or failed (the notice
+/// bar shows the error).
 fn save(ui: &AppWindow, name: &str, content: &str) -> Option<String> {
     if crate::context::headless_run() {
         return None;
@@ -374,7 +375,9 @@ fn save(ui: &AppWindow, name: &str, content: &str) -> Option<String> {
         dialog = dialog.set_directory(dir);
     }
     let path = dialog.save_file()?;
-    Some(write(&path, content))
+    write(&path, content)
+        .map_err(|e| crate::export_ui::failed(ui, &e))
+        .ok()
 }
 
 /// Where the save dialog starts: the user's Downloads folder if it exists,
@@ -385,11 +388,10 @@ fn start_dir(home: Option<&Path>) -> Option<std::path::PathBuf> {
 }
 
 /// Write `content` in one step; the path written, or the error.
-fn write(path: &Path, content: &str) -> String {
-    match crate::export::write(path, content.as_bytes()) {
-        Ok(()) => path.display().to_string(),
-        Err(e) => e.to_string(),
-    }
+fn write(path: &Path, content: &str) -> Result<String, String> {
+    crate::export::write(path, content.as_bytes())
+        .map(|()| path.display().to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -476,11 +478,35 @@ mod tests {
     fn a_download_writes_only_the_chosen_file() {
         let d = tempfile::tempdir().expect("temp dir");
         let chosen = d.path().join("arc42.md");
-        assert_eq!(write(&chosen, "# arc42\n"), chosen.display().to_string());
+        assert_eq!(
+            write(&chosen, "# arc42\n"),
+            Ok(chosen.display().to_string())
+        );
         assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "# arc42\n");
         let missing = d.path().join("gone/arc42.md");
-        assert!(write(&missing, "x").starts_with("Could not write"));
+        assert!(
+            write(&missing, "x")
+                .unwrap_err()
+                .starts_with("Could not write")
+        );
         assert!(!d.path().join("gone").exists());
+    }
+
+    /// A failed download is an error, never a path shown as "Saved".
+    #[cfg(unix)]
+    #[test]
+    fn a_download_into_a_read_only_folder_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().expect("temp dir");
+        let set = |mode| {
+            std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set(0o555);
+        let result = write(&d.path().join("a.puml"), "@startuml\n");
+        set(0o755);
+        let error = result.expect_err("a read-only folder is not written");
+        assert!(error.starts_with("Could not write"), "{error}");
+        assert!(!d.path().join("a.puml").exists());
     }
 
     /// The save dialog never starts in the project, where Enter would
