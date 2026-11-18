@@ -289,6 +289,15 @@ mod visibility_tests {
     }
 
     #[test]
+    fn access_modifier_pairs_are_skipped() {
+        let visibility = scan_visibility(
+            "protected internal class Shared {}\ninternal unsafe partial class Native {}\n",
+        );
+        assert!(visibility.internal.contains("Shared"));
+        assert!(visibility.internal.contains("Native"));
+    }
+
+    #[test]
     fn public_types_are_exported_the_rest_is_internal() {
         let source = "public class Service {}\ninternal class Helper {}\nclass Bare {}\npublic sealed class Locked {}\npublic interface IRepository {}\npublic static class Ext {}\n";
         let visibility = scan_visibility(source);
