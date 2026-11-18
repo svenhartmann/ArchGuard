@@ -40,7 +40,9 @@ pub(crate) fn analyze_scala_calls(root: &Path, config: &Config) -> CallAnalysis 
     if report.files == 0 {
         return report;
     }
-    let jvm = jvm_packages(root, config);
+    // Only a fully scanned project can tell that a package is not its own.
+    let complete = files.len() == report.files && files.iter().all(|(_, f)| f.measured);
+    let jvm = jvm_packages(root, config).filter(|_| complete);
     report.calls = resolve::resolve(&files, &report.methods, jvm.as_ref());
     let coverage = coverage(&report.calls);
     let at = report.diagnostics.len() - 1;
@@ -136,6 +138,40 @@ mod tests {
             "{:?}",
             report.diagnostics
         );
+    }
+
+    fn resolution<'a>(report: &'a CallAnalysis, code: &str) -> &'a str {
+        let call = report.calls.iter().find(|c| c.code.contains(code));
+        call.unwrap_or_else(|| panic!("{code}: {:?}", report.calls))
+            .resolution
+            .as_str()
+    }
+
+    #[test]
+    fn a_new_of_an_unknown_single_name_stays_unresolved() {
+        let dir = project(&[(
+            "src/A.scala",
+            "class A { def run(): Int = { throw new Exception(\"x\") } }\n",
+        )]);
+        let report = analyze_scala_calls(dir.path(), &Config::default());
+        assert_eq!(resolution(&report, "new Exception"), "unresolved");
+    }
+
+    #[test]
+    fn an_unscanned_file_turns_external_into_unresolved() {
+        let dir = project(&[
+            (
+                "src/shop/order/Order.scala",
+                "package shop.order\n\nimport shop.pay.Payment\n\nclass Order {\n  def a() = Payment.make(2)\n  def b() = Payment(3)\n}\n",
+            ),
+            (
+                "src/shop/pay/Payment.scala",
+                "package shop.pay\n\nobject Payment {\n  def make(n: Int) = { if (\n}\n",
+            ),
+        ]);
+        let report = analyze_scala_calls(dir.path(), &Config::default());
+        assert_eq!(resolution(&report, "Payment.make(2)"), "unresolved");
+        assert_eq!(resolution(&report, "Payment(3)"), "unresolved");
     }
 
     #[test]

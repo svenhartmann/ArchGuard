@@ -68,18 +68,22 @@ fn java_declarations(root: &Path, config: &Config) -> index::JavaDeclarations {
     let report = crate::java_calls::analyze_java_calls(root, config);
     let ids: std::collections::HashSet<&str> =
         report.classes.iter().map(|c| c.id.as_str()).collect();
+    // Grouped once: filtering all methods per class is quadratic.
+    let mut bodiless: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+    for m in report.methods.iter().filter(|m| m.complexity.is_none()) {
+        bodiless
+            .entry(&m.class_id)
+            .or_default()
+            .push(m.name.clone());
+    }
     let classes = report
         .classes
         .iter()
         .filter(|c| !c.id.contains(['$', '@']))
         .map(|c| {
             let qualified = c.id.rsplit("::").next().unwrap_or(&c.id);
-            let bodiless = report
-                .methods
-                .iter()
-                .filter(|m| m.class_id == c.id && m.complexity.is_none())
-                .map(|m| m.name.clone())
-                .collect();
+            let bodiless = bodiless.get(c.id.as_str()).cloned().unwrap_or_default();
             archguard_extract::kotlin::KotlinClassFacts {
                 id: c.id.clone(),
                 name: qualified.rsplit('.').next().unwrap_or(qualified).into(),
