@@ -14,7 +14,7 @@ use super::rich::layout::Style;
 #[cfg(test)]
 use super::rich::view::Key;
 use super::rich::view::Rich;
-use super::{blocks, markdown, sync};
+use super::{blocks, cursor, markdown, sync};
 use crate::arc42_file::{self, Arc42Files, Target, diagram_block};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
@@ -62,6 +62,8 @@ struct Open {
     rich: Option<Rich>,
     /// The caret of the last formatted editor, for the next one.
     caret: Caret,
+    /// The Markdown field shows: the next formatted editor starts at its cursor.
+    markdown: bool,
 }
 
 impl Open {
@@ -83,6 +85,20 @@ impl Open {
             }
             rich
         })
+    }
+
+    /// Where the caret is in the draft, for the Markdown field.
+    fn cursor(&mut self) -> usize {
+        let rich = self.rich();
+        cursor::offset(rich.editor.doc(), &rich.markdown(), rich.editor.focus)
+    }
+
+    /// Put the caret at byte `offset` of the draft, the Markdown field's cursor.
+    fn place(&mut self, offset: usize) {
+        let rich = self.rich();
+        if let Some(c) = cursor::caret(rich.editor.doc(), &rich.markdown(), offset) {
+            rich.editor.place(c, false);
+        }
     }
 }
 
@@ -211,6 +227,7 @@ impl Editor {
             base: self.files.as_ref().and_then(|f| f.saved(chapter)),
             rich: None,
             caret: Caret::default(),
+            markdown: false,
         };
         documents::set_state(self.doc, Some(open));
     }
@@ -237,13 +254,19 @@ impl Editor {
             r.set_reading(false);
         }
         let reading = r.get_reading();
+        let field = d.get_draft_cursor().max(0) as usize;
         let shown = self.with_open(|o| {
             let e = o.as_mut()?;
+            // The Markdown field opens at the caret, the caret comes back at its cursor.
             if !visual && !reading {
+                let cursor = (!std::mem::replace(&mut e.markdown, true)).then(|| e.cursor());
                 e.drop_rich();
                 let body = blocks::chapter_body(&e.draft, e.chapter, false);
                 let rows = blocks::ui_blocks(&markdown::parse(&body), &note);
-                return Some((e.draft.clone(), Err(rows)));
+                return Some((e.draft.clone(), Err((rows, cursor))));
+            }
+            if std::mem::take(&mut e.markdown) {
+                e.place(field);
             }
             let rich = e.rich();
             rich.set_style(style);
@@ -258,7 +281,12 @@ impl Editor {
             d.set_draft(draft.as_str().into());
         }
         match shown {
-            Err(rows) => d.set_preview(sync::keep_blocks(&d.get_preview(), rows)),
+            Err((rows, cursor)) => {
+                if let Some(c) = cursor {
+                    d.set_draft_cursor(c as i32);
+                }
+                d.set_preview(sync::keep_blocks(&d.get_preview(), rows));
+            }
             Ok((items, tools)) => {
                 let r = ui.global::<RichData>();
                 r.set_items(keep_items(&r.get_items(), items));
@@ -740,6 +768,29 @@ mod tests {
             Some(rich.editor.block(rich.editor.focus).inline.text.clone())
         });
         assert_eq!(text.as_deref(), Some("eins"));
+    }
+
+    /// The Markdown field opens at the caret; the formatted editor comes
+    /// back at the field's cursor.
+    #[test]
+    fn the_markdown_cursor_follows_the_caret_and_back() {
+        let (dir, a) = project();
+        let editor = Editor::new(a, dir.path());
+        editor.start(&doc("Old"), 5);
+        let md = "## 5. Title\n\neins\n\nzwei drei\n";
+        editor.edit(md);
+        let caret = editor.with_open(|o| {
+            let e = o.as_mut().unwrap();
+            let rich = e.rich();
+            let c = rich.editor.focus;
+            rich.editor.place(Caret { block: 1, at: 4, ..c }, false);
+            let offset = e.cursor();
+            assert_eq!(&md[..offset], "## 5. Title\n\neins\n\nzwei");
+            e.drop_rich();
+            e.place(md.find("eins").unwrap() + 2);
+            Some(e.rich().editor.focus)
+        });
+        assert_eq!(caret.map(|c| (c.block, c.at)), Some((0, 2)));
     }
 
     #[test]

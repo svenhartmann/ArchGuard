@@ -10,6 +10,7 @@ mod blocks;
 mod catalogue;
 #[cfg(test)]
 mod check;
+mod cursor;
 mod diagram;
 mod edit;
 mod figure;

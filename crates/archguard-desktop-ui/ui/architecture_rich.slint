@@ -102,6 +102,8 @@ export global RichData {
     in-out property <length> caret-h;
     in-out property <length> caret-in-x;
     in-out property <length> caret-in-y;
+    // Counts up when the page should scroll the caret into view now.
+    in-out property <int> reveal;
     // A named key (left, right, up, down, home, end, backspace, delete,
     // enter, tab, backtab) or shortcut letter; true when handled.
     callback key(string, bool, bool, bool) -> bool;
@@ -613,6 +615,20 @@ export component RichEditor inherits FocusScope {
                 RichData.type(self.text);
                 self.text = "";
             }
+        }
+    }
+    // Made while editing (back from the Markdown field): once laid out,
+    // the keys come here and the page scrolls to the caret.
+    property <bool> back;
+    init => { root.back = !RichData.reading; }
+    Timer {
+        interval: 1ms;
+        running: root.back;
+        triggered => {
+            root.back = false;
+            ime.focus();
+            RichData.focused = ime.has-focus;
+            RichData.reveal += 1;
         }
     }
     property <bool> linking: RichData.linking;

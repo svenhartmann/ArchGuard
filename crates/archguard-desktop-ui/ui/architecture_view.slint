@@ -85,6 +85,9 @@ export global ArchitectureData {
     // (RichData); else its Markdown beside the chapter as the reader shows it.
     in-out property <bool> visual: true;
     in-out property <string> draft;
+    // The Markdown field's cursor, a byte of the draft: Rust sets it to the
+    // formatted editor's caret before the field shows and reads it back.
+    in-out property <int> draft-cursor;
     in-out property <[ArcBlock]> preview;
     callback draft-changed(string);
     // The editor switched between formatted text and Markdown.
@@ -129,6 +132,8 @@ component ChapterEditor inherits VerticalLayout {
             font-size: Theme.font-small;
             text <=> ArchitectureData.draft;
             edited(t) => { ArchitectureData.draft-changed(t); }
+            init => { self.set-cursor(ArchitectureData.draft-cursor); self.focus(); }
+            changed cursor => { ArchitectureData.draft-cursor = self.cursor; }
         }
         Rectangle {
             preferred-width: 100px;
@@ -151,6 +156,8 @@ component ChapterEditor inherits VerticalLayout {
             font-size: Theme.font-small;
             text <=> ArchitectureData.draft;
             edited(t) => { ArchitectureData.draft-changed(t); }
+            init => { self.set-cursor(ArchitectureData.draft-cursor); self.focus(); }
+            changed cursor => { ArchitectureData.draft-cursor = self.cursor; }
         }
         Text { text: @tr("Preview"); color: Theme.muted; font-size: Theme.font-caption; }
         for b in ArchitectureData.preview: ArcBlockView { block: b; }
@@ -432,7 +439,10 @@ export component ArchitectureView inherits Rectangle {
                 horizontal-stretch: 1;
                 // The editor's caret stays in view while it moves.
                 property <length> caret: RichData.caret-top;
-                changed caret => {
+                changed caret => { self.show-caret(); }
+                property <int> reveal: RichData.reveal;
+                changed reveal => { self.show-caret(); }
+                function show-caret() {
                     if (!RichData.focused) {
                         return;
                     }
