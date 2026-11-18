@@ -173,7 +173,7 @@ pub fn scan_cpp_structure(file: &str, graph_node: &str, source: &str) -> CppStru
 fn code_tokens(source: &str) -> Vec<Token> {
     let mut code: Vec<Token> = Vec::new();
     let (mut line_start, mut directive, mut backslash) = (true, false, false);
-    for token in tokens(source, Flavor::C) {
+    for token in tokens(source, Flavor::Cpp) {
         if token.text == "\n" {
             // A trailing backslash continues the directive.
             directive &= backslash;
@@ -1137,6 +1137,22 @@ struct Forward;
         );
         assert_eq!(method(&found, "area").signature, "double area()");
         assert!(found.diagnostics.is_empty(), "{:?}", found.diagnostics);
+    }
+
+    #[test]
+    fn apostrophes_in_numbers_directives_and_prose_keep_the_code() {
+        for source in [
+            "int big = 10'000;\nint f() { return 1; }\n",
+            "#warning Don't use this file\nint f() { return 1; }\n",
+            "#if 0\nIt's prose\n#endif\nint f() { return 1; }\n",
+            "auto s = R\"x(\n} \"\n)x\";\nint f() { return 1; }\n",
+            "char c = L'{';\nint f() { return 1; }\n",
+        ] {
+            let found = scan(source);
+            let names: Vec<_> = found.methods.iter().map(|m| m.name.as_str()).collect();
+            assert_eq!(names, ["f"], "{source:?}");
+            assert!(found.diagnostics.is_empty(), "{:?}", found.diagnostics);
+        }
     }
 
     #[test]

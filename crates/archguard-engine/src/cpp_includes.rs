@@ -8,11 +8,12 @@
 //! whole repository: a spec found in two of them stays unresolved.
 
 use std::collections::{BTreeSet, HashMap};
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use archguard_core::NodeId;
-use archguard_extract::{RawImport, TargetSpec, strip_root};
+use archguard_extract::{Lang, RawImport, SourceFile, TargetSpec, strip_root};
+
+use crate::project_files::{read_manifest, read_repo_file};
 
 /// Include directories of one run, root-relative (`""` is the root).
 #[derive(Debug, Default)]
@@ -22,15 +23,10 @@ pub(super) struct Includes {
 }
 
 impl Includes {
-    /// Read the include directories for the C/C++ files at `rel_paths`;
-    /// unreadable or malformed build files add nothing.
-    pub(super) fn read<'a>(
-        root: &Path,
-        rel_paths: impl Iterator<Item = &'a str>,
-        source_roots: &[String],
-    ) -> Self {
+    /// Resolution over `dirs` from [`include_dirs`].
+    pub(super) fn new(dirs: BTreeSet<String>, source_roots: &[String]) -> Self {
         Includes {
-            dirs: include_dirs(root, rel_paths),
+            dirs,
             source_roots: source_roots.to_vec(),
         }
     }
@@ -81,17 +77,35 @@ fn normalize(path: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// Include directories of the C/C++ files among `files`; empty, and no
+/// build file read, without any.
+pub(crate) fn cpp_include_dirs(root: &Path, files: &[SourceFile]) -> BTreeSet<String> {
+    let mut cpp = files
+        .iter()
+        .filter(|file| file.lang == Lang::Cpp)
+        .peekable();
+    match cpp.peek() {
+        Some(_) => include_dirs(root, cpp.map(|file| file.rel_path.as_str())),
+        None => BTreeSet::new(),
+    }
+}
+
+/// Upper bound of a `compile_commands.json`; large builds list every file.
+const COMPILE_COMMANDS_LIMIT: u64 = 64 * 1024 * 1024;
+
 /// Root-relative include directories from the build files of the C/C++
-/// sources at `rel_paths`.
-pub(crate) fn include_dirs<'a>(
-    root: &Path,
-    rel_paths: impl Iterator<Item = &'a str>,
-) -> BTreeSet<String> {
+/// sources at `rel_paths`. Build files are read without following symlinks
+/// and only as bounded regular files; unreadable or malformed ones add nothing.
+fn include_dirs<'a>(root: &Path, rel_paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
     let base = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut found = BTreeSet::new();
-    for dir in [base.clone(), base.join("build")] {
-        if let Ok(text) = fs::read_to_string(dir.join("compile_commands.json")) {
-            found.extend(compile_commands(&text, &dir));
+    for dir in ["", "build"] {
+        let path = Path::new(dir).join("compile_commands.json");
+        if let Ok(bytes) = read_repo_file(&base, &path, COMPILE_COMMANDS_LIMIT) {
+            found.extend(compile_commands(
+                &String::from_utf8_lossy(&bytes),
+                &base.join(dir),
+            ));
         }
     }
     let mut cmake_dirs = BTreeSet::from([String::new()]);
@@ -103,7 +117,7 @@ pub(crate) fn include_dirs<'a>(
         }
     }
     for dir in cmake_dirs {
-        if let Ok(text) = fs::read_to_string(root.join(&dir).join("CMakeLists.txt")) {
+        if let Ok(text) = read_manifest(&base, &Path::new(&dir).join("CMakeLists.txt")) {
             found.extend(cmake(&text).into_iter().map(|d| base.join(&dir).join(d)));
         }
     }
@@ -248,6 +262,7 @@ fn literal_dir(arg: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn normalize_collapses_dots_and_refuses_to_leave_the_root() {
@@ -289,5 +304,51 @@ mod tests {
             ]
         );
         assert!(compile_commands("not json", Path::new("/repo")).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_files_behind_symlinks_or_fifos_are_not_read() {
+        let (root, outside) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root_dir = root.path().canonicalize().unwrap();
+        fs::create_dir_all(root_dir.join("inc")).unwrap();
+        fs::create_dir_all(root_dir.join("src")).unwrap();
+        let commands = format!(
+            r#"[{{"directory": "{}", "arguments": ["-Iinc"]}}]"#,
+            root_dir.display()
+        );
+        fs::write(outside.path().join("compile_commands.json"), commands).unwrap();
+        fs::write(
+            outside.path().join("CMakeLists.txt"),
+            "include_directories(../inc)",
+        )
+        .unwrap();
+        let link = std::os::unix::fs::symlink;
+        link(
+            outside.path().join("compile_commands.json"),
+            root_dir.join("compile_commands.json"),
+        )
+        .unwrap();
+        link(
+            outside.path().join("CMakeLists.txt"),
+            root_dir.join("src/CMakeLists.txt"),
+        )
+        .unwrap();
+        fs::create_dir_all(root_dir.join("build")).unwrap();
+        let fifo = std::process::Command::new("mkfifo")
+            .arg(root_dir.join("build/compile_commands.json"))
+            .status()
+            .unwrap();
+        assert!(fifo.success());
+        let (send, receive) = std::sync::mpsc::channel();
+        let scanned = root_dir.clone();
+        std::thread::spawn(move || {
+            send.send(include_dirs(&scanned, ["src/a.cpp"].into_iter()))
+                .unwrap();
+        });
+        let dirs = receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("a FIFO build file must not block the scan");
+        assert!(dirs.is_empty(), "{dirs:?}");
     }
 }

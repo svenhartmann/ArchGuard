@@ -26,7 +26,7 @@ impl Extractor for CppExtractor {
 
     fn extract(&self, rel_path: &str, content: &str) -> Extraction {
         let lines: Vec<&str> = content.lines().collect();
-        let tokens = crate::lex::tokens(content, Flavor::C);
+        let tokens = crate::lex::tokens(content, Flavor::Cpp);
         let mut extraction = Extraction::default();
         let mut line_start = true;
         for (i, token) in tokens.iter().enumerate() {
@@ -127,6 +127,12 @@ mod tests {
             imports(source),
             vec![(5, TargetSpec::Path("real.h".into()))]
         );
+    }
+
+    #[test]
+    fn an_apostrophe_in_a_directive_does_not_hide_the_next_include() {
+        let source = "#warning Don't use this file\n#include \"b.h\"\n";
+        assert_eq!(imports(source), vec![(2, TargetSpec::Path("b.h".into()))]);
     }
 
     #[test]

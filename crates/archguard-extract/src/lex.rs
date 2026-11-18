@@ -12,12 +12,15 @@ pub(crate) enum Flavor {
     /// C-like with nested block comments, `\(…)` interpolation and `#"…"#` raw strings.
     Swift,
     Ruby,
+    /// C-like, but literals end at the line end, `'` separates digits and `R"d(…)d"` is raw.
+    Cpp,
 }
 /// The lexer flavor that shields a language's comments and strings.
 pub(crate) fn flavor(lang: crate::walk::Lang) -> Flavor {
     use crate::walk::Lang;
     match lang {
-        Lang::Java | Lang::CSharp | Lang::Go | Lang::Cpp => Flavor::C,
+        Lang::Java | Lang::CSharp | Lang::Go => Flavor::C,
+        Lang::Cpp => Flavor::Cpp,
         Lang::Py => Flavor::Python,
         Lang::Ts | Lang::Js => Flavor::Js,
         Lang::Rust => Flavor::Rust,
@@ -211,6 +214,8 @@ impl Lexer<'_> {
             self.heredoc();
         } else if self.flavor == Flavor::Swift && swift_string_start(self).is_some() {
             swift_string(self);
+        } else if self.flavor == Flavor::Cpp && cpp_raw_string(self) {
+            // consumed
         } else if self.at_quote() {
             self.quoted();
         } else if self.at_regex() {
@@ -278,11 +283,15 @@ impl Lexer<'_> {
         let run = self.chars[self.i..].iter().take_while(|p| p.1 == c).count();
         let width = match (c != '`' && run >= 3, self.flavor) {
             (true, Flavor::C | Flavor::Kotlin) => run,
+            (true, Flavor::Cpp) | (false, _) => 1,
             (true, _) => 3,
-            (false, _) => 1,
         };
         self.i += width;
         while self.i < self.chars.len() {
+            // A C++ literal never spans an unescaped line end: `Don't` in a `#warning` or `#if 0`.
+            if self.flavor == Flavor::Cpp && self.peek(0) == Some('\n') {
+                break;
+            }
             if self.peek(0) == Some('\\') {
                 self.i += 1;
                 if self.i < self.chars.len() {
@@ -346,7 +355,15 @@ impl Lexer<'_> {
         if !word(self.chars[self.i - 1].1) {
             return;
         }
-        while self.i < self.chars.len() && word(self.chars[self.i].1) {
+        // C++14 digit separator: `10'000`, `0xFF'FF`.
+        let number = self.flavor == Flavor::Cpp && self.chars[self.i - 1].1.is_ascii_digit();
+        while self.i < self.chars.len() {
+            let c = self.chars[self.i].1;
+            let separator =
+                number && c == '\'' && self.peek(1).is_some_and(|c| c.is_ascii_alphanumeric());
+            if !word(c) && !separator {
+                break;
+            }
             self.i += 1;
         }
     }
@@ -531,6 +548,33 @@ fn swift_interpolation(lexer: &mut Lexer) {
 }
 
 /// Byte length of a heredoc body after `<<<`, through the line holding the closing label.
+/// C++ `R"d(…)d"` raw string (also `LR`, `uR`, `UR`, `u8R`), entered at its `"`.
+fn cpp_raw_string(lexer: &mut Lexer) -> bool {
+    let at = lexer.chars[lexer.i].0;
+    let prefixed = lexer.last_code_token().is_some_and(|t| {
+        t.end == at && !t.literal && matches!(t.text.as_str(), "R" | "LR" | "uR" | "UR" | "u8R")
+    });
+    if lexer.peek(0) != Some('"') || !prefixed {
+        return false;
+    }
+    let rest = &lexer.source[at + 1..];
+    let bad = |c: char| c.is_whitespace() || matches!(c, ')' | '\\' | '"');
+    let Some(open) = rest
+        .find('(')
+        .filter(|&n| n <= 16 && !rest[..n].contains(bad))
+    else {
+        return false;
+    };
+    let close = format!("){}\"", &rest[..open]);
+    let end = rest[open..]
+        .find(&close)
+        .map_or(lexer.source.len(), |n| at + 1 + open + n + close.len());
+    while lexer.i < lexer.chars.len() && lexer.chars[lexer.i].0 < end {
+        lexer.bump();
+    }
+    true
+}
+
 fn heredoc_len(tail: &str) -> usize {
     let label = tail
         .lines()
