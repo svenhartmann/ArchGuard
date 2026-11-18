@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 pub struct LicensesConfig {
     /// SPDX ids that are allowed. Non-empty: every other licence violates.
     pub allow: Vec<String>,
-    /// SPDX ids that always violate, even when also allowed.
+    /// SPDX ids that always violate, even when also allowed. Ids compare
+    /// exactly, so deprecated forms (`GPL-3.0`, `GPL-2.0+`) must be listed too.
     pub deny: Vec<String>,
     /// Whether a dependency without a stated licence violates.
     pub unknown: UnknownLicense,

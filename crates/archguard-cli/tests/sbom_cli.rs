@@ -110,3 +110,51 @@ fn check_fails_on_a_denied_licence_and_keeps_unknown_apart() {
     assert!(text.contains("license:pkg:npm/quiet@1.0.0"), "{text}");
     assert!(!text.contains("gpl-thing"), "{text}");
 }
+
+#[test]
+fn check_reads_a_yarn_lock_with_a_byte_order_mark() {
+    let dir = project("");
+    fs::write(
+        dir.path().join("yarn.lock"),
+        "\u{FEFF}# yarn lockfile v1\n\nlodash@^4.17.21:\n  version \"4.17.21\"\n",
+    )
+    .expect("yarn.lock");
+    let output = archguard(dir.path(), &["check"]);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn check_gates_a_lockfile_deep_in_a_monorepo() {
+    let dir = project("[licenses]\ndeny = ['GPL-3.0-only']\n");
+    let deep = dir.path().join("a/b/c/d/e");
+    fs::create_dir_all(&deep).expect("mkdir");
+    fs::rename(
+        dir.path().join("package-lock.json"),
+        deep.join("package-lock.json"),
+    )
+    .expect("move");
+    let output = archguard(dir.path(), &["check"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("license:pkg:npm/gpl-thing@2.0.0"), "{text}");
+}
+
+#[test]
+fn check_warns_when_a_licence_policy_finds_no_lockfile() {
+    let dir = project("[licenses]\ndeny = ['GPL-3.0-only']\n");
+    fs::remove_file(dir.path().join("package-lock.json")).expect("rm");
+    let output = archguard(dir.path(), &["check", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "a warning does not fail: {output:?}"
+    );
+    let report = json(&output);
+    let warnings: Vec<&Value> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|f| f["id"] == "license-coverage")
+        .collect();
+    assert_eq!(warnings.len(), 1, "{report}");
+    assert_eq!(warnings[0]["severity"], "warning");
+}
