@@ -151,13 +151,13 @@ function arc42Diagram(parent,source) {
   for(const edge of edges)edge.cycle=membership.has(edge.from)&&membership.get(edge.from)===membership.get(edge.to);
   arc42Graph(parent,model,{all:true});return true;
 }
-// Removes <!-- --> outside code blocks; a fence inside an open comment is comment text. As markdown::strip_comments (desktop).
+// Removes HTML comments outside code blocks (never write the opener literally here: it breaks the inline <script>); a fence inside an open comment is comment text. As markdown::strip_comments (desktop).
 function arc42StripComments(text){
-  const strip=s=>s.replace(/<!--[\s\S]*?-->/g,'');let out='',prose='',fenced=false;
+  const strip=s=>s.replace(/\x3C!--[\s\S]*?-->/g,'');let out='',prose='',fenced=false;
   for(const line of text.split(/(?<=\n)/)){
     const bare=line.replace(/\n$/,'');
     if(fenced){out+=line;fenced=!/^\s*```\s*$/.test(bare);}
-    else if(/^\s*```[^`]*$/.test(bare)&&!strip(prose).includes('<!--')){out+=strip(prose)+line;prose='';fenced=true;}
+    else if(/^\s*```[^`]*$/.test(bare)&&!strip(prose).includes('\x3C!--')){out+=strip(prose)+line;prose='';fenced=true;}
     else prose+=line;
   }
   return out+strip(prose);
