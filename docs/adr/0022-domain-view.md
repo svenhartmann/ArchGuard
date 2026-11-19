@@ -146,3 +146,35 @@ helper) or from an `else` as the literal negation of the source text,
 never simplified. A guard from an enclosing `if` stays as written. So
 `guard` always means "allowed when"; CLI and MCP label it so. The model is
 unchanged; a separate field for the source form was not added.
+
+### 2026-11-19: the chain from endpoint to event handler (decision 4)
+
+`EndpointAccess` gains `handler` (method id, e.g. `OrdersApi.CreateOrderAsync`;
+none for a lambda) and `sends` (both serde-default, so older `ui-flow.json`
+reads). The backend extractor fills them from the handler body: minimal-API
+method groups (found in the project) and lambdas, controller actions, Spring
+controller methods. `sends` holds the argument type of `x.Send(…)`,
+`SendAsync`, `send`, `sendAndWait` when the receiver name contains
+`mediator`, `sender`, `gateway` or `bus`: `new X(…)`, or a variable assigned
+`new X(…)` or declared `X` (local, parameter, field). A generic wrapper
+`new IdentifiedCommand<CreateOrderCommand, bool>(cmd, id)` yields the wrapper
+as written and every argument whose type is one of its type arguments, so
+eShop records both. A field typed `*UseCase`, `*CommandHandler` or
+`*QueryHandler` whose method the handler calls is recorded as that class.
+A computed argument (factory call) adds nothing; Kotlin constructor calls
+without `new` are not read. This stands in for the call model named in
+decision 4 until that model covers endpoint handlers.
+
+`archguard_engine::domain_chain::chains` joins endpoint → use cases (request
+or class name, generics and namespace stripped, every match) → transitions
+whose method a use case calls → `event_chain`; one chain per endpoint and
+calling action, endpoints without an action included.
+`triggers_of_state(flow, model, entity, state)` keeps the chains with a
+transition into that state. CLI `domain --chain` and `--entity E --state S`,
+MCP `domain_model` with `chain` and `state`, show them.
+
+On eShop, `Paid` is set by `SetPaidOrderStatusCommandHandler`, which an
+integration-event handler (payment succeeded) sends, not an endpoint; the
+reverse query therefore finds no endpoint for `Paid`. Integration-event
+handlers as chain starts are open. Rights along the path (simulating "can
+role X cause Paid") are not evaluated yet.

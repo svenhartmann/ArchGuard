@@ -423,6 +423,12 @@ pub(crate) enum Command {
         /// Limit the output to this entity (id or name).
         #[arg(long, value_name = "NAME")]
         entity: Option<String>,
+        /// Show the chain endpoint → use case → transitions → events → handlers.
+        #[arg(long)]
+        chain: bool,
+        /// With --entity: the endpoints and screens that can cause this state.
+        #[arg(long, value_name = "STATE", requires = "entity")]
+        state: Option<String>,
     },
     /// Runtime profile from recorded OTLP traces in .archguard/runtime (ADR 0004).
     Runtime {

@@ -60,8 +60,12 @@ public class OrderPaidHandler : INotificationHandler<OrderPaidEvent> { }
 ];
 
 fn project() -> tempfile::TempDir {
+    project_with(FILES)
+}
+
+fn project_with(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for (path, text) in FILES {
+    for (path, text) in files {
         let path = dir.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
@@ -247,4 +251,140 @@ fn domain_json_and_entity_filter() {
         .output()
         .unwrap();
     assert_eq!(none.status.code(), Some(2));
+}
+
+/// A screen posts to a minimal API that sends a wrapped command (eShop shape).
+const CHAIN_FILES: &[(&str, &str)] = &[
+    ("Web/Web.csproj", "<Project />"),
+    (
+        "Web/Pages/Checkout.razor",
+        "@page \"/checkout\"\n@code {\n    async Task Buy() => await Http.PostAsJsonAsync(\"api/orders\", basket);\n}\n",
+    ),
+    ("Api/Api.csproj", "<Project />"),
+    (
+        "Api/OrdersApi.cs",
+        r#"public static class OrdersApi
+{
+    public static RouteGroupBuilder MapOrdersApi(this IEndpointRouteBuilder app)
+    {
+        var api = app.MapGroup("api/orders");
+        api.MapPost("/", CreateOrderAsync);
+        api.MapPut("/pay", PayAsync);
+        api.MapGet("/", ListAsync);
+        return api;
+    }
+    public static async Task<bool> CreateOrderAsync(CreateOrderRequest request, [AsParameters] OrderServices services)
+    {
+        var command = new CreateOrderCommand(request.Items);
+        return await services.Mediator.Send(new IdentifiedCommand<CreateOrderCommand, bool>(command, request.Id));
+    }
+    public static Task<bool> PayAsync(SetPaidCommand command, IMediator mediator) => mediator.Send(command);
+    public static Task<int[]> ListAsync() => Task.FromResult(new int[0]);
+}
+"#,
+    ),
+    (
+        "Api/Domain/Order.cs",
+        r#"public interface IAggregateRoot { }
+public enum OrderStatus { Draft, Submitted, Paid }
+public class Order : IAggregateRoot
+{
+    public OrderStatus Status { get; private set; }
+    public Order() { Status = OrderStatus.Draft; }
+    public void Submit()
+    {
+        AddDomainEvent(new OrderStartedDomainEvent(Id));
+        Status = OrderStatus.Submitted;
+    }
+    public void SetPaid()
+    {
+        if (Status == OrderStatus.Submitted) { Status = OrderStatus.Paid; }
+    }
+}
+public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, bool>
+{
+    public Task<bool> Handle(CreateOrderCommand c, CancellationToken t) { _order.Submit(); return Task.FromResult(true); }
+}
+public class SetPaidCommandHandler : IRequestHandler<SetPaidCommand, bool>
+{
+    public Task<bool> Handle(SetPaidCommand c, CancellationToken t) { _order.SetPaid(); return Task.FromResult(true); }
+}
+public class ValidateBuyerWhenOrderStartedHandler : INotificationHandler<OrderStartedDomainEvent> { }
+"#,
+    ),
+];
+
+#[test]
+fn domain_chain_text_runs_from_endpoint_to_event_handlers() {
+    let dir = project_with(CHAIN_FILES);
+    let text = run(dir.path(), &["domain", "--chain"]);
+    assert!(text.starts_with("Chains 3 · with a use case 2\n"), "{text}");
+    assert!(
+        text.contains(
+            "POST /api/orders → CreateOrderCommandHandler · Api/OrdersApi.cs:6\n  handler OrdersApi.CreateOrderAsync · sends CreateOrderCommand, IdentifiedCommand<CreateOrderCommand, bool>\n  from screen "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  Order: any → Submitted · Order.Submit\n    → OrderStartedDomainEvent → ValidateBuyerWhenOrderStartedHandler\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("GET /api/orders → no use case found · "),
+        "{text}"
+    );
+}
+
+#[test]
+fn domain_chain_json_and_triggers_of_a_state() {
+    let dir = project_with(CHAIN_FILES);
+    let value = json(dir.path(), &["domain", "--chain"]);
+    let chains = value["chains"].as_array().unwrap();
+    assert_eq!(chains.len(), 3);
+    let create = (chains.iter())
+        .find(|c| c["endpoint"]["method"] == "POST")
+        .unwrap();
+    assert_eq!(create["endpoint"]["handler"], "OrdersApi.CreateOrderAsync");
+    assert_eq!(create["use_cases"][0]["id"], "CreateOrderCommandHandler");
+    assert_eq!(create["transitions"][0]["entity"], "Order");
+    assert_eq!(create["events"][0]["event"], "OrderStartedDomainEvent");
+    assert!(
+        create["action"]["file"]
+            .as_str()
+            .unwrap()
+            .contains("Checkout")
+    );
+
+    let paid = json(
+        dir.path(),
+        &["domain", "--entity", "Order", "--state", "Paid"],
+    );
+    assert_eq!(paid["entity"], "Order");
+    assert_eq!(paid["state"], "Paid");
+    let paths: Vec<&str> = (paid["chains"].as_array().unwrap().iter())
+        .map(|c| c["endpoint"]["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["/api/orders/pay"]);
+    let text = run(
+        dir.path(),
+        &["domain", "--entity", "Order", "--state", "Paid"],
+    );
+    assert!(text.starts_with("Triggers of Order → Paid: 1\n"), "{text}");
+    assert!(
+        text.contains("PUT /api/orders/pay → SetPaidCommandHandler"),
+        "{text}"
+    );
+    let none = run(
+        dir.path(),
+        &["domain", "--entity", "Order", "--state", "Draft"],
+    );
+    assert!(none.starts_with("Triggers of Order → Draft: 0\n"), "{none}");
+    let lone = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["domain", "--state", "Paid"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(lone.status.code(), Some(2));
 }

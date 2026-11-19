@@ -143,6 +143,15 @@ pub struct EndpointAccess {
     pub file: String,
     pub line: u32,
     pub source: String,
+    /// The handler method, e.g. `OrdersApi.CreateOrderAsync`; none for a lambda
+    /// or when it was not found (ADR 0022, decision 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<String>,
+    /// Request types the handler sends as written
+    /// (`IdentifiedCommand<CreateOrderCommand, bool>`), the wrapped request
+    /// (`CreateOrderCommand`), and use-case classes it calls directly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<String>,
 }
 
 /// Never two states: `undeclared` must not look `open` (ADR 0021, decision 2).
@@ -986,6 +995,8 @@ mod findings {
                 file: "Api.cs".into(),
                 line,
                 source: "test".into(),
+                handler: None,
+                sends: vec![],
             }
         }
         fn on(id: &str) -> Origin {
@@ -1250,7 +1261,17 @@ mod tests {
             file: "Api.cs".into(),
             line: 3,
             source: "test".into(),
+            handler: None,
+            sends: vec![],
         }
+    }
+
+    #[test]
+    fn endpoint_without_handler_fields_reads_and_writes_as_before() {
+        let old = r#"{"method":"GET","path":"/a","access":"undeclared","file":"Api.cs","line":3,"source":"test"}"#;
+        let e: EndpointAccess = serde_json::from_str(old).unwrap();
+        assert_eq!(e, endpoint("GET", "/a", AccessState::Undeclared));
+        assert_eq!(serde_json::to_string(&e).unwrap(), old);
     }
 
     #[test]

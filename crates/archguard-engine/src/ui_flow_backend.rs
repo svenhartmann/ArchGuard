@@ -30,6 +30,9 @@
 //!   dropped everywhere, so `hasAuthority('ROLE_A')`, `hasRole('A')` and
 //!   `@Secured("ROLE_A")` all read `role(A)`.
 //!
+//! Each endpoint also gets its handler method and the request types it sends
+//! (`handlers`, ADR 0022 decision 4).
+//!
 //! A project is the nearest directory with a `.csproj`, `pom.xml` or
 //! `build.gradle(.kts)`; its directory name is the endpoint's `application`.
 //! Not recognized (left `undeclared`, or a diagnostic):
@@ -47,6 +50,8 @@ use archguard_core::{
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
+
+pub(crate) use handlers::simple_type;
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_FILES: usize = 20_000;
@@ -200,7 +205,16 @@ impl Out {
             file: src.rel.clone(),
             line: src.line(at),
             source: source.into(),
+            handler: None,
+            sends: vec![],
         });
+    }
+    /// Sets the handler and what it sends on the endpoints from index `from` on.
+    fn link(&mut self, from: usize, (handler, sends): handlers::Link) {
+        for e in &mut self.0.endpoints[from..] {
+            e.handler = handler.clone();
+            e.sends = sends.clone();
+        }
     }
 }
 
@@ -293,6 +307,8 @@ struct Decl {
     class: bool,
     name: String,
     attrs: Vec<Attr>,
+    /// Offset of a method's parameter list; 0 for a class.
+    open: usize,
 }
 
 fn has(attrs: &[Attr], name: &str) -> bool {
@@ -320,11 +336,7 @@ fn decls(src: &Source, annotations: bool) -> Vec<Decl> {
             b'@' if annotations => annotation(src, i, &mut pending),
             _ => {
                 let end = header_end(src, i);
-                out.extend(declaration(
-                    src,
-                    &src.text[i..end],
-                    std::mem::take(&mut pending),
-                ));
+                out.extend(declaration(src, i, end, std::mem::take(&mut pending)));
                 end + 1
             }
         };
@@ -390,12 +402,14 @@ fn header_end(src: &Source, mut j: usize) -> usize {
     b.len()
 }
 
-fn declaration(src: &Source, header: &str, attrs: Vec<Attr>) -> Option<Decl> {
+fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Option<Decl> {
+    let header = &src.text[start..end];
     if let Some(name) = class_name(header, src.rel.ends_with(".kt")) {
         return Some(Decl {
             class: true,
             name,
             attrs,
+            open: 0,
         });
     }
     let p = header.find('(').filter(|_| !attrs.is_empty())?;
@@ -404,6 +418,7 @@ fn declaration(src: &Source, header: &str, attrs: Vec<Attr>) -> Option<Decl> {
         class: false,
         name: header[s..e].into(),
         attrs,
+        open: start + p,
     })
 }
 
@@ -665,6 +680,7 @@ mod controllers {
             return;
         };
         let access = access(src, out, &class.attrs, &d.attrs);
+        let first = out.0.endpoints.len();
         let tokens = [
             (
                 "[controller]",
@@ -699,6 +715,10 @@ mod controllers {
                 out.endpoint(src, attr.at, method, full, &access);
             }
         }
+        out.link(
+            first,
+            handlers::of_method(src, &class.name, &d.name, d.open),
+        );
     }
 
     /// Class × method templates; a method template from the root replaces the class one.
@@ -838,10 +858,8 @@ mod minimal {
         };
         let b = src.bytes();
         let open = skip_ws(b, p + name.len());
-        let first = split_top(&src.text[open + 1..close])
-            .first()
-            .copied()
-            .unwrap_or("");
+        let args = split_top(&src.text[open + 1..close]);
+        let first = args.first().copied().unwrap_or("");
         let Some(pattern) = literal(first) else {
             out.at(src, p, format!("{name} pattern is not a literal: {first}"));
             return;
@@ -860,7 +878,11 @@ mod minimal {
         }
         let mut parts: Vec<&str> = chain.prefix.iter().map(String::as_str).collect();
         parts.push(&pattern);
+        let n = out.0.endpoints.len();
         out.endpoint(src, p, method, path(&parts), &access(&mods));
+        if let Some(delegate) = args.get(1) {
+            out.link(n, handlers::of_delegate(src, sources, delegate));
+        }
     }
 
     fn access(mods: &[Mod]) -> AccessState {
@@ -1006,7 +1028,7 @@ mod minimal {
             .collect()
     }
 
-    fn statement_end(src: &Source, mut j: usize) -> usize {
+    pub(super) fn statement_end(src: &Source, mut j: usize) -> usize {
         let b = src.bytes();
         while j < b.len() {
             if let Some(end) = literal_end(b, j) {
@@ -1128,6 +1150,7 @@ mod spring {
             },
             None => vec![String::new()],
         };
+        let first = out.0.endpoints.len();
         for a in &d.attrs {
             let Some(methods) = methods(a) else { continue };
             let Some(paths) = paths(src, out, a) else {
@@ -1147,6 +1170,10 @@ mod spring {
                 out.endpoint(src, a.at, m, p.clone(), &access);
             }
         }
+        out.link(
+            first,
+            handlers::of_method(src, &class.name, &d.name, d.open),
+        );
     }
 
     /// HTTP methods of a mapping annotation; `None` for other annotations.
@@ -1372,6 +1399,533 @@ mod spring {
                     return None;
                 }
             }
+        }
+    }
+}
+
+/// The handler of an endpoint and the requests it sends (ADR 0022, decision 4).
+///
+/// In the handler body (method or lambda, parameters included):
+/// - `x.Send(arg)`, `x.SendAsync(arg)`, `x.send(arg)`, `x.sendAndWait(arg)`
+///   where the receiver name contains `mediator`, `sender`, `gateway` or `bus`
+///   (MediatR, `services.Mediator`, Axon `commandGateway`). `arg` is
+///   `new T(…)`, or a variable assigned `new T(…)` or declared with type `T`
+///   (local, parameter or field). A generic `new W<A, B>(x, …)` also yields the
+///   argument types that are one of `A`, `B`: the wrapped request.
+/// - `x.m(…)` where `x` is declared with a type named `*UseCase`,
+///   `*CommandHandler` or `*QueryHandler`: that class, called directly.
+///
+/// Anything else (a computed argument, a factory call, Kotlin constructor
+/// calls without `new`) adds nothing; nothing is guessed.
+mod handlers {
+    use super::Source;
+    use super::lex::{ident_before, is_ident, skip_ws, skip_ws_back, split_top, words};
+    use super::minimal::statement_end;
+
+    /// Handler method id and the types it sends.
+    pub(super) type Link = (Option<String>, Vec<String>);
+
+    const SEND: [&str; 4] = ["Send", "SendAsync", "send", "sendAndWait"];
+    const RECEIVERS: [&str; 4] = ["mediator", "sender", "gateway", "bus"];
+    const USE_CASES: [&str; 3] = ["UseCase", "CommandHandler", "QueryHandler"];
+    const NOT_TYPES: [&str; 12] = [
+        "return", "new", "await", "in", "out", "ref", "is", "as", "case", "else", "throw", "yield",
+    ];
+    /// Bound for `a = b; b = new T()` hops.
+    const MAX_DEPTH: usize = 3;
+
+    /// The method of `class` whose parameter list opens at `open`.
+    pub(super) fn of_method(src: &Source, class: &str, name: &str, open: usize) -> Link {
+        let sends = method_span(src, open).map_or_else(Vec::new, |span| sends(src, span));
+        (Some(format!("{class}.{name}")), sends)
+    }
+
+    /// A minimal-API delegate argument: a method group (searched in `src`, then
+    /// the project) or a lambda.
+    pub(super) fn of_delegate(src: &Source, sources: &[Source], arg: &str) -> Link {
+        let at = arg.as_ptr() as usize - src.text.as_ptr() as usize;
+        if arg.contains("=>") {
+            return (None, sends(src, (at, at + arg.len())));
+        }
+        let name = arg.rsplit('.').next().unwrap_or(arg).trim();
+        if name.is_empty() || !name.bytes().all(is_ident) {
+            return (None, vec![]);
+        }
+        let found = std::iter::once(src)
+            .chain(sources)
+            .find_map(|s| definition(s, name).map(|open| (s, open)));
+        match found {
+            Some((s, open)) => {
+                let class = enclosing_class(s, open).unwrap_or_default();
+                of_method(s, &class, name, open)
+            }
+            None => (None, vec![]),
+        }
+    }
+
+    /// From the parameter list at `open` to the end of the body; none without one.
+    fn method_span(src: &Source, open: usize) -> Option<(usize, usize)> {
+        let b = src.bytes();
+        let mut j = src.pair(open)? + 1;
+        while j < b.len() {
+            match b[j] {
+                b'=' if b.get(j + 1) == Some(&b'>') => return Some((open, statement_end(src, j))),
+                b'{' => return Some((open, src.pair(j)?)),
+                b';' | b'}' => return None,
+                _ => j += 1,
+            }
+        }
+        None
+    }
+
+    /// The parameter list of a method named `name` declared in `src`.
+    fn definition(src: &Source, name: &str) -> Option<usize> {
+        let b = src.bytes();
+        words(&src.text, name).find_map(|p| {
+            let prev = skip_ws_back(b, p);
+            let typed =
+                prev > 0 && (is_ident(b[prev - 1]) || matches!(b[prev - 1], b'>' | b']' | b'?'));
+            let open = skip_ws(b, p + name.len());
+            (typed && b.get(open) == Some(&b'(') && method_span(src, open).is_some())
+                .then_some(open)
+        })
+    }
+
+    /// The innermost class, record or struct whose body contains `at`.
+    fn enclosing_class(src: &Source, at: usize) -> Option<String> {
+        let b = src.bytes();
+        let mut found = None;
+        for kw in ["class", "record", "struct"] {
+            for p in words(&src.text, kw).filter(|p| *p < at) {
+                let s = skip_ws(b, p + kw.len());
+                let e = s + b[s..].iter().take_while(|c| is_ident(**c)).count();
+                let Some(open) = src.text[e..at].find('{').map(|o| o + e) else {
+                    continue;
+                };
+                if src.text[e..open].contains(';') || src.pair(open).is_none_or(|c| c < at) {
+                    continue;
+                }
+                if found.as_ref().is_none_or(|(o, _)| *o < open) {
+                    found = Some((open, src.text[s..e].to_string()));
+                }
+            }
+        }
+        found.map(|(_, name)| name)
+    }
+
+    /// Sent request types and directly called use cases in `span`, sorted.
+    fn sends(src: &Source, span: (usize, usize)) -> Vec<String> {
+        let b = src.bytes();
+        let mut found = Vec::new();
+        for dot in (span.0..span.1).filter(|&i| b[i] == b'.') {
+            let (s, e) = ident_before(b, dot);
+            let m = skip_ws(b, dot + 1);
+            let m_end = m + b[m..].iter().take_while(|c| is_ident(**c)).count();
+            let open = skip_ws(b, m_end);
+            let close = (b.get(open) == Some(&b'('))
+                .then(|| src.pair(open))
+                .flatten();
+            let (Some(close), true) = (close, s < e) else {
+                continue;
+            };
+            let receiver = &src.text[s..e];
+            let lower = receiver.to_ascii_lowercase();
+            if SEND.contains(&&src.text[m..m_end]) && RECEIVERS.iter().any(|r| lower.contains(r)) {
+                if let Some(arg) = arguments(&src.text[open + 1..close]).first() {
+                    found.extend(resolve(src, span, arg, 0));
+                }
+            } else if let Some(t) = declared(src, span, receiver).filter(|t| use_case(t)) {
+                found.push(t);
+            }
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
+
+    /// `split_top` that keeps `W<A, B>` in one argument.
+    fn arguments(s: &str) -> Vec<&str> {
+        let angles = |p: &str| {
+            let b = p.as_bytes();
+            let opened = b.iter().filter(|c| **c == b'<').count();
+            let closed = (b.iter().enumerate())
+                .filter(|(i, c)| **c == b'>' && (*i == 0 || b[i - 1] != b'='))
+                .count();
+            opened > closed
+        };
+        let mut out: Vec<&str> = Vec::new();
+        for part in split_top(s) {
+            match out.last_mut() {
+                Some(last) if angles(last) => {
+                    let start = last.as_ptr() as usize - s.as_ptr() as usize;
+                    let end = part.as_ptr() as usize - s.as_ptr() as usize + part.len();
+                    *last = &s[start..end];
+                }
+                _ => out.push(part),
+            }
+        }
+        out
+    }
+
+    /// `IdentifiedCommand` of `Ns.IdentifiedCommand<A, B>`.
+    pub(crate) fn simple_type(t: &str) -> &str {
+        let outer = t.split('<').next().unwrap_or(t).trim();
+        outer.rsplit('.').next().unwrap_or(outer)
+    }
+
+    fn use_case(type_text: &str) -> bool {
+        USE_CASES
+            .iter()
+            .any(|x| simple_type(type_text).ends_with(x))
+    }
+
+    /// Types the expression `expr` (a slice of `src.text`) stands for.
+    fn resolve(src: &Source, span: (usize, usize), expr: &str, depth: usize) -> Vec<String> {
+        let expr = expr.trim();
+        if depth > MAX_DEPTH {
+            return vec![];
+        }
+        if let Some(rest) = expr.strip_prefix("new ") {
+            return constructed(src, span, rest.trim_start(), depth);
+        }
+        if !expr.is_empty() && expr.bytes().all(is_ident) {
+            return variable(src, span, expr, depth);
+        }
+        vec![]
+    }
+
+    /// `T(…)` or `W<A, B>(x, …)` after `new`: `T`, or `W<A, B>` and the
+    /// arguments whose type is one of `A`, `B`.
+    fn constructed(src: &Source, span: (usize, usize), text: &str, depth: usize) -> Vec<String> {
+        let end = text.find(['(', '{']).unwrap_or(text.len());
+        let ty = text[..end].trim();
+        if ty.is_empty() {
+            return vec![];
+        }
+        let mut found = vec![ty.to_string()];
+        let generics: Vec<&str> = ty
+            .split_once('<')
+            .map(|(_, g)| g.trim_end_matches('>'))
+            .map_or_else(Vec::new, |g| g.split(',').map(simple_type).collect());
+        let at = text.as_ptr() as usize - src.text.as_ptr() as usize + end;
+        if let (false, Some(close)) = (generics.is_empty(), src.pair(at)) {
+            for arg in arguments(&src.text[at + 1..close]) {
+                let inner = resolve(src, span, arg, depth + 1);
+                found.extend(
+                    inner
+                        .into_iter()
+                        .filter(|t| generics.contains(&simple_type(t))),
+                );
+            }
+        }
+        found
+    }
+
+    /// The variable's initializer if it is `new …`, else its declared type: first
+    /// in `span`, then anywhere in the file (fields).
+    fn variable(src: &Source, span: (usize, usize), var: &str, depth: usize) -> Vec<String> {
+        for scope in [&src.text[span.0..span.1], &src.text[..]] {
+            let base = scope.as_ptr() as usize - src.text.as_ptr() as usize;
+            for p in words(scope, var).map(|p| p + base) {
+                if let Some(found) = declaration(src, span, p, var, depth) {
+                    return found;
+                }
+            }
+        }
+        vec![]
+    }
+
+    /// `T var`, `T var = init` or `var var = init` at `p`.
+    fn declaration(
+        src: &Source,
+        span: (usize, usize),
+        p: usize,
+        var: &str,
+        depth: usize,
+    ) -> Option<Vec<String>> {
+        let b = src.bytes();
+        let ty = type_before(src, p)?;
+        let eq = skip_ws(b, p + var.len());
+        if b.get(eq) == Some(&b'=') && !matches!(b.get(eq + 1), Some(b'=' | b'>')) {
+            let init = &src.text[eq + 1..statement_end(src, eq + 1)];
+            let found = resolve(src, span, init, depth + 1);
+            if !found.is_empty() {
+                return Some(found);
+            }
+        }
+        (!matches!(ty, "var" | "val")).then(|| vec![ty.to_string()])
+    }
+
+    /// The declared type right before the variable at `p`, if one is written.
+    fn type_before(src: &Source, p: usize) -> Option<&str> {
+        let b = src.bytes();
+        let end = skip_ws_back(b, p);
+        let (s, e) = ident_before(b, end);
+        let before = skip_ws_back(b, s);
+        let member = before > 0 && b[before - 1] == b'.';
+        let ty = &src.text[s..end];
+        (s < e && !member && !NOT_TYPES.contains(&&src.text[s..e])).then_some(ty)
+    }
+
+    /// The type text of the variable `var` in `span` or the file.
+    fn declared(src: &Source, span: (usize, usize), var: &str) -> Option<String> {
+        for scope in [&src.text[span.0..span.1], &src.text[..]] {
+            let base = scope.as_ptr() as usize - src.text.as_ptr() as usize;
+            let found = words(scope, var)
+                .map(|p| p + base)
+                .find_map(|p| type_before(src, p).filter(|t| !matches!(*t, "var" | "val")));
+            if let Some(t) = found {
+                return Some(t.to_string());
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::extract;
+        use archguard_core::{EndpointAccess, UiFlow};
+
+        fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
+            let dir = tempfile::tempdir().unwrap();
+            for (path, text) in files {
+                let path = dir.path().join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            dir
+        }
+
+        fn endpoint<'a>(flow: &'a UiFlow, method: &str, path: &str) -> &'a EndpointAccess {
+            (flow.endpoints.iter())
+                .find(|e| e.method == method && e.path == path)
+                .unwrap_or_else(|| panic!("{method} {path} in {:#?}", flow.endpoints))
+        }
+
+        fn link(flow: &UiFlow, method: &str, path: &str) -> (Option<String>, Vec<String>) {
+            let e = endpoint(flow, method, path);
+            (e.handler.clone(), e.sends.clone())
+        }
+
+        fn s(items: &[&str]) -> Vec<String> {
+            items.iter().map(|i| i.to_string()).collect()
+        }
+
+        const ORDERS_API: &str = r#"
+    public static class OrdersApi
+    {
+        public static RouteGroupBuilder MapOrdersApiV1(this IEndpointRouteBuilder app)
+        {
+            var api = app.MapGroup("api/orders");
+            api.MapPut("/cancel", CancelOrderAsync);
+            api.MapPost("/draft", CreateOrderDraftAsync);
+            api.MapPost("/", OrdersApi.CreateOrderAsync);
+            api.MapPost("/quick", async (QuickOrderCommand cmd, IMediator mediator) => await mediator.Send(cmd));
+            api.MapPost("/built", BuiltAsync);
+            api.MapPost("/mail", MailAsync);
+            api.MapPut("/ship", ShipAsync);
+            api.MapGet("/elsewhere", Handlers.Elsewhere);
+            return api;
+        }
+
+        public static async Task<Results<Ok, BadRequest<string>>> CancelOrderAsync(
+            [FromHeader(Name = "x-requestid")] Guid requestId,
+            CancelOrderCommand command,
+            [AsParameters] OrderServices services)
+        {
+            var requestCancelOrder = new IdentifiedCommand<CancelOrderCommand, bool>(command, requestId);
+            var commandResult = await services.Mediator.Send(requestCancelOrder);
+            return TypedResults.Ok();
+        }
+
+        public static async Task<OrderDraftDTO> CreateOrderDraftAsync(CreateOrderDraftCommand command, [AsParameters] OrderServices services)
+            => await services.Mediator.Send(command);
+
+        public static async Task<Results<Ok, BadRequest<string>>> CreateOrderAsync(
+            [FromHeader(Name = "x-requestid")] Guid requestId,
+            CreateOrderRequest request,
+            [AsParameters] OrderServices services)
+        {
+            using (services.Logger.BeginScope(new List<KeyValuePair<string, object>> { new("IdentifiedCommandId", requestId) }))
+            {
+                var createOrderCommand = new CreateOrderCommand(request.Items, request.UserId);
+                var requestCreateOrder = new IdentifiedCommand<CreateOrderCommand, bool>(createOrderCommand, requestId);
+                var result = await services.Mediator.Send(requestCreateOrder);
+                return TypedResults.Ok();
+            }
+        }
+
+        public static async Task<Ok> BuiltAsync([AsParameters] OrderServices services)
+        {
+            await services.Mediator.Send(Build());
+            return TypedResults.Ok();
+        }
+
+        public static Task<bool> ShipAsync(ShipOrderCommand command, Guid requestId, IMediator mediator)
+            => mediator.Send(new IdentifiedCommand<ShipOrderCommand, bool>(command, requestId));
+
+        public static async Task<Ok> MailAsync(IEmailService email)
+        {
+            await email.Send(new WelcomeMail());
+            return TypedResults.Ok();
+        }
+    }
+    "#;
+
+        const HANDLERS: &str = r#"
+    public static class Handlers
+    {
+        public static Task<int> Elsewhere(ISender sender) => sender.Send(new CountOrdersQuery());
+    }
+    "#;
+
+        #[test]
+        fn minimal_api_method_groups_and_lambdas_send_wrapped_commands() {
+            let dir = project(&[
+                ("Ordering.API/Ordering.API.csproj", "<Project />"),
+                ("Ordering.API/Apis/OrdersApi.cs", ORDERS_API),
+                ("Ordering.API/Apis/Handlers.cs", HANDLERS),
+            ]);
+            let flow = extract(dir.path());
+            let wrapped = |inner: &str| format!("IdentifiedCommand<{inner}, bool>");
+            assert_eq!(
+                link(&flow, "POST", "/api/orders"),
+                (
+                    Some("OrdersApi.CreateOrderAsync".into()),
+                    vec!["CreateOrderCommand".into(), wrapped("CreateOrderCommand")]
+                )
+            );
+            assert_eq!(
+                link(&flow, "PUT", "/api/orders/cancel"),
+                (
+                    Some("OrdersApi.CancelOrderAsync".into()),
+                    vec!["CancelOrderCommand".into(), wrapped("CancelOrderCommand")]
+                )
+            );
+            assert_eq!(
+                link(&flow, "POST", "/api/orders/draft"),
+                (
+                    Some("OrdersApi.CreateOrderDraftAsync".into()),
+                    s(&["CreateOrderDraftCommand"])
+                )
+            );
+            assert_eq!(
+                link(&flow, "POST", "/api/orders/quick"),
+                (None, s(&["QuickOrderCommand"]))
+            );
+            // A factory call and a mail service are not requests.
+            assert_eq!(
+                link(&flow, "POST", "/api/orders/built"),
+                (Some("OrdersApi.BuiltAsync".into()), vec![])
+            );
+            assert_eq!(
+                link(&flow, "POST", "/api/orders/mail").1,
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                link(&flow, "PUT", "/api/orders/ship").1,
+                vec![
+                    "IdentifiedCommand<ShipOrderCommand, bool>".to_string(),
+                    "ShipOrderCommand".into()
+                ]
+            );
+            assert_eq!(
+                link(&flow, "GET", "/api/orders/elsewhere"),
+                (Some("Handlers.Elsewhere".into()), s(&["CountOrdersQuery"]))
+            );
+        }
+
+        const CONTROLLER: &str = r#"
+    [ApiController]
+    [Route("api/[controller]")]
+    public class PaymentsController : ControllerBase
+    {
+        private readonly IMediator _mediator;
+        private readonly ShipOrderUseCase _ship;
+
+        [HttpPost]
+        public async Task<IActionResult> Pay([FromBody] PayOrderCommand command)
+        {
+            await _mediator.Send(command);
+            return Ok();
+        }
+
+        [HttpPost("ship")]
+        public IActionResult Ship(int id)
+        {
+            _ship.Execute(id);
+            return Ok();
+        }
+
+        [HttpGet]
+        public IActionResult List() => Ok();
+    }
+    "#;
+
+        #[test]
+        fn controller_actions_send_parameters_and_call_use_case_fields() {
+            let dir = project(&[
+                ("Api/Api.csproj", "<Project />"),
+                ("Api/PaymentsController.cs", CONTROLLER),
+            ]);
+            let flow = extract(dir.path());
+            assert_eq!(
+                link(&flow, "POST", "/api/Payments"),
+                (
+                    Some("PaymentsController.Pay".into()),
+                    s(&["PayOrderCommand"])
+                )
+            );
+            assert_eq!(
+                link(&flow, "POST", "/api/Payments/ship"),
+                (
+                    Some("PaymentsController.Ship".into()),
+                    s(&["ShipOrderUseCase"])
+                )
+            );
+            assert_eq!(
+                link(&flow, "GET", "/api/Payments"),
+                (Some("PaymentsController.List".into()), vec![])
+            );
+        }
+
+        const SPRING: &str = r#"
+    @RestController
+    @RequestMapping("/orders")
+    public class OrderController {
+        private final CommandGateway commandGateway;
+        private final PayOrderUseCase payOrderUseCase;
+
+        @PostMapping
+        public CompletableFuture<String> create(@RequestBody CreateOrder body) {
+            return commandGateway.send(new PlaceOrderCommand(body.id(), body.items()));
+        }
+
+        @PutMapping("/{id}/pay")
+        public void pay(@PathVariable String id) throws IOException {
+            payOrderUseCase.execute(id);
+        }
+    }
+    "#;
+
+        #[test]
+        fn spring_methods_send_axon_commands_and_call_use_cases() {
+            let dir = project(&[
+                ("orders/pom.xml", "<project/>"),
+                ("orders/src/main/java/shop/OrderController.java", SPRING),
+            ]);
+            let flow = extract(dir.path());
+            assert_eq!(
+                link(&flow, "POST", "/orders"),
+                (
+                    Some("OrderController.create".into()),
+                    s(&["PlaceOrderCommand"])
+                )
+            );
+            assert_eq!(
+                link(&flow, "PUT", "/orders/{id}/pay"),
+                (Some("OrderController.pay".into()), s(&["PayOrderUseCase"]))
+            );
         }
     }
 }
