@@ -405,6 +405,25 @@ pub(crate) enum Command {
         #[arg(long)]
         fail_on_found: bool,
     },
+    /// UI screens, navigations and permissions against backend endpoints (ADR 0021).
+    UiFlow {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Simulate a signed-in user with this role (repeatable).
+        #[arg(long, value_name = "ROLE", conflicts_with = "anonymous")]
+        role: Vec<String>,
+        /// Simulate a user who is not signed in.
+        #[arg(long)]
+        anonymous: bool,
+    },
+    /// Domain entities, state machines, use cases and events (ADR 0022).
+    Domain {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Limit the output to this entity (id or name).
+        #[arg(long, value_name = "NAME")]
+        entity: Option<String>,
+    },
     /// Runtime profile from recorded OTLP traces in .archguard/runtime (ADR 0004).
     Runtime {
         #[arg(value_name = "PFAD")]
@@ -747,6 +766,8 @@ impl Command {
             | Command::Evaluate { path, .. }
             | Command::Services { path, .. }
             | Command::Runtime { path }
+            | Command::UiFlow { path, .. }
+            | Command::Domain { path, .. }
             | Command::Workspace { path, .. }
             | Command::Doc { path, .. }
             | Command::Graph { path, .. }

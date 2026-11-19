@@ -125,6 +125,8 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Zyklen untersuchen | `archguard cycles . --format json` |
 | Compilerbelege untersuchen | `archguard calls . --format json` |
 | Dienstverbindungen untersuchen | `archguard services . --format json` |
+| UI-Screens, Navigationen und Berechtigungen untersuchen ([ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md)); eine Rolle simulieren | `archguard ui-flow .` oder `archguard ui-flow . --role Admin` |
+| Entitäten, Zustandsautomaten, Use Cases und Domain-Events untersuchen ([ADR 0022](docs/adr/0022-domain-view.md)) | `archguard domain . [--entity Order]` |
 | API-Verträge untersuchen (importiertes OpenAPI, GraphQL aus den Quellen) | `archguard contracts . --format json` |
 | Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries, Profiler-Samples pro Request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
@@ -196,6 +198,10 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 ```
 
 `archguard doc --arc42 --format json [--chapter N]` gibt das arc42-Dokument als Daten aus und schreibt nichts: wo der Text liegt (`target`: Datei oder Ordner, vorhanden), jedes Kapitel mit Nummer, Titel, der Datei, die es enthält (`null`: nur erzeugt), und seinem Markdown, wie die Desktop-App es liest, und den Katalog wie oben, jedes Diagramm mit `shown`, `chosen` (in `[arc42] shown_diagrams` genannt), `in_text`, Elementen und Beziehungen. Das MCP-Werkzeug `architecture_document` liefert denselben Katalog mit `template=arc42, format=catalogue`.
+
+### UI-Fluss und Domänensicht
+
+`archguard ui-flow .` listet die Screens jeder Frontend-Anwendung (Route, Name, Zugriffsbedingung, Datei:Zeile), die Befunde zu Abweichungen zwischen Frontend und Backend und die Lücken, die die Extraktoren nicht auflösen konnten (die ersten 10; `-v` zeigt alle). `--role ROLLE` (wiederholbar) oder `--anonymous` simuliert diesen Nutzer: Jeder Screen wird von den `/`-Screens seiner Anwendung aus als sicher, möglicherweise oder nicht erreicht markiert, jeder Backend-Endpunkt als erlaubt, verweigert oder unbekannt. `archguard domain . [--entity NAME]` zeigt Entitäten mit ihren Beziehungen, jeden Zustandsautomaten als Übergangstabelle, Use Cases und Domain-Events (ausgelöst von → behandelt von); `--entity` beschränkt die Ausgabe auf eine Entität. Beide kennen `--format json` und enden mit Exit-Code 0. Nur statische Analyse: Was erkannt wird, steht in [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) und [ADR 0022](docs/adr/0022-domain-view.md).
 
 ### Befunde mit einer Expertenbewertung vergleichen
 

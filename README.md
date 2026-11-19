@@ -125,6 +125,8 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect cycles | `archguard cycles . --format json` |
 | Inspect compiler evidence | `archguard calls . --format json` |
 | Inspect service connections | `archguard services . --format json` |
+| Inspect UI screens, navigations and permissions ([ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md)); simulate a role | `archguard ui-flow .` or `archguard ui-flow . --role Admin` |
+| Inspect entities, state machines, use cases and domain events ([ADR 0022](docs/adr/0022-domain-view.md)) | `archguard domain . [--entity Order]` |
 | Inspect API contracts (imported OpenAPI, GraphQL from the sources) | `archguard contracts . --format json` |
 | Inspect recorded runtime (requests, DB calls per request, slow and repeated queries, profiler samples per request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
@@ -196,6 +198,10 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 ```
 
 `archguard doc --arc42 --format json [--chapter N]` prints the arc42 document as data and writes nothing: where the text lives (`target`: file or folder, exists), each chapter with number, title, the file that holds it (`null`: only generated) and its Markdown as the desktop reads it, and the catalogue as above, each diagram with `shown`, `chosen` (listed in `[arc42] shown_diagrams`), `in_text`, elements and relations. The MCP tool `architecture_document` returns the same catalogue with `template=arc42, format=catalogue`.
+
+### UI flow and domain view
+
+`archguard ui-flow .` lists the screens of each frontend application (route, name, access condition, file:line), the frontend/backend mismatch findings and the gaps the extractors could not resolve (the first 10; `-v` shows all). `--role ROLE` (repeatable) or `--anonymous` simulates that user: each screen is marked reached surely, possibly or not from the application's `/` screens, and each backend endpoint is allowed, denied or unknown. `archguard domain . [--entity NAME]` prints entities with their relations, each state machine as a transition table, use cases and domain events (raised by → handled by); `--entity` limits the output to one entity. Both take `--format json` and exit 0. Static analysis only: see [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) and [ADR 0022](docs/adr/0022-domain-view.md) for what is recognized.
 
 ### Compare findings with an expert assessment
 
