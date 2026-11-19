@@ -111,6 +111,7 @@ mod test_coverage;
 mod test_evidence;
 mod trace_sequences;
 mod typescript_calls;
+pub mod ui_flow;
 mod workspace;
 mod workspace_sources;
 
