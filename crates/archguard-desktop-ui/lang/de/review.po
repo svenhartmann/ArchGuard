@@ -66,3 +66,93 @@ msgstr "Keine Prioritätssignale in diesem Analysebereich. Das belegt keine Fehl
 
 msgid "Contains a configured entry point; excluded from orphan candidates."
 msgstr "Enthält einen konfigurierten Einstiegspunkt und ist daher kein verwaister Kandidat."
+
+msgid "Review decisions…"
+msgstr "Review-Entscheidungen …"
+
+msgid "Review decisions"
+msgstr "Review-Entscheidungen"
+
+msgid "Findings of a review generated now. Decisions are recorded in .archguard/reviews.json, as `archguard review --decisions … --save` does, or exported for someone who imports them later."
+msgstr "Befunde eines jetzt erzeugten Reviews. Entscheidungen werden wie mit `archguard review --decisions … --save` in .archguard/reviews.json gespeichert oder für jemanden exportiert, der sie später importiert."
+
+msgid "Generating the review…"
+msgstr "Review wird erzeugt …"
+
+msgid "Recording…"
+msgstr "Wird gespeichert …"
+
+msgid "{} decisions recorded."
+msgstr "{} Entscheidungen gespeichert."
+
+msgid "Exported to {}. Import with:"
+msgstr "Exportiert nach {}. Importieren mit:"
+
+msgid "The review has no findings."
+msgstr "Das Review enthält keine Befunde."
+
+msgid "Fix"
+msgstr "Beheben"
+
+msgid "Defer"
+msgstr "Vertagen"
+
+msgid "Accept risk"
+msgstr "Risiko akzeptieren"
+
+msgid "Open"
+msgstr "Offen"
+
+msgid "Fix planned"
+msgstr "Behebung geplant"
+
+msgid "Deferred"
+msgstr "Vertagt"
+
+msgid "Accepted risk"
+msgstr "Akzeptiertes Risiko"
+
+msgid "Expired exception"
+msgstr "Abgelaufene Ausnahme"
+
+msgid "Evidence changed"
+msgstr "Beleg geändert"
+
+msgid "No longer observed"
+msgstr "Nicht mehr beobachtet"
+
+msgid "Draft"
+msgstr "Entwurf"
+
+msgid "Decision"
+msgstr "Entscheidung"
+
+msgid "Author"
+msgstr "Autor"
+
+msgid "Expires on (YYYY-MM-DD)"
+msgstr "Gültig bis (JJJJ-MM-TT)"
+
+msgid "required to accept a risk"
+msgstr "nötig, um ein Risiko zu akzeptieren"
+
+msgid "Note"
+msgstr "Begründung"
+
+msgid "Why, and what happens next"
+msgstr "Warum, und was als Nächstes passiert"
+
+msgid "ADR link"
+msgstr "ADR-Link"
+
+msgid "Add decision"
+msgstr "Entscheidung übernehmen"
+
+msgid "Export decisions…"
+msgstr "Entscheidungen exportieren …"
+
+msgid "Record {} decisions"
+msgstr "{} Entscheidungen speichern"
+
+msgid "Close"
+msgstr "Schließen"
