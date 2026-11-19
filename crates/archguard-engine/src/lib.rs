@@ -95,6 +95,7 @@ pub mod domain_chain;
 pub mod domain_csharp;
 pub mod domain_java;
 pub mod domain_model;
+pub mod domain_typescript;
 #[cfg(test)]
 mod manifest_render_tests;
 #[cfg(test)]
@@ -122,6 +123,9 @@ pub mod ui_flow_angular;
 pub mod ui_flow_backend;
 pub mod ui_flow_blazor;
 pub mod ui_flow_react;
+pub mod ui_flow_replay;
+pub mod ui_flow_slint;
+pub mod ui_flow_vue;
 pub mod ui_flow_xaml;
 pub mod view_conventions;
 mod workspace;

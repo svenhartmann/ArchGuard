@@ -45,8 +45,11 @@ pub fn analyze(root: &Path) -> Result<DomainModel, ArchguardError> {
     let import = read_domain_model(root)?.unwrap_or_default();
     Ok(merge_domain_models(
         merge_domain_models(
-            crate::domain_csharp::extract(root),
-            crate::domain_java::extract(root),
+            merge_domain_models(
+                crate::domain_csharp::extract(root),
+                crate::domain_java::extract(root),
+            ),
+            crate::domain_typescript::extract(root),
         ),
         import,
     ))
