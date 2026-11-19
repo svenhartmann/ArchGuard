@@ -90,6 +90,7 @@ mod swift_sources;
 // back would close a file cycle.
 #[cfg(test)]
 mod arc42_file_tests;
+pub mod domain_csharp;
 pub mod domain_model;
 #[cfg(test)]
 mod manifest_render_tests;
