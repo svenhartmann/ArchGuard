@@ -151,3 +151,12 @@ needs neither.
   list item get no `+`; image text with `,` or `=` is wrapped in `++…++`;
   two lists in a row are kept apart by a `//` line between blank lines.
   Checked by rendering with Asciidoctor 2.0.26.
+- **2026-11-19, one document for desktop and CLI.** The export converts
+  the arc42 text `doc --arc42` and the desktop editor find
+  (`archguard_engine::arc42_file`: the shallowest `arc42.md` or `arc42/`
+  chapter folder, else `<root>/arc42.md`), with generated and diagram
+  blocks brought up to date (`Arc42Files::markdown`). The desktop's
+  File → Export calls the same function, so it no longer writes the
+  generated document alone. `--chapter N` exports the project's chapter,
+  no longer only the generated one. The refused target is the found
+  `arc42.md`, not only `<root>/arc42.md`.

@@ -7,7 +7,6 @@
 
 #[cfg(test)]
 mod app_check;
-mod arc42_file;
 mod architecture_ui;
 #[cfg(feature = "snapshot")]
 mod bench;

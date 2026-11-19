@@ -154,8 +154,10 @@ pub fn arc42_file_name(chapter: Option<u8>, format: Arc42Format) -> String {
     }
 }
 
-/// The arc42 document as `archguard doc --arc42 --stdout [--chapter N]`
-/// prints it: the same engine call on the same analysis run.
+/// The arc42 document as `archguard doc --arc42 --format …` exports it:
+/// the project's arc42 text, found as the editor finds it, with current
+/// generated blocks and diagrams (`Arc42Files::markdown`); the generated
+/// document if the project has none.
 pub fn arc42(
     root: &Path,
     run: &AnalysisRun,
@@ -164,9 +166,10 @@ pub fn arc42(
 ) -> Result<String, String> {
     let mut config = run.config.clone();
     config.arc42.lang = lang;
-    archguard_engine::arc42_document(root, &config, &run.graph, &run.report)
-        .map(|doc| doc.markdown(chapter))
-        .map_err(|e| e.to_string())
+    let doc = archguard_engine::arc42_document(root, &config, &run.graph, &run.report)
+        .map_err(|e| e.to_string())?;
+    archguard_engine::arc42_file::Arc42Files::open(root, config.arc42.diagram_format)?
+        .markdown(&doc, chapter)
 }
 
 #[cfg(test)]
@@ -197,8 +200,8 @@ mod tests {
         assert_eq!(arc42_file_name(None, Arc42Format::Docx), "arc42.docx");
     }
 
-    /// The same text as the CLI: `arc42_document(..).markdown(None)` on
-    /// the run of the repo's own fixture.
+    /// The same text as the CLI export: the generated document for a
+    /// project without arc42 text, else that text with its own words.
     #[test]
     fn arc42_matches_the_cli_document() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ts-cyclic");
@@ -207,11 +210,9 @@ mod tests {
             archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
                 .expect("analysis");
         let text = arc42(&root, &run, None, Default::default()).expect("arc42");
-        let cli = archguard_engine::arc42_document(&root, &run.config, &run.graph, &run.report)
-            .expect("document")
-            .markdown(None);
-        assert_eq!(text, cli);
-        assert!(text.contains("arc42"), "{text}");
+        let doc = archguard_engine::arc42_document(&root, &run.config, &run.graph, &run.report)
+            .expect("document");
+        assert_eq!(text, doc.markdown(None), "the fixture has no arc42 text");
         let chapter = arc42(&root, &run, Some(5), Default::default()).expect("chapter 5");
         assert!(chapter.len() < text.len());
         let adoc = Arc42Format::Asciidoc.bytes(text.clone());
@@ -220,8 +221,39 @@ mod tests {
             "the AsciiDoc of the same text"
         );
         assert!(
-            Arc42Format::Docx.bytes(text).starts_with(b"PK"),
+            Arc42Format::Docx.bytes(text.clone()).starts_with(b"PK"),
             "a .docx package"
         );
+        // A project of its own with its own arc42 text in docs/.
+        let copy = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            copy.path().join("a.ts"),
+            "import './b';
+",
+        )
+        .expect("a.ts");
+        std::fs::write(
+            copy.path().join("b.ts"),
+            "export const b=1;
+",
+        )
+        .expect("b.ts");
+        let loaded = archguard_engine::load_config(None, copy.path()).expect("config");
+        let run = archguard_engine::analyze_run_quiet(
+            copy.path(),
+            &loaded,
+            archguard_engine::Level::Module,
+        )
+        .expect("analysis");
+        let own = arc42(copy.path(), &run, None, Default::default())
+            .expect("arc42")
+            .replace(
+                "<!-- Add your own explanations for chapter 5 here. -->",
+                "Our own building blocks.",
+            );
+        std::fs::create_dir(copy.path().join("docs")).expect("docs");
+        std::fs::write(copy.path().join("docs/arc42.md"), own).expect("write");
+        let exported = arc42(copy.path(), &run, None, Default::default()).expect("arc42");
+        assert!(exported.contains("Our own building blocks."), "{exported}");
     }
 }

@@ -628,3 +628,9 @@ comparison of the native view against the web view on the same project
   and brackets inside labels, skips `accTitle`/`accDescr`/`title`, points
   `Rel_Back` back and `BiRel` both ways, and groups what a deployment
   node holds.
+- **2026-11-19:** The arc42 file rules of `src/arc42_file.rs` moved out
+  of the desktop app, so `archguard doc --arc42` applies the same ones:
+  the text rules (chapter headings, generated and diagram blocks) to
+  `archguard-report` (`arc42_file.rs`), finding, reading and writing the
+  files to `archguard-engine` (`arc42_file.rs`). The desktop keeps only
+  the editor's state.

@@ -420,7 +420,8 @@ pub(crate) enum Command {
         /// File relative to the project root, or an absolute path.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Generate/update arc42.md with protected manual text and 12 evidence chapters;
+        /// Generate/update the project's arc42.md or arc42/ chapter folder (found as the
+        /// desktop app finds it) with protected manual text and 12 evidence chapters;
         /// with `--format asciidoc|docx` export it to arc42.adoc or arc42.docx instead.
         #[arg(long)]
         arc42: bool,

@@ -926,7 +926,7 @@ impl Editor {
         let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
         for g in blocks {
             cuts.push(line(g.start));
-            if md[g.end..].starts_with(crate::arc42_file::MARKER) {
+            if md[g.end..].starts_with(archguard_engine::report::arc42_file::MARKER) {
                 cuts.push(line(g.end));
             }
         }
