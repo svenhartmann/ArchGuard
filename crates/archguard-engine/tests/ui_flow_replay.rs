@@ -245,3 +245,19 @@ fn playwright_script_reads_keychain_passwords_from_an_env_var_the_cli_fills() {
     let error = playwright_script(&flow, "Help", &path, &config, Some("Guest")).unwrap_err();
     assert!(error.contains("[views.run.Web.users.Guest]"), "{error}");
 }
+
+/// A desktop/MAUI app has no `/` route; its start comes from `start_screens`.
+#[test]
+fn path_to_starts_at_a_marked_start_screen_without_a_root_route() {
+    let mut login = screen("Login", "//Login", None);
+    login.route = None;
+    let flow = UiFlow {
+        screens: vec![login, screen("Basket", "Basket", None)],
+        transitions: vec![link(on("Login"), "Basket", Some("Login"), None)],
+        start_screens: vec!["Login".into()],
+        ..UiFlow::default()
+    };
+    let path =
+        path_to(&flow, "Basket", &Assignment::default()).expect("path from the marked start");
+    assert_eq!(path.len(), 1);
+}

@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use archguard_core::{
     Assignment, Condition, Config, Origin, Outcome, Screen, Target, Transition, UiFlow,
-    evaluate_condition, normalize_path_pattern,
+    evaluate_condition, normalize_path_pattern, start_screen_ids,
 };
 
 /// Environment variable through which the CLI hands a keychain password to
@@ -100,14 +100,9 @@ fn not_denied(condition: Option<&Condition>, assignment: &Assignment) -> bool {
     condition.is_none_or(|c| evaluate_condition(c, assignment) != Outcome::Denied)
 }
 
-/// A start screen: routed `/`, the same rule as `screen_reaches`.
-fn is_start(screen: &Screen) -> bool {
-    screen
-        .route
-        .as_deref()
-        .map(normalize_path_pattern)
-        .as_deref()
-        == Some("/")
+/// A start screen by the one rule core uses (`start_screen_ids`).
+fn is_start(flow: &UiFlow, screen: &Screen) -> bool {
+    start_screen_ids(flow).contains(&screen.id.as_str())
 }
 
 fn leaves(transition: &Transition, screen: &Screen) -> bool {
@@ -129,7 +124,7 @@ pub fn path_to<'a>(
     let open = |s: &Screen| not_denied(s.access.as_ref(), assignment);
     let mut via: BTreeMap<&str, Option<(&str, &Transition)>> = BTreeMap::new();
     let mut queue = VecDeque::new();
-    for start in flow.screens.iter().filter(|s| is_start(s) && open(s)) {
+    for start in flow.screens.iter().filter(|s| is_start(flow, s) && open(s)) {
         via.entry(&start.id).or_insert(None);
         queue.push_back(start);
     }
@@ -314,7 +309,7 @@ fn start_of<'a>(
         Some(Origin::Screen(id)) => screen(flow, id),
         // shortcut: takes the first start screen of the application; exact when it has one.
         Some(Origin::AnyScreen { application: app }) => (flow.screens.iter())
-            .find(|s| is_start(s) && application(s) == app)
+            .find(|s| is_start(flow, s) && application(s) == app)
             .ok_or_else(|| format!("application {app} has no start screen")),
     }
 }
