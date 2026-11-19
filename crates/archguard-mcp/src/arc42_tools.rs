@@ -10,7 +10,9 @@ pub struct DocumentParams {
     pub template: Option<String>,
     /// arc42 only: chapter 1..=12. Omit for the complete document.
     pub chapter: Option<u8>,
-    /// arc42 only: markdown (default) or asciidoc.
+    /// arc42 only: markdown (default), asciidoc, or catalogue (the diagram
+    /// catalogue as JSON text: id, chapter, title, kind, shown, chosen,
+    /// in_text, elements, relations).
     pub format: Option<String>,
     /// structurizr only: service id or unique name whose packages become components.
     pub service: Option<String>,
@@ -50,9 +52,12 @@ impl DocumentParams {
                 "chapter/format require template=arc42",
             ));
         }
-        if !matches!(self.format.as_deref(), None | Some("markdown" | "asciidoc")) {
+        if !matches!(
+            self.format.as_deref(),
+            None | Some("markdown" | "asciidoc" | "catalogue")
+        ) {
             return Err(crate::tools::invalid_params(
-                "format must be markdown or asciidoc",
+                "format must be markdown, asciidoc or catalogue",
             ));
         }
         if template != Template::Structurizr && self.service.is_some() {
@@ -74,18 +79,31 @@ impl DocumentParams {
         match (self.template.as_deref(), self.format.as_deref()) {
             (Some("structurizr"), _) => "dsl",
             (_, Some("asciidoc")) => "asciidoc",
+            (_, Some("catalogue")) => "catalogue",
             _ => "markdown",
         }
     }
 }
 
-/// The arc42 document in the requested format.
-pub fn arc42_text(doc: &archguard_engine::report::Arc42Document, p: &DocumentParams) -> String {
+/// The arc42 document in the requested format; the catalogue as JSON
+/// text against the project's arc42 text, as `doc --arc42 --format json`.
+pub fn arc42_text(
+    run: &crate::tools::Run,
+    doc: &archguard_engine::report::Arc42Document,
+    p: &DocumentParams,
+) -> Result<String, ErrorData> {
     let markdown = doc.markdown(p.chapter);
-    match p.format.as_deref() {
+    Ok(match p.format.as_deref() {
         Some("asciidoc") => archguard_engine::report::markdown_to_asciidoc(&markdown),
+        Some("catalogue") => {
+            let format = run.loaded.config.arc42.diagram_format;
+            let files = archguard_engine::arc42_file::Arc42Files::open(&run.root, format)
+                .map_err(crate::tools::invalid_params)?;
+            let all = archguard_engine::arc42_data::catalogue(&files, doc, p.chapter);
+            Value::from(all).to_string()
+        }
         _ => markdown,
-    }
+    })
 }
 
 /// The Structurizr workspace of `run`, with `service`'s components.
