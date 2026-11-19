@@ -10,6 +10,7 @@ use archguard_engine::core::{
 use archguard_engine::report::{diagram_mermaid, diagram_plantuml};
 
 use super::diagram::{self, Layout};
+use super::mermaid::Own;
 use super::sequence::tone;
 use crate::tab_support::{Texts, model};
 use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
@@ -19,8 +20,12 @@ pub fn figure(d: &Diagram, format: DiagramFormat, chapter: String, texts: &Texts
     drawn(d, format, chapter, texts, false)
 }
 
-/// Own Mermaid of a chapter: its nodes as plain boxes, not packages.
-pub fn own(d: &Diagram, texts: &Texts) -> ArcFigure {
+/// Own Mermaid of a chapter: its nodes as plain boxes, not packages; a
+/// sequence with the frames of its blocks.
+pub fn own(d: &Own, texts: &Texts) -> ArcFigure {
+    if d.kind == DiagramKind::Sequence {
+        return super::sequence::own(d, &d.items, texts);
+    }
     ArcFigure {
         source: Default::default(),
         ..drawn(d, DiagramFormat::Mermaid, String::new(), texts, true)

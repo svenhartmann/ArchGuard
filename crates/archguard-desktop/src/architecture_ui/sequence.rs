@@ -2,44 +2,36 @@
 //! like a UML sequence diagram: participants above and below their dashed
 //! lifelines, one horizontal message per step from top to bottom, an
 //! activation bar on the callee while a call runs, and a dashed return to
-//! the caller once the calls made within it are done.
+//! the caller once the calls made within it are done. Own Mermaid sequences
+//! draw their messages as written, inside the frames of their blocks.
 
 use archguard_engine::core::{
     Diagram, DiagramElement, DiagramRelation, ElementKind, RelationKind, SequenceStep as Step,
     sequence_steps as steps,
 };
-use slint::{ModelRc, VecModel};
 
 use super::diagram;
+use super::mermaid::Item;
 use crate::block_names as names;
-use crate::tab_support::Texts;
-use crate::ui::{ArcCard, ArcFigure, ArcLine};
+use crate::tab_support::{Texts, model};
+use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
+
+mod lanes;
+use lanes::{CARD_W, LABEL, Lanes, TOP, dashes};
 
 const LEGEND: &str = "Blue: HTTP · cyan: gRPC · violet: events · red: recorded error · dashed: return to the caller. Top to bottom in measured start order.";
 /// Scenarios derived from the code (only calls): no measured order.
 const STATIC_LEGEND: &str = "Blue: calls · violet: events (async) · red: error path · dashed: return to the caller. Top to bottom in source order, derived from the code, not measured.";
-const COLUMN: f32 = 170.0;
-const CARD_W: f32 = 150.0;
-const MARGIN: f32 = 20.0;
-const TOP: f32 = 14.0;
-const ROW: f32 = 34.0;
 /// Half the width of an activation bar; nested bars shift by `NEST`.
 const BAR: f32 = 5.0;
 const NEST: f32 = 6.0;
-/// Message labels in px before zoom (other diagrams use 9).
-const LABEL: f32 = 12.0;
 
-/// The lanes of one figure: participant centres and step rows.
-struct Lanes {
-    first: f32,
-}
-
-impl Lanes {
-    fn centre(i: usize) -> f32 {
-        MARGIN + i as f32 * COLUMN + CARD_W / 2.0
-    }
-    fn row(&self, k: usize) -> f32 {
-        self.first + k as f32 * ROW
+/// Taller cards when a name needs two lines.
+fn card_height(labels: &[String]) -> f32 {
+    if labels.iter().any(|l| !diagram::name_lines(l).1.is_empty()) {
+        66.0
+    } else {
+        50.0
     }
 }
 
@@ -47,44 +39,70 @@ pub fn figure(d: &Diagram, source: String, chapter: String, texts: &Texts) -> Ar
     let classes = d.id.starts_with("runtime-scenario-classes-");
     let names: Vec<&str> = d.elements.iter().map(|e| e.name.as_str()).collect();
     let labels = labels(&names, classes);
-    let two_lines = labels.iter().any(|l| !diagram::name_lines(l).1.is_empty());
-    let card_h = if two_lines { 66.0 } else { 50.0 };
-    let lanes = Lanes {
-        first: TOP + card_h + 30.0,
-    };
     let rows = steps(&d.relations);
-    let bottom = lanes.row(rows.len());
-    let labels = &labels;
+    let lanes = lanes::even(d.elements.len(), rows.len(), card_height(&labels));
+    let head = |i: usize, e: &DiagramElement| participant(i, e, &labels[i], classes, texts);
+    ArcFigure {
+        chapter: chapter.into(),
+        source: source.into(),
+        legend: legend(d, texts).into(),
+        ..drawn(d, &rows, &lanes, head, Vec::new(), Vec::new())
+    }
+}
+
+/// Own Mermaid: participants named as written, plain boxes or actors;
+/// messages in order with no drawn returns; blocks and notes as frames.
+pub fn own(d: &Diagram, items: &[Item], texts: &Texts) -> ArcFigure {
+    let labels: Vec<String> = d.elements.iter().map(|e| e.name.clone()).collect();
+    let (lanes, frames, dividers) = lanes::own(d, items, card_height(&labels));
+    let rows: Vec<Step> = (0..d.relations.len()).map(Step::Call).collect();
+    let head = |i: usize, e: &DiagramElement| ArcCard {
+        kind: if e.kind == ElementKind::Person { 5 } else { 6 },
+        ..participant(i, e, &labels[i], false, texts)
+    };
+    drawn(d, &rows, &lanes, head, frames, dividers)
+}
+
+/// Cards above and below the lifelines, bars, messages, then `extra` lines.
+fn drawn(
+    d: &Diagram,
+    rows: &[Step],
+    lanes: &Lanes,
+    head: impl Fn(usize, &DiagramElement) -> ArcCard,
+    frames: Vec<ArcFrame>,
+    extra: Vec<ArcLine>,
+) -> ArcFigure {
+    let (card_h, bottom) = (lanes.card, lanes.bottom());
+    let head = &head;
     let cards: Vec<ArcCard> = [TOP, bottom]
         .into_iter()
         .flat_map(|y| {
             d.elements.iter().enumerate().map(move |(i, e)| ArcCard {
+                x: lanes.centre(i) - CARD_W / 2.0,
                 y,
                 h: card_h,
-                ..participant(i, e, &labels[i], classes, texts)
+                ..head(i, e)
             })
         })
         .collect();
-    let lifelines = (0..d.elements.len()).map(|i| lifeline(Lanes::centre(i), TOP + card_h, bottom));
+    let lifelines = (0..d.elements.len()).map(|i| lifeline(lanes.centre(i), TOP + card_h, bottom));
     let lines: Vec<ArcLine> = lifelines
-        .chain(bars(d, &rows, &lanes))
-        .chain(messages(d, &rows, &lanes))
+        .chain(bars(d, rows, lanes))
+        .chain(messages(d, rows, lanes))
+        .chain(extra)
         .collect();
     ArcFigure {
         id: d.id.as_str().into(),
-        chapter: chapter.into(),
         title: d.title.as_str().into(),
         note: d.note.as_str().into(),
         shown: d.shown,
-        cards: ModelRc::new(VecModel::from(cards)),
-        lines: ModelRc::new(VecModel::from(lines)),
-        frames: Default::default(),
-        dw: 2.0 * MARGIN + d.elements.len().max(1) as f32 * COLUMN - (COLUMN - CARD_W),
+        cards: model(cards),
+        lines: model(lines),
+        frames: model(frames),
+        dw: lanes.width,
         dh: bottom + card_h + 14.0,
-        source: source.into(),
-        legend: legend(d, texts).into(),
         sequence: true,
-        insertable: false,
+        ..Default::default()
     }
 }
 
@@ -145,7 +163,7 @@ fn bars<'a>(d: &Diagram, rows: &[Step], lanes: &'a Lanes) -> impl Iterator<Item 
         .map(|&(p, s, e)| (p, s, e, depth(&all, p, s)))
         .collect();
     placed.into_iter().map(move |(p, s, e, n)| {
-        let x = Lanes::centre(p) - BAR + n as f32 * NEST;
+        let x = lanes.centre(p) - BAR + n as f32 * NEST;
         let (top, low) = (lanes.row(s), lanes.row(e));
         let rect = format!("M {x} {top} H {} V {low} H {x} Z", x + 2.0 * BAR);
         ArcLine {
@@ -169,7 +187,7 @@ fn messages<'a>(
         let y = lanes.row(k);
         let (Step::Call(i) | Step::Return(i)) = *step;
         let r = &d.relations[i];
-        let (a, b) = (Lanes::centre(at(d, &r.from)?), Lanes::centre(at(d, &r.to)?));
+        let (a, b) = (lanes.centre(at(d, &r.from)?), lanes.centre(at(d, &r.to)?));
         let own = a == b;
         let dir = if b > a { 1.0 } else { -1.0 };
         let (a, b) = if own {
@@ -186,7 +204,13 @@ fn messages<'a>(
         } else {
             let back = b - dir * 9.0;
             let head = format!("M {b} {y} L {back} {} L {back} {} Z", y - 4.5, y + 4.5);
-            (format!("M {a} {y} H {b}"), head)
+            // Own Mermaid's dashed arrows (`-->>`) are references.
+            let line = if r.kind == RelationKind::Reference {
+                dashes(a, b, y)
+            } else {
+                format!("M {a} {y} H {b}")
+            };
+            (line, head)
         };
         Some(ArcLine {
             path: path.into(),
@@ -218,14 +242,8 @@ fn self_call(x: f32, y: f32) -> (String, String) {
 
 /// A dashed return from `from` back to the caller at `to`, open arrowhead.
 fn answer(from: f32, to: f32, y: f32, call: &DiagramRelation) -> ArcLine {
-    let (dir, len) = (if to > from { 1.0 } else { -1.0 }, (to - from).abs());
-    let mut path = String::new();
-    let mut pos = 0.0;
-    while pos < len {
-        let end = (pos + 6.0).min(len);
-        path += &format!("M {} {y} H {} ", from + dir * pos, from + dir * end);
-        pos += 10.0;
-    }
+    let dir = if to > from { 1.0 } else { -1.0 };
+    let mut path = dashes(from, to, y);
     let back = to - dir * 9.0;
     path += &format!("M {back} {} L {to} {y} L {back} {}", y - 4.5, y + 4.5);
     ArcLine {
@@ -303,7 +321,6 @@ fn participant(i: usize, e: &DiagramElement, label: &str, classes: bool, texts: 
     };
     ArcCard {
         index: i as i32,
-        x: Lanes::centre(i) - CARD_W / 2.0,
         w: CARD_W,
         kind,
         name1: name1.into(),
