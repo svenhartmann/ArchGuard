@@ -146,3 +146,17 @@ helper) or from an `else` as the literal negation of the source text,
 never simplified. A guard from an enclosing `if` stays as written. So
 `guard` always means "allowed when"; CLI and MCP label it so. The model is
 unchanged; a separate field for the source form was not added.
+
+### 2026-11-19: conventions in `check` (decision 6, first part)
+
+Switched on like the ADR 0021 conventions through `[views] conventions`:
+`state_changes_in_entity` reports, in a C# file other than the entity's,
+`x.Field = Enum.Value` on a state field of a found state machine, plus every
+non-literal state assignment the extractor reports; `events_through_raise_function`
+reports `new X(…)` of a domain-event type (named `*DomainEvent` or listing
+`INotification` as a base) that is neither an `AddDomainEvent(…)` argument nor
+a variable the same file passes to it, plus every raise argument the
+extractor could not read. The scan is text-level like the C# extractor. The
+raise function is the extractor's `AddDomainEvent`, not yet configurable.
+Not yet done: Java/Kotlin, object initializers, and "handlers are found by
+interface".
