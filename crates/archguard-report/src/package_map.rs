@@ -1,12 +1,16 @@
-//! Package projections of the original source graph for the arc42 chapters;
-//! a port of `arc42SourceModel`, `arc42PackageProjection`, `arc42CallEdges`
-//! and `arc42BuildingLevels` (viewer_architecture.js).
+//! The package map (ADR 0006): the building-block levels of the source
+//! graph, the boxes of one level with their files and labels, and the
+//! bundled relations between them with counts and cycle flags. One model
+//! for every reader: the desktop draws it, the arc42 document writes it as
+//! Mermaid or PlantUML (`arc42_diagrams::maps`). Plain data, indexed by
+//! positions in `graph.nodes`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use archguard_engine::core::{CallAnalysis, Graph, NodeId, NodeKind};
+use archguard_core::{CallAnalysis, DocLang, Graph, NodeId, NodeKind};
 
-use crate::block_names as names;
+mod names;
+pub use names::short_names;
 
 /// Containment indexes over `graph.nodes` (positions, not ids).
 pub struct SourceModel {
@@ -138,6 +142,8 @@ pub enum Group {
     Direct,
     /// Project nodes outside the scope.
     Outside,
+    /// The boxes beyond a size limit, as one ([`Projection::folded`]).
+    Others,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,7 +151,7 @@ pub struct PNode {
     pub group: Group,
     /// The full path (synthetic groups: their label).
     pub name: String,
-    /// What the views show ([`crate::block_names`]); `name` stays the tooltip.
+    /// What the readers show ([`short_names`]); `name` stays the full path.
     pub label: String,
     pub files: usize,
     pub cycle: bool,
@@ -171,15 +177,6 @@ pub struct Projection {
 }
 
 impl Projection {
-    /// Package cycles of the projection: groups of shown packages that
-    /// depend on each other in a cycle (`kpi::PACKAGE_CYCLES`).
-    pub fn cycle_groups(&self) -> usize {
-        crate::tree_order::scc(self.nodes.len(), self.edges.iter().map(|e| (e.from, e.to)))
-            .into_iter()
-            .filter(|g| g.len() > 1)
-            .count()
-    }
-
     /// Only the cyclic relationships and the nodes they touch.
     pub fn cycles_only(&self) -> Projection {
         let mut keep = vec![false; self.nodes.len()];
@@ -210,6 +207,67 @@ impl Projection {
             nodes,
             edges,
             ..*self
+        }
+    }
+}
+
+impl Projection {
+    /// At most `limit` boxes besides the outside box: the first `limit - 1`
+    /// and one box for the rest (`more`, its `{}` the number of boxes it
+    /// holds), relations bundled again and cycles marked again.
+    pub fn folded(&self, limit: usize, more: &str) -> Projection {
+        let inside = self
+            .nodes
+            .iter()
+            .filter(|n| n.group != Group::Outside)
+            .count();
+        if inside <= limit {
+            return self.clone();
+        }
+        let keep = limit.saturating_sub(1);
+        let rest = &self.nodes[keep..inside];
+        let label = more.replacen("{}", &rest.len().to_string(), 1);
+        let mut nodes: Vec<PNode> = self.nodes[..keep].to_vec();
+        nodes.push(PNode {
+            group: Group::Others,
+            name: label.clone(),
+            label,
+            files: rest.iter().map(|n| n.files).sum(),
+            cycle: false,
+        });
+        nodes.extend(self.nodes[inside..].iter().cloned());
+        nodes.iter_mut().for_each(|n| n.cycle = false);
+        // Old position -> new one; the rest share the remainder box.
+        let at = |i: usize| {
+            if i < inside {
+                i.min(keep)
+            } else {
+                i - inside + keep + 1
+            }
+        };
+        let mut counts: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+        let mut internal = self.internal;
+        for e in &self.edges {
+            match (at(e.from), at(e.to)) {
+                (a, b) if a == b => internal += e.count,
+                pair => *counts.entry(pair).or_default() += e.count,
+            }
+        }
+        let mut edges: Vec<PEdge> = counts
+            .into_iter()
+            .map(|((from, to), count)| PEdge {
+                from,
+                to,
+                count,
+                cycle: false,
+            })
+            .collect();
+        mark_cycles(&mut nodes, &mut edges);
+        Projection {
+            nodes,
+            edges,
+            internal,
+            total: self.total,
         }
     }
 }
@@ -252,7 +310,7 @@ pub fn dependency_edges(model: &SourceModel, graph: &Graph) -> Vec<(usize, usize
         .collect()
 }
 
-/// Translated names of the synthetic groups (from the window).
+/// Translated names of the synthetic groups.
 pub struct Labels {
     /// "Files without a package" (project overview).
     pub direct_root: String,
@@ -260,6 +318,21 @@ pub struct Labels {
     pub direct: String,
     /// "Other project packages".
     pub outside: String,
+}
+
+impl Labels {
+    /// The names in the document's language (ADR 0008).
+    pub fn of(l: DocLang) -> Labels {
+        Labels {
+            direct_root: l
+                .pick("Files without a package", "Dateien ohne Paket")
+                .into(),
+            direct: l.pick("direct files", "direkte Dateien").into(),
+            outside: l
+                .pick("Other project packages", "Andere Projektpakete")
+                .into(),
+        }
+    }
 }
 
 /// Packages of `scope` (or the overview) with bundled relationships.
@@ -426,20 +499,36 @@ fn bundle(
     }
 }
 
+/// Marks the nodes and edges that lie on a cycle between boxes.
 fn mark_cycles(nodes: &mut [PNode], edges: &mut [PEdge]) {
-    let mut comp = vec![usize::MAX; nodes.len()];
-    let groups = crate::tree_order::scc(nodes.len(), edges.iter().map(|e| (e.from, e.to)));
-    for (c, scc) in groups.into_iter().enumerate() {
-        if scc.len() > 1 {
-            for n in scc {
-                comp[n] = c;
-                nodes[n].cycle = true;
-            }
+    let reach = reach(nodes.len(), edges);
+    for e in edges.iter_mut() {
+        e.cycle = reach[e.to].contains(&e.from);
+        if e.cycle {
+            nodes[e.from].cycle = true;
+            nodes[e.to].cycle = true;
         }
     }
-    for e in edges.iter_mut() {
-        e.cycle = comp[e.from] != usize::MAX && comp[e.from] == comp[e.to];
+}
+
+/// Per node the nodes it reaches over one or more edges.
+fn reach(n: usize, edges: &[PEdge]) -> Vec<HashSet<usize>> {
+    let mut next = vec![Vec::new(); n];
+    for e in edges {
+        next[e.from].push(e.to);
     }
+    (0..n)
+        .map(|start| {
+            let mut seen = HashSet::new();
+            let mut todo = next[start].clone();
+            while let Some(k) = todo.pop() {
+                if seen.insert(k) {
+                    todo.extend(&next[k]);
+                }
+            }
+            seen
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -510,7 +599,7 @@ pub fn levels(model: &SourceModel, graph: &Graph, scope: Option<usize>) -> Level
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_engine::core::{CallClass, Edge, MethodCall, Node};
+    use archguard_core::{CallClass, Edge, MethodCall, Node};
 
     /// crates/{a/src/{x.rs, y.rs, sub/{z.rs}}, a/build.rs, b/src/{p.rs}},
     /// top.rs; x→p, p→x, z→y, y→z, x→y, top→x.
@@ -674,7 +763,6 @@ mod tests {
             .map(|e| (e.from, e.to, e.count, e.cycle))
             .collect();
         assert_eq!(e, vec![(0, 2, 1, true), (2, 0, 1, true), (1, 0, 1, false)]);
-        assert_eq!(p.cycle_groups(), 1, "a↔b form one package cycle");
     }
 
     #[test]
@@ -789,5 +877,33 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(call_edges(&g, &calls), vec![(3, 10), (10, 3)]);
+    }
+
+    #[test]
+    fn folding_keeps_the_largest_boxes_and_bundles_the_rest_into_one() {
+        let g = graph();
+        let m = SourceModel::new(&g);
+        let edges = dependency_edges(&m, &g);
+        let p = project(&m, &g, None, &edges, &labels());
+        assert_eq!(p.folded(3, "{} more"), p, "within the limit");
+        let f = p.folded(2, "{} more");
+        assert_eq!(
+            f.nodes
+                .iter()
+                .map(|n| (n.label.as_str(), n.group, n.files, n.cycle))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a", Group::Package(1), 4, true),
+                ("2 more", Group::Others, 2, true),
+            ]
+        );
+        // a→b, b→a and top→a become a→rest and rest→a (2): one cycle.
+        let e: Vec<(usize, usize, usize, bool)> = f
+            .edges
+            .iter()
+            .map(|e| (e.from, e.to, e.count, e.cycle))
+            .collect();
+        assert_eq!(e, vec![(0, 1, 1, true), (1, 0, 2, true)]);
+        assert_eq!((f.internal, f.total), (p.internal, p.total));
     }
 }

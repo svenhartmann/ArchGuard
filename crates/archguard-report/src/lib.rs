@@ -28,6 +28,7 @@ mod html;
 mod html_app;
 mod json;
 mod mermaid;
+pub mod package_map;
 mod pr_comment;
 mod render;
 mod staged;

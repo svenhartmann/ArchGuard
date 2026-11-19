@@ -3,12 +3,12 @@
 //! selects the building block holding it. A chapter without a map turns
 //! to the building blocks (chapter 5) first.
 
-use super::projection::{Group, Labels};
 use super::state::{ArchitectureState, current, derived, labels, open_scope};
 use super::visual::{Kind, RELATIONS_PAGE};
 use crate::follow::{self, Nav, Place};
 use crate::tab_support;
 use crate::ui::AppWindow;
+use archguard_engine::report::package_map::{Group, Labels};
 
 /// The chapter of the building blocks.
 const BLOCKS: u8 = 5;

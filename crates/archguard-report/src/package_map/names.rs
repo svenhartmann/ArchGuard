@@ -1,7 +1,7 @@
 //! Building-block names: the path below the segments all shown blocks
-//! share, without generic source roots, unique within the list. The arc42
-//! views (`architecture_ui`) and the Matrix's top rows and columns
-//! (`matrix_ui`) use it. The same rule as `arc42ShortNames`
+//! share, without generic source roots, unique within the list. The
+//! package map's boxes and levels, the arc42 document's package diagrams
+//! and the desktop's Matrix rows use it. The same rule as `arc42ShortNames`
 //! (viewer_architecture.js); both test the cases in
 //! `scripts/viewer/arc42_block_names.json`.
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// Maven/Gradle), `main` and `java` (Maven/Gradle `src/main/java`), `lib`
 /// (Ruby, Dart, Elixir), `source`/`sources` (C/C++, SwiftPM). Compared
 /// without case.
-pub(crate) const SOURCE_ROOTS: [&str; 6] = ["src", "lib", "main", "java", "source", "sources"];
+pub(super) const SOURCE_ROOTS: [&str; 6] = ["src", "lib", "main", "java", "source", "sources"];
 
 /// One label per name, in input order; equal names get equal labels.
 pub fn short_names(names: &[&str]) -> Vec<String> {
@@ -118,7 +118,7 @@ mod tests {
     /// The cases the web viewer's `test_viewer_arc42_names.js` checks too.
     #[test]
     fn shared_cases_match_the_web_viewer() {
-        let text = include_str!("../../../scripts/viewer/arc42_block_names.json");
+        let text = include_str!("../../../../scripts/viewer/arc42_block_names.json");
         let cases: Vec<serde_json::Value> = serde_json::from_str(text).expect("cases");
         assert!(cases.len() > 5);
         for c in &cases {
