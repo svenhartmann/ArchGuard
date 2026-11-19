@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Test actual CLI/HTML/MCP arc42 parity with source, config and imported evidence."""
+"""Test actual CLI/JSON/MCP arc42 parity with source, config and imported evidence."""
 import argparse
 import json
 from pathlib import Path
 import select
 import subprocess
 import tempfile
-from viewer_payload import payload_from_html
 
 
 def main():
@@ -39,12 +38,12 @@ def main():
         assert 'Modifiability' in full and 'proposed' in full
         assert 'Gemessene Klassenwerte' in full and 'Mermaid' not in full  # diagram uses a language fence
         assert '```mermaid' in full and 'compose' in full
-        page = run('graph', '--format', 'html')
-        arc42 = payload_from_html(page)['insights']['arc42']
-        assert arc42['markdown'].rstrip('\n') == full.rstrip('\n'), 'CLI and UI must use the same original evidence and renderer'
+        arc42 = json.loads(run('doc', '--arc42', '--format', 'json'))
+        assert len(arc42['chapters']) == 12
         for chapter in arc42['chapters']:
             expected = run('doc', '--arc42', '--chapter', str(chapter['number']), '--stdout')
-            assert chapter['markdown'].rstrip('\n') == expected.rstrip('\n')
+            assert expected.rstrip('\n').endswith(chapter['markdown'].rstrip('\n')), chapter['number']
+            assert chapter['markdown'].rstrip('\n') in full, 'JSON chapters are the sections of the CLI document'
         proc = subprocess.Popen([str(binary), 'mcp', '--root', str(root)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         sequence = 0
 
@@ -77,16 +76,14 @@ def main():
                     break
                 assert chunk['next_offset'] > offset
                 offset = chunk['next_offset']
-            assert text == arc42['markdown'], 'MCP must reconstruct exactly the UI document'
+            assert text == full, 'MCP must reconstruct exactly the CLI document'
         finally:
             proc.stdin.close()
             proc.wait(timeout=10)
         assert not (root / 'arc42.md').exists(), 'stdout and MCP must not write documentation'
         for path, before in inputs.items():
             assert (root / path).read_bytes() == before, path
-        (out / 'example.html').write_text(page)
-        (out / 'example.arc42.md').write_text(arc42['markdown'])
-        result = {'chapters': 12, 'cli_ui_mcp_parity': True, 'mcp_pages': pages, 'mcp_bounded': True, 'original_sources_unchanged': True}
+        result = {'chapters': 12, 'cli_json_mcp_parity': True, 'mcp_pages': pages, 'mcp_bounded': True, 'original_sources_unchanged': True}
         (out / 'live.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result))
 

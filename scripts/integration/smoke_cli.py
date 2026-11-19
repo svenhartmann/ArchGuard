@@ -86,18 +86,12 @@ def main():
         assert any(f["kind"] == "metric_threshold" for f in report["findings"])
         assert (root / ".archguard/cache.json").is_file()
         assert json.loads(cli("check", root, "--format", "json", code=1)) == report
-        html = cli("graph", root, "--format", "html")
-        assert 'id="archguard-data"' in html and 'id="action-dialog"' in html
+        graph = json.loads(cli("graph", root, "--format", "json"))
+        assert {"A.ts", "B.ts", "entry/index.ts"} <= {node["name"] for node in graph["nodes"]}, graph["nodes"]
 
-        # Execute the real viewer's export handler, then feed its downloaded
-        # JSON to the real CLI parser/engine. No browser or source edits needed.
-        export = base / "viewer-ops.json"
-        environment = {**os.environ, "VIEWER_EXPORT_PATH": str(export)}
-        subprocess.run(
-            ["node", "scripts/viewer/test_viewer_state.js"], cwd=repository,
-            env=environment, check=True, capture_output=True, text=True, timeout=60,
-        )
-        assert json.loads(export.read_text()) == [{"cut_edge": {"from": "A.ts", "to": "B.ts"}}]
+        # The SimOp file the desktop simulation exports, fed to the real CLI.
+        export = base / "simops.json"
+        export.write_text(json.dumps([{"cut_edge": {"from": "A.ts", "to": "B.ts"}}]))
         simulation = json.loads(cli("simulate", root, "--ops", export, "--format", "json"))
         assert simulation["scc_count_before"] == 1, simulation
         assert simulation["scc_count_after"] == 0, simulation
@@ -382,7 +376,7 @@ def main():
                 process.terminate()
                 process.wait(timeout=5)
 
-    print("CLI/MCP stdio, review/insight tools, Git comparison/ACD gate, document drift, cache, viewer export and root scope passed" + ("; real read-only DB passed" if args.db else ""))
+    print("CLI/MCP stdio, review/insight tools, Git comparison/ACD gate, document drift, cache, SimOp file and root scope passed" + ("; real read-only DB passed" if args.db else ""))
 
 
 if __name__ == "__main__":

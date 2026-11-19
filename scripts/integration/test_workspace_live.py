@@ -5,7 +5,7 @@ Usage: python3 scripts/integration/test_workspace_live.py [BINARY] [--out DIRECT
        [--project EXISTING_REPOSITORY]
 
 Creates a synthetic Maven cycle and an unrelated duplicate Java type. No Maven
-build, test runner, server or browser is started. Existing repositories are only
+build, test runner or server is started. Existing repositories are only
 analyzed; artifacts are written exclusively to --out, never into that repository.
 """
 import argparse
@@ -15,8 +15,6 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-
-from viewer_payload import payload_from_html
 
 
 def hashes(root, *, all_files=False):
@@ -48,10 +46,10 @@ def main():
     if args.project and output and (output == args.project.resolve() or args.project.resolve() in output.parents):
         raise SystemExit("--out must be outside the existing repository")
 
-    def cli(command, root, *options, html=False):
-        process = subprocess.run([str(binary), command, str(root), *map(str, options), "--format", "html" if html else "json"], capture_output=True, text=True, timeout=240, env=environment)
+    def cli(command, root, *options):
+        process = subprocess.run([str(binary), command, str(root), *map(str, options), "--format", "json"], capture_output=True, text=True, timeout=240, env=environment)
         assert process.returncode == 0, (command, options, process.returncode, process.stderr, process.stdout[:1000])
-        return process.stdout if html else json.loads(process.stdout)
+        return json.loads(process.stdout)
 
     with tempfile.TemporaryDirectory(prefix="archguard-workspace-live-") as temporary:
         root = Path(temporary)
@@ -104,25 +102,17 @@ def main():
         assert len({test["test_id"] for test in impact["selected"]}) == 2, impact
         assert {test["reason"] for test in impact["selected"]} == {"mapped_changed_source", "mapped_static_dependent"}, impact
 
-        page = cli("workspace", root, "--sources", "--target", target, html=True)
-        payload = payload_from_html(page)
-        assert payload["insights"]["workspace"] == workspace
-        assert payload["insights"]["workspace_impact"] == impact
-        assert "calls" not in payload["insights"]["workspace_sources"], "HTML shares the top-level call payload"
-        assert payload["insights"]["workspace_sources"]["call_summary"]["calls"] == len(sources["calls"]["calls"])
-        assert 'id="workspace-panel"' in page and "function renderWorkspace()" in page
-        assert hashes(root, all_files=True) == before, "Workspace JSON and HTML analysis must not change source, config, or imported snapshots"
+        assert hashes(root, all_files=True) == before, "Workspace analysis must not change source, config, or imported snapshots"
         result = {
             "dataset": "Synthetic Maven dependency cycle and unrelated duplicate type; no Maven build performed",
             "projects": len(workspace["projects"]), "declared_dependencies": len(workspace["dependencies"]), "project_cycles": len(workspace["cycles"]),
             "files": len(sources["files"]), "source_dependencies": len(sources["graph"]["edges"]), "source_cycles": len(sources["cycles"]),
             "compiler_calls": len(sources["calls"]["calls"]), "cross_project_calls": len(cross_calls), "source_status": sources["status"],
             "recommended_tests": len(impact["selected"]), "unknown_tests": impact["unknown_tests"], "all_fixture_file_hashes_unchanged": True,
-            "html_bytes": len(page.encode("utf-8")), "checks": "Actual built CLI, explicit test imports, installed Java compiler, scoped identities, call evidence, impact and embedded HTML payload; no browser rendering check",
+            "checks": "Actual built CLI, explicit test imports, installed Java compiler, scoped identities, call evidence and impact",
         }
         if output:
             output.mkdir(parents=True, exist_ok=True)
-            (output / "example.html").write_text(page, encoding="utf-8")
             (output / "analysis.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             (output / "verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             for relative, content in inputs.items():
@@ -136,7 +126,6 @@ def main():
         root = args.project.resolve()
         before = hashes(root)
         report = cli("workspace", root, "--sources")
-        page = cli("workspace", root, "--sources", html=True)
         assert hashes(root) == before, "Existing repository source/config/manifest content changed"
         sources = report["sources"]
         assert len({row["id"] for row in sources["files"]}) == len(sources["files"])
@@ -145,7 +134,6 @@ def main():
         result = {"root": str(root), "projects": len(report["workspace"]["projects"]), "declared_dependencies": len(report["workspace"]["dependencies"]), "files": len(sources["files"]), "source_status": sources["status"], "source_and_config_files_hashed": len(before), "hashes_unchanged": True}
         if output:
             (output / "real-workspace.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-            (output / "real-workspace.html").write_text(page, encoding="utf-8")
             (output / "real-verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result, indent=2))
 

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
-from viewer_payload import payload_from_html
 
 
 def main():
@@ -26,9 +25,9 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content)
 
-        def run(directory, fmt='json'):
-            result = subprocess.run([str(binary), 'patterns', str(directory), '--format', fmt], capture_output=True, text=True, timeout=90, check=True)
-            return json.loads(result.stdout) if fmt == 'json' else result.stdout
+        def run(directory):
+            result = subprocess.run([str(binary), 'patterns', str(directory), '--format', 'json'], capture_output=True, text=True, timeout=90, check=True)
+            return json.loads(result.stdout)
 
         def row(report, name):
             return next(p for p in report['assessments'] if p['pattern'] == name)
@@ -50,9 +49,6 @@ def main():
         assert all((root / 'ports' / e['file']).is_file() for e in port['evidence']), port['evidence']
         assert row(ports, 'microservices')['status'] == 'candidate'
         assert row(ports, 'event_driven')['status'] == 'candidate'
-        html = run(root / 'ports', 'html')
-        assert payload_from_html(html)['insights']['patterns'] == ports
-        (output / 'example.html').write_text(html)
         (output / 'ports.json').write_text(json.dumps(ports, indent=2) + '\n')
 
         write('layers/archguard.toml', "derive_layers=false\n[project]\nlanguages=['ts']\nsource_roots=['src']\nexclude=[]\n")
@@ -75,7 +71,7 @@ def main():
         for name, content in inputs.items():
             assert (root / name).read_text() == content, name
         (output / 'synthetic-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
-        result = {'syntheticSources': True, 'realCompiler': 'javac', 'checks': ['six pattern candidates across three fixtures', 'actual interface implementation and call', 'original source locations', 'standalone HTML parity', 'no source or config edits', 'no project bytecode']}
+        result = {'syntheticSources': True, 'realCompiler': 'javac', 'checks': ['six pattern candidates across three fixtures', 'actual interface implementation and call', 'original source locations', 'no source or config edits', 'no project bytecode']}
         (output / 'verification.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result))
 

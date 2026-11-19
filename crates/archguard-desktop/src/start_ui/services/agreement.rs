@@ -1,7 +1,5 @@
-//! The shared cases of `scripts/viewer/services_world_cases.json`: the
-//! web's islands and visible connections on real topologies
-//! (`scripts/viewer/test_viewer_services_world_cases.js` checks the web
-//! against the same file).
+//! The cases of `services_world_cases.json` next to this file: islands and
+//! visible connections of the services world on real topologies.
 
 use std::path::Path;
 
@@ -72,10 +70,9 @@ fn actual(w: &ServicesWorld) -> (Vec<String>, Vec<Value>) {
 }
 
 #[test]
-fn shared_cases_match_the_web() {
-    let file = repo().join("scripts/viewer/services_world_cases.json");
+fn recorded_cases_hold() {
     let shared: Value =
-        serde_json::from_str(&std::fs::read_to_string(file).expect("cases")).expect("json");
+        serde_json::from_str(include_str!("services_world_cases.json")).expect("json");
     let mut count = 0;
     for entry in shared.as_array().expect("topologies") {
         let name = entry["topology"].as_str().expect("topology");

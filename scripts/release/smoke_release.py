@@ -29,14 +29,17 @@ def main():
             return result.stdout
 
         assert run('--version').strip() == 'archguard ' + version()
-        assert 'serve' in run('--help')
+        assert 'diagram' in run('--help')
         checked = json.loads(run('check', '.', '--format', 'json'))
         assert checked['summary']['nodes'] >= 2, checked
         assert checked['summary']['edges'] >= 1, checked
         assert checked['findings'] == [], checked
-        html = run('graph', '.', '--format', 'html')
-        assert '<html' in html and 'app.py' in html and 'library.py' in html
-        print('Native release smoke: version, help, Python dependency extraction, clean check and embedded HTML passed')
+        graph = json.loads(run('graph', '.', '--format', 'json'))
+        names = {node['name'] for node in graph['nodes']}
+        assert {'app.py', 'lib/library.py'} <= names, names
+        diagram = run('diagram', '.', 'building-blocks', '--ascii')
+        assert 'building-blocks' in diagram and '| lib' in diagram, diagram
+        print('Native release smoke: version, help, Python dependency extraction, clean check, graph JSON and terminal diagram passed')
 
 
 if __name__ == '__main__':

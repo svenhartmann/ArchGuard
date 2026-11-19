@@ -1,13 +1,11 @@
 # Development scripts
 
-These tools support development and release verification. Normal CLI and viewer use does not require running them. Run commands from the repository root.
+These tools support development and release verification. Normal CLI and desktop use does not require running them. Run commands from the repository root.
 
 | Directory | Purpose |
 | --- | --- |
-| `viewer/` | Node.js regression tests for viewer behavior and generated HTML. |
-| `browser/` | Browser interaction and rendering tests; require Chromium and Puppeteer. |
-| `integration/` | CLI, MCP, language analysis and example integration tests; includes shared payload helpers. |
-| `benchmarks/` | Viewer and context-token measurements, baseline capture, cases and their tests. |
+| `integration/` | CLI, MCP, language analysis and example integration tests. |
+| `benchmarks/` | Context-token measurements, baseline capture, cases and their tests. |
 | `checks/` | Repository architecture checks and their tests. |
 | `hooks/` | Git pre-commit hook that runs `archguard check` and a compactness ratchet for methods and classes on the staged files, with its test. |
 | `release/` | Release packaging, verification, smoke tests, malware scans and report generation, with their tests. |
@@ -16,7 +14,7 @@ These tools support development and release verification. Normal CLI and viewer 
 
 ```sh
 python3 scripts/checks/check_architecture.py
-node scripts/viewer/test_viewer_world.js
+node scripts/integration/test_service_shop.js target/debug/archguard
 python3 scripts/integration/smoke_cli.py target/debug/archguard --db
 ```
 
@@ -26,11 +24,10 @@ Run Python unit tests separately by directory so each suite can import its adjac
 for suite in checks release benchmarks; do
   python3 -m unittest discover -s "scripts/$suite" -p 'test_*.py' || exit 1
 done
-python3 -m unittest discover -s scripts/integration -p test_viewer_payload.py
 python3 -m unittest discover -s scripts/integration -p test_jellyfin_example_import.py
 ```
 
-Language and live integration tests can require a built CLI, language SDKs or a running viewer. Browser tests take report/URL, browser, Puppeteer and output arguments; see each script's usage header. Do not run every script blindly: some capture baselines, build archives or need external tools.
+Language and live integration tests can require a built CLI or language SDKs; see each script's usage header. Do not run every script blindly: some capture baselines, build archives or need external tools.
 
 ## Pre-commit hook
 

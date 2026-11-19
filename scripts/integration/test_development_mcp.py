@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Protocol-level architecture entry, bounded atlas pages and real tool routes."""
-import json, os, re, select, subprocess, sys, tempfile
+import json, os, select, subprocess, sys, tempfile
 from pathlib import Path
 binary=Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/archguard').resolve()
 with tempfile.TemporaryDirectory(prefix='archguard-development-') as directory:
@@ -64,23 +64,6 @@ with tempfile.TemporaryDirectory(prefix='archguard-development-') as directory:
   assert len([r for r in items if r['kind']=='connection'])==2
   focused=call('architecture_atlas',{'within':'org/demo/search'});assert focused['metadata']['scope']=='org/demo/search'
   assert focused['metadata']['external_connections']>0
-  html=subprocess.check_output([str(binary),'graph',str(root),'--format','html'],text=True)
-  payload=json.loads(re.search(r'<script id="archguard-data" type="application/json">([\s\S]*?)</script>',html).group(1))
-  assert payload['insights']['world']['entities']==world_items
-  assert payload['insights']['world']['revision']==world_revision
-  assert payload['developmentPaths']==json.loads(Path('crates/archguard-core/src/development_paths.json').read_text())
-  js="""const fs=require('node:fs'),vm=require('node:vm');
-const harness=fs.readFileSync('scripts/viewer/test_viewer_state.js','utf8').split('const node=(id,name,parent=null,kind=')[0];
-const launch=vm.runInNewContext(harness+'\\nlaunch;',{require,console,performance,Blob});
-const app=launch(JSON.parse(fs.readFileSync(0,'utf8')),{library:false});
-process.stdout.write(app.run('JSON.stringify([architectureAtlasModel(work),architectureAtlasModel(work,"org/demo/search")])'));"""
-  frontend=json.loads(subprocess.check_output(['node','-e',js],input=json.dumps(payload),text=True))
-  for model,metadata,records in [(frontend[0],atlas['metadata'],items),(frontend[1],focused['metadata'],focused['items'])]:
-   for key in ['scope','cycle_groups','external_connections']:assert model[key]==metadata[key],key
-   expected={r['name']:{k:v for k,v in r.items() if k not in ['kind','node_kind']} for r in records if r['kind']=='area'}
-   actual={r['name']:{k:v for k,v in r.items() if k not in ['kind','src']} for r in model['areas']}
-   assert actual==expected,(actual,expected)
-   assert model['connections']==[{k:v for k,v in r.items() if k!='kind'} for r in records if r['kind']=='connection']
   (root/'org/demo/search/a.ts').write_text('export const changed=true;\n')
   stale=rpc('tools/call',{'name':'architecture_atlas','arguments':{'expected_revision':revision,'offset':1}})
   assert stale.get('error') or stale['result'].get('isError'),'changed graph must reject old pagination'
