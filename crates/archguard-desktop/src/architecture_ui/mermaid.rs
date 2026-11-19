@@ -1,16 +1,36 @@
 //! Own Mermaid in a chapter as a catalogue diagram, so the editor draws it
 //! like the generated ones: flowcharts (`flowchart`, `graph`) and C4
-//! (`C4Context`, `C4Container`, …) with their nodes, boxes and arrows.
+//! (`C4Context`, `C4Container`, …) with their nodes, boxes and arrows, and
+//! sequences (`sequenceDiagram`, read in `sequence`).
 //! shortcut: subgraphs, `&` chains, styles and other diagram types are not
 //! read (they stay source text); add them when a chapter needs them.
+
+use std::ops::Deref;
 
 use archguard_engine::core::{
     Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind,
 };
 
+mod sequence;
+pub use sequence::Item;
+
+/// Own Mermaid as read: the diagram, and for a sequence what lies between
+/// its messages (blocks, notes).
+pub struct Own {
+    pub diagram: Diagram,
+    pub items: Vec<Item>,
+}
+
+impl Deref for Own {
+    type Target = Diagram;
+    fn deref(&self) -> &Diagram {
+        &self.diagram
+    }
+}
+
 /// The diagram `source` (the inside of a ```` ```mermaid ```` block)
 /// draws, if it is a kind this reads and has at least one element.
-pub fn diagram(source: &str) -> Option<Diagram> {
+pub fn diagram(source: &str) -> Option<Own> {
     let mut lines = source
         .lines()
         .map(str::trim)
@@ -29,7 +49,10 @@ pub fn diagram(source: &str) -> Option<Diagram> {
         shown: true,
     };
     let word = head.split_whitespace().next().unwrap_or_default();
-    if matches!(word, "flowchart" | "graph") {
+    let mut items = Vec::new();
+    if word == "sequenceDiagram" {
+        items = sequence::read(lines, &mut d, label)?;
+    } else if matches!(word, "flowchart" | "graph") {
         for line in lines {
             for statement in split_unquoted(line, ';') {
                 flow_statement(statement.trim(), &mut d);
@@ -43,7 +66,7 @@ pub fn diagram(source: &str) -> Option<Diagram> {
     } else {
         return None;
     }
-    (!d.elements.is_empty()).then_some(d)
+    (!d.elements.is_empty()).then_some(Own { diagram: d, items })
 }
 
 fn element(d: &mut Diagram, id: &str, name: Option<String>, kind: ElementKind) {
@@ -479,9 +502,187 @@ mod tests {
         assert_eq!(links(&d), [("A", "B", None, RelationKind::Dependency)]);
     }
 
+    /// A real chapter's sequence: declared participants, autonumber,
+    /// `break` and `alt`/`else` nested inside `alt`.
+    const SEARCH: &str = "sequenceDiagram
+    autonumber
+    participant F as Frontend
+    participant A as APIM
+    participant G as GLS
+    participant E as Elasticsearch
+    F->>A: Suchrequest mit Identität
+    A->>A: Tokenprüfung laut API-Konzept
+    A->>G: Suchrequest und search-authorization
+    break Authentifizierung fehlgeschlagen
+        G-->>A: HTTP 401
+        A-->>F: Fehlerantwort
+    end
+    G->>G: Suchparameter validieren
+    alt Mindestens eine berechtigte Teilabfrage
+        G->>E: POST /_msearch/template mit geprüftem Bearer-Token
+        alt Auswertbare Multi-Search-Antwort
+            E-->>G: Teilantworten
+        else Gesamtfehler
+            G->>G: HTTP 401 oder 503 vorbereiten
+        end
+    else Keine berechtigte Teilabfrage
+        G->>G: Leere Suchantwort erzeugen
+    end
+    G-->>A: HTTP-Antwort
+    A-->>F: Such- oder Fehlerantwort
+";
+
+    #[test]
+    fn a_sequence_has_participants_numbered_messages_and_nested_blocks() {
+        let d = diagram(SEARCH).expect("a sequence");
+        assert_eq!(d.kind, DiagramKind::Sequence);
+        assert_eq!(
+            names(&d),
+            [
+                ("F", "Frontend", ElementKind::Package),
+                ("A", "APIM", ElementKind::Package),
+                ("G", "GLS", ElementKind::Package),
+                ("E", "Elasticsearch", ElementKind::Package),
+            ]
+        );
+        assert_eq!(d.relations.len(), 12);
+        let l = links(&d);
+        assert_eq!(
+            l[0],
+            (
+                "F",
+                "A",
+                Some("1. Suchrequest mit Identität"),
+                RelationKind::Dependency
+            )
+        );
+        assert_eq!(l[1].0, l[1].1, "a message to oneself");
+        assert_eq!(
+            l[3],
+            ("G", "A", Some("4. HTTP 401"), RelationKind::Reference),
+            "dashed"
+        );
+        assert_eq!(l[11].2, Some("12. Such- oder Fehlerantwort"));
+        use Item::*;
+        let open = |s: &str| Open(s.to_string());
+        let divider = |s: &str| Divider(s.to_string());
+        assert_eq!(
+            d.items,
+            [
+                Message,
+                Message,
+                Message,
+                open("break [Authentifizierung fehlgeschlagen]"),
+                Message,
+                Message,
+                End,
+                Message,
+                open("alt [Mindestens eine berechtigte Teilabfrage]"),
+                Message,
+                open("alt [Auswertbare Multi-Search-Antwort]"),
+                Message,
+                divider("[Gesamtfehler]"),
+                Message,
+                End,
+                divider("[Keine berechtigte Teilabfrage]"),
+                Message,
+                End,
+                Message,
+                Message,
+            ]
+        );
+    }
+
+    /// Implicit participants, actors, every arrow, notes and the lines
+    /// read without being drawn.
+    #[test]
+    fn sequence_arrows_actors_and_notes_read_as_mermaid_does() {
+        let d = diagram(
+            "sequenceDiagram\n  title Bestellung\n  actor K as Kunde\n  K->>+S: a\n  S-->>-K: b\n  K->S: c\n  K-->S: d\n  K-xS: e\n  K--xS: f\n  K-)Q: g\n  K--)Q\n  activate S\n  deactivate S\n  Note over K,S: Text\n  Note left of Q: links\n  loop Jede Minute\n    opt\n    rect rgb(0,0,0)\n    par\n      S->>Q: h\n    and\n      S->>K: i\n    end\n    end\n    end\n  end\n  critical Verbindung\n  option Zeitüberschreitung\n  end\n",
+        )
+        .expect("a sequence");
+        assert_eq!(
+            names(&d),
+            [
+                ("K", "Kunde", ElementKind::Person),
+                ("S", "S", ElementKind::Package),
+                ("Q", "Q", ElementKind::Package),
+            ]
+        );
+        let kinds: Vec<(RelationKind, bool)> =
+            d.relations.iter().map(|r| (r.kind, r.error)).collect();
+        use RelationKind::*;
+        assert_eq!(
+            kinds,
+            [
+                (Dependency, false),
+                (Reference, false),
+                (Dependency, false),
+                (Reference, false),
+                (Dependency, true),
+                (Reference, true),
+                (Event, false),
+                (Event, false),
+                (Dependency, false),
+                (Dependency, false),
+            ]
+        );
+        assert_eq!(d.relations[7].label, None);
+        assert_eq!(
+            d.items[8..10],
+            [
+                Item::Note {
+                    from: 0,
+                    to: 1,
+                    side: 0,
+                    text: "Text".into()
+                },
+                Item::Note {
+                    from: 2,
+                    to: 2,
+                    side: -1,
+                    text: "links".into()
+                },
+            ]
+        );
+        let opened: Vec<&str> = d
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Open(l) => Some(l.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            opened,
+            [
+                "loop [Jede Minute]",
+                "opt",
+                "",
+                "par",
+                "critical [Verbindung]"
+            ]
+        );
+    }
+
+    /// A construct this does not draw keeps the block as source text, as
+    /// does a block that never closes or closes twice.
+    #[test]
+    fn an_unknown_sequence_line_falls_back_to_code() {
+        let code = |s: &str| diagram(&format!("sequenceDiagram\n{s}")).is_none();
+        assert!(code(
+            "  box Aqua Gruppe\n  participant A\n  end\n  A->>B: x\n"
+        ));
+        assert!(code("  create participant C\n  A->>C: x\n"));
+        assert!(code("  loop x\n  A->>B: x\n"));
+        assert!(code("  A->>B: x\n  end\n"));
+        assert!(code("  A<<->>B: x\n"));
+        assert!(!code("  A->>B: x\n"));
+    }
+
     #[test]
     fn other_diagram_kinds_and_empty_ones_are_not_read() {
-        assert!(diagram("sequenceDiagram\n  A->>B: hi\n").is_none());
+        assert!(diagram("classDiagram\n  A <|-- B\n").is_none());
         assert!(diagram("flowchart LR\n").is_none());
         assert!(diagram("").is_none());
     }
