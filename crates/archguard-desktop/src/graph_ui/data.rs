@@ -37,6 +37,7 @@ pub struct Cycles<'a> {
     pub list: &'a [CycleItem],
     pub chosen: Option<usize>,
     pub cuts: &'a [CutItem],
+    pub plans: &'a CyclePlans,
 }
 
 pub fn graph_data(
@@ -101,6 +102,7 @@ pub fn graph_data(
         cycles: sync_rows(&old.cycles, cycles.list.iter().cloned()),
         cycle: cycles.chosen.map_or(-1, |c| c as i32),
         cuts: sync_rows(&old.cuts, cycles.cuts.iter().cloned()),
+        plans: cycles.plans.clone(),
         node_total: g.tree.nodes.len() as i32,
         sim: super::simulation::data(g, texts.locale(), &old.sim),
         review: super::review::data(g, &old.review),

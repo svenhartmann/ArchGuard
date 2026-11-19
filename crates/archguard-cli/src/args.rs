@@ -538,6 +538,9 @@ pub(crate) enum Command {
         /// Show at most N cuts per cycle.
         #[arg(long, value_name = "N")]
         max: Option<usize>,
+        /// Up to three repair plans (sets of dependencies to remove) per cycle instead.
+        #[arg(long, conflicts_with = "max")]
+        plans: bool,
     },
     /// Baseline ratchet: accept existing cycles, block new ones.
     Baseline {

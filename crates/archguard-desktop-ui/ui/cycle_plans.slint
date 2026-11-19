@@ -1,0 +1,110 @@
+// Explorer → Cycles, above the single cuts: up to three repair plans for
+// the selected cycle group (archguard-analysis `plan_cycle_repairs`, the
+// web viewer's "Repair alternatives"); "Preview" proposes all cuts of a
+// plan as one simulated change.
+import { Theme } from "theme.slint";
+import { Button, Badge } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { CutItem } from "simulation.slint";
+
+// One plan; `cuts` carry the dependency and its references (`refs`).
+export struct PlanItem {
+    cuts: [CutItem],
+    // The cycles among the members are gone in the model.
+    complete: bool,
+    files: int,
+    refs: int,
+    // Some total is unknown: `refs` is a lower bound.
+    refs-lower-bound: bool,
+    nodes-after: int,
+    edges-after: int,
+    largest-after: int,
+    // The cuts as `from\nto\n…`, the "plan" action's argument.
+    arg: string,
+}
+
+// The plans for the selected cycle group and how far the search went.
+export struct CyclePlans {
+    plans: [PlanItem],
+    nodes-before: int,
+    edges-before: int,
+    largest-before: int,
+    // Every candidate was examined; `examined` of them.
+    complete: bool,
+    examined: int,
+    // The order used a reference total that is a lower bound.
+    lower-bound: bool,
+    // Why there are no plans; "" none.
+    error: string,
+}
+
+export component CyclePlansView inherits VerticalLayout {
+    in property <CyclePlans> data;
+    callback action(string, string);
+    pure function refs(n: int, lower: bool) -> string {
+        return @tr("{0} reference" | "{0} references" % n, Fmt.int(n)) + (lower ? "+" : "");
+    }
+    spacing: 6px;
+    Text { text: @tr("Repair plans"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; }
+    if root.data.error != "": Text { text: root.data.error; color: Theme.danger; font-size: Theme.font-small; wrap: word-wrap; }
+    if root.data.error == "" && root.data.plans.length == 0: Text {
+        text: @tr("No plan of dependency removals was found for this group.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    for p[i] in root.data.plans: VerticalLayout {
+        spacing: 2px;
+        padding-bottom: 6px;
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text { text: @tr("Option {}", i + 1); color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; }
+            Badge {
+                text: p.complete ? @tr("cycle removed") : @tr("partial improvement");
+                variant: p.complete ? "success" : "warning";
+            }
+        }
+        for c in p.cuts: Text {
+            text: c.from + " → " + c.to + " · " + root.refs(c.refs, false);
+            color: Theme.text;
+            font-size: Theme.font-small;
+            font-family: Theme.mono-family;
+            wrap: word-wrap;
+        }
+        Text {
+            text: @tr("Cyclic modules {} → {} · cyclic dependencies {} → {} · largest group {} → {}", Fmt.int(root.data.nodes-before), Fmt.int(p.nodes-after), Fmt.int(root.data.edges-before), Fmt.int(p.edges-after), Fmt.int(root.data.largest-before), Fmt.int(p.largest-after));
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
+        Text {
+            text: @tr("{0} affected file" | "{0} affected files" % p.files, Fmt.int(p.files)) + " · " + root.refs(p.refs, p.refs-lower-bound);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            alignment: start;
+            Button { text: @tr("Preview"); compact: true; clicked => { root.action("plan", p.arg); } }
+        }
+    }
+    if root.data.error == "" && !root.data.complete: Text {
+        text: @tr("Search incomplete: {} candidates checked, more alternatives may exist.", Fmt.int(root.data.examined));
+        color: Theme.warning;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+    if root.data.lower-bound: Text {
+        text: @tr("The order is uncertain: some reference totals are lower bounds.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+    Text {
+        text: @tr("Ranked by affected files and references, not by effort. Every removed dependency still needs a source change.");
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+        wrap: word-wrap;
+    }
+}

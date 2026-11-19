@@ -859,7 +859,18 @@ impl ArchguardTools {
         let cycle_id = tools::required_str(&params.cycle_id, "cycle_id")?;
         let level = parse_level(params.level.as_deref())?;
         let run = tools::Run::at(&self.root, None, level)?;
-        let value = tools::suggest_cuts_value(&run.report, cycle_id, params.max)?;
+        let mut value = tools::suggest_cuts_value(&run.report, cycle_id, params.max)?;
+        // As `archguard suggest --plans`; the id was checked just above.
+        let finding = run.report.findings.iter().find(|f| f.id == cycle_id);
+        if let (Some(true), Some(finding)) = (params.plans, finding) {
+            let plans = archguard_engine::analysis::plan_cycle_repairs(
+                &run.file_graph,
+                &finding.nodes,
+                archguard_engine::analysis::DEFAULT_MAX_EXAMINED,
+            )
+            .map_err(|err| ErrorData::internal_error(format!("repair plans: {err}"), None))?;
+            value["plans"] = json!(plans);
+        }
         Ok(tools::guarded(&value).to_string())
     }
 
@@ -1190,6 +1201,9 @@ pub struct SuggestCutsParams {
     pub level: Option<String>,
     /// Maximum number of cuts; all by default.
     pub max: Option<usize>,
+    /// Also return up to three repair plans (sets of edges to remove
+    /// together, with before/after SCC figures and evidence).
+    pub plans: Option<bool>,
 }
 
 /// Input of the `baseline_diff` tool (Kap. 10.2: `{ path? }`, plus an
@@ -2140,12 +2154,17 @@ links = ["docs/adr/1.md"]
                     cycle_id: Some(id),
                     level: Some("file".into()),
                     max: None,
+                    plans: Some(true),
                 }))
                 .await
                 .unwrap(),
         )
         .unwrap();
         assert!(cuts["cuts"].to_string().contains("x.ts"), "{cuts}");
+        // x ⇄ y: one cut of either direction removes the cycle.
+        let plan = &cuts["plans"]["plans"][0];
+        assert_eq!(plan["complete"], true, "{cuts}");
+        assert_eq!(plan["ops"].as_array().map(Vec::len), Some(1), "{cuts}");
     }
 
     /// A missing `node` is a parameter error before any scan: even an

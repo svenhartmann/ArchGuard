@@ -109,3 +109,38 @@ msgstr "„{}“ gelöscht."
 
 msgid "Scenario action failed: {}"
 msgstr "Szenarioaktion fehlgeschlagen: {}"
+
+msgid "Apply these {} changes together?"
+msgstr "Diese {} Änderungen gemeinsam anwenden?"
+
+msgid "Repair plans"
+msgstr "Lösungsalternativen"
+
+msgid "No plan of dependency removals was found for this group."
+msgstr "Für diese Gruppe wurde kein Plan zum Entfernen von Abhängigkeiten gefunden."
+
+msgid "Option {}"
+msgstr "Option {}"
+
+msgid "cycle removed"
+msgstr "Zyklus aufgelöst"
+
+msgid "partial improvement"
+msgstr "teilweise Verbesserung"
+
+msgid "Cyclic modules {} → {} · cyclic dependencies {} → {} · largest group {} → {}"
+msgstr "Zyklische Module {} → {} · zyklische Abhängigkeiten {} → {} · größte Gruppe {} → {}"
+
+msgid "{0} affected file"
+msgid_plural "{0} affected files"
+msgstr[0] "{0} betroffene Datei"
+msgstr[1] "{0} betroffene Dateien"
+
+msgid "Search incomplete: {} candidates checked, more alternatives may exist."
+msgstr "Suche unvollständig: {} Kandidaten geprüft, weitere Alternativen sind möglich."
+
+msgid "The order is uncertain: some reference totals are lower bounds."
+msgstr "Die Reihenfolge ist unsicher: Einige Belegzahlen sind nur Untergrenzen."
+
+msgid "Ranked by affected files and references, not by effort. Every removed dependency still needs a source change."
+msgstr "Gereiht nach betroffenen Dateien und Belegen, nicht nach Aufwand. Jede entfernte Abhängigkeit braucht noch eine Änderung im Quellcode."

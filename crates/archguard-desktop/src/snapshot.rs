@@ -141,7 +141,7 @@ fn sim_hook(ui: &AppWindow) {
     for item in spec.split(',') {
         let (action, arg) = item.split_once(':').unwrap_or((item, ""));
         // `explorer:<tab>` switches the explorer (1: Cycles); `plan` takes
-        // `from>to`.
+        // `from>to`, a repair plan's cuts `a>b>c>d` (pairs, as its Preview).
         match action.trim() {
             "explorer" => ui.invoke_set_explorer_tab(id, arg.trim().parse().unwrap_or(0)),
             a => ui.invoke_graph_action(id, a.into(), arg.trim().replace('>', "\n").into()),
