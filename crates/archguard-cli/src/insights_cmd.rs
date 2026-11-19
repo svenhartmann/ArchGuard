@@ -154,7 +154,9 @@ pub(crate) fn doc(
     options: DocOptions<'_>,
 ) -> i32 {
     if cli.format != Format::Text {
-        return usage("doc writes Markdown; use the default text format");
+        return usage(
+            "doc writes Markdown; use the default text format, or --arc42 --format json for the document as data",
+        );
     }
     if options.arc42 {
         return arc42_doc(cli, root, loaded, graph, report, options);

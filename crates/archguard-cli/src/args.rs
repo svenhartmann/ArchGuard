@@ -435,6 +435,21 @@ pub(crate) enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// List the arc42 diagram catalogue, or draw one diagram in the terminal.
+    Diagram {
+        /// Project root; a single argument that is no folder is taken as ID.
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Catalogue id to draw (`archguard diagram` lists them).
+        id: Option<String>,
+        /// Draw the package map level of this package (`<ID>@<package>`,
+        /// ID defaults to building-blocks).
+        #[arg(long, value_name = "PACKAGE")]
+        level: Option<String>,
+        /// Plain ASCII instead of Unicode box-drawing characters.
+        #[arg(long)]
+        ascii: bool,
+    },
     /// Compare two Git refs, or a ref with the staged index; never the worktree.
     Diff {
         #[arg(value_name = "PFAD")]
@@ -749,6 +764,10 @@ impl Command {
                 DbAction::Query { .. } => None,
             },
             Command::Mcp { .. } => None,
+            // `diagram building-blocks`: one argument that is no folder is the id.
+            Command::Diagram { path, id, .. } => {
+                path.as_deref().filter(|p| id.is_some() || p.is_dir())
+            }
             Command::Doctor | Command::Update { .. } => None,
             Command::ReviewDecision { .. } => None,
         }

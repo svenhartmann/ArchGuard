@@ -294,3 +294,58 @@ fn arc42_check_accepts_a_current_document_the_desktop_wrote_in_german() {
     fs::write(root.join("arc42.md"), mixed).unwrap();
     check();
 }
+
+/// `doc --arc42 --format json` carries the chapters and the catalogue
+/// the web viewer gets in its payload, without a browser.
+#[test]
+fn arc42_json_carries_the_chapters_and_the_diagram_catalogue() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("a.ts"), "import './b';\n").unwrap();
+    fs::write(root.join("b.ts"), "export const b=1;\n").unwrap();
+    let json = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+            .current_dir(root)
+            .args(["doc", "--arc42", "--format", "json"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let doc = json(&[]);
+    assert_eq!(doc["chapters"].as_array().unwrap().len(), 12);
+    assert_eq!(doc["chapters"][4]["number"], 5);
+    let five = doc["chapters"][4]["markdown"].as_str().unwrap();
+    assert!(five.starts_with("## 5."), "{five}");
+    assert_eq!(doc["chapters"][4]["file"], serde_json::Value::Null);
+    assert_eq!(doc["target"]["kind"], "file");
+    assert_eq!(doc["target"]["exists"], false);
+    let diagrams = doc["diagrams"].as_array().unwrap();
+    let blocks = diagrams
+        .iter()
+        .find(|d| d["id"] == "building-blocks")
+        .unwrap();
+    assert_eq!(blocks["chapter"], 5);
+    assert_eq!(blocks["kind"], "packages");
+    assert_eq!(blocks["shown"], true);
+    assert_eq!(blocks["chosen"], false);
+    assert_eq!(blocks["in_text"], true, "the generated chapter has it");
+    assert!(blocks["elements"].is_array() && blocks["relations"].is_array());
+    assert!(!root.join("arc42.md").exists(), "json writes nothing");
+    let only = json(&["--chapter", "5"]);
+    assert_eq!(only["chapters"].as_array().unwrap().len(), 1);
+    let only_diagrams = only["diagrams"].as_array().unwrap();
+    assert!(only_diagrams.iter().all(|d| d["chapter"] == 5));
+    // Own text without the diagram: found, and the diagram is not in it.
+    fs::write(root.join("arc42.md"), "## 5. Bausteine\n\nUnser Text.\n").unwrap();
+    let own = json(&["--chapter", "5"]);
+    assert_eq!(own["target"]["exists"], true);
+    let file = own["chapters"][0]["file"].as_str().unwrap();
+    assert!(file.ends_with("arc42.md"), "{file}");
+    assert_eq!(own["diagrams"][0]["in_text"], false);
+}
