@@ -203,6 +203,22 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 
 `archguard ui-flow .` lists the screens of each frontend application (route, name, access condition, file:line), the frontend/backend mismatch findings and the gaps the extractors could not resolve (the first 10; `-v` shows all). `--role ROLE` (repeatable) or `--anonymous` simulates that user: each screen is marked reached surely or possibly from the application's `/` screens, or says why not: denied (with the access it needs), no known path (with the number of links in the app the rules could not resolve) or no start screen, and each backend endpoint is allowed, denied or unknown. `archguard domain . [--entity NAME]` prints entities with their relations, each state machine as a transition table (the guard is the condition under which the step is allowed; a throw or return guard appears as `!(source condition)`), use cases and domain events (raised by → handled by); `--entity` limits the output to one entity. `--chain` prints for each backend endpoint the chain to the domain: the screen action that calls it, its handler and the request types it sends (`mediator.Send`, Axon `commandGateway.send`, a called `*UseCase` field), the use cases handling them, their state transitions, events and event handlers, e.g. `POST /api/orders → CreateOrderCommandHandler`, `Order: any → Submitted`, `→ OrderStartedDomainEvent → …Handler`. `--entity Order --state Paid` answers the reverse question: which endpoints and screens can cause that state. State changes made by integration-event handlers or jobs have no endpoint and do not appear there. Both take `--format json` and exit 0. Static analysis only: see [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) and [ADR 0022](docs/adr/0022-domain-view.md) for what is recognized.
 
+Conventions keep both views complete when an agent writes the code and `archguard check` runs after each of its steps. They are opt-in; without `[views]` nothing is checked:
+
+```toml
+[views]
+conventions = [
+  "navigation_literal",            # every navigation target is a literal route or route constant
+  "endpoint_access_declared",      # every endpoint declares [Authorize]/[AllowAnonymous] or @PreAuthorize/@PermitAll
+  "http_url_literal",              # every HTTP call of a screen has a literal URL
+  "frontend_backend_agree",        # no shown_but_refused / hidden_but_unprotected mismatch
+  "state_changes_in_entity",       # C#: `x.Field = Enum.Value` on a state field only inside its entity, always a literal
+  "events_through_raise_function", # C#: a `*DomainEvent`/`INotification` type is created only for AddDomainEvent(…)
+]
+```
+
+Each break is one `target_architecture` error finding (check fails with exit 1; text, JSON and SARIF) with file:line and a fix hint, e.g. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, so the UI flow cannot follow it. Fix: write the target as a literal route or a route constant.`` The id `view-<rule>:<file>:<subject>` does not contain the line, so it stays the same when code above moves. An unknown name in the list is a configuration error.
+
 ### Compare findings with an expert assessment
 
 `archguard evaluate --init .` writes `.archguard/assessment.toml` with every current finding as an unjudged stub; it never overwrites an existing file. An expert records the problems they see (`[[expected]]`, with kind and node globs) and judges findings (`verdict = "true_positive"` or `"false_positive"`; empty means not judged). `archguard evaluate . [--assessment FILE] [--format json]` then reports recall (matched expected problems / expected problems), precision (true positives / judged current findings), unjudged findings, missed expected problems with reason and stale verdicts, and warns when the assessment revision is not `HEAD`. A metric with nothing counted is "not measured", never 0. ArchGuard never writes verdicts itself, and `evaluate` is not a gate. The MCP tool `evaluation` returns the same result. Format and matching rules: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).

@@ -189,3 +189,18 @@ possibly", "denied (needs: signed in)", "no known path (2 links in this app
 unresolved)", "no start screen". `not_reached` is gone. The MCP `ui_flow`
 tool now reaches screens from every `/` screen, also with `application` set;
 that parameter only narrows the rows. The findings are unchanged.
+
+### 2026-11-19: conventions in `check` (decision 6, first part)
+
+`[views] conventions` in the configuration switches the checks on, one name
+per convention; absent means none, an unknown name is a configuration error.
+For this ADR: `navigation_literal` (a transition target stayed
+`unresolved`), `endpoint_access_declared` (an `undeclared` endpoint),
+`http_url_literal` (a `Call::Unresolved` action) and `frontend_backend_agree`
+(a `shown_but_refused` or `hidden_but_unprotected` finding). Each break is a
+`target_architecture` finding with severity `error`, file:line, a fix hint
+for the agent, and the id `view-<rule>:<file>:<subject>`, without the line.
+An invalid import file is itself a finding, so the gate does not pass
+silently. The baseline still accepts only cycles. Not yet done: permission
+checks through configured functions and stable element ids (`data-testid`,
+`AutomationId`); a finding kind of its own instead of `target_architecture`.

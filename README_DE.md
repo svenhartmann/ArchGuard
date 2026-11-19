@@ -203,6 +203,22 @@ Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-h
 
 `archguard ui-flow .` listet die Screens jeder Frontend-Anwendung (Route, Name, Zugriffsbedingung, Datei:Zeile), die Befunde zu Abweichungen zwischen Frontend und Backend und die Lücken, die die Extraktoren nicht auflösen konnten (die ersten 10; `-v` zeigt alle). `--role ROLLE` (wiederholbar) oder `--anonymous` simuliert diesen Nutzer: Jeder Screen wird von den `/`-Screens seiner Anwendung aus als sicher oder möglicherweise erreicht markiert oder nennt den Grund, warum nicht: verweigert (mit der nötigen Berechtigung), kein bekannter Pfad (mit der Zahl der Links der Anwendung, die die Regeln nicht auflösen konnten) oder kein Start-Screen, jeder Backend-Endpunkt als erlaubt, verweigert oder unbekannt. `archguard domain . [--entity NAME]` zeigt Entitäten mit ihren Beziehungen, jeden Zustandsautomaten als Übergangstabelle (der Guard ist die Bedingung, unter der der Schritt erlaubt ist; ein Guard mit throw oder return erscheint als `!(Quellbedingung)`), Use Cases und Domain-Events (ausgelöst von → behandelt von); `--entity` beschränkt die Ausgabe auf eine Entität. `--chain` zeigt für jeden Backend-Endpunkt die Kette in die Domäne: die Screen-Aktion, die ihn aufruft, seinen Handler und die Request-Typen, die er sendet (`mediator.Send`, Axon `commandGateway.send`, ein aufgerufenes `*UseCase`-Feld), die Use Cases, die sie behandeln, deren Zustandsübergänge, Events und Event-Handler, z. B. `POST /api/orders → CreateOrderCommandHandler`, `Order: any → Submitted`, `→ OrderStartedDomainEvent → …Handler`. `--entity Order --state Paid` beantwortet die Gegenfrage: Welche Endpunkte und Screens können diesen Zustand auslösen. Zustandswechsel aus Integration-Event-Handlern oder Jobs haben keinen Endpunkt und erscheinen dort nicht. Beide kennen `--format json` und enden mit Exit-Code 0. Nur statische Analyse: Was erkannt wird, steht in [ADR 0021](docs/adr/0021-ui-flow-and-permission-simulator.md) und [ADR 0022](docs/adr/0022-domain-view.md).
 
+Konventionen halten beide Sichten vollständig, wenn ein Agent den Code schreibt und `archguard check` nach jedem seiner Schritte läuft. Sie sind optional; ohne `[views]` wird nichts geprüft:
+
+```toml
+[views]
+conventions = [
+  "navigation_literal",            # jedes Navigationsziel ist eine literale Route oder Routen-Konstante
+  "endpoint_access_declared",      # jeder Endpunkt deklariert [Authorize]/[AllowAnonymous] oder @PreAuthorize/@PermitAll
+  "http_url_literal",              # jeder HTTP-Aufruf eines Screens hat eine literale URL
+  "frontend_backend_agree",        # keine Abweichung shown_but_refused / hidden_but_unprotected
+  "state_changes_in_entity",       # C#: `x.Feld = Enum.Wert` auf ein Zustandsfeld nur in seiner Entität, immer literal
+  "events_through_raise_function", # C#: ein `*DomainEvent`/`INotification`-Typ entsteht nur für AddDomainEvent(…)
+]
+```
+
+Jeder Verstoß ist ein `target_architecture`-Befund mit Schwere error (check endet mit Exit-Code 1; Text, JSON und SARIF) mit Datei:Zeile und einem Hinweis zur Behebung, z. B. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, … Fix: write the target as a literal route or a route constant.`` Die Id `view-<regel>:<datei>:<gegenstand>` enthält keine Zeile und bleibt gleich, wenn sich Code darüber verschiebt. Ein unbekannter Name in der Liste ist ein Konfigurationsfehler.
+
 ### Befunde mit einer Expertenbewertung vergleichen
 
 `archguard evaluate --init .` schreibt `.archguard/assessment.toml` mit jedem aktuellen Befund als unbewertetem Eintrag; eine vorhandene Datei wird nie überschrieben. Eine Expertin trägt die Probleme ein, die sie sieht (`[[expected]]`, mit Art und Knoten-Globs), und bewertet Befunde (`verdict = "true_positive"` oder `"false_positive"`; leer heißt unbewertet). `archguard evaluate . [--assessment DATEI] [--format json]` meldet dann Recall (gefundene erwartete Probleme / erwartete Probleme), Precision (echte Treffer / bewertete aktuelle Befunde), unbewertete Befunde, nicht gefundene erwartete Probleme mit Grund und veraltete Bewertungen und warnt, wenn die Revision der Bewertung nicht `HEAD` ist. Eine Kennzahl ohne gezählte Fälle ist „nicht gemessen", nie 0. ArchGuard schreibt selbst keine Bewertungen, und `evaluate` ist kein Gate. Das MCP-Tool `evaluation` liefert dasselbe Ergebnis. Format und Zuordnungsregeln: [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md).

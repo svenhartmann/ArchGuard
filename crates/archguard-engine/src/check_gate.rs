@@ -59,6 +59,7 @@ pub fn check_gate_findings(root: &Path, config: &Config, report: &Report) -> Vec
             policy,
         ));
     }
+    findings.extend(crate::view_conventions::convention_findings(root, config));
     findings
 }
 
@@ -327,6 +328,23 @@ mod tests {
         let findings = check_gate_findings(dir.path(), &config, &report(None));
         let kinds: Vec<FindingKind> = findings.iter().map(|f| f.kind).collect();
         assert_eq!(kinds, [FindingKind::License], "{findings:?}");
+        assert!(gate_fails(&findings, None));
+    }
+
+    #[test]
+    fn check_gate_findings_add_view_conventions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".archguard")).unwrap();
+        std::fs::write(
+            dir.path().join(".archguard/ui-flow.json"),
+            r#"{"definition":"ui-flow/v1","complete":false,"transitions":[{"from":{"screen":"a"},"target":{"unresolved":"url"},"file":"A.razor","line":2,"source":"x"}]}"#,
+        )
+        .unwrap();
+        let config: Config =
+            toml::from_str("[views]\nconventions = [\"navigation_literal\"]").unwrap();
+        let findings = check_gate_findings(dir.path(), &config, &report(None));
+        let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, ["view-navigation_literal:A.razor:url"]);
         assert!(gate_fails(&findings, None));
     }
 
