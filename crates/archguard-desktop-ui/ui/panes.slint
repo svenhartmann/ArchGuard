@@ -90,7 +90,7 @@ component ViewTabChip inherits Rectangle {
     // view kind offers (Graph checks its display when exporting).
     callback export(string);
     property <bool> data: root.tab.kind == "graph" || root.tab.kind == "dsm" || root.tab.kind == "services"
-        || root.tab.kind == "security" || root.tab.kind == "quality" || root.tab.kind == "architecture";
+        || root.tab.kind == "security" || root.tab.kind == "quality" || root.tab.kind == "architecture" || root.tab.kind == "calls";
     height: 26px;
     width: row.preferred-width;
     border-radius: 6px;

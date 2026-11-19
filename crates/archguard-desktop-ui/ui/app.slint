@@ -98,7 +98,7 @@ export component AppWindow inherits Window {
     // Markdown and JSON need a view with an export snapshot; SVG is drawn
     // from Graph → Tree and Services, as in the web viewer.
     property <bool> export-data: root.focused-view == "graph" || root.focused-view == "dsm" || root.focused-view == "services"
-        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture";
+        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture" || root.focused-view == "calls";
     property <bool> export-svg: root.focused-view == "services"
         || (root.focused-view == "graph" && root.graph-panes[root.focused-pane].display == 0);
     // The panes' top edge in the window, for the PNG of a pane.
@@ -208,7 +208,7 @@ export component AppWindow inherits Window {
         if root.notice-kind == 5 { return @tr("Exported {} from the original project evidence.", root.notice); }
         if root.notice-kind == 6 { return @tr("Could not export: {}", root.notice); }
         if root.notice-kind == 7 { return @tr("SVG is available in Graph → Tree and Services."); }
-        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."); }
+        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture."); }
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
         if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
         if root.notice-kind == 11 { return @tr("Nothing to save."); }
@@ -280,7 +280,7 @@ export component AppWindow inherits Window {
                     activated => { root.export("json"); }
                 }
                 if root.ready && !root.export-data: MenuItem {
-                    title: @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture.");
+                    title: @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture.");
                     enabled: false;
                 }
                 MenuItem {

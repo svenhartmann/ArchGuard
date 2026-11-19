@@ -239,6 +239,7 @@ fn data(ui: &AppWindow, tab: &Tab) -> Result<(View, Snapshot), Failure> {
         }),
         View::Quality => quality_ui::export(ui),
         View::Architecture => Some(architecture(&project)?),
+        View::Calls => crate::calls_ui::export_snapshot(&project),
     };
     snapshot.map(|s| (view, s)).ok_or(Failure::Loading)
 }
