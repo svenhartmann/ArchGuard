@@ -246,8 +246,9 @@ fn spread(x: usize, w: usize, k: usize, m: usize) -> usize {
 }
 
 /// Port columns and tracks of every segment: ports spread over the box
-/// edge in the order of the other ends; a lower port moves off a column
-/// an upper port of the same gap uses, so lines never run into each other.
+/// edge in the order of the other ends; a lower port straight below its
+/// upper one where it can, and never on a column another upper port of
+/// the gap uses, so lines do not run into each other.
 fn ports(layout: &Layout, geo: &Geometry) -> Vec<(usize, usize, Option<usize>)> {
     let segs = &layout.segments;
     let centre = |v: usize| geo.x[v] * 2 + geo.w[v];
@@ -279,10 +280,10 @@ fn ports(layout: &Layout, geo: &Geometry) -> Vec<(usize, usize, Option<usize>)> 
             .collect();
         let uppers: BTreeSet<usize> = gap.iter().map(|&i| cols[i].0).collect();
         for &i in &gap {
-            let (a, b) = cols[i];
-            if a != b && uppers.contains(&b) {
-                let taken: BTreeSet<usize> = gap.iter().map(|&j| cols[j].1).collect();
-                cols[i].1 = moved(geo, segs[i].lower, b, &uppers, &taken);
+            if cols[i].0 != cols[i].1 {
+                let others = gap.iter().filter(|&&j| j != i);
+                let taken: BTreeSet<usize> = others.map(|&j| cols[j].1).collect();
+                cols[i].1 = moved(geo, segs[i].lower, cols[i], &uppers, &taken);
             }
         }
     }
@@ -293,16 +294,23 @@ fn ports(layout: &Layout, geo: &Geometry) -> Vec<(usize, usize, Option<usize>)> 
         .collect()
 }
 
-/// Lower port `b` of node `v` moved to the nearest inner column neither an
-/// upper port nor another lower port uses; `b` without one.
+/// Lower port `b` of node `v`: straight below the upper port `a` if that
+/// column is free, else moved off an upper port's column to the nearest
+/// inner column no other port uses; `b` without one.
 fn moved(
     geo: &Geometry,
     v: usize,
-    b: usize,
+    (a, b): (usize, usize),
     uppers: &BTreeSet<usize>,
     taken: &BTreeSet<usize>,
 ) -> usize {
     let inside = geo.x[v] + 1..(geo.x[v] + geo.w[v]).saturating_sub(1);
+    if inside.contains(&a) && !taken.contains(&a) {
+        return a;
+    }
+    if !uppers.contains(&b) {
+        return b;
+    }
     (1..geo.w[v])
         .flat_map(|d| [b + d, b.wrapping_sub(d)])
         .find(|c| inside.contains(c) && !uppers.contains(c) && !taken.contains(c))
