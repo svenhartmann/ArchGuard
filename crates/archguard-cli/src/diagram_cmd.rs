@@ -181,8 +181,10 @@ fn level_packages(graph: &Graph) -> Vec<String> {
         .collect()
 }
 
-/// The catalogue as a table: id, chapter, kind, in the document, in the
-/// project's text, title.
+/// The catalogue as a table: chapter, kind, in the document, in the
+/// project's text, title, id. The id comes last and whole (scenario ids
+/// run to 180 characters), so the short columns stay aligned and it
+/// stays copyable.
 fn table(catalogue: &[Value]) -> String {
     let yes = |v: &Value| {
         if v.as_bool() == Some(true) {
@@ -196,16 +198,16 @@ fn table(catalogue: &[Value]) -> String {
         .iter()
         .map(|d| {
             [
-                text(&d["id"]),
                 d["chapter"].to_string(),
                 text(&d["kind"]),
                 yes(&d["shown"]).into(),
                 yes(&d["in_text"]).into(),
-                text(&d["title"]),
+                title(&text(&d["title"])),
+                text(&d["id"]),
             ]
         })
         .collect();
-    let head = ["ID", "CHAPTER", "KIND", "IN DOC", "IN TEXT", "TITLE"].map(String::from);
+    let head = ["CHAPTER", "KIND", "IN DOC", "IN TEXT", "TITLE", "ID"].map(String::from);
     let mut widths = head.clone().map(|h| h.chars().count());
     for row in &rows {
         for (w, cell) in widths.iter_mut().zip(row) {
@@ -220,6 +222,18 @@ fn table(catalogue: &[Value]) -> String {
     };
     std::iter::once(&head).chain(&rows).map(line).collect()
 }
+
+/// A title cut to [`TITLE`] characters, so the id column starts at a
+/// fixed place.
+fn title(t: &str) -> String {
+    if t.chars().count() <= TITLE {
+        return t.to_string();
+    }
+    t.chars().take(TITLE - 1).chain(['…']).collect()
+}
+
+/// The widest title in the list.
+const TITLE: usize = 60;
 
 /// Title line, the drawing, what the counts count.
 fn drawing(entry: &Value, ascii: bool) -> String {
@@ -240,4 +254,15 @@ fn drawing(entry: &Value, ascii: bool) -> String {
         out.push_str(&format!("\ncounts: {}\n", d.unit));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_long_title_is_cut_to_the_column() {
+        let cut = super::title(&"x".repeat(70));
+        assert_eq!(cut.chars().count(), super::TITLE);
+        assert!(cut.ends_with('…'));
+        assert_eq!(super::title("Package overview"), "Package overview");
+    }
 }

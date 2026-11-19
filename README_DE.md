@@ -146,16 +146,16 @@ Ohne `--out` nimmt `doc --arc42` den arc42-Text, den die Desktop-App bearbeitet:
 
 ### Diagramme im Terminal
 
-`archguard diagram [PFAD]` listet den arc42-Diagrammkatalog: jedes Diagramm, das ArchGuard ableitet, mit Id, Kapitel, Art, ob das Dokument es zeigt (`IN DOC`) und ob der arc42-Text des Projekts es enthält (`IN TEXT`, nach der Regel der Desktop-App). `archguard diagram [PFAD] ID` zeichnet ein Diagramm; ein einzelnes Argument, das kein Ordner ist, gilt als Id. `--level PAKET` zeichnet eine Ebene der Paketkarte (`building-blocks@PAKET`, oder `cycles --level PAKET`), dieselbe Ebene, die die Karte der Desktop-App öffnet, auch wenn `[arc42] shown_diagrams` sie nicht nennt. Kastengraphen (Kontext, Bausteine, Paketkarten, Deployment, Dienste, Zyklen, Schichten) stehen von oben nach unten, von der nutzenden zur genutzten Seite; ein Zyklus wird an einer Kante gebrochen, die nach oben zeigt, und `!` markiert Kästen und Kanten im Zyklus. Sequenzen zeigen Teilnehmer mit Lebenslinien, nummerierte Nachrichten, gestrichelte Rückgaben, Aufrufe an sich selbst als Schleife, Ereignisse mit Doppelspitze (`>>`) und Fehler mit `✗`; die Szenarien haben keine alt/loop-Rahmen, daher werden keine gezeichnet. Die Ausgabe nutzt Unicode-Rahmenzeichen, `--ascii` reines ASCII; Farbe (Zyklen rot, HTTP blau) nur im Terminal ohne `NO_COLOR`; die Breite folgt `COLUMNS` (Standard 100), breite Reihen brechen um. `--format json` gibt stattdessen die Daten des Diagramms (Elemente und Beziehungen) oder den ganzen Katalog aus. Beispiel aus `fixtures/py-layers`:
+`archguard diagram [PFAD]` listet den arc42-Diagrammkatalog: jedes Diagramm, das ArchGuard ableitet, mit Kapitel, Art, ob das Dokument es zeigt (`IN DOC`), ob der arc42-Text des Projekts es enthält (`IN TEXT`, nach der Regel der Desktop-App), Titel (bei 60 Zeichen gekürzt) und Id, zuletzt und ungekürzt, damit sie sich kopieren lässt. `archguard diagram [PFAD] ID` zeichnet ein Diagramm; ein einzelnes Argument, das kein Ordner ist, gilt als Id. `--level PAKET` zeichnet eine Ebene der Paketkarte (`building-blocks@PAKET`, oder `cycles --level PAKET`), dieselbe Ebene, die die Karte der Desktop-App öffnet, auch wenn `[arc42] shown_diagrams` sie nicht nennt. Kastengraphen (Kontext, Bausteine, Paketkarten, Deployment, Dienste, Zyklen, Schichten) stehen von oben nach unten, von der nutzenden zur genutzten Seite; ein Zyklus wird an einer Kante gebrochen, die nach oben zeigt, und `!` markiert Kästen und Kanten im Zyklus. Sequenzen zeigen Teilnehmer mit Lebenslinien, nummerierte Nachrichten, gestrichelte Rückgaben, Aufrufe an sich selbst als Schleife, Ereignisse mit Doppelspitze (`>>`) und Fehler mit `✗`; die Szenarien haben keine alt/loop-Rahmen, daher werden keine gezeichnet. Die Ausgabe nutzt Unicode-Rahmenzeichen, `--ascii` reines ASCII; Farbe (Zyklen rot, HTTP blau) nur im Terminal ohne `NO_COLOR`; die Breite folgt `COLUMNS` (Standard 100), breite Reihen brechen um. `--format json` gibt stattdessen die Daten des Diagramms (Elemente und Beziehungen) oder den ganzen Katalog aus. Beispiel aus `fixtures/py-layers`:
 
 ```text
 $ archguard diagram fixtures/py-layers
-ID                                                                CHAPTER  KIND      IN DOC  IN TEXT  TITLE
-building-blocks                                                   5        packages  yes     yes      Package overview
-runtime-calls                                                     6        packages  yes     yes      Static calls between building blocks
-runtime-scenario-python-api-http-py-module-handle-4               6        sequence  yes     yes      Scenario · handle · api (static)
+CHAPTER  KIND      IN DOC  IN TEXT  TITLE                                            ID
+5        packages  yes     yes      Package overview                                 building-blocks
+6        packages  yes     yes      Static calls between building blocks             runtime-calls
+6        sequence  yes     yes      Scenario · handle · api (static)                 runtime-scenario-python-api-http-py-module-handle-4
 ...
-cycles                                                            11       packages  yes     yes      Cyclic package relations
+11       packages  yes     yes      Cyclic package relations                         cycles
 
 $ archguard diagram fixtures/py-layers building-blocks
 Package overview [building-blocks, chapter 5, packages]

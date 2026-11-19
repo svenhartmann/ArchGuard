@@ -146,16 +146,16 @@ Without `--out`, `doc --arc42` uses the arc42 text the desktop app edits: the sh
 
 ### Diagrams in the terminal
 
-`archguard diagram [PATH]` lists the arc42 diagram catalogue: every diagram ArchGuard derives, with its id, chapter, kind, whether the document shows it (`IN DOC`) and whether the project's arc42 text contains it (`IN TEXT`, by the rule the desktop uses). `archguard diagram [PATH] ID` draws one diagram; a single argument that is no folder is taken as the id. `--level PACKAGE` draws a package map level (`building-blocks@PACKAGE`, or `cycles --level PACKAGE`), the level the desktop's map opens, also when `[arc42] shown_diagrams` does not list it. Box graphs (context, building blocks, package maps, deployment, services, cycles, layers) are layered top-down from the using to the used side; a cycle is broken at one edge, which is drawn upwards, and `!` marks cyclic boxes and edges. Sequences show participants with lifelines, numbered messages, dashed returns, calls to oneself as a loop, events with a double head (`>>`) and errors with `✗`; the scenarios have no alt/loop frames, so none are drawn. Output uses Unicode box-drawing characters, `--ascii` plain ASCII; colour (cycles red, HTTP blue) only on a terminal without `NO_COLOR`; the width follows `COLUMNS` (default 100), wide rows wrap. `--format json` prints the diagram's data (elements and relations) or the whole catalogue instead. Example from `fixtures/py-layers`:
+`archguard diagram [PATH]` lists the arc42 diagram catalogue: every diagram ArchGuard derives, with its chapter, kind, whether the document shows it (`IN DOC`), whether the project's arc42 text contains it (`IN TEXT`, by the rule the desktop uses), its title (cut at 60 characters) and its id, last and whole so it can be copied. `archguard diagram [PATH] ID` draws one diagram; a single argument that is no folder is taken as the id. `--level PACKAGE` draws a package map level (`building-blocks@PACKAGE`, or `cycles --level PACKAGE`), the level the desktop's map opens, also when `[arc42] shown_diagrams` does not list it. Box graphs (context, building blocks, package maps, deployment, services, cycles, layers) are layered top-down from the using to the used side; a cycle is broken at one edge, which is drawn upwards, and `!` marks cyclic boxes and edges. Sequences show participants with lifelines, numbered messages, dashed returns, calls to oneself as a loop, events with a double head (`>>`) and errors with `✗`; the scenarios have no alt/loop frames, so none are drawn. Output uses Unicode box-drawing characters, `--ascii` plain ASCII; colour (cycles red, HTTP blue) only on a terminal without `NO_COLOR`; the width follows `COLUMNS` (default 100), wide rows wrap. `--format json` prints the diagram's data (elements and relations) or the whole catalogue instead. Example from `fixtures/py-layers`:
 
 ```text
 $ archguard diagram fixtures/py-layers
-ID                                                                CHAPTER  KIND      IN DOC  IN TEXT  TITLE
-building-blocks                                                   5        packages  yes     yes      Package overview
-runtime-calls                                                     6        packages  yes     yes      Static calls between building blocks
-runtime-scenario-python-api-http-py-module-handle-4               6        sequence  yes     yes      Scenario · handle · api (static)
+CHAPTER  KIND      IN DOC  IN TEXT  TITLE                                            ID
+5        packages  yes     yes      Package overview                                 building-blocks
+6        packages  yes     yes      Static calls between building blocks             runtime-calls
+6        sequence  yes     yes      Scenario · handle · api (static)                 runtime-scenario-python-api-http-py-module-handle-4
 ...
-cycles                                                            11       packages  yes     yes      Cyclic package relations
+11       packages  yes     yes      Cyclic package relations                         cycles
 
 $ archguard diagram fixtures/py-layers building-blocks
 Package overview [building-blocks, chapter 5, packages]

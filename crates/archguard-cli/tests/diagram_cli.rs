@@ -60,22 +60,29 @@ fn the_list_names_every_diagram_with_chapter_kind_and_where_it_is() {
     let dir = project();
     let list = run(dir.path(), &[]);
     let header = list.lines().next().unwrap();
-    for column in ["ID", "CHAPTER", "KIND", "IN DOC", "IN TEXT", "TITLE"] {
-        assert!(header.contains(column), "{list}");
-    }
+    let columns: Vec<&str> = header.split("  ").filter(|c| !c.is_empty()).collect();
+    let columns: Vec<&str> = columns.iter().map(|c| c.trim()).collect();
+    assert_eq!(
+        columns,
+        ["CHAPTER", "KIND", "IN DOC", "IN TEXT", "TITLE", "ID"],
+        "{list}"
+    );
     let blocks = list
         .lines()
-        .find(|l| l.starts_with("building-blocks "))
+        .find(|l| l.ends_with(" building-blocks"))
         .unwrap();
     let cells: Vec<&str> = blocks.split_whitespace().collect();
-    assert_eq!(cells[1..5], ["5", "packages", "yes", "yes"], "{list}");
+    assert_eq!(cells[..4], ["5", "packages", "yes", "yes"], "{list}");
+    // The id comes last, whole and at one column, so long ids stay copyable.
+    let at = header.find("ID").unwrap();
     let ids: Vec<String> = catalogue(dir.path())
         .iter()
         .map(|d| d["id"].as_str().unwrap().to_string())
         .collect();
     for id in &ids {
         assert!(
-            list.lines().any(|l| l.starts_with(id.as_str())),
+            list.lines()
+                .any(|l| l.chars().skip(at).collect::<String>() == *id),
             "{id}: {list}"
         );
     }
