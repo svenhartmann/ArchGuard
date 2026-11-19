@@ -386,6 +386,15 @@ pub fn diagram_block(id: &str, section: &str) -> String {
     )
 }
 
+/// Diagram `d` is in `text`: as a diagram block or as its generated
+/// section, in either format.
+pub fn in_text(text: &str, d: &archguard_engine::core::Diagram) -> bool {
+    diagram_ranges(text).iter().any(|(_, id)| *id == d.id)
+        || [DiagramFormat::Mermaid, DiagramFormat::Plantuml]
+            .into_iter()
+            .any(|f| text.contains(&archguard_engine::report::diagram_section(d, f)))
+}
+
 /// Each diagram block of `md`: its bytes (start marker to end marker) and
 /// its diagram's id; a start without its end is no block.
 pub fn diagram_ranges(md: &str) -> Vec<(Range<usize>, String)> {
@@ -462,12 +471,7 @@ fn complete_diagrams(
             out.replace_range(start.min(r.start)..r.end + blank.min(2), "");
         }
     }
-    let has = |text: &str, d: &archguard_engine::core::Diagram| {
-        diagram_ranges(text).iter().any(|(_, id)| *id == d.id)
-            || [DiagramFormat::Mermaid, DiagramFormat::Plantuml]
-                .into_iter()
-                .any(|f| text.contains(&archguard_engine::report::diagram_section(d, f)))
-    };
+    let has = in_text;
     let mut dropped = Vec::new();
     for d in doc.diagrams.iter().filter(|d| d.chapter == n && d.shown) {
         if has(&out, d) {

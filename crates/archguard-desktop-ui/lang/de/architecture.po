@@ -334,3 +334,9 @@ msgstr "Die Analyse kennt dieses Diagramm nicht mehr; der Block behält seine le
 
 msgid "Package map"
 msgstr "Paketkarte"
+
+msgid "Diagrams ({})"
+msgstr "Diagramme ({})"
+
+msgid "Every generated diagram of this chapter is in its text."
+msgstr "Jedes erzeugte Diagramm dieses Kapitels steht in seinem Text."
