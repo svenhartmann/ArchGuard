@@ -84,6 +84,8 @@ export component AppWindow inherits Window {
     callback close-all();
     callback quit-app();
     callback choose-theme(bool);
+    // View → System theme: drop the stored choice (src/shell_ui.rs).
+    callback follow-system-theme();
     callback choose-language(string);
     // 0 Save, 1 Don't save, 2 Cancel.
     callback prompt-answered(int);
@@ -198,7 +200,12 @@ export component AppWindow inherits Window {
     callback file-select(int, int);
     callback show-in-graph(int);
 
-    init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
+    // The system's scheme at start; "System theme" returns to it.
+    property <bool> system-dark;
+    init => {
+        root.system-dark = Palette.color-scheme == ColorScheme.dark;
+        Theme.dark = root.system-dark;
+    }
 
     // The notice bar's text for `notice-kind`; `notice` is its argument.
     pure function notice-text() -> string {
@@ -385,6 +392,10 @@ export component AppWindow inherits Window {
             MenuItem {
                 title: @tr("Light theme");
                 activated => { root.set-dark(false); root.choose-theme(false); }
+            }
+            MenuItem {
+                title: @tr("System theme");
+                activated => { root.set-dark(root.system-dark); root.follow-system-theme(); }
             }
             MenuSeparator { }
             Menu {

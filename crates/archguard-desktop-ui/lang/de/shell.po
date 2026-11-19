@@ -25,6 +25,9 @@ msgstr "Dunkles Design"
 msgid "Light theme"
 msgstr "Helles Design"
 
+msgid "System theme"
+msgstr "Systemdesign"
+
 msgid "System language"
 msgstr "Systemsprache"
 
