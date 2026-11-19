@@ -5,7 +5,9 @@ use archguard_engine::core::domain_model::{DomainModel, EntityKind, StateMachine
 use archguard_engine::domain_model::summary;
 
 use super::state::DomainState;
-use super::{entities, states};
+use super::{chain, entities, states};
+use slint::Model;
+
 use crate::tab_support::{Texts, model};
 use crate::ui::{
     DomArrow, DomBand, DomCard, DomEvent, DomField, DomState, DomStateArrow, DomTransition,
@@ -52,8 +54,32 @@ pub fn build(s: &DomainState, texts: &Texts) -> DomainViewModel {
     diagram(&mut m, s, d, texts);
     if let Some(i) = s.selected.filter(|&i| i < d.entities.len()) {
         selection(&mut m, d, i);
+        chains(&mut m, s, d, i, texts);
     }
     m
+}
+
+/// The simulated users, the chains into the chosen state and of the entity.
+fn chains(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, texts: &Texts) {
+    m.roles = model(crate::screens_ui::role_rows(texts, &s.roles, s.role));
+    let flow = match &*s.flow {
+        Ok(f) => f,
+        Err(e) => {
+            m.flow_note = e.as_str().into();
+            return;
+        }
+    };
+    let id = &d.entities[i].id;
+    let a = s.assignment();
+    m.chains = model(chain::of_entity(flow, d, id, &a, texts));
+    if let Some(state) = &s.state {
+        m.chosen_state = state.as_str().into();
+        m.triggers = model(chain::triggers(flow, d, id, state, &a, texts));
+        m.states = model(m.states.iter().map(|mut n| {
+            n.selected = n.name == state.as_str() && !n.any;
+            n
+        }));
+    }
 }
 
 fn or_none(items: &[String], texts: &Texts) -> String {
@@ -138,6 +164,7 @@ fn machine(m: &mut DomainViewModel, sm: &StateMachine) {
         y: n.y,
         w: states::NODE_W,
         h: states::NODE_H,
+        selected: false,
     }));
     m.state_arrows = model(g.arrows.iter().map(|a| DomStateArrow {
         path: a.path.as_str().into(),
@@ -161,6 +188,7 @@ pub fn table(sm: &StateMachine) -> Vec<DomTransition> {
             };
             DomTransition {
                 number: (i + 1).to_string().into(),
+                to: t.to.as_str().into(),
                 from_to: format!("{from} → {}", t.to).into(),
                 method: t.method.as_str().into(),
                 guard: t.guard.clone().unwrap_or_default().into(),
@@ -176,7 +204,6 @@ pub fn table(sm: &StateMachine) -> Vec<DomTransition> {
 mod tests {
     use super::*;
     use archguard_engine::core::domain_model::{Entity, StateTransition};
-    use slint::Model;
 
     fn shop() -> DomainModel {
         DomainModel {
@@ -211,7 +238,7 @@ mod tests {
 
     #[test]
     fn selecting_an_entity_shows_its_state_machine_and_table() {
-        let mut s = super::super::state::build_from(Ok(shop()));
+        let mut s = super::super::state::build_from(Ok(shop()), Err("no flow".into()));
         let m = build(&s, &Texts::default());
         assert_eq!(
             (m.selected, m.states.row_count()),

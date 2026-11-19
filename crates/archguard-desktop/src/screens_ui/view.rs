@@ -43,7 +43,7 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
             .count() as i32,
         refused: kind(UiFlowFindingKind::ShownButRefused),
         unprotected: kind(UiFlowFindingKind::HiddenButUnprotected),
-        roles: model(roles(s, texts)),
+        roles: model(role_rows(texts, &s.roles, s.role)),
         switches: model(s.atoms.iter().zip(&s.switches).map(|(a, v)| FlowSwitch {
             label: a.name.as_str().into(),
             policy: a.policy,
@@ -60,20 +60,21 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
     m
 }
 
-fn roles(s: &ScreensState, texts: &Texts) -> Vec<FlowRole> {
+/// The simulated users: anonymous, signed in without a role, each role.
+pub fn role_rows(texts: &Texts, roles: &[String], chosen: usize) -> Vec<FlowRole> {
     let fixed = [texts.t("Anonymous"), texts.t("Signed in without a role")];
-    let named = (s.roles.iter()).map(|r| texts.f("Role {name}", &[("name", r.clone())]));
+    let named = (roles.iter()).map(|r| texts.f("Role {name}", &[("name", r.clone())]));
     (fixed.into_iter().map(String::from).chain(named))
         .enumerate()
         .map(|(i, label)| FlowRole {
             label: label.into(),
-            chosen: i == s.role,
+            chosen: i == chosen,
         })
         .collect()
 }
 
 fn diagram(m: &mut ScreensModel, s: &ScreensState, flow: &UiFlow, texts: &Texts) {
-    let g = layout::layout(flow);
+    let g = layout::layout(flow, &s.collapsed);
     let reaches = screen_reaches(flow, &s.assignment());
     let cards = g.cards.iter().map(|c| {
         let mut card = card(flow, c.node, &reaches, texts);
@@ -87,14 +88,19 @@ fn diagram(m: &mut ScreensModel, s: &ScreensState, flow: &UiFlow, texts: &Texts)
         path: a.path.into(),
         unresolved: a.unresolved,
     }));
-    m.bands = model(g.bands.into_iter().map(|b| FlowBand {
-        title: if b.application.is_empty() {
-            texts.t("Screens without an application").into()
+    m.bands = model(g.bands.into_iter().map(|b| {
+        let name = if b.application.is_empty() {
+            texts.t("Screens without an application").to_string()
         } else {
-            b.application.into()
-        },
-        y: b.y,
-        h: b.h,
+            b.application
+        };
+        let count = texts.plural(b.screens, "{count} screen", "{count} screens");
+        FlowBand {
+            title: format!("{name} · {count}").into(),
+            y: b.y,
+            h: b.h,
+            collapsed: b.collapsed,
+        }
     }));
     m.width = g.width;
     m.height = g.height;
@@ -126,18 +132,17 @@ pub fn card(
             c.file = texts.t("layouts and menus").into();
         }
         Node::Unresolved(k) => {
-            let t = &flow.transitions[k];
+            let n = super::inspector::unreadable(flow, k).count();
             c.kind = 2;
-            c.title = match &t.target {
-                archguard_engine::core::Target::Unresolved(text) => text.as_str().into(),
-                archguard_engine::core::Target::Screen(id) => id.as_str().into(),
-            };
-            c.file = format!(
-                "{} · {}",
-                texts.t("target not readable"),
-                at(&t.file, t.line)
-            )
-            .into();
+            c.group = k as i32;
+            c.title = texts
+                .plural(
+                    n,
+                    "{count} target not readable",
+                    "{count} targets not readable",
+                )
+                .into();
+            c.file = texts.t("click for the list with file and line").into();
         }
     }
     if c.kind == 2 || c.state == 3 {
@@ -246,7 +251,7 @@ mod tests {
                     3,
                     "no known path, 1 link in this app unresolved".into()
                 ),
-                ("@Url(x)".into(), 4, String::new()),
+                ("1 target not readable".into(), 4, String::new()),
             ]
         );
         s.select_role(1);
@@ -263,8 +268,29 @@ mod tests {
         let dashed: Vec<bool> = m.cards.iter().map(|c| !c.border.is_empty()).collect();
         assert_eq!(dashed, [false, false, true, true]);
         let unresolved = m.cards.row_data(3).unwrap();
-        assert_eq!(unresolved.file, "target not readable · home.razor:7");
         assert_eq!(unresolved.screen, -1);
+        assert_eq!(unresolved.group, 1, "opens the list of its source");
+    }
+
+    #[test]
+    fn unreadable_targets_list_with_file_and_line_and_bands_collapse() {
+        use slint::Model;
+        let mut s = super::super::state::build_from(Ok(shop()));
+        s.open_group(1);
+        let m = build(&s, &Texts::default());
+        assert_eq!(m.inspector.title, "Targets not readable");
+        let row = m.inspector.rows.row_data(0).unwrap();
+        assert_eq!(
+            (row.text.as_str(), row.location.as_str()),
+            ("@Url(x)", "home.razor:7")
+        );
+        assert_eq!(m.bands.row_data(0).unwrap().title, "Web · 3 screens");
+        s.toggle_band(0);
+        let m = build(&s, &Texts::default());
+        assert!(m.bands.row_data(0).unwrap().collapsed);
+        assert_eq!(m.cards.row_count(), 0, "a collapsed band hides its cards");
+        s.toggle_band(0);
+        assert_eq!(build(&s, &Texts::default()).cards.row_count(), 4);
     }
 
     #[test]

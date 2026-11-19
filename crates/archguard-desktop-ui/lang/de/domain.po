@@ -97,3 +97,42 @@ msgid "{0} event"
 msgid_plural "{0} events"
 msgstr[0] "{0} Ereignis"
 msgstr[1] "{0} Ereignisse"
+
+msgid "every screen of {{name}}"
+msgstr "jeder Bildschirm von {{name}}"
+
+msgid "Screen action"
+msgstr "Bildschirmaktion"
+
+msgid "Endpoint"
+msgstr "Endpunkt"
+
+msgid "Use case"
+msgstr "Anwendungsfall"
+
+msgid "Transition"
+msgstr "Übergang"
+
+msgid "Event"
+msgstr "Ereignis"
+
+msgid "Who can cause this"
+msgstr "Wer das auslösen kann"
+
+msgid "Select a state in the diagram or a row of the table."
+msgstr "Einen Zustand im Diagramm oder eine Zeile der Tabelle wählen."
+
+msgid "Chains into {}: screen action → endpoint → use case → transition → events. The endpoint shows what it says to the simulated user."
+msgstr "Ketten nach {}: Bildschirmaktion → Endpunkt → Anwendungsfall → Übergang → Ereignisse. Der Endpunkt zeigt, was er dem simulierten Benutzer sagt."
+
+msgid "No endpoint chain leads into this state."
+msgstr "Keine Endpunkt-Kette führt in diesen Zustand."
+
+msgid "Chains of this entity ({})"
+msgstr "Ketten dieser Entität ({})"
+
+msgid "No endpoint chain changes this entity."
+msgstr "Keine Endpunkt-Kette ändert diese Entität."
+
+msgid "Colours each chain's endpoint, as in the Screens view."
+msgstr "Färbt den Endpunkt jeder Kette wie in der Ansicht Bildschirme."

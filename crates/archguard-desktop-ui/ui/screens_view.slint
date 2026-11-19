@@ -57,12 +57,16 @@ export global ScreensData {
     callback select-screen(int);
     // 0 gaps, 1 shown but refused, 2 hidden but unprotected, 3 undeclared endpoints.
     callback open-list(int);
+    // The unresolved targets of a source: index of its first transition.
+    callback open-group(int);
+    // Index into the bands; collapsed state lasts for the session.
+    callback toggle-band(int);
     callback close-details();
     // A project-relative file, opened in a File view.
     callback open-file(string);
 }
 
-component RoleRow inherits Rectangle {
+export component RoleRow inherits Rectangle {
     in property <FlowRole> role;
     callback clicked();
     height: 26px;
@@ -217,6 +221,8 @@ export component ScreensView inherits Rectangle {
                 canvas-w: m.width;
                 canvas-h: m.height;
                 select(i) => { ScreensData.select-screen(i); }
+                open-group(i) => { ScreensData.open-group(i); }
+                toggle-band(i) => { ScreensData.toggle-band(i); }
             }
             if m.inspector.mode > 0: Rectangle { width: 1px; background: Theme.border; }
             if m.inspector.mode > 0: ScreensInspector {

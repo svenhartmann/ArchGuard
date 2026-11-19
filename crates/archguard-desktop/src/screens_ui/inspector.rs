@@ -3,8 +3,9 @@
 //! a list of the left panel.
 
 use archguard_engine::core::{
-    AccessState, Action, DiagnosticSeverity, EndpointAccess, Origin, Outcome, Screen, UiFlow,
-    UiFlowFindingKind, evaluate_condition, join_actions_to_endpoints,
+    AccessState, Action, DiagnosticSeverity, EndpointAccess, Origin, Outcome, Screen, Target,
+    Transition, UiFlow, UiFlowFinding, UiFlowFindingKind, evaluate_condition,
+    join_actions_to_endpoints,
 };
 
 use super::state::{List, ScreensState};
@@ -27,6 +28,7 @@ pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         .access
         .as_ref()
         .map_or(Outcome::Allowed, |c| evaluate_condition(c, &s.assignment()));
+    let triggered = actions(s, flow, screen, texts);
     FlowInspector {
         mode: 1,
         title: screen.name.as_str().into(),
@@ -40,7 +42,8 @@ pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
             Outcome::Denied => 1,
             Outcome::Unknown => 2,
         },
-        actions: model(actions(s, flow, screen, texts)),
+        actions: model(triggered.iter().filter(|a| !a.trigger.is_empty()).cloned()),
+        untriggered: model(triggered.into_iter().filter(|a| a.trigger.is_empty())),
         ..Default::default()
     }
 }
@@ -89,6 +92,24 @@ fn backend(hits: &[&EndpointAccess], texts: &Texts) -> String {
     rows.join("\n")
 }
 
+/// Whether `f` is about action `a`: same place, and the endpoints it names
+/// are the action's (several calls can share a line). A finding without
+/// endpoints (no backend) needs an action without hits whose call it names.
+fn names(f: &UiFlowFinding, a: &Action, hits: &[&EndpointAccess]) -> bool {
+    let place = (f.action.as_ref()).is_some_and(|r| r.file == a.file && r.line == a.line);
+    let endpoints = if f.endpoints.is_empty() {
+        hits.is_empty() && f.message.contains(&words::call(a))
+    } else {
+        (f.endpoints.iter()).all(|r| {
+            (hits.iter()).any(|e| {
+                (e.method.as_str(), e.path.as_str(), e.file.as_str(), e.line)
+                    == (r.method.as_str(), r.path.as_str(), r.file.as_str(), r.line)
+            })
+        })
+    };
+    place && endpoints && f.kind != UiFlowFindingKind::NoStartScreen
+}
+
 /// The mismatch finding of this action, else agreement.
 fn agreement(
     s: &ScreensState,
@@ -96,12 +117,7 @@ fn agreement(
     hits: &[&EndpointAccess],
     texts: &Texts,
 ) -> (String, bool) {
-    let finding = s.findings.iter().find(|f| {
-        f.action
-            .as_ref()
-            .is_some_and(|r| r.file == a.file && r.line == a.line)
-            && f.kind != UiFlowFindingKind::NoStartScreen
-    });
+    let finding = s.findings.iter().find(|f| names(f, a, hits));
     match finding {
         Some(f) => (f.message.clone(), false),
         None if hits.is_empty() => (
@@ -150,6 +166,17 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
             "The frontend guards the action, but a matching endpoint is open or declares no guard.",
             findings(UiFlowFindingKind::HiddenButUnprotected),
         ),
+        List::Unreadable(k) => (
+            "Targets not readable",
+            "Navigation targets of this source the rules could not read literally. Each one may hide a path.",
+            unreadable(flow, k)
+                .map(|t| match &t.target {
+                    Target::Unresolved(text) | Target::Screen(text) => {
+                        row(text.clone(), &t.file, t.line)
+                    }
+                })
+                .collect(),
+        ),
         List::Undeclared => (
             "Endpoints without a declared guard",
             "No guard is declared; the code may still check by hand. Undeclared is never shown as allowed.",
@@ -166,6 +193,13 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
         rows: model(rows),
         ..Default::default()
     }
+}
+
+/// The unresolved transitions from the source of transition `k`.
+pub fn unreadable(flow: &UiFlow, k: usize) -> impl Iterator<Item = &Transition> {
+    let from = flow.transitions.get(k).map(|t| &t.from);
+    (flow.transitions.iter())
+        .filter(move |t| Some(&t.from) == from && matches!(t.target, Target::Unresolved(_)))
 }
 
 #[cfg(test)]
@@ -242,6 +276,61 @@ mod tests {
         );
         assert_eq!(a[1].backend, "no scanned endpoint matches");
         assert!(!a[1].agree);
+    }
+
+    #[test]
+    fn a_finding_shows_only_on_the_action_whose_call_it_names() {
+        use archguard_engine::core::{UiFlowActionRef, UiFlowEndpointRef, UiFlowFinding};
+        let mut f = flow();
+        // Two calls on one line, as on Checkout.razor:114.
+        f.actions[1].line = 5;
+        f.actions[1].call = Call::Http {
+            method: "GET".into(),
+            path: "/api/catalog".into(),
+        };
+        f.endpoints.push(EndpointAccess {
+            path: "/api/catalog".into(),
+            access: AccessState::Open,
+            line: 20,
+            ..f.endpoints[0].clone()
+        });
+        let mut s = super::super::state::build_from(Ok(f));
+        s.findings = vec![UiFlowFinding {
+            severity: archguard_engine::core::Severity::Warning,
+            kind: UiFlowFindingKind::HiddenButUnprotected,
+            application: None,
+            action: Some(UiFlowActionRef {
+                file: "Orders.razor".into(),
+                line: 5,
+                trigger: Some("Load".into()),
+            }),
+            role: None,
+            endpoints: vec![UiFlowEndpointRef {
+                method: "GET".into(),
+                path: "/api/catalog".into(),
+                file: "Api.cs".into(),
+                line: 20,
+                application: None,
+            }],
+            message: "catalog unguarded".into(),
+        }];
+        s.select_screen(0);
+        let flow = s.flow().unwrap().clone();
+        let a: Vec<FlowAction> = build(&s, &flow, &Texts::default()).actions.iter().collect();
+        assert_eq!(a[0].agreement, "Frontend and backend agree.");
+        assert_eq!(a[1].agreement, "catalog unguarded");
+    }
+
+    #[test]
+    fn actions_without_a_trigger_are_listed_apart() {
+        let mut f = flow();
+        f.actions[1].trigger = None;
+        let mut s = super::super::state::build_from(Ok(f));
+        s.select_screen(0);
+        let flow = s.flow().unwrap().clone();
+        let i = build(&s, &flow, &Texts::default());
+        assert_eq!((i.actions.row_count(), i.untriggered.row_count()), (1, 1));
+        assert_eq!(i.untriggered.row_data(0).unwrap().call, "GET /api/missing");
     }
 
     #[test]

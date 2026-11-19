@@ -4,6 +4,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Button, TipArea, SectionHeading } from "widgets.slint";
 import { Para, LinkLine, PanelTitle, Fact } from "flow_parts.slint";
+import { Fmt } from "format.slint";
 
 // An action of the screen and what the backend says to it.
 export struct FlowAction {
@@ -35,6 +36,8 @@ export struct FlowInspector {
     // 0 allowed, 1 denied, 2 unknown.
     result-tone: int,
     actions: [FlowAction],
+    // Actions without a readable trigger, listed last and collapsed.
+    untriggered: [FlowAction],
     list-note: string,
     rows: [FlowRow],
 }
@@ -66,6 +69,7 @@ export component ScreensInspector inherits Rectangle {
     in property <FlowInspector> data;
     callback close();
     callback open-file(string);
+    property <bool> show-untriggered;
     background: Theme.panel;
     sv := ScrollView {
         VerticalLayout {
@@ -114,6 +118,16 @@ export component ScreensInspector inherits Rectangle {
                 for a in data.actions: ActionBox {
                     item: a;
                     open-file(f) => { root.open-file(f); }
+                }
+                if data.untriggered.length > 0: LinkLine {
+                    text: (root.show-untriggered ? "▾ " : "▸ ") + @tr("Calls without a readable trigger ({})", Fmt.int(data.untriggered.length));
+                    clicked => { root.show-untriggered = !root.show-untriggered; }
+                }
+                if root.show-untriggered: VerticalLayout {
+                    for a in data.untriggered: ActionBox {
+                        item: a;
+                        open-file(f) => { root.open-file(f); }
+                    }
                 }
             }
         }

@@ -58,9 +58,6 @@ msgstr "Jeder Bildschirm"
 msgid "layouts and menus"
 msgstr "Layouts und Menüs"
 
-msgid "target not readable"
-msgstr "Ziel nicht lesbar"
-
 msgid "only if an open condition holds"
 msgstr "nur wenn eine offene Bedingung zutrifft"
 
@@ -241,3 +238,27 @@ msgid "{0} action"
 msgid_plural "{0} actions"
 msgstr[0] "{0} Aktion"
 msgstr[1] "{0} Aktionen"
+
+msgid "{{count}} screen"
+msgstr "{{count}} Bildschirm"
+
+msgid "{{count}} screens"
+msgstr "{{count}} Bildschirme"
+
+msgid "{{count}} target not readable"
+msgstr "{{count}} Ziel nicht lesbar"
+
+msgid "{{count}} targets not readable"
+msgstr "{{count}} Ziele nicht lesbar"
+
+msgid "click for the list with file and line"
+msgstr "Klick zeigt die Liste mit Datei und Zeile"
+
+msgid "Targets not readable"
+msgstr "Nicht lesbare Ziele"
+
+msgid "Navigation targets of this source the rules could not read literally. Each one may hide a path."
+msgstr "Navigationsziele dieser Quelle, die die Regeln nicht wörtlich lesen konnten. Jedes kann einen Weg verbergen."
+
+msgid "Calls without a readable trigger ({})"
+msgstr "Aufrufe ohne lesbaren Auslöser ({})"

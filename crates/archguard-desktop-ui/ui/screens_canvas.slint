@@ -1,9 +1,11 @@
 // The Screens tab's diagram: one band per application, screens as cards,
 // navigations as arrows (layout: src/screens_ui/layout.rs).
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { ZoomControls, TipArea } from "widgets.slint";
 
-// kind 0 screen, 1 every screen (layouts, menus), 2 unresolved target.
+// kind 0 screen, 1 every screen (layouts, menus), 2 the unresolved
+// targets of one source (`group`: its first transition, opens the list).
 // state 0 reached, 1 reached only if an open condition holds, 2 denied,
 // 3 no known path, 4 neutral. `border`: dashed outline in card units.
 export struct FlowCard {
@@ -18,6 +20,7 @@ export struct FlowCard {
     w: float,
     h: float,
     screen: int,
+    group: int,
     selected: bool,
     border: string,
 }
@@ -31,6 +34,7 @@ export struct FlowBand {
     title: string,
     y: float,
     h: float,
+    collapsed: bool,
 }
 
 component ScreenCard inherits Rectangle {
@@ -44,6 +48,8 @@ component ScreenCard inherits Rectangle {
     y: card.y * 1px * zoom;
     width: card.w * 1px * zoom;
     height: card.h * 1px * zoom;
+    // At small zoom the minimum font sizes would spill below the card.
+    clip: true;
     border-radius: 8px * zoom;
     background: card.kind == 2 ? transparent
         : card.state <= 2 ? self.tone.with-alpha(card.selected ? 0.28 : 0.12)
@@ -96,7 +102,7 @@ component ScreenCard inherits Rectangle {
     TipArea {
         tip: card.title + (card.route != "" ? "\n" + card.route : "") + "\n" + card.file + (card.note != "" ? "\n" + card.note : "");
         pin-on-click: false;
-        mouse-cursor: card.screen >= 0 ? pointer : default;
+        mouse-cursor: card.screen >= 0 || card.group >= 0 ? pointer : default;
         activated => { root.clicked(); }
     }
 }
@@ -109,20 +115,26 @@ export component FlowCanvas inherits Rectangle {
     in property <float> canvas-h;
     in-out property <float> zoom: 1.0;
     callback select(int);
+    callback open-group(int);
+    callback toggle-band(int);
 
+    // Every band in view; no lower bound, a large flow gets small.
     public function fit() {
         if (canvas-w > 0 && canvas-h > 0) {
-            zoom = max(0.3, min(1.0, min(flick.width / 1px / canvas-w, flick.height / 1px / canvas-h)));
+            zoom = min(1.0, min(flick.visible-width / 1px / canvas-w, flick.visible-height / 1px / canvas-h));
         }
     }
 
-    flick := Flickable {
-        content-width: max(self.width, root.canvas-w * root.zoom * 1px);
-        content-height: max(self.height, root.canvas-h * root.zoom * 1px);
+    // Scroll bars: every card stays reachable at any zoom.
+    flick := ScrollView {
+        content-width: max(self.visible-width, root.canvas-w * root.zoom * 1px);
+        content-height: max(self.visible-height, root.canvas-h * root.zoom * 1px);
         Rectangle {
+            x: 0;
+            y: 0;
             width: root.canvas-w * root.zoom * 1px;
             height: root.canvas-h * root.zoom * 1px;
-            for b in root.bands: Rectangle {
+            for b[i] in root.bands: Rectangle {
                 x: 8px * root.zoom;
                 y: b.y * 1px * root.zoom;
                 width: parent.width - 16px * root.zoom;
@@ -134,10 +146,16 @@ export component FlowCanvas inherits Rectangle {
                 Text {
                     x: 14px * root.zoom;
                     y: 8px * root.zoom;
-                    text: b.title;
-                    color: Theme.muted;
+                    text: (b.collapsed ? "▸ " : "▾ ") + b.title;
+                    color: head.has-hover ? Theme.text : Theme.muted;
                     font-size: max(7px, 12px * root.zoom);
                     font-weight: Theme.weight-strong;
+                }
+                head := TouchArea {
+                    height: 30px * root.zoom;
+                    y: 0;
+                    mouse-cursor: pointer;
+                    clicked => { root.toggle-band(i); }
                 }
             }
             for a in root.arrows: Path {
@@ -155,7 +173,13 @@ export component FlowCanvas inherits Rectangle {
             for c in root.cards: ScreenCard {
                 card: c;
                 zoom: root.zoom;
-                clicked => { if (c.screen >= 0) { root.select(c.screen); } }
+                clicked => {
+                    if (c.screen >= 0) {
+                        root.select(c.screen);
+                    } else if (c.group >= 0) {
+                        root.open-group(c.group);
+                    }
+                }
             }
         }
     }
