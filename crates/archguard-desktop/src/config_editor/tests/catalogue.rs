@@ -99,6 +99,10 @@ fn every_field_takes_a_value_of_its_kind() {
         match f.kind {
             Kind::Table => {}
             Kind::TableArray => assert_eq!(editor.add_entry(&path), Ok(0), "{path}"),
+            // `views.conventions` only accepts rule names, not the generic glob sample.
+            Kind::List if f.path == "views.conventions" => editor
+                .set(&path, FieldValue::List(vec!["navigation_literal".into()]))
+                .unwrap(),
             kind => editor.set(&path, sample(kind)).unwrap(),
         }
     }

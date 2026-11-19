@@ -334,6 +334,19 @@ pub const FIELDS: &[Field] = &[
         G::Rules,
         "Whether a dependency whose files state no licence is a violation (deny) or only reported (allow).",
     ),
+    // Views
+    f(
+        "views",
+        K::Table,
+        G::Rules,
+        "Conventions for the UI-flow and domain views; checked by archguard check (ADR 0021, 0022).",
+    ),
+    f(
+        "views.conventions",
+        K::List,
+        G::Rules,
+        "Convention rules to check, e.g. navigation_literal or endpoint_access_declared; empty checks nothing.",
+    ),
     // Review
     f(
         "review",
