@@ -208,6 +208,8 @@ mod tests {
             file: "Api.cs".into(),
             line: 9,
             source: "t".into(),
+            handler: None,
+            sends: Vec::new(),
         };
         UiFlow {
             screens: vec![screen],
