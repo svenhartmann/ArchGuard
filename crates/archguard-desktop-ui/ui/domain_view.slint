@@ -1,0 +1,213 @@
+// Domain tab (ADR 0022): entities by aggregate, the selected entity's
+// fields and state machine, and the domain events. Data and callbacks live
+// in DomainData, set from src/domain_ui.rs.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { EmptyState, SectionHeading } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Para, LinkLine, SummaryBar, PanelTitle, Heading } from "flow_parts.slint";
+import { EntityCanvas, StateDiagram, DomainKinds, DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+
+export { DomCard, DomArrow, DomBand, DomState, DomStateArrow }
+
+export struct DomField {
+    name: string,
+    type: string,
+}
+
+export struct DomTransition {
+    number: string,
+    from-to: string,
+    method: string,
+    guard: string,
+    events: string,
+    location: string,
+    file: string,
+}
+
+export struct DomEvent {
+    name: string,
+    raised: string,
+    handled: string,
+}
+
+export struct DomainViewModel {
+    // 0 loading, 1 ready, 2 the model could not be read.
+    state: int,
+    error: string,
+    entities: int,
+    machines: int,
+    transitions: int,
+    use-cases: int,
+    event-count: int,
+    complete: bool,
+    cards: [DomCard],
+    arrows: [DomArrow],
+    bands: [DomBand],
+    width: float,
+    height: float,
+    // The selected entity (index into the model's entities), or -1.
+    selected: int,
+    title: string,
+    kind: int,
+    location: string,
+    file: string,
+    fields: [DomField],
+    machine-title: string,
+    states: [DomState],
+    state-arrows: [DomStateArrow],
+    state-w: float,
+    state-h: float,
+    rows: [DomTransition],
+    events: [DomEvent],
+}
+
+export global DomainData {
+    in-out property <DomainViewModel> model;
+    callback select-entity(int);
+    callback close-details();
+    callback open-file(string);
+}
+
+component Cell inherits Text {
+    in property <bool> head;
+    color: head ? Theme.muted : Theme.text;
+    font-size: head ? Theme.font-caption : Theme.font-small;
+    font-weight: head ? Theme.weight-strong : Theme.weight-regular;
+    wrap: word-wrap;
+    vertical-alignment: top;
+}
+
+component TransitionRow inherits Rectangle {
+    in property <DomTransition> item;
+    in property <bool> head;
+    callback open-file(string);
+    height: cells.preferred-height;
+    background: !head && t.has-hover ? Theme.panel-2 : transparent;
+    t := TouchArea {
+        enabled: !root.head;
+        mouse-cursor: pointer;
+        clicked => { root.open-file(item.file); }
+    }
+    cells := HorizontalLayout {
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 12px;
+        Cell { head: root.head; width: 22px; text: root.head ? "#" : item.number; }
+        Cell { head: root.head; width: 190px; text: root.head ? @tr("from → to") : item.from-to; }
+        Cell { head: root.head; width: 200px; text: root.head ? @tr("method") : item.method; font-family: root.head ? "" : Theme.mono-family; }
+        Cell { head: root.head; horizontal-stretch: 2; text: root.head ? @tr("allowed when") : item.guard; font-family: root.head ? "" : Theme.mono-family; }
+        Cell { head: root.head; horizontal-stretch: 1; text: root.head ? @tr("events") : item.events; }
+        Cell { head: root.head; width: 210px; text: root.head ? @tr("file") : item.location; color: root.head ? Theme.muted : Theme.accent; }
+    }
+}
+
+// The selected entity's state machine: diagram, then the table.
+component MachinePanel inherits ScrollView {
+    property <DomainViewModel> m: DomainData.model;
+    VerticalLayout {
+        width: max(root.visible-width, m.state-w * 1px + 2 * Theme.page-pad);
+        padding: Theme.page-pad;
+        spacing: 6px;
+        alignment: start;
+        Heading { text: m.machine-title; }
+        Para { text: @tr("Transitions are numbered as the rows below. Guards are source text, never evaluated."); muted: true; }
+        StateDiagram {
+            states: m.states;
+            arrows: m.state-arrows;
+            canvas-w: m.state-w;
+            canvas-h: m.state-h;
+        }
+        TransitionRow { head: true; }
+        for r in m.rows: VerticalLayout {
+            Rectangle { height: 1px; background: Theme.border; }
+            TransitionRow { item: r; open-file(f) => { DomainData.open-file(f); } }
+        }
+    }
+}
+
+component SidePanel inherits ScrollView {
+    property <DomainViewModel> m: DomainData.model;
+    VerticalLayout {
+        width: root.visible-width;
+        padding: 14px;
+        spacing: 6px;
+        alignment: start;
+        if m.selected < 0: Para { text: @tr("Select an entity to see its fields and states."); muted: true; }
+        if m.selected >= 0: PanelTitle { text: m.title; close => { DomainData.close-details(); } }
+        if m.selected >= 0: Para { text: DomainKinds.label(m.kind); muted: true; }
+        if m.selected >= 0: LinkLine { text: m.location; mono: true; clicked => { DomainData.open-file(m.file); } }
+        if m.selected >= 0: SectionHeading { label: @tr("Fields"); }
+        if m.selected >= 0 && m.fields.length == 0: Para { text: @tr("No fields read."); muted: true; }
+        for f in m.fields: HorizontalLayout {
+            spacing: 8px;
+            Para { text: f.name; horizontal-stretch: 1; }
+            Para { text: f.type; mono: true; muted: true; horizontal-alignment: right; }
+        }
+        Rectangle { height: 8px; }
+        SectionHeading { label: @tr("Events"); }
+        if m.events.length == 0: Para { text: @tr("No domain events read."); muted: true; }
+        for e in m.events: VerticalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            spacing: 1px;
+            Para { text: e.name; font-weight: Theme.weight-strong; }
+            Para { text: @tr("raised by {}", e.raised); muted: true; }
+            Para { text: "→ " + @tr("handled by {}", e.handled); muted: true; }
+        }
+    }
+}
+
+export component DomainView inherits Rectangle {
+    property <DomainViewModel> m: DomainData.model;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state == 0: Text {
+        text: @tr("Reading the domain model …");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if m.state == 2: EmptyState { title: m.error; }
+    if m.state == 1: VerticalLayout {
+        SummaryBar {
+            complete: m.complete;
+            gaps-tip: @tr("Some elements could not be read by the rules; the model is not complete.");
+            text: @tr("{0} entity" | "{0} entities" % m.entities, Fmt.int(m.entities))
+                + " · " + @tr("{0} state machine" | "{0} state machines" % m.machines, Fmt.int(m.machines))
+                + " · " + @tr("{0} transition" | "{0} transitions" % m.transitions, Fmt.int(m.transitions))
+                + " · " + @tr("{0} use case" | "{0} use cases" % m.use-cases, Fmt.int(m.use-cases))
+                + " · " + @tr("{0} event" | "{0} events" % m.event-count, Fmt.int(m.event-count));
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                if m.cards.length == 0: EmptyState {
+                    vertical-stretch: 1;
+                    title: @tr("No entities found.");
+                    reason: @tr("Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json.");
+                }
+                if m.cards.length > 0: EntityCanvas {
+                    vertical-stretch: 1;
+                    cards: m.cards;
+                    arrows: m.arrows;
+                    bands: m.bands;
+                    canvas-w: m.width;
+                    canvas-h: m.height;
+                    select(i) => { DomainData.select-entity(i); }
+                }
+                if m.states.length > 0: Rectangle { height: 1px; background: Theme.border; }
+                if m.states.length > 0: MachinePanel { vertical-stretch: 1.2; }
+            }
+            Rectangle { width: 1px; background: Theme.border; }
+            SidePanel { width: 320px; }
+        }
+    }
+}

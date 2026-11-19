@@ -1,0 +1,99 @@
+msgid "Aggregate {{name}}"
+msgstr "Aggregat {{name}}"
+
+msgid "Not part of an aggregate"
+msgstr "Zu keinem Aggregat gehörig"
+
+msgid "aggregate root"
+msgstr "Aggregatwurzel"
+
+msgid "entity"
+msgstr "Entität"
+
+msgid "value object"
+msgstr "Wertobjekt"
+
+msgid "kind not declared"
+msgstr "Art nicht deklariert"
+
+msgid "state machine"
+msgstr "Zustandsautomat"
+
+msgid "any state"
+msgstr "beliebiger Zustand"
+
+msgid "from → to"
+msgstr "von → nach"
+
+msgid "method"
+msgstr "Methode"
+
+msgid "allowed when"
+msgstr "erlaubt, wenn"
+
+msgid "events"
+msgstr "Ereignisse"
+
+msgid "file"
+msgstr "Datei"
+
+msgid "Transitions are numbered as the rows below. Guards are source text, never evaluated."
+msgstr "Übergänge sind wie die Zeilen darunter nummeriert. Bedingungen sind Quelltext und werden nie ausgewertet."
+
+msgid "Select an entity to see its fields and states."
+msgstr "Eine Entität auswählen, um ihre Felder und Zustände zu sehen."
+
+msgid "Fields"
+msgstr "Felder"
+
+msgid "No fields read."
+msgstr "Keine Felder gelesen."
+
+msgid "No domain events read."
+msgstr "Keine Domänenereignisse gelesen."
+
+msgid "raised by {}"
+msgstr "ausgelöst von {}"
+
+msgid "handled by {}"
+msgstr "behandelt von {}"
+
+msgid "Reading the domain model …"
+msgstr "Domänenmodell wird gelesen …"
+
+msgid "Some elements could not be read by the rules; the model is not complete."
+msgstr "Einige Elemente konnten nach den Regeln nicht gelesen werden; das Modell ist unvollständig."
+
+msgid "No entities found."
+msgstr "Keine Entitäten gefunden."
+
+msgid "Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json."
+msgstr "Entitäten stammen aus ORM-Zuordnungen, Aggregatmarkierungen und der Importdatei .archguard/domain-model.json."
+
+msgid "Domain"
+msgstr "Domäne"
+
+msgid "{0} entity"
+msgid_plural "{0} entities"
+msgstr[0] "{0} Entität"
+msgstr[1] "{0} Entitäten"
+
+msgid "{0} state machine"
+msgid_plural "{0} state machines"
+msgstr[0] "{0} Zustandsautomat"
+msgstr[1] "{0} Zustandsautomaten"
+
+msgid "{0} transition"
+msgid_plural "{0} transitions"
+msgstr[0] "{0} Übergang"
+msgstr[1] "{0} Übergänge"
+
+msgid "{0} use case"
+msgid_plural "{0} use cases"
+msgstr[0] "{0} Anwendungsfall"
+msgstr[1] "{0} Anwendungsfälle"
+
+msgid "{0} event"
+msgid_plural "{0} events"
+msgstr[0] "{0} Ereignis"
+msgstr[1] "{0} Ereignisse"

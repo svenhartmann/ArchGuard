@@ -38,6 +38,8 @@ pub fn wire(ui: &AppWindow) {
     calls_ui::wire(ui);
     services_ui::wire(ui);
     runtime_ui::wire(ui);
+    crate::screens_ui::wire(ui);
+    crate::domain_ui::wire(ui);
     quality_ui::wire(ui);
     security_ui::wire(ui);
     crate::export_ui::wire(ui);
@@ -404,6 +406,8 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     calls_ui::show(ui, data);
     services_ui::show(ui, data);
     runtime_ui::show(ui, data);
+    crate::screens_ui::show(ui, data);
+    crate::domain_ui::show(ui, data);
     quality_ui::show(ui, data);
     security_ui::show(ui, data);
     // Graph, Matrix and File tabs: their instances for the layout.
