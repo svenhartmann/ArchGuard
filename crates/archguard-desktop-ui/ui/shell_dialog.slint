@@ -96,6 +96,9 @@ export component NoticeBar inherits Rectangle {
     in property <string> text;
     // A finished action (an export) instead of a warning.
     in property <bool> done;
+    // A button before the close button, e.g. "Analyze again"; "" none.
+    in property <string> action;
+    callback act();
     callback dismiss();
     height: 32px;
     background: root.done ? Theme.accent.with-alpha(0.14) : Theme.warning.with-alpha(0.18);
@@ -117,6 +120,12 @@ export component NoticeBar inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+        if root.action != "": Button {
+            y: (parent.height - self.height) / 2;
+            compact: true;
+            text: root.action;
+            clicked => { root.act(); }
         }
         Button {
             y: (parent.height - self.height) / 2;

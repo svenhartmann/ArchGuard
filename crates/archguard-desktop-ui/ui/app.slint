@@ -66,6 +66,9 @@ export component AppWindow inherits Window {
     callback close-doc(int);
     callback add-doc();
     callback open-sub-project(int);
+    // View → Analyze again on the active document (src/reanalyze_ui.rs,
+    // notices 12 to 15).
+    callback analyze-again();
 
     // App shell: menu, recent projects, settings, the save prompt
     // (src/shell_ui.rs).
@@ -219,6 +222,10 @@ export component AppWindow inherits Window {
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
         if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
         if root.notice-kind == 11 { return @tr("Nothing to save."); }
+        if root.notice-kind == 12 { return @tr("The project's sources changed since the analysis."); }
+        if root.notice-kind == 13 { return @tr("Not analyzed again: the Graph has simulated changes. Clear them first."); }
+        if root.notice-kind == 14 { return @tr("Not analyzed again: save or discard the unsaved changes first ({}).", root.notice); }
+        if root.notice-kind == 15 { return @tr("Analyzing again; the views update when it is done."); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 
@@ -347,6 +354,13 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: @tr("View");
+            MenuItem {
+                title: @tr("Analyze again");
+                shortcut: @keys(Control + R);
+                enabled: root.ready;
+                activated => { root.analyze-again(); }
+            }
+            MenuSeparator { }
             MenuItem {
                 title: @tr("Split right");
                 shortcut: @keys(Control + "\\");
@@ -632,7 +646,10 @@ export component AppWindow inherits Window {
 
         if root.notice != "": NoticeBar {
             text: root.notice-text();
-            done: (root.notice-kind >= 3 && root.notice-kind <= 5) || root.notice-kind >= 10;
+            done: (root.notice-kind >= 3 && root.notice-kind <= 5)
+                || (root.notice-kind >= 10 && root.notice-kind != 13 && root.notice-kind != 14);
+            action: root.notice-kind == 12 ? @tr("Analyze again") : "";
+            act => { root.analyze-again(); }
             dismiss => { root.notice = ""; }
         }
 

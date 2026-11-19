@@ -41,6 +41,7 @@ mod panes_ui;
 mod platform;
 mod quality_ui;
 mod rating;
+mod reanalyze_ui;
 mod review_decisions;
 mod review_decisions_ui;
 mod runtime_ui;
