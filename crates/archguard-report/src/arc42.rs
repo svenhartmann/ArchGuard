@@ -1,4 +1,4 @@
-//! Evidence-driven arc42 sections shared by CLI, MCP and the viewer.
+//! Evidence-driven arc42 sections shared by CLI, MCP and the desktop app.
 //! Chapter structure adapted from arc42 by Gernot Starke and Peter Hruschka,
 //! CC BY-SA 4.0. All explanatory text and projections below are ArchGuard's.
 use archguard_core::{Diagram, DocLang};

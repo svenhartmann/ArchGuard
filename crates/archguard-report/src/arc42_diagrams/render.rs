@@ -1,6 +1,6 @@
 //! Mermaid and PlantUML text of a catalogue diagram: package diagrams as
 //! flowchart / packages, C4 diagrams with Mermaid's C4 syntax and the
-//! C4-PlantUML standard library (as the web viewer's export).
+//! C4-PlantUML standard library.
 
 use archguard_core::{
     Diagram, DiagramElement, DiagramKind, DiagramRelation, ElementKind, RelationKind, SequenceStep,

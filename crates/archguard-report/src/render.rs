@@ -1,6 +1,5 @@
 //! Shared helpers for the graph formats ([`crate::to_mermaid`],
-//! [`crate::to_dot`], [`crate::to_graphml`], [`crate::to_gexf`],
-//! [`crate::to_html`]).
+//! [`crate::to_dot`], [`crate::to_graphml`], [`crate::to_gexf`]).
 //!
 //! Both formats render the same two ingredients and differ only in syntax:
 //! the set of nodes kept by a focus selection ([`focus_subset`]) and a

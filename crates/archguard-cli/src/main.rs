@@ -5,7 +5,6 @@
 //! handler lives in [`db`], real only with the `db` build feature).
 //! T41 adds `snapshot` and `trend` (snapshots & trends, Kap. 9 — their
 //! handler lives in [`trend_cmd`]).
-//! [`serve_cmd`] serves the live HTML viewer on loopback with automatic updates.
 //!
 //! Exit codes (Kap. 9): `0` ok · `1` violations found (`check`,
 //! `cycles --fail-on-found`) · `2` usage error (clap's own code for
@@ -59,7 +58,6 @@ mod runtime_cmd;
 mod sarif;
 mod sbom_cmd;
 mod security_cmd;
-mod serve_cmd;
 mod service_cmd;
 mod simulate_cmd;
 mod trend_cmd;
@@ -69,8 +67,7 @@ mod workspace_cmd;
 
 /// With `ARCHGUARD_PROBE=1` the run records its own spans into the analyzed
 /// project's `.archguard/runtime/` (ADR 0004): the command is one request
-/// named `archguard <command>`; under `mcp` each tool call is one, and
-/// `serve` records no request of its own.
+/// named `archguard <command>`; under `mcp` each tool call is one.
 fn main() -> ExitCode {
     let matches = Cli::command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
@@ -80,7 +77,7 @@ fn main() -> ExitCode {
     };
     let _probe = self_trace::start(&probe_root.unwrap_or_default(), "archguard");
     let code = match cli.command {
-        Command::Mcp { .. } | Command::Serve { .. } => run(&cli),
+        Command::Mcp { .. } => run(&cli),
         _ => {
             let command = matches.subcommand_name().unwrap_or_default();
             self_trace::entry_span(&format!("archguard {command}")).in_scope(|| run(&cli))
@@ -127,8 +124,8 @@ fn run(cli: &Cli) -> i32 {
         base, to, format, ..
     } = &cli.command
     {
-        if !matches!(format, Format::Html | Format::Json | Format::Text) {
-            eprintln!("diff supports html, json or text");
+        if !matches!(format, Format::Json | Format::Text) {
+            eprintln!("diff supports text or json");
             return EXIT_USAGE;
         }
         if let Some(target) = to {
@@ -140,7 +137,6 @@ fn run(cli: &Cli) -> i32 {
             ) {
                 Ok(diff) => {
                     let output = match format {
-                        Format::Html => archguard_engine::report::branch_diff_html(&diff),
                         Format::Json => {
                             serde_json::to_string_pretty(&diff).expect("diff serializes")
                         }
@@ -164,7 +160,6 @@ fn run(cli: &Cli) -> i32 {
         return match archguard_engine::compare_staged(&root, base, cli.config.as_deref()) {
             Ok(diff) => {
                 let output = match format {
-                    Format::Html => archguard_engine::report::staged_diff_html(&diff),
                     Format::Json => serde_json::to_string_pretty(&diff).expect("diff serializes"),
                     _ => format!(
                         "{} → index: +{} / -{} dependencies, {} changed evidence; {} new / {} resolved findings\n",
@@ -224,12 +219,6 @@ fn run(cli: &Cli) -> i32 {
     }
     if let Some(code) = review_command(cli, &root) {
         return code;
-    }
-    if let Command::Serve { port, depth, .. } = &cli.command {
-        return match serve_cmd::run(&root, cli.config.as_deref(), *port, *depth) {
-            Ok(()) => EXIT_OK,
-            Err(err) => analysis_error(err),
-        };
     }
     // `db query` never analyses; `db sync` loads the config and analyses
     // inside its handler. Without the `db` feature both are a usage error
@@ -360,9 +349,7 @@ fn run(cli: &Cli) -> i32 {
             },
         ),
         Command::Architecture { .. } => architecture_cmd::run(cli, &loaded, &graph),
-        Command::Patterns { .. } => {
-            architecture_cmd::patterns(cli, &root, &loaded, &graph, &report)
-        }
+        Command::Patterns { .. } => architecture_cmd::patterns(cli, &root, &loaded, &graph),
         Command::Doc { .. } | Command::Diagram { .. } => doc(cli, &root, &loaded, &graph, &report),
         Command::Graph {
             format,
@@ -423,7 +410,6 @@ fn run(cli: &Cli) -> i32 {
         | Command::Security { .. }
         | Command::Sbom { .. }
         | Command::Diff { .. }
-        | Command::Serve { .. }
         | Command::Doctor
         | Command::Update { .. }
         | Command::Evaluate { .. }
@@ -510,7 +496,6 @@ fn scan(
         Format::Mermaid
             | Format::Sarif
             | Format::Dot
-            | Format::Html
             | Format::Graphml
             | Format::Gexf
             | Format::Table
@@ -525,7 +510,7 @@ fn scan(
             out,
             &serde_json::to_string_pretty(graph).expect("graph serializes"),
         ),
-        None => project_files::write_project_graph(root, graph, None),
+        None => project_files::write_project_graph(root, graph),
     };
     if let Err(err) = saved.and_then(|()| project_files::write_effective_config(root, loaded)) {
         return analysis_error(err);
@@ -563,7 +548,7 @@ fn cycles(
         Format::Sarif | Format::Dot | Format::Graphml | Format::Gexf | Format::Table
     ) {
         return usage(format!(
-            "invalid value '{}' for '--format': cycles supports text, json, mermaid and html (sarif comes from check)",
+            "invalid value '{}' for '--format': cycles supports text, json and mermaid (sarif comes from check)",
             cli.format_name()
         ));
     }
@@ -577,24 +562,10 @@ fn cycles(
             "cycles.mmd",
             to_mermaid(graph, None, 0, &cyclic_edges(graph, &shown)),
         )),
-        // Same viewer as graph, initially showing the cycles panel.
-        Format::Html => match review_cmd::html(
-            graph,
-            loaded,
-            None,
-            0,
-            &cyclic_edges(graph, &shown),
-            &report.findings,
-            Some("cycles"),
-            None,
-        ) {
-            Ok(html) => Some(("cycles.html", html)),
-            Err(error) => return analysis_error(error),
-        },
         _ => None,
     };
     if let Some((name, text)) = &diagram {
-        let saved = project_files::write_project_graph(root, graph, None)
+        let saved = project_files::write_project_graph(root, graph)
             .and_then(|()| project_files::write_report(root, name, text))
             .and_then(|_| project_files::write_effective_config(root, loaded));
         if let Err(error) = saved {
@@ -604,7 +575,7 @@ fn cycles(
     if !cli.quiet {
         match cli.format {
             Format::Json => emit(&to_json(&cycle_report(report, &shown), true)),
-            Format::Mermaid | Format::Html => emit(&diagram.as_ref().expect("rendered diagram").1),
+            Format::Mermaid => emit(&diagram.as_ref().expect("rendered diagram").1),
             _ => {
                 emit(&to_text(&cycle_report(report, &shown)));
                 if shown.len() < total {
@@ -642,7 +613,6 @@ fn metrics(
         Format::Mermaid
             | Format::Sarif
             | Format::Dot
-            | Format::Html
             | Format::Graphml
             | Format::Gexf
             | Format::Table
@@ -727,16 +697,14 @@ fn metrics(
     EXIT_OK
 }
 
-/// `graph`: dot/mermaid/graphml/gexf/html via the report renderers
+/// `graph`: dot/mermaid/graphml/gexf via the report renderers
 /// (focus and depth pass straight through to their `focus_subset`),
 /// json as the canonical graph. Cyclic edges are highlighted from every
 /// cycle finding.
 ///
 /// With `--expand a,b` (T40) the export renders the module view the
 /// analysis checked — [`Cut::at_depth`] at the effective zoom — with the
-/// named modules unfolded. Static renderers and JSON use the aggregate;
-/// HTML retains the full graph and starts with that cut so navigation and
-/// source-backed review evidence remain available.
+/// named modules unfolded; every renderer and JSON use the aggregate.
 #[expect(clippy::too_many_arguments, reason = "one argument per CLI flag")]
 fn graph_export(
     cli: &Cli,
@@ -751,15 +719,10 @@ fn graph_export(
 ) -> i32 {
     if !matches!(
         format,
-        Format::Dot
-            | Format::Mermaid
-            | Format::Json
-            | Format::Html
-            | Format::Graphml
-            | Format::Gexf
+        Format::Dot | Format::Mermaid | Format::Json | Format::Graphml | Format::Gexf
     ) {
         return usage(format!(
-            "invalid value '{}' for '--format': graph supports dot, mermaid, json, html, graphml, gexf and structurizr",
+            "invalid value '{}' for '--format': graph supports dot, mermaid, json, graphml, gexf and structurizr",
             format_label(format)
         ));
     }
@@ -789,19 +752,6 @@ fn graph_export(
             let depth = depth.unwrap_or(u32::from(focus.is_some()));
             match format {
                 Format::Mermaid => to_mermaid(shown_graph, focus, depth, &cyclic_edges),
-                Format::Html => match review_cmd::html(
-                    graph,
-                    loaded,
-                    focus,
-                    depth,
-                    &cycle_view::cyclic_edges(graph, &shown),
-                    &report.findings,
-                    None,
-                    expanded_cut.as_ref(),
-                ) {
-                    Ok(html) => html,
-                    Err(error) => return analysis_error(error),
-                },
                 Format::Graphml => to_graphml(shown_graph, focus, depth, &cyclic_edges),
                 Format::Gexf => to_gexf(shown_graph, focus, depth, &cyclic_edges),
                 _ => to_dot(shown_graph, focus, depth, &cyclic_edges),
@@ -812,12 +762,11 @@ fn graph_export(
         Format::Dot => "dot",
         Format::Mermaid => "mmd",
         Format::Json => "json",
-        Format::Html => "html",
         Format::Graphml => "graphml",
         Format::Gexf => "gexf",
         _ => unreachable!(),
     };
-    let saved = project_files::write_project_graph(root, graph, None)
+    let saved = project_files::write_project_graph(root, graph)
         .and_then(|()| project_files::write_report(root, &format!("graph.{extension}"), &text))
         .and_then(|_| project_files::write_effective_config(root, loaded));
     if let Err(err) = saved {
@@ -838,7 +787,6 @@ fn suggest(cli: &Cli, cycle: Option<&str>, max: Option<usize>, report: &Report) 
         Format::Mermaid
             | Format::Sarif
             | Format::Dot
-            | Format::Html
             | Format::Graphml
             | Format::Gexf
             | Format::Table
@@ -887,7 +835,10 @@ fn suggest(cli: &Cli, cycle: Option<&str>, max: Option<usize>, report: &Report) 
             for cut in capped_cuts(finding, max) {
                 outln!(
                     "  {} -> {} (score {:.2}): {}",
-                    cut.from, cut.to, cut.score, cut.reason
+                    cut.from,
+                    cut.to,
+                    cut.score,
+                    cut.reason
                 );
             }
         }
@@ -1022,7 +973,6 @@ fn config(cli: &Cli, report: &Report, loaded: &LoadedConfig) -> i32 {
         Format::Mermaid
             | Format::Sarif
             | Format::Dot
-            | Format::Html
             | Format::Graphml
             | Format::Gexf
             | Format::Table

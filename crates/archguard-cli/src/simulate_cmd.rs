@@ -5,8 +5,8 @@
 //! Ops come from the flags (`--cut A,B`, `--move X:PARENT`,
 //! `--merge A,B`, each repeatable) and from `--ops DATEI`, a JSON array
 //! in the frozen T37 wire format of
-//! [`archguard_analysis::simulate::SimOp`] — the format the T39 viewer's
-//! "Export SimOps" button writes. Flag ops run first, file ops are
+//! [`archguard_analysis::simulate::SimOp`] — the format the desktop
+//! simulation's "Export changes" button writes. Flag ops run first, file ops are
 //! appended in file order. The printed [`SimDelta`] is the diff of the
 //! before/after analyses; the graph on disk is never touched.
 
