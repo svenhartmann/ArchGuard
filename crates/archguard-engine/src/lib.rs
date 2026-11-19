@@ -74,6 +74,7 @@ mod quality_gate;
 mod quality_goals;
 mod quality_history;
 mod reference_paths;
+mod review_decision_doc;
 mod review_metrics;
 mod review_register;
 mod review_session;
@@ -185,6 +186,7 @@ pub use quality_history::{
     record_quality_snapshot,
 };
 pub use reference_paths::source_reference_paths;
+pub use review_decision_doc::review_decision_document;
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
     LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, iso_from_unix, load_register, register_path,
