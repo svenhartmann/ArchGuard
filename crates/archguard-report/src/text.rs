@@ -191,10 +191,18 @@ fn summary_line(r: &Report) -> String {
         FindingKind::Orphan,
         FindingKind::TargetArchitecture,
         FindingKind::License,
+        FindingKind::Convention,
     ]
     .into_iter()
     .filter_map(|kind| {
-        let n = r.findings.iter().filter(|f| f.kind == kind).count();
+        // An info convention finding is a "fixed, remove from the baseline" note.
+        let n = r
+            .findings
+            .iter()
+            .filter(|f| {
+                f.kind == kind && !(kind == FindingKind::Convention && f.severity == Severity::Info)
+            })
+            .count();
         (n > 0).then(|| format!("{n} {}", pluralize(kind_label(kind), n)))
     })
     .collect();
@@ -281,6 +289,7 @@ fn kind_label(kind: FindingKind) -> &'static str {
         FindingKind::Orphan => "orphan candidate",
         FindingKind::TargetArchitecture => "target architecture violation",
         FindingKind::License => "licence finding",
+        FindingKind::Convention => "convention violation",
     }
 }
 

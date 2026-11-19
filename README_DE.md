@@ -228,7 +228,9 @@ conventions = [
 ]
 ```
 
-Jeder Verstoß ist ein `target_architecture`-Befund mit Schwere error (check endet mit Exit-Code 1; Text, JSON und SARIF) mit Datei:Zeile und einem Hinweis zur Behebung, z. B. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, … Fix: write the target as a literal route or a route constant.`` Die Id `view-<regel>:<datei>:<gegenstand>` enthält keine Zeile und bleibt gleich, wenn sich Code darüber verschiebt. Ein unbekannter Name in der Liste ist ein Konfigurationsfehler.
+Jeder Verstoß ist ein `convention`-Befund mit Schwere error (check endet mit Exit-Code 1; Text, JSON und SARIF mit Regel-Id `archguard/convention/<regel>`) mit Datei:Zeile und einem Hinweis zur Behebung, z. B. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, … Fix: write the target as a literal route or a route constant.`` Die Id `view-<regel>:<datei>:<gegenstand>` enthält keine Zeile und bleibt gleich, wenn sich Code darüber verschiebt. Ein unbekannter Name in der Liste ist ein Konfigurationsfehler.
+
+Um Konventionen in einem bestehenden Projekt einzuschalten, ohne zuerst alles zu beheben, schreibt `archguard baseline write` die aktuellen Konventions-Ids in die Baseline-Datei (`conventions`, neben den Zyklus-Hashes). `archguard check --baseline` schlägt dann nur bei Befunden fehl, die dort fehlen, und listet die akzeptierten nicht; eine Id aus der Baseline, die nicht mehr auftritt, erscheint als Info-Hinweis "remove it from the baseline" und lässt check nicht fehlschlagen. Ein nicht lesbarer Sicht-Import wird nie aufgenommen. Baseline-Dateien ohne `conventions` werden weiter gelesen.
 
 ### Befunde mit einer Expertenbewertung vergleichen
 

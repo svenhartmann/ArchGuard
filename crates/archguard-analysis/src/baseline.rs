@@ -36,13 +36,17 @@ pub fn cycle_hash(scc_node_names: &[String]) -> String {
 /// persisted as `.archguard/baseline.json` (Kap. 9/11). Serialized with
 /// serde; `hashes` is a `BTreeSet` so the JSON is sorted and the file
 /// is diffable (Kap. 12).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Baseline {
     /// Version of this file's schema; the current version is `1`,
     /// matching the canonical graph schema version (Kap. 5).
     pub schema_version: u32,
     /// [`cycle_hash`] of every accepted SCC, sorted.
     pub hashes: BTreeSet<String>,
+    /// Ids (`view-<rule>:<file>:<subject>`) of accepted `[views]`
+    /// convention findings, sorted. Absent in older files and when empty.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub conventions: BTreeSet<String>,
 }
 
 /// The delta between the current SCCs and a [`Baseline`], as produced
@@ -166,6 +170,7 @@ mod tests {
         Baseline {
             schema_version: 1,
             hashes: v.iter().map(|group| cycle_hash(&names(group))).collect(),
+            ..Baseline::default()
         }
     }
 
@@ -266,6 +271,7 @@ mod tests {
         let baseline = Baseline {
             schema_version: 1,
             hashes: BTreeSet::new(),
+            ..Baseline::default()
         };
 
         assert_eq!(
@@ -275,5 +281,25 @@ mod tests {
                 removed: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn a_baseline_without_conventions_reads_and_writes_as_before() {
+        let old = r#"{"schema_version":1,"hashes":["aa"]}"#;
+        let baseline: Baseline = serde_json::from_str(old).unwrap();
+        assert!(baseline.conventions.is_empty());
+        assert_eq!(serde_json::to_string(&baseline).unwrap(), old);
+    }
+
+    #[test]
+    fn convention_ids_round_trip() {
+        let baseline = Baseline {
+            schema_version: 1,
+            conventions: BTreeSet::from(["view-navigation_literal:A.razor:url".to_string()]),
+            ..Baseline::default()
+        };
+        let json = serde_json::to_string(&baseline).unwrap();
+        assert!(json.contains("\"conventions\""), "{json}");
+        assert_eq!(serde_json::from_str::<Baseline>(&json).unwrap(), baseline);
     }
 }

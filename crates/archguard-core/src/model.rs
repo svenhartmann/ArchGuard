@@ -191,6 +191,9 @@ pub enum FindingKind {
     TargetArchitecture,
     /// A third-party dependency fails the `[licenses]` policy (ADR 0016).
     License,
+    /// A broken `[views]` convention (ADR 0021/0022); its id
+    /// `view-<rule>:<file>:<subject>` is what a baseline accepts.
+    Convention,
 }
 
 /// A recommendation to break a cycle: cutting the dependency `from` → `to`
@@ -357,6 +360,14 @@ mod tests {
             parent: None,
             lang: None,
         }
+    }
+
+    #[test]
+    fn convention_kind_serializes_as_convention() {
+        let json = serde_json::to_string(&FindingKind::Convention).unwrap();
+        assert_eq!(json, "\"convention\"");
+        let back: FindingKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, FindingKind::Convention);
     }
 
     #[test]

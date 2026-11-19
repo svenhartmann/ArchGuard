@@ -253,3 +253,15 @@ finding "view and application disagree at step n". The script is written to
 the system temp directory unless `--out` says otherwise. Not yet done: the
 desktop buttons "Open in browser" and "Replay path", the desktop driver, and
 the generic sign-in fits forms with one password field only.
+
+### 2026-11-19: baseline for conventions
+
+Convention findings have their own kind `convention` (SARIF rule id
+`archguard/convention/<rule>`) instead of `target_architecture`. The baseline
+file gains an optional `conventions` list of finding ids, written by
+`baseline write`; files without it still read, and the field is left out when
+empty. `check --baseline` (CLI and MCP) drops accepted convention findings
+from the list, fails on the others, and turns each baselined id without a
+finding into an `info` note "remove it from the baseline", which does not
+fail. The `view-conventions:…` finding for an unreadable import is never
+recorded. `baseline diff` still compares cycles only; no ratchet beyond that.
