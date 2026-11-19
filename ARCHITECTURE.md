@@ -29,7 +29,7 @@ Section 15 describes the feature set.
 - No general cross-language semantic model or universal DIP/LSP verification. Java, C#, TypeScript/JavaScript and Go add compiler-backed evidence with explicit coverage limits.
 - Imported runtime/build observations are separate from static source evidence; they do not make static dependencies a complete runtime graph.
 - Line-based import scanners remain distinct from compiler helpers. A future tree-sitter backend can implement the `Extractor` trait.
-- The embedded HTML viewer and local live server supplement exports; a native desktop viewer (`archguard-desktop`, Slint) is a prototype, see [ADR 0002](docs/adr/0002-native-desktop-ui.md).
+- The native desktop app (`archguard-desktop`, Slint) is the interactive view, see [ADR 0002](docs/adr/0002-native-desktop-ui.md); the browser web viewer was removed on 2026-11-19. The CLI draws the arc42 diagrams in the terminal (`archguard diagram`) and prints every analysis as JSON.
 
 ---
 
@@ -61,7 +61,7 @@ graph LR
     E --> V[Aggregate view<br/>Cut / zoom level]
     V --> F[Analyses<br/>SCC · Cycles · layers · metrics · Simulation]
     F --> G[Report<br/>Findings + suggestions]
-    G --> H1[CLI output<br/>text · json · mermaid · dot · html · sarif]
+    G --> H1[CLI output<br/>text · json · mermaid · dot · sarif]
     G --> H2[MCP tool responses<br/>paginated]
     G --> H3[Graph DB mirror<br/>openCypher · Explorer-UI]
 ```
@@ -142,14 +142,12 @@ parser or project build. The longest entry chain is calculated on the
 SCC-condensed DAG. None of these analyses measures runtime or guarantees build
 parallelism.
 
-The HTML viewer receives optional `reviewContext`, `performance` and `insights`
-data. `viewer_review.js` mirrors the pure review calculation for current
-navigation and simulation; automated checks verify backend/frontend parity.
-Original source identities continue linking virtual moves to their source
-evidence. Performance, co-change and ownership remain labeled evidence from the
-original report; the UI does not claim to rerun compiler/Git analysis after a
-virtual operation. Older HTML payloads may omit context data. P1/P2 markers
-supplement existing cycle/direction colors.
+The desktop app runs the same review calculation (`analyze_review`) on the rows
+it shows. Original source identities continue linking virtual moves to their
+source evidence. Performance, co-change and ownership remain labeled evidence
+from the original report; the UI does not claim to rerun compiler/Git analysis
+after a virtual operation. P1/P2 markers supplement existing cycle/direction
+colors.
 
 Explicit `dependency_rules` check source edges before view aggregation.
 Ownership prohibitions and opt-in orphan findings feed the same `check` gate.
@@ -174,8 +172,8 @@ remains the structural priority report. Stable finding identities and evidence
 fingerprints bind reasoned decisions to the analyzed state. Analysis and decision
 revisions are checked again before import and recording. Individual project
 files are written atomically; historical reviews use content-based filenames
-without overwriting. CLI `review`, `viewer_assessment.js` and MCP `review_context`
-use the same report. The viewer edits exportable drafts; MCP reads the saved
+without overwriting. CLI `review` and MCP `review_context` use the same report;
+MCP reads the saved
 state with freshness checks and progressing 4-KiB pagination. Workflow, file
 formats, gate effects and evidence limits are in the
 [review guide](README.md#common-workflows).
@@ -190,13 +188,13 @@ archguard/
 │   ├── archguard-core/           # L0: types, no internal logic dependency
 │   ├── archguard-extract/        # L1: Walker, Extractor trait, scanners (Java, C#, Py, TS/JS, PHP, Rust, Go), Resolver
 │   ├── archguard-analysis/       # L1: SCC, cycles, metrics, layer rules, cut suggestions, baseline
-│   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, html, graphml, sarif)
+│   ├── archguard-report/         # L1: Formatter (json, text, mermaid, dot, graphml, sarif)
 │   ├── archguard-store/          # L1: Graph DB mirror (openCypher), query guard
 │   ├── archguard-update/         # L1: self-update from GitHub releases (CLI and desktop)
 │   ├── archguard-engine/         # L2: load config, orchestrate pipeline, graph cache
 │   ├── archguard-mcp/            # L3: MCP server (stdio), tool registration
 │   ├── archguard-cli/            # L3: Binary `archguard`, clap commands
-│   └── archguard-desktop/        # L3: native desktop viewer (Slint prototype)
+│   └── archguard-desktop/        # L3: native desktop app (Slint)
 ├── fixtures/                  # test projects (ts-cyclic, py-layers, rs-clean, java-packages, …)
 └── .github/workflows/ci.yml   # fmt, clippy, test, architecture check
 ```
@@ -212,7 +210,7 @@ archguard/
 | `archguard-engine` | `analyze(path, config) -> Report`, config parsing **and declared/derived/default resolution** (Section 11), caching, DB sync | `toml` |
 | `archguard-mcp` | MCP tools, JSON schemas, pagination guard | `rmcp` (official MCP Rust SDK), `tokio` (only here), `schemars` |
 | `archguard-cli` | Argument parsing, exit codes, format selection | `clap`, `anyhow` |
-| `archguard-desktop` | Native desktop viewer on the engine API ([ADR 0002](docs/adr/0002-native-desktop-ui.md)) | `slint`, `rfd` |
+| `archguard-desktop` | Native desktop app on the engine API ([ADR 0002](docs/adr/0002-native-desktop-ui.md)) | `slint`, `rfd` |
 
 `tokio` is a direct dependency of `archguard-mcp` only. `archguard-engine` and
 layers 0–1 are synchronous.
@@ -271,7 +269,7 @@ run at every zoom level without level-specific code.
 
 - **Zoom in** = `expand(node)`: replace the node in the cut with its children, allowing a module cycle to be expanded to the responsible files and import lines.
 - **Zoom out** = `collapse(node)`: collapse children back into their parent.
-- **Stateless:** clients (MCP agent, HTML viewer) send the expanded-node list; the server keeps no session.
+- **Stateless:** clients (MCP agent) send the expanded-node list; the server keeps no session.
 
 ```jsonc
 // Finding (part of the report)
@@ -365,7 +363,7 @@ links paths written in code and imports of local workspace crates.
 | Metrics | Fan-in (Ca), fan-out (Ce), instability `I = Ce/(Ca+Ce)`, cycle participation %, SCC size distribution | Martin metrics; computed from graph edges only |
 | Hierarchy aggregation | `aggregate(Graph, Cut) -> Graph`: project file edges onto visible ancestors and sum reference counts | Views are `Graph` instances; all analyses run at every zoom level |
 | ACD / CCD / NCCD | "Depends-upon" sets through reachability DFS; CCD = Σ, ACD = CCD/n, NCCD = CCD normalized against a binary tree | Lakos coupling measures; computed from graph edges only |
-| Simulation | Apply `SimOp { CutEdge, MoveNode, Merge }` to a graph copy, rerun analyses and diff findings/metrics. **SimOp JSON is the universal contract**: confirmed HTML viewer actions, CLI (`simulate --ops`) and agents (MCP `simulate`) produce and consume exactly the same format | Computes the effect of a structural change before the code change; one format for viewer, CLI and MCP |
+| Simulation | Apply `SimOp { CutEdge, MoveNode, Merge }` to a graph copy, rerun analyses and diff findings/metrics. **SimOp JSON is the universal contract**: the desktop simulation's export, CLI (`simulate --ops`) and agents (MCP `simulate`) produce and consume exactly the same format | Computes the effect of a structural change before the code change; one format for desktop, CLI and MCP |
 | Layer checks | Map nodes to layers by name globs (`globset`); an edge is allowed iff its target layer belongs to the source layer's `may_depend_on` (direct edges only, no transitivity needed). Severity follows provenance: declared ⇒ `Error`, derived ⇒ `Info` (promotion, Section 11) | Only direct edges are checked; inferred layers do not fail `check` |
 | **Layer inference** | SCC condensation → longest-path ranking on the condensed DAG (`rank = 1 + max(dependency ranks)`, sinks = 0). A name-affinity table (`core\|domain\|model\|entity\|shared` at the bottom, `app\|service\|usecase\|logic\|feature` in the middle, `api\|ui\|cli\|web\|controller\|http` at the top) names ranks. Modules **in** SCCs cannot be ranked: an informational "cycle prevents layering" finding replaces layer violations | Provides layers without configuration; a longest-path ranking is defined only on a DAG |
 | **Project inference** | Manifest inspection (`composer.json` PSR-4, `Cargo.toml`, `tsconfig.json`, `pyproject.toml`/`setup.py`, `pom.xml`) plus extension statistics over discovered files; declared values always win | Source roots and languages without a `[project]` section |
@@ -424,9 +422,8 @@ RETURN DISTINCT a.name LIMIT 25;
 | Option | Purpose | Setup |
 | --- | --- | --- |
 | `archguard graph --format mermaid\|dot` | Documentation, PR comments, READMEs | None (text output) |
-| `archguard graph --format html` | **Architecture dashboard** in one HTML file: explorer, graph/matrix and contextual inspector; explicit simulation with confirmed actions and JSON export. Browse clicks only inspect. Colors indicate cycle/simulation state; widths show full import counts. Usage and verification limits: [README.md](README.md) | None (open the file) |
-| `archguard serve [PATH]` | Same viewer over a local HTTP server; browser polls update cached analysis, changed reports reload automatically. No static project-file sharing; see README | Open the URL |
-| `archguard cycles --format html` | Same viewer, starts focused on cycles | None (open the file) |
+| `archguard-desktop [PATH]` | **Desktop app**: World view, graph/tree, matrix, calls, services, quality, security and arc42 with explicit simulation and SimOp export | Install the desktop app |
+| `archguard diagram [PATH] [ID]` | The arc42 diagram catalogue and one diagram drawn in the terminal | None (text output) |
 | Ladybug Explorer web UI on `.archguard/graph.db` | Interactive Cypher exploration and graph rendering | Start a Docker container |
 | [G.V()](https://gdotv.com/) on `.archguard/graph.db` | Graph IDE: query editor, layouts, debugging | Desktop app |
 | `archguard graph --format graphml\|gexf` → Gephi Lite / yEd | Large graphs, layout algorithms, cluster analysis | Import the file |
@@ -613,7 +610,7 @@ commented-out suggestions.
 - **Fixtures:** test projects under `fixtures/`, including `ts-cyclic/` (cycles), `py-layers/` (layer violation), `rs-clean/` (no findings), `java-packages/`, `cs-namespaces/`, `php-psr4/`.
 - **Golden-file tests:** `crates/archguard-cli/tests/goldens.rs` compares JSON output for the fixtures with `crates/archguard-cli/tests/goldens/*.json`.
 - **CLI integration tests:** `assert_cmd` in `crates/archguard-cli/tests/` checks exit codes and output.
-- **CI (GitHub Actions):** reproducible slim/DB checks, viewer state tests, real CLI/MCP transport tests, architecture allowlist, source scan and weekly dependency checks. Commands: [ci.yml](.github/workflows/ci.yml); advisory decisions: [SECURITY.md](SECURITY.md).
+- **CI (GitHub Actions):** reproducible slim/DB checks, real CLI/MCP transport tests, architecture allowlist, source scan and weekly dependency checks. Commands: [ci.yml](.github/workflows/ci.yml); advisory decisions: [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -629,26 +626,26 @@ commented-out suggestions.
 | Cycle **sampling** | Full Johnson enumeration | Bounded response size and runtime |
 | Embedded graph DB (LadybugDB) as a mirror | Server-based graph database, CozoDB | No daemon, one file, openCypher, explorer/G.V() visualization. Trait, feature flag and pinned version decouple from the archived Kuzu project |
 | In-memory analysis (`petgraph`), DB for exploration | All computation in DB | SCC and metrics are O(V+E) in memory without I/O; the DB serves ad hoc queries and visualization |
-| Stateless zoom: clients send `expanded` | Per-client server sessions | MCP server without session state; the HTML viewer keeps its own zoom state |
+| Stateless zoom: clients send `expanded` | Per-client server sessions | MCP server without session state; the desktop app keeps its own zoom state |
 | Containment hierarchy, views as aggregated graphs | Separate graph per level | One data model; every zoom level is a `Graph`, analyses and formatters have no level-specific code |
 | Config inference and promotion (`declared ⇐ derived ⇐ default`) | Fully manual configuration or inference alone | Inference alone produces no violation on its own graph. Severity by provenance (derived ⇒ Info, declared ⇒ Error) allows runs without configuration and CI gates from declared rules |
-| Shared SimOps JSON contract (viewer actions, CLI `--ops`, MCP `simulate`) | Viewer that writes source directly, or CLI-only simulation | One format for viewer, CLI and MCP; ArchGuard does not write source code |
+| Shared SimOps JSON contract (desktop export, CLI `--ops`, MCP `simulate`) | UI that writes source directly, or CLI-only simulation | One format for desktop, CLI and MCP; ArchGuard does not write source code |
 
 ---
 
 ## 15. Feature set
 
 ArchGuard combines dependency analysis, architecture rules and simulation through
-the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
+the CLI, MCP and desktop app. Analysis limits are in [README.md](README.md).
 
 | Feature | Implementation | Status |
 | --- | --- | --- |
 | Cycle detection and breakup suggestions | SCC, cycle sampling, cut scoring with explanations | Implemented |
 | Architecture rules (layers, components) | `archguard.toml` layer rules and layer **inference** with promotion (Section 11) | Implemented |
 | Basic metrics (Martin: Ca/Ce/instability) | Incoming/outgoing coupling and instability from the dependency graph | Implemented |
-| Hierarchical drill-down / zoom | Containment tree and views (Section 5.2): `graph_expand`, `--expand`, HTML viewer double-click zoom | Implemented |
-| Cycle visualization | HTML cycle panel (isolate SCC, evidence tooltips), DSM markers, Mermaid/DOT export | Implemented |
-| Dependency structure matrix (DSM) | `archguard dsm`, MCP `dsm`, viewer DSM tab | Implemented |
+| Hierarchical drill-down / zoom | Containment tree and views (Section 5.2): `graph_expand`, `--expand`, desktop double-click zoom | Implemented |
+| Cycle visualization | Desktop cycle views, DSM markers, terminal diagrams, Mermaid/DOT export | Implemented |
+| Dependency structure matrix (DSM) | `archguard dsm`, MCP `dsm`, desktop Matrix tab | Implemented |
 | Lakos metrics (ACD/CCD/NCCD) | Section 7, at every zoom level | Implemented |
 | Virtual refactoring (simulation) | `archguard simulate` / MCP `simulate`: move/cut/merge, findings delta | Implemented |
 | Trends / history | `snapshot`/`trend` and graph DB time series | Implemented |
@@ -660,9 +657,9 @@ the CLI, MCP and HTML viewer. Analysis limits are in [README.md](README.md).
 | Decision register | `archguard review-decision` / MCP `review_decisions`; `.archguard/reviews.json`, atomic upsert by ID (format below) | Implemented |
 | PR comment | `archguard review --format pr-comment --base <ref>` / MCP `pr_comment`; format below | Implemented |
 | Evaluation against an expert assessment | `archguard evaluate` / MCP `evaluation`: recall and precision against `.archguard/assessment.toml`, written by a human expert; format, matching rule and metrics in [ADR 0005](docs/adr/0005-evaluation-against-expert-assessment.md) | Implemented; no assessments shipped |
-| Native desktop viewer | `archguard-desktop` (Slint) on the engine API; decision and scope in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototype |
+| Native desktop app | `archguard-desktop` (Slint) on the engine API; decision and scope in [ADR 0002](docs/adr/0002-native-desktop-ui.md) | Prototype |
 | Quality goal assessment | `[[architecture.goals]]` with optional ISO/IEC 25010 `attribute`, `scope` globs and `scenario`; `archguard-analysis/src/goals.rs` links findings, review KPIs and saved evidence to goals by a fixed mapping; shown in `architecture_context`, `archguard doc` and arc42 chapters 1 and 10 ([ADR 0003](docs/adr/0003-quality-goal-assessment.md)) | Implemented |
-| IDE plugins | Not planned; HTML viewer, DB explorer UI and G.V() instead | — |
+| IDE plugins | Not planned; desktop app, DB explorer UI and G.V() instead | — |
 
 ### Review metrics and their limits
 
@@ -673,7 +670,7 @@ never "clean" or zero.
 
 - **Propagation cost** (`pc.rs`): for each cyclic SCC, its members plus all nodes reachable through original edges, divided by the view's node count. An acyclic view returns no entries: this records the state, not a measurement of 0. Edges to unknown node IDs are omitted. This measures static import reachability, not runtime behavior.
 - **SDP violations** (`sdp.rs`): an edge A → B in the configured `[modules].depth` view where `I(B) > I(A)`, with `I = Fan-out / (Fan-in + Fan-out)` computed in `f32`. Missing endpoint metrics cause the edge to be skipped, never guessed. Equal instability is not a violation.
-- **A/I zones** (`zones.rs`): classify by `D′ = |A + I − 1|` outside the ±1/3 corridor; `A + I < 1` is the Zone of Pain, `A + I > 1` the Zone of Uselessness. `A` requires compiler evidence. Boundaries without abstractness measurements remain `unmeasured`. The pipeline runs no compiler, so the cached KPI block keeps `zones` at `None`. The viewer fills it from the node-scope abstraction metrics of the performance analysis (Java and C#, Rust from syntax declarations; Rust impl blocks and function groups are no types); SCC metrics are not counted again. Without a single measurable boundary it stays `None` and the panel displays "not measured". The text report (`archguard scan`, `archguard check`) and the MCP `review_kpis` tool read the cached block and report zones as not measured unless asked otherwise: `--measure-zones` on `scan`/`check` and `measure_zones=true` on `review_kpis` run the same call and performance analysis (`archguard_engine::measure_review_zones`) and fill `zones` before output. The opt-in exists because the compiler helpers are slow; it does not change the rule that zones stay `None` without a measurable Java, C# or Rust boundary.
+- **A/I zones** (`zones.rs`): classify by `D′ = |A + I − 1|` outside the ±1/3 corridor; `A + I < 1` is the Zone of Pain, `A + I > 1` the Zone of Uselessness. `A` requires compiler evidence. Boundaries without abstractness measurements remain `unmeasured`. The pipeline runs no compiler, so the cached KPI block keeps `zones` at `None`. The desktop app fills it from the node-scope abstraction metrics of the performance analysis (Java and C#, Rust from syntax declarations; Rust impl blocks and function groups are no types); SCC metrics are not counted again. Without a single measurable boundary it stays `None` and the panel displays "not measured". The text report (`archguard scan`, `archguard check`) and the MCP `review_kpis` tool read the cached block and report zones as not measured unless asked otherwise: `--measure-zones` on `scan`/`check` and `measure_zones=true` on `review_kpis` run the same call and performance analysis (`archguard_engine::measure_review_zones`) and fill `zones` before output. The opt-in exists because the compiler helpers are slow; it does not change the rule that zones stay `None` without a measurable Java, C# or Rust boundary.
 - **Tangledness** (`tangles.rs`): proportion of view nodes belonging to a cyclic SCC with more than one member.
 - **Hub Gini** (`tangles.rs`): Gini coefficient of fan-in distribution plus the edge share of the five largest hubs (`top_share`). Without total reference counts in the graph, edge load is a sample lower bound and labeled accordingly.
 - **Layer drift** (`layer_drift.rs`): deviation of inferred rankings from declared layers. Without declared layers, the value stays `None`; inferred layers do not establish a drift finding.
@@ -694,7 +691,7 @@ the `[review]` gate `adr_required_on_accept_risk` (CLI: exit 2, MCP: Invalid Par
 to a review finding: `id` and `finding_ref` are the finding's SHA-256 ID, plus
 `finding_fingerprint`, optional `expires_on` (inclusive UTC day, required for
 `accept-risk`) and `links`. A changed fingerprint reopens the finding; `fix` shows
-as planned, `defer` as deferred. The import file is the viewer's Review export
+as planned, `defer` as deferred. The import file is a decision document
 (`schema_version` 2, `review_revision`, `decision_revision`, `decisions[]`); it
 replaces the review-bound entries and keeps entries recorded with
 `review-decision` or MCP. Older versions kept review decisions in
@@ -710,13 +707,10 @@ entry with High or Medium priority, keyed by node name. The report has no
 per-finding line numbers, so none are invented. All lists are sorted; repeated
 runs produce identical Markdown.
 
-The HTML report (`archguard-report/src/html.rs`) embeds `reviewKpis` and
-`reviewHistory` for the KPI cards, the A/I zone scatter and the health history
-on Start. Each is `null` when absent: no KPI block (for example, an older graph
-predating the KPI pipeline) or no snapshot history. Panels then display "not
-measured" rather than 0. The viewer has no Dashboard tab and no Review tab
-button; `archguard review --format html` opens the review view directly.
-Decisions are written only through the CLI and MCP; `serve` has no write
-endpoint.
+The desktop's Start tab shows the KPI cards, the A/I zones and the health
+history from the review KPI block and the snapshots. Without a KPI block (for
+example, an older graph predating the KPI pipeline) or snapshot history, panels
+display "not measured" rather than 0. Decisions are written only through the
+CLI and MCP.
 
 ---

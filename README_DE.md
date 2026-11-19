@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-ArchGuard analysiert Software-Abhängigkeiten aus Quellcode und Projektkonfiguration. Das Werkzeug bietet eine Rust-CLI, einen lokalen Browser-Viewer und einen MCP-Server für Coding-Agenten. Der Einstieg funktioniert ohne Konfigurationsdatei; explizite Regeln machen Befunde bei Bedarf zu CI-Gates.
+ArchGuard analysiert Software-Abhängigkeiten aus Quellcode und Projektkonfiguration. Das Werkzeug bietet eine Rust-CLI, eine native Desktop-App und einen MCP-Server für Coding-Agenten. Der Einstieg funktioniert ohne Konfigurationsdatei; explizite Regeln machen Befunde bei Bedarf zu CI-Gates.
 
 ArchGuard wird als nichtkommerzielles Open-Source-Projekt entwickelt. Die Software steht unter MIT OR Apache-2.0; beide Lizenzen erlauben auch ihre kommerzielle Nutzung.
 
@@ -15,7 +15,7 @@ ArchGuard wird als nichtkommerzielles Open-Source-Projekt entwickelt. Die Softwa
 - Architekturdokumentation nach arc42, deklarierte Sollarchitektur, Git-Vergleiche und rein lesende Refactoring-Simulationen.
 - Importe für Testabdeckung, Qualitätsbefunde, Testergebnisse, Duplikate, Mutationstests, API-Verträge und Laufzeitmessungen.
 
-Der Viewer trennt statische Beobachtungen, deklarierte Absichten, importierte Messwerte und simulierte Änderungen. Die Oberfläche ist auf Deutsch und Englisch verfügbar.
+Die Desktop-App trennt statische Beobachtungen, deklarierte Absichten, importierte Messwerte und simulierte Änderungen. Die Oberfläche ist auf Deutsch und Englisch verfügbar.
 
 ## Installation
 
@@ -47,19 +47,19 @@ Die optionale Graphdatenbank benötigt CMake und eine C++-Toolchain:
 cargo install --path crates/archguard-cli --features db --locked
 ```
 
-Ohne `db` bleiben Analyse und Viewer verfügbar; Datenbankbefehle und Cypher-Abfragen entfallen. Siehe [Release-Pakete und Prüfung](RELEASES.md).
+Ohne `db` bleiben Analyse und Desktop-App verfügbar; Datenbankbefehle und Cypher-Abfragen entfallen. Siehe [Release-Pakete und Prüfung](RELEASES.md).
 
 ## Mit einem Projekt starten
 
 ```sh
-archguard serve /pfad/zum/projekt --port 8787
+archguard-desktop /pfad/zum/projekt
 archguard check /pfad/zum/projekt
-archguard graph /pfad/zum/projekt --format html
+archguard diagram /pfad/zum/projekt
 ```
 
-**http://127.0.0.1:8787/** öffnen. Bei einem erkannten Repository mit mehreren Projekten beginnt die Ansicht mit der Projekt- und Diensteübersicht. Ein Projekt führt zu seinem Quellumfang. **Link kopieren** erhält Projekt und Seite beim Neuladen oder teilt sie mit Kollegen, die denselben Checkout lokal starten.
+Die Desktop-App öffnet das Projekt; bei einem erkannten Repository mit mehreren Projekten beginnt sie mit der Projekt- und Diensteübersicht. Ein Projekt führt zu seinem Quellumfang. `archguard diagram` listet die arc42-Diagramme und zeichnet eines im Terminal; die Analysebefehle geben mit `--format json` JSON aus.
 
-In der World View zoomt das Mausrad; Ziehen verschiebt die Ansicht. Ziehen mit rechter Maustaste oder Umschalt-Taste dreht sie. Touch unterstützt Pinch-Zoom und Drehen mit zwei Fingern. Ein Element auswählen, für den Kontext Details oder Enter verwenden und das Overlay mit Esc schließen. Die Viewer-Hilfe erklärt weitere Bedienelemente.
+In der World-Ansicht der Desktop-App zoomt das Mausrad; Ziehen verschiebt die Ansicht. Ziehen mit rechter Maustaste oder Umschalt-Taste dreht sie; Pinch zoomt, Drehen mit zwei Fingern dreht. Ein Element auswählen; Enter zeigt seine Details, Esc schließt sie. Die Hilfe der Ansicht erklärt weitere Bedienelemente.
 
 Die Diensterkennung berücksichtigt `.gitignore` und `project.exclude`. Untergeordnete `examples/`, `fixtures/`, Agent-Worktrees sowie erzeugte Build- und Berichtsverzeichnisse bleiben außen vor; Beispiele lassen sich direkt als Analyseverzeichnis öffnen. Ein Rust-Binary ist ein Anwendungsprojekt und wird erst durch Deployment-Belege als Service eingeordnet.
 
@@ -112,7 +112,7 @@ Ruby misst der eigene Token-Scanner von ArchGuard ohne Ruby-Installation ([ADR 0
 
 **Duplikate.** `archguard duplicates . --report cpd.xml` importiert PMD-CPD-XML. Ohne PMD durchsucht `archguard duplicates . --scan` die gefundenen Quelldateien mit dem eingebauten Token-Scanner von ArchGuard (`.gitignore` und `project.exclude` gelten). Er meldet identische Tokenfolgen ab `--min-tokens` (Standard 100; jedes Satzzeichen ist ein Token, die Zählung ist also feiner als bei CPD). `--normalize` findet zusätzlich Kopien mit anderen Bezeichnern und Literalen. Gruppen sind Token-Übereinstimmungen, keine semantische Gleichheit. Dateien über 1 MiB, ein Budget von 5 Mio. Tokens und ein Zeitlimit von 120 s machen das Ergebnis `partial` mit Diagnose. Ein Scan ersetzt einen importierten CPD-Bericht nur mit `--replace`; das Feld `producer` zeigt, welcher gespeichert ist.
 
-Die **KPI-Hilfe** im Viewer enthält Einrichtung, unterstützte Messwerte und Importbeispiele pro Sprache. Testabdeckung und Laufzeitmessungen benötigen echte Berichte; fehlende Daten gelten nicht als Nullwerte.
+Testabdeckung und Laufzeitmessungen benötigen echte Berichte; fehlende Daten gelten nicht als Nullwerte.
 
 Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust-Deklarationen, deshalb melden `archguard scan` und `archguard check` sie standardmäßig als nicht gemessen. Mit `--measure-zones` (MCP: `review_kpis` mit `measure_zones=true`) läuft die langsamere Aufrufanalyse und füllt die Zonen-Zeile; siehe [Review-Kennzahlen und ihre Grenzen](ARCHITECTURE_DE.md#review-kennzahlen-und-ihre-grenzen).
 
@@ -120,7 +120,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 
 | Aufgabe | Befehl |
 | --- | --- |
-| Interaktiv erkunden | `archguard serve .` |
+| Interaktiv erkunden | `archguard-desktop .` |
 | Architekturregeln prüfen | `archguard check .` |
 | Zyklen untersuchen | `archguard cycles . --format json` |
 | Compilerbelege untersuchen | `archguard calls . --format json` |
@@ -132,11 +132,11 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | arc42-Diagramme im Terminal auflisten oder zeichnen | `archguard diagram .` oder `archguard diagram . building-blocks` |
 | Das arc42-Dokument und seinen Diagrammkatalog als JSON | `archguard doc . --arc42 --format json` |
 | Diensttopologie als Structurizr-Workspace (C4) exportieren | `archguard graph . --format structurizr [--service orders]` |
-| Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
+| Mit einer Git-Revision vergleichen | `archguard review . --base main` oder `archguard diff . --to main` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |
 | SBOM der Fremdabhängigkeiten (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
 
-`archguard --help` und `archguard <command> --help` liefern die vollständige Befehlsreferenz. Der Viewer enthält zusätzlich CLI-Hilfe und natürlichsprachliche MCP-Beispiele.
+`archguard --help` und `archguard <command> --help` liefern die vollständige Befehlsreferenz.
 
 Die arc42-Erzeugung aktualisiert ausdrücklich markierte Belegblöcke. Eigene Texte außerhalb dieser Blöcke bleiben unverändert. Erzeugte Architekturbeobachtungen ersetzen keine Teamentscheidungen und belegen keine vollständige Laufzeitarchitektur.
 
@@ -281,12 +281,11 @@ Der Server bietet belegorientierte Werkzeuge und, soweit unterstützt, Paginatio
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-node scripts/viewer/test_viewer_world.js
 ```
 
-Der Workspace enthält den nativen Desktop-Viewer `archguard-desktop` ([ADR 0002](docs/adr/0002-native-desktop-ui.md)). Unter Linux baut er gegen das System-fontconfig; vorher dessen Header installieren (Debian/Ubuntu: `libfontconfig1-dev`).
+Der Workspace enthält die native Desktop-App `archguard-desktop` ([ADR 0002](docs/adr/0002-native-desktop-ui.md)). Unter Linux baut sie gegen das System-fontconfig; vorher dessen Header installieren (Debian/Ubuntu: `libfontconfig1-dev`).
 
-Das Verzeichnis [`scripts/`](scripts/README_DE.md) enthält Integrations- und Browsertests, Benchmarks sowie Release-Prüfungen. Das sind Entwicklungswerkzeuge; für die normale CLI- und Viewer-Nutzung müssen sie nicht manuell gestartet werden. Go-Integrationstests nutzen `ARCHGUARD_GO`; sprachspezifische Tests und Browsertests benötigen gegebenenfalls zusätzliche installierte Werkzeuge.
+Das Verzeichnis [`scripts/`](scripts/README_DE.md) enthält Integrationstests, Benchmarks sowie Release-Prüfungen. Das sind Entwicklungswerkzeuge; für die normale CLI- und Desktop-Nutzung müssen sie nicht manuell gestartet werden. Go-Integrationstests nutzen `ARCHGUARD_GO`; sprachspezifische Tests benötigen gegebenenfalls zusätzliche installierte Werkzeuge.
 
 Die CI-Workflows prüfen außerdem optionale Features, Dependency-Advisories, Secrets, native Releases und Malware. Release-Bundles enthalten Prüfberichte und verfügbare Scan-Protokolle; ein unauffälliger Scan garantiert keine Unbedenklichkeit. Siehe [SECURITY.md](SECURITY.md) und [RELEASES.md](RELEASES.md).
 

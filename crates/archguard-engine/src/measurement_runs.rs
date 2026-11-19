@@ -104,9 +104,6 @@ fn load(root: &Path) -> Result<Input, ArchguardError> {
         Err(e) => Err(error(e)),
     }
 }
-pub fn measurement_runs_fingerprint(root: &Path) -> String {
-    evidence::fingerprint(root, FILE)
-}
 pub fn import_measurement_runs(
     root: &Path,
     path: &Path,

@@ -24,8 +24,8 @@ pub(crate) struct Cli {
     pub(crate) config: Option<PathBuf>,
     /// Output format. `mermaid` is only valid for `cycles`, `sarif`
     /// only for `check`, `asciidoc` and `docx` only for `doc --arc42`;
-    /// `graph` has its own `--format` (dot, mermaid, json, html, graphml,
-    /// gexf, structurizr).
+    /// `graph` has its own `--format` (dot, mermaid, json, graphml, gexf,
+    /// structurizr).
     #[arg(
         long,
         global = true,
@@ -44,7 +44,7 @@ pub(crate) struct Cli {
     pub(crate) command: Command,
 }
 
-/// Global `--format` value set. `dot`, `html`, `graphml` and `gexf`
+/// Global `--format` value set. `dot`, `graphml` and `gexf`
 /// exist only for `graph`, `table` only for `db query` and `trend`; these
 /// commands re-declare `--format` as their own (subcommand-level)
 /// argument, with the defaults `dot` and `table`. Every other command
@@ -59,7 +59,6 @@ pub(crate) enum Format {
     Mermaid,
     Sarif,
     Dot,
-    Html,
     Graphml,
     Gexf,
     Table,
@@ -463,7 +462,7 @@ pub(crate) enum Command {
         /// Right-hand branch, tag or commit; read directly without a checkout.
         #[arg(long, required_unless_present = "staged")]
         to: Option<String>,
-        #[arg(long, value_enum, default_value = "html")]
+        #[arg(long, value_enum, default_value = "text")]
         format: Format,
     },
     /// Export the graph to stdout and <project>/.archguard/reports/.
@@ -488,18 +487,6 @@ pub(crate) enum Command {
         /// `structurizr` only: add this service's packages as components (id or unique name).
         #[arg(long, value_name = "SERVICE")]
         service: Option<String>,
-    },
-    /// Serve a live graph on localhost; source/config changes update the browser.
-    Serve {
-        /// Project root (default: current directory).
-        #[arg(value_name = "PFAD")]
-        path: Option<PathBuf>,
-        /// Loopback port; use 0 to choose an available port.
-        #[arg(long, default_value_t = 8787)]
-        port: u16,
-        /// Initial hierarchy depth; 0 shows top-level packages.
-        #[arg(long, default_value_t = 0)]
-        depth: u32,
     },
     /// Dependency-structure matrix of the module view.
     Dsm {
@@ -532,7 +519,7 @@ pub(crate) enum Command {
         /// Merge `UEBERLEBENDER,AUFGENOMMENER` (repeatable).
         #[arg(long, value_name = "UEBERLEBENDER,AUFGENOMMENER")]
         merge: Vec<String>,
-        /// JSON file containing operations exported by the viewer with "Export SimOps".
+        /// JSON file of operations, as the desktop app's simulation "Export changes" writes it.
         /// Applied after operations supplied as command-line flags.
         #[arg(long, value_name = "DATEI")]
         ops: Option<PathBuf>,
@@ -745,7 +732,6 @@ impl Command {
             | Command::Doc { path, .. }
             | Command::Graph { path, .. }
             | Command::Diff { path, .. }
-            | Command::Serve { path, .. }
             | Command::Suggest { path, .. }
             | Command::Dsm { path, .. }
             | Command::Simulate { path, .. }
@@ -815,7 +801,6 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Mermaid => "mermaid",
         Format::Sarif => "sarif",
         Format::Dot => "dot",
-        Format::Html => "html",
         Format::Graphml => "graphml",
         Format::Gexf => "gexf",
         Format::Table => "table",

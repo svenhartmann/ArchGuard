@@ -13,15 +13,15 @@ and broker adapters are not implemented; their Compose entries represent the
 intended deployment environment. They appear under **Startup**, not as allegedly
 observed API calls.
 
-## Open in the ArchGuard viewer
+## Open in the ArchGuard desktop app
 
 Run all commands from the repository root:
 
 ```bash
-cargo run -p archguard-cli --locked -- serve examples/service-shop --port 8789
+archguard-desktop examples/service-shop
 ```
 
-Open **Services** at <http://127.0.0.1:8789/>. Analysis does not require running
+Open **Services**. Analysis does not require running
 containers. Three Compose files form three tree groups:
 
 | Stack | Local APIs | Infrastructure |
@@ -137,12 +137,12 @@ docker network rm archguard-service-shop-demo
 ```bash
 cargo test -p archguard-engine --locked --test service_shop_example
 node --test examples/service-shop/test/*.test.js
-node scripts/viewer/test_service_shop.js
+node scripts/integration/test_service_shop.js
 ```
 
 The Rust test checks the actual Compose topology, source evidence, separate
 cycles and local implementations. Node tests cover business flows and failures.
 The integration test starts ten local HTTP listeners, checks price, checkout and
-inventory, and verifies the same topology in the viewer. All three Compose files
+inventory, from the topology the analyzer reports. All three Compose files
 were validated with `docker compose config --quiet`; container builds and runtime
 were not executed.

@@ -7,30 +7,9 @@ pub(crate) fn patterns(
     root: &std::path::Path,
     loaded: &LoadedConfig,
     graph: &Graph,
-    report: &archguard_engine::core::Report,
 ) -> i32 {
-    if !matches!(cli.format, Format::Text | Format::Json | Format::Html) {
-        return usage("patterns supports text, json and html");
-    }
-    if cli.format == Format::Html {
-        return match crate::review_cmd::html(
-            graph,
-            loaded,
-            None,
-            loaded.config.modules.depth,
-            &Default::default(),
-            &report.findings,
-            Some("architecture"),
-            None,
-        ) {
-            Ok(html) => {
-                if !cli.quiet {
-                    emit(&html);
-                }
-                EXIT_OK
-            }
-            Err(e) => analysis_error(e),
-        };
+    if !matches!(cli.format, Format::Text | Format::Json) {
+        return usage("patterns supports text and json");
     }
     match archguard_engine::architecture_patterns(root, &loaded.config, graph) {
         Ok(report) => {

@@ -44,7 +44,7 @@ pub struct Arc42Inputs<'a> {
     pub config: &'a Config,
     pub calls: &'a CallAnalysis,
     pub services: &'a ServiceTopology,
-    /// The same normalized evidence models that the viewer displays.
+    /// The same normalized evidence models that the desktop and MCP read.
     pub insights: &'a Value,
     /// Logical compiler paths -> unambiguous physical project-relative paths.
     pub source_paths: &'a BTreeMap<String, String>,

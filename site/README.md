@@ -75,11 +75,11 @@ commands, including the selected-text fallback when clipboard access is unavaila
 ## Documentation guides
 
 `docs/index.html` is the documentation hub, with a client-side topic filter.
-Eleven English guides cover installation, tools and prerequisites per language, the viewer, CLI commands, configuration,
+Eleven English guides cover installation, tools and prerequisites per language, the desktop app, CLI commands, configuration,
 product purpose and scope, language prerequisites and metrics, service evidence, MCP prompts, CI and
 troubleshooting. The sidebar and all guides work without JavaScript.
 
-Maintain these pages alongside the CLI and viewer. Verify commands against
+Maintain these pages alongside the CLI and desktop app. Verify commands against
 `archguard --help` and each command's `--help`; verify configuration examples
 against the engine schema. Keep missing measurements and inferred connections
 explicit rather than promising complete analysis. Never include machine-specific

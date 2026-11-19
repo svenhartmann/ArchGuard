@@ -60,14 +60,11 @@ target/release/archguard scan examples/checkouts/kafka --level file --format jso
   > .archguard/reports/kafka-world/scan.json
 python3 scripts/integration/test_kafka_example.py
 
-target/release/archguard graph examples/checkouts/kafka --format html \
-  > .archguard/reports/kafka-world/kafka.html
 python3 scripts/integration/test_kafka_mcp.py target/release/archguard
 ```
 
-Den HTML-Snapshot im Browser öffnen. Der URL-Zusatz
-`#world=org%2Fapache%2Fkafka` öffnet direkt die Pakete mit sichtbaren Zyklen;
-„Zurück“ führt zur vollständigen Übersicht einschließlich des zweiten Wurzelpakets.
+Den Checkout in der Desktop-App öffnen (`archguard-desktop examples/checkouts/kafka`);
+ihre World-Ansicht beginnt mit der Übersicht einschließlich des zweiten Wurzelpakets.
 Für die Klassenmessungen wird ein JDK 17+
 benötigt. Die zusätzliche JSON-Ausgabeprüfung läuft mit
 `python3 scripts/integration/test_java_json_memory.py`: über 100 MB Ausgabe werden mit 64 MiB

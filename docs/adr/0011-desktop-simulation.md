@@ -93,3 +93,9 @@ it through `archguard-engine`.
   against the web algorithm). Its scope holds the top-level nodes after
   the changes, since the desktop keeps no zoom level of its own; there is
   no description field yet (saved empty).
+- 2026-11-19: Web viewer removed (user decision). The desktop simulation
+  and its SimOp export, `archguard simulate --ops` and MCP `simulate`
+  remain; the scenario format and fingerprint stay as specified above.
+  The web viewer's multi-edge plan search (`cycle_planner.js`) is gone
+  without a port: `archguard suggest` and MCP `suggest_cuts` give
+  single-edge cuts, which `simulate` can combine.

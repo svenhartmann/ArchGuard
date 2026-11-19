@@ -1,4 +1,4 @@
-//! `archguard-desktop`: native viewer with the web viewer's layout.
+//! `archguard-desktop`: the native desktop app.
 //!
 //! Usage: `archguard-desktop [PROJECT_DIR …]`. Each directory opens as a
 //! document tab; its analysis runs on a worker thread with the same cached
@@ -91,9 +91,7 @@ fn main() -> Result<(), slint::PlatformError> {
     shell_ui::start(&ui, args);
     let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer
 
-    let result = ui.run();
-    web::shutdown();
-    result
+    ui.run()
 }
 
 /// macOS ignores window icons; without an app bundle the Dock shows the

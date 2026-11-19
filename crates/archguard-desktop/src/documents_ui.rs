@@ -25,7 +25,7 @@ use crate::tab_support::{self, Shared, Texts, Topology, model as vec_model};
 use crate::ui::{AppWindow, DocItem, RecentItem, SubProjectItem};
 use crate::{
     architecture_ui, calls_ui, file_ui, instances, matrix_ui, quality_ui, runtime_ui, security_ui,
-    services_ui, start_ui, web,
+    services_ui, start_ui,
 };
 
 /// Register the callbacks of the document strip and of every tab.
@@ -47,7 +47,6 @@ pub fn wire(ui: &AppWindow) {
     ui.on_open_sub_project(with_ui(ui, |ui, i: i32| open_sub_project(ui, index(i))));
     let add = with_ui(ui, |ui, ()| pick_folder(ui));
     ui.on_add_doc(move || add(()));
-    ui.on_open_web(with_ui(ui, |ui, tab: SharedString| open_web(ui, &tab)));
     let strip = with_ui(ui, |ui, ()| push_strip(ui));
     documents::on_dirty_changed(move || strip(()));
     // The window opens without waiting for rust-analyzer. Once its run for
@@ -164,10 +163,8 @@ pub fn close(ui: &AppWindow, index: Option<usize>) {
     if docs.is_empty() {
         return;
     }
-    let roots: Vec<PathBuf> = docs.iter().map(|d| d.root.clone()).collect();
     // Drop the documents' state before the window shows the next one.
     drop(docs);
-    std::thread::spawn(move || roots.iter().for_each(|r| web::stop(r)));
     record_session();
     refresh(ui);
 }
@@ -362,7 +359,6 @@ fn push_strip(ui: &AppWindow) {
 pub fn refresh(ui: &AppWindow) {
     push_strip(ui);
     ui.set_projects_open(false);
-    ui.set_web_status(SharedString::new());
     let doc = with_store(|s| {
         s.active().map(|d| {
             let projects: Vec<SubProject> = d.projects.clone();
@@ -414,26 +410,6 @@ fn show_tabs(ui: &AppWindow, data: &Loaded) {
     panes_ui::sync(ui);
     graph_ui::show(ui);
     ui.invoke_fit_views();
-}
-
-fn open_web(ui: &AppWindow, tab: &str) {
-    let Some(root) = with_store(|s| s.active().map(|d| d.root.clone())) else {
-        return;
-    };
-    ui.set_web_status(SharedString::from("… archguard serve"));
-    let (w, tab, doc) = (ui.as_weak(), tab.to_string(), documents::active_id());
-    std::thread::spawn(move || {
-        let msg = match web::open(&root, &tab) {
-            Ok(url) => url,
-            Err(e) => format!("archguard serve: {e}"),
-        };
-        let _ = slint::invoke_from_event_loop(move || {
-            // Not for a document the user switched to meanwhile.
-            if let Some(ui) = w.upgrade().filter(|_| documents::active_id() == doc) {
-                ui.set_web_status(msg.into());
-            }
-        });
-    });
 }
 
 #[cfg(test)]

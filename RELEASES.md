@@ -23,8 +23,8 @@ the [signing secrets](#signing-secrets) are set.
 Only `v*` tags and manual runs build all variants; pushes to `main` and pull
 requests run CI and Security only, because the macOS and Windows runners are
 slow and expensive.
-Every native binary must pass its version/help, real dependency-analysis and
-HTML-export smoke test. Packaging includes the binary, README, this guide,
+Every native binary must pass its version/help, real dependency-analysis,
+graph-JSON and terminal-diagram smoke test. Packaging includes the binary, README, this guide,
 project licenses, Cargo.lock and `release-info.json` (version, target, commit,
 features and binary SHA-256). Each archive has its own SHA-256 file.
 
@@ -69,9 +69,10 @@ remove the draft first if you need to regenerate it.
 
 Choose your OS and CPU, verify the archive against `SHA256SUMS`, and extract it.
 Run `archguard --version` (`archguard.exe --version` on Windows), then
-`archguard serve /path/to/project --port 8787`. The viewer is embedded. External
-compiler and scanner requirements still depend on the analyzed language and KPI;
-see the viewer's help and `archguard doctor`.
+`archguard check /path/to/project` and `archguard diagram /path/to/project`;
+the desktop app is a separate download. External compiler and scanner
+requirements still depend on the analyzed language and KPI; see
+`archguard doctor`.
 
 SHA-256 checksums verify consistency with the downloaded manifest; they are not
 a publisher signature. A successful malware scan is not a guarantee of safety.

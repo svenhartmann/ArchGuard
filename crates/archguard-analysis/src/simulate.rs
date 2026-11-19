@@ -6,8 +6,8 @@
 //! # The SimOp JSON contract (frozen)
 //!
 //! The ops are the universal format consumed by the CLI
-//! `archguard simulate --ops` (T40), produced by the HTML viewer's
-//! drag & drop export (T39) and exchanged with agents over MCP `simulate`.
+//! `archguard simulate --ops` (T40), produced by the desktop
+//! simulation's export and exchanged with agents over MCP `simulate`.
 //! The representation is serde's default *externally tagged* enum with
 //! `#[serde(rename_all = "snake_case")]`; a `Vec<SimOp>` therefore round
 //! trips as a JSON array of single-key objects:
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn sim_op_json_contract_is_pinned() {
         // The frozen wire format (Kap. 7): externally tagged, snake_case.
-        // T39 (HTML viewer) and T40 (CLI --ops) produce/consume exactly
+        // The desktop export and T40 (CLI --ops) produce/consume exactly
         // this; any change here breaks all three consumers.
         let ops = vec![
             SimOp::CutEdge {
@@ -821,7 +821,7 @@ mod tests {
         let cut = Cut::new([NodeId(1), NodeId(4)]);
 
         // The top suggested cut of the module-view cycle, as a consumer
-        // (CLI/MCP/viewer) would read it from the cycle finding.
+        // (CLI/MCP/desktop) would read it from the cycle finding.
         let view = aggregate(&g, &cut);
         let sccs = find_sccs(&view);
         assert_eq!(sccs.len(), 1);

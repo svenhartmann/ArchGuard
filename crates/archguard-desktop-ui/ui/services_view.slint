@@ -156,15 +156,10 @@ component Label inherits Text {
     vertical-alignment: center;
 }
 
-// Section of the web's Services tab that is not native yet.
-component WebOnly inherits Details {
-    callback open-web();
-    if root.open: HorizontalLayout {
-        alignment: start;
-        spacing: 10px;
-        Note { text: @tr("This section is not native yet. The web viewer shows it for the same project."); vertical-alignment: center; }
-        Button { compact: true; text: @tr("Open in web viewer"); icon: Icons.external; clicked => { root.open-web(); } }
-    }
+// A section that is not native yet: the CLI command that prints it.
+component CliOnly inherits Details {
+    in property <string> command;
+    if root.open: Note { text: @tr("This section is not native yet; `{}` prints it for the same project.", root.command); }
 }
 
 // Its controls flow into further rows when the view is too narrow for
@@ -285,7 +280,6 @@ component Toolbar inherits Rectangle {
 }
 
 export component ServicesView inherits Rectangle {
-    callback open-web();
     property <ServicesModel> m: ServicesData.model;
     property <bool> details-open;
     property <bool> evidence-open;
@@ -380,9 +374,9 @@ export component ServicesView inherits Rectangle {
                             Button { compact: true; text: @tr("Show more manifest projects"); clicked => { ServicesData.show-more-projects(); } }
                         }
                     }
-                    WebOnly { text: @tr("Project workspace"); open <=> root.workspace-open; open-web => { root.open-web(); } }
-                    WebOnly { text: @tr("Architecture pattern candidates"); open <=> root.patterns-open; open-web => { root.open-web(); } }
-                    WebOnly { text: @tr("API contracts and changes"); open <=> root.contracts-open; open-web => { root.open-web(); } }
+                    CliOnly { text: @tr("Project workspace"); command: "archguard workspace --sources"; open <=> root.workspace-open; }
+                    CliOnly { text: @tr("Architecture pattern candidates"); command: "archguard patterns"; open <=> root.patterns-open; }
+                    CliOnly { text: @tr("API contracts and changes"); command: "archguard contracts"; open <=> root.contracts-open; }
                     if m.diagnostics.length > 0: Details {
                         text: @tr("Diagnostics");
                         open <=> root.diagnostics-open;

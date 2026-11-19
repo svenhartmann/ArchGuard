@@ -100,8 +100,7 @@ export component AppWindow inherits Window {
         || (root.focused-view == "graph" && root.graph-panes[root.focused-pane].display == 0);
     // The panes' top edge in the window, for the PNG of a pane.
     out property <length> body-top: strip.height + header.height
-        + (root.notice != "" ? 32px : 0) + (UpdateNotice.kind != 0 ? 36px : 0)
-        + (root.web-status != "" ? 30px : 0);
+        + (root.notice != "" ? 32px : 0) + (UpdateNotice.kind != 0 ? 36px : 0);
     // The window's content height: below a menu bar Slint draws itself
     // (not the native one), so the PNG crop can add the bar.
     out property <length> content-height: self.height;
@@ -113,7 +112,6 @@ export component AppWindow inherits Window {
     in property <bool> loading: true;
     in property <string> status;
     in property <string> error;
-    in property <string> web-status;
 
     // Graph, Matrix and File views can be open several times: one entry
     // per pane with the data of the instance it shows (src/graph_ui.rs,
@@ -196,7 +194,6 @@ export component AppWindow inherits Window {
     // File instances: a dependency clicked (id, node); "Open in graph".
     callback file-select(int, int);
     callback show-in-graph(int);
-    callback open-web(string);
 
     init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
 
@@ -426,7 +423,7 @@ export component AppWindow inherits Window {
             // content, so no width -> content -> layout loop): level 0 all
             // labels, 1 icon-only buttons and the build-unit count, 2 also
             // without the project title (the document tab shows it) and
-            // with the web viewer, theme and About in a "more" menu. The
+            // with theme and About in a "more" menu. The
             // Graph's two toggles count in every view, so a button's label
             // does not change with the view.
             // The view bar at a tab padding, from its bold labels (not from
@@ -442,9 +439,9 @@ export component AppWindow inherits Window {
             // title, search and the buttons at the right.
             property <length> full: 28px + logo.preferred-width + self.bar(24px) + 3 * self.button + self.chip
                 + 3 * self.gap + min(title.preferred-width, 180px) + self.gap + self.chip-text
-                + 200px + m-web.min-width + self.gap + 2 * self.button;
+                + 200px + 2 * self.button;
             property <length> icons: 28px + logo.preferred-width + self.bar(24px) + 3 * self.button + self.chip
-                + 3 * self.gap + min(title.preferred-width, 180px) + self.gap + 160px + 3 * self.button;
+                + 3 * self.gap + min(title.preferred-width, 180px) + self.gap + 160px + 2 * self.button;
             // Level 2 (tabs padded less, gaps of 8px, split in the menu):
             // the window is never narrower.
             out property <length> tight: 28px + logo.preferred-width + self.bar(12px) + 3 * (Theme.control-h + 8px)
@@ -459,7 +456,6 @@ export component AppWindow inherits Window {
                 height: 0;
                 m-chip := Button { compact: true; icon: Icons.package; text: @tr("{0} build unit" | "{0} build units" % root.sub-projects.length, Fmt.int(root.sub-projects.length)); }
                 m-count := Button { compact: true; icon: Icons.package; text: Fmt.int(root.sub-projects.length); }
-                m-web := Button { text: @tr("Web viewer"); icon: Icons.external; }
                 m-labels := Text {
                     text: Views.label("start") + Views.label("architecture") + Views.label("graph") + Views.label("dsm") + Views.label("calls")
                         + Views.label("services") + Views.label("runtime") + Views.label("quality") + Views.label("security");
@@ -543,13 +539,6 @@ export component AppWindow inherits Window {
                     edited(t) => { root.search(t); root.show-explorer = true; }
                     accepted(t) => { if (root.hits.length > 0) { root.reveal-hit(root.hits[0].node); } }
                 }
-                if header.level < 2: Button {
-                    y: (parent.height - self.height) / 2;
-                    text: header.level == 0 ? m-web.text : "";
-                    tip: @tr("Open in web viewer");
-                    icon: Icons.external;
-                    clicked => { root.open-web(root.tab); }
-                }
                 // Explorer and details belong to the Graph view.
                 if root.focused-view == "graph": Button {
                     y: (parent.height - self.height) / 2;
@@ -590,10 +579,6 @@ export component AppWindow inherits Window {
                             activated => { root.split-right(); }
                         }
                         MenuItem {
-                            title: @tr("Open in web viewer");
-                            activated => { root.open-web(root.tab); }
-                        }
-                        MenuItem {
                             title: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                             activated => {
                                 root.set-dark(!Theme.dark);
@@ -628,18 +613,6 @@ export component AppWindow inherits Window {
         }
 
         if UpdateNotice.kind != 0: UpdateBar { }
-
-        if root.web-status != "": Rectangle {
-            height: 30px;
-            background: Theme.accent.with-alpha(0.12);
-            Text {
-                text: root.web-status;
-                color: Theme.text;
-                font-size: Theme.font-small;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
 
         // --------------------------------------------------------- body
         if !root.has-doc: EmptyStart {
@@ -743,30 +716,24 @@ export component AppWindow inherits Window {
 
                     if p.view == "start": StartView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("start"); }
                     }
                     if p.view == "architecture": ArchitectureView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("architecture"); }
                     }
                     if p.view == "calls": CallsView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("calls"); }
                     }
                     if p.view == "services": ServicesView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("services"); }
                     }
                     if p.view == "runtime": RuntimeView {
                         vertical-stretch: 1;
                     }
                     if p.view == "quality": QualityView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("quality"); }
                     }
                     if p.view == "security": SecurityView {
                         vertical-stretch: 1;
-                        open-web => { root.open-web("security"); }
                     }
                     if p.view == "settings": SettingsView {
                         vertical-stretch: 1;
@@ -791,7 +758,6 @@ export component AppWindow inherits Window {
                         open-row(r) => { root.open-row(p.id, r); }
                         open-node(n) => { root.open-node(p.id, n); }
                         reset-tree => { root.reset-tree(p.id); }
-                        open-web => { root.open-web("graph"); }
                         set-display(d) => { root.set-display(p.id, d); }
                         set-explorer-tab(t) => { root.set-explorer-tab(p.id, t); }
                         node-tab(kind, n, side) => { root.node-tab(kind, n, side); }

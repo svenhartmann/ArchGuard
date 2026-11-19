@@ -40,7 +40,6 @@ def main():
         assert after['latest']['operational']['runs']==6
         snapshots={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in (root/'src').rglob('*.java')}
         metrics=json.loads(run('metrics','--extended','--format','json'));(out/'synthetic.metrics.json').write_text(json.dumps(metrics,indent=2));(out/'synthetic.history.json').write_text(json.dumps(after,indent=2))
-        (out/'example.html').write_text(run('graph','--format','html'))
         proc=subprocess.Popen([str(binary),'mcp','--root',str(root)],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         sequence=0
         def rpc(method,params):

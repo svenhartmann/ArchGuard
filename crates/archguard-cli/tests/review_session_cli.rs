@@ -174,40 +174,23 @@ fn decisions_are_explicit_bound_to_evidence_and_do_not_disable_existing_gates() 
 }
 
 #[test]
-fn review_html_contains_the_shared_report_and_rejects_foreign_formats_before_writing() {
+fn saved_review_json_carries_the_report_and_foreign_formats_are_rejected_before_writing() {
     let root = project();
-    let output = run(
+    let data = value(run(
         root.path(),
-        &["--base", "HEAD", "--save", "--format", "html"],
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let html = String::from_utf8(output.stdout).unwrap();
-    let payload = html
-        .split("<script id=\"archguard-data\" type=\"application/json\">")
-        .nth(1)
-        .unwrap()
-        .split("</script>")
-        .next()
-        .unwrap();
-    let data: Value = serde_json::from_str(payload).unwrap();
-    assert_eq!(data["initialTab"], "assessment");
-    assert_eq!(data["insights"]["review_session"]["status"], "current");
-    assert_eq!(
-        issue(&data["insights"]["review_session"]["report"])["change"],
-        "new"
-    );
-    assert!(root.path().join(".archguard/reports/review.html").exists());
+        &["--base", "HEAD", "--save", "--format", "json"],
+    ));
+    assert_eq!(issue(&data)["change"], "new");
+    assert!(root.path().join(".archguard/review.json").exists());
     let previous = fs::read(root.path().join(".archguard/review.json")).unwrap();
-    assert_eq!(
-        run(root.path(), &["--save", "--format", "sarif"])
-            .status
-            .code(),
-        Some(2)
-    );
+    for format in ["sarif", "html"] {
+        assert_eq!(
+            run(root.path(), &["--save", "--format", format])
+                .status
+                .code(),
+            Some(2)
+        );
+    }
     assert_eq!(
         fs::read(root.path().join(".archguard/review.json")).unwrap(),
         previous

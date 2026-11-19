@@ -1,11 +1,8 @@
-//! Explicit review generation and recording; the viewer consumes the same report.
+//! Explicit review generation and recording; the desktop app reads the same report.
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
 use crate::project_files;
-use archguard_engine::{
-    core::ArchguardError,
-    report::{HtmlContext, to_html_with_context},
-};
+use archguard_engine::core::ArchguardError;
 use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
@@ -28,15 +25,15 @@ pub(crate) fn run(
     if out.is_some() {
         return usage("--out applies to --format pr-comment only");
     }
-    if !matches!(cli.format, Format::Text | Format::Json | Format::Html) {
-        return usage("review supports text, json, html and pr-comment");
+    if !matches!(cli.format, Format::Text | Format::Json) {
+        return usage("review supports text, json and pr-comment");
     }
     let result = || -> Result<(), ArchguardError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| ArchguardError::Analysis(e.to_string()))?
             .as_secs();
-        let (mut report, run) =
+        let (mut report, _) =
             archguard_engine::generate_review(root, cli.config.as_deref(), base, now)?;
         if let Some(path) = decisions {
             archguard_engine::import_review_decisions(root, &mut report, path, now)?;
@@ -45,24 +42,6 @@ pub(crate) fn run(
         // Render before persistence, so a renderer error cannot publish a record.
         let text = match cli.format {
             Format::Json => serde_json::to_string_pretty(&report).expect("review serializes"),
-            Format::Html => {
-                let insights = serde_json::json!({"review_session":{"status":"current","report":report,"diagnostics":[]}});
-                to_html_with_context(
-                    &run.graph,
-                    None,
-                    run.config.modules.depth,
-                    &crate::cycle_view::cyclic_edges(
-                        &run.graph,
-                        &run.report.findings.iter().collect::<Vec<_>>(),
-                    ),
-                    &run.report.findings,
-                    Some("assessment"),
-                    &HtmlContext {
-                        insights: Some(&insights),
-                        ..Default::default()
-                    },
-                )
-            }
             _ => {
                 let mut text = format!(
                     "Architecture review · {}\nRevision: {}\nOpen: {} · accepted risks: {} · evidence gaps: {}\n",
@@ -110,9 +89,6 @@ pub(crate) fn run(
         if save {
             project_files::ensure_ignore_rules(root)?;
             archguard_engine::save_review(root, &report)?;
-            if cli.format == Format::Html {
-                project_files::write_report(root, "review.html", &text)?;
-            }
         }
         if !cli.quiet {
             emit(&text);

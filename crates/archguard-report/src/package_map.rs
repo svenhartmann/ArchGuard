@@ -704,8 +704,7 @@ mod tests {
     }
 
     /// Level 1 of a monorepo: its top-level directories; below a service
-    /// the wrapper chain is skipped (the same case as
-    /// scripts/viewer/test_viewer_arc42_monorepo.js).
+    /// the wrapper chain is skipped.
     #[test]
     fn a_monorepo_shows_its_services_first() {
         let g = monorepo();

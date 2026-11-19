@@ -31,8 +31,8 @@ msgstr "Optional: mit einem Sollmodell vergleichen"
 msgid "Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph."
 msgstr "Definiere logische Komponenten und erlaubte Abhängigkeiten unter architecture.model in archguard.toml. Komponenten können mehrere Pakete umfassen; ihre Zuordnung wird am vollständigen Quell-Abhängigkeitsgraphen geprüft."
 
-msgid "Target architecture: the comparison with the declared model is not native yet."
-msgstr "Sollarchitektur: der Vergleich mit dem deklarierten Modell ist noch nicht nativ."
+msgid "Target architecture: the comparison with the declared model is not native yet; `archguard architecture` prints it."
+msgstr "Sollarchitektur: der Vergleich mit dem deklarierten Modell ist noch nicht nativ; `archguard architecture` gibt ihn aus."
 
 msgid "No entries recorded."
 msgstr "Nichts erfasst."

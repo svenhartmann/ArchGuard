@@ -587,23 +587,6 @@ fn graph_mermaid_and_json_formats_work() {
     assert!(!focused.contains("c_ts"), "depth 0 leaked: {focused}");
 }
 
-#[test]
-fn graph_html_format_emits_self_contained_page() {
-    let dir = fixture(&CYCLIC);
-    let out = archguard(&dir, &["graph", "--format", "html"]);
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    let page = stdout(&out);
-    assert!(page.starts_with("<!DOCTYPE html>"), "not a page: {page}");
-    assert!(
-        page.contains("https://cdn.jsdelivr.net/npm/force-graph@1.52.0/dist/force-graph.min.js"),
-        "pinned CDN script missing: {page}"
-    );
-    assert!(
-        page.contains(r#"type="application/json""#),
-        "JSON payload marker missing: {page}"
-    );
-}
-
 /// Recursively copy the checked-in fixture directory `fixtures/<name>`
 /// into a fresh tempdir, so repo-root fixtures stay pristine and config
 /// discovery cannot leak from the repository.
@@ -632,87 +615,24 @@ fn fixture_dir(name: &str) -> TempDir {
 }
 
 #[test]
-fn ts_xss_fixture_payloads_stay_literal_inert_text_in_the_html_viewer() {
+fn ts_xss_fixture_payloads_stay_literal_text_in_the_graph_json() {
     // F01 regression: `fixtures/ts-xss` carries HTML payloads inside
     // import comments (an <img onerror> probe and a </script> closer
-    // probe; the extractor keeps whole lines verbatim in `raw`). The
-    // viewer must show them as literal text — the payload text travels
-    // into the JSON block for the text-node tooltips — without ever
-    // breaking out of that block or materialising as an element or
-    // event handler. The behavioral half (force-graph receives text-only
-    // label ELEMENTS from nodeLabel/linkLabel) is verified by the
-    // headless DOM harness in scripts/viewer/test_viewer_state.js.
+    // probe); the extractor keeps whole lines verbatim in `raw`, and the
+    // JSON export carries them as plain strings.
     let dir = fixture_dir("ts-xss");
-    let out = archguard(&dir, &["graph", "--format", "html"]);
+    let out = archguard(&dir, &["graph", "--format", "json"]);
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    let page = stdout(&out);
-
-    const OPEN: &str = r#"<script id="archguard-data" type="application/json">"#;
-    let start = page.find(OPEN).expect("payload script") + OPEN.len();
-    let end = page[start..]
-        .find("</script>")
-        .expect("payload script must close");
-    let payload = &page[start..start + end];
-
-    // Untrusted source text survives verbatim INSIDE the payload block —
-    // this is the exact string the tooltips must display as literal text.
+    let text = stdout(&out);
+    let value: Value = serde_json::from_str(&text).expect("graph json is valid JSON");
+    assert!(value["edges"].is_array());
     assert!(
-        payload.contains("<img src=x onerror=alert(1)>"),
-        "payload must carry the literal import comment: {payload}"
-    );
-    // The script-closer probe is escaped at the embedding boundary and
-    // stayed inside the block (it did not terminate the script element).
-    assert!(
-        payload.contains(r"<\/script>"),
-        "the </script> probe must be escaped in place: {payload}"
-    );
-    // Exactly the two real scripts exist (payload, app). The optional network
-    // renderer loads dynamically; the probe must not create a third closer.
-    assert_eq!(
-        page.matches("</script>").count(),
-        2,
-        "script closers changed"
-    );
-    assert_eq!(
-        page.lines()
-            .filter(|line| line.starts_with("<script"))
-            .count(),
-        2,
-        "only the payload and application scripts may be embedded"
+        text.contains("<img src=x onerror=alert(1)>"),
+        "graph json must carry the literal import comment: {text}"
     );
     assert!(
-        !page.contains("<script src="),
-        "no parser-blocking CDN script"
-    );
-    // Outside the payload block the probe text is absent entirely, so no
-    // injected element or handler can exist. The trusted lazy loader does use
-    // script.onerror; that API name is not the untrusted fixture's handler.
-    let outside = format!(
-        "{}{}",
-        &page[..start - OPEN.len()],
-        &page[start + end + "</script>".len()..]
-    );
-    assert!(
-        !outside.contains("<img"),
-        "injected element outside payload"
-    );
-    assert!(
-        !outside.contains("onerror=alert(1)") && !outside.contains("alert(1)"),
-        "injected handler outside payload"
-    );
-    // Both label accessors hand force-graph the text-only element builder
-    // (tooltipEl → createTextNode), never raw HTML strings (innerHTML).
-    assert!(
-        page.contains(".nodeLabel(n => tooltipEl("),
-        "nodeLabel must build a text-only element"
-    );
-    assert!(
-        page.contains(".linkLabel(l => tooltipEl("),
-        "linkLabel must build a text-only element"
-    );
-    assert!(
-        page.contains("document.createTextNode(String(line))"),
-        "tooltip lines must go through text nodes"
+        text.contains("</script>"),
+        "the closer probe stays literal text: {text}"
     );
 }
 
@@ -730,8 +650,6 @@ fn graph_graphml_and_gexf_formats_emit_xml() {
     assert!(out.starts_with("<?xml"));
     assert!(out.contains("<gexf"));
     // The graph-only formats stay a usage error (exit 2) as global flags.
-    // (`html` moved out of this set with T40: it is a valid `cycles`
-    // format now — see cycles_format_html_opens_the_cycles_panel.)
     let bad = archguard(&dir, &["--format", "graphml", "cycles"]);
     assert_eq!(code(&bad), 2);
     let bad = archguard(&dir, &["--format", "graphml", "check"]);
@@ -1127,23 +1045,6 @@ fn trend_rejects_foreign_formats_with_usage_exit() {
         stderr(&out).contains("trend supports table and json"),
         "stderr: {}",
         stderr(&out)
-    );
-}
-
-#[test]
-fn cycles_format_html_opens_the_cycles_panel() {
-    let dir = fixture(&CYCLIC);
-    let out = archguard(&dir, &["cycles", "--format", "html"]);
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    let page = stdout(&out);
-    assert!(page.starts_with("<!DOCTYPE html>"), "not a page: {page}");
-    assert!(
-        page.contains("https://cdn.jsdelivr.net/npm/force-graph@1.52.0/dist/force-graph.min.js"),
-        "pinned CDN script missing"
-    );
-    assert!(
-        page.contains(r#""initialTab":"cycles""#),
-        "the payload must ask for the cycles tab"
     );
 }
 

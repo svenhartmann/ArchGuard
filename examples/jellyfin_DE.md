@@ -28,18 +28,16 @@ git -C examples/checkouts/jellyfin rev-parse HEAD
 mkdir -p examples/checkouts/jellyfin/.archguard
 cp -n examples/jellyfin.toml examples/checkouts/jellyfin/.archguard/archguard.toml
 
-cargo run -p archguard-cli --locked -- serve examples/checkouts/jellyfin \
-  --port 8790 --depth 1
+archguard-desktop examples/checkouts/jellyfin
 ```
 
-Die Commit-ID muss dem oben verlinkten Stand entsprechen. Der lokale Viewer
-läuft unter <http://127.0.0.1:8790/>; `Ctrl-C` beendet ihn. Er aktualisiert die
-Analyse bei Quelländerungen. Die anderen Beispiele können parallel laufen.
+Die Commit-ID muss dem oben verlinkten Stand entsprechen. Die anderen Beispiele
+können parallel geöffnet sein.
 
 Die [Konfigurationsvorlage](jellyfin.toml) wird beim Setup in den analysierten
 Checkout kopiert; `cp -n` erhält eine dort bereits vorhandene Config. Danach wird
 `.archguard/archguard.toml` automatisch geladen. Graph, effektive Config und
-eigenständiger HTML-Report liegen ebenfalls im Checkout unter `.archguard`, wie
+Berichte liegen ebenfalls im Checkout unter `.archguard`, wie
 im [Projektstandard](../README_DE.md#konfiguration-und-projektdaten) beschrieben.
 `--config examples/jellyfin.toml` bleibt als explizite Alternative verfügbar.
 
@@ -82,7 +80,9 @@ ist sie separat von der Offline-CI ausführbar. Der tatsächliche Viewer-Payload
 wurde zusätzlich mit dem vorhandenen DOM-/SVG-Testharness geprüft: Start-KPIs,
 100 gerichtete Pfeile, Namespace-Navigation und Auswahl. Keine Browser-Abnahme.
 
-## Einstieg im Viewer
+## Einstieg im Graphen
+
+> Aufgezeichnet im Browser-Web-Viewer, der am 2026-11-19 entfernt wurde. Die Desktop-App zeigt dieselben Belege in den Tabs Graph, Matrix und Calls (Bedienelemente können anders heißen); `archguard cycles` und `archguard calls` mit `--format json` geben sie aus.
 
 1. **Cycles → scc-3** zeigt `Jellyfin/MediaEncoding` und
    `MediaBrowser/Controller` als kleine Gruppe auf der Starttiefe.

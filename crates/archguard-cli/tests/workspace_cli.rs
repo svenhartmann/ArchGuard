@@ -27,7 +27,7 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 #[test]
-fn workspace_manifest_json_and_html_keep_declared_edges_and_do_not_write_project_state() {
+fn workspace_manifest_json_keeps_declared_edges_and_does_not_write_project_state() {
     let dir = fixture();
     let result = run(dir.path(), &["--format", "json"]);
     assert!(
@@ -42,14 +42,6 @@ fn workspace_manifest_json_and_html_keep_declared_edges_and_do_not_write_project
     assert_eq!(edges[0]["from"], "project:app/package.json");
     assert_eq!(edges[0]["to"], "project:lib/package.json");
     assert!(data["sources"].is_null() && data["impact"].is_null());
-    let page = run(dir.path(), &["--format", "html"]);
-    assert!(
-        page.status.success(),
-        "{}",
-        String::from_utf8_lossy(&page.stderr)
-    );
-    let page = String::from_utf8(page.stdout).unwrap();
-    assert!(page.contains("project:app/package.json") && page.contains("workspace"));
     assert!(!dir.path().join(".archguard").exists());
     assert!(!dir.path().join("app/.archguard").exists());
 }
@@ -59,6 +51,7 @@ fn workspace_rejects_inapplicable_options_before_analysis() {
     for args in [
         vec!["--target", "app"],
         vec!["--format", "sarif"],
+        vec!["--format", "html"],
         vec!["--config", "missing.toml"],
     ] {
         let result = run(dir.path(), &args);

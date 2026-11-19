@@ -11,7 +11,6 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from viewer_payload import payload_from_html
 
 
 def main():
@@ -33,13 +32,13 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8")
 
-        def run(command, *arguments, expected=0, as_json=True):
+        def run(command, *arguments, expected=0):
             process = subprocess.run(
-                [str(binary), command, str(root), *arguments, "--format", "json" if as_json else "html"],
+                [str(binary), command, str(root), *arguments, "--format", "json"],
                 capture_output=True, text=True, timeout=90, env=environment,
             )
             assert process.returncode == expected, (command, arguments, process.returncode, process.stderr, process.stdout[:1000])
-            return json.loads(process.stdout) if as_json else process.stdout
+            return json.loads(process.stdout)
 
         write("archguard.toml", "derive_layers=false\n[project]\nsource_roots=['src']\nlanguages=['py']\nexclude=[]\n[modules]\ndepth=1\n[rules]\ndeny_cycles='off'\n")
         with (root / "archguard.toml").open("a") as config:
@@ -134,40 +133,33 @@ def main():
         assert {"architecture", "tests", "mutations", "duplication"} <= categories, categories
         duplicate_finding = next(f for f in review["findings"] if f["category"] == "duplication")
         assert set(duplicate_finding["evidence"]["current_source_hashes"]) == {"pkg/b.py", "pkg/d.py"}
-        page = run("graph", as_json=False)
-        data = payload_from_html(page)
-        for key in ["cohesion", "quality_history", "test_evidence", "mutations", "duplicates", "contracts"]:
-            assert key in data["insights"], f"Missing actual HTML insight {key}"
-        insights = data["insights"]
-        assert any(row["node"] == "pkg" and row["split_candidate"] for row in insights["cohesion"]["packages"])
-        assert len(insights["quality_history"]["records"]) == 2
-        assert len(insights["test_evidence"]["tests"]) == 3
-        assert insights["mutations"]["summary"]["killed_percent"] == 50.0
-        assert len(insights["duplicates"]["groups"]) == 1
-        model = insights["architecture"]["observed"]["target_model"]
+        # The saved snapshots read back through their JSON commands.
+        assert any(row["node"] == "pkg" and row["split_candidate"] for row in run("cohesion")["packages"])
+        assert len(run("quality-history")["records"]) == 2
+        assert len(run("test-evidence")["report"]["tests"]) == 3
+        assert run("mutations")["summary"]["killed_percent"] == 50.0
+        assert len(run("duplicates")["groups"]) == 1
+        model = run("architecture")
         assert model["violating_dependencies"] == 0 and model["violating_interfaces"] == 1 and model["coupling_violations"] == 1, model
-        assert insights["review_session"]["status"] == "current", insights["review_session"]
-        assert insights["contracts"]["contracts"][0]["changes"][0]["operation"] == "GET /items"
-        assert 'data-tab="quality"' in page and 'id="contracts-panel"' in page
-        assert 'function renderEngineeringQuality(' in page and 'function renderApiContracts(' in page
-        measured = [method for method in data.get("calls", {}).get("methods", []) if method.get("complexity")]
+        assert (root / ".archguard/review.json").is_file(), "review --save records the review"
+        assert run("contracts")["contracts"][0]["changes"][0]["operation"] == "GET /items"
+        measured = [method for method in run("calls").get("methods", []) if method.get("complexity")]
         assert all(method.get("end_line", 0) >= method["line"] for method in measured)
         result = {
             "dataset": "Synthetic fixtures only; not measurements from a real application",
             "source_files": len(sources), "cohesion_groups": [len(group["files"]) for group in package["groups"]],
             "tests": len(tests["report"]["tests"]), "recommended_tests": len(tests["impact"]["selected"]), "unmapped_tests": tests["impact"]["unmapped_tests"],
             "killed_percent": mutations["summary"]["killed_percent"], "history_records": len(history["records"]), "history_delta": delta,
-            "contract_change": removed, "html_insights": ["cohesion", "quality_history", "test_evidence", "mutations", "duplicates", "contracts"],
+            "contract_change": removed, "snapshot_reads": ["cohesion", "quality_history", "test_evidence", "mutations", "duplicates", "contracts"],
             "duplicate_groups": len(duplicates["groups"]), "review_categories": sorted(categories),
-            "compiler_measured_methods": len(measured), "html_bytes": len(page.encode("utf-8")),
-            "checks": "Built CLI imports, saved-snapshot reads and actual embedded HTML payload; no browser layout/paint verification",
+            "compiler_measured_methods": len(measured),
+            "checks": "Built CLI imports and saved-snapshot reads through the JSON commands",
         }
         if args.out:
             output = args.out.resolve()
             output.mkdir(parents=True, exist_ok=True)
-            (output / "example.html").write_text(page, encoding="utf-8")
             (output / "verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-            # Preserve labeled, reproducible input files separately from the generated viewer.
+            # Preserve labeled, reproducible input files next to the verification result.
             for path, content in inputs.items():
                 destination = output / "synthetic-inputs" / path
                 destination.parent.mkdir(parents=True, exist_ok=True)

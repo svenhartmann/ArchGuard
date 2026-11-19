@@ -36,16 +36,9 @@ pub(crate) fn write_report(root: &Path, name: &str, text: &str) -> io::Result<Pa
     write_artifact(root, &Path::new("reports").join(name), text)
 }
 
-pub(crate) fn write_project_graph(
-    root: &Path,
-    graph: &Graph,
-    html: Option<&str>,
-) -> io::Result<()> {
+pub(crate) fn write_project_graph(root: &Path, graph: &Graph) -> io::Result<()> {
     let json = serde_json::to_string_pretty(graph)?;
     write_artifact(root, Path::new("graph.json"), &json)?;
-    if let Some(html) = html {
-        write_report(root, "graph.html", html)?;
-    }
     Ok(())
 }
 

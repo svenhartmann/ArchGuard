@@ -2,7 +2,7 @@
 
 [Deutsch](README_DE.md)
 
-ArchGuard analyzes software dependencies from source code and project configuration. It provides a Rust CLI, a local browser viewer, and an MCP server for coding agents. Start without a configuration file; add explicit rules when you want findings to become CI gates.
+ArchGuard analyzes software dependencies from source code and project configuration. It provides a Rust CLI, a native desktop app, and an MCP server for coding agents. Start without a configuration file; add explicit rules when you want findings to become CI gates.
 
 ArchGuard is developed as a non-commercial open-source project. It is available under MIT OR Apache-2.0; both licenses also permit commercial use of the software.
 
@@ -15,7 +15,7 @@ ArchGuard is developed as a non-commercial open-source project. It is available 
 - Architecture documentation in arc42 form, declared target architecture, Git comparisons, and read-only refactoring simulations.
 - Imports for coverage, quality findings, test results, duplication, mutation testing, API contracts, and runtime measurements.
 
-The viewer keeps static observations, declared intent, imported measurements, and simulated changes distinct. It is available in English and German.
+The desktop app keeps static observations, declared intent, imported measurements, and simulated changes distinct. It is available in English and German.
 
 ## Install
 
@@ -47,19 +47,19 @@ The optional graph database requires CMake and a C++ toolchain:
 cargo install --path crates/archguard-cli --features db --locked
 ```
 
-Without `db`, the analysis and viewer remain available; database commands and Cypher queries are omitted. See [release packages and verification](RELEASES.md).
+Without `db`, the analysis and desktop app remain available; database commands and Cypher queries are omitted. See [release packages and verification](RELEASES.md).
 
 ## Start with a project
 
 ```sh
-archguard serve /path/to/project --port 8787
+archguard-desktop /path/to/project
 archguard check /path/to/project
-archguard graph /path/to/project --format html
+archguard diagram /path/to/project
 ```
 
-Open **http://127.0.0.1:8787/**. A detected multi-project repository starts with its project and service overview. Select a project to inspect its source scope. Use **Copy link** to retain the selected project and page across reloads or share them with a colleague running the same checkout locally.
+The desktop app opens the project; a detected multi-project repository starts with its project and service overview. Select a project to inspect its source scope. `archguard diagram` lists the arc42 diagrams and draws one in the terminal; the analysis commands print JSON with `--format json`.
 
-In World View, use the wheel to zoom, drag to pan, and right-drag or Shift-drag to rotate. Touch supports pinch zoom and two-finger rotation. Select an element for context; use Details or Enter to open its overlay, and Esc to close it. The viewer help explains the remaining controls.
+In the desktop's World view, use the wheel to zoom, drag to pan, and right-drag or Shift-drag to rotate; pinch zooms and a two-finger twist rotates. Select an element for context; Enter shows its details and Esc closes them. The view's help explains the remaining controls.
 
 Service discovery respects `.gitignore` and `project.exclude`. Nested `examples/`, `fixtures/`, agent worktrees and generated build/report directories are excluded; open a sample directory directly to analyze it. A Rust binary is an application project, not automatically a service: deployment evidence is required.
 
@@ -112,7 +112,7 @@ Ruby is measured by ArchGuard's own token scanner without a Ruby installation ([
 
 **Duplicates.** `archguard duplicates . --report cpd.xml` imports PMD CPD XML. Without PMD, `archguard duplicates . --scan` runs ArchGuard's built-in token scanner over the walked sources (`.gitignore` and `project.exclude` apply). It reports identical token runs of at least `--min-tokens` (default 100; each punctuation character is one token, so counts are finer than CPD's). `--normalize` also matches copies whose identifiers and literals differ. Groups are token matches, not semantic equivalence. Files over 1 MiB, a budget of 5 million tokens and a 120 s limit mark the result `partial` with a diagnostic. A scan replaces an imported CPD report only with `--replace`; the `producer` field says which one is stored.
 
-**KPI help** in the viewer lists setup, supported measurements, and import examples for each language. Coverage and runtime measurements require actual reports; missing data is not treated as zero.
+Coverage and runtime measurements require actual reports; missing data is not treated as zero.
 
 Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust declarations, so `archguard scan` and `archguard check` report them as not measured by default. Add `--measure-zones` (MCP: `review_kpis` with `measure_zones=true`) to run the slower call analysis and fill the zones row; see [Review metrics and their limits](ARCHITECTURE.md#review-metrics-and-their-limits).
 
@@ -120,7 +120,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 
 | Task | Command |
 | --- | --- |
-| Explore interactively | `archguard serve .` |
+| Explore interactively | `archguard-desktop .` |
 | Check architecture rules | `archguard check .` |
 | Inspect cycles | `archguard cycles . --format json` |
 | Inspect compiler evidence | `archguard calls . --format json` |
@@ -132,11 +132,11 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | List or draw the arc42 diagrams in the terminal | `archguard diagram .` or `archguard diagram . building-blocks` |
 | The arc42 document and its diagram catalogue as JSON | `archguard doc . --arc42 --format json` |
 | Export the service topology as a Structurizr (C4) workspace | `archguard graph . --format structurizr [--service orders]` |
-| Compare with a Git revision | `archguard review . --base main --format html` |
+| Compare with a Git revision | `archguard review . --base main` or `archguard diff . --to main` |
 | Inspect effective configuration | `archguard config . --format json` |
 | SBOM of third-party dependencies (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
 
-Use `archguard --help` and `archguard <command> --help` for the complete command reference. The viewer also includes CLI help and natural-language MCP examples.
+Use `archguard --help` and `archguard <command> --help` for the complete command reference.
 
 Arc42 generation updates explicitly marked evidence blocks. Your text outside those blocks remains unchanged. Generated architecture observations do not replace team decisions or establish a complete runtime architecture.
 
@@ -281,12 +281,11 @@ Use `archguard check .` as the architecture gate. Exit codes are `0` for success
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-node scripts/viewer/test_viewer_world.js
 ```
 
-The workspace includes the native desktop viewer `archguard-desktop` ([ADR 0002](docs/adr/0002-native-desktop-ui.md)). On Linux it builds against the system fontconfig, so install its headers first (Debian/Ubuntu: `libfontconfig1-dev`).
+The workspace includes the native desktop app `archguard-desktop` ([ADR 0002](docs/adr/0002-native-desktop-ui.md)). On Linux it builds against the system fontconfig, so install its headers first (Debian/Ubuntu: `libfontconfig1-dev`).
 
-The [`scripts/`](scripts/README.md) directory contains integration and browser tests, benchmarks, and release verification. These are development tools; normal CLI and viewer use does not require running them manually. Go integration tests use `ARCHGUARD_GO`; language-specific and browser tests may need additional installed tools.
+The [`scripts/`](scripts/README.md) directory contains integration tests, benchmarks, and release verification. These are development tools; normal CLI and desktop use does not require running them manually. Go integration tests use `ARCHGUARD_GO`; language-specific tests may need additional installed tools.
 
 The CI workflows also cover optional features, dependency advisories, secret scanning, native release checks, and malware scanning. Release bundles include verification reports and available scan logs; a clean scan is not a guarantee that software is harmless. See [SECURITY.md](SECURITY.md) and [RELEASES.md](RELEASES.md).
 

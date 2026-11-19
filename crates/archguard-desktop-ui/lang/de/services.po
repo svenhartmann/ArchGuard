@@ -37,8 +37,8 @@ msgstr "Architekturmuster-Kandidaten"
 msgid "API contracts and changes"
 msgstr "API-Verträge und Änderungen"
 
-msgid "This section is not native yet. The web viewer shows it for the same project."
-msgstr "Dieser Abschnitt ist noch nicht nativ. Der Web-Viewer zeigt ihn für dasselbe Projekt."
+msgid "This section is not native yet; `{}` prints it for the same project."
+msgstr "Dieser Abschnitt ist noch nicht nativ; `{}` gibt ihn für dasselbe Projekt aus."
 
 msgid "Diagnostics"
 msgstr "Diagnosehinweise"

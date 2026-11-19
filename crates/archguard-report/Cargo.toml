@@ -1,6 +1,6 @@
 [package]
 name = "archguard-report"
-description = "L1: formatters for the report types (json, text, mermaid, dot, html, graphml, sarif)."
+description = "L1: formatters for the report types (json, text, mermaid, dot, graphml, sarif)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
