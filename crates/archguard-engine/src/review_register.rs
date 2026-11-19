@@ -262,8 +262,7 @@ const IMPORT_SCHEMA: u32 = 2;
 /// Bound for decision-state reads; matches the review session.
 const MAX_BYTES: u64 = 32 * 1024 * 1024;
 
-/// The document `archguard review --decisions` imports and the viewer
-/// exports: register entries bound to findings of one review revision.
+/// The document `archguard review --decisions` imports: register entries bound to findings of one review revision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewDecisionImport {

@@ -51,7 +51,7 @@ struct Input {
 /// optional JDK backend reports an unavailable status instead of failing import
 /// analysis. Results are reused only while source *contents* and paths match.
 /// Thus changes inside method bodies invalidate calls even if imports do not.
-/// The single cached project bounds memory and serves the live viewer's polls.
+/// The single cached project bounds memory for long-running MCP sessions.
 #[tracing::instrument(skip_all)]
 pub fn analyze_java_calls(root: &Path, config: &Config) -> CallAnalysis {
     let scopes = match prepare_scopes(root, config) {
@@ -107,7 +107,7 @@ pub(crate) fn analyze_java_workspace_calls(
     )
 }
 
-/// Content fingerprint used by the live viewer before reusing a rendered page.
+/// Content fingerprint of the Java call inputs.
 /// Includes compiler settings, build descriptors and explicit reference files.
 pub fn java_calls_fingerprint(root: &Path, config: &Config) -> Result<[u8; 32], String> {
     prepare_scopes(root, config).map(|scopes| scopes_fingerprint(&scopes))

@@ -97,7 +97,7 @@ pub(crate) fn analyze_go_calls(root: &Path, config: &Config) -> CallAnalysis {
         };
     }
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    // Serialize helper runs: several viewer endpoints can request the same analysis.
+    // Serialize helper runs: several callers can request the same analysis.
     let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((old, result)) = &*guard
         && *old == fp

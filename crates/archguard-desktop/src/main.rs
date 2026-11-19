@@ -1,4 +1,4 @@
-//! `archguard-desktop`: native viewer with the web viewer's layout.
+//! `archguard-desktop`: the native desktop app.
 //!
 //! Usage: `archguard-desktop [PROJECT_DIR …]`. Each directory opens as a
 //! document tab; its analysis runs on a worker thread with the same cached

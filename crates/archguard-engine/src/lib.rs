@@ -31,14 +31,14 @@ pub use code_metrics::{
 pub use knowledge_metrics::{Contributor, KnowledgeMetric, KnowledgeReport, knowledge_metrics};
 pub use measurement_runs::{
     MeasurementGroup, MeasurementReport, MeasurementRun, import_measurement_runs,
-    measurement_runs_fingerprint, read_measurement_runs,
+    read_measurement_runs,
 };
 mod co_change;
 mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
 mod staged;
-pub use staged::{GitBranch, GitBranches, compare_branches, compare_staged, list_git_branches};
+pub use staged::{compare_branches, compare_staged};
 mod arc42_context;
 mod compiler_sandbox;
 mod compiler_trust;

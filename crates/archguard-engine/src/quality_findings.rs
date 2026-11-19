@@ -90,7 +90,7 @@ fn safe_help(value: &str) -> bool {
         && !value.chars().any(|c| c.is_control() || c == '\\')
 }
 
-/// A change to the saved report invalidates the live-viewer cache.
+/// Changes when the saved report changes.
 pub fn quality_findings_fingerprint(root: &Path) -> String {
     match crate::project_files::read_repo_file(root, Path::new(SNAPSHOT), MAX_BYTES) {
         Ok(bytes) => hash(&bytes),
