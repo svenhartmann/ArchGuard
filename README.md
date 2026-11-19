@@ -129,6 +129,8 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Inspect recorded runtime (requests, DB calls per request, slow and repeated queries, profiler samples per request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | Generate or update arc42 evidence blocks | `archguard doc . --arc42` |
 | Export arc42 as AsciiDoc or Word (for a Confluence import) | `archguard doc . --arc42 --format asciidoc` or `--format docx` |
+| List or draw the arc42 diagrams in the terminal | `archguard diagram .` or `archguard diagram . building-blocks` |
+| The arc42 document and its diagram catalogue as JSON | `archguard doc . --arc42 --format json` |
 | Export the service topology as a Structurizr (C4) workspace | `archguard graph . --format structurizr [--service orders]` |
 | Compare with a Git revision | `archguard review . --base main --format html` |
 | Inspect effective configuration | `archguard config . --format json` |
@@ -141,6 +143,58 @@ Arc42 generation updates explicitly marked evidence blocks. Your text outside th
 Without `--out`, `doc --arc42` uses the arc42 text the desktop app edits: the shallowest `arc42.md` or `arc42/` folder up to four folder levels deep (not in hidden or build folders such as `target`, `node_modules`). A folder holds one file per chapter, named by its number (`05-building-blocks.md`, `arc42-05.md`); each is checked and updated on its own. Only when the project has neither, `doc --arc42` creates `arc42.md` in the project folder. Diagram blocks that the desktop's "Insert into chapter" put into a chapter of your own text (`<!-- archguard:diagram:ID:start/end -->`) are refreshed like the evidence blocks and a hidden one's block is removed. A chapter of your own text gets only the diagrams you chose for it: a diagram listed in `[arc42] shown_diagrams` (the desktop's "In documentation" switch writes it) and missing from such a chapter is added at its end; the other diagrams are only offered in the desktop's "Diagrams" tab. Chapters with generated blocks contain every diagram not listed in `[arc42] hidden_diagrams`. `--check` names chapters these rules would change as outdated.
 
 `--format asciidoc` writes `arc42.adoc` and `--format docx` writes `arc42.docx` (or `--out`). Both convert the arc42 text `doc --arc42` finds (file or chapter folder) with its evidence and diagram blocks brought up to date, which they only read; without one they convert the generated document. `--chapter N` exports that chapter. AsciiDoc diagrams are `[mermaid]`/`[plantuml]` blocks for Asciidoctor Diagram. Word headings use the Heading 1–3 styles, so Confluence's "Import Word document" builds its table of contents from them; tables are Word tables, and diagrams stay Mermaid or PlantUML source, because the document has no rendered images. `graph --format structurizr` writes `.archguard/reports/graph.dsl`: one software system, the deployment services as containers, datastores outside the configuration as external systems, relations with protocol and configuration evidence, and with `--service` that service's packages as components. Mapping and limits: [ADR 0013](docs/adr/0013-structurizr-and-asciidoc-export.md). The desktop app offers the same arc42 files under File → Export, the MCP tool `architecture_document` returns AsciiDoc (`format=asciidoc`) and the workspace (`template=structurizr`).
+
+### Diagrams in the terminal
+
+`archguard diagram [PATH]` lists the arc42 diagram catalogue: every diagram ArchGuard derives, with its id, chapter, kind, whether the document shows it (`IN DOC`) and whether the project's arc42 text contains it (`IN TEXT`, by the rule the desktop uses). `archguard diagram [PATH] ID` draws one diagram; a single argument that is no folder is taken as the id. `--level PACKAGE` draws a package map level (`building-blocks@PACKAGE`, or `cycles --level PACKAGE`), the level the desktop's map opens, also when `[arc42] shown_diagrams` does not list it. Box graphs (context, building blocks, package maps, deployment, services, cycles, layers) are layered top-down from the using to the used side; a cycle is broken at one edge, which is drawn upwards, and `!` marks cyclic boxes and edges. Sequences show participants with lifelines, numbered messages, dashed returns, calls to oneself as a loop, events with a double head (`>>`) and errors with `✗`; the scenarios have no alt/loop frames, so none are drawn. Output uses Unicode box-drawing characters, `--ascii` plain ASCII; colour (cycles red, HTTP blue) only on a terminal without `NO_COLOR`; the width follows `COLUMNS` (default 100), wide rows wrap. `--format json` prints the diagram's data (elements and relations) or the whole catalogue instead. Example from `fixtures/py-layers`:
+
+```text
+$ archguard diagram fixtures/py-layers
+ID                                                                CHAPTER  KIND      IN DOC  IN TEXT  TITLE
+building-blocks                                                   5        packages  yes     yes      Package overview
+runtime-calls                                                     6        packages  yes     yes      Static calls between building blocks
+runtime-scenario-python-api-http-py-module-handle-4               6        sequence  yes     yes      Scenario · handle · api (static)
+...
+cycles                                                            11       packages  yes     yes      Cyclic package relations
+
+$ archguard diagram fixtures/py-layers building-blocks
+Package overview [building-blocks, chapter 5, packages]
+
+┌─────────┐
+│ api     │
+│ package │
+└────┬────┘
+     │
+     ▼ 2
+┌─────────┐
+│ ! app   │
+│ package │
+└──┬───┬──┘
+   │   ▲ !1
+!3 ▼   │
+┌──────┴───┐
+│ ! domain │
+│ package  │
+└──────────┘
+
+counts: source connections
+
+$ archguard diagram fixtures/py-layers runtime-scenario-python-api-http-py-module-handle-4
+Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-handle-4, chapter 6, sequence]
+
+      ┌─────┐           ┌─────┐         ┌────────┐
+      │ api │           │ app │         │ domain │
+      └──┬──┘           └──┬──┘         └────┬───┘
+         │ 1. estimate     │                 │
+         ├────────────────>│                 │
+         │                 │ 2. price_cents  │
+         │                 ├────────────────>│
+         │                 │<╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+         │<╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤                 │
+         │                 │                 │
+```
+
+`archguard doc --arc42 --format json [--chapter N]` prints the arc42 document as data and writes nothing: where the text lives (`target`: file or folder, exists), each chapter with number, title, the file that holds it (`null`: only generated) and its Markdown as the desktop reads it, and the catalogue as above, each diagram with `shown`, `chosen` (listed in `[arc42] shown_diagrams`), `in_text`, elements and relations. The MCP tool `architecture_document` returns the same catalogue with `template=arc42, format=catalogue`.
 
 ### Compare findings with an expert assessment
 
