@@ -135,6 +135,7 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Mit einer Git-Revision vergleichen | `archguard review . --base main` oder `archguard diff . --to main` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |
 | SBOM der Fremdabhängigkeiten (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
+| Teilbarer Bericht in einer Datei (Markdown mit Mermaid; Desktop: Datei → Exportieren → Bericht …) | `archguard report . --out report.md` |
 
 `archguard --help` und `archguard <command> --help` liefern die vollständige Befehlsreferenz.
 

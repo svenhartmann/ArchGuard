@@ -16,6 +16,9 @@ msgstr "arc42 als AsciiDoc"
 msgid "arc42 as Word (.docx)"
 msgstr "arc42 als Word (.docx)"
 
+msgid "Report…"
+msgstr "Bericht …"
+
 msgid "SVG diagram"
 msgstr "SVG-Diagramm"
 

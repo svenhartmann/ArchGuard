@@ -20,8 +20,8 @@ pub struct Simulation {
     /// off keeps the ops.
     pub on: bool,
     pub ops: Vec<SimOp>,
-    /// Proposed, waiting for confirmation.
-    pub pending: Option<SimOp>,
+    /// Proposed, waiting for confirmation: one op, or a repair plan's cuts.
+    pub pending: Vec<SimOp>,
     /// Why the ops do not apply to the current analysis.
     pub error: Option<String>,
     /// Before/after of the confirmed ops, from the last [`Self::apply`].
@@ -58,16 +58,17 @@ impl Simulation {
         Some(after)
     }
 
-    /// Confirm the pending op. `false` when there was none or it does not
-    /// apply to `full` after the confirmed ones (it is then dropped and
-    /// [`Self::error`] says why).
+    /// Confirm the pending ops, all or none. `false` when there were none
+    /// or they do not apply to `full` after the confirmed ones (they are
+    /// then dropped and [`Self::error`] says why).
     pub fn confirm(&mut self, full: &Graph) -> bool {
-        let Some(op) = self.pending.take() else {
+        if self.pending.is_empty() {
             return false;
-        };
-        self.ops.push(op);
+        }
+        let kept = self.ops.len();
+        self.ops.append(&mut self.pending);
         if let Err(e) = apply_ops(full, &self.ops) {
-            self.ops.pop();
+            self.ops.truncate(kept);
             self.error = Some(e.to_string());
             return false;
         }
@@ -213,9 +214,9 @@ pub(crate) mod tests {
     #[test]
     fn a_confirmed_cut_resolves_the_cycle() {
         let (g, mut s) = (graph(), Simulation::default());
-        s.pending = Some(cut("core", "app"));
+        s.pending = vec![cut("core", "app")];
         assert!(s.confirm(&g));
-        assert!(s.pending.is_none());
+        assert!(s.pending.is_empty());
         let after = s.apply(&g, &Config::default()).expect("simulated");
         assert_eq!(after.edges.len(), 1);
         let d = s.delta.as_ref().expect("delta");
@@ -226,10 +227,22 @@ pub(crate) mod tests {
     #[test]
     fn an_op_that_does_not_apply_is_dropped_with_the_reason() {
         let (g, mut s) = (graph(), Simulation::default());
-        s.pending = Some(cut("core", "nowhere"));
+        s.pending = vec![cut("core", "nowhere")];
         assert!(!s.confirm(&g));
         assert!(s.ops.is_empty());
         assert!(s.error.as_deref().is_some_and(|e| e.contains("nowhere")));
+    }
+
+    /// A repair plan's cuts are confirmed together or not at all.
+    #[test]
+    fn a_plan_is_confirmed_all_or_nothing() {
+        let (g, mut s) = (graph(), Simulation::default());
+        s.pending = vec![cut("core", "app"), cut("app", "nowhere")];
+        assert!(!s.confirm(&g));
+        assert!(s.ops.is_empty() && s.pending.is_empty());
+        s.pending = vec![cut("core", "app"), cut("app", "core")];
+        assert!(s.confirm(&g));
+        assert_eq!(s.ops.len(), 2);
     }
 
     /// Ops kept from an older analysis that no longer apply: the original

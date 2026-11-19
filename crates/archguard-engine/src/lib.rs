@@ -74,6 +74,7 @@ mod quality_gate;
 mod quality_goals;
 mod quality_history;
 mod reference_paths;
+mod review_decision_doc;
 mod review_metrics;
 mod review_register;
 mod review_session;
@@ -106,6 +107,7 @@ mod semantic_graph;
 mod service_flows;
 mod service_projects;
 mod services;
+mod share_report;
 mod snapshot;
 mod structurizr;
 mod target_architecture;
@@ -191,6 +193,7 @@ pub use quality_history::{
     record_quality_snapshot,
 };
 pub use reference_paths::source_reference_paths;
+pub use review_decision_doc::review_decision_document;
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
     LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, iso_from_unix, load_register, register_path,
@@ -212,6 +215,7 @@ pub use security::{
 };
 pub use semantic_calls::{analyze_calls, semantic_fingerprints};
 pub use services::analyze_services;
+pub use share_report::share_report;
 pub use snapshot::{
     Snapshot, SnapshotRow, latest_snapshot, read_snapshots, read_trend, snapshot_record,
     write_snapshot,

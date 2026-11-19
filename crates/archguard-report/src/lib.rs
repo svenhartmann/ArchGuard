@@ -31,6 +31,7 @@ mod mermaid;
 pub mod package_map;
 mod pr_comment;
 mod render;
+mod share_report;
 mod structurizr;
 mod text;
 
@@ -51,5 +52,6 @@ pub use graphml::to_graphml;
 pub use json::to_json;
 pub use mermaid::to_mermaid;
 pub use pr_comment::render_pr_comment;
+pub use share_report::{ShareReport, render_share_report};
 pub use structurizr::{C4Components, to_structurizr};
 pub use text::to_text;

@@ -28,6 +28,9 @@ mod layers;
 mod leaky;
 mod metrics;
 mod pc;
+mod repair_plans;
+#[cfg(test)]
+mod repair_plans_tests;
 mod review;
 mod rules;
 mod scc;
@@ -50,6 +53,10 @@ pub use layers::{check_layer_pairs, check_layers, layer_assignment};
 pub use leaky::leaky_encapsulation;
 pub use metrics::{compute_metrics, summarize};
 pub use pc::propagation_cost;
+pub use repair_plans::{
+    DEFAULT_MAX_EXAMINED, MAX_PLANS, RepairPlan, RepairPlans, RepairSearch, RepairStats,
+    plan_cycle_repairs,
+};
 pub use review::{analyze_review, match_review_entry_points};
 pub use rules::{check_dependency_rules, check_orphans, validate_dependency_rules};
 pub use scc::{Scc, find_sccs};

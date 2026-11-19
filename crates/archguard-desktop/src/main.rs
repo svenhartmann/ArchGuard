@@ -41,6 +41,8 @@ mod panes_ui;
 mod platform;
 mod quality_ui;
 mod rating;
+mod review_decisions;
+mod review_decisions_ui;
 mod runtime_ui;
 #[cfg(test)]
 mod security_check;
@@ -88,6 +90,7 @@ fn main() -> Result<(), slint::PlatformError> {
     fullscreen::wire(&ui);
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
+    review_decisions_ui::wire(&ui);
     shell_ui::start(&ui, args);
     let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer
 

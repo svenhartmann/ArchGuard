@@ -168,3 +168,40 @@ fn record_upserts_by_id() {
     assert_eq!(decisions.len(), 1, "upsert by id, no duplicates");
     assert_eq!(decisions[0]["note"], "second");
 }
+
+/// `review-decision export` writes the document `review --decisions`
+/// imports; an export older than the register is refused.
+#[test]
+fn export_round_trips_through_review_decisions() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("src")).expect("src");
+    for (file, source) in [("a.ts", "import './b';\n"), ("b.ts", "import './a';\n")] {
+        std::fs::write(dir.path().join("src").join(file), source).expect("source");
+    }
+    std::fs::write(dir.path().join("archguard.toml"), "derive_layers=false\n[project]\nsource_roots=['src']\nlanguages=['ts']\nexclude=[]\n[rules]\ndeny_cycles='file'\nmax_scc_size=100\n").expect("config");
+    let export = archguard(&dir, &["review-decision", "export", "--out", "d.json"]);
+    let stderr = String::from_utf8_lossy(&export.stderr);
+    assert!(export.status.success(), "{stderr}");
+    let doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("d.json")).expect("written"))
+            .expect("json");
+    assert_eq!(doc["schema_version"], 2);
+    assert_eq!(doc["review_revision"].as_str().map(str::len), Some(64));
+    let import = archguard(&dir, &["review", "--decisions", "d.json"]);
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(import.status.success(), "{stderr}");
+    let recorded = archguard(
+        &dir,
+        &[
+            "review-decision",
+            "record",
+            "--finding",
+            "x",
+            "--decision",
+            "fix",
+        ],
+    );
+    assert!(recorded.status.success());
+    let stale = archguard(&dir, &["review", "--decisions", "d.json"]);
+    assert_eq!(stale.status.code(), Some(3), "stale export refused");
+}

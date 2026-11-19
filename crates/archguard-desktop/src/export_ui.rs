@@ -103,9 +103,9 @@ pub fn run(ui: &AppWindow, format: &str, path: Option<PathBuf>) -> Option<PathBu
     let choice = Choice::parse(format)?;
     let layout = panes_ui::layout();
     let tab = layout.view(layout.focus)?.clone();
-    // One arc42 export at a time; a request meanwhile does nothing.
+    // One arc42 or report export at a time; a request meanwhile does nothing.
     let busy = match choice {
-        Choice::Arc42(_) => Some(Busy::begin()?),
+        Choice::Arc42(_) | Choice::Report => Some(Busy::begin()?),
         _ => None,
     };
     let prepared = match prepare(ui, &tab, layout.focus, choice) {
@@ -211,6 +211,7 @@ fn prepare(ui: &AppWindow, tab: &Tab, pane: usize, choice: Choice) -> Result<Pre
             )),
             DONE_ARC42,
         ),
+        Choice::Report => (Bytes::Later(report_job(active_analysis()?)), DONE_ARC42),
         Choice::Png => (Bytes::Now(image(ui, pane)?), DONE_IMAGE),
     };
     Ok(Prepared {
@@ -302,6 +303,16 @@ fn arc42_job(
     })
 }
 
+/// The shareable report of `analysis` (`archguard report`), made by a
+/// worker: it runs the arc42 analysis as well.
+fn report_job(analysis: Arc<Analysis>) -> Job {
+    Box::new(move || {
+        archguard_engine::share_report(&analysis.root, &analysis.run)
+            .map(String::into_bytes)
+            .map_err(|e| Failure::Error(e.to_string()))
+    })
+}
+
 /// Pane `pane` cropped from the rendered window.
 fn image(ui: &AppWindow, pane: usize) -> Result<Vec<u8>, Failure> {
     let window = ui.window();
@@ -381,6 +392,39 @@ mod tests {
         assert_ne!(worker, caller);
         let text = String::from_utf8(bytes.ok().expect("arc42")).unwrap();
         assert!(text.contains("arc42"), "{text}");
+    }
+
+    /// The report export is the CLI's `archguard report`, made off the UI
+    /// thread, without a window.
+    #[test]
+    fn the_report_export_is_the_cli_report() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/a.py"), "import b\n").unwrap();
+        std::fs::write(dir.path().join("src/b.py"), "import a\n").unwrap();
+        let root = dir.path().to_path_buf();
+        let loaded = archguard_engine::load_config(None, &root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(&root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let analysis = Arc::new(Analysis {
+            root,
+            run,
+            sources: Default::default(),
+        });
+        let job = report_job(analysis);
+        let bytes = std::thread::spawn(job).join().expect("worker");
+        let text = String::from_utf8(bytes.ok().expect("report")).unwrap();
+        assert!(text.starts_with("# ArchGuard report: "), "{text}");
+        assert!(text.contains("## Cycles and suggested cuts"), "{text}");
+        assert!(
+            text.contains("| Suggested cut | Score | Reason |"),
+            "a.py and b.py import each other: {text}"
+        );
+        assert_eq!(
+            choice::file_name("graph", Choice::Report),
+            "archguard-report.md"
+        );
     }
 
     /// A second arc42 export while one runs starts no second analysis.

@@ -709,7 +709,11 @@ geänderter Fingerprint öffnet den Befund wieder; `fix` erscheint als geplant,
 ersetzt die review-gebundenen Einträge und lässt mit `review-decision` oder MCP
 erfasste Einträge stehen. Ältere Versionen hielten Review-Entscheidungen in
 `.archguard/review-decisions.json`: Lesen führt diese Datei mit, der nächste
-Schreibvorgang übernimmt ihre Einträge in `reviews.json` und löscht sie.
+Schreibvorgang übernimmt ihre Einträge in `reviews.json` und löscht sie. Eine
+Engine-Funktion baut das Dokument (`review_decision_document`): `archguard
+review-decision export [--out DATEI]` gibt es für ein jetzt erzeugtes Review aus,
+und die Desktop-App (Ansicht → Review-Entscheidungen …) speichert es über denselben
+Import oder exportiert es.
 
 Der **PR-Kommentar** (`archguard-report/src/pr_comment.rs`) rendert fest
 definierte Abschnitte: `## Architektur-Review`, `### Zusammenfassung`

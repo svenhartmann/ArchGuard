@@ -17,6 +17,7 @@ import { SecurityView, SecurityData } from "security_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
+import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
@@ -37,6 +38,8 @@ export { Theme }
 export { Tips }
 // The update notice (src/update_ui.rs).
 export { UpdateNotice }
+// View → Review decisions… (src/review_decisions_ui.rs).
+export { ReviewDecisionsData, DecisionRow }
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -86,7 +89,7 @@ export component AppWindow inherits Window {
     callback prompt-answered(int);
 
     // Export (src/export_ui.rs): the focused pane's view as "markdown",
-    // "json", "arc42", "arc42-adoc", "arc42-docx", "svg" or "png"; a view tab's export (pane, tab,
+    // "json", "arc42", "arc42-adoc", "arc42-docx", "report", "svg" or "png"; a view tab's export (pane, tab,
     // format). Results come back as notices 3 to 9.
     callback export(string);
     callback export-tab(int, int, string);
@@ -296,6 +299,11 @@ export component AppWindow inherits Window {
                     activated => { root.export("arc42-docx"); }
                 }
                 MenuItem {
+                    title: @tr("Report…");
+                    enabled: root.ready;
+                    activated => { root.export("report"); }
+                }
+                MenuItem {
                     title: @tr("SVG diagram");
                     enabled: root.ready && root.export-svg;
                     activated => { root.export("svg"); }
@@ -355,6 +363,11 @@ export component AppWindow inherits Window {
                 title: @tr("Settings" => "Settings");
                 enabled: root.has-doc;
                 activated => { root.open-view-tab("settings"); }
+            }
+            MenuItem {
+                title: @tr("Review decisions…");
+                enabled: root.ready;
+                activated => { ReviewDecisionsData.show(); }
             }
             MenuSeparator { }
             // The web's fullscreen button; the platforms' own shortcuts
@@ -798,6 +811,8 @@ export component AppWindow inherits Window {
         what: root.prompt-what;
         answered(a) => { root.prompt-answered(a); }
     }
+
+    if ReviewDecisionsData.open: ReviewDecisionsDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.
     TipLayer { }

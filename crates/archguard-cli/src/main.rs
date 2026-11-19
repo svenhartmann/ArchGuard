@@ -17,9 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use archguard_engine::analysis::{Baseline, cycle_hash};
-use archguard_engine::core::{
-    Finding, FindingKind, Graph, ModuleMetrics, Report, Severity, Status,
-};
+use archguard_engine::core::{Finding, Graph, ModuleMetrics, Report, Severity, Status};
 use archguard_engine::report::{to_dot, to_gexf, to_graphml, to_json, to_mermaid, to_text};
 use archguard_engine::self_trace;
 use archguard_engine::{
@@ -32,6 +30,7 @@ use serde_json::{Value, json};
 #[macro_use]
 mod output;
 mod args;
+mod suggest_cmd;
 use args::{BaselineAction, Cli, Command, Format, format_label};
 use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
@@ -52,6 +51,7 @@ mod export_cmd;
 mod insights_cmd;
 mod project_files;
 mod quality_cmd;
+mod report_cmd;
 mod review_cmd;
 mod review_session_cmd;
 mod runtime_cmd;
@@ -176,25 +176,6 @@ fn run(cli: &Cli) -> i32 {
             }
             Err(error) => analysis_error(error),
         };
-    }
-    if let Command::Security {
-        cached,
-        offline,
-        cache_dir,
-        fail_on_found,
-        ..
-    } = &cli.command
-    {
-        return security_cmd::run(
-            cli,
-            &root,
-            *cached,
-            *fail_on_found,
-            &archguard_engine::SecurityScanOptions {
-                offline: *offline,
-                cache_dir: cache_dir.clone(),
-            },
-        );
     }
     if let Some(code) = standalone(cli, &root) {
         return code;
@@ -391,7 +372,7 @@ fn run(cli: &Cli) -> i32 {
             &loaded,
             &graph,
         ),
-        Command::Suggest { cycle, max, .. } => suggest(cli, cycle.as_deref(), *max, &report),
+        Command::Suggest { .. } => suggest_cmd::run(cli, &graph, &report),
         Command::Baseline { action } => baseline(cli, &root, &loaded, action, &report),
         Command::Config { .. } => config(cli, &report, &loaded),
         Command::Snapshot { tag, .. } => {
@@ -409,6 +390,7 @@ fn run(cli: &Cli) -> i32 {
         | Command::Contracts { .. }
         | Command::Security { .. }
         | Command::Sbom { .. }
+        | Command::Report { .. }
         | Command::Diff { .. }
         | Command::Doctor
         | Command::Update { .. }
@@ -455,7 +437,24 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::Security {
+            cached,
+            offline,
+            cache_dir,
+            fail_on_found,
+            ..
+        } => security_cmd::run(
+            cli,
+            root,
+            *cached,
+            *fail_on_found,
+            &archguard_engine::SecurityScanOptions {
+                offline: *offline,
+                cache_dir: cache_dir.clone(),
+            },
+        ),
         Command::Sbom { .. } => sbom_cmd::run(cli, root),
+        Command::Report { out, .. } => report_cmd::run(cli, root, out.as_deref()),
         Command::Workspace {
             sources, target, ..
         } => workspace_cmd::run(cli, root, *sources, target),
@@ -778,77 +777,6 @@ fn graph_export(
     EXIT_OK
 }
 
-/// `suggest`: the [`SuggestedCut`]s already carried by the cycle
-/// findings (Kap. 7). `--cycle <ID>` selects one finding (an unknown id
-/// is a usage error), `--max N` caps the cuts per cycle.
-fn suggest(cli: &Cli, cycle: Option<&str>, max: Option<usize>, report: &Report) -> i32 {
-    if matches!(
-        cli.format,
-        Format::Mermaid
-            | Format::Sarif
-            | Format::Dot
-            | Format::Graphml
-            | Format::Gexf
-            | Format::Table
-    ) {
-        return usage(format!(
-            "invalid value '{}' for '--format': suggest supports text and json",
-            cli.format_name()
-        ));
-    }
-    let findings: Vec<&Finding> = report
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == FindingKind::Cycle)
-        .filter(|finding| cycle.is_none_or(|id| finding.id == id))
-        .collect();
-    if let Some(id) = cycle
-        && findings.is_empty()
-    {
-        return usage(format!("unknown cycle '{id}'"));
-    }
-    if cli.quiet {
-        return EXIT_OK;
-    }
-    if cli.format == Format::Json {
-        let out: Vec<Value> = findings
-            .iter()
-            .map(|finding| {
-                let cuts: Vec<Value> = capped_cuts(finding, max)
-                    .iter()
-                    .map(|cut| {
-                        json!({
-                            "from": cut.from,
-                            "to": cut.to,
-                            "score": cut.score,
-                            "reason": cut.reason,
-                        })
-                    })
-                    .collect();
-                json!({ "id": finding.id, "cuts": cuts })
-            })
-            .collect();
-        emit(&to_pretty_json(&json!(out)));
-    } else {
-        for finding in &findings {
-            outln!("{}:", finding.id);
-            for cut in capped_cuts(finding, max) {
-                outln!(
-                    "  {} -> {} (score {:.2}): {}",
-                    cut.from,
-                    cut.to,
-                    cut.score,
-                    cut.reason
-                );
-            }
-        }
-        if findings.is_empty() {
-            outln!("no cycle findings");
-        }
-    }
-    EXIT_OK
-}
-
 /// `baseline write|diff` (Kap. 7 ratchet). The identity of a cycle is
 /// Kap. 7's [`cycle_hash`] over the sorted member names of its finding
 /// — the very hashes [`Baseline`] stores — so write and `check
@@ -1011,14 +939,6 @@ fn cycle_hashes(report: &Report) -> BTreeMap<String, String> {
     cycle_findings(report)
         .map(|finding| (finding.id.clone(), cycle_hash(&finding.nodes)))
         .collect()
-}
-
-/// The first `max` suggested cuts of a finding (all of them without a cap).
-fn capped_cuts(finding: &Finding, max: Option<usize>) -> &[archguard_engine::core::SuggestedCut] {
-    match max {
-        Some(max) => &finding.suggested_cuts[..finding.suggested_cuts.len().min(max)],
-        None => &finding.suggested_cuts,
-    }
 }
 
 /// Write `json` (plus trailing newline) to `path`, creating parent

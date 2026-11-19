@@ -24,7 +24,8 @@
 //! at a point ([`tip_hook`]) or type into the focused field ([`type_hook`]). Settings come from
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
 //! Export without the save dialog: [`export_hook`]. View → Settings:
-//! `crate::settings_view_ui::snapshot_hook`.
+//! `crate::settings_view_ui::snapshot_hook`. View → Review decisions…:
+//! `crate::review_decisions_ui::snapshot_hook`.
 
 use std::cell::Cell;
 
@@ -65,6 +66,7 @@ pub fn schedule(ui: &AppWindow) {
     sim_hook(ui);
     apply_shell_hooks(ui);
     export_hook(ui);
+    crate::review_decisions_ui::snapshot_hook(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
@@ -141,7 +143,7 @@ fn sim_hook(ui: &AppWindow) {
     for item in spec.split(',') {
         let (action, arg) = item.split_once(':').unwrap_or((item, ""));
         // `explorer:<tab>` switches the explorer (1: Cycles); `plan` takes
-        // `from>to`.
+        // `from>to`, a repair plan's cuts `a>b>c>d` (pairs, as its Preview).
         match action.trim() {
             "explorer" => ui.invoke_set_explorer_tab(id, arg.trim().parse().unwrap_or(0)),
             a => ui.invoke_graph_action(id, a.into(), arg.trim().replace('>', "\n").into()),

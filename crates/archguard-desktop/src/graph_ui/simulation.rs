@@ -4,9 +4,9 @@
 
 use std::path::Path;
 
-use archguard_engine::analysis::SimOp;
+use archguard_engine::analysis::{DEFAULT_MAX_EXAMINED, SimOp, plan_cycle_repairs};
 use archguard_engine::core::Graph;
-use slint::SharedString;
+use slint::{ModelRc, SharedString, VecModel};
 
 use crate::documents::{self, with_store};
 use crate::format::Locale;
@@ -16,20 +16,84 @@ use crate::state::GraphState;
 use crate::tree::Tree;
 use crate::tree::scenario::{Ask, Scenarios, Status};
 pub use crate::tree::simulation::Simulation;
-use crate::ui::{AppWindow, ScenarioRow, SimData, SimOpRow};
+use crate::ui::{AppWindow, CutItem, CyclePlans, PlanItem, ScenarioRow, SimData, SimOpRow};
 
 /// What Graph `g` proposes for `action` (`cut-out`/`cut-in` with the
-/// neighbour's row, `move` with the target module), from its selection.
-pub fn proposal(g: &GraphState, action: &str, arg: &str) -> Option<SimOp> {
-    let name = |n: usize| g.tree.nodes[n].name.clone();
-    // A cut from the cycle planner: `from` and `to` by name, no selection.
+/// neighbour's row, `move` with the target module), from its selection;
+/// empty for nothing.
+pub fn proposal(g: &GraphState, action: &str, arg: &str) -> Vec<SimOp> {
+    // Cuts from the cycle planner: `from\nto` pairs by name, no selection;
+    // a repair plan has several.
     if action == "plan" {
-        let (from, to) = arg.split_once('\n')?;
-        return Some(SimOp::CutEdge {
-            from: from.into(),
-            to: to.into(),
-        });
+        let names: Vec<&str> = arg.lines().collect();
+        return names
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[from, to]| SimOp::CutEdge {
+                from: (*from).into(),
+                to: (*to).into(),
+            })
+            .collect();
     }
+    single(g, action, arg).into_iter().collect()
+}
+
+/// The repair plans for the cycle group `members` of `full`, as the
+/// explorer shows them; a failure shows as their error.
+pub fn cycle_plans(full: &Graph, members: &[String]) -> CyclePlans {
+    let r = match plan_cycle_repairs(full, members, DEFAULT_MAX_EXAMINED) {
+        Ok(r) => r,
+        Err(e) => {
+            return CyclePlans {
+                error: e.to_string().into(),
+                complete: true,
+                ..Default::default()
+            };
+        }
+    };
+    let int = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+    let plans = r.plans.iter().map(|p| {
+        let pairs = p.ops.iter().filter_map(|op| match op {
+            SimOp::CutEdge { from, to } => Some((from.as_str(), to.as_str())),
+            _ => None,
+        });
+        let cuts = pairs
+            .clone()
+            .zip(&p.op_references)
+            .map(|((from, to), &refs)| CutItem {
+                from: from.into(),
+                to: to.into(),
+                refs: refs.min(i32::MAX as u64) as i32,
+                ..Default::default()
+            });
+        let arg: Vec<&str> = pairs.flat_map(|(from, to)| [from, to]).collect();
+        PlanItem {
+            cuts: ModelRc::new(VecModel::from(cuts.collect::<Vec<_>>())),
+            complete: p.complete,
+            files: int(p.affected_files.len()),
+            refs: p.reference_count.min(i32::MAX as u64) as i32,
+            refs_lower_bound: p.reference_lower_bound,
+            nodes_after: int(p.after.cyclic_nodes),
+            edges_after: int(p.after.cyclic_edges),
+            largest_after: int(p.after.largest_scc),
+            arg: arg.join("\n").into(),
+        }
+    });
+    CyclePlans {
+        plans: ModelRc::new(VecModel::from(plans.collect::<Vec<_>>())),
+        nodes_before: int(r.before.cyclic_nodes),
+        edges_before: int(r.before.cyclic_edges),
+        largest_before: int(r.before.largest_scc),
+        complete: r.search.complete,
+        examined: int(r.search.examined),
+        lower_bound: r.ranking_lower_bound,
+        error: SharedString::new(),
+    }
+}
+
+fn single(g: &GraphState, action: &str, arg: &str) -> Option<SimOp> {
+    let name = |n: usize| g.tree.nodes[n].name.clone();
     let selected = name(g.selected?);
     let other = || {
         let row = arg.parse::<usize>().ok()?;
@@ -55,7 +119,7 @@ pub fn proposal(g: &GraphState, action: &str, arg: &str) -> Option<SimOp> {
 /// Do `action` with `arg` (simulation.slint) on the active document's
 /// simulation; `proposed` is the Graph's [`proposal`] for it. `true` when
 /// the confirmed changes changed and the tree must be built again.
-pub fn act(ui: &AppWindow, action: &str, arg: &str, proposed: Option<SimOp>) -> bool {
+pub fn act(ui: &AppWindow, action: &str, arg: &str, proposed: Vec<SimOp>) -> bool {
     let Some(analysis) = with_store(|s| s.active()?.analysis.clone()) else {
         return false;
     };
@@ -73,7 +137,7 @@ pub fn act(ui: &AppWindow, action: &str, arg: &str, proposed: Option<SimOp>) -> 
     let changed = documents::with_active_state_or(Simulation::default, |s| match action {
         "toggle" => {
             s.on = !s.on;
-            s.pending = None;
+            s.pending.clear();
             false
         }
         "cut-out" | "cut-in" | "move" => {
@@ -88,7 +152,7 @@ pub fn act(ui: &AppWindow, action: &str, arg: &str, proposed: Option<SimOp>) -> 
         }
         "confirm" => s.confirm(full),
         "cancel" => {
-            s.pending = None;
+            s.pending.clear();
             false
         }
         "undo" => s.ops.pop().is_some(),
@@ -149,7 +213,7 @@ fn scenario(action: &str, arg: &str, root: &Path, full: &Graph) -> bool {
     documents::with_active_state_or(Simulation::default, |s| {
         s.ops = ops;
         s.on = true;
-        s.pending = None;
+        s.pending.clear();
     });
     true
 }
@@ -219,8 +283,7 @@ pub fn data(g: &GraphState, locale: Locale, old: &SimData) -> SimData {
         SimData {
             on: s.on,
             ops: sync_rows(&old.ops, s.ops.iter().map(op_row)),
-            has_pending: s.pending.is_some(),
-            pending: s.pending.as_ref().map(op_row).unwrap_or_default(),
+            pending: sync_rows(&old.pending, s.pending.iter().map(op_row)),
             error: s.error.clone().unwrap_or_default().into(),
             has_delta: d.is_some(),
             cycles_before: d.map_or(0, |d| d.scc_count_before as i32),
@@ -295,11 +358,16 @@ mod tests {
     #[test]
     fn proposals_come_from_the_selection() {
         let mut g = GraphState::new(Tree::from_graph(&graph()));
-        assert_eq!(proposal(&g, "cut-out", "1"), None, "nothing selected");
+        assert_eq!(proposal(&g, "cut-out", "1"), [], "nothing selected");
         assert_eq!(
             proposal(&g, "plan", "core\napp"),
-            Some(cut("core", "app")),
+            [cut("core", "app")],
             "the planner needs no selection"
+        );
+        assert_eq!(
+            proposal(&g, "plan", "core\napp\napp\ncore"),
+            [cut("core", "app"), cut("app", "core")],
+            "a repair plan proposes all its cuts"
         );
         g.select_row(Some(0));
         let names: Vec<&str> = g
@@ -309,18 +377,35 @@ mod tests {
             .map(|r| g.tree.nodes[r.node].name.as_str())
             .collect();
         assert_eq!(names, ["app", "core"]);
-        assert_eq!(proposal(&g, "cut-out", "1"), Some(cut("app", "core")));
-        assert_eq!(proposal(&g, "cut-in", "1"), Some(cut("core", "app")));
-        assert_eq!(proposal(&g, "cut-in", "9"), None, "no such row");
+        assert_eq!(proposal(&g, "cut-out", "1"), [cut("app", "core")]);
+        assert_eq!(proposal(&g, "cut-in", "1"), [cut("core", "app")]);
+        assert_eq!(proposal(&g, "cut-in", "9"), [], "no such row");
         assert_eq!(
             proposal(&g, "move", "core"),
-            Some(SimOp::MoveNode {
+            [SimOp::MoveNode {
                 node: "app".into(),
                 new_parent: "core".into()
-            })
+            }]
         );
-        assert_eq!(proposal(&g, "move", ""), None);
-        assert_eq!(proposal(&g, "plan", "core\napp"), Some(cut("core", "app")));
+        assert_eq!(proposal(&g, "move", ""), []);
+    }
+
+    /// Each plan's "Preview" argument is what [`proposal`] reads back.
+    #[test]
+    fn cycle_plans_preview_their_cuts() {
+        use slint::Model;
+        let g = GraphState::new(Tree::from_graph(&graph()));
+        let p = cycle_plans(&graph(), &["core".into(), "app".into()]);
+        assert!(p.complete && p.error.is_empty());
+        assert_eq!((p.nodes_before, p.edges_before), (2, 2));
+        assert_eq!(p.plans.row_count(), 2);
+        let first = p.plans.row_data(0).expect("a plan");
+        assert!(first.complete);
+        assert_eq!((first.files, first.refs, first.nodes_after), (1, 1, 0));
+        assert_eq!(first.cuts.row_count(), 1);
+        assert_eq!(proposal(&g, "plan", &first.arg), [cut("app", "core")]);
+        let unknown = cycle_plans(&graph(), &["nowhere".into()]);
+        assert!(unknown.error.contains("nowhere"));
     }
 
     #[test]
