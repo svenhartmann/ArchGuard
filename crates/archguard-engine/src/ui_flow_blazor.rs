@@ -3138,6 +3138,8 @@ mod usage_tests {
             file: "Api/Hooks.cs".into(),
             line: 1,
             source: "test".into(),
+            handler: None,
+            sends: Vec::new(),
         });
         let refused: Vec<_> = (ui_flow_findings(&flow).into_iter())
             .filter(|f| f.kind == UiFlowFindingKind::ShownButRefused)
