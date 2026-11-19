@@ -231,3 +231,25 @@ any match without a catch-all above every catch-all match;
 `path_match_score` still returns the equal literal segments. Consequence:
 an Angular link to an unknown path resolves to the `**` route, as in the
 running application, instead of staying unresolved.
+
+### 2026-11-19: jump and replay (decision 7, phase 5, web)
+
+`[views.run.<application>]` holds `base_url`, an optional `login_path` and
+per role a test user `users.<role>` with `login` and exactly one of
+`password_env` and `password_keychain`; a literal `password` is a
+configuration error. `ui-flow open SCREEN` prints base URL plus route, route
+parameters from `--param`, and opens it with the platform opener.
+`ui-flow replay SCREEN` takes the shortest path of resolved transitions from
+a `/` screen (breadth first, transitions whose condition or target access is
+`denied` skipped) and writes a Playwright test: sign in by filling the first
+password field and the user field (password from `process.env`; a keychain
+password reaches the script through `ARCHGUARD_REPLAY_PASSWORD`, which the
+CLI fills), then per step click the trigger by test id, else aria-label, else
+text, and wait for the next route's URL. A step without a trigger navigates
+directly and says so in the script; that is weaker evidence, and a direct step
+to a route with parameters fails with the missing parameter. Only `--run`
+executes `npx playwright test` and prints each step; a failed step is the
+finding "view and application disagree at step n". The script is written to
+the system temp directory unless `--out` says otherwise. Not yet done: the
+desktop buttons "Open in browser" and "Replay path", the desktop driver, and
+the generic sign-in fits forms with one password field only.
