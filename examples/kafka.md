@@ -57,14 +57,11 @@ target/release/archguard scan examples/checkouts/kafka --level file --format jso
   > .archguard/reports/kafka-world/scan.json
 python3 scripts/integration/test_kafka_example.py
 
-target/release/archguard graph examples/checkouts/kafka --format html \
-  > .archguard/reports/kafka-world/kafka.html
 python3 scripts/integration/test_kafka_mcp.py target/release/archguard
 ```
 
-Open the HTML snapshot in a browser. The URL fragment
-`#world=org%2Fapache%2Fkafka` opens packages with visible cycles directly;
-**Back** returns to the full overview, including the second root package.
+Open the checkout in the desktop app (`archguard-desktop examples/checkouts/kafka`);
+its World view starts at the overview, including the second root package.
 Class measurements require JDK 17+. The additional JSON output check,
 `python3 scripts/integration/test_java_json_memory.py`, streams over 100 MB of output with a
 64-MiB Java heap and verifies the complete output by hash. The production adapter

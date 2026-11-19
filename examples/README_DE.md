@@ -40,18 +40,15 @@ mkdir -p examples/checkouts/commons-collections/.archguard
 cp -n examples/commons-collections.toml \
   examples/checkouts/commons-collections/.archguard/archguard.toml
 
-cargo run -p archguard-cli --locked -- serve examples/checkouts/commons-collections \
-  --port 8788 --depth 4
+archguard-desktop examples/checkouts/commons-collections
 ```
 
 Die ausgegebene Commit-ID muss mit dem oben verlinkten Stand übereinstimmen.
-Viewer: <http://127.0.0.1:8788/>. Port 8787 kann parallel das kleine Beispiel zeigen.
-`Ctrl-C` beendet den Server.
 
 Die [Konfigurationsvorlage](commons-collections.toml) wird beim Setup in den
 analysierten Checkout kopiert; `cp -n` erhält eine dort bereits vorhandene Config.
 Danach wird `.archguard/archguard.toml` automatisch geladen. Graph, effektive
-Config und eigenständiger HTML-Report liegen ebenfalls im Checkout unter
+Config und Berichte liegen ebenfalls im Checkout unter
 `.archguard`, wie im [Projektstandard](../README_DE.md#konfiguration-und-projektdaten)
 beschrieben. `--config examples/commons-collections.toml` bleibt als explizite
 Alternative verfügbar.
@@ -85,7 +82,9 @@ DOM-/Canvas-Testdoubles wurden geprüft; keine visuelle Browserabnahme.
 Zusätzlich wurden alle 10.291 Aufrufbelege gegen Datei, Zeile, Spalte und
 Quelltext geprüft. Diese Calls-Daten sind unabhängig von den Importkanten.
 
-## Einstieg im Viewer
+## Einstieg im Graphen
+
+> Aufgezeichnet im Browser-Web-Viewer, der am 2026-11-19 entfernt wurde. Die Desktop-App zeigt dieselben Belege in den Tabs Graph, Matrix und Calls (Bedienelemente können anders heißen); `archguard cycles` und `archguard calls` mit `--format json` geben sie aus.
 
 1. **Cycles → scc-2** fokussiert den kleinen Zyklus zwischen `ComparatorUtils.java`
    und dem Paket `comparators`. Er eignet sich als überschaubarer Einstieg.
@@ -105,7 +104,7 @@ vorhandene Interfaces prüfen. `BagUtils → CollectionBag` zeigt einen
 Verschiebekandidaten in Richtung `bag`, unter anderem anhand von `BagUtils.java:44`.
 **Copy review plan** kopiert den Vorschlag; Quellcode wird nicht automatisch geändert.
 Voraussetzung für die Erzeugung dieser Daten ist ein JDK 17+ auf PATH; Grenzen
-der statischen Analyse stehen in der [Viewer-Anleitung](../README_DE.md).
+der statischen Analyse stehen in der [README](../README_DE.md).
 
 CLI-Abfragen für denselben Stand:
 
@@ -125,7 +124,7 @@ target/debug/archguard co-change examples/checkouts/commons-collections \
 Der Scan speichert seinen vollständigen Importgraph unter
 `examples/checkouts/commons-collections/.archguard/graph.json`.
 
-**Review priorities** öffnet im Viewer eine begründete Rangliste. Gelbe P1/P2-Marken
+**Review priorities** öffnete im Web-Viewer eine begründete Rangliste. Gelbe P1/P2-Marken
 zeigen Kandidaten, der Inspektor erklärt Kopplung, Zyklusbeitrag, transitive Nutzer
 und verfügbare Git-Dateiberührungen. Die ausklappbaren KPIs ergänzen CCD/NCCD,
 größte zyklische Gruppe und Quellenabdeckung. **Source & build indicators** zeigt
@@ -143,7 +142,7 @@ git -C examples/checkouts/commons-collections fetch --unshallow
 ```
 
 Die neue Auswertung benennt ihre tatsächliche Historien-/Quellabdeckung in JSON
-und im Viewer. Es werden keine neuen Messwerte für dieses Beispiel behauptet;
+und in der Desktop-App. Es werden keine neuen Messwerte für dieses Beispiel behauptet;
 der obige Umfang ist der separat dokumentierte Lauf. Score, Konfigurationsregeln
 und Grenzen sind in der [Review-Anleitung](../README_DE.md#häufige-arbeitsabläufe)
 beschrieben.

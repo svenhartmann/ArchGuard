@@ -332,3 +332,9 @@ What exists:
   the id and puts the block in, off removes the id and the block) and
   leaves `hidden_diagrams` alone; it is on while the diagram is expected or
   already in the text.
+- **2026-11-19:** Web viewer removed (user decision). The catalogue is
+  shown by the desktop app, drawn in the terminal by `archguard diagram`
+  and returned by `doc --arc42 --format json` and the MCP tool
+  `architecture_document` (`format=catalogue`). The web viewer's drawing
+  and ticks described above no longer exist; `hidden_diagrams` and
+  `shown_diagrams` keep their meaning.

@@ -27,17 +27,15 @@ git -C examples/checkouts/jellyfin rev-parse HEAD
 mkdir -p examples/checkouts/jellyfin/.archguard
 cp -n examples/jellyfin.toml examples/checkouts/jellyfin/.archguard/archguard.toml
 
-cargo run -p archguard-cli --locked -- serve examples/checkouts/jellyfin \
-  --port 8790 --depth 1
+archguard-desktop examples/checkouts/jellyfin
 ```
 
-The commit ID must match the linked revision above. The viewer runs at
-<http://127.0.0.1:8790/>; `Ctrl-C` stops it. Source changes update the analysis.
-Other examples can run alongside it.
+The commit ID must match the linked revision above. Other examples can be open
+alongside it.
 
 Setup copies the [configuration template](jellyfin.toml) into the analyzed
 checkout; `cp -n` preserves an existing config. `.archguard/archguard.toml` is then
-loaded automatically. The graph, effective config and standalone HTML report
+loaded automatically. The graph, effective config and reports
 also live under the checkout's `.archguard`, following the
 [project convention](../README.md#configuration-and-project-data).
 `--config examples/jellyfin.toml` remains an explicit alternative.
@@ -79,7 +77,9 @@ from offline CI. The actual viewer payload was also checked using the existing
 DOM/SVG harness: initial KPIs, 100 directed arrows, namespace navigation and
 selection. This was not a browser acceptance test.
 
-## Explore the viewer
+## Explore the graph
+
+> Recorded in the browser web viewer, removed on 2026-11-19. The desktop app shows the same evidence in its Graph, Matrix and Calls tabs (control names can differ); `archguard cycles` and `archguard calls` with `--format json` print it.
 
 1. **Cycles → scc-3** shows `Jellyfin/MediaEncoding` and `MediaBrowser/Controller` as a small group at the initial depth.
 2. Select a direction and read evidence in the inspector: `src/Jellyfin.MediaEncoding.Hls/Cache/CacheDecorator.cs:9` imports `MediaBrowser.Controller.Persistence`; in the other direction, `MediaBrowser.Controller/Library/IKeyframeManager.cs:5` imports `Jellyfin.MediaEncoding.Keyframes`.

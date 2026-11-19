@@ -13,15 +13,15 @@ lokal gesammelt. Datenbank-, Cache- und Broker-Adapter sind nicht implementiert;
 deren Compose-Einträge zeigen die vorgesehene Deployment-Umgebung. Sie sind
 über **Startup**, nicht als angeblich beobachtete API-Aufrufe sichtbar.
 
-## Im ArchGuard-Viewer öffnen
+## In der ArchGuard-Desktop-App öffnen
 
 Alle Befehle vom Repository-Root aus:
 
 ```bash
-cargo run -p archguard-cli --locked -- serve examples/service-shop --port 8789
+archguard-desktop examples/service-shop
 ```
 
-Unter <http://127.0.0.1:8789/> den Tab **Services** öffnen. Laufende Container sind
+Den Tab **Services** öffnen. Laufende Container sind
 für die Analyse nicht nötig. Drei Compose-Dateien bilden drei Baumgruppen:
 
 | Stack | Lokale APIs | Infrastruktur |
@@ -147,12 +147,12 @@ docker network rm archguard-service-shop-demo
 ```bash
 cargo test -p archguard-engine --locked --test service_shop_example
 node --test examples/service-shop/test/*.test.js
-node scripts/viewer/test_service_shop.js
+node scripts/integration/test_service_shop.js
 ```
 
 Der Rust-Test prüft die echte Compose-Topologie samt Quellenbelegen, getrennten
 Zyklen und lokalen Implementierungen. Die Node-Tests prüfen Geschäftsabläufe
 und Fehlerfälle. Der Integrationstest startet zehn lokale HTTP-Listener,
-prüft Preis, Bestellung und Bestand und prüft dieselbe Topologie im Viewer.
+prüft Preis, Bestellung und Bestand anhand der Topologie, die die Analyse meldet.
 Alle drei Compose-Dateien wurden mit `docker compose config --quiet` validiert;
 Container-Build und Container-Laufzeit wurden nicht ausgeführt.

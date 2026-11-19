@@ -67,3 +67,9 @@ analyzed".
   naming strategy; a custom naming strategy can produce different names.
 - Liquibase XML/YAML changelogs, Django models and Go are not read; their
   services show no tables, and the finding then makes no table claim.
+
+## History
+
+- **2026-11-19:** Web viewer removed (user decision). The tables are
+  shown by the desktop app and returned by `archguard services --format
+  json` and MCP `service_topology`.

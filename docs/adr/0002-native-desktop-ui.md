@@ -634,3 +634,13 @@ comparison of the native view against the web view on the same project
   `archguard-report` (`arc42_file.rs`), finding, reading and writing the
   files to `archguard-engine` (`arc42_file.rs`). The desktop keeps only
   the editor's state.
+- **2026-11-19:** Web viewer removed (user decision). Decision 4 no
+  longer holds: there is no "Open in web viewer" and the app starts no
+  `archguard serve`; `archguard serve`, `--format html` and the viewer's
+  JavaScript are gone. Replacements: the desktop app, and on the command
+  line `archguard diagram` (arc42 diagrams in the terminal), `doc --arc42
+  --format json` (chapters and diagram catalogue) and the JSON outputs of
+  the analysis commands. Sections not native yet name their CLI command
+  (`archguard workspace --sources`, `patterns`, `contracts`,
+  `architecture`). The ports above keep their history; their web
+  counterparts no longer exist.

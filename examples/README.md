@@ -33,24 +33,20 @@ mkdir -p examples/checkouts/commons-collections/.archguard
 cp -n examples/commons-collections.toml \
   examples/checkouts/commons-collections/.archguard/archguard.toml
 
-cargo run -p archguard-cli --locked -- serve examples/checkouts/commons-collections \
-  --port 8788 --depth 4
+archguard-desktop examples/checkouts/commons-collections
 ```
 
-The printed commit ID must match the linked revision. Viewer:
-<http://127.0.0.1:8788/>. Port 8787 can simultaneously show the small example.
-`Ctrl-C` stops the server.
+The printed commit ID must match the linked revision.
 
 Setup copies the [configuration template](commons-collections.toml) into the
 analyzed checkout; `cp -n` preserves existing config. Then
 `.archguard/archguard.toml` loads automatically. Graph, effective config and
-standalone HTML report also live under the checkout's `.archguard`, following
+reports also live under the checkout's `.archguard`, following
 the [project convention](../README.md#configuration-and-project-data).
 `--config examples/commons-collections.toml` remains an explicit alternative.
 
 The configuration excludes `src/test/**`. Depth 4 shows the children of
 `org/apache/commons/collections4`: subpackages and files directly in that package.
-The server needs explicit `--depth 4` because its default initial depth is 0.
 The graph initially shows 18 direct subpackages; **Show files** reveals 55 direct
 files. Analysis still includes all 73 nodes.
 
@@ -76,7 +72,9 @@ acceptance test was performed. All 10,291 call references were also checked
 against file, line, column and source text. These call data are independent of
 import edges.
 
-## Explore the viewer
+## Explore the graph
+
+> Recorded in the browser web viewer, removed on 2026-11-19. The desktop app shows the same evidence in its Graph, Matrix and Calls tabs (control names can differ); `archguard cycles` and `archguard calls` with `--format json` print it.
 
 1. **Cycles → scc-2** focuses the small cycle between `ComparatorUtils.java` and `comparators`, a manageable starting point.
 2. Select a directed edge and inspect import lines. One concrete file pair is `ComparatorUtils.java:26 → NullComparator` and `comparators/NullComparator.java:23 → ComparatorUtils`.
@@ -90,7 +88,7 @@ Check existing interfaces first. `BagUtils → CollectionBag` shows a candidate
 move toward `bag`, supported in part by `BagUtils.java:44`. **Copy review plan**
 copies the suggestion; source code is not changed automatically. Generating this
 data requires JDK 17+ on PATH; static-analysis limits are in the
-[viewer guide](../README.md).
+[README](../README.md).
 
 CLI queries for the same revision:
 
@@ -110,7 +108,7 @@ target/debug/archguard co-change examples/checkouts/commons-collections \
 The scan saves its full import graph to
 `examples/checkouts/commons-collections/.archguard/graph.json`.
 
-**Review priorities** opens an evidence-backed ranking. Yellow P1/P2 markers show
+**Review priorities** opened an evidence-backed ranking in the web viewer. Yellow P1/P2 markers show
 candidates; the inspector explains coupling, cycle contribution, transitive users
 and available Git file touches. Expandable KPIs add CCD/NCCD, largest cyclic group
 and source coverage. **Source & build indicators** includes Java abstractness
@@ -126,7 +124,7 @@ analysis, explicitly fetch history:
 git -C examples/checkouts/commons-collections fetch --unshallow
 ```
 
-The new run reports its actual history/source coverage in JSON and the viewer.
+The new run reports its actual history/source coverage in JSON and the desktop app.
 No new measurements are claimed here; the figures above belong to the separately
 documented run. Score, configuration rules and limits are in the
 [review guide](../README.md#common-workflows).

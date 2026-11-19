@@ -22,10 +22,10 @@ git clone https://github.com/open-telemetry/opentelemetry-demo.git \
   examples/checkouts/opentelemetry-demo
 git -C examples/checkouts/opentelemetry-demo checkout 33bd823107b1b38eaa88dd4ef625cc16d60475d4
 
-archguard serve examples/checkouts/opentelemetry-demo --port 8795
+archguard-desktop examples/checkouts/opentelemetry-demo
 ```
 
-Open <http://127.0.0.1:8795/> and choose **Services**. No configuration file is
+Choose **Services**. No configuration file is
 needed.
 
 ## Recorded scope
