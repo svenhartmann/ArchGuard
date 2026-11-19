@@ -112,22 +112,6 @@ fn record(
         DecisionArg::Defer => DecisionKind::Defer,
         DecisionArg::AcceptRisk => DecisionKind::AcceptRisk,
     };
-    if kind == DecisionKind::AcceptRisk && adr.is_none() {
-        // R30's gate, enforced here (R31): with the gate on,
-        // a risk without ADR is a usage error, not a record.
-        let loaded = archguard_engine::load_config(None, root)?;
-        if loaded.config.review.adr_required_on_accept_risk {
-            eprintln!(
-                "archguard: [review] adr_required_on_accept_risk is set — pass --adr docs/adr/NNN.md"
-            );
-            return Ok(EXIT_USAGE);
-        }
-        if !cli.quiet {
-            eprintln!(
-                "archguard: warning: accept-risk without --adr — set [review] adr_required_on_accept_risk to require one"
-            );
-        }
-    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -142,6 +126,16 @@ fn record(
         ts: iso_from_unix(now),
         ..Default::default()
     };
+    // R30's gate (the engine's one rule): a usage error, not a record.
+    if let Err(e) = archguard_engine::check_adr_gate(root, std::slice::from_ref(&decision)) {
+        eprintln!("archguard: {e} — pass --adr docs/adr/NNN.md");
+        return Ok(EXIT_USAGE);
+    }
+    if kind == DecisionKind::AcceptRisk && adr.is_none() && !cli.quiet {
+        eprintln!(
+            "archguard: warning: accept-risk without --adr — set [review] adr_required_on_accept_risk to require one"
+        );
+    }
     let id = decision.id.clone();
     upsert_decision(root, decision)?;
     if !cli.quiet {
