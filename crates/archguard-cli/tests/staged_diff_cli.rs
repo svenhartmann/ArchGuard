@@ -77,15 +77,14 @@ fn staged_diff_uses_complete_index_and_preserves_partial_staging() {
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
     assert_eq!(fs::read(root.join("b.ts")).unwrap(), worktree);
     assert_eq!(git(root, &["status", "--porcelain=v1", "-z"]), status);
-    let html = diff(root, "html");
+    let text = diff(root, "text");
     assert!(
-        html.status.success(),
+        text.status.success(),
         "{}",
-        String::from_utf8_lossy(&html.stderr)
+        String::from_utf8_lossy(&text.stderr)
     );
-    let html = String::from_utf8(html.stdout).unwrap();
-    assert!(html.contains("id=\"architecture-diff-data\""));
-    assert!(html.contains("Git-Index"));
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.starts_with("HEAD → index: +"), "{text}");
 }
 #[test]
 fn unchanged_index_and_staged_deletions_are_distinguished() {

@@ -138,11 +138,21 @@ fn branches_are_compared_without_checkout_or_index_input_under_target_policy() {
             .unwrap()
             .contains("unrelated")
     );
+    // Text is the default format: one summary line.
+    let text = Command::new(assert_cmd::cargo::cargo_bin!("archguard"))
+        .args(["diff", "--from", "main", "--to", "feature/architecture"])
+        .arg(root)
+        .output()
+        .unwrap();
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.starts_with("main → feature/architecture: +"), "{text}");
     let html = diff(root, "main", "feature/architecture", "html");
-    assert!(html.status.success());
-    let html = String::from_utf8(html.stdout).unwrap();
-    assert!(html.contains("id=\"architecture-diff-data\""));
-    assert!(!html.contains("</script><script>globalThis.INJECTED"));
+    assert_eq!(
+        html.status.code(),
+        Some(2),
+        "html is no diff format any more"
+    );
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
     assert_eq!(git(root, &["symbolic-ref", "HEAD"]), head);
     assert_eq!(git(root, &["status", "--porcelain=v1", "-z"]), status);

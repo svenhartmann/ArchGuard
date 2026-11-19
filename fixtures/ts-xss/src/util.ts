@@ -1,5 +1,5 @@
 // F01 regression fixture: the second payload probes the script-closer
-// escape — it must never terminate the JSON payload element either.
+// boundary — it must stay literal text in exports too.
 import { run } from "./app"; // </script><img src=x onerror=alert(1)>
 
 export function helper(input: string): string {

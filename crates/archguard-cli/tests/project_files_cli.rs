@@ -90,7 +90,6 @@ fn graph_exports_are_saved_without_changing_stdout_and_quiet_still_saves() {
         ("mermaid", "mmd"),
         ("graphml", "graphml"),
         ("gexf", "gexf"),
-        ("html", "html"),
     ] {
         let result = run(
             caller.path(),
@@ -167,15 +166,15 @@ fn explicit_scan_output_remains_an_override_and_effective_config_is_not_intent()
 #[test]
 fn generated_files_and_user_policy_survive_failed_analysis() {
     let dir = project();
-    success(&run(dir.path(), &["graph", "--format", "html"]));
-    let report = dir.path().join(".archguard/reports/graph.html");
+    success(&run(dir.path(), &["graph", "--format", "dot"]));
+    let report = dir.path().join(".archguard/reports/graph.dot");
     let before = fs::read(&report).expect("saved report");
     fs::write(
         dir.path().join(".archguard/archguard.toml"),
         "invalid = [\n",
     )
     .unwrap();
-    let result = run(dir.path(), &["graph", "--format", "html"]);
+    let result = run(dir.path(), &["graph", "--format", "dot"]);
     assert_eq!(result.status.code(), Some(3));
     assert_eq!(fs::read(report).unwrap(), before);
 }
@@ -185,7 +184,8 @@ fn cycle_diagrams_are_saved_even_when_quiet_and_keep_the_gate_exit_code() {
     let dir = project();
     fs::write(dir.path().join("b.ts"), "import './a';\n").unwrap();
     let caller = tempfile::tempdir().unwrap();
-    for (format, extension) in [("html", "html"), ("mermaid", "mmd")] {
+    {
+        let (format, extension) = ("mermaid", "mmd");
         let result = run(
             caller.path(),
             &[

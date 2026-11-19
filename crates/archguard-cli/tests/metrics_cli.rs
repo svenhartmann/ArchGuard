@@ -38,19 +38,4 @@ fn metrics_cli_imports_observations_and_exposes_code_and_git_coverage() {
             .unwrap()["cognitive"],
         1
     );
-    let html = Command::new(env!("CARGO_BIN_EXE_archguard"))
-        .args(["graph", root.path().to_str().unwrap(), "--format", "html"])
-        .output()
-        .unwrap();
-    assert!(
-        html.status.success(),
-        "{}",
-        String::from_utf8_lossy(&html.stderr)
-    );
-    let html = String::from_utf8(html.stdout).unwrap();
-    assert!(
-        html.contains("code_metrics")
-            && html.contains("measurement_runs")
-            && html.contains("knowledge_metrics")
-    );
 }

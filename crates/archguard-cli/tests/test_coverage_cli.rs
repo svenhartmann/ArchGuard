@@ -18,7 +18,7 @@ fn value(out: &std::process::Output) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()
 }
 #[test]
-fn coverage_import_survives_reload_reaches_html_and_excludes_stale_scores() {
+fn coverage_import_survives_reload_and_excludes_stale_scores() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("lib")).unwrap();
     fs::write(root.path().join("lib/a.ts"), "export const a=1;\n").unwrap();
@@ -49,23 +49,6 @@ fn coverage_import_survives_reload_reaches_html_and_excludes_stale_scores() {
     assert_eq!(rows[1]["score"], 0.0);
     let read = value(&run(root.path(), "coverage", &["--format", "json"]));
     assert_eq!(read, imported);
-    let html = run(root.path(), "graph", &["--format", "html"]);
-    assert!(
-        html.status.success(),
-        "{}",
-        String::from_utf8_lossy(&html.stderr)
-    );
-    let page = String::from_utf8(html.stdout).unwrap();
-    let payload = page
-        .split("<script id=\"archguard-data\" type=\"application/json\">")
-        .nth(1)
-        .unwrap()
-        .split("</script>")
-        .next()
-        .unwrap();
-    let data: Value = serde_json::from_str(payload).unwrap();
-    assert_eq!(data["insights"]["test_coverage"]["files"], read["files"]);
-    assert_eq!(data["insights"]["coverage_review"], read["review"]);
     fs::write(root.path().join("lib/a.ts"), "export const a=2;\n").unwrap();
     let stale = value(&run(root.path(), "coverage", &["--format", "json"]));
     assert_eq!(stale["status"], "stale");

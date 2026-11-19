@@ -150,33 +150,3 @@ fn asyncapi_contracts_keep_direction_and_unknown_addresses_without_inventing_ser
             .any(|d| d.as_str().unwrap().contains("reference"))
     );
 }
-
-#[test]
-fn standalone_pattern_report_contains_the_same_assessment_and_ui() {
-    let root = fixture(&[
-        ("web/a.ts", "import '../application/b';\n"),
-        ("application/b.ts", "import '../data/c';\n"),
-        ("data/c.ts", "export const c=1;\n"),
-    ]);
-    let report = run(root.path(), &[]);
-    let output = Command::new(assert_cmd::cargo::cargo_bin!("archguard"))
-        .arg("patterns")
-        .arg(root.path())
-        .args(["--format", "html"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let html = String::from_utf8(output.stdout).unwrap();
-    let data: Value = serde_json::from_str(
-        html.split("<script id=\"archguard-data\" type=\"application/json\">")
-            .nth(1)
-            .unwrap()
-            .split("</script>")
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(data["insights"]["patterns"], report);
-    assert_eq!(data["initialTab"], "architecture");
-    assert!(html.contains("function renderPatternAssessments("));
-}
