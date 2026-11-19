@@ -9,7 +9,8 @@
 //! (`ARCHGUARD_DESKTOP_HOVER`), switch display (`ARCHGUARD_DESKTOP_DISPLAY`,
 //! 0 tree, 1 network, 2 dependencies), open a matrix cell
 //! (`ARCHGUARD_DESKTOP_MCELL=<name>:<col>`), switch tab
-//! (`ARCHGUARD_DESKTOP_TAB`, in the focused pane) or open the Projects
+//! (`ARCHGUARD_DESKTOP_TAB`, in the focused pane), show an arc42 chapter's
+//! Diagrams tab (`ARCHGUARD_DESKTOP_ARC_TAB=diagrams`) or open the Projects
 //! menu (`ARCHGUARD_DESKTOP_MENU=projects`). Pane hooks: see
 //! [`apply_pane_hooks`]; keys on the Start World: [`start_keys`].
 //!
@@ -343,6 +344,9 @@ fn apply_view_hooks(ui: &AppWindow) {
     }
     if let Some(tab) = env::<String>("ARCHGUARD_DESKTOP_TAB") {
         ui.invoke_navigate(tab.into());
+    }
+    if env::<String>("ARCHGUARD_DESKTOP_ARC_TAB").as_deref() == Some("diagrams") {
+        ui.global::<crate::ui::ArchitectureData>().set_chapter_tab(1);
     }
     if env::<String>("ARCHGUARD_DESKTOP_MENU").as_deref() == Some("projects") {
         ui.set_projects_open(true);

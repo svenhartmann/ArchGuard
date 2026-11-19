@@ -18,7 +18,7 @@ slint::slint! {
     export component Page inherits Window {
         width: 380px;
         height: 3000px;
-        // The diagrams below the text open, so they are checked too.
+        // The diagrams on their tab open, so they are checked too.
         ArchitectureView { width: 100%; height: 100%; map-open: true; figures-open: true; }
     }
 }
@@ -200,12 +200,12 @@ fn right_border(buf: &[PremultipliedRgbaColor]) -> (usize, usize) {
     best
 }
 
-/// `ARCH_CHECK_PNG=<file>` saves the frame, to look at the layout.
-fn save(buf: &[PremultipliedRgbaColor]) {
+/// `ARCH_CHECK_PNG=<file>` saves the frame of tab `tab` as `<file>.<tab>.png`, to look at the layout.
+fn save(buf: &[PremultipliedRgbaColor], tab: usize) {
     let Ok(path) = std::env::var("ARCH_CHECK_PNG") else {
         return;
     };
-    let file = std::fs::File::create(path).expect("png file");
+    let file = std::fs::File::create(format!("{path}.{tab}.png")).expect("png file");
     let mut enc = png::Encoder::new(file, W as u32, H as u32);
     enc.set_color(png::ColorType::Rgba);
     let data: Vec<u8> = buf
@@ -217,14 +217,19 @@ fn save(buf: &[PremultipliedRgbaColor]) {
         .expect("png");
 }
 
-fn render(model: ArchitectureModel) -> Vec<PremultipliedRgbaColor> {
+/// The page with `model`, its chapter tabs (0 the text, 1 the diagrams)
+/// drawn one after the other.
+fn render(model: ArchitectureModel) -> [Vec<PremultipliedRgbaColor>; 2] {
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     window.set_size(PhysicalSize::new(W as u32, H as u32));
     slint::platform::set_platform(Box::new(Pixels(window.clone()))).expect("platform");
     let page = Page::new().expect("component");
     page.show().expect("shown");
     page.global::<ArchitectureData>().set_model(model);
-    frame(&window)
+    [0, 1].map(|tab| {
+        page.global::<ArchitectureData>().set_chapter_tab(tab);
+        frame(&window)
+    })
 }
 
 /// Asserts that nothing is drawn in the gap between the chapter panel's
@@ -238,18 +243,19 @@ fn encloses_its_blocks(buf: &[PremultipliedRgbaColor], bottom: usize) {
     assert_eq!(ink, None, "drawn below the panel's bottom at {bottom}");
 }
 
-/// The chapter panel ends at the pane's right edge, where its border is
-/// drawn top to bottom: the content did not widen it. Its blocks, which
-/// wrap into many lines there, stay inside it.
+/// On both chapter tabs the panel ends at the pane's right edge, where
+/// its border is drawn top to bottom: the content did not widen it. Its
+/// blocks and diagrams, which wrap into many lines there, stay inside it.
 #[test]
 fn the_page_fits_a_narrow_pane() {
-    let buf = render(model());
-    save(&buf);
-    fits(&buf);
-    let (top, bottom) = right_border(&buf);
-    assert!(
-        bottom - top > 1000,
-        "the panel's right border, rows {top}..{bottom}"
-    );
-    encloses_its_blocks(&buf, bottom);
+    for (tab, buf) in render(model()).iter().enumerate() {
+        save(buf, tab);
+        fits(buf);
+        let (top, bottom) = right_border(buf);
+        assert!(
+            bottom - top > 600,
+            "tab {tab}: the panel's right border, rows {top}..{bottom}"
+        );
+        encloses_its_blocks(buf, bottom);
+    }
 }

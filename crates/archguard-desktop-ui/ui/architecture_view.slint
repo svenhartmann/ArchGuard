@@ -4,7 +4,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { TextEdit } from "fields.slint";
 import { Theme } from "theme.slint";
-import { Button, Disclosure, HelpTip, PageTitle } from "widgets.slint";
+import { Button, Disclosure, HelpTip, PageTitle, Tab } from "widgets.slint";
 import { ArcBlock, ArcBlockView, Fit } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
@@ -60,6 +60,9 @@ export struct ArchitectureModel {
     // The open chapter has no generated block: the map can be taken into
     // its text.
     map-insertable: bool,
+    // The open chapter's diagrams that are not in its text, the package
+    // map included: the count on the Diagrams tab.
+    missing: int,
     // Why a tick could not be written to archguard.toml.
     figure-error: string,
 }
@@ -80,6 +83,9 @@ export global ArchitectureData {
     // A diagram as a diagram block at the caret of the open chapter.
     callback insert-diagram(string);
     callback open-catalogue();
+    // Below a chapter's title: 0 its text, 1 its diagrams not in the text.
+    // Kept across chapters for the window's session.
+    in-out property <int> chapter-tab;
 
     // The chapter editor. Visual: the formatted text to type in
     // (RichData); else its Markdown beside the chapter as the reader shows it.
@@ -367,9 +373,9 @@ component ChapterButton inherits Rectangle {
 
 export component ArchitectureView inherits Rectangle {
     callback open-web();
-    // The interactive package map below the chapter's text is open (the
-    // layout check opens it); the other diagrams there start open.
-    in-out property <bool> map-open;
+    // The interactive package map on the Diagrams tab is open; the other
+    // diagrams there start open.
+    in-out property <bool> map-open: true;
     in property <bool> figures-open: true;
     property <bool> about-open;
     background: Theme.bg;
@@ -378,6 +384,8 @@ export component ArchitectureView inherits Rectangle {
     min-width: 360px;
     // A split pane: chapter numbers only, download buttons below the title.
     property <bool> narrow: root.width < 900px;
+    // A chapter's text shows, not its Diagrams tab.
+    property <bool> on-text: ArchitectureData.chapter-tab == 0;
     preferred-width: 1480px;
     max-width: 100000px;
     preferred-height: 860px;
@@ -506,6 +514,7 @@ export component ArchitectureView inherits Rectangle {
                                     primary: true;
                                     text: @tr("Edit");
                                     clicked => {
+                                        ArchitectureData.chapter-tab = 0;
                                         RichData.reading = false;
                                         ArchitectureData.visual-changed(ArchitectureData.visual);
                                     }
@@ -537,6 +546,17 @@ export component ArchitectureView inherits Rectangle {
                                 Text { text: ArchitectureData.model.chapter-note; color: Theme.muted; font-size: Theme.font-small; wrap: word-wrap; }
                             }
                             Rectangle { height: 14px; }
+                            if !ArchitectureData.model.catalogue: HorizontalLayout {
+                                spacing: 2px;
+                                alignment: start;
+                                padding-bottom: 14px;
+                                Tab { text: @tr("Chapter"); active: root.on-text; clicked => { ArchitectureData.chapter-tab = 0; } }
+                                Tab {
+                                    text: @tr("Diagrams ({})", ArchitectureData.model.missing);
+                                    active: !root.on-text;
+                                    clicked => { ArchitectureData.chapter-tab = 1; }
+                                }
+                            }
                             if ArchitectureData.model.figure-error != "": Fit {
                                 Text {
                                     text: ArchitectureData.model.figure-error;
@@ -563,16 +583,24 @@ export component ArchitectureView inherits Rectangle {
                                     }
                                 }
                             }
-                            if ArchitectureData.model.editing: ChapterEditor { narrow: root.narrow; }
-                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue: VerticalLayout {
+                            // The draft lives in Rust and RichData, so the Diagrams tab
+                            // may drop the editor's elements.
+                            if ArchitectureData.model.editing && root.on-text: ChapterEditor { narrow: root.narrow; }
+                            if !ArchitectureData.model.editing && !ArchitectureData.model.catalogue && root.on-text: VerticalLayout {
                                 for b in ArchitectureData.model.blocks: ArcBlockView { block: b; }
                             }
-                            // The chapter's diagrams below its text, each opened on a click.
-                            if !ArchitectureData.model.catalogue && (ArchitectureData.model.map.kind >= 0 || ArchitectureData.model.map-id != "" || ArchitectureData.model.figures.length > 0): VerticalLayout {
-                                padding-top: 28px;
+                            // The chapter's diagrams that are not in its text, each opened on a click.
+                            if !ArchitectureData.model.catalogue && !root.on-text: VerticalLayout {
                                 spacing: 10px;
-                                Rectangle { height: 1px; background: Theme.border; }
-                                Text { text: @tr("Diagrams"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-strong; }
+                                // shortcut: a FigureView's overview strip reaches below its
+                                // preferred height; drop once architecture_figure.slint counts it.
+                                padding-bottom: 24px;
+                                if ArchitectureData.model.missing == 0: Text {
+                                    text: @tr("Every generated diagram of this chapter is in its text.");
+                                    color: Theme.muted;
+                                    font-size: Theme.font-body;
+                                    wrap: word-wrap;
+                                }
                                 // A hidden map is one line with its tick; a shown one has it in its header.
                                 if ArchitectureData.model.map-id != "" && !ArchitectureData.model.map-shown && !ArchitectureData.model.map-optional: HorizontalLayout {
                                     spacing: 12px;
@@ -619,9 +647,10 @@ export component ArchitectureView inherits Rectangle {
                                         plantuml(u) => { ArchitectureData.plantuml(u); }
                                     }
                                 }
-                                for f in ArchitectureData.model.figures: DiagramEntry { figure: f; compact: root.narrow; open: root.figures-open; }
+                                // `Fit`: a repeated entry's wrapped title counts all its lines.
+                                for f in ArchitectureData.model.figures: Fit { DiagramEntry { figure: f; compact: root.narrow; open: root.figures-open; } }
                             }
-                            if !ArchitectureData.model.catalogue: VerticalLayout {
+                            if !ArchitectureData.model.catalogue && root.on-text: VerticalLayout {
                             Rectangle { height: 24px; }
                             Rectangle { height: 1px; background: Theme.border; }
                             Rectangle { height: 10px; }

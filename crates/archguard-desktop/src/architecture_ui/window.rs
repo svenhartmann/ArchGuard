@@ -86,16 +86,8 @@ fn fill_figures(
     // it can take one over as text.
     let text = s.editor.chapter(doc, s.chapter);
     let has_block = text.contains(crate::arc42_file::MARKER);
-    // Diagram blocks of the chapter draw in its text, not above it.
-    let inserted: Vec<String> = crate::arc42_file::diagram_ranges(&text)
-        .into_iter()
-        .map(|(_, id)| id)
-        .collect();
-    let inserted = |id: &str| inserted.iter().any(|i| i == id);
-    // Shown diagrams whose section is in the text draw there too.
-    let in_text = |d: &archguard_engine::core::Diagram| {
-        d.shown && text.contains(&archguard_engine::report::diagram_section(d, s.format))
-    };
+    // Diagrams in the chapter's text draw there; the rule the save uses.
+    let in_text = |d: &archguard_engine::core::Diagram| crate::arc42_file::in_text(&text, d);
     let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
@@ -111,14 +103,16 @@ fn fill_figures(
             .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
             .into();
         m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
-        m.map_insertable = !has_block && entry.is_some() && !inserted(id);
+        let map_in_text = entry.is_some_and(in_text);
+        m.map_insertable = !has_block && entry.is_some() && !map_in_text;
+        m.missing = i32::from(!map_in_text);
     }
     let figures = doc
         .diagrams
         .iter()
         .filter(|d| {
             let drawn = Some(d.id.as_str()) == map || Some(d.id.as_str()) == open;
-            s.catalogue || (d.chapter == s.chapter && !drawn && !inserted(&d.id) && !in_text(d))
+            s.catalogue || (d.chapter == s.chapter && !drawn && !in_text(d))
         })
         .map(|d| {
             let chapter = if s.catalogue {
@@ -132,7 +126,11 @@ fn fill_figures(
                 ..figure::figure(d, s.format, chapter, texts)
             }
         });
-    m.figures = slint::ModelRc::new(slint::VecModel::from(figures.collect::<Vec<_>>()));
+    let figures = figures.collect::<Vec<_>>();
+    if !s.catalogue {
+        m.missing += figures.len() as i32;
+    }
+    m.figures = slint::ModelRc::new(slint::VecModel::from(figures));
 }
 
 /// What the desktop says around the engine's arc42 text: in chapter 10,
@@ -226,6 +224,45 @@ mod tests {
         assert_eq!(rows(&new.map.cards), rows(&fresh.map.cards));
         assert_eq!(rows(&new.map.lines), rows(&fresh.map.lines));
         assert_ne!(blocks(&new.blocks), chapter5, "chapter 11 shown");
+    }
+
+    /// Chapter 5 of a project's own arc42 text `chapter5`, open in the tab.
+    fn own_text(dir: &std::path::Path, chapter5: &str) -> ArchitectureModel {
+        let (a, _) = crate::documents::with_store(|s| s.open(dir));
+        std::fs::write(dir.join("arc42.md"), format!("## 5. Bausteine\n\n{chapter5}")).unwrap();
+        let mut s = fixture_state(Some(dir));
+        s.editor = super::super::edit::Editor::new(a, dir).with_format(s.format);
+        s.chapter = 5;
+        built(&s)
+    }
+
+    /// The Diagrams tab counts the chapter's generated diagrams that are
+    /// not in its text: the package map too while its block is missing.
+    #[test]
+    fn the_diagrams_tab_counts_what_the_text_lacks() {
+        let s = fixture_state(None);
+        let doc = s.doc.as_ref().expect("document");
+        let five: Vec<_> = doc.diagrams.iter().filter(|d| d.chapter == 5).collect();
+        let map = five
+            .iter()
+            .find(|d| d.id == "building-blocks")
+            .expect("the package map");
+        let others = five.len() - 1;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let own = own_text(dir.path(), "Eigener Text.\n");
+        assert_eq!(own.map_id, "building-blocks");
+        assert!(own.map_insertable);
+        assert_eq!(own.figures.row_count(), others);
+        assert_eq!(own.missing, others as i32 + 1, "the map is not in the text");
+        let section = archguard_engine::report::diagram_section(map, s.format);
+        let block = crate::arc42_file::diagram_block(&map.id, &section);
+        let with_map = own_text(dir.path(), &format!("Eigener Text.\n\n{block}\n"));
+        assert!(!with_map.map_insertable);
+        assert_eq!(with_map.missing, others as i32, "the map is in the text");
+        // The generated chapter has every shown diagram in its text.
+        let generated = built(&s);
+        let hidden = five.iter().filter(|d| !d.shown).count();
+        assert_eq!(generated.missing, hidden as i32);
     }
 
     /// The diagram view keeps its figures and their drawings across pushes.
