@@ -25,6 +25,7 @@ mod follow;
 mod follow_ui;
 mod format;
 mod fullscreen;
+mod graph_panels_ui;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;

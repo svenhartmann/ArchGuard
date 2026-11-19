@@ -51,6 +51,7 @@ fn apply_settings(ui: &AppWindow) {
         Err(_) => {}
     }
     select_language(ui, &language);
+    crate::graph_panels_ui::apply(ui);
     if let Some((w, h)) = window {
         ui.window()
             .set_size(slint::LogicalSize::new(w as f32, h as f32));
@@ -104,6 +105,7 @@ pub fn wire(ui: &AppWindow) {
     });
     route_app_quit();
     crate::settings_view_ui::wire(ui);
+    crate::graph_panels_ui::wire(ui);
 }
 
 /// File → Save: everything unsaved in the active project; the notice

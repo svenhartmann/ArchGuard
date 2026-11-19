@@ -13,6 +13,7 @@ import { Fmt } from "format.slint";
 import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
 import { CyclePlans, CyclePlansView } from "cycle_plans.slint";
 import { ReviewData, ReviewList, ReviewDetails } from "review.slint";
+import { GraphPanels, PanelHandle } from "graph_panels.slint";
 
 export struct Crumb {
     node: int,
@@ -232,11 +233,12 @@ export component GraphView inherits HorizontalLayout {
     // decided from the view's own width only (no layout loop).
     // Below 600px the graph itself needs the whole pane.
     property <bool> details-on: root.show-details && root.data.selected-row >= 0 && root.width >= 600px;
-    property <length> details-w: root.width >= 900px ? 320px : 240px;
+    // Both widths are dragged at the panels' inner edges (`GraphPanels`).
+    property <length> details-w: root.width >= 900px ? GraphPanels.details-w : 240px;
     // The explorer only when the graph keeps at least 480px beside it.
     property <bool> explorer-on: root.show-explorer
-        && root.width - 250px - (root.details-on ? root.details-w : 0) >= 480px;
-    property <length> main-w: root.width - (root.explorer-on ? 250px : 0) - (root.details-on ? root.details-w : 0);
+        && root.width - GraphPanels.explorer-w - (root.details-on ? root.details-w : 0) >= 480px;
+    property <length> main-w: root.width - (root.explorer-on ? GraphPanels.explorer-w : 0) - (root.details-on ? root.details-w : 0);
 
     callback select-row(int);
     callback toggle-row(int);
@@ -258,7 +260,7 @@ export component GraphView inherits HorizontalLayout {
 
     // ------------------------------------------------- explorer
     if root.explorer-on: Rectangle {
-        width: 250px;
+        width: GraphPanels.explorer-w;
         background: Theme.panel;
         Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
         VerticalLayout {
@@ -343,6 +345,11 @@ export component GraphView inherits HorizontalLayout {
                 select-row(r) => { root.select-row(r); }
                 action(a, b) => { root.action(a, b); }
             }
+        }
+        PanelHandle {
+            x: parent.width - self.width;
+            moved(d) => { GraphPanels.set-explorer(GraphPanels.explorer-w + d); }
+            released => { GraphPanels.changed(); }
         }
     }
 
@@ -567,6 +574,12 @@ export component GraphView inherits HorizontalLayout {
                     }
                 }
             }
+        }
+        // Only the wide panel follows the drag; a narrow pane keeps 240px.
+        if root.width >= 900px: PanelHandle {
+            x: 0;
+            moved(d) => { GraphPanels.set-details(GraphPanels.details-w - d); }
+            released => { GraphPanels.changed(); }
         }
     }
 }
