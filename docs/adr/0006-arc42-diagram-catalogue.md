@@ -311,3 +311,10 @@ What exists:
   three calls gets no diagram. Mermaid and PlantUML now draw the dashed
   return of every call (shared `archguard_core::sequence_steps`, as in the
   desktop); a call to oneself returns without a line.
+- 2026-11-19: `doc --arc42` applies the desktop's diagram rule to the
+  project's text (`archguard_report::arc42_file::update_chapter`): diagram
+  blocks in own text are refreshed, a shown diagram a chapter lacks is put
+  in at its end as a diagram block, a hidden one's block goes out, and
+  `--check` reports such a chapter as outdated. The rule is "the document
+  contains every shown diagram"; hiding a diagram in `archguard.toml`
+  keeps it out.
