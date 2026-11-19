@@ -8,6 +8,7 @@ use archguard_engine::core::{
     Arc42Config, CallAnalysis, Config, DiagramFormat, DocLang, Graph, Report,
 };
 use archguard_engine::report::Arc42Document;
+use archguard_engine::report::arc42_file::MARKER;
 
 use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
 use super::{catalogue, edit};
@@ -183,7 +184,9 @@ pub(super) fn current(s: &ArchitectureState, labels: &Labels) -> Option<(Kind, M
 }
 
 /// Show (`show`) or hide catalogue diagram `id`: writes `archguard.toml`,
-/// then the document as the CLI would write it.
+/// then the document as the CLI would write it. A diagram of a chapter of
+/// own text is chosen by name (`shown_diagrams`); off leaves it shown in
+/// `hidden_diagrams` terms, it is only no longer expected there.
 pub(super) fn toggle_diagram(
     s: &mut ArchitectureState,
     ui: Option<&AppWindow>,
@@ -193,14 +196,32 @@ pub(super) fn toggle_diagram(
     if Arc42Config::level_of(id).is_some() {
         return toggle_level(s, ui, id, show);
     }
-    let hidden = catalogue::hidden_after(&s.hidden, id, show);
-    s.figure_error = match catalogue::write(&s.root, "hidden_diagrams", &hidden) {
-        Ok(()) => String::new(),
-        Err(e) => e,
+    let own = s.doc.as_ref().is_ok_and(|doc| {
+        let chapter = doc.diagrams.iter().find(|d| d.id == id).map(|d| d.chapter);
+        chapter.is_some_and(|n| !s.editor.chapter(doc, n).contains(MARKER))
+    });
+    let hidden = match own && !show {
+        true => s.hidden.clone(),
+        false => catalogue::hidden_after(&s.hidden, id, show),
     };
+    let shown = match own {
+        true => catalogue::hidden_after(&s.shown, id, !show),
+        false => s.shown.clone(),
+    };
+    let lists = [
+        ("hidden_diagrams", &hidden, &s.hidden),
+        ("shown_diagrams", &shown, &s.shown),
+    ];
+    let written = lists
+        .into_iter()
+        .filter(|(_, new, old)| new != old)
+        .try_for_each(|(key, new, _)| catalogue::write(&s.root, key, new));
+    s.figure_error = written.err().unwrap_or_default();
     if s.figure_error.is_empty() {
         s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
+        s.config.arc42.shown_diagrams = shown.clone();
+        s.shown = shown;
         if let Ok(doc) = &mut s.doc {
             catalogue::place(doc, &s.config.arc42);
         }

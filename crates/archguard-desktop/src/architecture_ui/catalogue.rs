@@ -56,6 +56,7 @@ pub fn write(root: &Path, key: &str, ids: &[String]) -> Result<(), String> {
 pub fn place(doc: &mut Arc42Document, choice: &Arc42Config) {
     let chapters = doc.chapters.iter_mut().map(|c| (c.number, &mut c.markdown));
     diagram_place(chapters, &mut doc.diagrams, choice);
+    doc.chosen = choice.shown_diagrams.clone();
 }
 
 #[cfg(test)]
@@ -98,6 +99,7 @@ mod tests {
                 questions: vec![],
             }],
             diagrams,
+            chosen: vec![],
         }
     }
 

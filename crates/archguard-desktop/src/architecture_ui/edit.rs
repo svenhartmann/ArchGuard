@@ -590,6 +590,7 @@ pub(super) mod tests {
                 })
                 .collect(),
             diagrams: vec![],
+            chosen: vec![],
         }
     }
 

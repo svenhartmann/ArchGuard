@@ -21,8 +21,8 @@ pub const DIAGRAM_MARKER: &str = "<!-- archguard:diagram:";
 pub const BOM: char = '\u{feff}';
 
 /// Chapter `n` (from its heading, LF line ends) as `doc` has it: the
-/// generated blocks and diagram blocks refreshed, every shown diagram of
-/// the chapter in it (see [`complete_diagrams`]). A broken block marker
+/// generated blocks and diagram blocks refreshed, every [`expected`]
+/// diagram of the chapter in it (see [`complete_diagrams`]). A broken block marker
 /// is an error.
 pub fn update_chapter(
     doc: &Arc42Document,
@@ -100,11 +100,20 @@ pub fn refresh_diagrams(doc: &Arc42Document, text: &str) -> String {
     out
 }
 
+/// Diagram `d` belongs in its chapter, whose text is `chapter`: every
+/// shown one in a chapter with a generated block; in a chapter of own
+/// text only a shown one chosen by name (`[arc42] shown_diagrams`), the
+/// others are only offered.
+pub fn expected(doc: &Arc42Document, d: &Diagram, chapter: &str) -> bool {
+    d.shown && (chapter.contains(MARKER) || doc.chosen.contains(&d.id))
+}
+
 /// `text` with the diagrams of chapter `n` as the documentation has them:
-/// a shown one that is in neither generated text nor a diagram block goes
-/// in at the end as a diagram block, a hidden one's diagram block goes out.
-/// A shown one that was in the chapter `before` and is not in `text` was
-/// removed or taken over as own text: it stays out and is returned.
+/// an [`expected`] one that is in neither generated text nor a diagram
+/// block goes in at the end as a diagram block, a hidden one's diagram
+/// block goes out. An expected one that was in the chapter `before` and
+/// is not in `text` was removed or taken over as own text: it stays out
+/// and is returned.
 pub fn complete_diagrams(
     doc: &Arc42Document,
     n: u8,
@@ -112,22 +121,11 @@ pub fn complete_diagrams(
     text: &str,
     format: DiagramFormat,
 ) -> (String, Vec<String>) {
-    let mut out = text.to_string();
-    for (r, id) in diagram_ranges(text).into_iter().rev() {
-        if doc.diagrams.iter().any(|d| d.id == id && !d.shown) {
-            // With the line break and blank line it went in with; at the
-            // end, with the blank line before it.
-            let blank = out[r.end..].len() - out[r.end..].trim_start_matches('\n').len();
-            let start = if r.end + blank == out.len() {
-                out[..r.start].trim_end_matches('\n').len() + 1
-            } else {
-                r.start
-            };
-            out.replace_range(start.min(r.start)..r.end + blank.min(2), "");
-        }
-    }
+    let hidden = doc.diagrams.iter().filter(|d| !d.shown);
+    let mut out = hidden.fold(text.to_string(), |t, d| without_diagram(&t, &d.id));
     let mut dropped = Vec::new();
-    for d in doc.diagrams.iter().filter(|d| d.chapter == n && d.shown) {
+    let mine = doc.diagrams.iter().filter(|d| d.chapter == n);
+    for d in mine.filter(|d| expected(doc, d, text)) {
         if in_text(&out, d) {
             continue;
         }
@@ -139,6 +137,27 @@ pub fn complete_diagrams(
         }
     }
     (out, dropped)
+}
+
+/// `text` without the diagram blocks of diagram `id`.
+pub fn without_diagram(text: &str, id: &str) -> String {
+    let mut out = text.to_string();
+    for (r, _) in diagram_ranges(text)
+        .into_iter()
+        .rev()
+        .filter(|(_, i)| i == id)
+    {
+        // With the line break and blank line it went in with; at the
+        // end, with the blank line before it.
+        let blank = out[r.end..].len() - out[r.end..].trim_start_matches('\n').len();
+        let start = if r.end + blank == out.len() {
+            out[..r.start].trim_end_matches('\n').len() + 1
+        } else {
+            r.start
+        };
+        out.replace_range(start.min(r.start)..r.end + blank.min(2), "");
+    }
+    out
 }
 
 /// Refresh the generated blocks in `text`; text without any block stays
@@ -246,6 +265,56 @@ pub fn chapter_of(name: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runtime_doc(chosen: &[&str]) -> Arc42Document {
+        let scenario = Diagram {
+            id: "scenario".into(),
+            chapter: 6,
+            title: "Szenario".into(),
+            kind: archguard_core::DiagramKind::Sequence,
+            note: String::new(),
+            unit: String::new(),
+            elements: vec![],
+            relations: vec![],
+            shown: true,
+        };
+        Arc42Document {
+            schema_version: 1,
+            lang: archguard_core::DocLang::De,
+            scope: "p".into(),
+            notice: "",
+            chapters: vec![crate::arc42::Arc42Chapter {
+                number: 6,
+                title: "Laufzeitsicht",
+                markdown: "Text.".into(),
+                questions: vec![],
+            }],
+            diagrams: vec![scenario],
+            chosen: chosen.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    /// A chapter of own text gets only the diagrams chosen by name; one
+    /// with a generated block gets every shown diagram, as before.
+    #[test]
+    fn own_text_expects_only_chosen_diagrams() {
+        let f = DiagramFormat::Mermaid;
+        let own = "## 6. Laufzeitsicht\n\nEigener Text.\n";
+        assert_eq!(update_chapter(&runtime_doc(&[]), 6, own, f).unwrap(), own);
+        let chosen = runtime_doc(&["scenario"]);
+        let new = update_chapter(&chosen, 6, own, f).unwrap();
+        assert!(
+            new.contains(&format!("{DIAGRAM_MARKER}scenario:start")),
+            "{new}"
+        );
+        assert_eq!(update_chapter(&chosen, 6, &new, f).unwrap(), new);
+        let generated = "## 6. Laufzeitsicht\n\n<!-- archguard:arc42:06:start -->\nText.\n<!-- archguard:arc42:06:end -->\n";
+        let new = update_chapter(&runtime_doc(&[]), 6, generated, f).unwrap();
+        assert!(
+            new.contains(&format!("{DIAGRAM_MARKER}scenario:start")),
+            "{new}"
+        );
+    }
 
     /// A start marker without its end is text: the block of the same
     /// diagram further down does not swallow what is between.

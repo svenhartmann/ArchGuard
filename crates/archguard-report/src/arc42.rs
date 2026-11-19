@@ -57,6 +57,10 @@ pub struct Arc42Document {
     pub chapters: Vec<Arc42Chapter>,
     /// The diagram catalogue (ADR 0006); `shown` ones are in the chapters.
     pub diagrams: Vec<Diagram>,
+    /// `[arc42] shown_diagrams`: the diagrams chosen by name, the only
+    /// ones a chapter of own text expects (`arc42_file::expected`).
+    #[serde(skip)]
+    pub chosen: Vec<String>,
 }
 
 pub use crate::arc42_blocks::{Arc42Blocks, Arc42Context, Arc42Inputs};
@@ -79,6 +83,7 @@ impl Arc42Document {
             notice: input.lang.pick(NOTICE_EN, NOTICE_DE),
             chapters,
             diagrams,
+            chosen: input.config.arc42.shown_diagrams.clone(),
         }
     }
 
@@ -673,6 +678,7 @@ mod tests {
                 })
                 .collect(),
             diagrams: vec![],
+            chosen: vec![],
         }
     }
     #[test]

@@ -318,3 +318,17 @@ What exists:
   `--check` reports such a chapter as outdated. The rule is "the document
   contains every shown diagram"; hiding a diagram in `archguard.toml`
   keeps it out.
+- 2026-11-19: Own text expects only chosen diagrams, decided by the user
+  after `doc --arc42 --check` failed on a project whose own chapters 3, 5,
+  6 and 7 lacked the 16 default-shown diagrams (an update would have put
+  ~15 scenarios into chapter 6). The rule
+  (`archguard_report::arc42_file::expected`, used by desktop save,
+  `doc --arc42` and `--check`): a chapter with a generated block expects
+  every shown diagram as before; a chapter of own text only the shown ones
+  listed by id in `[arc42] shown_diagrams`. The others are only offered in
+  the desktop's "Diagrams" tab. Diagram blocks already in the text are
+  still refreshed, a hidden one's block still goes out. In the desktop the
+  switch of an own-text chapter's diagram writes `shown_diagrams` (on adds
+  the id and puts the block in, off removes the id and the block) and
+  leaves `hidden_diagrams` alone; it is on while the diagram is expected or
+  already in the text.

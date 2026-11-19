@@ -209,6 +209,17 @@ fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show
     }
     // A package map level is written off the UI thread; its doc is late.
     let level = archguard_engine::core::Arc42Config::level_of(id).is_some();
+    // Off takes its block out too: own text keeps a block that is not hidden.
+    if !show
+        && !level
+        && let Ok(doc) = &s.doc
+    {
+        let text = s.editor.chapter(doc, s.chapter);
+        let without = archguard_engine::report::arc42_file::without_diagram(&text, id);
+        if without != text {
+            s.editor.edit(&without);
+        }
+    }
     let ours = s.doc.as_ref().is_ok_and(|doc| {
         doc.diagrams
             .iter()
@@ -619,11 +630,11 @@ mod tests {
         });
     }
 
-    /// A shown diagram removed from its chapter leaves the documentation on
-    /// save: `hidden_diagrams` lists it, so the next save does not put it
-    /// back in.
+    /// A diagram chosen for a chapter of own text and removed from it
+    /// leaves the documentation on save: `shown_diagrams` no longer lists
+    /// it, so the next save does not put it back in.
     #[test]
-    fn a_diagram_removed_from_its_chapter_is_hidden_on_save() {
+    fn a_diagram_removed_from_its_chapter_is_unchosen_on_save() {
         let dir = tempfile::tempdir().expect("temp dir");
         let (a, _) = documents::with_store(|s| s.open(dir.path()));
         let mut state = state::fixture_state(Some(dir.path()));
@@ -644,6 +655,11 @@ mod tests {
         .unwrap();
         state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
         state.chapter = n;
+        state.shown = vec![d.id.clone()];
+        state.config.arc42.shown_diagrams = state.shown.clone();
+        if let Ok(doc) = &mut state.doc {
+            catalogue::place(doc, &state.config.arc42);
+        }
         documents::set_state(a, state);
         documents::with_state(a, |s: &mut ArchitectureState| {
             open_editor(s);
@@ -654,9 +670,10 @@ mod tests {
         assert_eq!(text, format!("## {n}. Kapitel\n\nText.\n"));
         let config = std::fs::read_to_string(dir.path().join(".archguard/archguard.toml")).unwrap();
         let config: archguard_engine::core::Config = toml::from_str(&config).unwrap();
-        assert!(config.arc42.hidden_diagrams.contains(&d.id), "{config:?}");
+        assert!(config.arc42.shown_diagrams.is_empty(), "{config:?}");
+        assert!(config.arc42.hidden_diagrams.is_empty(), "{config:?}");
         documents::with_state(a, |s: &mut ArchitectureState| {
-            assert!(s.hidden.contains(&d.id));
+            assert!(s.shown.is_empty() && s.hidden.is_empty());
         });
     }
 
@@ -720,6 +737,59 @@ mod tests {
         });
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(text, format!("## {n}. Kapitel\n\nText.\n"));
+    }
+
+    /// In a chapter of own text the switch is the choice by name: on
+    /// lists the diagram in `shown_diagrams` and puts it in, off takes it
+    /// out of both; `hidden_diagrams` stays untouched.
+    #[test]
+    fn the_switch_in_own_text_writes_shown_diagrams() {
+        use slint::Model as _;
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (a, mut state, d, block) = ticking_state(dir.path());
+        let n = d.chapter;
+        let path = dir.path().join("arc42.md");
+        let own = format!("## {n}. Kapitel\n\nText.\n");
+        std::fs::write(&path, &own).unwrap();
+        state.editor = edit::Editor::new(a, dir.path()).with_format(state.format);
+        state.chapter = n;
+        documents::set_state(a, state);
+        let config = || {
+            let text = std::fs::read_to_string(dir.path().join(".archguard/archguard.toml"))
+                .unwrap_or_default();
+            toml::from_str::<archguard_engine::core::Config>(&text)
+                .unwrap()
+                .arc42
+        };
+        let switch = |s: &ArchitectureState| {
+            let m = window::model(s, &Texts::default());
+            m.figures
+                .iter()
+                .find(|f| f.id == d.id)
+                .expect("listed")
+                .shown
+        };
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            open_editor(s);
+            s.catalogue = true;
+            assert!(!switch(s), "default-shown is not chosen for own text");
+            follow_tick(s, None, &d.id, true);
+            assert_eq!(s.figure_error, "");
+            assert!(switch(s));
+        });
+        assert_eq!(config().shown_diagrams, std::slice::from_ref(&d.id));
+        assert!(config().hidden_diagrams.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("{own}\n{block}\n")
+        );
+        documents::with_state(a, |s: &mut ArchitectureState| {
+            follow_tick(s, None, &d.id, false);
+            assert_eq!(s.figure_error, "");
+            assert!(!switch(s));
+        });
+        assert!(config().shown_diagrams.is_empty() && config().hidden_diagrams.is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), own);
     }
 
     /// A download goes only where the save dialog points, in one step;
