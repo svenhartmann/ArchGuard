@@ -46,12 +46,16 @@ pub(crate) fn run(cli: &Cli, root: &Path, roles: &[String], anonymous: bool) -> 
 
 /// The simulated assignment: `--role` implies a signed-in user, no role
 /// with `--anonymous` an anonymous one.
-fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
-    let assignment = Assignment {
+pub(crate) fn assignment(roles: &[String]) -> Assignment {
+    Assignment {
         authenticated: !roles.is_empty(),
         roles: roles.iter().cloned().collect(),
         ..Assignment::default()
-    };
+    }
+}
+
+fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
+    let assignment = assignment(roles);
     let reaches = screen_reaches(flow, &assignment);
     let screens: Vec<Value> = (flow.screens.iter())
         .map(|s| {
@@ -151,7 +155,10 @@ fn print_screens(flow: &UiFlow, simulation: Option<&Value>) {
             if app.is_empty() { "(none)" } else { app }
         );
         for screen in screens {
-            let access = screen.access.as_ref().map_or("none".into(), condition_text);
+            let access = screen
+                .access
+                .as_ref()
+                .map_or("none".into(), Condition::text);
             let reached = reach
                 .get(screen.id.as_str())
                 .map(|r| format!(" · {}", reach_text(r, &access)))
@@ -228,30 +235,6 @@ fn reach_text(row: &Value, access: &str) -> String {
     }
 }
 
-/// A condition in words: `role Admin or policy P`, `signed in`, `not (…)`.
-pub(crate) fn condition_text(condition: &Condition) -> String {
-    let join = |items: &[Condition], word: &str| {
-        let parts: Vec<String> = (items.iter())
-            .map(|c| match c {
-                Condition::All(_) | Condition::Any(_) => format!("({})", condition_text(c)),
-                _ => condition_text(c),
-            })
-            .collect();
-        parts.join(word)
-    };
-    match condition {
-        Condition::All(items) => join(items, " and "),
-        Condition::Any(items) => join(items, " or "),
-        Condition::Not(inner) => format!("not ({})", condition_text(inner)),
-        Condition::Authenticated => "signed in".into(),
-        Condition::Never => "never".into(),
-        Condition::Role(name) => format!("role {name}"),
-        Condition::Policy(name) => format!("policy {name}"),
-        Condition::Custom(name) => format!("custom {name}"),
-        Condition::Unknown(text) => format!("unknown ({text})"),
-    }
-}
-
 /// The snake_case serde name of a unit enum value, from its `Debug` name.
 pub(crate) fn label(value: &impl std::fmt::Debug) -> String {
     let mut out = String::new();
@@ -284,7 +267,7 @@ mod tests {
             Condition::Not(Box::new(Condition::Custom("x".into()))),
         ]);
         assert_eq!(
-            condition_text(&condition),
+            condition.text(),
             "signed in and (role A or policy P) and not (custom x)"
         );
         assert_eq!(label(&Outcome::Denied), "denied");

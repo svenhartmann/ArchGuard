@@ -204,3 +204,30 @@ An invalid import file is itself a finding, so the gate does not pass
 silently. The baseline still accepts only cycles. Not yet done: permission
 checks through configured functions and stable element ids (`data-testid`,
 `AutomationId`); a finding kind of its own instead of `target_architecture`.
+
+### 2026-11-19: start screens without `/`, catch-all routes
+
+MAUI and desktop applications route no screen `/`, so eShop's `ClientApp`
+was `no_start_screen` and none of its screens had a reach. `UiFlow` gains
+`start_screens` (screen ids, serde default, left out of the JSON when empty;
+merged as a sorted union). The start screens are those listed there plus
+those routed `/` (`start_screen_ids` in `archguard-core`, the one place that
+decides it); `screen_reaches`, the findings, CLI and MCP start there, and
+`no_start_screen` now means "neither". A union rather than "marked, else
+`/`": a web `/` stays an entry next to a marked one. The XAML extractor marks
+one screen per application by a fixed rule: with a MAUI Shell, the page of
+the first `ShellContent` of the first Shell file in document order;
+otherwise the `StartupUri` of the `Application` XAML, else the first screen
+class created with `new` in `OnStartup`, `OnLaunched`,
+`OnFrameworkInitializationCompleted` or `CreateWindow`. Nothing found is a
+`note` on the project folder. On eShop `ClientApp` starts at `LoginView`,
+`HybridApp` at `MainPage` (`CreateWindow`). The flag lives on `UiFlow`, not on
+`Screen`, so code that builds `Screen` literally keeps compiling.
+
+A trailing `*` or `**` route segment (React `[...slug]` and `path="*"`,
+Angular `**`, Spring `/**`) now matches one or more remaining segments
+instead of being a literal. `best_route` and the action-endpoint join rank
+any match without a catch-all above every catch-all match;
+`path_match_score` still returns the equal literal segments. Consequence:
+an Angular link to an unknown path resolves to the `**` route, as in the
+running application, instead of staying unresolved.

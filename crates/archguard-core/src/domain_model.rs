@@ -25,6 +25,10 @@ pub struct DomainModel {
     /// False as soon as one state assignment, guard or event could not be read
     /// by a declared rule (same meaning as in ADR 0021).
     pub complete: bool,
+    /// Chain starts inside the system: handlers of integration events and
+    /// bus messages (ADR 0022 decision 4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_handlers: Vec<MessageHandler>,
 }
 impl Default for DomainModel {
     /// Empty and complete, so it is the identity of [`merge_domain_models`].
@@ -38,6 +42,7 @@ impl Default for DomainModel {
             events: vec![],
             diagnostics: vec![],
             complete: true,
+            message_handlers: vec![],
         }
     }
 }
@@ -164,6 +169,24 @@ pub struct DomainEvent {
     pub source: String,
 }
 
+/// A class or method that handles a message from outside a request (an
+/// integration event, a bus or broker message) and sends requests to use
+/// cases, e.g. eShop's `OrderPaymentSucceededIntegrationEventHandler`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MessageHandler {
+    /// Class name (C#) or `Class.method` (Java listener methods).
+    pub id: String,
+    /// The handled message type, e.g. `OrderPaymentSucceededIntegrationEvent`.
+    pub message: String,
+    /// Request types it sends and use-case classes it calls, by the rule of
+    /// `EndpointAccess.sends`.
+    #[serde(default)]
+    pub sends: Vec<String>,
+    pub file: String,
+    pub line: u32,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DomainDiagnostic {
     pub file: String,
@@ -268,6 +291,7 @@ pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
         events: union(a.events, b.events),
         diagnostics: union(a.diagnostics, b.diagnostics),
         complete: a.complete && b.complete,
+        message_handlers: union(a.message_handlers, b.message_handlers),
     }
 }
 
@@ -538,9 +562,23 @@ mod tests {
                 message: "m".into(),
             }],
             complete: false,
+            message_handlers: vec![MessageHandler {
+                id: "OrderPaymentSucceededIntegrationEventHandler".into(),
+                message: "OrderPaymentSucceededIntegrationEvent".into(),
+                sends: s(&["SetPaidOrderStatusCommand"]),
+                file: "OrderPaymentSucceededIntegrationEventHandler.cs".into(),
+                line: 3,
+                source: "csharp".into(),
+            }],
             ..order_model(Some("Submitted"))
         };
         let json = serde_json::to_string(&model).unwrap();
+        assert!(
+            json.contains(r#""message_handlers":[{"id":"OrderPaymentSucceededIntegrationEventHandler","message":"OrderPaymentSucceededIntegrationEvent","sends":["SetPaidOrderStatusCommand"]"#),
+            "{json}"
+        );
+        let without = serde_json::to_string(&DomainModel::default()).unwrap();
+        assert!(!without.contains("message_handlers"), "{without}");
         assert!(json.contains(r#""definition":"domain-model/v1""#), "{json}");
         assert!(json.contains(r#""kind":"aggregate_root""#), "{json}");
         assert!(json.contains(r#""kind":"has_many""#), "{json}");

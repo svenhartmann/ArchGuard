@@ -44,18 +44,24 @@
 //!   exactly one entity. This unique-name rule stands in for the
 //!   compiler-backed call model of ADR 0022 decision 2; a name on several
 //!   entities is a diagnostic and not recorded.
+//! - Message handlers (chain starts without an endpoint): classes implementing
+//!   `IIntegrationEventHandler<T>` (eShop), MassTransit `IConsumer<T>` or
+//!   NServiceBus `IHandleMessages<T>`, one entry per `T`; `sends` by the
+//!   backend extractor's send rule over the class body (`mediator.Send(…)`
+//!   and the like; `context.Send`/`Publish` are not read).
 //!
 //! Not recognized: partial classes across files, nested-type qualification,
 //! state changes outside the entity's own methods, `switch`/`is`/pattern
 //! guards, `else if` chains as negations, guards on other fields, the State
-//! pattern or Stateless, integration-event handlers, and constructor events as
-//! part of `initial`. The marker names are the constants below with the ADR
-//! 0022 defaults; reading them from the configuration comes later.
+//! pattern or Stateless, and constructor events as part of `initial`. The
+//! marker names are the constants below with the ADR 0022 defaults; reading
+//! them from the configuration comes later.
 use crate::project_files::read_repo_file;
 use crate::services::support::{excluded, relative, test_path};
+use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, Relation, RelationKind,
-    StateMachine, StateTransition, UseCase, UseCaseKind,
+    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, MessageHandler,
+    Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -71,6 +77,7 @@ const RAISE_FUNCTION: &str = "AddDomainEvent";
 const EVENT_HANDLER: &str = "INotificationHandler";
 const REQUEST_HANDLER: &str = "IRequestHandler";
 const USE_CASE_SUFFIXES: [&str; 3] = ["CommandHandler", "QueryHandler", "UseCase"];
+const MESSAGE_HANDLERS: [&str; 3] = ["IIntegrationEventHandler", "IConsumer", "IHandleMessages"];
 const COLLECTIONS: [&str; 7] = [
     "List",
     "IList",
@@ -118,6 +125,7 @@ pub fn extract(root: &Path) -> DomainModel {
     x.relations();
     x.machines_and_events();
     x.use_cases();
+    x.message_handlers();
     x.finish()
 }
 
@@ -661,6 +669,30 @@ impl Extractor {
             line: line(s, d.pos),
             source: SOURCE.into(),
         })
+    }
+
+    /// One entry per class and handled message type, sorted.
+    fn message_handlers(&mut self) {
+        let mut found = vec![];
+        for d in self.decls.iter().filter(|d| d.kw == "class") {
+            let src = &self.files[d.file];
+            let messages = (d.bases.iter())
+                .filter_map(|b| MESSAGE_HANDLERS.iter().find_map(|h| generic_args(b, h)));
+            for args in messages {
+                found.push(MessageHandler {
+                    id: d.name.clone(),
+                    message: simple(&args[0]),
+                    sends: d
+                        .body
+                        .map_or_else(Vec::new, |body| sends_in(&src.text, body)),
+                    file: src.rel.clone(),
+                    line: line(&src.text, d.pos),
+                    source: SOURCE.into(),
+                });
+            }
+        }
+        found.sort();
+        self.model.message_handlers = found;
     }
 
     fn finish(mut self) -> DomainModel {
@@ -2156,6 +2188,79 @@ public class Order
             .expect("ambiguous Close");
         assert_eq!(ambiguous.file, "App/SubmitOrderCommandHandler.cs");
         assert_eq!(ambiguous.line, 9);
+    }
+
+    #[test]
+    fn message_handlers_with_the_requests_they_send() {
+        let model = run(&[
+            (
+                "Ordering/OrderPaymentSucceededIntegrationEventHandler.cs",
+                r#"namespace Ordering;
+public class OrderPaymentSucceededIntegrationEventHandler(
+    IMediator mediator,
+    ILogger<OrderPaymentSucceededIntegrationEventHandler> logger) :
+    IIntegrationEventHandler<OrderPaymentSucceededIntegrationEvent>
+{
+    public async Task Handle(OrderPaymentSucceededIntegrationEvent @event)
+    {
+        var command = new SetPaidOrderStatusCommand(@event.OrderId);
+        logger.LogInformation("Sending {Name}", "mediator.Send(new Fake())");
+        await mediator.Send(command);
+    }
+}
+"#,
+            ),
+            (
+                "Billing/Consumers.cs",
+                r#"public class InvoiceConsumer : IConsumer<Bus.OrderShipped>, IConsumer<OrderCancelled>
+{
+    public Task Consume(ConsumeContext<OrderShipped> context) => _sender.Send(new CreateInvoiceCommand());
+}
+public class AuditHandler : IHandleMessages<AuditMessage> { }
+public class NotAHandler : INotificationHandler<OrderShipped> { }
+"#,
+            ),
+        ]);
+        let found: Vec<(&str, &str, Vec<String>, &str, u32)> = (model.message_handlers.iter())
+            .map(|h| {
+                assert_eq!(h.source, "csharp");
+                (
+                    h.id.as_str(),
+                    h.message.as_str(),
+                    h.sends.clone(),
+                    h.file.as_str(),
+                    h.line,
+                )
+            })
+            .collect();
+        let consumers = "Billing/Consumers.cs";
+        assert_eq!(
+            found,
+            [
+                ("AuditHandler", "AuditMessage", vec![], consumers, 5),
+                (
+                    "InvoiceConsumer",
+                    "OrderCancelled",
+                    s(&["CreateInvoiceCommand"]),
+                    consumers,
+                    1
+                ),
+                (
+                    "InvoiceConsumer",
+                    "OrderShipped",
+                    s(&["CreateInvoiceCommand"]),
+                    consumers,
+                    1
+                ),
+                (
+                    "OrderPaymentSucceededIntegrationEventHandler",
+                    "OrderPaymentSucceededIntegrationEvent",
+                    s(&["SetPaidOrderStatusCommand"]),
+                    "Ordering/OrderPaymentSucceededIntegrationEventHandler.cs",
+                    2
+                ),
+            ]
+        );
     }
 
     #[test]

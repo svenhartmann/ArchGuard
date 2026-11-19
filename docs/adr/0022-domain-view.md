@@ -192,3 +192,39 @@ extractor could not read. The scan is text-level like the C# extractor. The
 raise function is the extractor's `AddDomainEvent`, not yet configurable.
 Not yet done: Java/Kotlin, object initializers, and "handlers are found by
 interface".
+
+### 2026-11-19: message handlers as chain starts, rights along the chain
+
+Decision 4 named endpoints as the only chain start, so `Order → Paid` on
+eShop had no trigger. `DomainModel` gains `message_handlers` (serde default,
+left out when empty): `MessageHandler { id, message, sends, file, line,
+source }`. The C# rules record a class per handled `T` of
+`IIntegrationEventHandler<T>`, MassTransit `IConsumer<T>` and NServiceBus
+`IHandleMessages<T>`; the Java rules a method annotated `@KafkaListener`,
+`@RabbitListener`, `@JmsListener` or `@StreamListener` (id `Class.method`,
+message = first parameter type). `sends` uses the send rule of the backend
+extractor (the same `sends` function, made reachable through
+`ui_flow_backend::sends_in`, not a copy), so `context.Send`/`Publish` of
+MassTransit and NServiceBus are not read, and Spring Cloud Stream functional
+beans are not found. The handlers are part of the model, not only of
+`domain_chain`, so the import file can add them and other views can show
+them.
+
+`domain_chain::Chain` now has a `start`: `Endpoint { action, endpoint }` or
+`Message { message_handler }`, serialized flat as before (`endpoint`,
+`action`) or as `message_handler`. `chains` lists endpoint chains, then one
+chain per message handler; `triggers_of_state` keeps both. On eShop `domain
+--entity Order --state Paid` now finds `message
+OrderPaymentSucceededIntegrationEvent → SetPaidOrderStatusCommandHandler`.
+
+Rights along the path (decision 4, last sentence): `domain_chain::rights`
+gives each chain a `verdict` and `reasons` for an assignment. For an
+endpoint chain it joins in Kleene logic the endpoint access (`undeclared` is
+unknown), and with an action the reach of its screen (`sure` allowed,
+`possible`/`no_known_path`/`no_start_screen` unknown, `denied` denied) and
+the action's condition. A message-handler chain is `not_a_user_path`: it
+runs inside the system, no role starts it. CLI `domain --chain|--state …
+--role R|--anonymous` prints `right: …` per chain and adds `right` and
+`simulated` to the JSON; MCP `domain_model` takes `roles`/`anonymous` with
+`chain` or `state`. Not done: following a message back to the endpoint whose
+use case publishes it (the integration event's raiser).

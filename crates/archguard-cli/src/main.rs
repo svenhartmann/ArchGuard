@@ -433,8 +433,20 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
             entity,
             chain,
             state,
+            role,
+            anonymous,
             ..
-        } => domain_cmd::run(cli, root, entity.as_deref(), *chain, state.as_deref()),
+        } => {
+            let simulated = (*anonymous || !role.is_empty()).then_some(role.as_slice());
+            domain_cmd::run(
+                cli,
+                root,
+                entity.as_deref(),
+                *chain,
+                state.as_deref(),
+                simulated,
+            )
+        }
         Command::Contracts {
             report,
             service,

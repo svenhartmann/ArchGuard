@@ -71,10 +71,19 @@
 //! One hop: a call of a method of a service class (any other class of the
 //! project) adds that method's direct HTTP calls at the caller's screen.
 //!
+//! Start screen (`UiFlow.start_screens`, one per application, since no XAML
+//! screen is routed `/`): MAUI with a Shell, the page of the first
+//! `ShellContent` of the first Shell file in document order. Otherwise the
+//! `StartupUri` of the `Application` XAML (relative to its folder), else the
+//! first screen class created with `new` in `OnStartup` (WPF), `OnLaunched`
+//! (WinUI), `OnFrameworkInitializationCompleted` (Avalonia) or `CreateWindow`
+//! (MAUI without a Shell: `new Window(new MainPage())`). None found: a note on
+//! the project folder.
+//!
 //! Not recognized: commented-out code, routes or targets from variables,
 //! `else` branches of guards, C#-only pages without XAML, `ContentControl`
-//! switching by view model (`CurrentView = new XViewModel()`), start screens
-//! (no screen is routed `/`), services reached over more than one hop.
+//! switching by view model (`CurrentView = new XViewModel()`), the older MAUI
+//! `MainPage = …` assignment, services reached over more than one hop.
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
@@ -96,6 +105,14 @@ const VERBS: [&str; 5] = ["Get", "Post", "Put", "Delete", "Patch"];
 /// Configured guard methods (ADR 0021 decision 6).
 const GUARDS: [&str; 2] = ["IsAuthenticated", "HasRole"];
 const EVENTS: [&str; 4] = ["Clicked", "Click", "Tapped", "Pressed"];
+/// Application overrides that create the first window or page (WPF, WinUI,
+/// Avalonia, MAUI without a Shell).
+const STARTUP: [&str; 4] = [
+    "OnStartup",
+    "OnLaunched",
+    "OnFrameworkInitializationCompleted",
+    "CreateWindow",
+];
 const SHELL_ITEMS: [&str; 6] = [
     "FlyoutItem",
     "TabBar",
@@ -141,6 +158,8 @@ struct Index<'a> {
     wrappers: BTreeSet<String>,
     /// Method name -> bodies in service classes.
     services: BTreeMap<String, Vec<Body>>,
+    /// The doc the application starts with.
+    start: Option<usize>,
 }
 
 /// A method body: cs file index and (start, end) offsets.
@@ -365,6 +384,18 @@ fn file_transitions(
 /// One screen per doc; a page or window opened only modally is a dialog.
 fn screens(ix: &Index, opened: &Opened, flow: &mut UiFlow) {
     let app = ix.app;
+    match ix.start {
+        Some(doc) => flow.start_screens.push(ix.docs[doc].id.clone()),
+        None if !ix.docs.is_empty() => {
+            let message = format!(
+                "No start screen found for {}: no Shell, `StartupUri` or window created in {}.",
+                app.name,
+                STARTUP.join("/")
+            );
+            note(flow, &app.dir, 0, message);
+        }
+        None => {}
+    }
     for (i, doc) in ix.docs.iter().enumerate() {
         let route = (ix.shell.iter().chain(&ix.registered))
             .find(|(_, d)| *d == i)
@@ -883,7 +914,9 @@ mod index {
             behind: BTreeMap::new(),
             wrappers: BTreeSet::new(),
             services: BTreeMap::new(),
+            start: None,
         };
+        ix.start = start(&ix, &shells);
         for xi in shells {
             shell_routes(&mut ix, xi);
         }
@@ -897,6 +930,54 @@ mod index {
         bindings(&mut ix, &view_models, &shown);
         callables(&mut ix);
         ix
+    }
+
+    /// The doc the application starts with; see the module doc.
+    fn start(ix: &Index, shells: &[usize]) -> Option<usize> {
+        let doc = |class: &str| ix.docs.iter().position(|d| d.class == class);
+        let local =
+            |name: &'static str| move |t: &xml::Tag| t.name.rsplit(':').next() == Some(name);
+        if let Some(&xi) = shells.first() {
+            let content = tags(&ix.app.xaml[xi].1).find(local("ShellContent"))?;
+            return doc(template_class(attr(content.attrs, "ContentTemplate")?));
+        }
+        for (file, text) in &ix.app.xaml {
+            let Some(root) = tags(text).next().filter(local("Application")) else {
+                continue;
+            };
+            if let Some(uri) = attr(root.attrs, "StartupUri") {
+                let uri = uri.trim_start_matches('/');
+                let target = match file.rsplit_once('/') {
+                    Some((dir, _)) => format!("{dir}/{uri}"),
+                    None => uri.to_string(),
+                };
+                return ix.docs.iter().position(|d| d.file == target);
+            }
+        }
+        let methods = ix.app.cs.iter().flat_map(|(_, text)| {
+            let bodies = scopes(text)
+                .into_iter()
+                .filter(|s| STARTUP.contains(&s.name.as_str()));
+            bodies.map(move |s| &text[s.body.0..s.body.1])
+        });
+        methods
+            .flat_map(|body| body.match_indices("new ").map(move |(at, _)| (body, at)))
+            .filter(|(body, at)| !body[..*at].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+            .find_map(|(body, at)| {
+                let rest = &body[at + "new ".len()..];
+                doc(&rest[..rest
+                    .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(rest.len())])
+            })
+    }
+
+    /// `LoginPage` of `{DataTemplate views:LoginPage}`.
+    fn template_class(template: &str) -> &str {
+        let class = template
+            .trim_start_matches("{DataTemplate")
+            .trim_end_matches('}')
+            .trim();
+        class.rsplit(':').next().unwrap_or(class)
     }
 
     /// `class Name ... : Base`: (offset, name, first base without namespace or generics).
@@ -985,11 +1066,7 @@ mod index {
             if local == "ShellContent"
                 && let Some(template) = attr(tag.attrs, "ContentTemplate")
             {
-                let class = template
-                    .trim_start_matches("{DataTemplate")
-                    .trim_end_matches('}')
-                    .trim();
-                let class = class.rsplit(':').next().unwrap_or(class);
+                let class = template_class(template);
                 let segments: Vec<&str> =
                     stack.iter().filter_map(|(_, r)| *r).chain(route).collect();
                 if let Some(doc) = ix.docs.iter().position(|d| d.class == class)
@@ -2249,6 +2326,112 @@ public class MauiNavigationService : INavigationService
         // No routing in WPF: no Shell note.
         assert!(flow.complete, "{:#?}", flow.diagnostics);
         assert!(flow.diagnostics.is_empty(), "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn start_screens_from_shell_startup_uri_and_startup_code() {
+        use archguard_core::{Assignment, ScreenReach, screen_reaches};
+        let anonymous = Assignment::default();
+        // MAUI: the first ShellContent of the first Shell item.
+        let flow = extract(maui().path());
+        assert_eq!(flow.start_screens, ["Shop:Views/LoginPage.xaml"]);
+        let reaches = screen_reaches(&flow, &anonymous);
+        assert_eq!(reaches["Shop:Views/LoginPage.xaml"], ScreenReach::Sure);
+        assert!(!reaches.values().any(|r| *r == ScreenReach::NoStartScreen));
+        // WPF: `StartupUri` of App.xaml.
+        let dir = wpf();
+        let flow = extract(dir.path());
+        let app = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let main = format!("{app}:MainWindow.xaml");
+        assert_eq!(flow.start_screens, std::slice::from_ref(&main));
+        let reaches = screen_reaches(&flow, &anonymous);
+        assert_eq!(reaches[&main], ScreenReach::Sure);
+        assert_eq!(
+            reaches[&format!("{app}:SettingsWindow.xaml")],
+            ScreenReach::Sure
+        );
+        // Avalonia and WinUI: the window created in the startup override.
+        let avalonia = write(&[
+            (
+                "Desk/Desk.csproj",
+                "<Project><ItemGroup><PackageReference Include=\"Avalonia\" /></ItemGroup></Project>",
+            ),
+            ("Desk/App.axaml", "<Application x:Class=\"Desk.App\" />\n"),
+            (
+                "Desk/App.axaml.cs",
+                r#"public partial class App : Application
+{
+    public void Helper() { var w = new OtherWindow(); }
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            desktop.MainWindow = new MainWindow { DataContext = new MainWindowViewModel() };
+    }
+}
+"#,
+            ),
+            (
+                "Desk/MainWindow.axaml",
+                "<Window x:Class=\"Desk.MainWindow\" />\n",
+            ),
+            (
+                "Desk/OtherWindow.axaml",
+                "<Window x:Class=\"Desk.OtherWindow\" />\n",
+            ),
+            (
+                "Win/Win.csproj",
+                "<Project><ItemGroup><PackageReference Include=\"Microsoft.WindowsAppSDK\" /></ItemGroup></Project>",
+            ),
+            (
+                "Win/App.xaml.cs",
+                "public partial class App : Application\n{\n    protected override void OnLaunched(LaunchActivatedEventArgs args)\n    {\n        m_window = new ShellWindow();\n        m_window.Activate();\n    }\n}\n",
+            ),
+            (
+                "Win/ShellWindow.xaml",
+                "<Window x:Class=\"Win.ShellWindow\" />\n",
+            ),
+            ("Hybrid/Hybrid.csproj", MAUI_PROJ),
+            (
+                "Hybrid/App.xaml.cs",
+                "public partial class App : Application\n{\n    protected override Window CreateWindow(IActivationState? state)\n    {\n        return new Window(new MainPage()) { Title = \"Shop\" };\n    }\n}\n",
+            ),
+            (
+                "Hybrid/MainPage.xaml",
+                "<ContentPage x:Class=\"Hybrid.MainPage\" />\n",
+            ),
+            ("Bare/Bare.csproj", WPF_PROJ),
+            ("Bare/App.xaml", "<Application x:Class=\"Bare.App\" />\n"),
+            (
+                "Bare/MainWindow.xaml",
+                "<Window x:Class=\"Bare.MainWindow\" />\n",
+            ),
+        ]);
+        let flow = extract(avalonia.path());
+        assert_eq!(
+            flow.start_screens,
+            [
+                "Desk:MainWindow.axaml",
+                "Hybrid:MainPage.xaml",
+                "Win:ShellWindow.xaml"
+            ]
+        );
+        // Nothing found: a note, and the simulation says so.
+        let note = (flow.diagnostics.iter())
+            .find(|d| d.message.contains("No start screen found"))
+            .expect("note for Bare");
+        assert_eq!(
+            (note.file.as_str(), note.severity),
+            ("Bare", DiagnosticSeverity::Note)
+        );
+        assert_eq!(
+            screen_reaches(&flow, &anonymous)["Bare:MainWindow.xaml"],
+            ScreenReach::NoStartScreen
+        );
     }
 
     #[test]
