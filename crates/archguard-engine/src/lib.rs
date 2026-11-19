@@ -38,7 +38,7 @@ mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
 mod staged;
-pub use staged::{compare_branches, compare_staged};
+pub use staged::{GitBranch, GitBranches, compare_branches, compare_staged, list_git_branches};
 mod arc42_context;
 mod compiler_sandbox;
 mod compiler_trust;

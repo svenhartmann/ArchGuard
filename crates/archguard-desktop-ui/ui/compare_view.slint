@@ -1,0 +1,241 @@
+// File → Compare architecture…: the result view of the active document,
+// a package tree marked added / removed / changed / unchanged with cycle
+// changes, and the relations of the selection with their source evidence.
+// Filled from src/compare_ui.rs; the dialog is compare_dialog.slint.
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Badge, EmptyState, PageTitle, SectionHeading } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// status: 0 added, 1 removed, 2 changed, 3 unchanged; cycle: 0 none,
+// 1 in a cycle on both sides, 2 new, 3 removed.
+export struct CompareRow {
+    name: string,
+    file: bool,
+    status: int,
+    cycle: int,
+}
+
+export struct CompareRelation {
+    from: string,
+    to: string,
+    status: int,
+    cycle: int,
+    // "file:line  source" per line, the first few.
+    evidence: string,
+    more: int,
+}
+
+export struct CompareCounts {
+    packages-added: int,
+    packages-removed: int,
+    added: int,
+    removed: int,
+    changed: int,
+    cycles-new: int,
+    cycles-removed: int,
+}
+
+export global CompareData {
+    // The dialog: local branches, the picked pair (`to-index` past the
+    // branches: the Git index); state 1 comparing, 2 failed with `error`.
+    in-out property <bool> dialog;
+    in-out property <[string]> branches;
+    in-out property <[string]> targets;
+    in-out property <int> from-index;
+    in-out property <int> to-index;
+    in-out property <int> state;
+    in-out property <string> error;
+    callback show();
+    callback run();
+    callback close();
+
+    // The result; `to` is empty for the Git index.
+    in-out property <bool> has-result;
+    in-out property <string> from;
+    in-out property <string> to;
+    in-out property <bool> empty;
+    in-out property <CompareCounts> counts;
+    in-out property <[CompareRow]> rows;
+    in-out property <int> selected: -1;
+    in-out property <[CompareRelation]> relations;
+    callback select(int);
+
+    public pure function index-label() -> string { return @tr("Git index (staged)"); }
+    public pure function to-label() -> string { return CompareData.to == "" ? CompareData.index-label() : CompareData.to; }
+    public pure function status-label(s: int) -> string {
+        if s == 0 { return @tr("added"); }
+        if s == 1 { return @tr("removed"); }
+        if s == 2 { return @tr("changed"); }
+        return @tr("unchanged");
+    }
+    public pure function status-variant(s: int) -> string {
+        return s == 0 ? "success" : s == 1 ? "danger" : s == 2 ? "warning" : "neutral";
+    }
+}
+
+// "+ added" in the status colour: never colour alone.
+component StatusBadge inherits Badge {
+    in property <int> status;
+    text: (status == 0 ? "+ " : status == 1 ? "− " : status == 2 ? "~ " : "") + CompareData.status-label(status);
+    variant: CompareData.status-variant(status);
+}
+
+component CycleBadge inherits Badge {
+    in property <int> cycle;
+    text: cycle == 2 ? @tr("Cycle new") : @tr("Cycle removed");
+    variant: cycle == 2 ? "danger" : "success";
+}
+
+component RowView inherits Rectangle {
+    in property <CompareRow> item;
+    in property <bool> selected;
+    callback clicked;
+    height: 28px;
+    border-radius: 6px;
+    background: root.selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    accessible-role: list-item;
+    accessible-label: root.item.name + " · " + CompareData.status-label(root.item.status);
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: root.item.file ? 26px : 6px;
+        padding-right: 10px;
+        spacing: 8px;
+        StatusBadge { status: root.item.status; y: (parent.height - self.height) / 2; }
+        Text {
+            text: root.item.name;
+            color: root.item.status == 3 ? Theme.muted : Theme.text;
+            font-size: root.item.file ? Theme.font-small : Theme.font-body;
+            font-weight: root.item.file ? Theme.weight-regular : Theme.weight-strong;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.item.cycle >= 2: CycleBadge { cycle: root.item.cycle; y: (parent.height - self.height) / 2; }
+    }
+}
+
+component RelationView inherits VerticalLayout {
+    in property <CompareRelation> item;
+    spacing: 3px;
+    padding-bottom: 8px;
+    HorizontalLayout {
+        spacing: 8px;
+        StatusBadge { status: root.item.status; }
+        Text { text: root.item.from + " → " + root.item.to; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; horizontal-stretch: 1; }
+        if root.item.cycle >= 2: CycleBadge { cycle: root.item.cycle; }
+    }
+    if root.item.evidence != "": Text {
+        text: root.item.evidence;
+        color: Theme.muted;
+        font-family: Theme.mono-family;
+        font-size: Theme.font-mono;
+        wrap: word-wrap;
+    }
+    if root.item.more > 0: Text {
+        text: @tr("{} more source references", Fmt.int(root.item.more));
+        color: Theme.muted;
+        font-size: Theme.font-caption;
+    }
+}
+
+// The selection's relations; "Copy path" through a hidden text field.
+component Details inherits VerticalLayout {
+    property <string> copied;
+    property <CompareRow> shown: CompareData.selected >= 0 && CompareData.selected < CompareData.rows.length
+        ? CompareData.rows[CompareData.selected] : { name: "", file: false, status: 3, cycle: 0 };
+    spacing: 8px;
+    clipboard := TextInput { width: 0; height: 0; opacity: 0; read-only: true; }
+    if root.shown.name == "": EmptyState { reason: @tr("Select a package or file to see its relations and their source evidence."); }
+    if root.shown.name != "": HorizontalLayout {
+        spacing: 10px;
+        Text { text: root.shown.name; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-strong; wrap: word-wrap; horizontal-stretch: 1; }
+        Button {
+            text: @tr("Copy path");
+            compact: true;
+            clicked => {
+                clipboard.text = root.shown.name;
+                clipboard.select-all();
+                clipboard.copy();
+                clipboard.clear-selection();
+                root.copied = @tr("Path copied.");
+            }
+        }
+    }
+    if root.copied != "": Text { text: root.copied; color: Theme.muted; font-size: Theme.font-small; }
+    if root.shown.name != "" && CompareData.relations.length == 0: Text {
+        text: @tr("No relations.");
+        color: Theme.muted;
+        font-size: Theme.font-small;
+    }
+    ListView {
+        vertical-stretch: 1;
+        for r in CompareData.relations: RelationView { item: r; }
+    }
+}
+
+export component CompareView inherits Rectangle {
+    background: Theme.bg;
+    property <CompareCounts> c: CompareData.counts;
+    if !CompareData.has-result: EmptyState {
+        title: @tr("No comparison yet");
+        reason: @tr("File → Compare architecture… compares two branches, or a branch with the Git index.");
+        Button {
+            text: @tr("Compare architecture…");
+            primary: true;
+            clicked => { CompareData.show(); }
+        }
+    }
+    if CompareData.has-result: VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 10px;
+            PageTitle {
+                text: @tr("Architecture compare");
+                sub: CompareData.from + " → " + CompareData.to-label();
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: @tr("Compare architecture…");
+                y: (parent.height - self.height) / 2;
+                clicked => { CompareData.show(); }
+            }
+        }
+        if CompareData.empty: Text {
+            text: @tr("No architecture change between {} and {}", CompareData.from, CompareData.to-label());
+            color: Theme.text;
+            font-size: Theme.font-body;
+        }
+        if !CompareData.empty: Text {
+            text: @tr("Packages: +{} / −{} · relations: +{} / −{} · {} with other evidence · cycles: {} new, {} removed",
+                Fmt.int(c.packages-added), Fmt.int(c.packages-removed), Fmt.int(c.added), Fmt.int(c.removed),
+                Fmt.int(c.changed), Fmt.int(c.cycles-new), Fmt.int(c.cycles-removed));
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+        if !CompareData.empty: HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 16px;
+            VerticalLayout {
+                width: parent.width * 0.45;
+                spacing: 6px;
+                SectionHeading { label: @tr("Packages"); }
+                ListView {
+                    vertical-stretch: 1;
+                    for r[i] in CompareData.rows: RowView {
+                        item: r;
+                        selected: i == CompareData.selected;
+                        clicked => { CompareData.select(i); }
+                    }
+                }
+            }
+            Details { width: parent.width * 0.55 - 16px; }
+        }
+        if CompareData.empty: Rectangle { vertical-stretch: 1; }
+    }
+}
