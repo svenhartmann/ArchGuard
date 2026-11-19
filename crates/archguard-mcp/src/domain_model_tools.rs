@@ -114,7 +114,7 @@ pub fn domain_model_value(model: &DomainModel, p: &DomainModelParams) -> Result<
             "incomplete"
         },
         json!({"definition":model.definition,"revision":rev,"summary":archguard_engine::domain_model::summary(model),"entity":entity,
-            "limitations":"Static evidence from rules over the code (ADR 0022), not a runtime trace. Guards are source text and never evaluated. A use case that calls an entity method through an interface or a name several entities share is not linked. Diagnostics stay complete under the entity filter."}),
+            "limitations":"Static evidence from rules over the code (ADR 0022), not a runtime trace. A guard is source text for when the transition is allowed (allowed when), never evaluated; an exit guard (throw or return) is the literal negation `!(source condition)`. A use case that calls an entity method through an interface or a name several entities share is not linked. Diagnostics stay complete under the entity filter."}),
         rows.iter()
             .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q)),
         &p.page,
@@ -125,7 +125,7 @@ pub fn domain_model_value(model: &DomainModel, p: &DomainModelParams) -> Result<
 #[tool_router(router = domain_model_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text, raised events), use cases with the entity methods they call, and domain events with raisers and handlers, plus summary and gap diagnostics. Built-in rules for C# plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text of when it is allowed, raised events), use cases with the entity methods they call, and domain events with raisers and handlers, plus summary and gap diagnostics. Built-in rules for C# plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn domain_model(
         &self,

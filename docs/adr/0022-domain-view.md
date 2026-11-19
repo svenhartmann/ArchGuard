@@ -132,3 +132,17 @@ public void SetPaidStatus() {
 - Which further state machine forms (State pattern, Stateless, Spring
   Statemachine) come first.
 - Whether Spring `@Service` methods count as use cases by default.
+
+## Verlauf
+
+### 2026-11-19: a guard reads as the allowed condition
+
+`domain` showed `Order.SetCancelledStatus` with the guard `OrderStatus ==
+OrderStatus.Paid || OrderStatus == OrderStatus.Shipped`: the from-set was
+right, but the text was the condition under which the method throws. The C#
+rules now write a guard taken from an exit `if` (throw, return, throwing
+helper) or from an `else` as the literal negation of the source text,
+`!(OrderStatus == OrderStatus.Paid || OrderStatus == OrderStatus.Shipped)`,
+never simplified. A guard from an enclosing `if` stays as written. So
+`guard` always means "allowed when"; CLI and MCP label it so. The model is
+unchanged; a separate field for the source form was not added.

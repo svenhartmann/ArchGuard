@@ -58,12 +58,12 @@ pub mod domain_model;
 mod ui_flow;
 pub use ui_flow::{
     ANY_METHOD, AccessState, Action, Assignment, Call, Condition, DiagnosticSeverity,
-    EndpointAccess, EndpointCounts, Origin, Outcome, Reach, Screen, ScreenKind, SimulatedRole,
-    Target, Transition, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow, UiFlowActionRef,
-    UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind, UiFlowSummary,
-    best_route, evaluate_access, evaluate_condition, join_actions_to_endpoints, merge_ui_flows,
-    normalize_path_pattern, path_match_score, path_patterns_match, reachable_screens,
-    ui_flow_findings, ui_flow_summary,
+    EndpointAccess, EndpointCounts, Origin, Outcome, Reach, Screen, ScreenKind, ScreenReach,
+    SimulatedRole, Target, Transition, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow,
+    UiFlowActionRef, UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind,
+    UiFlowSummary, best_route, evaluate_access, evaluate_condition, join_actions_to_endpoints,
+    merge_ui_flows, normalize_path_pattern, path_match_score, path_patterns_match,
+    reachable_screens, screen_reaches, ui_flow_findings, ui_flow_summary,
 };
 mod view;
 mod workspace;

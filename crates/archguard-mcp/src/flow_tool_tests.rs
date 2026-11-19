@@ -5,12 +5,13 @@ use crate::ui_flow_tools::UiFlowParams;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
-const FILES: [(&str, &str); 12] = [
+const FILES: [(&str, &str); 13] = [
     ("Web/Web.csproj", "<Project />"),
     (
         "Web/Pages/Home.razor",
-        "@page \"/\"\n<a href=\"orders\">Orders</a>\n",
+        "@page \"/\"\n<a href=\"orders\">Orders</a>\n<a href=\"@ItemUrl()\">Item</a>\n",
     ),
+    ("Web/Pages/Item.razor", "@page \"/item/{id:int}\"\n"),
     (
         "Web/Pages/Orders.razor",
         "@page \"/orders\"\n@attribute [Authorize(Roles = \"Clerk\")]\n@code {\n    protected override async Task OnInitializedAsync()\n    {\n        await Http.GetFromJsonAsync<int[]>(\"api/orders\");\n    }\n}\n",
@@ -30,7 +31,7 @@ const FILES: [(&str, &str); 12] = [
     ),
     (
         "Domain/Order.cs",
-        "namespace Shop.Domain;\npublic class Order : Entity, IAggregateRoot\n{\n    public OrderState State { get; private set; }\n    public Customer Buyer { get; private set; }\n    public Order() { State = OrderState.New; }\n    public void Submit()\n    {\n        if (State == OrderState.New)\n        {\n            AddDomainEvent(new OrderSubmitted(this));\n            State = OrderState.Submitted;\n        }\n    }\n    public void Cancel() { State = OrderState.Cancelled; }\n}\n",
+        "namespace Shop.Domain;\npublic class Order : Entity, IAggregateRoot\n{\n    public OrderState State { get; private set; }\n    public Customer Buyer { get; private set; }\n    public Order() { State = OrderState.New; }\n    public void Submit()\n    {\n        if (State == OrderState.New)\n        {\n            AddDomainEvent(new OrderSubmitted(this));\n            State = OrderState.Submitted;\n        }\n    }\n    public void Cancel()\n    {\n        if (State == OrderState.Cancelled) { throw new InvalidOperationException(); }\n        State = OrderState.Cancelled;\n    }\n}\n",
     ),
     (
         "Domain/OrderState.cs",
@@ -156,12 +157,12 @@ fn both_tools_are_registered_read_only_with_their_parameters() {
 async fn ui_flow_lists_screens_endpoints_and_summary_without_simulation() {
     let (_dir, tools) = project();
     let (last, rows) = all_rows(&tools, "ui_flow", json!({})).await;
-    assert_eq!(last["metadata"]["summary"]["screens"], 2);
+    assert_eq!(last["metadata"]["summary"]["screens"], 3);
     assert!(last["metadata"]["simulation"].is_null());
     let home = screen(&rows, "/");
     assert_eq!(home["file"], "Web/Pages/Home.razor");
     assert!(home.get("reach").is_none());
-    assert_eq!(of_kind(&rows, "transition").len(), 1);
+    assert_eq!(of_kind(&rows, "transition").len(), 2);
     assert_eq!(of_kind(&rows, "action").len(), 1);
     assert_eq!(
         endpoint(&rows, "health")["endpoint"]["access"],
@@ -176,7 +177,10 @@ async fn ui_flow_simulates_anonymous_and_roles() {
     let (last, anon) = all_rows(&tools, "ui_flow", json!({"anonymous": true})).await;
     assert_eq!(last["metadata"]["simulation"]["anonymous"], true);
     assert_eq!(screen(&anon, "/")["reach"], "sure");
-    assert_eq!(screen(&anon, "/orders")["reach"], "not_reached");
+    assert_eq!(screen(&anon, "/orders")["reach"], "denied");
+    let item = screen(&anon, "/item/{id:int}");
+    assert_eq!(item["reach"], "no_known_path");
+    assert_eq!(item["unresolved_transitions_in_application"], 1);
     assert_eq!(endpoint(&anon, "orders")["simulated"], "denied");
     assert_eq!(endpoint(&anon, "health")["simulated"], "unknown");
 
@@ -186,7 +190,7 @@ async fn ui_flow_simulates_anonymous_and_roles() {
     assert_eq!(endpoint(&clerk, "health")["simulated"], "unknown");
 
     let (_, other) = all_rows(&tools, "ui_flow", json!({"roles": []})).await;
-    assert_eq!(screen(&other, "/orders")["reach"], "not_reached");
+    assert_eq!(screen(&other, "/orders")["reach"], "denied");
     assert_eq!(endpoint(&other, "orders")["simulated"], "denied");
 }
 
@@ -201,7 +205,7 @@ async fn ui_flow_rejects_contradictions_and_unknown_application() {
         assert!(ui_flow(&tools, args.clone()).await.is_err(), "{args}");
     }
     let (_, web) = all_rows(&tools, "ui_flow", json!({"application": "Web"})).await;
-    assert_eq!(of_kind(&web, "screen").len(), 2);
+    assert_eq!(of_kind(&web, "screen").len(), 3);
 }
 
 #[tokio::test]
@@ -234,6 +238,16 @@ async fn domain_model_lists_the_whole_model() {
         assert!(!of_kind(&rows, kind).is_empty(), "no {kind}: {rows:#?}");
     }
     assert!(of_kind(&rows, "transition")[0].get("event_chain").is_none());
+    let cancel = (of_kind(&rows, "transition").into_iter())
+        .find(|t| t["transition"]["method"] == "Order.Cancel")
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    // The code throws when Cancelled; the guard reads as when the step is allowed.
+    assert_eq!(
+        cancel["transition"]["guard"],
+        "!(State == OrderState.Cancelled)"
+    );
+    let limits = last["metadata"]["limitations"].as_str().unwrap();
+    assert!(limits.contains("allowed when"), "{limits}");
 }
 
 #[tokio::test]

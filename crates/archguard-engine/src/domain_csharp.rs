@@ -29,7 +29,9 @@
 //!   by `||`, `!=` joined by `&&`, one `==`/`!=`), from the `else` of such an
 //!   `if` (negated), or from the nearest preceding `if` on the field whose
 //!   block throws, returns or calls an entity method that only throws
-//!   (negated). Without such an `if`, from = [] (any). A constructor
+//!   (negated). The guard text is the allowed condition: a negated guard is
+//!   the literal `!(source condition)`, never simplified. Without such an
+//!   `if`, from = [] (any). A constructor
 //!   assignment is `initial`. A non-literal value, a `switch` on the field or a
 //!   guard of another shape is a diagnostic and makes the model incomplete.
 //! - Events: `AddDomainEvent(new X(…))`, or of a variable assigned `new X(…)`
@@ -1234,14 +1236,21 @@ mod states {
             found
         }
 
+        /// `negate` for an exit or `else` guard: the text then reads as the
+        /// allowed condition, the literal `!(…)` of the source, never simplified.
         fn read(&self, cond: Span, negate: bool) -> Guard {
             let text = &self.s[cond.0..cond.1];
+            let shown = if negate {
+                format!("!({})", collapse(text))
+            } else {
+                collapse(text)
+            };
             match self.cond_set(text) {
                 Some(set) if negate => {
-                    Guard::From(self.all.difference(&set).cloned().collect(), collapse(text))
+                    Guard::From(self.all.difference(&set).cloned().collect(), shown)
                 }
-                Some(set) => Guard::From(set, collapse(text)),
-                None => Guard::Unread(Some(collapse(text)), "condition shape"),
+                Some(set) => Guard::From(set, shown),
+                None => Guard::Unread(Some(shown), "condition shape"),
             }
         }
 
@@ -2049,11 +2058,20 @@ public class Order
         );
         let ship = t("Ship");
         assert_eq!(ship.from, s(&["Approved"]));
-        assert_eq!(ship.guard.as_deref(), Some("State != OrderState.Approved"));
+        // An exit guard (throw, return, throwing helper) reads as the allowed
+        // condition: the literal negation of the source text.
+        assert_eq!(
+            ship.guard.as_deref(),
+            Some("!(State != OrderState.Approved)")
+        );
         assert_eq!(ship.events, s(&["OrderShipped"]));
         assert_eq!(
             t("Cancel").from,
             s(&["New", "Submitted", "OnHold", "Approved"])
+        );
+        assert_eq!(
+            t("Cancel").guard.as_deref(),
+            Some("!(State == OrderState.Shipped || State == OrderState.Cancelled)")
         );
         assert_eq!(
             (t("Hold").from.clone(), t("Hold").guard.clone()),
@@ -2062,6 +2080,10 @@ public class Order
         assert_eq!(
             t("Reopen").from,
             s(&["New", "Submitted", "OnHold", "Approved", "Shipped"])
+        );
+        assert_eq!(
+            t("Reopen").guard.as_deref(),
+            Some("!(State == OrderState.Cancelled)")
         );
         assert!(m.transitions.iter().all(|t| t.method != "Order.Restore"));
         assert!(has_diag(&model, "previous"));

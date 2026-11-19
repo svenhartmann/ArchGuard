@@ -6,8 +6,9 @@ const FILES: &[(&str, &str)] = &[
     ("Web/Web.csproj", "<Project />"),
     (
         "Web/Pages/Home.razor",
-        "@page \"/\"\n<a href=\"orders\">Orders</a>\n<a href=\"admin\">Admin</a>\n",
+        "@page \"/\"\n<a href=\"orders\">Orders</a>\n<a href=\"admin\">Admin</a>\n<a href=\"@ItemUrl()\">Item</a>\n",
     ),
+    ("Web/Pages/Item.razor", "@page \"/item/{id:int}\"\n"),
     (
         "Web/Pages/Orders.razor",
         "@page \"/orders\"\n@attribute [Authorize]\n@code {\n    async Task Load() => await Http.GetFromJsonAsync<int[]>(\"api/orders\");\n}\n",
@@ -24,7 +25,7 @@ const FILES: &[(&str, &str)] = &[
     (
         "Api/Domain/Order.cs",
         r#"public interface IAggregateRoot { }
-public enum OrderStatus { Submitted, Paid }
+public enum OrderStatus { Submitted, Paid, Cancelled }
 public class Order : IAggregateRoot
 {
     public OrderStatus Status { get; private set; }
@@ -37,6 +38,11 @@ public class Order : IAggregateRoot
             Status = OrderStatus.Paid;
             AddDomainEvent(new OrderPaidEvent(Id));
         }
+    }
+    public void Cancel()
+    {
+        if (Status == OrderStatus.Paid) { throw new InvalidOperationException(); }
+        Status = OrderStatus.Cancelled;
     }
 }
 public class OrderItem : Entity { public int Units { get; set; } }
@@ -90,7 +96,7 @@ fn ui_flow_text_lists_screens_by_application_and_findings() {
     let text = run(dir.path(), &["ui-flow"]);
     assert!(
         text.starts_with(
-            "Screens 3 · navigations 2 of 2 resolved · actions 1, 0 unresolved · endpoints: 1 protected, 0 open, 0 undeclared · complete: yes\n"
+            "Screens 4 · navigations 2 of 3 resolved · actions 1, 0 unresolved · endpoints: 1 protected, 0 open, 0 undeclared · complete: no\n"
         ),
         "{text}"
     );
@@ -111,10 +117,10 @@ fn ui_flow_text_lists_screens_by_application_and_findings() {
 fn ui_flow_json_has_summary_findings_and_flow() {
     let dir = project();
     let value = json(dir.path(), &["ui-flow"]);
-    assert_eq!(value["summary"]["screens"], 3);
+    assert_eq!(value["summary"]["screens"], 4);
     assert_eq!(value["summary"]["endpoints_by_access"]["protected"], 1);
     assert_eq!(value["flow"]["definition"], "ui-flow/v1");
-    assert_eq!(value["flow"]["screens"].as_array().unwrap().len(), 3);
+    assert_eq!(value["flow"]["screens"].as_array().unwrap().len(), 4);
     assert!(
         (value["findings"].as_array().unwrap())
             .iter()
@@ -135,13 +141,23 @@ fn ui_flow_simulates_an_anonymous_user() {
     let text = run(dir.path(), &["ui-flow", "--anonymous"]);
     assert!(text.contains("Simulated: anonymous"), "{text}");
     assert!(line_with(&text, "Home").ends_with("· reached surely"));
-    assert!(line_with(&text, "/orders").ends_with("· not reached"));
+    assert!(line_with(&text, "/orders").ends_with("· denied (needs: signed in)"));
+    // Open, but only a link the rules could not resolve leads there.
+    assert!(
+        line_with(&text, "/item/").ends_with("· no known path (1 link in this app unresolved)"),
+        "{text}"
+    );
     assert!(line_with(&text, "GET /api/orders").starts_with("  denied "));
     let value = json(dir.path(), &["ui-flow", "--anonymous"]);
     let simulation = &value["simulation"];
     assert_eq!(simulation["anonymous"], true);
     assert_eq!(reach_of(simulation, "/"), "sure");
-    assert_eq!(reach_of(simulation, "/orders"), "not_reached");
+    assert_eq!(reach_of(simulation, "/orders"), "denied");
+    let item = (simulation["screens"].as_array().unwrap().iter())
+        .find(|s| s["route"] == "/item/{id:int}")
+        .unwrap();
+    assert_eq!(item["reach"], "no_known_path");
+    assert_eq!(item["unresolved_transitions_in_application"], 1);
     assert_eq!(simulation["endpoints"][0]["outcome"], "denied");
 }
 
@@ -171,7 +187,7 @@ fn domain_text_shows_entities_state_machines_use_cases_and_events() {
     let text = run(dir.path(), &["domain"]);
     assert!(
         text.starts_with(
-            "Entities 3 · state machines 1 · transitions 1 · use cases 1 · events 1 · complete: yes\n"
+            "Entities 3 · state machines 1 · transitions 2 · use cases 1 · events 1 · complete: yes\n"
         ),
         "{text}"
     );
@@ -186,6 +202,18 @@ fn domain_text_shows_entities_state_machines_use_cases_and_events() {
     assert!(
         row.contains("Order.SetPaid") && row.contains("OrderPaidEvent"),
         "{row}"
+    );
+    assert!(
+        text.contains("  from → to · method · guard (allowed when) · events\n"),
+        "{text}"
+    );
+    // The code throws when Paid; the guard reads as when the step is allowed.
+    let cancel = line_with(&text, "Order.Cancel");
+    assert!(
+        cancel.starts_with(
+            "  Submitted, Cancelled → Cancelled · Order.Cancel · !(Status == OrderStatus.Paid) · - · "
+        ),
+        "{cancel}"
     );
     let use_case = line_with(&text, "PayOrderCommandHandler");
     assert!(use_case.contains("calls Order.SetPaid"), "{use_case}");

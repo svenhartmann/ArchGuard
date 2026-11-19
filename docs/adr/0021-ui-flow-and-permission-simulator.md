@@ -165,3 +165,27 @@ working around it.
 7. **Diagnostic severity.** `severity` is `gap` (an element is missing or
    unknown; the flow is not complete) or `note` (information, e.g. the
    `SecurityFilterChain` hint). A missing field reads as `gap`.
+
+### 2026-11-19: every simulated screen says why it is not reached
+
+On eShop, `ui-flow --anonymous` showed the open page `/item/{itemId:int}` as
+"not reached": the catalog links to it only through helper-built URLs that
+stay `Unresolved`. Readers took "not reached" as "denied". The simulation now
+gives every screen one reach from `screen_reaches` in `archguard-core`, the
+only place that decides it (CLI and MCP render it):
+
+- `sure`, `possible`: as before.
+- `denied`: the screen's own access evaluates `denied` for the assignment.
+- `no_known_path`: not denied, but no resolved path from a `/` screen;
+  `unresolved_transitions_in_application` counts the transitions of the
+  screen's application whose target stayed unresolved, so the reader sees
+  that the gap may be the extractor's, not the application's. A screen behind
+  a denied transition condition also lands here.
+- `no_start_screen`: the application has no screen routed `/`.
+
+JSON: `{"reach": "no_known_path", "unresolved_transitions_in_application":
+2}` merged into the screen row. CLI text: "reached surely", "reached
+possibly", "denied (needs: signed in)", "no known path (2 links in this app
+unresolved)", "no start screen". `not_reached` is gone. The MCP `ui_flow`
+tool now reaches screens from every `/` screen, also with `application` set;
+that parameter only narrows the rows. The findings are unchanged.

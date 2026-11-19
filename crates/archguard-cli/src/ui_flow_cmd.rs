@@ -1,12 +1,12 @@
 //! `archguard ui-flow`: screens, navigations and permissions of UI frontends
 //! against backend endpoints, with an optional permission simulation (ADR 0021).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{
-    Assignment, Condition, Reach, UiFlow, evaluate_access, normalize_path_pattern,
-    reachable_screens, ui_flow_findings, ui_flow_summary,
+    Assignment, Condition, UiFlow, evaluate_access, screen_reaches, ui_flow_findings,
+    ui_flow_summary,
 };
 use serde_json::{Value, json};
 
@@ -52,20 +52,15 @@ fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
         roles: roles.iter().cloned().collect(),
         ..Assignment::default()
     };
-    let reached = reached_screens(flow, &assignment);
-    let started: BTreeSet<&str> = (flow.screens.iter())
-        .filter(|s| is_start(s.route.as_deref()))
-        .map(|s| application(s.application.as_deref()))
-        .collect();
+    let reaches = screen_reaches(flow, &assignment);
     let screens: Vec<Value> = (flow.screens.iter())
         .map(|s| {
-            let reach = match reached.get(&s.id) {
-                Some(Reach::Sure) => "sure",
-                Some(Reach::Possible) => "possible",
-                None if started.contains(application(s.application.as_deref())) => "not_reached",
-                None => "no_start_screen",
-            };
-            json!({"id": s.id, "route": s.route, "application": s.application, "reach": reach})
+            let mut row = json!({"id": s.id, "route": s.route, "application": s.application});
+            let reach = json!(reaches[&s.id]);
+            for (key, value) in reach.as_object().into_iter().flatten() {
+                row[key] = value.clone();
+            }
+            row
         })
         .collect();
     let endpoints: Vec<Value> = (flow.endpoints.iter())
@@ -83,22 +78,6 @@ fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
         "screens": screens,
         "endpoints": endpoints,
     })
-}
-
-/// Best reach of every screen from the `/` screens of its application.
-fn reached_screens(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String, Reach> {
-    let mut reached = BTreeMap::new();
-    for start in flow.screens.iter().filter(|s| is_start(s.route.as_deref())) {
-        for (id, reach) in reachable_screens(flow, &start.id, assignment) {
-            let best = reached.entry(id).or_insert(reach);
-            *best = (*best).min(reach);
-        }
-    }
-    reached
-}
-
-fn is_start(route: Option<&str>) -> bool {
-    route.map(normalize_path_pattern).as_deref() == Some("/")
 }
 
 fn application(name: Option<&str>) -> &str {
@@ -155,11 +134,11 @@ fn print_text(flow: &UiFlow, simulation: Option<&Value>, verbose: bool) {
 }
 
 fn print_screens(flow: &UiFlow, simulation: Option<&Value>) {
-    let reach: BTreeMap<&str, &str> = simulation
+    let reach: BTreeMap<&str, &Value> = simulation
         .and_then(|s| s["screens"].as_array())
         .into_iter()
         .flatten()
-        .filter_map(|s| Some((s["id"].as_str()?, s["reach"].as_str()?)))
+        .filter_map(|s| Some((s["id"].as_str()?, s)))
         .collect();
     let mut by_application: BTreeMap<&str, Vec<_>> = BTreeMap::new();
     for screen in &flow.screens {
@@ -172,15 +151,15 @@ fn print_screens(flow: &UiFlow, simulation: Option<&Value>) {
             if app.is_empty() { "(none)" } else { app }
         );
         for screen in screens {
+            let access = screen.access.as_ref().map_or("none".into(), condition_text);
             let reached = reach
                 .get(screen.id.as_str())
-                .map(|r| format!(" · {}", reach_text(r)))
+                .map(|r| format!(" · {}", reach_text(r, &access)))
                 .unwrap_or_default();
             outln!(
-                "  {} · {} · access: {} · {}:{}{reached}",
+                "  {} · {} · access: {access} · {}:{}{reached}",
                 screen.route.as_deref().unwrap_or("-"),
                 screen.name,
-                screen.access.as_ref().map_or("none".into(), condition_text),
                 screen.file,
                 screen.line
             );
@@ -232,12 +211,20 @@ fn assignment_text(simulation: &Value) -> String {
     format!("signed in with roles {}", roles.join(", "))
 }
 
-fn reach_text(reach: &str) -> &str {
-    match reach {
-        "sure" => "reached surely",
-        "possible" => "possibly reached",
-        "not_reached" => "not reached",
-        _ => "not simulated (no screen routed /)",
+/// A simulated screen row in words; `access` is the screen's access in words.
+fn reach_text(row: &Value, access: &str) -> String {
+    match row["reach"].as_str().unwrap_or("") {
+        "sure" => "reached surely".into(),
+        "possible" => "reached possibly".into(),
+        "denied" => format!("denied (needs: {access})"),
+        "no_known_path" => {
+            let n = row["unresolved_transitions_in_application"]
+                .as_u64()
+                .unwrap_or(0);
+            let links = if n == 1 { "link" } else { "links" };
+            format!("no known path ({n} {links} in this app unresolved)")
+        }
+        _ => "no start screen".into(),
     }
 }
 

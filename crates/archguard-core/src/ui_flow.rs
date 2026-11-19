@@ -329,6 +329,90 @@ pub fn reachable_screens(
     reached
 }
 
+/// Reach of one screen in a simulation, with the reason when not reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reach", rename_all = "snake_case")]
+pub enum ScreenReach {
+    Sure,
+    Possible,
+    /// The screen's own access evaluates denied.
+    Denied,
+    /// Not denied, but no resolved path from a start screen. The count of
+    /// unresolved transitions of the application tells whether the gap may be
+    /// the extractor's rather than the application's.
+    NoKnownPath {
+        unresolved_transitions_in_application: usize,
+    },
+    /// The application has no screen routed `/`.
+    NoStartScreen,
+}
+
+/// A start screen: routed `/`.
+fn is_start(screen: &Screen) -> bool {
+    screen
+        .route
+        .as_deref()
+        .map(normalize_path_pattern)
+        .as_deref()
+        == Some("/")
+}
+
+/// Best reach of every screen over all `starts`.
+fn reach_from(flow: &UiFlow, starts: &[&str], assignment: &Assignment) -> BTreeMap<String, Reach> {
+    let mut reached = BTreeMap::new();
+    for start in starts {
+        for (id, reach) in reachable_screens(flow, start, assignment) {
+            let best = reached.entry(id).or_insert(reach);
+            *best = (*best).min(reach);
+        }
+    }
+    reached
+}
+
+/// Every screen's reach from the `/` screens, with the reason when not reached.
+pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String, ScreenReach> {
+    let app = |s: &Screen| s.application.clone().unwrap_or_default();
+    let starts: Vec<&str> = (flow.screens.iter().filter(|s| is_start(s)))
+        .map(|s| s.id.as_str())
+        .collect();
+    let started: BTreeSet<String> = flow
+        .screens
+        .iter()
+        .filter(|s| is_start(s))
+        .map(app)
+        .collect();
+    let screens: BTreeMap<&str, &Screen> =
+        flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut unresolved: BTreeMap<&str, usize> = BTreeMap::new();
+    for t in &flow.transitions {
+        let from_app = match &t.from {
+            Origin::Screen(id) => application_of(&screens, id),
+            Origin::AnyScreen { application } => Some(application.as_str()),
+        };
+        if let (Target::Unresolved(_), Some(a)) = (&t.target, from_app) {
+            *unresolved.entry(a).or_default() += 1;
+        }
+    }
+    let reached = reach_from(flow, &starts, assignment);
+    let reason = |s: &Screen| match reached.get(&s.id) {
+        Some(Reach::Sure) => ScreenReach::Sure,
+        Some(Reach::Possible) => ScreenReach::Possible,
+        None if evaluate_optional(s.access.as_ref(), assignment) == Outcome::Denied => {
+            ScreenReach::Denied
+        }
+        None if !started.contains(&app(s)) => ScreenReach::NoStartScreen,
+        None => ScreenReach::NoKnownPath {
+            unresolved_transitions_in_application: unresolved
+                .get(app(s).as_str())
+                .copied()
+                .unwrap_or(0),
+        },
+    };
+    (flow.screens.iter())
+        .map(|s| (s.id.clone(), reason(s)))
+        .collect()
+}
+
 /// Path shape: leading/trailing slashes dropped, literal segments lower-case,
 /// every parameter (`:id`, `{id}`, `{id:int}`) becomes `{}`.
 pub fn normalize_path_pattern(path: &str) -> String {
@@ -632,13 +716,7 @@ mod findings {
             .into_iter()
             .map(|role| {
                 let assignment = assignment_of(&role);
-                let mut reached = BTreeMap::new();
-                for start in &starts {
-                    for (id, reach) in reachable_screens(flow, start, &assignment) {
-                        let best = reached.entry(id).or_insert(reach);
-                        *best = (*best).min(reach);
-                    }
-                }
+                let reached = reach_from(flow, &starts, &assignment);
                 (role, assignment, reached)
             })
             .collect();
@@ -699,8 +777,6 @@ mod findings {
 
     /// Ids of the screens routed `/`, and a note for each application without one.
     fn start_screens(flow: &UiFlow) -> (Vec<&str>, Vec<UiFlowFinding>) {
-        let is_start =
-            |s: &Screen| s.route.as_deref().map(normalize_path_pattern).as_deref() == Some("/");
         let starts = flow
             .screens
             .iter()
@@ -1312,6 +1388,69 @@ mod tests {
         assert_eq!(reached.get("beta_detail"), Some(&Reach::Sure));
         assert!(reachable_screens(&flow, "nowhere", &user).is_empty());
         assert!(reachable_screens(&flow, "admin", &user).is_empty());
+    }
+
+    #[test]
+    fn every_screen_gets_a_reach_with_its_reason() {
+        let in_app = |app: &str, s: Screen| Screen {
+            application: Some(app.into()),
+            ..s
+        };
+        let start = |s: Screen| Screen {
+            route: Some("/".into()),
+            ..s
+        };
+        let unresolved = |from: &str| Transition {
+            target: Target::Unresolved("Url.Item(id)".into()),
+            ..go(from, "x", None)
+        };
+        let flow = UiFlow {
+            screens: vec![
+                in_app("shop", start(screen("home", None))),
+                in_app("shop", screen("beta", None)),
+                in_app("shop", screen("admin", Some(role("admin")))),
+                in_app("shop", screen("item", None)),
+                in_app("shop", screen("hidden", None)),
+                in_app("tools", screen("help", None)),
+                in_app("tools", screen("locked", Some(Condition::Never))),
+            ],
+            transitions: vec![
+                go("home", "beta", Some(Condition::Custom("beta".into()))),
+                go("home", "admin", None),
+                go("home", "hidden", Some(Condition::Never)),
+                unresolved("home"),
+                unresolved("beta"),
+                unresolved("help"),
+            ],
+            ..UiFlow::default()
+        };
+        let reaches = screen_reaches(&flow, &Assignment::default());
+        let no_path = |n| ScreenReach::NoKnownPath {
+            unresolved_transitions_in_application: n,
+        };
+        assert_eq!(
+            reaches,
+            BTreeMap::from([
+                ("home".to_string(), ScreenReach::Sure),
+                ("beta".to_string(), ScreenReach::Possible),
+                ("admin".to_string(), ScreenReach::Denied),
+                // Open, but only an unresolved link could lead there.
+                ("item".to_string(), no_path(2)),
+                // Behind a denied transition, not behind its own access.
+                ("hidden".to_string(), no_path(2)),
+                ("help".to_string(), ScreenReach::NoStartScreen),
+                ("locked".to_string(), ScreenReach::Denied),
+            ])
+        );
+        assert_eq!(screen_reaches(&flow, &admin())["admin"], ScreenReach::Sure);
+        assert_eq!(
+            serde_json::to_value(no_path(2)).unwrap(),
+            serde_json::json!({"reach": "no_known_path", "unresolved_transitions_in_application": 2})
+        );
+        assert_eq!(
+            serde_json::to_value(ScreenReach::Denied).unwrap(),
+            serde_json::json!({"reach": "denied"})
+        );
     }
 
     #[test]

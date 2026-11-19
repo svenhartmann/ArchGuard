@@ -3,8 +3,8 @@
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
 use archguard_engine::core::{
-    Assignment, Origin, Outcome, Reach, UiFlow, evaluate_access, normalize_path_pattern,
-    reachable_screens, ui_flow_findings, ui_flow_summary,
+    Assignment, Origin, Outcome, ScreenReach, UiFlow, evaluate_access, normalize_path_pattern,
+    screen_reaches, ui_flow_findings, ui_flow_summary,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ErrorData, schemars, tool, tool_router};
@@ -87,25 +87,18 @@ fn assignment(p: &UiFlowParams) -> Option<Assignment> {
     })
 }
 
-/// Best reach of each screen over every start screen (route `/`) in scope.
+/// The start screens (route `/`) in scope and the reach of every screen.
 fn simulate(
     flow: &UiFlow,
     app: Option<&str>,
     a: &Assignment,
-) -> (Vec<String>, BTreeMap<String, Reach>) {
+) -> (Vec<String>, BTreeMap<String, ScreenReach>) {
     let starts: Vec<String> = (flow.screens.iter())
         .filter(|s| s.route.as_deref().map(normalize_path_pattern).as_deref() == Some("/"))
         .filter(|s| app.is_none_or(|app| s.application.as_deref() == Some(app)))
         .map(|s| s.id.clone())
         .collect();
-    let mut reached = BTreeMap::new();
-    for start in &starts {
-        for (id, reach) in reachable_screens(flow, start, a) {
-            let best = reached.entry(id).or_insert(reach);
-            *best = (*best).min(reach);
-        }
-    }
-    (starts, reached)
+    (starts, screen_reaches(flow, a))
 }
 
 fn outcome(o: Outcome) -> &'static str {
@@ -140,10 +133,10 @@ pub fn ui_flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData
     {
         let mut row = json!({"kind":"screen","id":s.id,"name":s.name,"route":s.route,"application":s.application,"access":s.access,"file":s.file,"line":s.line});
         if let Some(((_, reached), _)) = &sim {
-            row["reach"] = json!(reached.get(&s.id).map_or("not_reached", |r| match r {
-                Reach::Sure => "sure",
-                Reach::Possible => "possible",
-            }));
+            let reach = json!(reached[&s.id]);
+            for (key, value) in reach.as_object().into_iter().flatten() {
+                row[key] = value.clone();
+            }
         }
         rows.push(row);
     }
@@ -180,7 +173,7 @@ pub fn ui_flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData
             "incomplete"
         },
         json!({"definition":flow.definition,"revision":rev,"summary":ui_flow_summary(flow),"application":app,"simulation":simulation,
-            "limitations":"Static evidence from rules over the code (ADR 0021), no running application. undeclared means no declaration was found and is never allowed. Policy and custom checks stay unknown. Reach: sure = every guard allowed, possible = some guard unknown, not_reached = denied or no path from a `/` screen."}),
+            "limitations":"Static evidence from rules over the code (ADR 0021), no running application. undeclared means no declaration was found and is never allowed. Policy and custom checks stay unknown. Reach from the `/` screens: sure = every guard allowed, possible = some guard unknown, denied = the screen's own access denies, no_known_path = not denied but no resolved path (unresolved_transitions_in_application counts links the rules could not read, so the gap may be ours), no_start_screen = the application has no `/` screen."}),
         rows.iter()
             .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q)),
         &p.page,
@@ -191,7 +184,7 @@ pub fn ui_flow_value(flow: &UiFlow, p: &UiFlowParams) -> Result<Value, ErrorData
 #[tool_router(router = ui_flow_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. With roles or anonymous: true it simulates that user: each screen sure/possible/not_reached from the application's `/` start screens and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the UI flow from code (ADR 0021): screens (route, name, access, file, line), navigation transitions, actions with their HTTP calls, backend endpoint access (protected/open/undeclared), frontend/backend mismatch findings, summary and gap diagnostics. Built-in rules for Blazor, Angular, ASP.NET and Spring plus .archguard/ui-flow.json. With roles or anonymous: true it simulates that user: each screen sure/possible/denied/no_known_path/no_start_screen from the `/` start screens and each endpoint allowed/denied/unknown. Static evidence, not a running application; undeclared never means allowed. application narrows screens, transitions and actions. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn ui_flow(
         &self,

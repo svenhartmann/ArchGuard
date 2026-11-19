@@ -135,7 +135,7 @@ fn print_state_machine(machine: &StateMachine) {
     );
     outln!("  states: {}", list(&machine.states));
     outln!("  initial: {}", machine.initial.as_deref().unwrap_or("-"));
-    outln!("  from → to · method · guard · events");
+    outln!("  from → to · method · guard (allowed when) · events");
     for t in &machine.transitions {
         let from = if t.from.is_empty() {
             "any".to_string()
