@@ -156,3 +156,78 @@ msgstr "{} Entscheidungen speichern"
 
 msgid "Close"
 msgstr "Schließen"
+
+msgid "Change coupling & ownership"
+msgstr "Änderungskopplung & Zuständigkeit"
+
+msgid "Reading Git history and CODEOWNERS…"
+msgstr "Git-Historie und CODEOWNERS werden gelesen…"
+
+msgid "Source and history evidence of the analysis; simulated changes are not included."
+msgstr "Quellcode- und Historienbelege der Analyse; simulierte Änderungen sind nicht enthalten."
+
+msgid "Co-change candidates"
+msgstr "Kandidaten für gemeinsame Änderungen"
+
+msgid "Git unavailable: {}"
+msgstr "Git nicht verfügbar: {}"
+
+msgid "{} commits used · {} bulk commits excluded · {} candidates without an import edge"
+msgstr "{} Commits berücksichtigt · {} Massenänderungs-Commits ausgeschlossen · {} Kandidaten ohne Importkante"
+
+msgid "Shallow Git history: shares describe only the fetched commits."
+msgstr "Flache Git-Historie: Anteile beschreiben nur die geladenen Commits."
+
+msgid "Truncated result: history, pair search or result list hit a limit; inspect coverage before reading these ratios."
+msgstr "Gekürztes Ergebnis: Historie, Paarsuche oder Ergebnisliste haben eine Grenze erreicht; vor dem Lesen dieser Verhältnisse die Abdeckung prüfen."
+
+msgid "{} shared commits · {}% of left changes touch right · {}% of right changes touch left"
+msgstr "{} gemeinsame Commits · {} % der Änderungen links betreffen rechts · {} % der Änderungen rechts betreffen links"
+
+msgid "Inspect {}"
+msgstr "Untersuchen: {}"
+
+msgid "No pairs meet the co-change thresholds in the available history."
+msgstr "Keine Paare erfüllen die Schwellenwerte für gemeinsame Änderungen in der verfügbaren Historie."
+
+msgid "Showing 20 of {} pairs."
+msgstr "Anzeige von 20 aus {} Paaren."
+
+msgid "Team boundaries · CODEOWNERS"
+msgstr "Teamgrenzen · CODEOWNERS"
+
+msgid "No CODEOWNERS file in .github/, the root or docs/."
+msgstr "Keine CODEOWNERS-Datei in .github/, im Wurzelverzeichnis oder in docs/."
+
+msgid "{} · {} of {} files assigned · {} unowned"
+msgstr "{} · {} von {} Dateien zugeordnet · {} ohne Zuständigkeit"
+
+msgid "incomplete coverage"
+msgstr "unvollständige Abdeckung"
+
+msgid "Cross-owner dependencies: {}"
+msgstr "Abhängigkeiten zwischen Zuständigen: {}"
+
+msgid "Showing 20 of {} cross-owner dependencies."
+msgstr "Anzeige von 20 aus {} Abhängigkeiten zwischen Zuständigen."
+
+msgid "Architecture intent & trade-offs"
+msgstr "Architekturziele und Abwägungen"
+
+msgid "Constraint: {}"
+msgstr "Randbedingung: {}"
+
+msgid "Priority: {}"
+msgstr "Priorität: {}"
+
+msgid "unspecified"
+msgstr "nicht angegeben"
+
+msgid "Alternatives: {}"
+msgstr "Alternativen: {}"
+
+msgid "Accepted trade-offs: {}"
+msgstr "Akzeptierte Kompromisse: {}"
+
+msgid "No goals, constraints or decisions in the configuration. Priorities are not inferred from the graph."
+msgstr "Keine Ziele, Randbedingungen oder Entscheidungen in der Konfiguration. Prioritäten werden nicht aus dem Graphen abgeleitet."

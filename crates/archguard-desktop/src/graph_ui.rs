@@ -3,6 +3,7 @@
 //! share the document's package tree.
 
 mod data;
+mod insights;
 mod review;
 pub mod simulation;
 
@@ -241,6 +242,9 @@ pub fn wire(ui: &AppWindow) {
         let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
             return;
         };
+        if insights_action(&ui, id, &action, &arg) {
+            return;
+        }
         if let Some(f) = review_action(&action) {
             let layout = panes_ui::layout();
             instances::update(&ui, &layout, id, |s: &mut Graph| f(&mut s.g));
@@ -370,6 +374,22 @@ fn review_action(action: &str) -> Option<fn(&mut GraphState)> {
     }
 }
 
+/// Explorer → Review → "Change coupling & ownership": open or close it,
+/// or show a file it names in Graph `id`.
+fn insights_action(ui: &AppWindow, id: u32, action: &str, name: &str) -> bool {
+    match action {
+        "review-insights" => insights::toggle(ui),
+        "review-reveal" => {
+            let tree = documents::with_active_state(|t: &mut Rc<Tree>| t.clone());
+            if let Some(n) = tree.and_then(|t| instances::node_named(&t, name)) {
+                act(ui, id as i32, |g| g.reveal(n));
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// The cycle groups the Graphs list: the simulated graph's while there
 /// are simulated changes, else the report's findings.
 fn cycle_groups(data: &Loaded) -> Vec<Vec<String>> {
@@ -417,9 +437,11 @@ pub fn export(ui: &AppWindow, id: u32) -> Option<(GraphInput, Option<Diagram>)> 
 }
 
 /// After the active document's analysis is there or it is shown again:
-/// the header search's hits (the Graphs follow `panes_ui::sync`).
+/// the header search's hits (the Graphs follow `panes_ui::sync`) and the
+/// review insights.
 pub fn show(ui: &AppWindow) {
     push_hits(ui);
+    insights::show(ui);
 }
 
 /// The tree node named `name` in the active document (snapshot hooks).
