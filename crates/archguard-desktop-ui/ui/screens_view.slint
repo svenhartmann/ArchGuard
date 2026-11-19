@@ -1,0 +1,230 @@
+// Screens tab (ADR 0021): screens and navigations per application, the
+// permission simulator and the frontend/backend mismatches. Data and
+// callbacks live in ScreensData, set from src/screens_ui.rs.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { EmptyState, SectionHeading, Legend, ZoomControls } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Para, LinkLine, SummaryBar } from "flow_parts.slint";
+import { ScreensInspector, FlowInspector, FlowAction, FlowRow } from "screens_inspector.slint";
+import { FlowCanvas, FlowCard, FlowArrow, FlowBand } from "screens_canvas.slint";
+
+export { FlowInspector, FlowAction, FlowRow, FlowCard, FlowArrow, FlowBand }
+
+export struct FlowRole {
+    label: string,
+    chosen: bool,
+}
+
+// An open condition: a policy or custom atom; value 0 open, 1 on, 2 off.
+export struct FlowSwitch {
+    label: string,
+    policy: bool,
+    value: int,
+}
+
+export struct ScreensModel {
+    // 0 loading, 1 ready, 2 the flow could not be read.
+    state: int,
+    error: string,
+    screens: int,
+    resolved: int,
+    navigations: int,
+    actions: int,
+    actions-unresolved: int,
+    protected: int,
+    open: int,
+    undeclared: int,
+    complete: bool,
+    gaps: int,
+    refused: int,
+    unprotected: int,
+    roles: [FlowRole],
+    switches: [FlowSwitch],
+    cards: [FlowCard],
+    arrows: [FlowArrow],
+    bands: [FlowBand],
+    width: float,
+    height: float,
+    inspector: FlowInspector,
+}
+
+export global ScreensData {
+    in-out property <ScreensModel> model;
+    callback select-role(int);
+    callback set-switch(int, int);
+    // Index into the flow's screens.
+    callback select-screen(int);
+    // 0 gaps, 1 shown but refused, 2 hidden but unprotected, 3 undeclared endpoints.
+    callback open-list(int);
+    callback close-details();
+    // A project-relative file, opened in a File view.
+    callback open-file(string);
+}
+
+component RoleRow inherits Rectangle {
+    in property <FlowRole> role;
+    callback clicked();
+    height: 26px;
+    border-radius: 4px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    HorizontalLayout {
+        padding-left: 4px;
+        spacing: 8px;
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 7px;
+            border-width: 1.5px;
+            border-color: role.chosen ? Theme.accent : Theme.muted;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
+                visible: role.chosen;
+            }
+        }
+        Text { text: role.label; color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One open condition with its three states.
+component SwitchRow inherits VerticalLayout {
+    in property <FlowSwitch> item;
+    callback chosen(int);
+    spacing: 3px;
+    Text {
+        text: (item.policy ? @tr("Policy") : @tr("Condition")) + ": " + item.label;
+        color: Theme.text;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        spacing: 2px;
+        for v[i] in [@tr("on"), @tr("off"), @tr("open")]: Rectangle {
+            property <int> value: i == 2 ? 0 : i + 1;
+            height: 22px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: item.value == self.value ? Theme.accent : Theme.border;
+            background: item.value == self.value ? Theme.accent.with-alpha(0.16) : t.has-hover ? Theme.panel-2 : Theme.panel;
+            Text { text: v; color: item.value == parent.value ? Theme.accent : Theme.text; font-size: Theme.font-caption; }
+            t := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.chosen(parent.value); }
+            }
+        }
+    }
+}
+
+component SidePanel inherits ScrollView {
+    property <ScreensModel> m: ScreensData.model;
+    VerticalLayout {
+        width: root.visible-width;
+        padding: 14px;
+        spacing: 6px;
+        alignment: start;
+        SectionHeading { label: @tr("Simulate as"); }
+        for r[i] in m.roles: RoleRow {
+            role: r;
+            clicked => { ScreensData.select-role(i); }
+        }
+        Rectangle { height: 6px; }
+        SectionHeading { label: @tr("Open conditions"); }
+        if m.switches.length == 0: Para { text: @tr("No policy or custom conditions in this project."); muted: true; }
+        if m.switches.length > 0: Para { text: @tr("Open means unknown: the simulator keeps both outcomes."); muted: true; }
+        for s[i] in m.switches: SwitchRow {
+            item: s;
+            chosen(v) => { ScreensData.set-switch(i, v); }
+        }
+        Rectangle { height: 6px; }
+        SectionHeading { label: @tr("Legend"); }
+        Legend { text: @tr("reached"); swatch: Theme.accent; }
+        Legend { text: @tr("reached only if an open condition holds"); swatch: Theme.outgoing; }
+        Legend { text: @tr("denied for this user"); swatch: Theme.priority; }
+        Legend { text: @tr("no known path"); outline: true; outline-color: Theme.muted; }
+        Rectangle { height: 6px; }
+        SectionHeading { label: @tr("Completeness"); }
+        Para { text: @tr("{} of {} navigations resolved", Fmt.int(m.resolved), Fmt.int(m.navigations)); }
+        LinkLine {
+            text: @tr("Show the gap list ({})", Fmt.int(m.gaps));
+            clicked => { ScreensData.open-list(0); }
+        }
+        Rectangle { height: 6px; }
+        SectionHeading { label: @tr("Mismatches"); }
+        LinkLine {
+            text: @tr("Shown but refused by the backend: {}", Fmt.int(m.refused));
+            clicked => { ScreensData.open-list(1); }
+        }
+        LinkLine {
+            text: @tr("Hidden but not protected by the backend: {}", Fmt.int(m.unprotected));
+            clicked => { ScreensData.open-list(2); }
+        }
+        LinkLine {
+            text: @tr("Endpoints without a declared guard: {}", Fmt.int(m.undeclared));
+            clicked => { ScreensData.open-list(3); }
+        }
+    }
+}
+
+export component ScreensView inherits Rectangle {
+    property <ScreensModel> m: ScreensData.model;
+    background: Theme.bg;
+    min-width: 360px;
+    preferred-width: 1480px;
+    max-width: 100000px;
+    preferred-height: 860px;
+
+    if m.state == 0: Text {
+        text: @tr("Reading screens and navigations …");
+        color: Theme.muted;
+        font-size: Theme.font-body;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if m.state == 2: EmptyState { title: m.error; }
+    if m.state == 1: VerticalLayout {
+        SummaryBar {
+            complete: m.complete;
+            gaps-tip: @tr("Some navigations or calls could not be read; see the gap list.");
+            text: @tr("{0} screen" | "{0} screens" % m.screens, Fmt.int(m.screens))
+                + " · " + @tr("{} of {} navigations resolved", Fmt.int(m.resolved), Fmt.int(m.navigations))
+                + " · " + @tr("{0} action" | "{0} actions" % m.actions, Fmt.int(m.actions))
+                + (m.actions-unresolved > 0 ? @tr(" ({} unresolved)", Fmt.int(m.actions-unresolved)) : "")
+                + " · " + @tr("endpoints: {} protected, {} open, {} undeclared", Fmt.int(m.protected), Fmt.int(m.open), Fmt.int(m.undeclared));
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            SidePanel { width: 280px; }
+            Rectangle { width: 1px; background: Theme.border; }
+            if m.cards.length == 0: EmptyState {
+                horizontal-stretch: 1;
+                title: @tr("No screens found.");
+                reason: @tr("Screens come from Blazor @page components, Angular route arrays, React and Next routes, XAML shells and the import file .archguard/ui-flow.json.");
+            }
+            if m.cards.length > 0: FlowCanvas {
+                horizontal-stretch: 1;
+                cards: m.cards;
+                arrows: m.arrows;
+                bands: m.bands;
+                canvas-w: m.width;
+                canvas-h: m.height;
+                select(i) => { ScreensData.select-screen(i); }
+            }
+            if m.inspector.mode > 0: Rectangle { width: 1px; background: Theme.border; }
+            if m.inspector.mode > 0: ScreensInspector {
+                width: 360px;
+                data: m.inspector;
+                close => { ScreensData.close-details(); }
+                open-file(f) => { ScreensData.open-file(f); }
+            }
+        }
+    }
+}

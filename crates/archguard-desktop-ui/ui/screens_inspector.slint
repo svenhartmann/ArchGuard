@@ -1,0 +1,121 @@
+// The Screens tab's details panel: the selected screen with its access
+// and actions, or one of the lists of the left panel.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, TipArea, SectionHeading } from "widgets.slint";
+import { Para, LinkLine, PanelTitle, Fact } from "flow_parts.slint";
+
+// An action of the screen and what the backend says to it.
+export struct FlowAction {
+    trigger: string,
+    call: string,
+    backend: string,
+    agreement: string,
+    agree: bool,
+    location: string,
+    file: string,
+}
+
+// A row of a list: what, and where (opens the file).
+export struct FlowRow {
+    text: string,
+    location: string,
+    file: string,
+}
+
+export struct FlowInspector {
+    // 0 hidden, 1 screen, 2 list.
+    mode: int,
+    title: string,
+    route: string,
+    location: string,
+    file: string,
+    access: string,
+    result: string,
+    // 0 allowed, 1 denied, 2 unknown.
+    result-tone: int,
+    actions: [FlowAction],
+    list-note: string,
+    rows: [FlowRow],
+}
+
+// A button of phase 5 (ADR 0021 decision 7): shown, not yet usable.
+component Later inherits Rectangle {
+    in property <string> text;
+    width: b.preferred-width;
+    height: b.preferred-height;
+    b := Button { text: root.text; compact: true; enabled: false; }
+    TipArea { tip: @tr("phase 5"); pin-on-click: false; }
+}
+
+component ActionBox inherits VerticalLayout {
+    in property <FlowAction> item;
+    callback open-file(string);
+    spacing: 3px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    Rectangle { height: 1px; background: Theme.border; }
+    Text { text: item.trigger != "" ? item.trigger : @tr("(no trigger read)"); color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; wrap: word-wrap; }
+    Para { text: item.call; mono: true; }
+    Fact { label: @tr("Backend access"); value: item.backend; }
+    Para { text: item.agreement; color: item.agree ? Theme.success : Theme.priority; }
+    LinkLine { text: item.location; mono: true; clicked => { root.open-file(item.file); } }
+}
+
+export component ScreensInspector inherits Rectangle {
+    in property <FlowInspector> data;
+    callback close();
+    callback open-file(string);
+    background: Theme.panel;
+    sv := ScrollView {
+        VerticalLayout {
+            width: sv.visible-width;
+            padding: 14px;
+            spacing: 8px;
+            alignment: start;
+            PanelTitle { text: data.title; close => { root.close(); } }
+            if data.mode == 2 && data.list-note != "": Para { text: data.list-note; muted: true; }
+            if data.mode == 2 && data.rows.length == 0: Para { text: @tr("Nothing to list."); muted: true; }
+            if data.mode == 2: VerticalLayout {
+                spacing: 2px;
+                for r in data.rows: VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    Para { text: r.text; }
+                    LinkLine { text: r.location; mono: true; clicked => { root.open-file(r.file); } }
+                }
+            }
+            if data.mode == 1: VerticalLayout {
+                spacing: 8px;
+                if data.route != "": Fact { label: @tr("Route"); value: data.route; mono: true; }
+                VerticalLayout {
+                    spacing: 1px;
+                    Text { text: @tr("File"); color: Theme.muted; font-size: Theme.font-caption; }
+                    LinkLine { text: data.location; mono: true; clicked => { root.open-file(data.file); } }
+                }
+                Fact { label: @tr("Access condition"); value: data.access; }
+                VerticalLayout {
+                    spacing: 1px;
+                    Text { text: @tr("For the simulated user"); color: Theme.muted; font-size: Theme.font-caption; }
+                    Para {
+                        text: data.result;
+                        font-weight: Theme.weight-strong;
+                        color: data.result-tone == 0 ? Theme.success : data.result-tone == 1 ? Theme.priority : Theme.outgoing;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Later { text: @tr("Open in browser"); }
+                    Later { text: @tr("Replay path"); }
+                }
+                SectionHeading { label: @tr("Actions"); }
+                if data.actions.length == 0: Para { text: @tr("No backend calls read on this screen."); muted: true; }
+                for a in data.actions: ActionBox {
+                    item: a;
+                    open-file(f) => { root.open-file(f); }
+                }
+            }
+        }
+    }
+}
