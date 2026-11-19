@@ -385,7 +385,7 @@ fn collision_suffix(timestamp: u64, name: &str) -> u32 {
 /// Short git SHA of `root` (`git rev-parse --short HEAD`), or `None`
 /// whenever git cannot answer: missing binary, no repository, empty
 /// HEAD, non-zero exit, non-UTF-8 output. Never an error (Kap. 9).
-fn git_sha(root: &Path) -> Option<String> {
+pub(crate) fn git_sha(root: &Path) -> Option<String> {
     let output = Command::new("git")
         .current_dir(root)
         .args(["rev-parse", "--short", "HEAD"])

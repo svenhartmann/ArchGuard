@@ -190,6 +190,15 @@ pub(crate) enum Command {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
     },
+    /// A shareable single-file report (Markdown with Mermaid diagrams):
+    /// KPIs, gate findings, cycles, review priorities, services, diagrams.
+    Report {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Write the report to this file instead of standard output.
+        #[arg(long, value_name = "DATEI")]
+        out: Option<PathBuf>,
+    },
     /// Coupling metrics per module.
     Metrics {
         /// Project root (default: current directory).
@@ -710,6 +719,7 @@ impl Command {
             | Command::Metrics { path, .. }
             | Command::Security { path, .. }
             | Command::Sbom { path }
+            | Command::Report { path, .. }
             | Command::Hotspots { path, .. }
             | Command::CoChange { path, .. }
             | Command::Ownership { path, .. }

@@ -135,6 +135,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | Compare with a Git revision | `archguard review . --base main` or `archguard diff . --to main` |
 | Inspect effective configuration | `archguard config . --format json` |
 | SBOM of third-party dependencies (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
+| A shareable single-file report (Markdown with Mermaid; desktop: File → Export → Report…) | `archguard report . --out report.md` |
 
 Use `archguard --help` and `archguard <command> --help` for the complete command reference.
 
