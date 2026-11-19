@@ -406,7 +406,10 @@ pub(crate) enum Command {
         fail_on_found: bool,
     },
     /// UI screens, navigations and permissions against backend endpoints (ADR 0021).
+    #[command(args_conflicts_with_subcommands = true)]
     UiFlow {
+        #[command(subcommand)]
+        action: Option<crate::ui_flow_run_cmd::UiFlowAction>,
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
         /// Simulate a signed-in user with this role (repeatable).
@@ -772,7 +775,6 @@ impl Command {
             | Command::Evaluate { path, .. }
             | Command::Services { path, .. }
             | Command::Runtime { path }
-            | Command::UiFlow { path, .. }
             | Command::Domain { path, .. }
             | Command::Workspace { path, .. }
             | Command::Doc { path, .. }
@@ -795,6 +797,9 @@ impl Command {
                 // `query` only opens the database file — no project root.
                 DbAction::Query { .. } => None,
             },
+            Command::UiFlow { path, action, .. } => action
+                .as_ref()
+                .map_or(path.as_deref(), |action| action.path()),
             Command::Mcp { .. } => None,
             // `diagram building-blocks`: one argument that is no folder is the id.
             Command::Diagram { path, id, .. } => {

@@ -63,6 +63,7 @@ mod service_cmd;
 mod simulate_cmd;
 mod trend_cmd;
 mod ui_flow_cmd;
+mod ui_flow_run_cmd;
 mod update_cmd;
 mod view_util;
 mod workspace_cmd;
@@ -426,6 +427,10 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::UiFlow {
+            action: Some(action),
+            ..
+        } => ui_flow_run_cmd::run(cli.config.as_deref(), root, action),
         Command::UiFlow {
             role, anonymous, ..
         } => ui_flow_cmd::run(cli, root, role, *anonymous),
