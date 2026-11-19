@@ -48,6 +48,8 @@ pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
         crate::ui_flow_blazor::extract,
         crate::ui_flow_angular::extract,
         crate::ui_flow_backend::extract,
+        crate::ui_flow_react::extract,
+        crate::ui_flow_xaml::extract,
     ];
     Ok(extractors
         .into_iter()

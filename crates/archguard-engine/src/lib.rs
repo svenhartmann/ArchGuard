@@ -91,7 +91,9 @@ mod swift_sources;
 // back would close a file cycle.
 #[cfg(test)]
 mod arc42_file_tests;
+pub mod domain_chain;
 pub mod domain_csharp;
+pub mod domain_java;
 pub mod domain_model;
 #[cfg(test)]
 mod manifest_render_tests;
@@ -119,6 +121,9 @@ pub mod ui_flow;
 pub mod ui_flow_angular;
 pub mod ui_flow_backend;
 pub mod ui_flow_blazor;
+pub mod ui_flow_react;
+pub mod ui_flow_xaml;
+pub mod view_conventions;
 mod workspace;
 mod workspace_sources;
 
