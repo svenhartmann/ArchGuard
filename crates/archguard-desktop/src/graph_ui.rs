@@ -39,6 +39,8 @@ pub struct Graph {
     /// The cycle chosen in the explorer and the cuts that break it.
     cycle: Option<usize>,
     cuts: Vec<CutItem>,
+    /// The repair plans for the chosen cycle.
+    plans: CyclePlans,
 }
 
 impl Graph {
@@ -49,6 +51,7 @@ impl Graph {
             members: Vec::new(),
             cycle: None,
             cuts: Vec::new(),
+            plans: CyclePlans::default(),
         };
         s.set_cycles(groups);
         s
@@ -68,6 +71,7 @@ impl Graph {
             .collect();
         self.cycle = None;
         self.cuts.clear();
+        self.plans = CyclePlans::default();
     }
 
     /// Choose listed cycle `i` and find the cuts that break it in the
@@ -86,6 +90,7 @@ impl Graph {
                 refs: h.refs.min(i32::MAX as u64) as i32,
             })
             .collect();
+        self.plans = simulation::cycle_plans(&self.g.tree.full, members);
         self.cycle = Some(i);
     }
 }
@@ -105,6 +110,7 @@ impl Instance for Graph {
             list: &self.cycles,
             chosen: self.cycle,
             cuts: &self.cuts,
+            plans: &self.plans,
         };
         let row = data::graph_data(ui, &self.g, cycles, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
@@ -255,7 +261,7 @@ pub fn wire(ui: &AppWindow) {
         let proposed = instances::with(id, |s: &mut Graph| {
             simulation::proposal(&s.g, &action, &arg)
         });
-        if simulation::act(&ui, &action, &arg, proposed.flatten()) {
+        if simulation::act(&ui, &action, &arg, proposed.unwrap_or_default()) {
             resimulate(&ui);
         } else {
             panes_ui::sync(&ui);

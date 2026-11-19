@@ -26,8 +26,8 @@ export struct ScenarioRow {
 export struct SimData {
     on: bool,
     ops: [SimOpRow],
-    has-pending: bool,
-    pending: SimOpRow,
+    // Proposed, waiting for confirmation: one op or a repair plan's cuts.
+    pending: [SimOpRow],
     // Why the ops or the last proposal do not apply; "" none.
     error: string,
     has-delta: bool,
@@ -193,7 +193,7 @@ component ScenarioPanel inherits VerticalLayout {
 export component SimStrip inherits Rectangle {
     in property <SimData> sim;
     callback action(string, string);
-    height: root.sim.ops.length > 0 || root.sim.error != "" || root.sim.has-pending || root.sim.scenarios-open ? box.preferred-height : 0;
+    height: root.sim.ops.length > 0 || root.sim.error != "" || root.sim.pending.length > 0 || root.sim.scenarios-open ? box.preferred-height : 0;
     visible: self.height > 0;
     background: Theme.panel;
     Rectangle { y: 0; height: 1px; background: Theme.border; }
@@ -217,7 +217,7 @@ export component SimStrip inherits Rectangle {
             Button { text: @tr("Clear changes"); compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("clear", ""); } }
             Button { text: @tr("Export changes"); primary: true; compact: true; enabled: root.sim.ops.length > 0; clicked => { root.action("export", ""); } }
         }
-        if root.sim.has-pending: Rectangle {
+        if root.sim.pending.length > 0: Rectangle {
             background: Theme.accent.with-alpha(0.08);
             border-radius: 8px;
             border-width: 1px;
@@ -225,7 +225,12 @@ export component SimStrip inherits Rectangle {
             VerticalLayout {
                 padding: 10px;
                 spacing: 8px;
-                Text { text: SimText.op(root.sim.pending) + "?"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                if root.sim.pending.length == 1: Text { text: SimText.op(root.sim.pending[0]) + "?"; color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                // A repair plan: all its cuts, applied together.
+                if root.sim.pending.length > 1: Text { text: @tr("Apply these {} changes together?", Fmt.int(root.sim.pending.length)); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; wrap: word-wrap; }
+                if root.sim.pending.length > 1: VerticalLayout {
+                    for o in root.sim.pending: Text { text: "· " + SimText.op(o); color: Theme.text; font-size: Theme.font-small; font-family: Theme.mono-family; wrap: word-wrap; }
+                }
                 Text {
                     text: @tr("This changes only the simulated graph; source files remain unchanged.");
                     color: Theme.muted;

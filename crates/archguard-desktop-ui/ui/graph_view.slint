@@ -11,6 +11,7 @@ import { DepsView, DepCard } from "deps_view.slint";
 import { NodeMenu } from "node_menu.slint";
 import { Fmt } from "format.slint";
 import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
+import { CyclePlans, CyclePlansView } from "cycle_plans.slint";
 import { ReviewData, ReviewList, ReviewDetails } from "review.slint";
 
 export struct Crumb {
@@ -74,6 +75,8 @@ export struct GraphData {
     // The cycle chosen in the explorer (-1 none) and the cuts that break it.
     cycle: int,
     cuts: [CutItem],
+    // Up to three repair plans for that cycle.
+    plans: CyclePlans,
     // Explorer → Review and the selected row's review.
     review: ReviewData,
 }
@@ -315,9 +318,22 @@ export component GraphView inherits HorizontalLayout {
                     }
                 }
             }
-            if root.data.explorer-tab == 1 && root.data.cycle >= 0: CycleCuts {
-                cuts: root.data.cuts;
-                action(a, b) => { root.action(a, b); }
+            // Single cuts and repair plans scroll together: plans need room.
+            if root.data.explorer-tab == 1 && root.data.cycle >= 0: ScrollView {
+                vertical-stretch: 2;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 12px;
+                    // Plans first: they resolve the whole group, cuts a sample.
+                    CyclePlansView {
+                        data: root.data.plans;
+                        action(a, b) => { root.action(a, b); }
+                    }
+                    CycleCuts {
+                        cuts: root.data.cuts;
+                        action(a, b) => { root.action(a, b); }
+                    }
+                }
             }
             if root.data.explorer-tab == 2: ReviewList {
                 vertical-stretch: 1;
