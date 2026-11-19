@@ -129,6 +129,8 @@ Martins A/I-Zonen brauchen Abstraktheit aus Compilerbelegen (Java, C#) oder Rust
 | Aufgezeichnete Laufzeit untersuchen (Requests, DB-Calls pro Request, langsame und wiederholte Queries, Profiler-Samples pro Request; [ADR 0004](docs/adr/0004-runtime-probes.md)) | `archguard runtime . --format json` |
 | arc42-Belegblöcke erzeugen oder aktualisieren | `archguard doc . --arc42` |
 | arc42 als AsciiDoc oder Word exportieren (für einen Confluence-Import) | `archguard doc . --arc42 --format asciidoc` oder `--format docx` |
+| arc42-Diagramme im Terminal auflisten oder zeichnen | `archguard diagram .` oder `archguard diagram . building-blocks` |
+| Das arc42-Dokument und seinen Diagrammkatalog als JSON | `archguard doc . --arc42 --format json` |
 | Diensttopologie als Structurizr-Workspace (C4) exportieren | `archguard graph . --format structurizr [--service orders]` |
 | Mit einer Git-Revision vergleichen | `archguard review . --base main --format html` |
 | Wirksame Konfiguration lesen | `archguard config . --format json` |
@@ -141,6 +143,58 @@ Die arc42-Erzeugung aktualisiert ausdrücklich markierte Belegblöcke. Eigene Te
 Ohne `--out` nimmt `doc --arc42` den arc42-Text, den die Desktop-App bearbeitet: die am wenigsten tief liegende `arc42.md` oder den Ordner `arc42/`, bis vier Ordnerebenen tief (nicht in versteckten oder Build-Ordnern wie `target`, `node_modules`). Ein Ordner enthält je Kapitel eine Datei, benannt nach seiner Nummer (`05-bausteinsicht.md`, `arc42-05.md`); jede wird für sich geprüft und aktualisiert. Nur wenn das Projekt beides nicht hat, legt `doc --arc42` `arc42.md` im Projektordner an. Diagrammblöcke, die „In Kapitel einfügen“ der Desktop-App in ein Kapitel mit eigenem Text gesetzt hat (`<!-- archguard:diagram:ID:start/end -->`), werden wie die Belegblöcke aufgefrischt, der Block eines ausgeblendeten fällt weg. Ein Kapitel mit eigenem Text bekommt nur die Diagramme, die Sie dafür gewählt haben: Ein Diagramm, das in `[arc42] shown_diagrams` steht (der Schalter „In der Dokumentation“ der Desktop-App schreibt es) und in so einem Kapitel fehlt, kommt an dessen Ende dazu; die übrigen bietet nur der Reiter „Diagramme“ der Desktop-App an. Kapitel mit erzeugten Blöcken enthalten jedes Diagramm, das nicht in `[arc42] hidden_diagrams` steht. `--check` nennt Kapitel, die diese Regeln ändern würden, als veraltet.
 
 `--format asciidoc` schreibt `arc42.adoc`, `--format docx` schreibt `arc42.docx` (oder `--out`). Beide wandeln den arc42-Text um, den `doc --arc42` findet (Datei oder Kapitelordner), mit aktuellen Beleg- und Diagrammblöcken, und lesen ihn nur; ohne ihn wandeln sie das erzeugte Dokument um. `--chapter N` exportiert dieses Kapitel. Diagramme stehen in AsciiDoc als `[mermaid]`/`[plantuml]`-Blöcke für Asciidoctor Diagram. Word-Überschriften nutzen die Formatvorlagen Überschrift 1–3, daher baut Confluences „Word-Dokument importieren" daraus das Inhaltsverzeichnis; Tabellen sind Word-Tabellen, Diagramme bleiben Mermaid- oder PlantUML-Quelltext, weil das Dokument keine gerenderten Bilder hat. `graph --format structurizr` schreibt `.archguard/reports/graph.dsl`: ein Softwaresystem, die Deployment-Dienste als Container, Datenspeicher außerhalb der Konfiguration als externe Systeme, Beziehungen mit Protokoll und Konfigurationsbeleg und mit `--service` die Pakete dieses Dienstes als Komponenten. Abbildung und Grenzen: [ADR 0013](docs/adr/0013-structurizr-and-asciidoc-export.md). Die Desktop-App bietet dieselben arc42-Dateien unter Datei → Exportieren an, das MCP-Werkzeug `architecture_document` liefert AsciiDoc (`format=asciidoc`) und den Workspace (`template=structurizr`).
+
+### Diagramme im Terminal
+
+`archguard diagram [PFAD]` listet den arc42-Diagrammkatalog: jedes Diagramm, das ArchGuard ableitet, mit Kapitel, Art, ob das Dokument es zeigt (`IN DOC`), ob der arc42-Text des Projekts es enthält (`IN TEXT`, nach der Regel der Desktop-App), Titel (bei 60 Zeichen gekürzt) und Id, zuletzt und ungekürzt, damit sie sich kopieren lässt. `archguard diagram [PFAD] ID` zeichnet ein Diagramm; ein einzelnes Argument, das kein Ordner ist, gilt als Id. `--level PAKET` zeichnet eine Ebene der Paketkarte (`building-blocks@PAKET`, oder `cycles --level PAKET`), dieselbe Ebene, die die Karte der Desktop-App öffnet, auch wenn `[arc42] shown_diagrams` sie nicht nennt. Kastengraphen (Kontext, Bausteine, Paketkarten, Deployment, Dienste, Zyklen, Schichten) stehen von oben nach unten, von der nutzenden zur genutzten Seite; ein Zyklus wird an einer Kante gebrochen, die nach oben zeigt, und `!` markiert Kästen und Kanten im Zyklus. Sequenzen zeigen Teilnehmer mit Lebenslinien, nummerierte Nachrichten, gestrichelte Rückgaben, Aufrufe an sich selbst als Schleife, Ereignisse mit Doppelspitze (`>>`) und Fehler mit `✗`; die Szenarien haben keine alt/loop-Rahmen, daher werden keine gezeichnet. Die Ausgabe nutzt Unicode-Rahmenzeichen, `--ascii` reines ASCII; Farbe (Zyklen rot, HTTP blau) nur im Terminal ohne `NO_COLOR`; die Breite folgt `COLUMNS` (Standard 100), breite Reihen brechen um. `--format json` gibt stattdessen die Daten des Diagramms (Elemente und Beziehungen) oder den ganzen Katalog aus. Beispiel aus `fixtures/py-layers`:
+
+```text
+$ archguard diagram fixtures/py-layers
+CHAPTER  KIND      IN DOC  IN TEXT  TITLE                                            ID
+5        packages  yes     yes      Package overview                                 building-blocks
+6        packages  yes     yes      Static calls between building blocks             runtime-calls
+6        sequence  yes     yes      Scenario · handle · api (static)                 runtime-scenario-python-api-http-py-module-handle-4
+...
+11       packages  yes     yes      Cyclic package relations                         cycles
+
+$ archguard diagram fixtures/py-layers building-blocks
+Package overview [building-blocks, chapter 5, packages]
+
+┌─────────┐
+│ api     │
+│ package │
+└────┬────┘
+     │
+     ▼ 2
+┌─────────┐
+│ ! app   │
+│ package │
+└──┬───┬──┘
+   │   ▲ !1
+!3 ▼   │
+┌──────┴───┐
+│ ! domain │
+│ package  │
+└──────────┘
+
+counts: source connections
+
+$ archguard diagram fixtures/py-layers runtime-scenario-python-api-http-py-module-handle-4
+Scenario · handle · api (static) [runtime-scenario-python-api-http-py-module-handle-4, chapter 6, sequence]
+
+      ┌─────┐           ┌─────┐         ┌────────┐
+      │ api │           │ app │         │ domain │
+      └──┬──┘           └──┬──┘         └────┬───┘
+         │ 1. estimate     │                 │
+         ├────────────────>│                 │
+         │                 │ 2. price_cents  │
+         │                 ├────────────────>│
+         │                 │<╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+         │<╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤                 │
+         │                 │                 │
+```
+
+`archguard doc --arc42 --format json [--chapter N]` gibt das arc42-Dokument als Daten aus und schreibt nichts: wo der Text liegt (`target`: Datei oder Ordner, vorhanden), jedes Kapitel mit Nummer, Titel, der Datei, die es enthält (`null`: nur erzeugt), und seinem Markdown, wie die Desktop-App es liest, und den Katalog wie oben, jedes Diagramm mit `shown`, `chosen` (in `[arc42] shown_diagrams` genannt), `in_text`, Elementen und Beziehungen. Das MCP-Werkzeug `architecture_document` liefert denselben Katalog mit `template=arc42, format=catalogue`.
 
 ### Befunde mit einer Expertenbewertung vergleichen
 

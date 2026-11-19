@@ -74,6 +74,9 @@ pub(crate) fn doc(
     graph: &Graph,
     report: &Report,
 ) -> i32 {
+    if let Some(code) = crate::diagram_cmd::dispatch(cli, root, loaded, graph, report) {
+        return code;
+    }
     let Command::Doc {
         out,
         check,

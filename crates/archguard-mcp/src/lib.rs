@@ -784,7 +784,7 @@ impl ArchguardTools {
     }
 
     #[tool(
-        description = "Generate deterministic architecture Markdown without writing files. Default template: architecture. Use template=arc42 for twelve evidence-backed arc42 chapters, optionally chapter=1..12 and format=asciidoc (key asciidoc instead of markdown); template=structurizr returns the C4 workspace DSL (key dsl) of the service topology, with service=<id or name> adding that service's packages as components. Arc42 and structurizr pages are lossless and bounded to 4 KiB: concatenate markdown while following next_offset (Unicode character offsets); limit=1..2000 characters. Declared intent, static observations and missing business context remain explicit."
+        description = "Generate deterministic architecture Markdown without writing files. Default template: architecture. Use template=arc42 for twelve evidence-backed arc42 chapters, optionally chapter=1..12 and format=asciidoc (key asciidoc instead of markdown) or format=catalogue (key catalogue: the arc42 diagram catalogue as JSON text, each diagram with id, chapter, title, kind, shown, chosen, in_text, elements and relations); template=structurizr returns the C4 workspace DSL (key dsl) of the service topology, with service=<id or name> adding that service's packages as components. Arc42 and structurizr pages are lossless and bounded to 4 KiB: concatenate markdown while following next_offset (Unicode character offsets); limit=1..2000 characters. Declared intent, static observations and missing business context remain explicit."
     )]
     async fn architecture_document(
         &self,
@@ -804,7 +804,7 @@ impl ArchguardTools {
                 &run.report,
             )
             .map_err(|e| tools::invalid_params(e.to_string()))?;
-            let text = arc42_tools::arc42_text(&doc, &params);
+            let text = arc42_tools::arc42_text(&run, &doc, &params)?;
             return Ok(arc42_tools::page(&text, &params)?.to_string());
         }
         let goals = archguard_engine::quality_goal_assessment(
@@ -1457,6 +1457,18 @@ mod tests {
         let text = adoc["asciidoc"].as_str().unwrap();
         assert!(text.starts_with("= arc42"), "{text}");
         assert!(text.contains("== 5. Building Block View"), "{text}");
+        let catalogue = review_tool(
+            &handler,
+            "architecture_document",
+            json!({"template":"arc42","chapter":5,"format":"catalogue","limit":2000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(catalogue["next_offset"], Value::Null, "{catalogue}");
+        let diagrams: Value =
+            serde_json::from_str(catalogue["catalogue"].as_str().unwrap()).unwrap();
+        assert_eq!(diagrams[0]["id"], "building-blocks", "{diagrams}");
+        assert_eq!(diagrams[0]["in_text"], true);
         let dsl = review_tool(
             &handler,
             "architecture_document",

@@ -19,6 +19,7 @@ mod arc42_goals;
 mod arc42_quality;
 mod arc42_text;
 mod architecture_doc;
+pub mod ascii;
 mod asciidoc;
 mod docx;
 mod dot;

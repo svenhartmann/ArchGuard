@@ -36,6 +36,7 @@ mod args;
 use args::{BaselineAction, Cli, Command, Format, format_label};
 use check_cmd::read_baseline;
 use cycle_view::{cycle_findings, cyclic_edges};
+use export_cmd::doc;
 use output::{EXIT_FOUND, EXIT_OK, EXIT_USAGE, analysis_error, emit, to_pretty_json, usage};
 mod architecture_cmd;
 mod assessment_cmd;
@@ -43,6 +44,7 @@ mod check_cmd;
 mod coverage_cmd;
 mod cycle_view;
 mod db;
+mod diagram_cmd;
 mod doctor_cmd;
 mod dsm_cmd;
 mod engineering_cmd;
@@ -361,7 +363,7 @@ fn run(cli: &Cli) -> i32 {
         Command::Patterns { .. } => {
             architecture_cmd::patterns(cli, &root, &loaded, &graph, &report)
         }
-        Command::Doc { .. } => export_cmd::doc(cli, &root, &loaded, &graph, &report),
+        Command::Doc { .. } | Command::Diagram { .. } => doc(cli, &root, &loaded, &graph, &report),
         Command::Graph {
             format,
             focus,

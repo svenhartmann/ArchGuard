@@ -9,6 +9,7 @@ pub use atlas::{ArchitectureAtlas, AtlasArea, AtlasConnection, architecture_atla
 pub use world::{ArchitectureWorld, WorldCoverage, WorldEntity, architecture_world};
 mod api_contracts;
 mod arc42;
+pub mod arc42_data;
 pub mod arc42_file;
 mod architecture;
 mod cache;
