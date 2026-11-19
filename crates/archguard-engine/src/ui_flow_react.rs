@@ -777,6 +777,8 @@ mod next {
                     file: file.clone(),
                     line,
                     source: SOURCE.into(),
+                    handler: None,
+                    sends: Vec::new(),
                 });
             }
         }
