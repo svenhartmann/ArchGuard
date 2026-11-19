@@ -417,6 +417,7 @@ pub(crate) enum Command {
         anonymous: bool,
     },
     /// Domain entities, state machines, use cases and events (ADR 0022).
+    #[command(group(clap::ArgGroup::new("chains").args(["chain", "state"]).multiple(true)))]
     Domain {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
@@ -426,9 +427,20 @@ pub(crate) enum Command {
         /// Show the chain endpoint → use case → transitions → events → handlers.
         #[arg(long)]
         chain: bool,
-        /// With --entity: the endpoints and screens that can cause this state.
+        /// With --entity: the endpoints, screens and message handlers that can cause this state.
         #[arg(long, value_name = "STATE", requires = "entity")]
         state: Option<String>,
+        /// With --chain or --state: whether a signed-in user with this role can run each chain (repeatable).
+        #[arg(
+            long,
+            value_name = "ROLE",
+            conflicts_with = "anonymous",
+            requires = "chains"
+        )]
+        role: Vec<String>,
+        /// With --chain or --state: whether a user who is not signed in can run each chain.
+        #[arg(long, requires = "chains")]
+        anonymous: bool,
     },
     /// Runtime profile from recorded OTLP traces in .archguard/runtime (ADR 0004).
     Runtime {

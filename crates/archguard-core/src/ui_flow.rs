@@ -25,6 +25,10 @@ pub struct UiFlow {
     pub diagnostics: Vec<UiFlowDiagnostic>,
     /// False as soon as one route, target or role could not be read literally.
     pub complete: bool,
+    /// Ids of screens an extractor or import marks as where the application
+    /// starts (MAUI Shell, WPF `StartupUri`, ...); see [`start_screen_ids`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub start_screens: Vec<String>,
 }
 impl Default for UiFlow {
     /// Empty and complete, so it is the identity of [`merge_ui_flows`].
@@ -37,6 +41,7 @@ impl Default for UiFlow {
             endpoints: vec![],
             diagnostics: vec![],
             complete: true,
+            start_screens: vec![],
         }
     }
 }
@@ -179,6 +184,31 @@ pub enum Condition {
     Custom(String),
     /// Source text the rules cannot read.
     Unknown(String),
+}
+impl Condition {
+    /// In words: `role Admin or policy P`, `signed in`, `not (…)`.
+    pub fn text(&self) -> String {
+        let join = |items: &[Condition], word: &str| {
+            let parts: Vec<String> = (items.iter())
+                .map(|c| match c {
+                    Condition::All(_) | Condition::Any(_) => format!("({})", c.text()),
+                    _ => c.text(),
+                })
+                .collect();
+            parts.join(word)
+        };
+        match self {
+            Condition::All(items) => join(items, " and "),
+            Condition::Any(items) => join(items, " or "),
+            Condition::Not(inner) => format!("not ({})", inner.text()),
+            Condition::Authenticated => "signed in".into(),
+            Condition::Never => "never".into(),
+            Condition::Role(name) => format!("role {name}"),
+            Condition::Policy(name) => format!("policy {name}"),
+            Condition::Custom(name) => format!("custom {name}"),
+            Condition::Unknown(text) => format!("unknown ({text})"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -352,18 +382,19 @@ pub enum ScreenReach {
     NoKnownPath {
         unresolved_transitions_in_application: usize,
     },
-    /// The application has no screen routed `/`.
+    /// The application has no start screen (none marked, none routed `/`).
     NoStartScreen,
 }
 
-/// A start screen: routed `/`.
-fn is_start(screen: &Screen) -> bool {
-    screen
-        .route
-        .as_deref()
-        .map(normalize_path_pattern)
-        .as_deref()
-        == Some("/")
+/// The start screens, in screen order: those listed in `flow.start_screens`
+/// and those routed `/`. Simulation and findings start only here.
+pub fn start_screen_ids(flow: &UiFlow) -> Vec<&str> {
+    let routed =
+        |s: &Screen| s.route.as_deref().map(normalize_path_pattern).as_deref() == Some("/");
+    (flow.screens.iter())
+        .filter(|s| flow.start_screens.contains(&s.id) || routed(s))
+        .map(|s| s.id.as_str())
+        .collect()
 }
 
 /// Best reach of every screen over all `starts`.
@@ -378,20 +409,14 @@ fn reach_from(flow: &UiFlow, starts: &[&str], assignment: &Assignment) -> BTreeM
     reached
 }
 
-/// Every screen's reach from the `/` screens, with the reason when not reached.
+/// Every screen's reach from the start screens ([`start_screen_ids`]), with
+/// the reason when not reached.
 pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String, ScreenReach> {
     let app = |s: &Screen| s.application.clone().unwrap_or_default();
-    let starts: Vec<&str> = (flow.screens.iter().filter(|s| is_start(s)))
-        .map(|s| s.id.as_str())
-        .collect();
-    let started: BTreeSet<String> = flow
-        .screens
-        .iter()
-        .filter(|s| is_start(s))
-        .map(app)
-        .collect();
+    let starts = start_screen_ids(flow);
     let screens: BTreeMap<&str, &Screen> =
         flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
+    let started: BTreeSet<String> = (starts.iter().map(|id| app(screens[id]))).collect();
     let mut unresolved: BTreeMap<&str, usize> = BTreeMap::new();
     for t in &flow.transitions {
         let from_app = match &t.from {
@@ -463,34 +488,49 @@ fn application_of<'a>(screens: &BTreeMap<&str, &'a Screen>, id: &str) -> Option<
         .map(|s| s.application.as_deref().unwrap_or(""))
 }
 
-fn is_parameter(segment: &str) -> bool {
-    segment.starts_with(':') || (segment.starts_with('{') && segment.ends_with('}'))
-}
-
 /// How well the route `pattern` matches `path`: none when it does not, else
 /// the number of literal segments that are equal (higher is more specific).
 /// Segments match when both are parameters, when they are equal literals
 /// (case-insensitive), or when the pattern has a parameter and the path a
 /// literal (`/orders/:id` matches `/orders/42`). A parameter in `path` never
 /// matches a literal in `pattern`, so pattern against pattern compares shape.
+/// A trailing `*` or `**` (React `[...slug]`, Angular `**`) matches one or
+/// more remaining segments; [`best_route`] and the join rank such a match
+/// below every match without one.
 pub fn path_match_score(pattern: &str, path: &str) -> Option<usize> {
+    route_rank(pattern, path).map(|(_, literals)| literals)
+}
+
+/// `(no catch-all, equal literal segments)`: ordered so the better match is greater.
+fn route_rank(pattern: &str, path: &str) -> Option<(bool, usize)> {
     let segments = |p: &str| -> Vec<String> {
         p.split('/')
             .filter(|s| !s.is_empty())
             .map(str::to_lowercase)
             .collect()
     };
-    let (pattern, path) = (segments(pattern), segments(path));
-    if pattern.len() != path.len() {
+    let parameter = |s: &str| s.starts_with(':') || (s.starts_with('{') && s.ends_with('}'));
+    let (mut pattern, path) = (segments(pattern), segments(path));
+    let catch_all = pattern.last().is_some_and(|s| s == "*" || s == "**");
+    if catch_all {
+        pattern.pop();
+    }
+    let fits = if catch_all {
+        path.len() > pattern.len()
+    } else {
+        path.len() == pattern.len()
+    };
+    if !fits {
         return None;
     }
-    pattern.iter().zip(&path).try_fold(0, |score, (p, s)| {
-        match (is_parameter(p), is_parameter(s)) {
+    let literals = pattern.iter().zip(&path).try_fold(0, |score, (p, s)| {
+        match (parameter(p), parameter(s)) {
             (true, _) => Some(score),
             (false, false) if p == s => Some(score + 1),
             _ => None,
         }
-    })
+    })?;
+    Some((!catch_all, literals))
 }
 
 /// Whether the route `pattern` matches `path`; see [`path_match_score`].
@@ -499,7 +539,7 @@ pub fn path_patterns_match(pattern: &str, path: &str) -> bool {
 }
 
 /// The one candidate whose route matches `path` best (an exact literal route
-/// beats a parameter route). `Err` holds the tied best candidates, empty when
+/// beats a parameter route, any route beats a catch-all). `Err` holds the tied best candidates, empty when
 /// none matches: a tie is never guessed. A candidate may come with several routes.
 pub fn best_route<'a, T: PartialEq>(
     path: &str,
@@ -507,7 +547,7 @@ pub fn best_route<'a, T: PartialEq>(
 ) -> Result<T, Vec<T>> {
     let (mut best, mut tied) = (None, Vec::new());
     for (candidate, route) in candidates {
-        let Some(score) = path_match_score(route, path) else {
+        let Some(score) = route_rank(route, path) else {
             continue;
         };
         match best.cmp(&Some(score)) {
@@ -554,13 +594,13 @@ fn endpoint_hits<'a>(
     method: &str,
     path: &str,
 ) -> Vec<&'a EndpointAccess> {
-    let scored: Vec<(usize, &EndpointAccess)> = flow
+    let scored: Vec<((bool, usize), &EndpointAccess)> = flow
         .endpoints
         .iter()
         .filter(|e| e.method == ANY_METHOD || e.method.eq_ignore_ascii_case(method))
-        .filter_map(|e| path_match_score(&e.path, path).map(|score| (score, e)))
+        .filter_map(|e| route_rank(&e.path, path).map(|score| (score, e)))
         .collect();
-    let mut best: BTreeMap<Option<&str>, usize> = BTreeMap::new();
+    let mut best: BTreeMap<Option<&str>, (bool, usize)> = BTreeMap::new();
     for (score, e) in &scored {
         let top = best.entry(e.application.as_deref()).or_default();
         *top = (*top).max(*score);
@@ -595,6 +635,7 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         endpoints: union(a.endpoints, b.endpoints),
         diagnostics: union(a.diagnostics, b.diagnostics),
         complete: a.complete && b.complete,
+        start_screens: union(a.start_screens, b.start_screens),
     }
 }
 
@@ -618,7 +659,8 @@ mod findings {
         HiddenButUnprotected,
         /// No scanned endpoint matches the HTTP call; the backend may be outside the scan.
         NoBackendEndpoint,
-        /// The application has no screen with route `/`; no reachability for it.
+        /// The application has no start screen (none marked, none routed `/`);
+        /// no reachability for it.
         NoStartScreen,
     }
 
@@ -715,8 +757,9 @@ mod findings {
 
     /// Mismatch findings, sorted. Simulates anonymous, signed in without a
     /// role, and each role named anywhere in the flow alone; policy and custom
-    /// atoms stay unknown. Reachability starts at every screen routed `/`; an
-    /// application without one gets a note and is not reached from itself.
+    /// atoms stay unknown. Reachability starts at every start screen
+    /// ([`start_screen_ids`]); an application without one gets a note and is
+    /// not reached from itself.
     /// One finding per action and kind, naming the first role that shows it.
     pub fn ui_flow_findings(flow: &UiFlow) -> Vec<UiFlowFinding> {
         let (starts, mut findings) = start_screens(flow);
@@ -784,22 +827,20 @@ mod findings {
         findings
     }
 
-    /// Ids of the screens routed `/`, and a note for each application without one.
+    /// The start screen ids, and a note for each application without one.
     fn start_screens(flow: &UiFlow) -> (Vec<&str>, Vec<UiFlowFinding>) {
-        let starts = flow
-            .screens
-            .iter()
-            .filter(|s| is_start(s))
-            .map(|s| s.id.as_str())
-            .collect();
-        let apps: BTreeSet<&str> = flow
-            .screens
-            .iter()
-            .map(|s| s.application.as_deref().unwrap_or(""))
+        let starts = start_screen_ids(flow);
+        fn app(s: &Screen) -> &str {
+            s.application.as_deref().unwrap_or("")
+        }
+        let apps: BTreeSet<&str> = flow.screens.iter().map(app).collect();
+        let started: BTreeSet<&str> = (flow.screens.iter())
+            .filter(|s| starts.contains(&s.id.as_str()))
+            .map(app)
             .collect();
         let notes = apps
             .into_iter()
-            .filter(|app| !flow.screens.iter().any(|s| is_start(s) && s.application.as_deref().unwrap_or("") == *app))
+            .filter(|a| !started.contains(a))
             .map(|app| UiFlowFinding {
                 severity: Severity::Info,
                 kind: UiFlowFindingKind::NoStartScreen,
@@ -807,7 +848,7 @@ mod findings {
                 action: None,
                 role: None,
                 endpoints: vec![],
-                message: format!("Application {app:?} has no screen routed `/`, so its reachability is not simulated."),
+                message: format!("Application {app:?} has no start screen (none routed `/` or marked as start), so its reachability is not simulated."),
             })
             .collect();
         (starts, notes)
@@ -1551,6 +1592,88 @@ mod tests {
         // Several routes of one candidate are no tie.
         let one = [("b", "/b"), ("b", "/bee"), ("b", "/{x}")];
         assert_eq!(best_route("/bee", one), Ok("b"));
+    }
+
+    #[test]
+    fn catch_all_routes_match_the_rest_and_rank_last() {
+        // React `[...slug]` and `path="*"` become `*`, Angular `**`.
+        assert_eq!(path_match_score("/docs/*", "/docs/a/b"), Some(1));
+        assert_eq!(path_match_score("/**", "/anything"), Some(0));
+        assert!(path_patterns_match("/docs/*", "/docs/{id}"));
+        // One or more segments: the catch-all needs something to catch.
+        assert!(!path_patterns_match("/docs/*", "/docs"));
+        assert!(!path_patterns_match("/docs/*", "/blog/a"));
+        // A literal or parameter route beats a catch-all, also one with more literals.
+        let routes = [
+            ("all", "/**"),
+            ("docs", "/docs/*"),
+            ("page", "/docs/:id"),
+            ("intro", "/docs/intro"),
+        ];
+        assert_eq!(best_route("/docs/intro", routes), Ok("intro"));
+        assert_eq!(best_route("/docs/x", routes), Ok("page"));
+        assert_eq!(best_route("/docs/x/y", routes), Ok("docs"));
+        assert_eq!(best_route("/cart", routes), Ok("all"));
+        let deep = [("catch", "/a/b/*"), ("param", "/a/:x/:y")];
+        assert_eq!(best_route("/a/b/c", deep), Ok("param"));
+        // The join ranks the same way.
+        let flow = UiFlow {
+            actions: vec![http_action("GET", "/api/docs/7")],
+            endpoints: vec![
+                endpoint("GET", "/api/**", AccessState::Open),
+                endpoint("GET", "/api/docs/{id}", AccessState::Undeclared),
+            ],
+            ..UiFlow::default()
+        };
+        let joined = join_actions_to_endpoints(&flow);
+        let paths: Vec<&str> = joined[0].1.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["/api/docs/{id}"]);
+    }
+
+    #[test]
+    fn marked_start_screens_start_the_simulation() {
+        let in_app = |s: Screen| Screen {
+            application: Some("ClientApp".into()),
+            route: Some(format!("//Main/{}", s.id)),
+            ..s
+        };
+        let mut flow = UiFlow {
+            screens: vec![
+                in_app(screen("login", None)),
+                in_app(screen("catalog", None)),
+                in_app(screen("orders", Some(Condition::Authenticated))),
+            ],
+            transitions: vec![go("login", "catalog", None), go("catalog", "orders", None)],
+            ..UiFlow::default()
+        };
+        let anonymous = Assignment::default();
+        assert_eq!(
+            screen_reaches(&flow, &anonymous)["login"],
+            ScreenReach::NoStartScreen
+        );
+        let kinds: Vec<_> = ui_flow_findings(&flow).iter().map(|f| f.kind).collect();
+        assert_eq!(kinds, [UiFlowFindingKind::NoStartScreen]);
+        flow.start_screens = vec!["login".into()];
+        assert_eq!(start_screen_ids(&flow), ["login"]);
+        let reaches = screen_reaches(&flow, &anonymous);
+        assert_eq!(reaches["login"], ScreenReach::Sure);
+        assert_eq!(reaches["catalog"], ScreenReach::Sure);
+        assert_eq!(reaches["orders"], ScreenReach::Denied);
+        assert!(ui_flow_findings(&flow).is_empty());
+        // A screen routed `/` stays a start screen next to a marked one.
+        flow.screens.push(Screen {
+            route: Some("/".into()),
+            ..screen("home", None)
+        });
+        assert_eq!(start_screen_ids(&flow), ["login", "home"]);
+        // JSON: the list, absent when empty; older files read without it.
+        let json = serde_json::to_string(&flow).unwrap();
+        assert!(json.contains(r#""start_screens":["login"]"#), "{json}");
+        assert_eq!(serde_json::from_str::<UiFlow>(&json).unwrap(), flow);
+        let empty = serde_json::to_string(&UiFlow::default()).unwrap();
+        assert!(!empty.contains("start_screens"), "{empty}");
+        let merged = merge_ui_flows(flow.clone(), UiFlow::default());
+        assert_eq!(merged.start_screens, ["login"]);
     }
 
     #[test]

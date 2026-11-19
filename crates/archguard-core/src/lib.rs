@@ -63,7 +63,7 @@ pub use ui_flow::{
     UiFlowActionRef, UiFlowDiagnostic, UiFlowEndpointRef, UiFlowFinding, UiFlowFindingKind,
     UiFlowSummary, best_route, evaluate_access, evaluate_condition, join_actions_to_endpoints,
     merge_ui_flows, normalize_path_pattern, path_match_score, path_patterns_match,
-    reachable_screens, screen_reaches, ui_flow_findings, ui_flow_summary,
+    reachable_screens, screen_reaches, start_screen_ids, ui_flow_findings, ui_flow_summary,
 };
 mod view;
 mod workspace;

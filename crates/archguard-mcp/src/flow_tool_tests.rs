@@ -138,6 +138,8 @@ fn both_tools_are_registered_read_only_with_their_parameters() {
                 "entity",
                 "chain",
                 "state",
+                "roles",
+                "anonymous",
                 "offset",
                 "limit",
                 "expected_revision",
@@ -319,4 +321,39 @@ async fn domain_model_chain_and_triggers_of_a_state() {
     .await;
     assert!(cancelled.is_empty(), "{cancelled:#?}");
     assert!(domain(&tools, json!({"state": "Submitted"})).await.is_err());
+}
+
+#[tokio::test]
+async fn domain_model_triggers_with_message_handlers_and_rights() {
+    let (dir, tools) = project();
+    std::fs::write(
+        dir.path().join("App/ImportHandler.cs"),
+        "public class ImportHandler(IMediator mediator) : IIntegrationEventHandler<OrderImported>\n{\n    public Task Handle(OrderImported e) => mediator.Send(new SubmitOrderCommand(e.Id));\n}\n",
+    )
+    .unwrap();
+    let args = json!({"entity": "Order", "state": "Submitted", "roles": ["Clerk"]});
+    let (last, rows) = all_rows(&tools, "domain_model", args).await;
+    assert_eq!(rows.len(), 2, "{rows:#?}");
+    assert_eq!(rows[0]["endpoint"]["path"], "/api/submit");
+    assert_eq!(
+        rows[0]["right"],
+        json!({"verdict": "unknown", "reasons": ["endpoint POST /api/submit no access declared: unknown"]})
+    );
+    assert_eq!(rows[1]["message_handler"]["message"], "OrderImported");
+    assert_eq!(rows[1]["right"]["verdict"], "not_a_user_path");
+    assert_eq!(
+        last["metadata"]["simulation"],
+        json!({"anonymous": false, "roles": ["Clerk"]})
+    );
+    // Without a simulation there is no right; roles need state or chain.
+    let (_, plain) = all_rows(
+        &tools,
+        "domain_model",
+        json!({"entity": "Order", "state": "Submitted"}),
+    )
+    .await;
+    assert!(plain.iter().all(|r| r.get("right").is_none()), "{plain:#?}");
+    assert!(domain(&tools, json!({"roles": ["Clerk"]})).await.is_err());
+    let both = json!({"chain": true, "roles": [], "anonymous": true});
+    assert!(domain(&tools, both).await.is_err());
 }

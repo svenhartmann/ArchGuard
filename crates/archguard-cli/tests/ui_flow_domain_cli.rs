@@ -388,3 +388,53 @@ fn domain_chain_json_and_triggers_of_a_state() {
         .unwrap();
     assert_eq!(lone.status.code(), Some(2));
 }
+
+#[test]
+fn domain_triggers_include_message_handlers_and_rights_per_role() {
+    let handler = (
+        "Api/PaymentHandler.cs",
+        "public class PaymentSucceededHandler(IMediator mediator) : IIntegrationEventHandler<PaymentSucceededIntegrationEvent>\n{\n    public Task Handle(PaymentSucceededIntegrationEvent e) => mediator.Send(new SetPaidCommand(e.OrderId));\n}\n",
+    );
+    let files: Vec<(&str, &str)> = CHAIN_FILES.iter().copied().chain([handler]).collect();
+    let dir = project_with(&files);
+    let args = ["domain", "--entity", "Order", "--state", "Paid"];
+    let text = run(dir.path(), &args);
+    assert!(text.starts_with("Triggers of Order → Paid: 2\n"), "{text}");
+    assert!(
+        text.contains(
+            "message PaymentSucceededIntegrationEvent → SetPaidCommandHandler · Api/PaymentHandler.cs:1\n  handler PaymentSucceededHandler · sends SetPaidCommand\n  Order: Submitted → Paid · Order.SetPaid\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("right:"), "{text}");
+
+    let anonymous = run(dir.path(), &[&args[..], &["--anonymous"]].concat());
+    assert!(anonymous.contains("Simulated: anonymous\n"), "{anonymous}");
+    assert!(
+        anonymous.contains(
+            "  right: unknown · endpoint PUT /api/orders/pay no access declared: unknown\n"
+        ),
+        "{anonymous}"
+    );
+    assert!(
+        anonymous.contains("  right: not_a_user_path · not a user path: PaymentSucceededHandler handles PaymentSucceededIntegrationEvent inside the system\n"),
+        "{anonymous}"
+    );
+
+    let value = json(dir.path(), &[&args[..], &["--role", "Admin"]].concat());
+    assert_eq!(value["simulated"]["roles"][0], "Admin");
+    let verdicts: Vec<&str> = (value["chains"].as_array().unwrap().iter())
+        .map(|c| c["right"]["verdict"].as_str().unwrap())
+        .collect();
+    assert_eq!(verdicts, ["unknown", "not_a_user_path"]);
+    let message = &value["chains"][1];
+    assert_eq!(message["message_handler"]["id"], "PaymentSucceededHandler");
+    assert!(message.get("endpoint").is_none());
+
+    let without_chain = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["domain", "--role", "Admin"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(without_chain.status.code(), Some(2));
+}

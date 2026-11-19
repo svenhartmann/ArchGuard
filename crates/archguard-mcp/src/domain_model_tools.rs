@@ -2,11 +2,11 @@
 //! read from code (ADR 0022), read-only and paginated within 4 KiB.
 use crate::engineering_tools::EngineeringParams;
 use crate::server::ArchguardTools;
-use archguard_engine::core::UiFlow;
 use archguard_engine::core::domain_model::{
     DomainModel, StateMachine, StateTransition, event_chain,
 };
-use archguard_engine::domain_chain::{chains, triggers_of_state};
+use archguard_engine::core::{Assignment, UiFlow};
+use archguard_engine::domain_chain::{chains, rights, triggers_of_state};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ErrorData, schemars, tool, tool_router};
 use serde::Deserialize;
@@ -26,6 +26,11 @@ pub struct DomainModelParams {
     pub chain: bool,
     /// With entity: only the chains that cause entity -> state.
     pub state: Option<String>,
+    /// With chain or state: simulate a signed-in user holding exactly these
+    /// roles; each chain gets right = allowed/denied/unknown/not_a_user_path.
+    pub roles: Option<Vec<String>>,
+    /// With chain or state: true simulates an anonymous visitor; not with roles.
+    pub anonymous: Option<bool>,
     /// Revision from a previous page. Rejects a changed model; restart at offset 0.
     pub expected_revision: Option<String>,
 }
@@ -34,13 +39,25 @@ pub fn validate(p: &DomainModelParams) -> Result<(), ErrorData> {
     crate::engineering_tools::validate(&p.page)?;
     let bad = |v: &str| v.is_empty() || v.len() > 256 || v.contains('\0');
     let strings = [&p.entity, &p.state, &p.expected_revision];
-    if strings.iter().any(|v| v.as_deref().is_some_and(bad)) {
+    if strings.iter().any(|v| v.as_deref().is_some_and(bad))
+        || (p.roles.as_ref()).is_some_and(|r| r.len() > 64 || r.iter().any(|v| bad(v)))
+    {
         return Err(crate::tools::invalid_params(
-            "entity, state and expected_revision must be 1..=256 bytes without NUL",
+            "entity, state, roles (at most 64) and expected_revision must be 1..=256 bytes without NUL",
         ));
     }
     if p.state.is_some() && p.entity.is_none() {
         return Err(crate::tools::invalid_params("state requires entity"));
+    }
+    if p.anonymous == Some(true) && p.roles.is_some() {
+        return Err(crate::tools::invalid_params(
+            "anonymous cannot be combined with roles",
+        ));
+    }
+    if (p.roles.is_some() || p.anonymous.is_some()) && !p.chain && p.state.is_none() {
+        return Err(crate::tools::invalid_params(
+            "roles and anonymous need chain or state",
+        ));
     }
     Ok(())
 }
@@ -68,12 +85,14 @@ fn transition_row(
     row
 }
 
-/// Chain rows: every chain, those changing `entity`, or those causing `state`.
+/// Chain rows: every chain, those changing `entity`, or those causing `state`;
+/// with an assignment each row gets its `right`.
 fn chain_rows(
     flow: &UiFlow,
     model: &DomainModel,
     entity: Option<&str>,
     state: Option<&str>,
+    assignment: Option<&Assignment>,
 ) -> Vec<Value> {
     let found = match (entity, state) {
         (Some(e), Some(s)) => triggers_of_state(flow, model, e, s),
@@ -82,8 +101,9 @@ fn chain_rows(
             .collect(),
         (None, _) => chains(flow, model),
     };
-    (found.iter())
-        .map(|c| {
+    let rights = assignment.map(|a| rights(flow, &found, a));
+    (found.iter().enumerate())
+        .map(|(i, c)| {
             let mut row = json!({"kind": "chain"});
             row.as_object_mut().unwrap().extend(
                 serde_json::to_value(c)
@@ -92,6 +112,9 @@ fn chain_rows(
                     .cloned()
                     .unwrap_or_default(),
             );
+            if let Some(rights) = &rights {
+                row["right"] = json!(rights[i]);
+            }
             row
         })
         .collect()
@@ -111,15 +134,18 @@ pub fn domain_model_value(
                 .ok_or_else(|| crate::tools::invalid_params("Unknown entity"))?,
         ),
     };
-    let rev = crate::ui_flow_tools::revision(&(model, entity, flow, p.chain, &p.state));
+    let simulation = (&p.roles, &p.anonymous);
+    let rev = crate::ui_flow_tools::revision(&(model, entity, flow, p.chain, &p.state, simulation));
     crate::ui_flow_tools::check_revision(&rev, p.expected_revision.as_deref())?;
     let is = |id: &str| entity.is_none_or(|e| e == id);
     // `Order.Submit` belongs to `Order`.
     let owns =
         |call: &str| entity.is_none_or(|e| call.split_once('.').is_some_and(|(o, _)| o == e));
     if let Some(flow) = flow.filter(|_| p.chain || p.state.is_some()) {
-        let rows = chain_rows(flow, model, entity, p.state.as_deref());
-        return page(model, rev, entity, &rows, &p.page);
+        let a = crate::ui_flow_tools::assignment(p.roles.as_deref(), p.anonymous);
+        let rows = chain_rows(flow, model, entity, p.state.as_deref(), a.as_ref());
+        let simulation = a.map(|a| json!({"anonymous": !a.authenticated, "roles": a.roles}));
+        return page(model, (rev, simulation), entity, &rows, &p.page);
     }
     let mut rows: Vec<Value> = (model.entities.iter().filter(|e| is(&e.id)))
         .map(|e| json!({"kind":"entity","entity":e}))
@@ -156,12 +182,14 @@ pub fn domain_model_value(
             .iter()
             .map(|d| json!({"kind":"diagnostic","diagnostic":d})),
     );
-    page(model, rev, entity, &rows, &p.page)
+    page(model, (rev, None), entity, &rows, &p.page)
 }
 
+/// `(rev, simulation)`: the revision and, for chains with roles or anonymous,
+/// the simulated user.
 fn page(
     model: &DomainModel,
-    rev: String,
+    (rev, simulation): (String, Option<Value>),
     entity: Option<&str>,
     rows: &[Value],
     params: &EngineeringParams,
@@ -173,8 +201,8 @@ fn page(
         } else {
             "incomplete"
         },
-        json!({"definition":model.definition,"revision":rev,"summary":archguard_engine::domain_model::summary(model),"entity":entity,
-            "limitations":"Static evidence from rules over the code (ADR 0022), not a runtime trace. A chain links an endpoint to use cases only through request types its handler sends literally (mediator/gateway Send of new X or a typed variable) or use-case fields it calls; state changes from integration-event handlers or jobs have no endpoint and are not in a chain. A guard is source text for when the transition is allowed (allowed when), never evaluated; an exit guard (throw or return) is the literal negation `!(source condition)`. A use case that calls an entity method through an interface or a name several entities share is not linked. Diagnostics stay complete under the entity filter."}),
+        json!({"definition":model.definition,"revision":rev,"summary":archguard_engine::domain_model::summary(model),"entity":entity,"simulation":simulation,
+            "limitations":"Static evidence from rules over the code (ADR 0022), not a runtime trace. A chain starts at an endpoint or a message handler (integration event, broker listener) and links to use cases only through request types sent literally (mediator/gateway Send of new X or a typed variable) or use-case fields called; jobs are not starts. right: endpoint access and, with an action, screen reach, undeclared = unknown; message handlers are not_a_user_path. A guard is source text (allowed when), never evaluated; an exit guard is the literal negation `!(source condition)`. Calls through an interface or a method name several entities share are not linked."}),
         rows.iter()
             .filter(|r| q.is_empty() || r.to_string().to_lowercase().contains(&q)),
         params,
@@ -185,7 +213,7 @@ fn page(
 #[tool_router(router = domain_model_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text of when it is allowed, raised events), use cases with the entity methods they call, and domain events with raisers and handlers, plus summary and gap diagnostics. Built-in rules for C# plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. chain=true returns instead one row per endpoint (and calling UI action): its handler, the request types it sends, the use cases handling them, their state transitions, events and handlers; entity+state returns the chains that cause that state (which endpoints and screens can cause Order -> Paid). Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text of when it is allowed, raised events), use cases with the entity methods they call, and domain events with raisers and handlers, plus summary and gap diagnostics. Built-in rules for C# plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. chain=true returns instead one row per endpoint (and calling UI action) and per message handler (integration event, MassTransit/NServiceBus consumer, Kafka/Rabbit/JMS listener): its handler, the request types it sends, the use cases handling them, their state transitions, events and handlers; entity+state returns the chains that cause that state (which endpoints, screens and message handlers can cause Order -> Paid). With roles or anonymous: true each chain also gets right = allowed/denied/unknown with reasons (endpoint access, screen reach), or not_a_user_path for a message handler. Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn domain_model(
         &self,

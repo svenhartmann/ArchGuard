@@ -36,6 +36,7 @@ pub fn read_domain_model(root: &Path) -> Result<Option<DomainModel>, ArchguardEr
     model.relations.iter_mut().for_each(|e| e.source = import());
     model.use_cases.iter_mut().for_each(|e| e.source = import());
     model.events.iter_mut().for_each(|e| e.source = import());
+    (model.message_handlers.iter_mut()).for_each(|e| e.source = import());
     Ok(Some(model))
 }
 

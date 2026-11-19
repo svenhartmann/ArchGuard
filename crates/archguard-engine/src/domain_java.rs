@@ -49,6 +49,12 @@
 //!   `calls`: `.m(` in the use case where `m` is a public method of exactly one
 //!   entity, accessors (`getX`/`setX`/`isX` of a field), `equals`, `hashCode`
 //!   and `toString` left out. A name on several entities is a diagnostic.
+//! - Message handlers (chain starts without an endpoint): methods annotated
+//!   `@KafkaListener`, `@RabbitListener`, `@JmsListener` or `@StreamListener`
+//!   (id `Class.method`, message = first parameter type without generics, so
+//!   `ConsumerRecord<K, V>` reads `ConsumerRecord`); `sends` by the backend
+//!   extractor's send rule over the method body. Spring Cloud Stream
+//!   functional beans (`Consumer<T>` beans) are not read.
 //!
 //! Not recognized: nested-type qualification, state changes outside the
 //! entity's own methods (setters called from services assign a variable and
@@ -59,9 +65,10 @@
 //! defaults; reading them from the configuration comes later.
 use crate::project_files::read_repo_file;
 use crate::services::support::{excluded, relative, test_path};
+use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, Relation, RelationKind,
-    StateMachine, StateTransition, UseCase, UseCaseKind,
+    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, MessageHandler,
+    Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
 use members::{Kind, Member, field, param_types};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -83,6 +90,12 @@ const EVENT_LISTENERS: [&str; 4] = [
     "TransactionalEventListener",
     "EventHandler",
     "ApplicationModuleListener",
+];
+const MESSAGE_LISTENERS: [&str; 4] = [
+    "KafkaListener",
+    "RabbitListener",
+    "JmsListener",
+    "StreamListener",
 ];
 const COMMAND_HANDLER: &str = "CommandHandler";
 const QUERY_HANDLER: &str = "QueryHandler";
@@ -161,6 +174,7 @@ pub fn extract(root: &Path) -> DomainModel {
     x.relations();
     x.machines_and_events();
     x.use_cases();
+    x.message_handlers();
     x.finish()
 }
 
@@ -630,6 +644,32 @@ impl Extractor {
             out.push(make(d.name.clone(), kind, None, body, d.pos));
         }
         out
+    }
+
+    /// Broker listener methods, sorted.
+    fn message_handlers(&mut self) {
+        let mut found = vec![];
+        for d in &self.decls {
+            let src = &self.files[d.file];
+            for (m, name, params, body, _) in d.methods() {
+                let message = param_types(&src.text, params, src.kotlin)
+                    .into_iter()
+                    .next();
+                let (true, Some(message)) = (m.has_any(&MESSAGE_LISTENERS), message) else {
+                    continue;
+                };
+                found.push(MessageHandler {
+                    id: format!("{}.{name}", d.name),
+                    message,
+                    sends: sends_in(&src.text, body),
+                    file: src.rel.clone(),
+                    line: line(&src.text, body.0),
+                    source: SOURCE.into(),
+                });
+            }
+        }
+        found.sort();
+        self.model.message_handlers = found;
     }
 
     fn finish(mut self) -> DomainModel {
@@ -2700,6 +2740,54 @@ enum class DriverState { IDLE, BUSY }
             ("src/main/java/shop/app/SubmitOrderUseCase.java", 8)
         );
         assert!(!has_diag(&model, "getStatus"));
+    }
+
+    #[test]
+    fn java_broker_listeners_are_message_handlers() {
+        let model = run(&[(
+            "src/main/java/shop/app/PaymentListener.java",
+            r#"package shop.app;
+public class PaymentListener {
+    private final CommandGateway gateway;
+    private final MarkPaidUseCase markPaid;
+    @KafkaListener(topics = "payments")
+    public void onPaid(@Payload PaymentSucceeded event) {
+        gateway.send(new MarkOrderPaidCommand(event.orderId()));
+    }
+    @RabbitListener(queues = "refunds")
+    void onRefund(RefundIssued event) { markPaid.undo(event.orderId()); }
+    @JmsListener(destination = "x") void onJms(JmsThing t) { }
+    @StreamListener("in") void onStream(StreamThing t) { }
+    public void notAListener(Other o) { gateway.send(new Ignored()); }
+}
+"#,
+        )]);
+        let found: Vec<(&str, &str, Vec<String>, u32)> = (model.message_handlers.iter())
+            .map(|h| {
+                assert_eq!(h.source, "java");
+                assert_eq!(h.file, "src/main/java/shop/app/PaymentListener.java");
+                (h.id.as_str(), h.message.as_str(), h.sends.clone(), h.line)
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("PaymentListener.onJms", "JmsThing", vec![], 11),
+                (
+                    "PaymentListener.onPaid",
+                    "PaymentSucceeded",
+                    s(&["MarkOrderPaidCommand"]),
+                    6
+                ),
+                (
+                    "PaymentListener.onRefund",
+                    "RefundIssued",
+                    s(&["MarkPaidUseCase"]),
+                    10
+                ),
+                ("PaymentListener.onStream", "StreamThing", vec![], 12),
+            ]
+        );
     }
 
     #[test]

@@ -51,7 +51,7 @@ use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-pub(crate) use handlers::simple_type;
+pub(crate) use handlers::{sends_in, simple_type};
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_FILES: usize = 20_000;
@@ -1511,6 +1511,12 @@ mod handlers {
             }
         }
         found.map(|(_, name)| name)
+    }
+
+    /// [`sends`] for other extractors (message handlers, ADR 0022): `text` is
+    /// a C#, Java or Kotlin file, `span` a byte range of it.
+    pub(crate) fn sends_in(text: &str, span: (usize, usize)) -> Vec<String> {
+        sends(&Source::new(String::new(), text), span)
     }
 
     /// Sent request types and directly called use cases in `span`, sorted.

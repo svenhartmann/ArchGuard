@@ -5,21 +5,25 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use archguard_engine::core::domain_model::{DomainModel, Entity, StateMachine};
-use archguard_engine::core::{Origin, UiFlow};
-use archguard_engine::domain_chain::{Chain, chains, triggers_of_state};
+use archguard_engine::core::{Assignment, Origin, UiFlow};
+use archguard_engine::domain_chain::{
+    Chain, ChainRight, ChainStart, chains, rights, triggers_of_state,
+};
 use archguard_engine::domain_model::summary;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
-use crate::ui_flow_cmd::{label, print_gaps, yes_no};
+use crate::ui_flow_cmd::{assignment, label, print_gaps, yes_no};
 
+/// `simulated`: the roles of `--role`, empty for `--anonymous`, none without either.
 pub(crate) fn run(
     cli: &Cli,
     root: &Path,
     entity: Option<&str>,
     chain: bool,
     state: Option<&str>,
+    simulated: Option<&[String]>,
 ) -> i32 {
     if !matches!(cli.format, Format::Text | Format::Json) {
         return usage("domain supports --format text|json");
@@ -30,7 +34,7 @@ pub(crate) fn run(
     };
     if chain || state.is_some() {
         return match archguard_engine::ui_flow::analyze(root) {
-            Ok(flow) => run_chain(cli, &flow, &model, entity, state),
+            Ok(flow) => run_chain(cli, &flow, &model, entity, state, simulated),
             Err(error) => analysis_error(error),
         };
     }
@@ -53,13 +57,15 @@ pub(crate) fn run(
 }
 
 /// `--chain` (optionally only chains touching `entity`) or, with `state`,
-/// the chains that cause `entity` → `state`.
+/// the chains that cause `entity` → `state`; with `simulated`, each chain's
+/// right for that user.
 fn run_chain(
     cli: &Cli,
     flow: &UiFlow,
     model: &DomainModel,
     entity: Option<&str>,
     state: Option<&str>,
+    simulated: Option<&[String]>,
 ) -> i32 {
     let id = match entity {
         None => None,
@@ -75,48 +81,95 @@ fn run_chain(
             .collect(),
         (None, _) => chains(flow, model),
     };
+    let assignment = simulated.map(assignment);
+    let rights = (assignment.as_ref()).map(|a| rights(flow, &found, a));
     if cli.quiet {
         return EXIT_OK;
     }
+    let simulation = assignment.as_ref().zip(rights.as_deref());
     if cli.format == Format::Json {
-        let value = match (id, state) {
-            (Some(id), Some(state)) => json!({"entity": id, "state": state, "chains": found}),
-            _ => json!({"chains": found}),
-        };
+        let value = chains_json(&found, id.zip(state), simulation);
         emit(&serde_json::to_string_pretty(&value).expect("chains serialize"));
-        return EXIT_OK;
+    } else {
+        print_chains(&found, id.zip(state), simulation);
     }
-    match (id, state) {
-        (Some(id), Some(state)) => outln!("Triggers of {id} → {state}: {}", found.len()),
-        _ => outln!(
+    EXIT_OK
+}
+
+/// `simulation`: the assignment and the right of each chain.
+type Simulation<'a> = Option<(&'a Assignment, &'a [ChainRight])>;
+
+fn chains_json(found: &[Chain], target: Option<(&str, &str)>, simulation: Simulation) -> Value {
+    let mut chains = json!(found);
+    if let Some((_, rights)) = simulation {
+        let rows = chains.as_array_mut().into_iter().flatten();
+        for (row, right) in rows.zip(rights) {
+            row["right"] = json!(right);
+        }
+    }
+    let mut value = match target {
+        Some((id, state)) => json!({"entity": id, "state": state, "chains": chains}),
+        None => json!({"chains": chains}),
+    };
+    if let Some((a, _)) = simulation {
+        value["simulated"] = json!({"anonymous": !a.authenticated, "roles": a.roles});
+    }
+    value
+}
+
+fn print_chains(found: &[Chain], target: Option<(&str, &str)>, simulation: Simulation) {
+    match target {
+        Some((id, state)) => outln!("Triggers of {id} → {state}: {}", found.len()),
+        None => outln!(
             "Chains {} · with a use case {}",
             found.len(),
             found.iter().filter(|c| !c.use_cases.is_empty()).count()
         ),
     }
-    found.iter().for_each(print_chain);
-    EXIT_OK
+    if let Some((a, _)) = simulation {
+        let roles: Vec<&str> = a.roles.iter().map(String::as_str).collect();
+        match a.authenticated {
+            true => outln!("Simulated: signed in with roles {}", roles.join(", ")),
+            false => outln!("Simulated: anonymous"),
+        }
+    }
+    for (i, c) in found.iter().enumerate() {
+        print_chain(c);
+        if let Some((_, rights)) = simulation {
+            let r = &rights[i];
+            outln!("  right: {} · {}", label(&r.verdict), r.reasons.join("; "));
+        }
+    }
 }
 
-/// `POST /api/orders → Handler · file:line`, then handler, screen, and each
-/// transition with its events and their handlers.
+/// `POST /api/orders → Handler · file:line` or `message Event → Handler ·
+/// file:line`, then handler, screen, and each transition with its events and
+/// their handlers.
 fn print_chain(c: &Chain) {
-    let e = c.endpoint;
     let use_cases: Vec<String> = c.use_cases.iter().map(|u| u.name.clone()).collect();
     let target = if use_cases.is_empty() {
         "no use case found".to_string()
     } else {
         use_cases.join(", ")
     };
-    outln!("{} {} → {target} · {}:{}", e.method, e.path, e.file, e.line);
-    if e.handler.is_some() || !e.sends.is_empty() {
+    let (handler, sends) = match c.start {
+        ChainStart::Endpoint { endpoint: e, .. } => {
+            outln!("{} {} → {target} · {}:{}", e.method, e.path, e.file, e.line);
+            (e.handler.as_deref(), &e.sends)
+        }
+        ChainStart::Message { message_handler: m } => {
+            outln!("message {} → {target} · {}:{}", m.message, m.file, m.line);
+            (Some(m.id.as_str()), &m.sends)
+        }
+    };
+    if handler.is_some() || !sends.is_empty() {
         outln!(
             "  handler {} · sends {}",
-            e.handler.as_deref().unwrap_or("-"),
-            list(&e.sends)
+            handler.unwrap_or("-"),
+            list(sends)
         );
     }
-    if let Some(a) = c.action {
+    if let Some(a) = c.action() {
         let screen = match &a.screen {
             Origin::Screen(id) => format!("screen {id}"),
             Origin::AnyScreen { application } => format!("any screen of {application:?}"),

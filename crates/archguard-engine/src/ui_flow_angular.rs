@@ -1622,11 +1622,8 @@ export class OrderService {
                 unresolved("dynamicTarget"),
                 Some("Somewhere".into()),
             ),
-            (
-                page("web:/"),
-                unresolved("/missing"),
-                Some("Missing".into()),
-            ),
+            // no route but the wildcard `**` matches, as in Angular
+            (page("web:/"), to("web:/**"), Some("Missing".into())),
             (page("web:/"), to("web:/orders/:id"), None),
             (page("web:/"), unresolved("'/orders/' + this.id"), None),
             // a literal target matches the parameter route
@@ -1674,12 +1671,13 @@ export class OrderService {
             .collect();
         for at in [
             ("web/src/app/home.component.html", 4),
-            ("web/src/app/home.component.html", 5),
             ("web/src/app/home.component.ts", 5),
             ("web/src/app/home.component.ts", 9),
         ] {
             assert!(lines.contains(&at), "missing {at:?} in {lines:?}");
         }
+        // `/missing` lands on the wildcard route: no gap.
+        assert!(!lines.contains(&("web/src/app/home.component.html", 5)));
     }
 
     #[test]

@@ -1,30 +1,68 @@
-//! Endpoint to use-case chain (ADR 0022 decision 4): action → endpoint → use
-//! cases → state transitions → events → handlers, and the reverse query
-//! "which endpoints and screens can cause this state".
+//! Chains from a start to the domain (ADR 0022 decision 4): action → endpoint
+//! → use cases → state transitions → events → handlers, or message handler →
+//! use cases → …, and the reverse query "what can cause this state".
 //!
-//! An endpoint reaches the use cases whose `request` (generics and namespace
-//! stripped) is one of the types its handler sends, or whose name is a
-//! use-case class the handler calls directly; several matches all count. A
-//! use case reaches the transitions whose method it calls, and those reach
-//! their events and handlers (`event_chain`). Actions come from
+//! A start reaches the use cases whose `request` (generics and namespace
+//! stripped) is one of the types it sends, or whose name is a use-case class
+//! it calls directly; several matches all count. Starts are HTTP endpoints
+//! (`EndpointAccess.sends`) and message handlers (`DomainModel.message_handlers`,
+//! integration events and broker messages that run inside the system). A use
+//! case reaches the transitions whose method it calls, and those reach their
+//! events and handlers (`event_chain`). Actions come from
 //! `join_actions_to_endpoints`; an endpoint without one still forms a chain.
-use std::collections::BTreeSet;
+//!
+//! [`rights`] answers "can this user cause it" per chain: the endpoint access
+//! and, with an action, the reach of its screen and the action's condition,
+//! in three-valued logic. A message-handler chain is no user path.
+use std::collections::{BTreeMap, BTreeSet};
 
-use archguard_core::domain_model::{DomainModel, StateTransition, UseCase, event_chain};
-use archguard_core::{Action, EndpointAccess, UiFlow, join_actions_to_endpoints};
+use archguard_core::domain_model::{
+    DomainModel, MessageHandler, StateTransition, UseCase, event_chain,
+};
+use archguard_core::{
+    AccessState, Action, Assignment, EndpointAccess, Origin, Outcome, ScreenReach, UiFlow,
+    evaluate_access, evaluate_condition, join_actions_to_endpoints, screen_reaches,
+};
 use serde::Serialize;
 
 use crate::ui_flow_backend::simple_type;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Chain<'a> {
-    /// The UI action calling the endpoint; none for an endpoint no action hits.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub action: Option<&'a Action>,
-    pub endpoint: &'a EndpointAccess,
+    #[serde(flatten)]
+    pub start: ChainStart<'a>,
     pub use_cases: Vec<&'a UseCase>,
     pub transitions: Vec<ChainTransition<'a>>,
     pub events: Vec<ChainEvent<'a>>,
+}
+
+/// Where a chain starts. JSON: the variant's fields beside the chain's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum ChainStart<'a> {
+    /// An HTTP endpoint, with the UI action calling it when one does.
+    Endpoint {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        action: Option<&'a Action>,
+        endpoint: &'a EndpointAccess,
+    },
+    /// A message handler: runs inside the system, no user starts it.
+    Message { message_handler: &'a MessageHandler },
+}
+
+impl<'a> Chain<'a> {
+    pub fn endpoint(&self) -> Option<&'a EndpointAccess> {
+        match self.start {
+            ChainStart::Endpoint { endpoint, .. } => Some(endpoint),
+            ChainStart::Message { .. } => None,
+        }
+    }
+    pub fn action(&self) -> Option<&'a Action> {
+        match self.start {
+            ChainStart::Endpoint { action, .. } => action,
+            ChainStart::Message { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -42,10 +80,21 @@ pub struct ChainEvent<'a> {
 }
 
 /// One chain per endpoint and action calling it (one without an action when
-/// none does), in endpoint order.
+/// none does), in endpoint order, then one per message handler in model order.
 pub fn chains<'a>(flow: &'a UiFlow, model: &'a DomainModel) -> Vec<Chain<'a>> {
     let joined = join_actions_to_endpoints(flow);
     let mut found = Vec::new();
+    let chain = |start, sends: &[String]| {
+        let use_cases = use_cases_of(model, sends);
+        let transitions = transitions_of(model, &use_cases);
+        let events = events_of(model, &transitions);
+        Chain {
+            start,
+            use_cases,
+            transitions,
+            events,
+        }
+    };
     for endpoint in &flow.endpoints {
         let mut actions: Vec<Option<&Action>> = (joined.iter())
             .filter(|(_, hits)| hits.contains(&endpoint))
@@ -54,16 +103,15 @@ pub fn chains<'a>(flow: &'a UiFlow, model: &'a DomainModel) -> Vec<Chain<'a>> {
         if actions.is_empty() {
             actions.push(None);
         }
-        let use_cases = use_cases_of(model, endpoint);
-        let transitions = transitions_of(model, &use_cases);
-        let events = events_of(model, &transitions);
-        found.extend(actions.into_iter().map(|action| Chain {
-            action,
-            endpoint,
-            use_cases: use_cases.clone(),
-            transitions: transitions.clone(),
-            events: events.clone(),
-        }));
+        found.extend(
+            actions
+                .into_iter()
+                .map(|action| chain(ChainStart::Endpoint { action, endpoint }, &endpoint.sends)),
+        );
+    }
+    for message_handler in &model.message_handlers {
+        let start = ChainStart::Message { message_handler };
+        found.push(chain(start, &message_handler.sends));
     }
     found
 }
@@ -84,8 +132,124 @@ pub fn triggers_of_state<'a>(
         .collect()
 }
 
-fn use_cases_of<'a>(model: &'a DomainModel, endpoint: &EndpointAccess) -> Vec<&'a UseCase> {
-    let sent: BTreeSet<&str> = endpoint.sends.iter().map(|s| simple_type(s)).collect();
+/// Whether a simulated user can run a chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Allowed,
+    Denied,
+    Unknown,
+    /// A message-handler chain: it runs inside the system.
+    NotAUserPath,
+}
+
+/// The verdict and one reason per part that decided it, in words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChainRight {
+    pub verdict: Verdict,
+    pub reasons: Vec<String>,
+}
+
+/// The right of `assignment` for each chain, in order: endpoint access and,
+/// with an action, the reach of its screen and the action's condition, joined
+/// in Kleene logic (one denied decides, else one unknown keeps it open).
+/// `undeclared` access is unknown, never allowed (ADR 0021 decision 2).
+pub fn rights(flow: &UiFlow, chains: &[Chain], assignment: &Assignment) -> Vec<ChainRight> {
+    let reaches = screen_reaches(flow, assignment);
+    (chains.iter())
+        .map(|c| match c.start {
+            ChainStart::Message { message_handler } => ChainRight {
+                verdict: Verdict::NotAUserPath,
+                reasons: vec![format!(
+                    "not a user path: {} handles {} inside the system",
+                    message_handler.id, message_handler.message
+                )],
+            },
+            ChainStart::Endpoint { action, endpoint } => {
+                let mut parts = vec![endpoint_part(endpoint, assignment)];
+                if let Some(action) = action {
+                    parts.push(screen_part(flow, action, &reaches));
+                    if let Some(condition) = &action.condition {
+                        let outcome = evaluate_condition(condition, assignment);
+                        let text = format!("action needs {}", condition.text());
+                        parts.push((outcome, text));
+                    }
+                }
+                let verdict = if parts.iter().any(|p| p.0 == Outcome::Denied) {
+                    Verdict::Denied
+                } else if parts.iter().any(|p| p.0 == Outcome::Unknown) {
+                    Verdict::Unknown
+                } else {
+                    Verdict::Allowed
+                };
+                let reasons = (parts.into_iter())
+                    .map(|(o, text)| format!("{text}: {}", outcome_text(o)))
+                    .collect();
+                ChainRight { verdict, reasons }
+            }
+        })
+        .collect()
+}
+
+fn outcome_text(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Allowed => "allowed",
+        Outcome::Denied => "denied",
+        Outcome::Unknown => "unknown",
+    }
+}
+
+fn endpoint_part(e: &EndpointAccess, assignment: &Assignment) -> (Outcome, String) {
+    let access = match &e.access {
+        AccessState::Protected(c) => format!("needs {}", c.text()),
+        AccessState::Open => "open".into(),
+        AccessState::Undeclared => "no access declared".into(),
+    };
+    let text = format!("endpoint {} {} {access}", e.method, e.path);
+    (evaluate_access(&e.access, assignment), text)
+}
+
+/// The action's screen reach; for an `any_screen` action the best screen of
+/// its application.
+fn screen_part(
+    flow: &UiFlow,
+    action: &Action,
+    reaches: &BTreeMap<String, ScreenReach>,
+) -> (Outcome, String) {
+    let part = |id: &str| {
+        let (outcome, how) = match reaches.get(id) {
+            Some(ScreenReach::Sure) => (Outcome::Allowed, "reached surely"),
+            Some(ScreenReach::Possible) => (Outcome::Unknown, "reached possibly"),
+            Some(ScreenReach::Denied) => (Outcome::Denied, "denied"),
+            Some(ScreenReach::NoKnownPath { .. }) => (Outcome::Unknown, "no known path"),
+            Some(ScreenReach::NoStartScreen) => (Outcome::Unknown, "no start screen"),
+            None => (Outcome::Unknown, "not in the flow"),
+        };
+        let route = (flow.screens.iter().find(|s| s.id == id)).and_then(|s| s.route.as_deref());
+        (outcome, format!("screen {} {how}", route.unwrap_or(id)))
+    };
+    match &action.screen {
+        Origin::Screen(id) => part(id),
+        Origin::AnyScreen { application } => {
+            let rank = |o: &Outcome| match o {
+                Outcome::Allowed => 0,
+                Outcome::Unknown => 1,
+                Outcome::Denied => 2,
+            };
+            (flow.screens.iter())
+                .filter(|s| s.application.as_deref().unwrap_or("") == application)
+                .map(|s| part(&s.id))
+                .min_by_key(|(o, _)| rank(o))
+                .unwrap_or((
+                    Outcome::Unknown,
+                    format!("no screen of application {application:?}"),
+                ))
+        }
+    }
+}
+
+fn use_cases_of<'a>(model: &'a DomainModel, sends: &[String]) -> Vec<&'a UseCase> {
+    let sent: BTreeSet<&str> = sends.iter().map(|s| simple_type(s)).collect();
     (model.use_cases.iter())
         .filter(|u| {
             let request = u.request.as_deref().map(simple_type);
@@ -225,9 +389,52 @@ public class OrderPaidDomainEventHandler : INotificationHandler<OrderStatusChang
         ),
     ];
 
+    /// An integration-event handler, an admin page linked from `/` and an
+    /// admin-only controller, on top of [`FILES`].
+    const MORE: &[(&str, &str)] = &[
+        (
+            "Ordering.API/Application/PaymentSucceededHandler.cs",
+            r#"public class OrderPaymentSucceededIntegrationEventHandler(IMediator mediator) :
+    IIntegrationEventHandler<OrderPaymentSucceededIntegrationEvent>
+{
+    public async Task Handle(OrderPaymentSucceededIntegrationEvent @event)
+    {
+        var command = new SetPaidOrderStatusCommand(@event.OrderId);
+        await mediator.Send(command);
+    }
+}
+"#,
+        ),
+        (
+            "Web/Pages/Home.razor",
+            "@page \"/\"\n<a href=\"admin/cancel\">Cancel</a>\n",
+        ),
+        (
+            "Web/Pages/AdminCancel.razor",
+            "@page \"/admin/cancel\"\n@attribute [Authorize(Roles = \"Admin\")]\n@code {\n    async Task Go() => await Http.PutAsJsonAsync(\"api/admin/cancel\", order);\n}\n",
+        ),
+        (
+            "Ordering.API/Apis/AdminController.cs",
+            r#"[ApiController]
+[Route("api/admin")]
+[Authorize(Roles = "Admin")]
+public class AdminController : ControllerBase
+{
+    private readonly IMediator _mediator;
+    [HttpPut("cancel")]
+    public Task<bool> Cancel(CancelOrderCommand command) => _mediator.Send(command);
+}
+"#,
+        ),
+    ];
+
     fn analyzed() -> (UiFlow, DomainModel) {
+        analyzed_with(&[])
+    }
+
+    fn analyzed_with(more: &[(&str, &str)]) -> (UiFlow, DomainModel) {
         let dir = tempfile::tempdir().unwrap();
-        for (path, text) in FILES {
+        for (path, text) in FILES.iter().chain(more) {
             let path = dir.path().join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
@@ -241,7 +448,10 @@ public class OrderPaidDomainEventHandler : INotificationHandler<OrderStatusChang
 
     fn chain<'a>(all: &'a [Chain<'a>], method: &str, path: &str) -> &'a Chain<'a> {
         let hits: Vec<_> = (all.iter())
-            .filter(|c| c.endpoint.method == method && c.endpoint.path == path)
+            .filter(|c| {
+                c.endpoint()
+                    .is_some_and(|e| e.method == method && e.path == path)
+            })
             .collect();
         assert_eq!(hits.len(), 1, "{method} {path} in {all:#?}");
         hits[0]
@@ -258,10 +468,10 @@ public class OrderPaidDomainEventHandler : INotificationHandler<OrderStatusChang
         let (flow, model) = analyzed();
         let all = chains(&flow, &model);
         let create = chain(&all, "POST", "/api/orders");
-        let action = create.action.expect("checkout action");
+        let action = create.action().expect("checkout action");
         assert_eq!(action.file, "Web/Pages/Checkout.razor");
         assert_eq!(
-            create.endpoint.handler.as_deref(),
+            create.endpoint().unwrap().handler.as_deref(),
             Some("OrdersApi.CreateOrderAsync")
         );
         assert_eq!(
@@ -292,7 +502,7 @@ public class OrderPaidDomainEventHandler : INotificationHandler<OrderStatusChang
         let (flow, model) = analyzed();
         let all = chains(&flow, &model);
         let list = chain(&all, "GET", "/api/orders");
-        assert!(list.action.is_none());
+        assert!(list.action().is_none());
         assert!(list.use_cases.is_empty() && list.transitions.is_empty());
         assert!(list.events.is_empty());
         assert_eq!(all.len(), flow.endpoints.len());
@@ -314,10 +524,109 @@ public class OrderPaidDomainEventHandler : INotificationHandler<OrderStatusChang
     fn triggers_of_a_state_are_the_endpoints_that_reach_it() {
         let (flow, model) = analyzed();
         let paid = triggers_of_state(&flow, &model, "Order", "Paid");
-        let paths: Vec<_> = paid.iter().map(|c| c.endpoint.path.as_str()).collect();
+        let paths: Vec<_> = paid
+            .iter()
+            .map(|c| c.endpoint().unwrap().path.as_str())
+            .collect();
         assert_eq!(paths, ["/api/orders/pay"]);
         assert_eq!(paid[0].events[0].handlers, ["OrderPaidDomainEventHandler"]);
         assert!(triggers_of_state(&flow, &model, "Order", "Draft").is_empty());
         assert!(triggers_of_state(&flow, &model, "Nope", "Paid").is_empty());
+    }
+
+    #[test]
+    fn integration_event_handlers_start_chains_too() {
+        let (flow, model) = analyzed_with(MORE);
+        let paid = triggers_of_state(&flow, &model, "Order", "Paid");
+        let starts: Vec<String> = (paid.iter())
+            .map(|c| match c.start {
+                ChainStart::Endpoint { endpoint, .. } => endpoint.path.clone(),
+                ChainStart::Message { message_handler } => {
+                    format!("{} {}", message_handler.message, message_handler.id)
+                }
+            })
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                "/api/orders/pay",
+                "OrderPaymentSucceededIntegrationEvent OrderPaymentSucceededIntegrationEventHandler",
+            ]
+        );
+        let message = &paid[1];
+        assert!(message.endpoint().is_none() && message.action().is_none());
+        assert_eq!(use_case_ids(message), ["SetPaidOrderStatusCommandHandler"]);
+        assert_eq!(
+            message.transitions[0].transition.method,
+            "Order.SetPaidStatus"
+        );
+        assert_eq!(message.events[0].handlers, ["OrderPaidDomainEventHandler"]);
+        let json = serde_json::to_value(message).unwrap();
+        assert_eq!(
+            json["message_handler"]["message"],
+            "OrderPaymentSucceededIntegrationEvent"
+        );
+        assert!(json.get("endpoint").is_none() && json.get("action").is_none());
+        let json = serde_json::to_value(&paid[0]).unwrap();
+        assert_eq!(json["endpoint"]["path"], "/api/orders/pay");
+        assert!(json.get("message_handler").is_none());
+    }
+
+    #[test]
+    fn rights_per_role_along_the_chain() {
+        let (flow, model) = analyzed_with(MORE);
+        let cancelled = triggers_of_state(&flow, &model, "Order", "Cancelled");
+        let admin_path = |c: &&Chain| c.endpoint().is_some_and(|e| e.path == "/api/admin/cancel");
+        let at = cancelled
+            .iter()
+            .position(|c| admin_path(&c))
+            .expect("admin chain");
+        let open = (cancelled.iter())
+            .position(|c| c.endpoint().is_some_and(|e| e.path == "/api/orders/cancel"))
+            .expect("undeclared chain");
+        let user = |roles: &[&str]| Assignment {
+            authenticated: !roles.is_empty(),
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+            ..Assignment::default()
+        };
+        let admin = rights(&flow, &cancelled, &user(&["Admin"]));
+        assert_eq!(admin.len(), cancelled.len());
+        assert_eq!(admin[at].verdict, Verdict::Allowed, "{:?}", admin[at]);
+        assert_eq!(
+            admin[at].reasons,
+            [
+                "endpoint PUT /api/admin/cancel needs role Admin: allowed",
+                "screen /admin/cancel reached surely: allowed",
+            ]
+        );
+        let anonymous = rights(&flow, &cancelled, &user(&[]));
+        assert_eq!(anonymous[at].verdict, Verdict::Denied);
+        assert_eq!(
+            anonymous[at].reasons,
+            [
+                "endpoint PUT /api/admin/cancel needs role Admin: denied",
+                "screen /admin/cancel denied: denied",
+            ]
+        );
+        assert_eq!(
+            rights(&flow, &cancelled, &user(&["Clerk"]))[at].verdict,
+            Verdict::Denied
+        );
+        // Undeclared is never allowed, not even for the admin.
+        assert_eq!(admin[open].verdict, Verdict::Unknown);
+        assert_eq!(
+            admin[open].reasons,
+            ["endpoint PUT /api/orders/cancel no access declared: unknown"]
+        );
+        // A message handler runs inside the system.
+        let paid = triggers_of_state(&flow, &model, "Order", "Paid");
+        let right = &rights(&flow, &paid, &user(&["Admin"]))[1];
+        assert_eq!(right.verdict, Verdict::NotAUserPath);
+        assert_eq!(
+            serde_json::to_value(right).unwrap(),
+            serde_json::json!({"verdict": "not_a_user_path", "reasons": [
+                "not a user path: OrderPaymentSucceededIntegrationEventHandler handles OrderPaymentSucceededIntegrationEvent inside the system"
+            ]})
+        );
     }
 }

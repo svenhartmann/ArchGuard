@@ -2284,6 +2284,49 @@ export function Nav() {
     }
 
     #[test]
+    fn catch_all_pages_take_deep_links_after_exact_and_parameter_pages() {
+        let dir = project(&[
+            ("shop/package.json", NEXT_PKG),
+            (
+                "shop/pages/index.tsx",
+                "import Link from 'next/link';
+export default function Home() {
+  return <nav>
+    <Link href=\"/docs/intro\">Intro</Link>
+    <Link href=\"/docs/guide/setup\">Setup</Link>
+    <Link href=\"/docs/faq\">FAQ</Link>
+  </nav>;
+}
+",
+            ),
+            (
+                "shop/pages/docs/[...slug].tsx",
+                "export default function Docs() { return null; }\n",
+            ),
+            (
+                "shop/pages/docs/[page].tsx",
+                "export default function DocPage() { return null; }\n",
+            ),
+            (
+                "shop/pages/docs/intro.tsx",
+                "export default function Intro() { return null; }\n",
+            ),
+        ]);
+        let flow = extract(dir.path());
+        let found: Vec<(Target, Option<String>)> = (transitions(&flow).into_iter())
+            .map(|(_, target, trigger)| (target, trigger))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (to("shop:/docs/*"), Some("Setup".into())),
+                (to("shop:/docs/:page"), Some("FAQ".into())),
+                (to("shop:/docs/intro"), Some("Intro".into())),
+            ]
+        );
+    }
+
+    #[test]
     fn next_pages_router_screens_and_api_endpoints() {
         let dir = pages_project();
         let flow = extract(dir.path());
