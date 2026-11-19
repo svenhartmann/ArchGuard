@@ -13,56 +13,7 @@ use std::path::Path;
 pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAction) -> i32 {
     let result = || -> Result<i32, archguard_engine::core::ArchguardError> {
         match action {
-            crate::args::ReviewDecisionAction::Record {
-                finding,
-                decision,
-                adr,
-                note,
-                author,
-                id,
-            } => {
-                let kind = match decision {
-                    DecisionArg::Fix => DecisionKind::Fix,
-                    DecisionArg::Defer => DecisionKind::Defer,
-                    DecisionArg::AcceptRisk => DecisionKind::AcceptRisk,
-                };
-                if kind == DecisionKind::AcceptRisk && adr.is_none() {
-                    // R30's gate, enforced here (R31): with the gate on,
-                    // a risk without ADR is a usage error, not a record.
-                    let loaded = archguard_engine::load_config(None, root)?;
-                    if loaded.config.review.adr_required_on_accept_risk {
-                        eprintln!(
-                            "archguard: [review] adr_required_on_accept_risk is set — pass --adr docs/adr/NNN.md"
-                        );
-                        return Ok(EXIT_USAGE);
-                    }
-                    if !cli.quiet {
-                        eprintln!(
-                            "archguard: warning: accept-risk without --adr — set [review] adr_required_on_accept_risk to require one"
-                        );
-                    }
-                }
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or_default();
-                let decision = ReviewDecision {
-                    id: id.clone().unwrap_or_else(|| finding.clone()),
-                    finding_ref: finding.clone(),
-                    decision: kind,
-                    adr_link: adr.as_ref().map(|p| p.display().to_string()),
-                    note: note.clone().unwrap_or_default(),
-                    author: author.clone().unwrap_or_else(|| "cli".to_string()),
-                    ts: iso_from_unix(now),
-                    ..Default::default()
-                };
-                let id = decision.id.clone();
-                upsert_decision(root, decision)?;
-                if !cli.quiet {
-                    outln!("recorded decision {id} for {finding}");
-                }
-                Ok(EXIT_OK)
-            }
+            crate::args::ReviewDecisionAction::Record { .. } => record(cli, root, action),
             crate::args::ReviewDecisionAction::List => {
                 let register = load_register(root)?;
                 if cli.format == Format::Json {
@@ -92,6 +43,10 @@ pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAc
                         );
                     }
                 }
+                Ok(EXIT_OK)
+            }
+            crate::args::ReviewDecisionAction::Export { out } => {
+                export(cli, root, out.as_deref())?;
                 Ok(EXIT_OK)
             }
             crate::args::ReviewDecisionAction::Show { id } => {
@@ -133,6 +88,87 @@ pub(crate) fn run(cli: &Cli, root: &Path, action: &crate::args::ReviewDecisionAc
         Ok(code) => code,
         Err(error) => analysis_error(error),
     }
+}
+
+/// `review-decision record`: one decision upserted into the register.
+fn record(
+    cli: &Cli,
+    root: &Path,
+    action: &crate::args::ReviewDecisionAction,
+) -> Result<i32, archguard_engine::core::ArchguardError> {
+    let crate::args::ReviewDecisionAction::Record {
+        finding,
+        decision,
+        adr,
+        note,
+        author,
+        id,
+    } = action
+    else {
+        unreachable!("called for record only");
+    };
+    let kind = match decision {
+        DecisionArg::Fix => DecisionKind::Fix,
+        DecisionArg::Defer => DecisionKind::Defer,
+        DecisionArg::AcceptRisk => DecisionKind::AcceptRisk,
+    };
+    if kind == DecisionKind::AcceptRisk && adr.is_none() {
+        // R30's gate, enforced here (R31): with the gate on,
+        // a risk without ADR is a usage error, not a record.
+        let loaded = archguard_engine::load_config(None, root)?;
+        if loaded.config.review.adr_required_on_accept_risk {
+            eprintln!(
+                "archguard: [review] adr_required_on_accept_risk is set — pass --adr docs/adr/NNN.md"
+            );
+            return Ok(EXIT_USAGE);
+        }
+        if !cli.quiet {
+            eprintln!(
+                "archguard: warning: accept-risk without --adr — set [review] adr_required_on_accept_risk to require one"
+            );
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let decision = ReviewDecision {
+        id: id.clone().unwrap_or_else(|| finding.clone()),
+        finding_ref: finding.clone(),
+        decision: kind,
+        adr_link: adr.as_ref().map(|p| p.display().to_string()),
+        note: note.clone().unwrap_or_default(),
+        author: author.clone().unwrap_or_else(|| "cli".to_string()),
+        ts: iso_from_unix(now),
+        ..Default::default()
+    };
+    let id = decision.id.clone();
+    upsert_decision(root, decision)?;
+    if !cli.quiet {
+        outln!("recorded decision {id} for {finding}");
+    }
+    Ok(EXIT_OK)
+}
+
+/// The decision document of a review generated now: its recorded
+/// decisions, to edit and import with `review --decisions`.
+fn export(
+    cli: &Cli,
+    root: &Path,
+    out: Option<&Path>,
+) -> Result<(), archguard_engine::core::ArchguardError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let (report, _) = archguard_engine::generate_review(root, cli.config.as_deref(), None, now)?;
+    let document = archguard_engine::review_decision_document(&report, &[]);
+    let text = serde_json::to_string_pretty(&document).expect("serializes") + "\n";
+    match out {
+        Some(path) => std::fs::write(path, text)?,
+        None => crate::output::emit(&text),
+    }
+    Ok(())
 }
 
 /// Deterministic list order: finding first, then id.

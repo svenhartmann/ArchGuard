@@ -1,0 +1,226 @@
+// View → Review decisions…: decide per finding of a review generated now,
+// then record the decisions or export them for `archguard review
+// --decisions`. Filled from src/review_decisions_ui.rs.
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Badge } from "widgets.slint";
+import { ComboBox } from "combo.slint";
+import { LineEdit, CommandField } from "fields.slint";
+
+// A finding; kind -1 without a decision, else 0 fix, 1 defer, 2 accept
+// risk; `draft`: decided here, not yet recorded or exported.
+export struct DecisionRow {
+    title: string,
+    meta: string,
+    disposition: string,
+    kind: int,
+    author: string,
+    note: string,
+    draft: bool,
+}
+
+export global ReviewDecisionsData {
+    in-out property <bool> open;
+    // 1 generating, 2 recording, 3 recorded `count`, 4 exported to
+    // `detail`, 5 error `detail`, 0 none.
+    in-out property <int> state;
+    in-out property <int> count;
+    in-out property <string> detail;
+    in-out property <[DecisionRow]> rows;
+    in-out property <int> selected: -1;
+    // The form of the selected finding.
+    in-out property <int> kind;
+    in-out property <string> note;
+    in-out property <string> adr;
+    in-out property <string> expires;
+    in-out property <string> author;
+    in-out property <int> drafts;
+    callback show();
+    callback select(int);
+    callback add();
+    callback record();
+    callback export();
+    callback close();
+
+    public pure function kind-label(k: int) -> string {
+        if k == 0 { return @tr("Fix"); }
+        if k == 1 { return @tr("Defer"); }
+        return @tr("Accept risk");
+    }
+    public pure function disposition(d: string) -> string {
+        if d == "open" { return @tr("Open"); }
+        if d == "planned" { return @tr("Fix planned"); }
+        if d == "deferred" { return @tr("Deferred"); }
+        if d == "accepted_risk" { return @tr("Accepted risk"); }
+        if d == "expired" { return @tr("Expired exception"); }
+        if d == "changed" { return @tr("Evidence changed"); }
+        if d == "not_observed" { return @tr("No longer observed"); }
+        return d;
+    }
+}
+
+component DecisionRowView inherits Rectangle {
+    in property <DecisionRow> item;
+    in property <bool> selected;
+    callback clicked;
+    height: box.preferred-height;
+    border-radius: 6px;
+    background: root.selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    box := VerticalLayout {
+        padding: 6px;
+        padding-right: 14px;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.item.title; color: Theme.text; font-size: Theme.font-body; overflow: elide; horizontal-stretch: 1; }
+            if root.item.draft: Badge { text: @tr("Draft"); variant: "p2"; }
+        }
+        Text {
+            text: root.item.meta + " · " + ReviewDecisionsData.disposition(root.item.disposition);
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            overflow: elide;
+        }
+        if root.item.kind >= 0: Text {
+            text: ReviewDecisionsData.kind-label(root.item.kind) + " · " + root.item.author + " · " + root.item.note;
+            color: Theme.muted;
+            font-size: Theme.font-caption;
+            overflow: elide;
+        }
+    }
+}
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 4px;
+    alignment: start;
+    vertical-stretch: 0;
+    Text { text: root.label; color: Theme.text; font-size: Theme.field-label; }
+    @children
+}
+
+// Modal over the window, as the save prompt.
+export component ReviewDecisionsDialog inherits Rectangle {
+    property <int> state: ReviewDecisionsData.state;
+    property <bool> busy: self.state == 1 || self.state == 2;
+    background: Theme.shadow;
+    TouchArea { }
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                ReviewDecisionsData.close();
+                return accept;
+            }
+            reject
+        }
+    }
+    Rectangle {
+        x: (root.width - self.width) / 2;
+        y: 30px;
+        width: min(820px, root.width - 32px);
+        height: root.height - 60px;
+        background: Theme.panel;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.shadow;
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text { text: @tr("Review decisions"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; }
+            Text {
+                text: @tr("Findings of a review generated now. Decisions are recorded in .archguard/reviews.json, as `archguard review --decisions … --save` does, or exported for someone who imports them later.");
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            if root.state > 0: Text {
+                text: root.state == 1 ? @tr("Generating the review…")
+                    : root.state == 2 ? @tr("Recording…")
+                    : root.state == 3 ? @tr("{} decisions recorded.", ReviewDecisionsData.count)
+                    : root.state == 4 ? @tr("Exported to {}. Import with:", ReviewDecisionsData.detail)
+                    : ReviewDecisionsData.detail;
+                color: root.state == 5 ? Theme.danger : root.state == 3 || root.state == 4 ? Theme.success : Theme.muted;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            if root.state == 4: CommandField { command: "archguard review --decisions " + ReviewDecisionsData.detail + " --save"; }
+            if !root.busy && ReviewDecisionsData.rows.length == 0 && root.state != 5: Text {
+                text: @tr("The review has no findings.");
+                color: Theme.muted;
+                font-size: Theme.font-body;
+            }
+            ListView {
+                vertical-stretch: 1;
+                for r[i] in ReviewDecisionsData.rows: DecisionRowView {
+                    item: r;
+                    selected: i == ReviewDecisionsData.selected;
+                    clicked => { ReviewDecisionsData.select(i); }
+                }
+            }
+            if ReviewDecisionsData.selected >= 0: VerticalLayout {
+                spacing: 8px;
+                vertical-stretch: 0;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Field {
+                        label: @tr("Decision");
+                        ComboBox {
+                            height: Theme.control-h;
+                            width: 150px;
+                            model: [@tr("Fix"), @tr("Defer"), @tr("Accept risk")];
+                            current-index <=> ReviewDecisionsData.kind;
+                        }
+                    }
+                    Field {
+                        label: @tr("Author");
+                        LineEdit { text <=> ReviewDecisionsData.author; }
+                    }
+                    Field {
+                        label: @tr("Expires on (YYYY-MM-DD)");
+                        width: 170px;
+                        LineEdit { text <=> ReviewDecisionsData.expires; placeholder-text: @tr("required to accept a risk"); }
+                    }
+                }
+                Field {
+                    label: @tr("Note");
+                    LineEdit { text <=> ReviewDecisionsData.note; placeholder-text: @tr("Why, and what happens next"); }
+                }
+                Field {
+                    label: @tr("ADR link");
+                    LineEdit { text <=> ReviewDecisionsData.adr; placeholder-text: "docs/adr/0007-….md"; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button {
+                    text: @tr("Add decision");
+                    enabled: !root.busy && ReviewDecisionsData.selected >= 0;
+                    clicked => { ReviewDecisionsData.add(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: @tr("Export decisions…");
+                    enabled: !root.busy && ReviewDecisionsData.rows.length > 0;
+                    clicked => { ReviewDecisionsData.export(); }
+                }
+                Button {
+                    primary: true;
+                    text: @tr("Record {} decisions", ReviewDecisionsData.drafts);
+                    enabled: !root.busy && ReviewDecisionsData.drafts > 0;
+                    clicked => { ReviewDecisionsData.record(); }
+                }
+                Button {
+                    text: @tr("Close");
+                    clicked => { ReviewDecisionsData.close(); }
+                }
+            }
+        }
+    }
+}

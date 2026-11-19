@@ -258,7 +258,7 @@ fn review_error(message: impl std::fmt::Display) -> ArchguardError {
     ArchguardError::Analysis(format!("architecture review: {message}"))
 }
 /// The decision import document (`archguard review --decisions`).
-const IMPORT_SCHEMA: u32 = 2;
+pub(crate) const IMPORT_SCHEMA: u32 = 2;
 /// Bound for decision-state reads; matches the review session.
 const MAX_BYTES: u64 = 32 * 1024 * 1024;
 

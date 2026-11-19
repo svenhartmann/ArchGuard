@@ -696,7 +696,10 @@ as planned, `defer` as deferred. The import file is a decision document
 replaces the review-bound entries and keeps entries recorded with
 `review-decision` or MCP. Older versions kept review decisions in
 `.archguard/review-decisions.json`: reads merge that file, and the next register
-write moves its entries into `reviews.json` and deletes it.
+write moves its entries into `reviews.json` and deletes it. One engine function
+builds the document (`review_decision_document`): `archguard review-decision
+export [--out FILE]` prints it for a review generated now, and the desktop app
+(View → Review decisions…) records it through the same import or exports it.
 
 The **PR comment** (`archguard-report/src/pr_comment.rs`) renders fixed sections:
 `## Architektur-Review`, `### Zusammenfassung` (deltas for prioritized findings, cyclic

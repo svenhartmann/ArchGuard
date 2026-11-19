@@ -635,6 +635,12 @@ pub(crate) enum ReviewDecisionAction {
     },
     /// List all recorded decisions.
     List,
+    /// Write the decision document of a fresh review, as `review --decisions` imports it.
+    Export {
+        /// Write the JSON to this file instead of stdout.
+        #[arg(long, value_name = "DATEI")]
+        out: Option<PathBuf>,
+    },
     /// Show one decision by id (or by finding id).
     Show {
         /// Decision id, falling back to the finding id.
