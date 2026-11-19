@@ -82,6 +82,68 @@ pub struct ViewsConfig {
     /// answers and who signs in per role (ADR 0021, decision 7).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub run: BTreeMap<String, RunTarget>,
+    /// `[views.access]`: what a project-specific guard, guard function or
+    /// access attribute means, by its name (`mustBeAuthenticatedGuard =
+    /// "authenticated"`, `ApiPermission = "policy:$arg"`). Extractors map a
+    /// listed name to this meaning instead of an opaque custom condition and
+    /// never guess from a name that is not listed (ADR 0021, decision 6).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub access: BTreeMap<String, AccessMeaning>,
+}
+
+/// The meaning of one `[views.access]` entry. Written as `open`,
+/// `authenticated`, `never`, `role:<name>`, `policy:<name>`, or
+/// `role:$arg` / `policy:$arg` for the literal arguments at the use site
+/// (several arguments mean any of them).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum AccessMeaning {
+    Open,
+    Authenticated,
+    Never,
+    Role(String),
+    Policy(String),
+    RoleFromArguments,
+    PolicyFromArguments,
+}
+
+impl TryFrom<String> for AccessMeaning {
+    type Error = String;
+    fn try_from(text: String) -> Result<Self, String> {
+        let named =
+            |rest: &str, from_args: AccessMeaning, fixed: fn(String) -> AccessMeaning| match rest {
+                "$arg" => Ok(from_args),
+                "" => Err(format!("`{text}` names no role or policy")),
+                name => Ok(fixed(name.to_string())),
+            };
+        match text.as_str() {
+            "open" => Ok(Self::Open),
+            "authenticated" => Ok(Self::Authenticated),
+            "never" => Ok(Self::Never),
+            t => match t.split_once(':') {
+                Some(("role", rest)) => named(rest, Self::RoleFromArguments, Self::Role),
+                Some(("policy", rest)) => named(rest, Self::PolicyFromArguments, Self::Policy),
+                _ => Err(format!(
+                    "unknown access meaning `{text}`; expected open, authenticated, never, \
+                     role:<name>, policy:<name>, role:$arg or policy:$arg"
+                )),
+            },
+        }
+    }
+}
+
+impl From<AccessMeaning> for String {
+    fn from(meaning: AccessMeaning) -> String {
+        match meaning {
+            AccessMeaning::Open => "open".into(),
+            AccessMeaning::Authenticated => "authenticated".into(),
+            AccessMeaning::Never => "never".into(),
+            AccessMeaning::Role(n) => format!("role:{n}"),
+            AccessMeaning::Policy(n) => format!("policy:{n}"),
+            AccessMeaning::RoleFromArguments => "role:$arg".into(),
+            AccessMeaning::PolicyFromArguments => "policy:$arg".into(),
+        }
+    }
 }
 
 /// One locally running application of the UI flow.
@@ -164,6 +226,36 @@ impl ViewConvention {
             Self::FrontendBackendAgree => "frontend_backend_agree",
             Self::StateChangesInEntity => "state_changes_in_entity",
             Self::EventsThroughRaiseFunction => "events_through_raise_function",
+        }
+    }
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::{AccessMeaning, Config};
+
+    #[test]
+    fn views_access_reads_every_meaning_and_rejects_unknown_ones() {
+        let config: Config = toml::from_str(
+            "[views.access]\nauthGuard = \"authenticated\"\npublicGuard = \"open\"\n\
+             DenyAll = \"never\"\nAdminGuard = \"role:Admin\"\nCanPurge = \"policy:CanPurge\"\n\
+             ApiPermission = \"policy:$arg\"\nRequireRole = \"role:$arg\"\n",
+        )
+        .unwrap();
+        let access = &config.views.access;
+        assert_eq!(access["authGuard"], AccessMeaning::Authenticated);
+        assert_eq!(access["publicGuard"], AccessMeaning::Open);
+        assert_eq!(access["DenyAll"], AccessMeaning::Never);
+        assert_eq!(access["AdminGuard"], AccessMeaning::Role("Admin".into()));
+        assert_eq!(access["CanPurge"], AccessMeaning::Policy("CanPurge".into()));
+        assert_eq!(access["ApiPermission"], AccessMeaning::PolicyFromArguments);
+        assert_eq!(access["RequireRole"], AccessMeaning::RoleFromArguments);
+        let text = toml::to_string(&config.views).unwrap();
+        assert!(text.contains("ApiPermission = \"policy:$arg\""), "{text}");
+        for bad in ["\"admin\"", "\"role:\"", "\"group:x\""] {
+            let err =
+                toml::from_str::<Config>(&format!("[views.access]\nx = {bad}\n")).unwrap_err();
+            assert!(err.to_string().contains("x"), "{bad}: {err}");
         }
     }
 }

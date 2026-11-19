@@ -79,7 +79,7 @@ pub use calls::{
     JavaSemanticConfig, MethodCall, MethodComplexity, SemanticConfig, SemanticDependencyCoverage,
     TypeScriptSemanticConfig,
 };
-pub use config::Config;
+pub use config::{AccessMeaning, Config};
 pub use graph::GraphBuilder;
 pub use model::{
     ArchguardError, ConfigSource, CycleSampling, Edge, Finding, FindingKind, Graph, ModuleMetrics,

@@ -102,10 +102,11 @@ pub struct Field {
 }
 
 /// Config keys the editor does not list because their shape has no field
-/// kind: `views.run` holds one table per application with test users, edited
+/// kind: `views.run` holds one table per application with test users and
+/// `views.access` maps project-specific names to meanings; both are edited
 /// in `archguard.toml` only (ADR 0021, decision 7).
 #[cfg(test)]
-pub const FILE_ONLY: &[&str] = &["views.run"];
+pub const FILE_ONLY: &[&str] = &["views.access", "views.run"];
 
 pub const SEVERITIES: &[&str] = &["error", "warning", "info"];
 pub const DENY_CYCLES: &[&str] = &["module", "file", "off"];
