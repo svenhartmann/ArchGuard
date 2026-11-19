@@ -54,6 +54,7 @@ mod staged;
 pub use staged::{
     ArchitectureDiffDetails, ArchitectureEdgeChange, BranchArchitectureDiff, StagedArchitectureDiff,
 };
+pub mod domain_model;
 mod ui_flow;
 pub use ui_flow::{
     AccessState, Action, Assignment, Call, Condition, EndpointAccess, Outcome, Reach, Screen,
