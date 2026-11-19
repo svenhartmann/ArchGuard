@@ -107,6 +107,12 @@ msgstr "Bildschirmaktion"
 msgid "Endpoint"
 msgstr "Endpunkt"
 
+msgid "Message handler"
+msgstr "Nachrichten-Handler"
+
+msgid "not a user path"
+msgstr "kein Benutzerweg"
+
 msgid "Use case"
 msgstr "Anwendungsfall"
 

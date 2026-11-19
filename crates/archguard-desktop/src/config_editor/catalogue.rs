@@ -101,6 +101,11 @@ pub struct Field {
     pub description: &'static str,
 }
 
+/// Config keys the editor does not list because their shape has no field
+/// kind: `views.run` holds one table per application with test users, edited
+/// in `archguard.toml` only (ADR 0021, decision 7).
+pub const FILE_ONLY: &[&str] = &["views.run"];
+
 pub const SEVERITIES: &[&str] = &["error", "warning", "info"];
 pub const DENY_CYCLES: &[&str] = &["module", "file", "off"];
 pub const ORPHANS: &[&str] = &["off", "info", "warning", "error"];

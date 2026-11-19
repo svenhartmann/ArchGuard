@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use archguard_engine::core::{Origin, Target, UiFlow, normalize_path_pattern};
+use archguard_engine::core::{Origin, Target, UiFlow, start_screen_ids};
 
 use crate::diagram;
 
@@ -80,6 +80,7 @@ fn applications(flow: &UiFlow) -> BTreeMap<&str, App> {
     let ids: HashMap<&str, usize> = (flow.screens.iter().enumerate())
         .map(|(i, s)| (s.id.as_str(), i))
         .collect();
+    let starts = start_screen_ids(flow);
     let mut order: Vec<usize> = (0..flow.screens.len()).collect();
     order.sort_by(|&a, &b| flow.screens[a].name.cmp(&flow.screens[b].name));
     for i in order {
@@ -89,8 +90,7 @@ fn applications(flow: &UiFlow) -> BTreeMap<&str, App> {
             starts: vec![],
         });
         app.nodes.push(Node::Screen(i));
-        let route = flow.screens[i].route.as_deref().map(normalize_path_pattern);
-        if route.as_deref() == Some("/") {
+        if starts.contains(&flow.screens[i].id.as_str()) {
             app.starts.push(Node::Screen(i));
         }
     }
@@ -372,6 +372,19 @@ mod tests {
         let g = layout(&f, &BTreeSet::new());
         let names: Vec<&str> = g.bands.iter().map(|b| b.application.as_str()).collect();
         assert_eq!(names, ["Web", "Admin", "B", "Client"], "ties by name");
+    }
+
+    #[test]
+    fn a_marked_start_screen_without_a_root_route_counts_as_start() {
+        let mut f = shop();
+        // Client starts at a MAUI-style route marked in `start_screens`;
+        // Aaa has no start, so it goes last despite its name.
+        f.screens.push(screen("client", "Client", "//Login"));
+        f.screens.push(screen("aaa", "Aaa", "/aaa"));
+        f.start_screens = vec!["client".into()];
+        let g = layout(&f, &BTreeSet::new());
+        let names: Vec<&str> = g.bands.iter().map(|b| b.application.as_str()).collect();
+        assert_eq!(names, ["Web", "Admin", "Client", "Aaa"]);
     }
 
     #[test]

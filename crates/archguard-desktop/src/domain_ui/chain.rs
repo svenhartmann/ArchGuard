@@ -6,7 +6,7 @@
 
 use archguard_engine::core::domain_model::DomainModel;
 use archguard_engine::core::{Assignment, Origin, Outcome, UiFlow, evaluate_access};
-use archguard_engine::domain_chain::{Chain, chains, triggers_of_state};
+use archguard_engine::domain_chain::{Chain, ChainStart, chains, triggers_of_state};
 
 use crate::screens_ui::words;
 use crate::tab_support::{Texts, model};
@@ -56,7 +56,7 @@ fn step(kind: &str, text: String, file: &str, line: u32, tone: i32) -> DomStep {
 
 fn chain(flow: &UiFlow, c: &Chain, a: &Assignment, texts: &Texts) -> DomChain {
     let mut steps = Vec::new();
-    if let Some(act) = c.action {
+    if let Some(act) = c.action() {
         let screen = match &act.screen {
             Origin::Screen(id) => (flow.screens.iter())
                 .find(|s| s.id == *id)
@@ -75,21 +75,29 @@ fn chain(flow: &UiFlow, c: &Chain, a: &Assignment, texts: &Texts) -> DomChain {
             -1,
         ));
     }
-    let e = c.endpoint;
-    let outcome = evaluate_access(&e.access, a);
-    let text = format!(
-        "{} {} · {} · {}",
-        e.method,
-        e.path,
-        words::endpoint_access(texts, &e.access),
-        words::outcome(texts, outcome)
-    );
-    let tone = match outcome {
-        Outcome::Allowed => 0,
-        Outcome::Denied => 1,
-        Outcome::Unknown => 2,
-    };
-    steps.push(step(texts.t("Endpoint"), text, &e.file, e.line, tone));
+    match (c.endpoint(), &c.start) {
+        (Some(e), _) => {
+            let outcome = evaluate_access(&e.access, a);
+            let text = format!(
+                "{} {} · {} · {}",
+                e.method,
+                e.path,
+                words::endpoint_access(texts, &e.access),
+                words::outcome(texts, outcome)
+            );
+            let tone = match outcome {
+                Outcome::Allowed => 0,
+                Outcome::Denied => 1,
+                Outcome::Unknown => 2,
+            };
+            steps.push(step(texts.t("Endpoint"), text, &e.file, e.line, tone));
+        }
+        (None, ChainStart::Message { message_handler: m }) => {
+            let text = format!("{} · {} · {}", m.message, m.id, texts.t("not a user path"));
+            steps.push(step(texts.t("Message handler"), text, &m.file, m.line, -1));
+        }
+        (None, ChainStart::Endpoint { .. }) => {}
+    }
     for u in &c.use_cases {
         steps.push(step(
             texts.t("Use case"),
