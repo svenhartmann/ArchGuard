@@ -144,7 +144,7 @@ component ExplorerRow inherits Rectangle {
             border-radius: 3.5px;
             background: Theme.cycle;
         }
-        if data.priority > 0: Badge {
+        if data.priority > 0 && GraphPanels.priorities: Badge {
             text: data.priority == 1 ? "P1" : "P2";
             variant: data.priority == 1 ? "p1" : "p2";
             y: (parent.height - self.height) / 2;
@@ -469,6 +469,17 @@ export component GraphView inherits HorizontalLayout {
                 Button { compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                 Button { compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
                 SimToggle { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
+                // The web viewer's "Highlight priorities", for every Graph.
+                Button {
+                    compact: true;
+                    text: @tr("Highlight priorities");
+                    tip: @tr("Mark high (P1) and medium (P2) review priorities in the explorer, tree and network. Scores are a review order, not defect probabilities.");
+                    pressed-state: GraphPanels.priorities;
+                    clicked => {
+                        GraphPanels.priorities = !GraphPanels.priorities;
+                        GraphPanels.changed();
+                    }
+                }
             }
             // The reference takes the rest of the last row.
             Text {

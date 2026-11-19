@@ -1,6 +1,6 @@
 //! The Graph panels every Graph of the window shares
 //! (`ui/graph_panels.slint`): shown as the settings' `[graph]` say, saved
-//! when a drag at a panel edge ends.
+//! when a drag at a panel edge ends or the priority highlight toggles.
 
 use slint::ComponentHandle;
 
@@ -14,6 +14,7 @@ pub fn apply(ui: &AppWindow) {
     let p = ui.global::<Panels>();
     p.set_explorer_w(g.explorer_width as f32);
     p.set_details_w(g.details_width as f32);
+    p.set_priorities(g.priorities);
 }
 
 pub fn wire(ui: &AppWindow) {
@@ -24,6 +25,7 @@ pub fn wire(ui: &AppWindow) {
         let graph = GraphPanels {
             explorer_width: p.get_explorer_w().round() as u32,
             details_width: p.get_details_w().round() as u32,
+            priorities: p.get_priorities(),
         };
         settings_file::update(|s| s.graph = graph);
     });

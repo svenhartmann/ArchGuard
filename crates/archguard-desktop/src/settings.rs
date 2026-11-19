@@ -13,6 +13,7 @@
 //! [graph]                   # shared by every Graph of the window
 //! explorer_width = 250      # logical pixels, dragged at the panel edge
 //! details_width = 320
+//! priorities = true         # highlight P1/P2 review priorities
 //!
 //! [session]                 # the documents open at the last quit
 //! documents = ["/work/shop", "/work/api"]
@@ -48,11 +49,12 @@ pub enum Theme {
 }
 
 /// The Graph panels' widths in logical pixels (`ui/graph_panels.slint`
-/// clamps them to the same ranges).
+/// clamps them to the same ranges) and the priority highlight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GraphPanels {
     pub explorer_width: u32,
     pub details_width: u32,
+    pub priorities: bool,
 }
 
 impl Default for GraphPanels {
@@ -60,6 +62,7 @@ impl Default for GraphPanels {
         GraphPanels {
             explorer_width: 250,
             details_width: 320,
+            priorities: true,
         }
     }
 }
@@ -77,6 +80,9 @@ impl GraphPanels {
         GraphPanels {
             explorer_width: width("explorer_width", Self::EXPLORER, d.explorer_width),
             details_width: width("details_width", Self::DETAILS, d.details_width),
+            priorities: item
+                .and_then(|t| t.get("priorities")?.as_bool())
+                .unwrap_or(d.priorities),
         }
     }
 }
@@ -302,6 +308,7 @@ pub fn render(doc: &mut DocumentMut, settings: &Settings) -> String {
         let t = table(doc, "graph");
         set(t, "explorer_width", value(i64::from(g.explorer_width)));
         set(t, "details_width", value(i64::from(g.details_width)));
+        set(t, "priorities", value(g.priorities));
     }
     if let Some(session) = &settings.session {
         let t = table(doc, "session");
@@ -579,6 +586,7 @@ mod tests {
         assert_eq!(s.graph, GraphPanels::default());
         assert!(!render(&mut doc, &s).contains("[graph]"), "default not written");
         s.graph.explorer_width = 300;
+        s.graph.priorities = false;
         let out = render(&mut doc, &s);
         assert_eq!(parse(&out).expect("valid").1.graph, s.graph);
         let (_, s) = parse("[graph]\nexplorer_width = 5\ndetails_width = 9000\n").expect("valid");

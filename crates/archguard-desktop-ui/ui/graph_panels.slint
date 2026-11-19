@@ -1,15 +1,17 @@
 // What every Graph of the window shares: the explorer's and the details
-// panel's width. Rust loads and saves them in the settings (`[graph]`, src/graph_panels_ui.rs).
+// panel's width and whether review priorities are highlighted. Rust loads and saves them in the settings (`[graph]`, src/graph_panels_ui.rs).
 import { Theme } from "theme.slint";
 
 export global GraphPanels {
     in-out property <length> explorer-w: 250px;
     in-out property <length> details-w: 320px;
+    // P1/P2 badges in the explorer, the tree and the network.
+    in-out property <bool> priorities: true;
     out property <length> explorer-min: 180px;
     out property <length> explorer-max: 520px;
     out property <length> details-min: 240px;
     out property <length> details-max: 560px;
-    // A drag ended: save.
+    // A drag ended or the toggle changed: save.
     callback changed();
 
     public function set-explorer(w: length) {

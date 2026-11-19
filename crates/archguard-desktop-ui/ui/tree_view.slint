@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Fmt } from "format.slint";
 import { Icon, Icons, Button, Badge, ZoomControls, SectionHeading } from "widgets.slint";
 import { NodeMenu } from "node_menu.slint";
+import { GraphPanels } from "graph_panels.slint";
 
 export struct TreeRow {
     row: int,
@@ -120,7 +121,7 @@ component RowCard inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
-        if data.priority > 0: Badge {
+        if data.priority > 0 && GraphPanels.priorities: Badge {
             text: data.priority == 1 ? "P1" : "P2";
             variant: data.priority == 1 ? "p1" : "p2";
             zoom: root.zoom;
