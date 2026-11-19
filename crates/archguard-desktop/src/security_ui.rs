@@ -1,7 +1,6 @@
-//! Security tab: the web viewer's dependency scan view (renderSecurity in
-//! viewer_security.js). It reads the saved `.archguard/security.json`
-//! through `archguard_engine::read_security`, as `archguard graph` and
-//! `archguard serve` do; it never starts Trivy or network work.
+//! Security tab: the dependency scan view. It reads the saved
+//! `.archguard/security.json` through `archguard_engine::read_security`, as
+//! `archguard security --cached` does; it never starts Trivy or network work.
 //!
 //! All tab state is one [`SecurityState`], built by [`build_from`] and shown by
 //! [`push`] as one `SecurityModel` value.

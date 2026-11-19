@@ -94,7 +94,6 @@ component WorldStatus inherits HorizontalLayout {
 }
 
 export component StartView inherits Rectangle {
-    callback open-web();
     property <StartModel> m: StartData.model;
     property <bool> services: m.services.shown;
     // `repositoryWorldControls`: the selection, its connections and notes.

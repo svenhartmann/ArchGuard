@@ -213,7 +213,6 @@ component NotScanned inherits VerticalLayout {
 }
 
 export component SecurityView inherits Rectangle {
-    callback open-web();
     property <SecurityModel> model: SecurityData.model;
     background: Theme.bg;
     // Tabs must not change the window's preferred size; a split pane can

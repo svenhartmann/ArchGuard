@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Build ArchGuard.app for macOS: the desktop app with its icon, plus the
-# `archguard` CLI next to it (the app starts `archguard serve` for the web
-# viewer fallback). Uses only Apple's tools (sips, iconutil, plutil).
+# Build ArchGuard.app for macOS: the desktop app with its icon. Uses only
+# Apple's tools (sips, iconutil, plutil).
 #
 # Usage: scripts/desktop/bundle-macos.sh [out-dir]   (default: target/bundle)
 # Not signed or notarised yet (phase 8 of ADR 0002).
@@ -12,12 +11,11 @@ out="${1:-$root/target/bundle}"
 app="$out/ArchGuard.app"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 
-cargo build --release --manifest-path "$root/Cargo.toml" -p archguard-desktop -p archguard-cli
+cargo build --release --manifest-path "$root/Cargo.toml" -p archguard-desktop
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$root/target/release/archguard-desktop" "$app/Contents/MacOS/"
-cp "$root/target/release/archguard" "$app/Contents/MacOS/"
 
 # Icon set from the 1024 px master (assets/icon.png, drawn from icon.svg).
 iconset="$(mktemp -d)/AppIcon.iconset"

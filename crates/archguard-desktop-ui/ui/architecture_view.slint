@@ -372,7 +372,6 @@ component ChapterButton inherits Rectangle {
 }
 
 export component ArchitectureView inherits Rectangle {
-    callback open-web();
     // The interactive package map on the Diagrams tab is open; the other
     // diagrams there start open.
     in-out property <bool> map-open: true;
@@ -686,24 +685,11 @@ export component ArchitectureView inherits Rectangle {
                             tip: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
                         }
                     }
-                    // The button below the wrapped text in a narrow pane.
-                    if ArchitectureData.model.has-model: Fit {
-                        HorizontalLayout {
-                            spacing: 10px;
-                            Text {
-                                text: @tr("Target architecture: the comparison with the declared model is not native yet.");
-                                color: Theme.muted;
-                                font-size: Theme.font-small;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                wrap: word-wrap;
-                            }
-                            if !root.narrow: Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
-                        }
-                    }
-                    if ArchitectureData.model.has-model && root.narrow: HorizontalLayout {
-                        alignment: start;
-                        Button { compact: true; text: @tr("Open in web viewer"); clicked => { root.open-web(); } }
+                    if ArchitectureData.model.has-model: Text {
+                        text: @tr("Target architecture: the comparison with the declared model is not native yet; `archguard architecture` prints it.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
                     }
                 }
             }
