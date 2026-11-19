@@ -803,9 +803,13 @@ fn baseline(
         BaselineAction::Write { file, .. } => {
             let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
             let hashes: BTreeSet<String> = cycle_hashes(report).into_values().collect();
+            let conventions = archguard_engine::baseline_convention_ids(
+                &archguard_engine::view_conventions::convention_findings(root, &loaded.config),
+            );
             let baseline = Baseline {
                 schema_version: 1,
                 hashes,
+                conventions,
             };
             let json = match serde_json::to_string_pretty(&baseline) {
                 Ok(json) => json,
@@ -816,8 +820,9 @@ fn baseline(
             }
             if !cli.quiet {
                 outln!(
-                    "wrote {} cycle hashes to {}",
-                    cycle_hashes(report).len(),
+                    "wrote {} cycle hashes and {} convention ids to {}",
+                    baseline.hashes.len(),
+                    baseline.conventions.len(),
                     file.display()
                 );
             }

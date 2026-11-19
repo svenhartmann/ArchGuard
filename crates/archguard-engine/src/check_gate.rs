@@ -1,6 +1,7 @@
 //! The `check` gate shared by `archguard check` and the MCP `check` tool:
 //! the empty-analysis refusal, the `[review]` KPI gates (R30/R31) and the
 //! fail rule with its baseline acceptance (Kap. 5/7).
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use archguard_analysis::{Baseline, cycle_hash};
@@ -26,15 +27,47 @@ pub fn read_baseline(path: &Path) -> Result<Baseline, String> {
         .map_err(|err| format!("baseline {}: invalid baseline JSON: {err}", path.display()))
 }
 
-/// Whether `baseline` accepts `finding`: only **cycle** findings whose
-/// membership [`cycle_hash`] the baseline stores are accepted.
+/// Whether `baseline` accepts `finding`: **cycle** findings whose
+/// membership [`cycle_hash`] the baseline stores, and **convention**
+/// findings whose id it stores.
 pub fn accepted_by_baseline(baseline: Option<&Baseline>, finding: &Finding) -> bool {
     match (baseline, finding.kind) {
         (Some(baseline), FindingKind::Cycle) => {
             baseline.hashes.contains(&cycle_hash(&finding.nodes))
         }
+        (Some(baseline), FindingKind::Convention) => baseline.conventions.contains(&finding.id),
         _ => false,
     }
+}
+
+/// The convention ids `baseline write` records: every convention finding
+/// except an unreadable view (`view-conventions:…`), which must stay loud.
+pub fn baseline_convention_ids(findings: &[Finding]) -> BTreeSet<String> {
+    findings
+        .iter()
+        .filter(|f| f.kind == FindingKind::Convention && !f.id.starts_with("view-conventions:"))
+        .map(|f| f.id.clone())
+        .collect()
+}
+
+/// Baseline for conventions in `check`: accepted convention findings leave
+/// the list (the baseline file names them), and each baselined id that no
+/// finding has anymore becomes an info note to remove it.
+pub fn apply_convention_baseline(findings: &mut Vec<Finding>, baseline: Option<&Baseline>) {
+    let Some(baseline) = baseline else { return };
+    let current: BTreeSet<String> = baseline_convention_ids(findings);
+    findings
+        .retain(|f| f.kind != FindingKind::Convention || !accepted_by_baseline(Some(baseline), f));
+    findings.extend(baseline.conventions.difference(&current).map(|id| Finding {
+        kind: FindingKind::Convention,
+        severity: Severity::Info,
+        ..gate_finding(
+            id.clone(),
+            Vec::new(),
+            Vec::new(),
+            format!("Fixed: `{id}` no longer occurs; remove it from the baseline."),
+        )
+    }));
 }
 
 /// Gate semantics: fail as soon as one `Error` finding is not accepted
@@ -358,11 +391,71 @@ mod tests {
         let baseline = Baseline {
             schema_version: 1,
             hashes: [cycle_hash(&nodes)].into(),
+            ..Baseline::default()
         };
         assert!(gate_fails(std::slice::from_ref(&cycle), None));
         assert!(!gate_fails(std::slice::from_ref(&cycle), Some(&baseline)));
         let metric = gate_finding("m".into(), nodes, vec![], String::new());
         assert!(gate_fails(&[metric], Some(&baseline)));
+    }
+
+    fn convention(id: &str) -> Finding {
+        Finding {
+            kind: FindingKind::Convention,
+            ..gate_finding(id.into(), vec![], vec![], String::new())
+        }
+    }
+
+    #[test]
+    fn a_baseline_accepts_recorded_conventions_and_notes_fixed_ones() {
+        let old = convention("view-navigation_literal:A.razor:url");
+        let unreadable = convention("view-conventions::ui-flow");
+        let recorded = baseline_convention_ids(&[old.clone(), unreadable.clone()]);
+        // A broken import file must never be accepted silently.
+        assert_eq!(
+            recorded,
+            ["view-navigation_literal:A.razor:url".to_string()].into()
+        );
+        let baseline = Baseline {
+            schema_version: 1,
+            conventions: recorded
+                .into_iter()
+                .chain(["view-navigation_literal:B.razor:gone".to_string()])
+                .collect(),
+            ..Baseline::default()
+        };
+        let new = convention("view-navigation_literal:A.razor:next");
+        let mut findings = vec![old.clone(), new.clone(), unreadable];
+        apply_convention_baseline(&mut findings, Some(&baseline));
+        let shown: Vec<(&str, Severity)> = findings
+            .iter()
+            .map(|f| (f.id.as_str(), f.severity))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("view-navigation_literal:A.razor:next", Severity::Error),
+                ("view-conventions::ui-flow", Severity::Error),
+                ("view-navigation_literal:B.razor:gone", Severity::Info),
+            ]
+        );
+        assert!(
+            findings[2]
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("remove it from the baseline")
+        );
+        assert!(gate_fails(&findings, Some(&baseline)));
+
+        let mut only_old = vec![old];
+        apply_convention_baseline(&mut only_old, Some(&baseline));
+        assert_eq!(only_old.len(), 1, "only the fixed note: {only_old:?}");
+        assert!(!gate_fails(&only_old, Some(&baseline)));
+
+        let mut without = vec![new];
+        apply_convention_baseline(&mut without, None);
+        assert!(gate_fails(&without, None));
     }
 
     #[test]

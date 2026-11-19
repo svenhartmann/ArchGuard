@@ -1,6 +1,6 @@
 //! Convention checks for the UI-flow and domain views (ADR 0021 decision 6,
 //! ADR 0022 decision 6): the opt-in `[views] conventions` of `check`. Each
-//! broken convention is one `target_architecture` error finding with file:line
+//! broken convention is one `convention` error finding with file:line
 //! and a fix hint for the agent that wrote the code. The id is
 //! `view-<rule>:<file>:<subject>` (`#2`, `#3` … for repeats in one file), so
 //! it survives moved lines.
@@ -263,7 +263,7 @@ fn unreadable(what: &str, error: impl std::fmt::Display) -> Finding {
 
 fn finding(rule: &str, file: &str, line: u32, subject: &str, message: String) -> Finding {
     Finding {
-        kind: FindingKind::TargetArchitecture,
+        kind: FindingKind::Convention,
         id: format!("view-{rule}:{file}:{subject}"),
         severity: Severity::Error,
         message: Some(format!("[views] {rule}: {message}")),
@@ -488,7 +488,7 @@ public class ShipOrderCommandHandler
             "{message}"
         );
         assert_eq!(findings[0].severity, Severity::Error);
-        assert_eq!(findings[0].kind, FindingKind::TargetArchitecture);
+        assert_eq!(findings[0].kind, FindingKind::Convention);
     }
 
     #[test]

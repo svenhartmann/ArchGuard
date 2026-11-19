@@ -1206,6 +1206,7 @@ mod tests {
         let accepted = Baseline {
             schema_version: 1,
             hashes: BTreeSet::from([cycle_hash(&["app".to_string(), "domain".to_string()])]),
+            ..Baseline::default()
         };
         let with_baseline = check_value(&report, Some(&accepted));
         assert_eq!(with_baseline["status"], json!("fail"));
@@ -1268,6 +1269,7 @@ mod tests {
         let baseline = Baseline {
             schema_version: 1,
             hashes: BTreeSet::from([kept, stale.clone()]),
+            ..Baseline::default()
         };
         std::fs::write(&path, serde_json::to_string(&baseline).unwrap()).unwrap();
 

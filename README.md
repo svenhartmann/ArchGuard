@@ -217,7 +217,9 @@ conventions = [
 ]
 ```
 
-Each break is one `target_architecture` error finding (check fails with exit 1; text, JSON and SARIF) with file:line and a fix hint, e.g. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, so the UI flow cannot follow it. Fix: write the target as a literal route or a route constant.`` The id `view-<rule>:<file>:<subject>` does not contain the line, so it stays the same when code above moves. An unknown name in the list is a configuration error.
+Each break is one `convention` error finding (check fails with exit 1; text, JSON and SARIF with rule id `archguard/convention/<rule>`) with file:line and a fix hint, e.g. ``[views] navigation_literal: Navigation target `returnUrl` is not a literal, so the UI flow cannot follow it. Fix: write the target as a literal route or a route constant.`` The id `view-<rule>:<file>:<subject>` does not contain the line, so it stays the same when code above moves. An unknown name in the list is a configuration error.
+
+To switch conventions on in an existing project without fixing everything first, `archguard baseline write` records the current convention ids in the baseline file (`conventions`, next to the cycle hashes). `archguard check --baseline` then fails only on findings not in it and does not list the accepted ones; a baselined id that no longer occurs is shown as an info note "remove it from the baseline" and does not fail. An unreadable view import is never recorded. Baseline files without `conventions` still read.
 
 ### Compare findings with an expert assessment
 

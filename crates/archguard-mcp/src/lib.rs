@@ -310,6 +310,7 @@ impl ArchguardTools {
         let gates =
             archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
         run.report.findings.extend(gates);
+        archguard_engine::apply_convention_baseline(&mut run.report.findings, baseline.as_ref());
         Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
     }
 

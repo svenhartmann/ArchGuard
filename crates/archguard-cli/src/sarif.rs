@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use archguard_engine::analysis::Baseline;
-use archguard_engine::core::{FindingKind, Report, Severity};
+use archguard_engine::core::{Finding, FindingKind, Report, Severity};
 use serde_json::{Value, json};
 
 use crate::output::to_pretty_json;
@@ -18,14 +18,14 @@ pub(crate) fn to_sarif(
     source_paths: &BTreeMap<String, String>,
     baseline: Option<&Baseline>,
 ) -> String {
-    let mut rule_ids: Vec<&'static str> = Vec::new();
+    let mut rule_ids: Vec<String> = Vec::new();
     let results: Vec<Value> = report
         .findings
         .iter()
         .map(|finding| {
-            let id = rule_id(finding.kind);
+            let id = rule_id(finding);
             if !rule_ids.contains(&id) {
-                rule_ids.push(id);
+                rule_ids.push(id.clone());
             }
             let mut locations:Vec<_>=finding.evidence.iter().filter_map(|reference|source_paths.get(&reference.file).map(|path|{
                 let uri:String=path.bytes().map(|byte|if byte.is_ascii_alphanumeric()||b"-._~/".contains(&byte){(byte as char).to_string()}else{format!("%{byte:02X}")}).collect();
@@ -83,9 +83,10 @@ pub(crate) fn to_sarif(
     to_pretty_json(&doc)
 }
 
-/// The SARIF rule id for a finding kind.
-fn rule_id(kind: FindingKind) -> &'static str {
-    match kind {
+/// The SARIF rule id for a finding: one per kind, one per convention
+/// (`archguard/convention/<rule>` from the id `view-<rule>:…`).
+fn rule_id(finding: &Finding) -> String {
+    let id = match finding.kind {
         FindingKind::Cycle => "archguard/cycle",
         FindingKind::LayerViolation => "archguard/layer-violation",
         FindingKind::MetricThreshold => "archguard/metric-threshold",
@@ -95,7 +96,15 @@ fn rule_id(kind: FindingKind) -> &'static str {
         FindingKind::Orphan => "archguard/orphan",
         FindingKind::TargetArchitecture => "archguard/target-architecture",
         FindingKind::License => "archguard/license",
-    }
+        FindingKind::Convention => {
+            let rule = finding.id.strip_prefix("view-").unwrap_or(&finding.id);
+            return format!(
+                "archguard/convention/{}",
+                rule.split(':').next().unwrap_or(rule)
+            );
+        }
+    };
+    id.to_string()
 }
 
 /// Severity → SARIF result level.

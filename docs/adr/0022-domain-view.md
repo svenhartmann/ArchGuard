@@ -192,3 +192,15 @@ extractor could not read. The scan is text-level like the C# extractor. The
 raise function is the extractor's `AddDomainEvent`, not yet configurable.
 Not yet done: Java/Kotlin, object initializers, and "handlers are found by
 interface".
+
+### 2026-11-19: baseline for conventions
+
+Convention findings have their own kind `convention` (SARIF rule id
+`archguard/convention/<rule>`) instead of `target_architecture`. The baseline
+file gains an optional `conventions` list of finding ids, written by
+`baseline write`; files without it still read, and the field is left out when
+empty. `check --baseline` (CLI and MCP) drops accepted convention findings
+from the list, fails on the others, and turns each baselined id without a
+finding into an `info` note "remove it from the baseline", which does not
+fail. The `view-conventions:…` finding for an unreadable import is never
+recorded. `baseline diff` still compares cycles only; no ratchet beyond that.

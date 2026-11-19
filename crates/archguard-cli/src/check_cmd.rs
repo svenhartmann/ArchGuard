@@ -121,7 +121,8 @@ fn precondition_error(
 /// (default: [`baseline_path`]), **cycle** findings whose
 /// membership hash — Kap. 7's [`archguard_engine::analysis::cycle_hash`] over the finding's sorted
 /// member names, the same identity [`archguard_engine::analysis::Baseline`] stores — is present in
-/// the baseline are accepted and no longer fail the gate; every other
+/// the baseline are accepted and no longer fail the gate, and so are
+/// convention findings by id ([`archguard_engine::apply_convention_baseline`]); every other
 /// Error finding (declared layer violations, metric thresholds) fails
 /// regardless. The full report is still printed either way; a missing
 /// or unparsable baseline file is an IO error (exit 3).
@@ -145,8 +146,9 @@ pub(crate) fn check(
             Err(err) => return analysis_error(err),
         },
     };
-    let fails = gate_fails(&report.findings, baseline.as_ref());
     let mut report = report.clone();
+    archguard_engine::apply_convention_baseline(&mut report.findings, baseline.as_ref());
+    let fails = gate_fails(&report.findings, baseline.as_ref());
     report.summary.status = if fails {
         archguard_engine::core::Status::Fail
     } else {

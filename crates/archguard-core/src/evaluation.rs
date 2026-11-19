@@ -63,10 +63,11 @@ pub fn finding_kind_name(kind: FindingKind) -> &'static str {
         FindingKind::Orphan => "orphan",
         FindingKind::TargetArchitecture => "target_architecture",
         FindingKind::License => "license",
+        FindingKind::Convention => "convention",
     }
 }
 
-const FINDING_KINDS: [FindingKind; 9] = [
+const FINDING_KINDS: [FindingKind; 10] = [
     FindingKind::Cycle,
     FindingKind::LayerViolation,
     FindingKind::MetricThreshold,
@@ -76,6 +77,7 @@ const FINDING_KINDS: [FindingKind; 9] = [
     FindingKind::Orphan,
     FindingKind::TargetArchitecture,
     FindingKind::License,
+    FindingKind::Convention,
 ];
 
 impl<'de> Deserialize<'de> for ExpectedKind {
