@@ -51,6 +51,7 @@ mod export_cmd;
 mod insights_cmd;
 mod project_files;
 mod quality_cmd;
+mod report_cmd;
 mod review_cmd;
 mod review_session_cmd;
 mod runtime_cmd;
@@ -175,25 +176,6 @@ fn run(cli: &Cli) -> i32 {
             }
             Err(error) => analysis_error(error),
         };
-    }
-    if let Command::Security {
-        cached,
-        offline,
-        cache_dir,
-        fail_on_found,
-        ..
-    } = &cli.command
-    {
-        return security_cmd::run(
-            cli,
-            &root,
-            *cached,
-            *fail_on_found,
-            &archguard_engine::SecurityScanOptions {
-                offline: *offline,
-                cache_dir: cache_dir.clone(),
-            },
-        );
     }
     if let Some(code) = standalone(cli, &root) {
         return code;
@@ -408,6 +390,7 @@ fn run(cli: &Cli) -> i32 {
         | Command::Contracts { .. }
         | Command::Security { .. }
         | Command::Sbom { .. }
+        | Command::Report { .. }
         | Command::Diff { .. }
         | Command::Doctor
         | Command::Update { .. }
@@ -454,7 +437,24 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::Security {
+            cached,
+            offline,
+            cache_dir,
+            fail_on_found,
+            ..
+        } => security_cmd::run(
+            cli,
+            root,
+            *cached,
+            *fail_on_found,
+            &archguard_engine::SecurityScanOptions {
+                offline: *offline,
+                cache_dir: cache_dir.clone(),
+            },
+        ),
         Command::Sbom { .. } => sbom_cmd::run(cli, root),
+        Command::Report { out, .. } => report_cmd::run(cli, root, out.as_deref()),
         Command::Workspace {
             sources, target, ..
         } => workspace_cmd::run(cli, root, *sources, target),

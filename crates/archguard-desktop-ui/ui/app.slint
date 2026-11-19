@@ -89,7 +89,7 @@ export component AppWindow inherits Window {
     callback prompt-answered(int);
 
     // Export (src/export_ui.rs): the focused pane's view as "markdown",
-    // "json", "arc42", "arc42-adoc", "arc42-docx", "svg" or "png"; a view tab's export (pane, tab,
+    // "json", "arc42", "arc42-adoc", "arc42-docx", "report", "svg" or "png"; a view tab's export (pane, tab,
     // format). Results come back as notices 3 to 9.
     callback export(string);
     callback export-tab(int, int, string);
@@ -297,6 +297,11 @@ export component AppWindow inherits Window {
                     title: @tr("arc42 as Word (.docx)");
                     enabled: root.ready;
                     activated => { root.export("arc42-docx"); }
+                }
+                MenuItem {
+                    title: @tr("Report…");
+                    enabled: root.ready;
+                    activated => { root.export("report"); }
                 }
                 MenuItem {
                     title: @tr("SVG diagram");
