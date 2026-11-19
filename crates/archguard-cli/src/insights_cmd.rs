@@ -1,6 +1,7 @@
 //! Evidence-based analysis commands. The engine owns their semantics.
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_FOUND, EXIT_OK, analysis_error, emit, usage};
+use archguard_engine::arc42_file::{self, Arc42Files, Target};
 use archguard_engine::core::{ArchguardError, Cut, Graph, aggregate};
 use archguard_engine::{CoChangeOptions, LoadedConfig, collect_review_sources};
 use std::path::Path;
@@ -223,13 +224,12 @@ pub(crate) fn doc(
     }
 }
 
-/// `doc --arc42 --check`: exit 1 and name the chapters whose generated
-/// blocks no longer match the graph. ADR 0008: the desktop may have written
+/// `doc --arc42 --check`: exit 1 and name the chapters a refresh would
+/// change (`Arc42Files::stale`). ADR 0008: the desktop may have written
 /// German blocks while the CLI writes English, so `german` is tried as well.
 fn arc42_check(
     cli: &Cli,
-    target: &Path,
-    saved: Option<String>,
+    files: &Arc42Files,
     chapter: Option<u8>,
     document: &archguard_engine::report::Arc42Document,
     german: impl FnOnce() -> Result<
@@ -237,20 +237,21 @@ fn arc42_check(
         archguard_engine::core::ArchguardError,
     >,
 ) -> i32 {
-    let Some(saved) = saved else {
+    let (Target::File(target) | Target::Folder(target)) = &files.target;
+    if !files.exists() {
         if !cli.quiet {
             outln!("arc42 document is missing: {}", target.display());
         }
         return EXIT_FOUND;
-    };
-    let mut stale = match document.stale_chapters(&saved, chapter) {
+    }
+    let mut stale = match files.stale(document, chapter) {
         Ok(s) => s,
         Err(e) => return usage(&e),
     };
     // Each chapter may be in either language (one window saves one chapter).
     if !stale.is_empty() {
         let german = match german() {
-            Ok(g) => g.stale_chapters(&saved, chapter).unwrap_or_default(),
+            Ok(g) => files.stale(&g, chapter).unwrap_or_default(),
             Err(e) => return analysis_error(e),
         };
         stale.retain(|n| german.contains(n));
@@ -337,90 +338,39 @@ fn arc42_doc(
         }
         return EXIT_OK;
     }
-    let out = options.out.unwrap_or_else(|| Path::new("arc42.md"));
-    let target = if out.is_absolute() {
-        out.to_path_buf()
-    } else {
-        root.join(out)
+    let format = loaded.config.arc42.diagram_format;
+    // `--out` names the document; else it is where the desktop finds it.
+    let files = match options.out {
+        Some(out) => Arc42Files::load(Target::File(root.join(out))),
+        None => Arc42Files::open(root, format),
     };
-    // Reading/writing a documentation file is explicit; never follow a final
-    // symlink or replace a non-regular file supplied as a document.
-    match std::fs::symlink_metadata(&target) {
-        Ok(m) if !m.is_file() || m.file_type().is_symlink() => {
-            return usage("arc42 output must be a regular file, not a symlink");
-        }
-        Ok(m) if m.len() > 8 * 1024 * 1024 => return usage("arc42 document exceeds 8 MiB"),
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return analysis_error(e),
-        _ => {}
-    }
-    let saved = match std::fs::read_to_string(&target) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return analysis_error(e),
+    let mut files = match files {
+        Ok(f) => f,
+        Err(e) => return usage(&e),
     };
+    files.format = format;
     if options.check {
         let german = || {
             let mut config = loaded.config.clone();
             config.arc42.lang = archguard_engine::core::DocLang::De;
             archguard_engine::arc42_document(root, &config, graph, report)
         };
-        return arc42_check(cli, &target, saved, options.chapter, &document, german);
+        return arc42_check(cli, &files, options.chapter, &document, german);
     }
-    let next = match saved.as_deref() {
-        Some(s) => match document.merge(s, options.chapter) {
-            Ok(n) => n,
-            Err(e) => return usage(&e),
-        },
-        None => document.markdown(options.chapter),
+    let changes = match files.update(&document, options.chapter) {
+        Ok(c) => c,
+        Err(e) => return usage(&e),
     };
-    if saved.as_deref() == Some(next.as_str()) {
-        return EXIT_OK;
-    }
-    if let Some(parent) = target.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        return analysis_error(e);
-    }
-    // Publish a complete update so interruption cannot leave half a document.
-    let temp = target.with_file_name(format!(".archguard-arc42-{}.tmp", std::process::id()));
-    let mut created = false;
-    let result = (|| -> std::io::Result<()> {
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        created = true;
-        if let Ok(metadata) = std::fs::metadata(&target) {
-            file.set_permissions(metadata.permissions())?;
+    for change in changes {
+        // Publish complete files, and none over a change made meanwhile.
+        if let Err(e) = arc42_file::write(&change.path, change.old.as_deref(), &change.new) {
+            return analysis_error(e);
         }
-        file.write_all(next.as_bytes())?;
-        file.sync_all()?;
-        if saved
-            != match std::fs::read_to_string(&target) {
-                Ok(s) => Some(s),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(e),
-            }
-        {
-            return Err(std::io::Error::other(
-                "arc42 document changed during generation; retry without losing manual edits",
-            ));
+        if !cli.quiet {
+            outln!("arc42 document updated: {}", change.path.display());
         }
-        std::fs::rename(&temp, &target)
-    })();
-    if created && temp.exists() {
-        let _ = std::fs::remove_file(&temp);
     }
-    match result {
-        Ok(()) => {
-            if !cli.quiet {
-                outln!("arc42 document updated: {}", target.display());
-            }
-            EXIT_OK
-        }
-        Err(e) => analysis_error(e),
-    }
+    EXIT_OK
 }
 
 // ----------------------------------------------------- review KPI table (R28)

@@ -4,6 +4,7 @@
 use crate::args::{Cli, Command, Format};
 use crate::output::{EXIT_FOUND, EXIT_OK, analysis_error, emit, usage};
 use archguard_engine::LoadedConfig;
+use archguard_engine::arc42_file::{Arc42Files, Target};
 use archguard_engine::core::{Graph, Report};
 use archguard_engine::report::{markdown_to_asciidoc, markdown_to_docx};
 use std::path::{Path, PathBuf};
@@ -150,9 +151,9 @@ struct Arc42Export<'a> {
     check: bool,
 }
 
-/// `doc --arc42 --format asciidoc|docx`: the arc42 Markdown, with the
-/// own text of `<root>/arc42.md` when it exists (one chapter: generated
-/// only), converted; `arc42.md` itself is only read.
+/// `doc --arc42 --format asciidoc|docx`: the project's arc42 text, found
+/// as `doc --arc42` finds it, with current generated blocks and diagrams,
+/// converted; that text itself is only read.
 fn arc42_export(
     cli: &Cli,
     root: &Path,
@@ -201,7 +202,8 @@ fn arc42_export(
     }
 }
 
-/// The Markdown to convert; `Err` is the exit code.
+/// The Markdown to convert, the project's arc42 text as the desktop
+/// exports it (`Arc42Files::markdown`); `Err` is the exit code.
 fn markdown(
     root: &Path,
     loaded: &LoadedConfig,
@@ -211,10 +213,16 @@ fn markdown(
 ) -> Result<String, i32> {
     let document = archguard_engine::arc42_document(root, &loaded.config, graph, report)
         .map_err(analysis_error)?;
-    match (chapter, read_regular(&root.join("arc42.md"))) {
-        (None, Ok(Some(saved))) => document.merge(&saved, None).map_err(usage),
-        (_, Err(e)) => Err(analysis_error(e)),
-        (chapter, _) => Ok(document.markdown(chapter)),
+    Arc42Files::open(root, loaded.config.arc42.diagram_format)
+        .and_then(|files| files.markdown(&document, chapter))
+        .map_err(usage)
+}
+
+/// The arc42 Markdown the export reads and must never overwrite.
+fn source(root: &Path) -> PathBuf {
+    match archguard_engine::arc42_file::find(root) {
+        Some(Target::File(path)) => path,
+        _ => root.join("arc42.md"),
     }
 }
 
@@ -242,14 +250,14 @@ fn target(root: &Path, options: &Arc42Export<'_>, docx: bool) -> Result<PathBuf,
         None => format!("arc42.{ext}"),
     };
     let target = root.join(options.out.unwrap_or(Path::new(&name)));
-    if same_file(&target, &root.join("arc42.md")) {
+    if same_file(&target, &source(root)) {
         return Err(usage(OVERWRITES_ARC42));
     }
     Ok(target)
 }
 
 const OVERWRITES_ARC42: &str =
-    "the export would overwrite arc42.md, which it only reads; choose another --out";
+    "the export would overwrite the arc42.md it only reads; choose another --out";
 
 /// Creates the folder of `target`, then refuses `arc42.md` once more: a
 /// `..` after a new folder (`new/../arc42.md`) resolves only now. Folders
@@ -258,7 +266,7 @@ fn create_parent(root: &Path, target: &Path) -> Result<(), i32> {
     let parent = target.parent().unwrap_or(root);
     let created: Vec<&Path> = parent.ancestors().take_while(|p| !p.exists()).collect();
     std::fs::create_dir_all(parent).map_err(analysis_error)?;
-    if same_file(target, &root.join("arc42.md")) {
+    if same_file(target, &source(root)) {
         for dir in created {
             // Only empty folders go; `new/..` itself is never removed.
             let _ = std::fs::remove_dir(dir);
@@ -280,21 +288,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
     #[cfg(not(unix))]
     {
         matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
-    }
-}
-
-/// The text of a regular file, `None` if it does not exist; a symlink or
-/// other entry is refused, as for `doc --arc42`.
-fn read_regular(path: &Path) -> std::io::Result<Option<String>> {
-    use std::io::{Error, ErrorKind};
-    match std::fs::symlink_metadata(path) {
-        Ok(m) if !m.is_file() => Err(Error::new(
-            ErrorKind::InvalidInput,
-            format!("{} must be a regular file, not a symlink", path.display()),
-        )),
-        Ok(_) => std::fs::read_to_string(path).map(Some),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
     }
 }
 
