@@ -4,7 +4,7 @@ use std::path::Path;
 
 use archguard_core::ArchguardError;
 use archguard_core::domain_model::{
-    DOMAIN_MODEL_DEFINITION, DOMAIN_MODEL_IMPORT_SOURCE, DomainModel,
+    DOMAIN_MODEL_DEFINITION, DOMAIN_MODEL_IMPORT_SOURCE, DomainModel, merge_domain_models,
 };
 
 pub const DOMAIN_MODEL_FILE: &str = ".archguard/domain-model.json";
@@ -39,9 +39,99 @@ pub fn read_domain_model(root: &Path) -> Result<Option<DomainModel>, ArchguardEr
     Ok(Some(model))
 }
 
+/// The domain model below `root`: the C# extractor merged with the import
+/// file. An invalid import file is an error.
+pub fn analyze(root: &Path) -> Result<DomainModel, ArchguardError> {
+    let import = read_domain_model(root)?.unwrap_or_default();
+    Ok(merge_domain_models(
+        crate::domain_csharp::extract(root),
+        import,
+    ))
+}
+
+/// Counts for the summary line of the domain view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DomainModelSummary {
+    pub entities: usize,
+    pub state_machines: usize,
+    pub transitions: usize,
+    pub use_cases: usize,
+    pub events: usize,
+    pub complete: bool,
+}
+
+pub fn summary(model: &DomainModel) -> DomainModelSummary {
+    DomainModelSummary {
+        entities: model.entities.len(),
+        state_machines: model.state_machines.len(),
+        transitions: (model.state_machines.iter())
+            .map(|m| m.transitions.len())
+            .sum(),
+        use_cases: model.use_cases.len(),
+        events: model.events.len(),
+        complete: model.complete,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analyze_merges_csharp_and_import() {
+        let dir = project(Some(
+            r#"{"definition":"domain-model/v1","complete":true,
+            "entities":[{"id":"Invoice","name":"Invoice","kind":"entity","fields":[],"file":"x.json","line":1,"source":"x"}]}"#,
+        ));
+        std::fs::write(
+            dir.path().join("Order.cs"),
+            "public interface IAggregateRoot { }\npublic class Order : IAggregateRoot { }\n",
+        )
+        .unwrap();
+        let model = analyze(dir.path()).unwrap();
+        let entities: Vec<(&str, &str)> = model
+            .entities
+            .iter()
+            .map(|e| (e.id.as_str(), e.source.as_str()))
+            .collect();
+        assert_eq!(entities, [("Invoice", "import"), ("Order", "csharp")]);
+        assert_eq!(
+            summary(&model),
+            DomainModelSummary {
+                entities: 2,
+                complete: model.complete,
+                ..DomainModelSummary::default()
+            }
+        );
+        std::fs::write(dir.path().join(DOMAIN_MODEL_FILE), "{not json").unwrap();
+        let err = analyze(dir.path()).unwrap_err();
+        assert!(err.to_string().contains(DOMAIN_MODEL_FILE), "{err}");
+    }
+
+    #[test]
+    fn summary_counts_transitions_of_every_machine() {
+        let model: DomainModel = serde_json::from_str(
+            r#"{"definition":"domain-model/v1","complete":false,
+            "state_machines":[{"entity":"A","field":"S","enum_type":"S","states":[],"transitions":[
+              {"to":"x","method":"A.X","file":"a","line":1},{"to":"y","method":"A.Y","file":"a","line":2}]},
+              {"entity":"B","field":"S","enum_type":"S","states":[],"transitions":[
+              {"to":"z","method":"B.Z","file":"b","line":1}]}],
+            "use_cases":[{"id":"U","name":"U","kind":"command","calls":[],"file":"u","line":1,"source":"x"}],
+            "events":[{"type":"E","raised_by":[],"handled_by":[],"source":"x"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            summary(&model),
+            DomainModelSummary {
+                entities: 0,
+                state_machines: 2,
+                transitions: 3,
+                use_cases: 1,
+                events: 1,
+                complete: false,
+            }
+        );
+    }
 
     fn project(json: Option<&str>) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

@@ -505,6 +505,611 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
     }
 }
 
+pub use findings::{
+    EndpointCounts, SimulatedRole, UiFlowActionRef, UiFlowEndpointRef, UiFlowFinding,
+    UiFlowFindingKind, UiFlowSummary, ui_flow_findings, ui_flow_summary,
+};
+
+/// Frontend/backend mismatch findings (ADR 0021, third question) and the
+/// summary line of the flow view.
+mod findings {
+    use super::*;
+    use crate::model::Severity;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum UiFlowFindingKind {
+        /// The role reaches the action, but every matched endpoint refuses it.
+        ShownButRefused,
+        /// The frontend guards the action, but an endpoint is open or undeclared.
+        HiddenButUnprotected,
+        /// No scanned endpoint matches the HTTP call; the backend may be outside the scan.
+        NoBackendEndpoint,
+        /// The application has no screen with route `/`; no reachability for it.
+        NoStartScreen,
+    }
+
+    /// A role the findings simulate; policy and custom atoms stay unknown.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum SimulatedRole {
+        Anonymous,
+        /// Signed in without any role.
+        Authenticated,
+        /// Signed in with this one role.
+        Role(String),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct UiFlowActionRef {
+        pub file: String,
+        pub line: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub trigger: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct UiFlowEndpointRef {
+        pub method: String,
+        pub path: String,
+        pub file: String,
+        pub line: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub application: Option<String>,
+    }
+
+    /// Field order is the sort order: warnings first, then kind, then place.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct UiFlowFinding {
+        /// `warning` for a mismatch, `info` for a note.
+        pub severity: Severity,
+        pub kind: UiFlowFindingKind,
+        /// Only for `no_start_screen`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub application: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub action: Option<UiFlowActionRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub role: Option<SimulatedRole>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub endpoints: Vec<UiFlowEndpointRef>,
+        pub message: String,
+    }
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct EndpointCounts {
+        pub protected: usize,
+        pub open: usize,
+        pub undeclared: usize,
+    }
+
+    /// The "12 of 13 navigations resolved" line of the flow view.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct UiFlowSummary {
+        pub screens: usize,
+        pub transitions_resolved: usize,
+        pub transitions_unresolved: usize,
+        pub actions: usize,
+        pub actions_unresolved: usize,
+        /// Undeclared endpoints are counted here instead of one finding each.
+        pub endpoints_by_access: EndpointCounts,
+        pub complete: bool,
+    }
+
+    pub fn ui_flow_summary(flow: &UiFlow) -> UiFlowSummary {
+        let mut access = EndpointCounts::default();
+        for endpoint in &flow.endpoints {
+            *match endpoint.access {
+                AccessState::Protected(_) => &mut access.protected,
+                AccessState::Open => &mut access.open,
+                AccessState::Undeclared => &mut access.undeclared,
+            } += 1;
+        }
+        let unresolved = |t: &&Transition| matches!(t.target, Target::Unresolved(_));
+        let transitions_unresolved = flow.transitions.iter().filter(unresolved).count();
+        UiFlowSummary {
+            screens: flow.screens.len(),
+            transitions_resolved: flow.transitions.len() - transitions_unresolved,
+            transitions_unresolved,
+            actions: flow.actions.len(),
+            actions_unresolved: (flow.actions.iter())
+                .filter(|a| matches!(a.call, Call::Unresolved(_)))
+                .count(),
+            endpoints_by_access: access,
+            complete: flow.complete,
+        }
+    }
+
+    /// Mismatch findings, sorted. Simulates anonymous, signed in without a
+    /// role, and each role named anywhere in the flow alone; policy and custom
+    /// atoms stay unknown. Reachability starts at every screen routed `/`; an
+    /// application without one gets a note and is not reached from itself.
+    /// One finding per action and kind, naming the first role that shows it.
+    pub fn ui_flow_findings(flow: &UiFlow) -> Vec<UiFlowFinding> {
+        let (starts, mut findings) = start_screens(flow);
+        let roles = simulated_roles(flow);
+        let reached: Vec<(SimulatedRole, Assignment, BTreeMap<String, Reach>)> = roles
+            .into_iter()
+            .map(|role| {
+                let assignment = assignment_of(&role);
+                let mut reached = BTreeMap::new();
+                for start in &starts {
+                    for (id, reach) in reachable_screens(flow, start, &assignment) {
+                        let best = reached.entry(id).or_insert(reach);
+                        *best = (*best).min(reach);
+                    }
+                }
+                (role, assignment, reached)
+            })
+            .collect();
+        for (action, hits) in join_actions_to_endpoints(flow) {
+            if hits.is_empty() {
+                let text = format!(
+                    "No scanned endpoint matches {}; the backend may be outside the scan.",
+                    call_text(action)
+                );
+                findings.push(finding(
+                    UiFlowFindingKind::NoBackendEndpoint,
+                    action,
+                    None,
+                    &[],
+                    text,
+                ));
+                continue;
+            }
+            let refused = reached.iter().find(|(_, assignment, reached)| {
+                shown(flow, action, assignment, reached)
+                    && (hits.iter())
+                        .all(|e| evaluate_access(&e.access, assignment) == Outcome::Denied)
+            });
+            if let Some((role, ..)) = refused {
+                let text = format!(
+                    "{} reaches the action calling {}, but the backend refuses it.",
+                    role_text(role),
+                    call_text(action)
+                );
+                findings.push(finding(
+                    UiFlowFindingKind::ShownButRefused,
+                    action,
+                    Some(role.clone()),
+                    &hits,
+                    text,
+                ));
+            }
+            let unprotected: Vec<&EndpointAccess> = (hits.iter().copied())
+                .filter(|e| matches!(e.access, AccessState::Open | AccessState::Undeclared))
+                .collect();
+            if !unprotected.is_empty() && guarded_for_anonymous(flow, action) {
+                let text = format!(
+                    "The frontend guards the action calling {}, but the backend does not declare a guard.",
+                    call_text(action)
+                );
+                findings.push(finding(
+                    UiFlowFindingKind::HiddenButUnprotected,
+                    action,
+                    Some(SimulatedRole::Anonymous),
+                    &unprotected,
+                    text,
+                ));
+            }
+        }
+        findings.sort();
+        findings
+    }
+
+    /// Ids of the screens routed `/`, and a note for each application without one.
+    fn start_screens(flow: &UiFlow) -> (Vec<&str>, Vec<UiFlowFinding>) {
+        let is_start =
+            |s: &Screen| s.route.as_deref().map(normalize_path_pattern).as_deref() == Some("/");
+        let starts = flow
+            .screens
+            .iter()
+            .filter(|s| is_start(s))
+            .map(|s| s.id.as_str())
+            .collect();
+        let apps: BTreeSet<&str> = flow
+            .screens
+            .iter()
+            .map(|s| s.application.as_deref().unwrap_or(""))
+            .collect();
+        let notes = apps
+            .into_iter()
+            .filter(|app| !flow.screens.iter().any(|s| is_start(s) && s.application.as_deref().unwrap_or("") == *app))
+            .map(|app| UiFlowFinding {
+                severity: Severity::Info,
+                kind: UiFlowFindingKind::NoStartScreen,
+                application: Some(app.to_string()),
+                action: None,
+                role: None,
+                endpoints: vec![],
+                message: format!("Application {app:?} has no screen routed `/`, so its reachability is not simulated."),
+            })
+            .collect();
+        (starts, notes)
+    }
+
+    /// Anonymous, authenticated, then every role name in the flow, sorted.
+    fn simulated_roles(flow: &UiFlow) -> Vec<SimulatedRole> {
+        fn collect(condition: &Condition, names: &mut BTreeSet<String>) {
+            match condition {
+                Condition::All(items) | Condition::Any(items) => {
+                    items.iter().for_each(|c| collect(c, names))
+                }
+                Condition::Not(inner) => collect(inner, names),
+                Condition::Role(name) => {
+                    names.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        let mut names = BTreeSet::new();
+        let conditions = (flow.screens.iter().filter_map(|s| s.access.as_ref()))
+            .chain(flow.transitions.iter().filter_map(|t| t.condition.as_ref()))
+            .chain(flow.actions.iter().filter_map(|a| a.condition.as_ref()))
+            .chain(flow.endpoints.iter().filter_map(|e| match &e.access {
+                AccessState::Protected(c) => Some(c),
+                _ => None,
+            }));
+        conditions.for_each(|c| collect(c, &mut names));
+        [SimulatedRole::Anonymous, SimulatedRole::Authenticated]
+            .into_iter()
+            .chain(names.into_iter().map(SimulatedRole::Role))
+            .collect()
+    }
+
+    fn assignment_of(role: &SimulatedRole) -> Assignment {
+        Assignment {
+            authenticated: *role != SimulatedRole::Anonymous,
+            roles: match role {
+                SimulatedRole::Role(name) => BTreeSet::from([name.clone()]),
+                _ => BTreeSet::new(),
+            },
+            ..Assignment::default()
+        }
+    }
+
+    /// The action's screen is reached for sure (for `any_screen`, some screen
+    /// of its application is) and its own condition is not denied.
+    fn shown(
+        flow: &UiFlow,
+        action: &Action,
+        assignment: &Assignment,
+        reached: &BTreeMap<String, Reach>,
+    ) -> bool {
+        let sure = |id: &String| reached.get(id) == Some(&Reach::Sure);
+        let on_sure_screen = match &action.screen {
+            Origin::Screen(id) => sure(id),
+            Origin::AnyScreen { application } => flow
+                .screens
+                .iter()
+                .any(|s| s.application.as_deref().unwrap_or("") == application && sure(&s.id)),
+        };
+        on_sure_screen
+            && evaluate_optional(action.condition.as_ref(), assignment) != Outcome::Denied
+    }
+
+    /// The screen's access and the action's condition deny an anonymous user.
+    fn guarded_for_anonymous(flow: &UiFlow, action: &Action) -> bool {
+        let anonymous = Assignment::default();
+        let screen_access = match &action.screen {
+            Origin::Screen(id) => flow
+                .screens
+                .iter()
+                .find(|s| s.id == *id)
+                .and_then(|s| s.access.as_ref()),
+            Origin::AnyScreen { .. } => None,
+        };
+        and(
+            evaluate_optional(screen_access, &anonymous),
+            evaluate_optional(action.condition.as_ref(), &anonymous),
+        ) == Outcome::Denied
+    }
+
+    fn finding(
+        kind: UiFlowFindingKind,
+        action: &Action,
+        role: Option<SimulatedRole>,
+        endpoints: &[&EndpointAccess],
+        message: String,
+    ) -> UiFlowFinding {
+        let severity = match kind {
+            UiFlowFindingKind::ShownButRefused | UiFlowFindingKind::HiddenButUnprotected => {
+                Severity::Warning
+            }
+            _ => Severity::Info,
+        };
+        UiFlowFinding {
+            severity,
+            kind,
+            application: None,
+            action: Some(UiFlowActionRef {
+                file: action.file.clone(),
+                line: action.line,
+                trigger: action.trigger.clone(),
+            }),
+            role,
+            endpoints: (endpoints.iter())
+                .map(|e| UiFlowEndpointRef {
+                    method: e.method.clone(),
+                    path: e.path.clone(),
+                    file: e.file.clone(),
+                    line: e.line,
+                    application: e.application.clone(),
+                })
+                .collect(),
+            message,
+        }
+    }
+
+    fn call_text(action: &Action) -> String {
+        match &action.call {
+            Call::Http { method, path } => format!("{method} {path}"),
+            Call::Method(id) | Call::Unresolved(id) => id.clone(),
+        }
+    }
+
+    fn role_text(role: &SimulatedRole) -> String {
+        match role {
+            SimulatedRole::Anonymous => "An anonymous user".into(),
+            SimulatedRole::Authenticated => "A signed-in user without roles".into(),
+            SimulatedRole::Role(name) => format!("Role {name:?}"),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn screen(id: &str, app: &str, route: &str, access: Option<Condition>) -> Screen {
+            Screen {
+                id: id.into(),
+                name: id.into(),
+                kind: ScreenKind::Page,
+                route: Some(route.into()),
+                application: Some(app.into()),
+                file: format!("{id}.razor"),
+                line: 1,
+                access,
+                source: "test".into(),
+            }
+        }
+        fn go(from: &str, to: Target) -> Transition {
+            Transition {
+                from: Origin::Screen(from.into()),
+                target: to,
+                trigger: None,
+                file: "Home.razor".into(),
+                line: 2,
+                condition: None,
+                source: "test".into(),
+            }
+        }
+        fn act(screen: Origin, line: u32, call: Call, condition: Option<Condition>) -> Action {
+            Action {
+                screen,
+                trigger: Some(format!("t{line}")),
+                call,
+                file: "Ui.razor".into(),
+                line,
+                condition,
+                source: "test".into(),
+            }
+        }
+        fn http(method: &str, path: &str) -> Call {
+            Call::Http {
+                method: method.into(),
+                path: path.into(),
+            }
+        }
+        fn api(method: &str, path: &str, line: u32, access: AccessState) -> EndpointAccess {
+            EndpointAccess {
+                method: method.into(),
+                path: path.into(),
+                access,
+                application: Some("api".into()),
+                file: "Api.cs".into(),
+                line,
+                source: "test".into(),
+            }
+        }
+        fn on(id: &str) -> Origin {
+            Origin::Screen(id.into())
+        }
+        fn any_web() -> Origin {
+            Origin::AnyScreen {
+                application: "web".into(),
+            }
+        }
+        fn role(name: &str) -> Condition {
+            Condition::Role(name.into())
+        }
+        fn guarded(condition: Condition) -> AccessState {
+            AccessState::Protected(condition)
+        }
+
+        /// `web` starts at `home`; `other` has no start screen.
+        fn fixture() -> UiFlow {
+            UiFlow {
+                screens: vec![
+                    screen("home", "web", "/", None),
+                    screen("orders", "web", "/orders", Some(Condition::Authenticated)),
+                    screen("admin", "web", "/admin/", Some(role("Admin"))),
+                    screen("lone", "other", "/lone", None),
+                ],
+                transitions: vec![
+                    go("home", Target::Screen("orders".into())),
+                    go("home", Target::Screen("admin".into())),
+                    go("home", Target::Unresolved("url".into())),
+                ],
+                actions: vec![
+                    // Every signed-in user sees it; only `Manager` may call it.
+                    act(
+                        on("orders"),
+                        10,
+                        http("POST", "/api/orders/42/cancel"),
+                        None,
+                    ),
+                    // `Banned` appears only in the endpoint.
+                    act(on("home"), 11, http("POST", "/api/feedback"), None),
+                    act(on("admin"), 12, http("DELETE", "/api/cache"), None),
+                    act(
+                        any_web(),
+                        13,
+                        http("POST", "/api/logout"),
+                        Some(Condition::Authenticated),
+                    ),
+                    act(any_web(), 14, http("GET", "/api/basket"), None),
+                    act(on("home"), 15, http("GET", "/api/missing"), None),
+                    act(on("home"), 16, Call::Unresolved("url".into()), None),
+                    // Not reached: `other` has no start screen.
+                    act(on("lone"), 17, http("POST", "/api/never"), None),
+                    // An unknown endpoint guard decides nothing.
+                    act(on("home"), 18, http("GET", "/api/unknown"), None),
+                    act(on("home"), 19, Call::Method("Svc.Load".into()), None),
+                ],
+                endpoints: vec![
+                    api(
+                        "POST",
+                        "/api/orders/{id}/cancel",
+                        1,
+                        guarded(role("Manager")),
+                    ),
+                    api(
+                        "POST",
+                        "/api/feedback",
+                        2,
+                        guarded(Condition::Not(Box::new(role("Banned")))),
+                    ),
+                    api("DELETE", "/api/cache", 3, AccessState::Undeclared),
+                    api("POST", "/api/logout", 4, AccessState::Open),
+                    api("GET", "/api/basket", 5, guarded(Condition::Never)),
+                    api("POST", "/api/never", 6, guarded(Condition::Never)),
+                    api(
+                        "GET",
+                        "/api/unknown",
+                        7,
+                        guarded(Condition::Policy("P".into())),
+                    ),
+                    api("GET", "/api/health", 8, AccessState::Open),
+                ],
+                complete: false,
+                ..UiFlow::default()
+            }
+        }
+
+        fn rows(
+            findings: &[UiFlowFinding],
+        ) -> Vec<(UiFlowFindingKind, Option<u32>, Option<SimulatedRole>)> {
+            findings
+                .iter()
+                .map(|f| (f.kind, f.action.as_ref().map(|a| a.line), f.role.clone()))
+                .collect()
+        }
+
+        #[test]
+        fn every_kind_with_its_role_in_a_fixed_order() {
+            use SimulatedRole::*;
+            use UiFlowFindingKind::*;
+            let findings = ui_flow_findings(&fixture());
+            assert_eq!(
+                rows(&findings),
+                vec![
+                    (ShownButRefused, Some(10), Some(Authenticated)),
+                    (ShownButRefused, Some(11), Some(Role("Banned".into()))),
+                    (ShownButRefused, Some(14), Some(Anonymous)),
+                    (HiddenButUnprotected, Some(12), Some(Anonymous)),
+                    (HiddenButUnprotected, Some(13), Some(Anonymous)),
+                    (NoBackendEndpoint, Some(15), None),
+                    (NoStartScreen, None, None),
+                ]
+            );
+            assert!(
+                findings[..5]
+                    .iter()
+                    .all(|f| f.severity == Severity::Warning)
+            );
+            assert!(findings[5..].iter().all(|f| f.severity == Severity::Info));
+            assert_eq!(findings[6].application.as_deref(), Some("other"));
+            assert!(findings.iter().all(|f| !f.message.is_empty()));
+            let refused = &findings[0];
+            assert_eq!(
+                refused.action.as_ref().unwrap().trigger.as_deref(),
+                Some("t10")
+            );
+            assert_eq!(
+                refused.endpoints,
+                vec![UiFlowEndpointRef {
+                    method: "POST".into(),
+                    path: "/api/orders/{id}/cancel".into(),
+                    file: "Api.cs".into(),
+                    line: 1,
+                    application: Some("api".into()),
+                }]
+            );
+            assert_eq!(findings[3].endpoints[0].line, 3);
+            assert!(findings[5].endpoints.is_empty());
+        }
+
+        #[test]
+        fn denied_action_condition_is_not_shown_and_an_allowed_endpoint_clears_it() {
+            let mut flow = fixture();
+            // The action hides itself from everyone, so no role sees it refused.
+            flow.actions[0].condition = Some(Condition::Never);
+            // A second endpoint of the same shape that admits everyone signed in.
+            flow.endpoints.push(EndpointAccess {
+                application: Some("api2".into()),
+                ..api(
+                    "POST",
+                    "/api/feedback",
+                    9,
+                    guarded(Condition::Authenticated),
+                )
+            });
+            let lines: Vec<_> = ui_flow_findings(&flow)
+                .iter()
+                .filter(|f| f.kind == UiFlowFindingKind::ShownButRefused)
+                .map(|f| f.action.as_ref().unwrap().line)
+                .collect();
+            // Line 11 goes: for `Banned` the second endpoint admits it.
+            assert_eq!(lines, vec![14]);
+        }
+
+        #[test]
+        fn findings_serialize_compactly() {
+            let findings = ui_flow_findings(&fixture());
+            let json = serde_json::to_value(&findings[1]).unwrap();
+            assert_eq!(json["kind"], "shown_but_refused");
+            assert_eq!(json["severity"], "warning");
+            assert_eq!(json["role"], serde_json::json!({"role": "Banned"}));
+            assert!(json.get("application").is_none());
+            let anonymous = serde_json::to_value(&findings[2]).unwrap();
+            assert_eq!(anonymous["role"], "anonymous");
+            let back: UiFlowFinding = serde_json::from_value(json).unwrap();
+            assert_eq!(back, findings[1]);
+        }
+
+        #[test]
+        fn summary_counts_navigations_actions_and_access() {
+            assert_eq!(
+                ui_flow_summary(&fixture()),
+                UiFlowSummary {
+                    screens: 4,
+                    transitions_resolved: 2,
+                    transitions_unresolved: 1,
+                    actions: 10,
+                    actions_unresolved: 1,
+                    endpoints_by_access: EndpointCounts {
+                        protected: 5,
+                        open: 2,
+                        undeclared: 1,
+                    },
+                    complete: false,
+                }
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
