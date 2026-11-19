@@ -3,19 +3,18 @@
 //! as Mermaid or PlantUML (`[arc42]` in `archguard.toml`).
 
 mod context;
-mod cyclic;
 mod failures;
 mod flows;
 mod layers;
+mod maps;
 mod recorded;
 mod render;
 mod scenarios;
 pub use scenarios::class_sequence;
-mod scoped;
 mod sequences;
 mod services;
 
-use archguard_core::{Diagram, DiagramFormat, DiagramKind, DiagramRelation, DocLang, ElementKind};
+use archguard_core::{Arc42Config, Diagram, DiagramFormat};
 
 use crate::arc42_blocks::{Arc42Inputs, Blocks};
 
@@ -28,20 +27,48 @@ pub(crate) fn add<'c>(
     chapters: impl Iterator<Item = (u8, &'c mut String)>,
     input: &Arc42Inputs<'_>,
 ) -> Vec<Diagram> {
-    let choice = &input.config.arc42;
     let mut diagrams = catalogue(input);
-    for d in &mut diagrams {
+    place(chapters, &mut diagrams, &input.config.arc42);
+    diagrams
+}
+
+/// The one placement rule of every writer (CLI, desktop): the diagrams
+/// `choice` shows open their chapter, in catalogue order; sections of the
+/// `diagrams` a chapter already starts with are replaced, and each
+/// diagram's `shown` follows `choice`.
+pub fn place<'c>(
+    chapters: impl Iterator<Item = (u8, &'c mut String)>,
+    diagrams: &mut [Diagram],
+    choice: &Arc42Config,
+) {
+    let format = choice.diagram_format;
+    for (number, markdown) in chapters {
+        let mine = || diagrams.iter().filter(|d| d.chapter == number);
+        let text = strip(markdown, mine(), format);
+        let mut prefix: String = mine()
+            .filter(|d| choice.shows(&d.id))
+            .map(|d| section(d, format))
+            .collect();
+        prefix.push_str(&text);
+        *markdown = prefix;
+    }
+    for d in diagrams {
         d.shown = choice.shows(&d.id);
     }
-    for (number, markdown) in chapters {
-        let text: String = diagrams
-            .iter()
-            .filter(|d| d.shown && d.chapter == number)
-            .map(|d| section(d, choice.diagram_format))
-            .collect();
-        markdown.insert_str(0, &text);
-    }
+}
+
+/// `text` without the generated sections of the shown `diagrams`.
+pub fn strip<'d>(
+    text: &str,
+    diagrams: impl IntoIterator<Item = &'d Diagram>,
+    format: DiagramFormat,
+) -> String {
     diagrams
+        .into_iter()
+        .filter(|d| d.shown)
+        .fold(text.to_string(), |t, d| {
+            t.replacen(&section(d, format), "", 1)
+        })
 }
 
 /// One diagram as a Markdown section: heading, note, fenced source.
@@ -56,32 +83,6 @@ pub fn section(d: &Diagram, format: DiagramFormat) -> String {
     )
 }
 
-/// Title and note of the package maps (ADR 0008).
-const OVERVIEW_EN: (&str, &str) = (
-    "Package overview",
-    "Source: complete source graph; packages as building blocks, at most nine boxes. Arrows: source connections from the using to the used side.",
-);
-const OVERVIEW_DE: (&str, &str) = (
-    "Paketübersicht",
-    "Quelle: vollständiger Quellgraph; Pakete als Bausteine, höchstens neun Kästen. Pfeile: Quellverbindungen von der nutzenden zur genutzten Seite.",
-);
-const CALLS_EN: (&str, &str) = (
-    "Static calls between building blocks",
-    "Source: compiler-resolved call sites. Statically recorded; no runtime order and no frequency at runtime.",
-);
-const CALLS_DE: (&str, &str) = (
-    "Statische Aufrufe zwischen Bausteinen",
-    "Quelle: compileraufgelöste Aufrufstellen. Statisch erfasst; keine Laufzeitreihenfolge und keine Häufigkeit zur Laufzeit.",
-);
-const CYCLES_EN: (&str, &str) = (
-    "Cyclic package relations",
-    "Source: source connections between the boxes of the package overview; only relations in cycles are shown.",
-);
-const CYCLES_DE: (&str, &str) = (
-    "Zyklische Paketbeziehungen",
-    "Quelle: Quellverbindungen zwischen den Kästen der Paketübersicht; gezeigt sind nur Beziehungen in Zyklen.",
-);
-
 /// All diagrams of the project, in chapter order.
 fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     let blocks = Blocks::new(
@@ -93,29 +94,9 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         input.lang,
     );
     let l = input.lang;
-    let mut out = Vec::new();
-    let elements = blocks.elements();
-    if !elements.is_empty() {
-        let relations = blocks.relations();
-        out.push(packages(
-            l,
-            "building-blocks",
-            5,
-            l.pick(OVERVIEW_EN, OVERVIEW_DE),
-            &elements,
-            &relations,
-        ));
-        let calls = blocks.call_relations(input.source_graph, input.calls);
-        if !calls.is_empty() {
-            out.push(packages(
-                l,
-                "runtime-calls",
-                6,
-                l.pick(CALLS_EN, CALLS_DE),
-                &elements,
-                &calls,
-            ));
-        }
+    let maps = maps::Maps::new(input);
+    let mut out = maps.overview();
+    if !blocks.labels.is_empty() {
         // Service flows describe a service system's runtime; method-level
         // scenarios only where there are none.
         let flows = flows::diagrams(l, input.services);
@@ -129,7 +110,6 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
         }
         out.extend(flows);
         out.extend(failures::diagrams(l, input.services));
-        out.extend(cycles(l, &elements, &relations));
         out.extend(layers::diagram(l, &blocks, input.config, input.blocks));
     }
     let system = std::path::Path::new(&input.view.root)
@@ -147,59 +127,9 @@ fn catalogue(input: &Arc42Inputs<'_>) -> Vec<Diagram> {
     if let Some(runtime) = &input.blocks.runtime {
         out.extend(recorded::diagrams(l, runtime));
     }
-    out.extend(scoped::diagrams(input));
+    out.extend(maps.levels());
     out.sort_by_key(|d| d.chapter);
     out
-}
-
-fn packages(
-    l: DocLang,
-    id: &str,
-    chapter: u8,
-    (title, note): (&str, &str),
-    elements: &[archguard_core::DiagramElement],
-    relations: &[DiagramRelation],
-) -> Diagram {
-    let mut d = Diagram {
-        id: id.into(),
-        chapter,
-        title: title.into(),
-        kind: DiagramKind::Packages,
-        note: note.into(),
-        unit: if relations
-            .first()
-            .is_some_and(|r| r.kind == archguard_core::RelationKind::Call)
-        {
-            l.pick("call sites", "Aufrufstellen").into()
-        } else {
-            l.pick("source connections", "Quellverbindungen").into()
-        },
-        elements: elements.to_vec(),
-        relations: relations.to_vec(),
-        shown: true,
-    };
-    cyclic::mark(&mut d);
-    d
-}
-
-/// Chapter 11: the boxes and relations that lie on a cycle.
-fn cycles(
-    l: DocLang,
-    elements: &[archguard_core::DiagramElement],
-    relations: &[DiagramRelation],
-) -> Option<Diagram> {
-    let mut d = packages(
-        l,
-        "cycles",
-        11,
-        l.pick(CYCLES_EN, CYCLES_DE),
-        elements,
-        relations,
-    );
-    d.relations.retain(|r| r.cycle);
-    d.elements
-        .retain(|e| e.cycle && e.kind != ElementKind::Remainder);
-    (!d.relations.is_empty()).then_some(d)
 }
 
 #[cfg(test)]

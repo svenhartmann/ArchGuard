@@ -12,9 +12,9 @@ use archguard_engine::core::{
 
 use super::diagram;
 use super::mermaid::Item;
-use crate::block_names as names;
 use crate::tab_support::{Texts, model};
 use crate::ui::{ArcCard, ArcFigure, ArcFrame, ArcLine};
+use archguard_engine::report::package_map as names;
 
 mod lanes;
 use lanes::{CARD_W, LABEL, Lanes, TOP, dashes};

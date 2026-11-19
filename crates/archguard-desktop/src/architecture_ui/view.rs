@@ -4,7 +4,6 @@ use archguard_engine::core::Graph;
 use archguard_engine::report::Arc42Document;
 use slint::SharedString;
 
-use super::projection::Group;
 use super::visual::{self, Action, Kind, Map, RELATIONS_PAGE};
 use super::{blocks, diagram, markdown};
 use crate::kpi;
@@ -12,6 +11,7 @@ use crate::tab_support::{Texts, model};
 use crate::ui::{
     ArcCard, ArcChapter, ArcLevelItem, ArcLine, ArcMap, ArcRelation, ArchitectureModel,
 };
+use archguard_engine::report::package_map::Group;
 
 /// The Markdown the reader shows: the open chapter from its heading on,
 /// and the whole document (or its part before the first chapter).
@@ -65,7 +65,7 @@ pub fn map_model(
         kind: kind as i32,
         total: map.projection.total as i32,
         internal: map.projection.internal as i32,
-        cycles: kpi::PACKAGE_CYCLES.item(texts, map.projection.cycle_groups()),
+        cycles: kpi::PACKAGE_CYCLES.item(texts, visual::cycle_groups(&map.projection)),
         calls_status: calls_status.into(),
         scopes: model(
             std::iter::once(overview.clone())
@@ -126,7 +126,7 @@ fn card(map: &Map, i: usize) -> ArcCard {
         kind: match n.group {
             Group::Package(_) => 0,
             Group::Direct => 1,
-            Group::Outside => 2,
+            Group::Outside | Group::Others => 2,
         },
         name1: name1.into(),
         name2: name2.into(),

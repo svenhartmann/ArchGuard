@@ -29,6 +29,7 @@ mod html;
 mod html_app;
 mod json;
 mod mermaid;
+pub mod package_map;
 mod pr_comment;
 mod render;
 mod staged;
@@ -40,8 +41,8 @@ pub use arc42::{
     Arc42Blocks, Arc42Chapter, Arc42Context, Arc42Document, Arc42Inputs, render_arc42,
 };
 pub use arc42_diagrams::{
-    class_sequence, mermaid as diagram_mermaid, plantuml as diagram_plantuml,
-    section as diagram_section,
+    class_sequence, mermaid as diagram_mermaid, place as diagram_place,
+    plantuml as diagram_plantuml, section as diagram_section, strip as diagram_strip,
 };
 pub use architecture_doc::render_architecture_doc;
 pub use asciidoc::markdown_to_asciidoc;

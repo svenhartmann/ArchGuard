@@ -10,7 +10,6 @@ mod app_check;
 mod architecture_ui;
 #[cfg(feature = "snapshot")]
 mod bench;
-mod block_names;
 mod calls_ui;
 mod config_editor;
 mod context;

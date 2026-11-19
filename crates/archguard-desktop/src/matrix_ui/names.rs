@@ -1,10 +1,10 @@
 //! Labels of the Matrix's top rows and columns: the building-block names
-//! of [`crate::block_names`], as in the arc42 views.
+//! of `archguard_report::package_map::short_names`, as in the arc42 views.
 
 use std::collections::BTreeMap;
 
-use crate::block_names::short_names;
 use crate::tree::Tree;
+use archguard_engine::report::package_map::short_names;
 
 /// Label per node of `roots`, from their full names.
 pub fn root_labels(tree: &Tree, roots: &[usize]) -> BTreeMap<usize, String> {

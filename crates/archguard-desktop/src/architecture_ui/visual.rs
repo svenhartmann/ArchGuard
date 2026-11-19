@@ -6,8 +6,9 @@ use archguard_engine::core::Graph;
 use std::collections::HashMap;
 
 use super::diagram;
-use super::projection::{self, Group, Labels, Levels, Projection, SourceModel};
-use crate::block_names as names;
+use archguard_engine::report::package_map::{
+    self as projection, Group, Labels, Levels, Projection, SourceModel,
+};
 
 /// Relationships listed per page, as the web (30).
 pub const RELATIONS_PAGE: usize = 30;
@@ -117,6 +118,15 @@ fn scopes(graph: &Graph, levels: Option<&Levels>) -> Vec<Option<usize>> {
         .collect()
 }
 
+/// Package cycles of a projection: groups of shown packages that depend
+/// on each other in a cycle (`kpi::PACKAGE_CYCLES`).
+pub fn cycle_groups(p: &Projection) -> usize {
+    crate::tree_order::scc(p.nodes.len(), p.edges.iter().map(|e| (e.from, e.to)))
+        .into_iter()
+        .filter(|g| g.len() > 1)
+        .count()
+}
+
 /// Relationships touching the selection (all without one).
 pub fn relations(map: &Map) -> Vec<&projection::PEdge> {
     map.shown
@@ -134,7 +144,7 @@ pub fn scope_labels(map: &Map, graph: &Graph) -> Vec<String> {
         .flatten()
         .map(|&n| graph.nodes[n].name.as_str())
         .collect();
-    names::short_names(&paths)
+    projection::short_names(&paths)
 }
 
 /// Level-entry labels: level 2 among each other, level 3 among its
@@ -150,7 +160,7 @@ pub fn level_labels(levels: &Levels, graph: &Graph) -> HashMap<usize, String> {
             .iter()
             .map(|&n| graph.nodes[n].name.as_str())
             .collect();
-        out.extend(nodes.iter().copied().zip(names::short_names(&paths)));
+        out.extend(nodes.iter().copied().zip(projection::short_names(&paths)));
     }
     out
 }

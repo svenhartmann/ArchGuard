@@ -3,8 +3,8 @@
 //! The Markdown table around it stays in `arc42.rs`.
 
 use archguard_core::{
-    CallAnalysis, Config, DiagramElement, DiagramRelation, DocLang, ElementKind, GoalAssessment,
-    Graph, Node, NodeId, NodeKind, RelationKind, Report, ServiceProject, ServiceTopology,
+    CallAnalysis, Config, DocLang, GoalAssessment, Graph, Node, NodeId, NodeKind, Report,
+    ServiceProject, ServiceTopology,
 };
 use serde_json::Value;
 use std::cmp::Reverse;
@@ -55,16 +55,11 @@ pub struct Arc42Inputs<'a> {
     pub lang: DocLang,
 }
 
-/// Boxes in the diagram: nine blocks, or eight and a remainder box.
-const BOXES: usize = 9;
-
 type Children<'a> = BTreeMap<Option<NodeId>, Vec<&'a Node>>;
 
 /// Building blocks in reading order (`order`); every vector is indexed by
 /// block, and "Files without a package" is the last block when present.
 pub(crate) struct Blocks<'a> {
-    /// The language of the labels this writes (ADR 0008).
-    lang: DocLang,
     /// The package node of each real block.
     frontier: Vec<&'a Node>,
     pub labels: Vec<String>,
@@ -74,17 +69,12 @@ pub(crate) struct Blocks<'a> {
     /// The manifest project id owning each block.
     projects: Vec<Option<&'a str>>,
     pub order: Vec<usize>,
-    /// Block -> diagram box; blocks after the eighth share the remainder box.
-    display: BTreeMap<usize, usize>,
-    /// Blocks in the remainder box, 0 without one.
-    more: usize,
-    relations: BTreeMap<(usize, usize), usize>,
     /// Source-graph node -> block.
     owner: BTreeMap<NodeId, usize>,
     uses: BTreeMap<(usize, usize), usize>,
     /// Source connections whose both ends lie in blocks.
     pub covered: usize,
-    /// Of those, the ones inside one diagram box.
+    /// Of those, the ones inside one block.
     pub internal: usize,
 }
 
@@ -123,12 +113,6 @@ impl<'a> Blocks<'a> {
             })
             .collect();
         let order = order(&layers, &groups.files, &labels);
-        // A remainder box only pays off when it hides more than one package.
-        let more = if names.len() > BOXES {
-            names.len() - (BOXES - 1)
-        } else {
-            0
-        };
         let mut blocks = Blocks {
             layer_names: layers
                 .iter()
@@ -145,18 +129,10 @@ impl<'a> Blocks<'a> {
                         .map(String::as_str)
                 })
                 .collect(),
-            display: order
-                .iter()
-                .enumerate()
-                .map(|(position, &i)| (i, position.min(BOXES - 1)))
-                .collect(),
-            lang,
             frontier,
             labels,
             files: groups.files,
             order,
-            more,
-            relations: BTreeMap::new(),
             owner: BTreeMap::new(),
             uses: BTreeMap::new(),
             covered: 0,
@@ -186,14 +162,10 @@ impl<'a> Blocks<'a> {
                 continue;
             };
             self.covered += 1;
-            if a != b {
-                *self.uses.entry((a, b)).or_default() += 1;
-            }
-            let (a, b) = (self.display[&a], self.display[&b]);
             if a == b {
                 self.internal += 1;
             } else {
-                *self.relations.entry((a, b)).or_default() += 1;
+                *self.uses.entry((a, b)).or_default() += 1;
             }
         }
     }
@@ -212,75 +184,7 @@ impl<'a> Blocks<'a> {
             .collect()
     }
 
-    /// The diagram boxes of the first blocks (grouped by layer) and, when
-    /// some are left out, a remainder box; empty without blocks.
-    pub fn elements(&self) -> Vec<DiagramElement> {
-        let boxes = if self.more > 0 { BOXES - 1 } else { BOXES };
-        let element = |position: usize, name: String, kind| DiagramElement {
-            id: format!("e{position}"),
-            name,
-            kind,
-            technology: None,
-            detail: None,
-            group: None,
-            cycle: false,
-        };
-        let mut out: Vec<DiagramElement> = self.order[..self.order.len().min(boxes)]
-            .iter()
-            .map(|&i| DiagramElement {
-                group: self.layer_names[i]
-                    .map(|name| format!("{} {name}", self.lang.pick("Layer", "Schicht"))),
-                ..element(
-                    self.display[&i],
-                    self.labels[i].clone(),
-                    ElementKind::Package,
-                )
-            })
-            .collect();
-        if self.more > 0 && !out.is_empty() {
-            let more = self.lang.pick("{} more packages", "Weitere {} Pakete");
-            let name = crate::arc42_text::fill(more, &[&self.more]);
-            out.push(element(BOXES - 1, name, ElementKind::Remainder));
-        }
-        out
-    }
-
-    /// Source connections between diagram boxes.
-    pub fn relations(&self) -> Vec<DiagramRelation> {
-        box_relations(&self.relations, RelationKind::Dependency)
-    }
-
-    /// Project call sites between diagram boxes, through the classes'
-    /// source-graph nodes.
-    pub fn call_relations(&self, graph: &Graph, calls: &CallAnalysis) -> Vec<DiagramRelation> {
-        let boxes = self.class_boxes(graph, calls);
-        let mut counts = BTreeMap::new();
-        for call in calls.calls.iter().filter(|c| c.resolution == "project") {
-            let from = boxes.get(call.from_class.as_str());
-            let to = call.to_class.as_deref().and_then(|c| boxes.get(c));
-            if let (Some(&a), Some(&b)) = (from, to)
-                && a != b
-            {
-                *counts.entry((a, b)).or_default() += 1;
-            }
-        }
-        box_relations(&counts, RelationKind::Call)
-    }
-
-    /// The diagram box of every call-model class, through its source node.
-    pub fn class_boxes<'c>(
-        &self,
-        graph: &Graph,
-        calls: &'c CallAnalysis,
-    ) -> BTreeMap<&'c str, usize> {
-        self.class_blocks(graph, calls)
-            .into_iter()
-            .map(|(class, block)| (class, self.display[&block]))
-            .collect()
-    }
-
-    /// The building block (index into `labels`) of every call-model class,
-    /// not merged into the remainder box.
+    /// The building block (index into `labels`) of every call-model class.
     pub fn class_blocks<'c>(
         &self,
         graph: &Graph,
@@ -486,24 +390,4 @@ fn order(layers: &[Option<usize>], files: &[usize], labels: &[String]) -> Vec<us
         )
     });
     order
-}
-
-fn box_relations(
-    counts: &BTreeMap<(usize, usize), usize>,
-    kind: RelationKind,
-) -> Vec<DiagramRelation> {
-    counts
-        .iter()
-        .map(|(&(a, b), &count)| DiagramRelation {
-            from: format!("e{a}"),
-            to: format!("e{b}"),
-            kind,
-            count,
-            cycle: false,
-            label: None,
-            error: false,
-            caller: None,
-            reply: false,
-        })
-        .collect()
 }

@@ -9,12 +9,12 @@ use archguard_engine::core::{
 };
 use archguard_engine::report::Arc42Document;
 
-use super::projection::{self, Labels, SourceModel};
 use super::visual::{self, Kind, Map, MapState, RELATIONS_PAGE};
 use super::{catalogue, edit};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::AppWindow;
+use archguard_engine::report::package_map::{self as projection, Labels, SourceModel};
 use slint::ComponentHandle;
 
 /// Everything the tab knows: the document, the source graph and its
@@ -199,11 +199,11 @@ pub(super) fn toggle_diagram(
         Err(e) => e,
     };
     if s.figure_error.is_empty() {
-        if let Ok(doc) = &mut s.doc {
-            catalogue::rebase(doc, &hidden, s.format);
-        }
         s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
+        if let Ok(doc) = &mut s.doc {
+            catalogue::place(doc, &s.config.arc42);
+        }
     }
 }
 
@@ -282,9 +282,9 @@ fn deliver(doc: DocId, number: u64, result: Result<Arc42Document, String>) -> bo
         let took = st.write == number;
         if took {
             st.doc = result;
-            // A tick since the rewrite started is in `hidden`, not in its document.
+            // A tick since the rewrite started is in `config`, not in its document.
             if let Ok(doc) = &mut st.doc {
-                catalogue::rebase(doc, &st.hidden, st.format);
+                catalogue::place(doc, &st.config.arc42);
             }
         }
         took
@@ -362,6 +362,64 @@ mod tests {
         documents::set_state(a, rebuilt);
         assert!(!deliver(a, newer, written("stale")), "started before it");
         assert_ne!(scope().as_deref(), Some("stale"));
+    }
+
+    /// What a map level shows is what its tick writes into the document:
+    /// the same boxes with the same labels, overview and package level.
+    #[test]
+    fn a_ticked_map_level_writes_the_boxes_the_map_shows() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/py-layers");
+        let root = dir.path();
+        // py-layers: archguard.toml and src/<package>/<file>.py.
+        std::fs::copy(fixture.join("archguard.toml"), root.join("archguard.toml")).expect("copy");
+        for package in std::fs::read_dir(fixture.join("src"))
+            .expect("src")
+            .flatten()
+        {
+            let target = root.join("src").join(package.file_name());
+            std::fs::create_dir_all(&target).expect("package dir");
+            for file in std::fs::read_dir(package.path())
+                .expect("package")
+                .flatten()
+            {
+                std::fs::copy(file.path(), target.join(file.file_name())).expect("copy");
+            }
+        }
+        let loaded = archguard_engine::load_config(None, root).expect("config");
+        let run =
+            archguard_engine::analyze_run_quiet(root, &loaded, archguard_engine::Level::Module)
+                .expect("analysis");
+        let calls = archguard_engine::analyze_calls(root, &run.config);
+        let mut config = run.config.clone();
+        config.arc42.shown_diagrams = vec!["building-blocks@app".into()];
+        let mut s = build_from(root, &config, run.graph, &run.report, &calls, DocLang::De);
+        let labels = Labels::of(DocLang::De);
+        let app = s.graph.nodes.iter().position(|n| n.name == "app");
+        assert!(app.is_some(), "the fixture has a package app");
+        for (scope, id) in [(None, "building-blocks"), (app, "building-blocks@app")] {
+            s.maps[Kind::Dependencies as usize].scope = scope;
+            let (_, map) = current(&s, &labels).expect("chapter 5 map");
+            let shown: Vec<&str> = map.shown.nodes.iter().map(|n| n.label.as_str()).collect();
+            let doc = s.doc.as_ref().expect("document");
+            let diagram = doc.diagrams.iter().find(|d| d.id == id).expect(id);
+            let written: Vec<&str> = diagram.elements.iter().map(|e| e.name.as_str()).collect();
+            assert_eq!(written, shown, "{id}");
+            let mut written: Vec<(String, String, usize)> = diagram
+                .relations
+                .iter()
+                .map(|r| (r.from.clone(), r.to.clone(), r.count))
+                .collect();
+            let mut shown: Vec<(String, String, usize)> = map
+                .shown
+                .edges
+                .iter()
+                .map(|e| (format!("e{}", e.from), format!("e{}", e.to), e.count))
+                .collect();
+            written.sort();
+            shown.sort();
+            assert_eq!(written, shown, "{id}");
+        }
     }
 
     /// A rewrite (language switch) starts, a diagram is ticked off, then
