@@ -81,7 +81,7 @@ pub fn draw(d: &Diagram, style: Style) -> String {
         let (a, b) = ends(e);
         let labelled = if e.up { s.upper == a } else { s.lower == b };
         let text = label(r, e.up);
-        if labelled && !put_label(&mut canvas, &geo, i, e, &text) {
+        if labelled && !put_label(&mut canvas, &geo, i, (e, color(r, e)), &text) {
             let name = |v: usize| d.elements[v].name.as_str();
             notes.push(format!("{} → {}: {text}", name(e.from), name(e.to)));
         }
@@ -401,11 +401,16 @@ fn draw_segment(
 }
 
 /// The label on the track, else beside the arrowhead; false without room.
-fn put_label(canvas: &mut Canvas, geo: &Geometry, i: usize, e: &Edge, text: &str) -> bool {
+fn put_label(
+    canvas: &mut Canvas,
+    geo: &Geometry,
+    i: usize,
+    (e, color): (&Edge, u8),
+    text: &str,
+) -> bool {
     let (a, b, track) = geo.ports[i];
     let (bottom, below) = geo.spans[i];
     let len = width(text);
-    let color = if e.up { RED } else { 0 };
     if let Some(t) = track {
         let ty = bottom + 2 + t;
         let (lo, hi) = (a.min(b), a.max(b));
