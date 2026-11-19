@@ -56,8 +56,8 @@ mod tests {
         let dir = project(Some(
             r#"{"definition":"ui-flow/v1","complete":false,
             "screens":[{"id":"home","name":"Home","kind":"page","route":"/","file":"a.ts","line":1,"source":"angular"}],
-            "transitions":[{"from":"home","target":{"unresolved":"url"},"file":"a.ts","line":2,"source":"x"}],
-            "actions":[{"screen":"home","call":{"http":{"method":"GET","path":"/api"}},"file":"a.ts","line":3,"source":"x"}],
+            "transitions":[{"from":{"any_screen":{"application":"web"}},"target":{"unresolved":"url"},"file":"a.ts","line":2,"source":"x"}],
+            "actions":[{"screen":{"screen":"home"},"call":{"http":{"method":"GET","path":"/api"}},"file":"a.ts","line":3,"source":"x"}],
             "endpoints":[{"method":"GET","path":"/api","access":"undeclared","file":"A.cs","line":4,"source":"x"}]}"#,
         ));
         let flow = read_ui_flow(dir.path()).unwrap().unwrap();

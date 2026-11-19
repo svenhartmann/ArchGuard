@@ -21,13 +21,16 @@
 //!   `routerLink="…"` and `[routerLink]="'…'"` / `"['…', expr]"`; in its class:
 //!   `.navigate([...])` (relative only with `relativeTo`) and `.navigateByUrl('…')`.
 //!   Non-literal array parts after the first become a `:param` segment; targets are
-//!   matched to the application's routes by path shape. The trigger is the element's
+//!   matched to the application's routes, a literal segment also to a parameter
+//!   (`/orders/42` -> `orders/:id`); an exact literal route wins, and a tie of
+//!   equally good routes stays unresolved. The trigger is the element's
 //!   `data-testid`, `id` or text.
 //! - `http.get/post/put/patch/delete/head/options` with a literal or template-literal
 //!   URL (holes become `:param`) in a component, or in an `@Injectable` class the
-//!   component names, as `Call::Http` on the component's screens.
+//!   component names, as `Call::Http` on the component's screens; a computed URL
+//!   becomes `Call::Unresolved`.
 //! - A component that is no route target (header, navigation) acts on every screen:
-//!   its transitions and actions start at `<application>:*`.
+//!   its transitions and actions start at `any_screen` of the application.
 //!
 //! Not recognized; each case is a diagnostic and makes the flow incomplete:
 //! non-literal paths, targets and URLs, route spreads and helper functions,
@@ -39,8 +42,8 @@
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
-    Action, Call, Condition, Screen, ScreenKind, ServiceTopology, Target, Transition, UiFlow,
-    UiFlowDiagnostic, path_patterns_match,
+    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, ServiceTopology,
+    Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -84,8 +87,11 @@ pub fn extract(root: &Path) -> UiFlow {
     flow.actions.dedup();
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
-    // Every unresolved target, unknown condition or unread file leaves a diagnostic.
-    flow.complete = flow.diagnostics.is_empty();
+    // Every unresolved target, unknown condition or unread file leaves a gap.
+    flow.complete = !flow
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == DiagnosticSeverity::Gap);
     flow
 }
 
@@ -94,6 +100,7 @@ fn diag(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl In
         file: file.into(),
         line,
         message: message.into(),
+        severity: DiagnosticSeverity::Gap,
     });
 }
 
@@ -376,20 +383,22 @@ impl App<'_> {
             .iter()
             .map(|c| self.http_calls(c, &mut flow.diagnostics))
             .collect();
-        let everywhere = format!("{}:*", self.name);
+        let everywhere = Origin::AnyScreen {
+            application: self.name.clone(),
+        };
         for (class, own_calls) in classes.iter().zip(&calls) {
             if !class.component {
                 continue;
             }
             let text = &self.files[&class.file];
             let body = &text[class.range.clone()];
-            let mut froms: Vec<(&str, Option<&str>)> = screens
+            let mut froms: Vec<(Origin, Option<&str>)> = screens
                 .iter()
                 .filter(|(_, c)| *c == class.name)
-                .map(|(s, _)| (s.id.as_str(), s.route.as_deref()))
+                .map(|(s, _)| (Origin::Screen(s.id.clone()), s.route.as_deref()))
                 .collect();
             if froms.is_empty() {
-                froms.push((&everywhere, None));
+                froms.push((everywhere.clone(), None));
             }
             let mut links = self.template_links(class, &mut flow.diagnostics);
             links.extend(Link::in_class(&class.file, text, class.range.clone()));
@@ -403,7 +412,7 @@ impl App<'_> {
                 for link in &links {
                     let target = self.target(link, base, screens, &mut flow.diagnostics);
                     flow.transitions.push(Transition {
-                        from: from.into(),
+                        from: from.clone(),
                         target,
                         trigger: link.trigger.clone(),
                         file: link.file.clone(),
@@ -414,12 +423,9 @@ impl App<'_> {
                 }
                 for call in own_calls.iter().chain(injected.iter().copied()) {
                     flow.actions.push(Action {
-                        screen: from.into(),
+                        screen: from.clone(),
                         trigger: None,
-                        call: Call::Http {
-                            method: call.method.clone(),
-                            path: call.path.clone(),
-                        },
+                        call: call.call.clone(),
                         file: call.file.clone(),
                         line: call.line,
                         condition: None,
@@ -458,17 +464,25 @@ impl App<'_> {
                     "Relative navigation {} in a component that is no route target; its base route is unknown.",
                     link.source
                 ),
-                Some(path) => match screens.iter().find(|(s, _)| {
-                    s.route
-                        .as_deref()
-                        .is_some_and(|r| path_patterns_match(r, &path))
-                }) {
-                    Some((s, _)) => return Target::Screen(s.id.clone()),
-                    None => format!(
-                        "Navigation target {path} matches no route of application {}.",
-                        self.name
-                    ),
-                },
+                Some(path) => {
+                    let routes = screens
+                        .iter()
+                        .filter_map(|(s, _)| Some((&s.id, s.route.as_deref()?)));
+                    match best_route(&path, routes) {
+                        Ok(id) => return Target::Screen(id.clone()),
+                        Err(tied) if tied.is_empty() => format!(
+                            "Navigation target {path} matches no route of application {}.",
+                            self.name
+                        ),
+                        Err(tied) => format!(
+                            "Navigation target {path} matches several routes equally: {}.",
+                            tied.iter()
+                                .map(|id| id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    }
+                }
             },
         };
         diag(out, &link.file, link.line, message);
@@ -499,21 +513,25 @@ impl App<'_> {
                 }
                 let url = Parser { s: text, i: j + 1 }.value(0);
                 let line = line_of(text, pos);
-                match url.value.literal() {
-                    Some(u) => calls.push(HttpCall {
-                        file: class.file.clone(),
-                        line,
+                let call = match url.value.literal() {
+                    Some(u) => Call::Http {
                         method: method.to_ascii_uppercase(),
                         path: url_path(&u),
-                    }),
+                    },
                     None => {
+                        let source = url.source(text);
                         let message = format!(
-                            "HTTP call URL is not a literal; the call is unknown: {}",
-                            url.source(text)
+                            "HTTP call URL is not a literal; the call is unknown: {source}"
                         );
                         diag(out, &class.file, line, message);
+                        Call::Unresolved(source)
                     }
-                }
+                };
+                calls.push(HttpCall {
+                    file: class.file.clone(),
+                    line,
+                    call,
+                });
             }
         }
         calls
@@ -793,8 +811,7 @@ impl<'w> Walk<'w> {
 struct HttpCall {
     file: String,
     line: u32,
-    method: String,
-    path: String,
+    call: Call,
 }
 
 enum Template {
@@ -1346,7 +1363,7 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{Call, Condition, ScreenKind, Target};
+    use archguard_core::{Call, Condition, Origin, ScreenKind, Target};
 
     fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -1371,7 +1388,11 @@ mod tests {
             .collect()
     }
 
-    fn transitions(flow: &UiFlow) -> Vec<(String, Target, Option<String>)> {
+    fn page(id: &str) -> Origin {
+        Origin::Screen(id.into())
+    }
+
+    fn transitions(flow: &UiFlow) -> Vec<(Origin, Target, Option<String>)> {
         flow.transitions
             .iter()
             .map(|t| (t.from.clone(), t.target.clone(), t.trigger.clone()))
@@ -1544,6 +1565,7 @@ export class HomeComponent {
 <a [routerLink]=\"['/orders', order.id]\">Open order</a>
 <a [routerLink]=\"dynamicTarget\">Somewhere</a>
 <a routerLink=\"/missing\">Missing</a>
+<a routerLink=\"/orders/42/edit\">Edit 42</a>
 ",
             ),
             (
@@ -1582,32 +1604,44 @@ export class OrderService {
         let unresolved = |text: &str| Target::Unresolved(text.into());
         let mut expected = vec![
             // header: not a route target, so it navigates from every screen
-            ("web:*".into(), to("web:/help"), Some("Help".into())),
-            ("web:/".into(), to("web:/help"), Some("help-link".into())),
             (
-                "web:/".into(),
+                Origin::AnyScreen {
+                    application: "web".into(),
+                },
+                to("web:/help"),
+                Some("Help".into()),
+            ),
+            (page("web:/"), to("web:/help"), Some("help-link".into())),
+            (
+                page("web:/"),
                 to("web:/orders/:id"),
                 Some("Open order".into()),
             ),
             (
-                "web:/".into(),
+                page("web:/"),
                 unresolved("dynamicTarget"),
                 Some("Somewhere".into()),
             ),
             (
-                "web:/".into(),
+                page("web:/"),
                 unresolved("/missing"),
                 Some("Missing".into()),
             ),
-            ("web:/".into(), to("web:/orders/:id"), None),
-            ("web:/".into(), unresolved("'/orders/' + this.id"), None),
+            (page("web:/"), to("web:/orders/:id"), None),
+            (page("web:/"), unresolved("'/orders/' + this.id"), None),
+            // a literal target matches the parameter route
+            (
+                page("web:/"),
+                to("web:/orders/:id/edit"),
+                Some("Edit 42".into()),
+            ),
             // relative link and relativeTo navigation from /orders/:id
             (
-                "web:/orders/:id".into(),
+                page("web:/orders/:id"),
                 to("web:/orders/:id/edit"),
                 Some("Edit".into()),
             ),
-            ("web:/orders/:id".into(), to("web:/orders/:id/edit"), None),
+            (page("web:/orders/:id"), to("web:/orders/:id/edit"), None),
         ];
         expected.sort();
         let mut got = transitions(&flow);
@@ -1656,7 +1690,7 @@ export class OrderService {
             method: method.into(),
             path: path.into(),
         };
-        let got: Vec<(String, Call, String, u32)> = flow
+        let got: Vec<(Origin, Call, String, u32)> = flow
             .actions
             .iter()
             .map(|a| (a.screen.clone(), a.call.clone(), a.file.clone(), a.line))
@@ -1666,18 +1700,19 @@ export class OrderService {
             got,
             vec![
                 (
-                    "web:/".into(),
+                    page("web:/"),
                     http("DELETE", "/api/orders/:param"),
                     "web/src/app/order.service.ts".into(),
                     3
                 ),
-                ("web:/".into(), http("GET", "/api/orders"), home.clone(), 7),
+                (page("web:/"), http("GET", "/api/orders"), home.clone(), 7),
                 (
-                    "web:/".into(),
+                    page("web:/"),
                     http("POST", "/api/orders/:param/pay"),
-                    home,
+                    home.clone(),
                     8
                 ),
+                (page("web:/"), Call::Unresolved("this.url".into()), home, 9),
             ]
         );
         assert!(flow.actions.iter().all(|a| a.source == "angular"));

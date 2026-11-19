@@ -17,6 +17,12 @@
 //!   `PostAsJsonAsync`, `PutAsync`, `DeleteAsync`, `PatchAsync`, ...) with a
 //!   literal or interpolated path.
 //!
+//! - A component without `@page` (layout, menu) acts on every screen of its
+//!   application: its transitions and actions start at `any_screen`.
+//! - A literal target matches parameter routes (`item/42` -> `/item/{id:int}`);
+//!   an exact literal route wins, and a tie of equally good routes stays
+//!   unresolved. An HTTP call with a computed path is a `Call::Unresolved` action.
+//!
 //! Not recognized: routes from constants or `[Route]`, targets built by helper
 //! methods (they stay unresolved), calls through injected services, buttons
 //! whose handler navigates (no trigger), commented-out C# code, components of
@@ -24,8 +30,8 @@
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
-    Action, Call, Condition, Screen, ScreenKind, ServiceTopology, Target, Transition, UiFlow,
-    UiFlowDiagnostic, path_patterns_match,
+    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, ServiceTopology,
+    Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -41,8 +47,8 @@ const VERBS: [&str; 5] = ["Get", "Post", "Put", "Delete", "Patch"];
 
 /// One `.razor` file with its optional code-behind.
 struct Component {
-    /// Screen id, or `application:*` for a component without `@page`.
-    id: String,
+    /// The component's screen, or every screen of its application without `@page`.
+    origin: Origin,
     application: Option<String>,
     /// (root-relative file, text with comments blanked); the `.razor` first.
     texts: Vec<(String, String)>,
@@ -55,8 +61,7 @@ type Files = (Vec<String>, BTreeSet<String>, BTreeSet<String>);
 /// Screens, transitions and actions of every Blazor component below `root`.
 ///
 /// Components without `@page` (layouts, menus) have no screen of their own:
-/// their transitions and actions use the pseudo id `application:*`, which
-/// means "from every screen of that application".
+/// their transitions and actions start at `any_screen` of their application.
 pub fn extract(root: &Path) -> UiFlow {
     let mut flow = UiFlow::default();
     let Some(files) = discover(root, &mut flow) else {
@@ -86,6 +91,7 @@ fn discover(root: &Path, flow: &mut UiFlow) -> Option<Files> {
             file: d.file,
             line: 0,
             message: d.message,
+            severity: DiagnosticSeverity::Note,
         }));
     let (mut razor, mut projects, mut code_behind) = Files::default();
     for entry in discovery.walk(root).flatten() {
@@ -140,23 +146,24 @@ fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component]) {
                 path => Some((at, arg, path, None)),
             });
         for (at, source, path, trigger) in markup.into_iter().chain(navigations) {
-            let target = match path {
-                Some(path) => resolve(&path, c, components, &source),
-                None => Target::Unresolved(source),
+            let line = line(text, at);
+            let target = match resolve(path.as_deref(), c, components, &source) {
+                Ok(id) => Target::Screen(id),
+                Err(message) => {
+                    report(flow, file, line, message);
+                    Target::Unresolved(source)
+                }
             };
             let condition = guard(text, &views, at, file, flow);
-            push(
-                flow,
-                Transition {
-                    from: c.id.clone(),
-                    target,
-                    trigger,
-                    file: file.clone(),
-                    line: line(text, at),
-                    condition,
-                    source: SOURCE.into(),
-                },
-            );
+            flow.transitions.push(Transition {
+                from: c.origin.clone(),
+                target,
+                trigger,
+                file: file.clone(),
+                line,
+                condition,
+                source: SOURCE.into(),
+            });
         }
         http(flow, c, file, text, &views);
     }
@@ -184,6 +191,7 @@ fn report(flow: &mut UiFlow, file: &str, line: u32, message: String) {
         file: file.into(),
         line,
         message,
+        severity: DiagnosticSeverity::Gap,
     });
 }
 
@@ -197,10 +205,16 @@ fn component(
     let (application, inner) = owner(root, rel, projects);
     let (file, text) = &texts[0];
     let (routes, first) = routes(file, text, flow);
-    let local = if first > 0 { inner } else { "*" };
     let id = match &application {
-        Some(app) => format!("{app}:{local}"),
-        None => local.to_string(),
+        Some(app) => format!("{app}:{inner}"),
+        None => inner.to_string(),
+    };
+    let origin = if first > 0 {
+        Origin::Screen(id.clone())
+    } else {
+        Origin::AnyScreen {
+            application: application.clone().unwrap_or_default(),
+        }
     };
     if first > 0 {
         let name = inner.rsplit('/').next().unwrap_or(inner);
@@ -218,7 +232,7 @@ fn component(
         });
     }
     Component {
-        id,
+        origin,
         application,
         texts,
         routes,
@@ -346,24 +360,34 @@ fn all(mut items: Vec<Condition>) -> Option<Condition> {
     }
 }
 
-fn push(flow: &mut UiFlow, transition: Transition) {
-    if let Target::Unresolved(text) = &transition.target {
-        let message = format!("Navigation target {text} is not a route of this application.");
-        report(flow, &transition.file, transition.line, message);
-    }
-    flow.transitions.push(transition);
-}
-
-/// The first screen of the same application with a matching route.
-fn resolve(path: &str, from: &Component, components: &[Component], text: &str) -> Target {
-    components
+/// The screen of the same application whose route matches best, or the
+/// diagnostic why there is none.
+fn resolve(
+    path: Option<&str>,
+    from: &Component,
+    components: &[Component],
+    text: &str,
+) -> Result<String, String> {
+    let unresolved = || format!("Navigation target {text} is not a route of this application.");
+    let candidates = components
         .iter()
         .filter(|c| c.application == from.application)
-        .find(|c| c.routes.iter().any(|r| path_patterns_match(r, path)))
-        .map_or_else(
-            || Target::Unresolved(text.into()),
-            |c| Target::Screen(c.id.clone()),
-        )
+        .filter_map(|c| match &c.origin {
+            Origin::Screen(id) => Some((id, &c.routes)),
+            Origin::AnyScreen { .. } => None,
+        })
+        .flat_map(|(id, routes)| routes.iter().map(move |r| (id, r.as_str())));
+    match best_route(path.ok_or_else(unresolved)?, candidates) {
+        Ok(id) => Ok(id.clone()),
+        Err(tied) if tied.is_empty() => Err(unresolved()),
+        Err(tied) => Err(format!(
+            "Navigation target {text} matches several routes equally: {}.",
+            tied.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 /// Actions for direct HTTP client calls with a literal path.
@@ -395,27 +419,26 @@ fn http(flow: &mut UiFlow, c: &Component, file: &str, text: &str, views: &Blocks
             .next()
             .unwrap_or_default();
         let line = line(text, at);
-        let Some(path) = path_of(&arg) else {
-            let message = format!("HTTP call path {arg} is not a literal; no action recorded.");
-            flow.diagnostics.push(UiFlowDiagnostic {
-                file: file.into(),
-                line,
-                message,
-            });
-            continue;
-        };
-        let path = match path.split_once("://") {
-            Some((_, host_path)) => shape(host_path.split_once('/').map_or("", |(_, p)| p)),
-            None => path,
+        let call = match path_of(&arg) {
+            Some(path) => Call::Http {
+                method: verb.to_uppercase(),
+                path: match path.split_once("://") {
+                    Some((_, host)) => shape(host.split_once('/').map_or("", |(_, p)| p)),
+                    None => path,
+                },
+            },
+            None => {
+                let message =
+                    format!("HTTP call path {arg} is not a literal; its endpoint is unknown.");
+                report(flow, file, line, message);
+                Call::Unresolved(arg)
+            }
         };
         let condition = guard(text, views, at, file, flow);
         flow.actions.push(Action {
-            screen: c.id.clone(),
+            screen: c.origin.clone(),
             trigger: None,
-            call: Call::Http {
-                method: verb.to_uppercase(),
-                path,
-            },
+            call,
             file: file.into(),
             line,
             condition,
@@ -736,7 +759,9 @@ mod text {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_core::{Call, Condition, Screen, Target, Transition};
+    use archguard_core::{
+        Assignment, Call, Condition, Origin, Reach, Screen, Target, Transition, reachable_screens,
+    };
 
     const HOME: &str = r##"@page "/"
 @page "/home"
@@ -762,6 +787,7 @@ mod tests {
         Nav.NavigateTo($"item/{Id + 1}");
         NavigationManager.NavigateTo("/cart");
         Nav.NavigateTo(returnUrl);
+        await Http.DeleteAsync(ItemUrl(Id));
     }
 }
 "##;
@@ -833,8 +859,15 @@ mod tests {
             .unwrap_or_else(|| panic!("no screen {id}: {:#?}", flow.screens))
     }
 
-    fn from<'a>(flow: &'a UiFlow, id: &str) -> Vec<&'a Transition> {
-        flow.transitions.iter().filter(|t| t.from == id).collect()
+    fn from<'a>(flow: &'a UiFlow, origin: &Origin) -> Vec<&'a Transition> {
+        flow.transitions
+            .iter()
+            .filter(|t| t.from == *origin)
+            .collect()
+    }
+
+    fn page(id: &str) -> Origin {
+        Origin::Screen(id.into())
     }
 
     fn to(id: &str) -> Target {
@@ -912,7 +945,7 @@ mod tests {
     #[test]
     fn links_resolve_within_the_application_and_external_ones_are_ignored() {
         let flow = extract(fixture().path());
-        let home = from(&flow, "Shop:Pages/Home.razor");
+        let home = from(&flow, &page("Shop:Pages/Home.razor"));
         let targets: Vec<(&Target, Option<&str>)> = home
             .iter()
             .map(|t| (&t.target, t.trigger.as_deref()))
@@ -932,7 +965,7 @@ mod tests {
     #[test]
     fn navigate_to_resolves_literals_and_interpolations() {
         let flow = extract(fixture().path());
-        let item = from(&flow, "Shop:Pages/Item.razor");
+        let item = from(&flow, &page("Shop:Pages/Item.razor"));
         let targets: Vec<&Target> = item.iter().map(|t| &t.target).collect();
         assert_eq!(
             targets,
@@ -948,7 +981,7 @@ mod tests {
                 .any(|d| d.file == "Shop/Pages/Item.razor" && d.line == 13)
         );
         // A code-behind partial belongs to its component.
-        let cart = from(&flow, "Shop:Pages/Cart.razor");
+        let cart = from(&flow, &page("Shop:Pages/Cart.razor"));
         let done = cart
             .iter()
             .find(|t| t.file == "Shop/Pages/Cart.razor.cs")
@@ -960,7 +993,7 @@ mod tests {
     #[test]
     fn unresolved_link_target_is_reported() {
         let flow = extract(fixture().path());
-        let lost = from(&flow, "Shop:Pages/Cart.razor")
+        let lost = from(&flow, &page("Shop:Pages/Cart.razor"))
             .into_iter()
             .find(|t| t.file == "Shop/Pages/Cart.razor")
             .unwrap();
@@ -987,7 +1020,10 @@ mod tests {
     #[test]
     fn layout_links_start_from_every_screen_with_authorize_view_conditions() {
         let flow = extract(fixture().path());
-        let menu = from(&flow, "Shop:*");
+        let shop = Origin::AnyScreen {
+            application: "Shop".into(),
+        };
+        let menu = from(&flow, &shop);
         let found: Vec<(&Target, Option<&Condition>, Option<&str>)> = menu
             .iter()
             .map(|t| (&t.target, t.condition.as_ref(), t.trigger.as_deref()))
@@ -1018,6 +1054,17 @@ mod tests {
             ]
         );
         assert!(menu.iter().all(|t| t.file == "Shop/Layout/UserMenu.razor"));
+        // The menu link reaches the admin page from every screen of Shop.
+        let admin = Assignment {
+            authenticated: true,
+            roles: ["Admin".to_string()].into(),
+            ..Assignment::default()
+        };
+        let reached = reachable_screens(&flow, "Shop:Pages/Home.razor", &admin);
+        assert_eq!(
+            reached.get("Shop:Pages/Admin.razor"),
+            Some(&Reach::Possible)
+        );
         // The other application's /cart is never a target here.
         assert!(
             flow.transitions
@@ -1029,11 +1076,12 @@ mod tests {
     #[test]
     fn direct_http_calls_with_literal_paths_become_actions() {
         let flow = extract(fixture().path());
-        let calls: Vec<(&str, &Call, u32)> = flow
+        let calls: Vec<(&Origin, &Call, u32)> = flow
             .actions
             .iter()
-            .map(|a| (a.screen.as_str(), &a.call, a.line))
+            .map(|a| (&a.screen, &a.call, a.line))
             .collect();
+        let item = page("Shop:Pages/Item.razor");
         let http = |method: &str, path: &str| Call::Http {
             method: method.into(),
             path: path.into(),
@@ -1041,11 +1089,47 @@ mod tests {
         assert_eq!(
             calls,
             [
-                ("Shop:Pages/Item.razor", &http("GET", "/api/items"), 9),
-                ("Shop:Pages/Item.razor", &http("POST", "/api/items/{p}"), 10),
+                (&item, &http("GET", "/api/items"), 9),
+                (&item, &http("POST", "/api/items/{p}"), 10),
+                (&item, &Call::Unresolved("ItemUrl(Id)".into()), 14),
             ]
         );
+        let gap = flow.diagnostics.iter().find(|d| d.line == 14).unwrap();
+        assert_eq!(gap.severity, DiagnosticSeverity::Gap);
         assert!(flow.actions.iter().all(|a| a.source == "blazor"));
+    }
+
+    #[test]
+    fn literal_targets_prefer_exact_routes_and_ties_stay_unresolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = [
+            ("App.csproj", ""),
+            (
+                "Nav.razor",
+                "<a href=\"item/new\">N</a>\n<a href=\"item/42\">D</a>\n<a href=\"x/1\">X</a>\n",
+            ),
+            ("New.razor", "@page \"/item/new\"\n"),
+            ("Detail.razor", "@page \"/item/{id:int}\"\n"),
+            ("X.razor", "@page \"/x/{id}\"\n"),
+            ("One.razor", "@page \"/{name}/1\"\n"),
+        ];
+        for (name, text) in files {
+            std::fs::write(dir.path().join(name), text).unwrap();
+        }
+        let flow = extract(dir.path());
+        let app = dir.path().file_name().unwrap().to_string_lossy();
+        let targets: Vec<&Target> = flow.transitions.iter().map(|t| &t.target).collect();
+        assert_eq!(
+            targets,
+            [
+                &to(&format!("{app}:New.razor")),
+                &to(&format!("{app}:Detail.razor")),
+                &Target::Unresolved("x/1".into()),
+            ]
+        );
+        let tie = flow.diagnostics.iter().find(|d| d.line == 3).unwrap();
+        assert!(tie.message.contains("several routes"), "{}", tie.message);
+        assert!(!flow.complete);
     }
 
     #[test]

@@ -6,6 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const UI_FLOW_DEFINITION: &str = "ui-flow/v1";
 /// `source` of every entry read from `.archguard/ui-flow.json`.
 pub const UI_FLOW_IMPORT_SOURCE: &str = "import";
+/// Endpoint method that accepts every HTTP method (Spring `@RequestMapping`
+/// without `method`); the join matches it with any action method.
+pub const ANY_METHOD: &str = "ANY";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiFlow {
@@ -75,9 +78,21 @@ pub enum Target {
     Unresolved(String),
 }
 
+/// Where a transition or action starts.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    Screen(String),
+    /// Every screen of one application, e.g. a layout or menu component.
+    /// `""` stands for the screens without an application.
+    AnyScreen {
+        application: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Transition {
-    pub from: String,
+    pub from: Origin,
     pub target: Target,
     /// Element id or label that triggers the navigation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,11 +113,13 @@ pub enum Call {
     },
     /// A method id for calls that are not HTTP.
     Method(String),
+    /// Source text of a call the rules could not read, e.g. a computed URL.
+    Unresolved(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Action {
-    pub screen: String,
+    pub screen: Origin,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<String>,
     pub call: Call,
@@ -116,9 +133,13 @@ pub struct Action {
 /// The backend side: who may call an HTTP endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EndpointAccess {
+    /// Upper-case HTTP method, or [`ANY_METHOD`].
     pub method: String,
     pub path: String,
     pub access: AccessState,
+    /// Owning project (directory name of the nearest build file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
     pub file: String,
     pub line: u32,
     pub source: String,
@@ -142,6 +163,8 @@ pub enum Condition {
     Any(Vec<Condition>),
     Not(Box<Condition>),
     Authenticated,
+    /// Never holds, e.g. `@DenyAll`.
+    Never,
     Role(String),
     Policy(String),
     Custom(String),
@@ -154,6 +177,19 @@ pub struct UiFlowDiagnostic {
     pub file: String,
     pub line: u32,
     pub message: String,
+    /// Older files without the field read as `gap`.
+    #[serde(default)]
+    pub severity: DiagnosticSeverity,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    /// An element is missing or unknown; the flow is not complete.
+    #[default]
+    Gap,
+    /// Information only, e.g. rules that exist but are not evaluated.
+    Note,
 }
 
 /// Simulator input: the chosen role sets `authenticated` and `roles`; policy
@@ -203,6 +239,7 @@ pub fn evaluate_condition(condition: &Condition, assignment: &Assignment) -> Out
         })),
         Condition::Not(inner) => negate(evaluate_condition(inner, assignment)),
         Condition::Authenticated => known(Some(&assignment.authenticated)),
+        Condition::Never => Outcome::Denied,
         Condition::Role(name) => known(Some(&assignment.roles.contains(name))),
         Condition::Policy(name) => known(assignment.policies.get(name)),
         Condition::Custom(name) => known(assignment.custom.get(name)),
@@ -241,8 +278,9 @@ pub enum Reach {
 }
 
 /// Screens reachable from `start` (included). A transition is followed when
-/// neither its condition nor the target screen's access is denied; unresolved
-/// targets and unknown screen ids are skipped. Empty when `start` is unknown
+/// neither its condition nor the target screen's access is denied; an
+/// `any_screen` transition starts at every reached screen of its application.
+/// Unresolved targets and unknown screen ids are skipped. Empty when `start` is unknown
 /// or its own access is denied.
 pub fn reachable_screens(
     flow: &UiFlow,
@@ -269,9 +307,8 @@ pub fn reachable_screens(
     while changed {
         changed = false;
         for transition in &flow.transitions {
-            let (Some(&from), Target::Screen(to)) =
-                (reached.get(&transition.from), &transition.target)
-            else {
+            let from = origin_reach(&transition.from, &reached, &screens);
+            let (Some(from), Target::Screen(to)) = (from, &transition.target) else {
                 continue;
             };
             let Some(target) = screens.get(to.as_str()) else {
@@ -309,29 +346,143 @@ pub fn normalize_path_pattern(path: &str) -> String {
     format!("/{}", segments.join("/"))
 }
 
-pub fn path_patterns_match(a: &str, b: &str) -> bool {
-    normalize_path_pattern(a) == normalize_path_pattern(b)
+/// How well a transition's origin is reached: an `any_screen` origin as well
+/// as the best reached screen of its application.
+fn origin_reach(
+    origin: &Origin,
+    reached: &BTreeMap<String, Reach>,
+    screens: &BTreeMap<&str, &Screen>,
+) -> Option<Reach> {
+    match origin {
+        Origin::Screen(id) => reached.get(id).copied(),
+        Origin::AnyScreen { application } => reached
+            .iter()
+            .filter(|(id, _)| application_of(screens, id) == Some(application.as_str()))
+            .map(|(_, reach)| *reach)
+            .min(),
+    }
 }
 
-/// Each HTTP action with the endpoints it hits (same method and path shape).
-/// An empty list means no backend endpoint was found for the call.
+/// Application of a screen id: `""` for a screen without one, none for an unknown id.
+fn application_of<'a>(screens: &BTreeMap<&str, &'a Screen>, id: &str) -> Option<&'a str> {
+    screens
+        .get(id)
+        .map(|s| s.application.as_deref().unwrap_or(""))
+}
+
+fn is_parameter(segment: &str) -> bool {
+    segment.starts_with(':') || (segment.starts_with('{') && segment.ends_with('}'))
+}
+
+/// How well the route `pattern` matches `path`: none when it does not, else
+/// the number of literal segments that are equal (higher is more specific).
+/// Segments match when both are parameters, when they are equal literals
+/// (case-insensitive), or when the pattern has a parameter and the path a
+/// literal (`/orders/:id` matches `/orders/42`). A parameter in `path` never
+/// matches a literal in `pattern`, so pattern against pattern compares shape.
+pub fn path_match_score(pattern: &str, path: &str) -> Option<usize> {
+    let segments = |p: &str| -> Vec<String> {
+        p.split('/')
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let (pattern, path) = (segments(pattern), segments(path));
+    if pattern.len() != path.len() {
+        return None;
+    }
+    pattern.iter().zip(&path).try_fold(0, |score, (p, s)| {
+        match (is_parameter(p), is_parameter(s)) {
+            (true, _) => Some(score),
+            (false, false) if p == s => Some(score + 1),
+            _ => None,
+        }
+    })
+}
+
+/// Whether the route `pattern` matches `path`; see [`path_match_score`].
+pub fn path_patterns_match(pattern: &str, path: &str) -> bool {
+    path_match_score(pattern, path).is_some()
+}
+
+/// The one candidate whose route matches `path` best (an exact literal route
+/// beats a parameter route). `Err` holds the tied best candidates, empty when
+/// none matches: a tie is never guessed. A candidate may come with several routes.
+pub fn best_route<'a, T: PartialEq>(
+    path: &str,
+    candidates: impl IntoIterator<Item = (T, &'a str)>,
+) -> Result<T, Vec<T>> {
+    let (mut best, mut tied) = (None, Vec::new());
+    for (candidate, route) in candidates {
+        let Some(score) = path_match_score(route, path) else {
+            continue;
+        };
+        match best.cmp(&Some(score)) {
+            std::cmp::Ordering::Less => (best, tied) = (Some(score), vec![candidate]),
+            std::cmp::Ordering::Equal if !tied.contains(&candidate) => tied.push(candidate),
+            _ => {}
+        }
+    }
+    if tied.len() == 1 {
+        Ok(tied.remove(0))
+    } else {
+        Err(tied)
+    }
+}
+
+/// Each HTTP action with the endpoints it hits. An endpoint hits when its
+/// method is equal or [`ANY_METHOD`] and its route matches the call path;
+/// within one application only its best-matching routes count (a literal route
+/// beats a parameter route, as in ASP.NET and Spring). When some hit belongs to
+/// the action's own application, only those stay; otherwise hits of every
+/// application stay, since frontends call other services. Unresolved and
+/// method calls are skipped; an empty list means no endpoint was found.
 pub fn join_actions_to_endpoints(flow: &UiFlow) -> Vec<(&Action, Vec<&EndpointAccess>)> {
+    let screens: BTreeMap<&str, &Screen> =
+        flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
     flow.actions
         .iter()
         .filter_map(|action| {
             let Call::Http { method, path } = &action.call else {
                 return None;
             };
-            let hits = flow
-                .endpoints
-                .iter()
-                .filter(|e| {
-                    e.method.eq_ignore_ascii_case(method) && path_patterns_match(&e.path, path)
-                })
-                .collect();
-            Some((action, hits))
+            let application = match &action.screen {
+                Origin::Screen(id) => application_of(&screens, id),
+                Origin::AnyScreen { application } => Some(application.as_str()),
+            };
+            Some((action, endpoint_hits(flow, application, method, path)))
         })
         .collect()
+}
+
+fn endpoint_hits<'a>(
+    flow: &'a UiFlow,
+    application: Option<&str>,
+    method: &str,
+    path: &str,
+) -> Vec<&'a EndpointAccess> {
+    let scored: Vec<(usize, &EndpointAccess)> = flow
+        .endpoints
+        .iter()
+        .filter(|e| e.method == ANY_METHOD || e.method.eq_ignore_ascii_case(method))
+        .filter_map(|e| path_match_score(&e.path, path).map(|score| (score, e)))
+        .collect();
+    let mut best: BTreeMap<Option<&str>, usize> = BTreeMap::new();
+    for (score, e) in &scored {
+        let top = best.entry(e.application.as_deref()).or_default();
+        *top = (*top).max(*score);
+    }
+    let mut hits: Vec<&EndpointAccess> = scored
+        .into_iter()
+        .filter(|(score, e)| best[&e.application.as_deref()] == *score)
+        .map(|(_, e)| e)
+        .collect();
+    let own =
+        |e: &&EndpointAccess| application.is_some_and(|a| e.application.as_deref() == Some(a));
+    if hits.iter().any(own) {
+        hits.retain(own);
+    }
+    hits
 }
 
 /// Union of two flows (extractor result + import): sorted, identical entries
@@ -386,7 +537,7 @@ mod tests {
     }
     fn go(from: &str, to: &str, condition: Option<Condition>) -> Transition {
         Transition {
-            from: from.into(),
+            from: Origin::Screen(from.into()),
             target: Target::Screen(to.into()),
             trigger: None,
             file: "App.razor".into(),
@@ -397,7 +548,7 @@ mod tests {
     }
     fn http_action(method: &str, path: &str) -> Action {
         Action {
-            screen: "orders".into(),
+            screen: Origin::Screen("orders".into()),
             trigger: Some("save".into()),
             call: Call::Http {
                 method: method.into(),
@@ -414,6 +565,7 @@ mod tests {
             method: method.into(),
             path: path.into(),
             access,
+            application: None,
             file: "Api.cs".into(),
             line: 3,
             source: "test".into(),
@@ -474,6 +626,11 @@ mod tests {
         assert_eq!(
             evaluate_condition(&Condition::Authenticated, &Assignment::default()),
             Outcome::Denied
+        );
+        assert_eq!(evaluate_condition(&Condition::Never, &a), Outcome::Denied);
+        assert_eq!(
+            evaluate_condition(&Condition::Any(vec![Condition::Never, unknown]), &a),
+            Outcome::Unknown
         );
     }
 
@@ -553,6 +710,53 @@ mod tests {
     }
 
     #[test]
+    fn any_screen_transitions_start_at_every_reached_screen_of_the_application() {
+        let in_app = |app: &str, s: Screen| Screen {
+            application: Some(app.into()),
+            ..s
+        };
+        let menu = |app: &str, to: &str, condition: Option<Condition>| Transition {
+            from: Origin::AnyScreen {
+                application: app.into(),
+            },
+            ..go("x", to, condition)
+        };
+        let flow = UiFlow {
+            screens: vec![
+                in_app("shop", screen("home", None)),
+                in_app("shop", screen("cart", None)),
+                in_app("shop", screen("beta", None)),
+                in_app("other", screen("help", None)),
+                screen("loose", None),
+            ],
+            transitions: vec![
+                go("home", "beta", Some(Condition::Custom("beta".into()))),
+                menu("shop", "cart", None),
+                menu("other", "help", None),
+                menu("", "loose", None),
+            ],
+            ..UiFlow::default()
+        };
+        let reached = reachable_screens(&flow, "home", &admin());
+        assert_eq!(
+            reached,
+            BTreeMap::from([
+                ("beta".to_string(), Reach::Possible),
+                ("cart".to_string(), Reach::Sure),
+                ("home".to_string(), Reach::Sure),
+            ])
+        );
+        // From a screen reached only possibly, the menu is only possible too.
+        let mut gated = flow.clone();
+        gated.transitions[1].from = Origin::Screen("beta".into());
+        assert_eq!(
+            reachable_screens(&gated, "home", &admin()).get("cart"),
+            Some(&Reach::Possible)
+        );
+        assert_eq!(reachable_screens(&flow, "loose", &admin()).len(), 1);
+    }
+
+    #[test]
     fn path_patterns_compare_by_shape() {
         for other in ["/order/{id}", "order/{id:int}", "/Order/{id}/"] {
             assert!(path_patterns_match("/order/:id", other), "{other}");
@@ -561,6 +765,84 @@ mod tests {
         assert_eq!(normalize_path_pattern("/"), "/");
         assert!(!path_patterns_match("/order/:id", "/order/:id/items"));
         assert!(!path_patterns_match("/order/:id", "/orders/:id"));
+    }
+
+    #[test]
+    fn literal_paths_match_parameter_routes_and_exact_routes_win() {
+        assert!(path_patterns_match("/orders/:id", "/orders/42"));
+        assert!(path_patterns_match("/item/{id:int}", "item/42"));
+        // A parameter in the path is no literal: pattern against pattern is shape.
+        assert!(!path_patterns_match("/item/new", "/item/{p}"));
+        assert!(!path_patterns_match("/orders/:id", "/orders/42/items"));
+        assert_eq!(path_match_score("/Item/New", "/item/new"), Some(2));
+        let routes = [("detail", "/item/{id}"), ("new", "/item/new")];
+        assert_eq!(best_route("/item/new", routes), Ok("new"));
+        assert_eq!(best_route("/item/7", routes), Ok("detail"));
+        assert_eq!(best_route("/item/{p}", routes), Ok("detail"));
+        assert_eq!(best_route("/cart", routes), Err(vec![]));
+        // Two equally good candidates are never guessed.
+        let tied = [("a", "/x/{id}"), ("b", "/{name}/1")];
+        assert_eq!(best_route("/x/1", tied), Err(vec!["a", "b"]));
+        // Several routes of one candidate are no tie.
+        let one = [("b", "/b"), ("b", "/bee"), ("b", "/{x}")];
+        assert_eq!(best_route("/bee", one), Ok("b"));
+    }
+
+    #[test]
+    fn join_uses_any_method_best_routes_and_own_application() {
+        let in_app = |app: &str, e: EndpointAccess| EndpointAccess {
+            application: Some(app.into()),
+            ..e
+        };
+        let flow = UiFlow {
+            screens: vec![Screen {
+                application: Some("Shop".into()),
+                ..screen("orders", None)
+            }],
+            actions: vec![
+                http_action("GET", "/api/items/new"),
+                http_action("PUT", "/api/orders/7"),
+                Action {
+                    screen: Origin::AnyScreen {
+                        application: "Shop".into(),
+                    },
+                    ..http_action("GET", "/api/orders/7")
+                },
+                Action {
+                    call: Call::Unresolved("Http.GetAsync(url)".into()),
+                    ..http_action("GET", "/")
+                },
+            ],
+            endpoints: vec![
+                in_app("Api", endpoint("GET", "/api/items/{id}", AccessState::Open)),
+                in_app(
+                    "Api",
+                    endpoint("GET", "/api/items/new", AccessState::Undeclared),
+                ),
+                in_app(
+                    "Other",
+                    endpoint("ANY", "/api/items/{id}", AccessState::Open),
+                ),
+                in_app(
+                    "Api",
+                    endpoint("ANY", "/api/orders/{id}", AccessState::Open),
+                ),
+                in_app(
+                    "Shop",
+                    endpoint("GET", "/api/orders/{id}", AccessState::Open),
+                ),
+            ],
+            ..UiFlow::default()
+        };
+        let joined = join_actions_to_endpoints(&flow);
+        assert_eq!(joined.len(), 3, "unresolved calls are skipped");
+        let e = &flow.endpoints;
+        // Per application the literal route wins; other applications stay.
+        assert_eq!(joined[0].1, vec![&e[1], &e[2]]);
+        // ANY matches every method.
+        assert_eq!(joined[1].1, vec![&e[3]]);
+        // The action's own application wins when it serves the path.
+        assert_eq!(joined[2].1, vec![&e[4]]);
     }
 
     #[test]
@@ -598,6 +880,7 @@ mod tests {
                 file: "x.ts".into(),
                 line: 4,
                 message: "unresolved target".into(),
+                severity: DiagnosticSeverity::Gap,
             }],
             complete: false,
             ..UiFlow::default()
@@ -650,6 +933,7 @@ mod tests {
                 file: "a".into(),
                 line: 1,
                 message: "m".into(),
+                severity: DiagnosticSeverity::Note,
             }],
             complete: false,
             ..UiFlow::default()
@@ -658,6 +942,36 @@ mod tests {
         assert!(json.contains(r#""definition":"ui-flow/v1""#), "{json}");
         assert!(json.contains(r#""access":"undeclared""#), "{json}");
         assert!(json.contains(r#""target":{"unresolved":"url"}"#), "{json}");
+        assert!(json.contains(r#""from":{"screen":"home"}"#), "{json}");
+        assert!(json.contains(r#""severity":"note""#), "{json}");
         assert_eq!(serde_json::from_str::<UiFlow>(&json).unwrap(), flow);
+    }
+
+    #[test]
+    fn json_shapes_of_the_refinements() {
+        let any = Origin::AnyScreen {
+            application: "Shop".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&any).unwrap(),
+            r#"{"any_screen":{"application":"Shop"}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Call::Unresolved("url".into())).unwrap(),
+            r#"{"unresolved":"url"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Condition::Never).unwrap(),
+            r#""never""#
+        );
+        let mut api = endpoint("ANY", "/x", AccessState::Protected(Condition::Never));
+        api.application = Some("Api".into());
+        let json = serde_json::to_string(&api).unwrap();
+        assert!(json.contains(r#""application":"Api""#), "{json}");
+        assert!(json.contains(r#""access":{"protected":"never"}"#), "{json}");
+        // Files written before `severity` existed read every diagnostic as a gap.
+        let old: UiFlowDiagnostic =
+            serde_json::from_str(r#"{"file":"a","line":1,"message":"m"}"#).unwrap();
+        assert_eq!(old.severity, DiagnosticSeverity::Gap);
     }
 }

@@ -22,26 +22,27 @@
 //!   `@RequestMapping` on the class with `@Get/Post/Put/Delete/PatchMapping` or
 //!   `@RequestMapping(method = …)` on methods (`value`, `path` or positional,
 //!   arrays give one endpoint each; `@RequestMapping` without `method` gives
-//!   method `ANY`). Access from the method, else the class: `@PreAuthorize` with
+//!   method `ANY`, which the join matches with every method). Access from the method, else the class: `@PreAuthorize` with
 //!   `hasRole`, `hasAnyRole`, `hasAuthority`, `hasAnyAuthority`,
 //!   `isAuthenticated()`, `isFullyAuthenticated()`, `and`/`or`/`!`/`not`/`&&`/`||`
 //!   and parentheses, `permitAll()` alone = `open`; `@Secured`, `@RolesAllowed`,
-//!   `@PermitAll`. Authorities become `role` atoms too, and a `ROLE_` prefix is
+//!   `@PermitAll`, `@DenyAll` (`never`). Authorities become `role` atoms too, and a `ROLE_` prefix is
 //!   dropped everywhere, so `hasAuthority('ROLE_A')`, `hasRole('A')` and
 //!   `@Secured("ROLE_A")` all read `role(A)`.
 //!
 //! A project is the nearest directory with a `.csproj`, `pom.xml` or
-//! `build.gradle(.kts)`. Not recognized (left `undeclared`, or a diagnostic):
+//! `build.gradle(.kts)`; its directory name is the endpoint's `application`.
+//! Not recognized (left `undeclared`, or a diagnostic):
 //! conventional routing (actions skipped with a diagnostic), `[AcceptVerbs]`,
 //! `MapMethods`, `MapGroup` prefixes passed in from a call site, central rules
-//! (`FallbackPolicy`; Spring `SecurityFilterChain` only gets one diagnostic per
-//! project), other SpEL (`unknown`), `@DenyAll` (`unknown`, the model has no
-//! `false` atom), constants as routes or roles (diagnostic, the endpoint is
-//! skipped or the condition is `unknown`).
+//! (`FallbackPolicy`; Spring `SecurityFilterChain` only gets one `note` per
+//! project), other SpEL (`unknown`), constants as routes or roles (diagnostic,
+//! the endpoint is skipped or the condition is `unknown`).
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
-    AccessState, Condition, EndpointAccess, ServiceTopology, UiFlow, UiFlowDiagnostic,
+    ANY_METHOD, AccessState, Condition, DiagnosticSeverity, EndpointAccess, ServiceTopology,
+    UiFlow, UiFlowDiagnostic,
 };
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -55,7 +56,8 @@ const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 /// Endpoints with their declared access, plus diagnostics.
 pub fn extract(root: &Path) -> UiFlow {
     let mut out = Out(UiFlow::default());
-    for sources in read_projects(root, &mut out).values() {
+    for (application, sources) in read_projects(root, &mut out).values() {
+        let first = out.0.endpoints.len();
         let mut call_sites = HashMap::new();
         for src in sources {
             if src.rel.ends_with(".cs") {
@@ -66,6 +68,9 @@ pub fn extract(root: &Path) -> UiFlow {
             }
         }
         spring::central_rules(sources, &mut out);
+        for e in &mut out.0.endpoints[first..] {
+            e.application = application.clone();
+        }
     }
     let flow = &mut out.0;
     flow.endpoints.sort();
@@ -75,20 +80,38 @@ pub fn extract(root: &Path) -> UiFlow {
     out.0
 }
 
-/// Source files by project; unreadable files become diagnostics.
-fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Vec<Source>> {
+/// Application name and source files by project directory; unreadable files
+/// become diagnostics.
+fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
     let (projects, files) = discover(root, out);
-    let mut by_project: BTreeMap<String, Vec<Source>> = BTreeMap::new();
+    let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
     for rel in files {
         match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
             Ok(bytes) => by_project
                 .entry(project_of(&rel, &projects))
-                .or_default()
+                .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
+                .1
                 .push(Source::new(rel, &String::from_utf8_lossy(&bytes))),
             Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
         }
     }
     by_project
+}
+
+/// The owning application of a project directory, and its sources.
+type Project = (Option<String>, Vec<Source>);
+
+/// The project directory's name (the root's for a build file at the root);
+/// none for files outside every project.
+fn application(root: &Path, dir: &str, projects: &BTreeSet<String>) -> Option<String> {
+    if !projects.contains(dir) {
+        return None;
+    }
+    match dir.rsplit_once('/') {
+        Some((_, name)) => Some(name.into()),
+        None if dir.is_empty() => root.file_name().map(|n| n.to_string_lossy().into_owned()),
+        None => Some(dir.into()),
+    }
 }
 
 fn project_of(rel: &str, projects: &BTreeSet<String>) -> String {
@@ -146,6 +169,7 @@ impl Out {
             file: file.into(),
             line,
             message,
+            severity: DiagnosticSeverity::Gap,
         });
     }
     fn at(&mut self, src: &Source, at: usize, message: String) {
@@ -172,6 +196,7 @@ impl Out {
             method: method.into(),
             path,
             access: access.clone(),
+            application: None, // set per project in `extract`
             file: src.rel.clone(),
             line: src.line(at),
             source: source.into(),
@@ -1090,6 +1115,7 @@ mod spring {
                 file: src.rel.clone(),
                 line: src.line(at),
                 message: "Central SecurityFilterChain rules exist and are not evaluated; endpoints marked undeclared may be protected there.".into(),
+                severity: DiagnosticSeverity::Note,
             });
         }
     }
@@ -1138,7 +1164,7 @@ mod spring {
             .map(|r| r.chars().take_while(char::is_ascii_alphabetic).collect())
             .collect();
         Some(if found.is_empty() {
-            vec!["ANY".into()]
+            vec![ANY_METHOD.into()]
         } else {
             found
         })
@@ -1195,7 +1221,7 @@ mod spring {
                 Some(Some(roles.unwrap_or_else(|| out.unknown(src, a.at, raw))))
             }
             "PermitAll" => Some(None),
-            "DenyAll" => Some(Some(out.unknown(src, a.at, "@DenyAll"))),
+            "DenyAll" => Some(Some(Condition::Never)),
             _ => None,
         }
     }
@@ -1600,6 +1626,10 @@ public class OwnerController {
     @org.springframework.web.bind.annotation.PatchMapping("/{id}/audit")
     @RolesAllowed("AUDITOR")
     public void audit() {}
+
+    @RequestMapping("/closed")
+    @DenyAll
+    public void closed() {}
 }
 
 @FeignClient("owners")
@@ -1689,8 +1719,17 @@ class KController(private val repo: Repo) {
         );
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
         assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("USER")));
-        assert_eq!(flow.endpoints.len(), 11, "{:#?}", flow.endpoints);
+        assert_eq!(
+            access(&flow, "ANY", "/api/owners/closed"),
+            &protected(Condition::Never)
+        );
+        assert_eq!(flow.endpoints.len(), 12, "{:#?}", flow.endpoints);
         assert!(flow.endpoints.iter().all(|e| e.source == "spring"));
+        assert!(
+            flow.endpoints
+                .iter()
+                .all(|e| e.application.as_deref() == Some("owners"))
+        );
         let messages: Vec<_> = flow
             .diagnostics
             .iter()
@@ -1707,6 +1746,7 @@ class KController(private val repo: Repo) {
             (central.file.as_str(), central.line),
             ("owners/src/main/java/shop/SecurityConfig.java", 5)
         );
+        assert_eq!(central.severity, DiagnosticSeverity::Note);
         assert!(!flow.complete);
     }
 
@@ -1721,6 +1761,9 @@ class KController(private val repo: Repo) {
         assert_eq!(access(&flow, "GET", "/a"), &AccessState::Undeclared);
         assert_eq!(flow.diagnostics.len(), 1, "{:#?}", flow.diagnostics);
         assert_eq!(flow.diagnostics[0].file, "Big.java");
+        assert_eq!(flow.diagnostics[0].severity, DiagnosticSeverity::Gap);
+        // Outside every project there is no application.
+        assert_eq!(flow.endpoints[0].application, None);
         assert!(!flow.complete);
         assert!(extract(&dir.path().join("missing")).endpoints.is_empty());
     }

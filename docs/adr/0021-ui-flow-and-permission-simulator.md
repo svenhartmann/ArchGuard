@@ -133,3 +133,35 @@ Blazor web app (13 `@page` components, `@attribute [Authorize]`,
   (decision 7) is not decided.
 - How far the TypeScript checker resolves route helper functions is not
   measured; phase 7 starts with that measurement.
+
+## Verlauf
+
+### 2026-11-19: model refinements after the first extractors
+
+The Blazor, Angular and backend extractors reported gaps in the model. Since
+`ui-flow/v1` is unreleased, the model changed instead of the extractors
+working around it.
+
+1. **Every screen as source.** `Transition.from` and `Action.screen` are an
+   `Origin`: `{"screen": id}` or `{"any_screen": {"application": name}}` for
+   layouts and menus (`""` for screens without an application). Reachability
+   follows an `any_screen` transition from every reached screen of that
+   application; the pseudo id `<app>:*` is gone.
+2. **Literal path against route pattern.** A parameter segment of a route
+   matches any single literal segment (`/orders/42` hits `/orders/:id`);
+   pattern against pattern still compares shape. The most literal route wins
+   (`/item/new` beats `/item/{id}`); a tie stays unresolved with a diagnostic.
+3. **Unresolved action.** `Call::Unresolved(text)` keeps a call whose URL is
+   not a literal as an action; the join skips it.
+4. **Any HTTP method.** `ANY` (Spring `@RequestMapping` without `method`) is
+   a wildcard in the join and matches every action method.
+5. **False atom.** `Condition::Never` evaluates to `denied`; `@DenyAll` maps
+   to it instead of `unknown`.
+6. **Application on endpoints.** `EndpointAccess.application` is the project
+   directory name (nearest `.csproj`, `pom.xml`, `build.gradle`). Routes rank
+   within each application. When a hit belongs to the action's own
+   application, only those hits stay; otherwise hits of all applications
+   stay, since frontends call other services.
+7. **Diagnostic severity.** `severity` is `gap` (an element is missing or
+   unknown; the flow is not complete) or `note` (information, e.g. the
+   `SecurityFilterChain` hint). A missing field reads as `gap`.
