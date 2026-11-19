@@ -5,8 +5,9 @@
 
 use std::path::Path;
 
-use archguard_engine::core::{Diagram, DiagramFormat, Graph};
-use archguard_engine::report::{Arc42Document, diagram_section};
+use archguard_engine::core::{Arc42Config, Graph};
+pub use archguard_engine::report::diagram_strip as strip;
+use archguard_engine::report::{Arc42Document, diagram_place};
 
 use super::visual::Kind;
 use crate::config_editor::{ConfigEditor, FieldValue};
@@ -18,16 +19,6 @@ pub fn map_id(kind: Kind) -> &'static str {
         Kind::Calls => "runtime-calls",
         Kind::Cycles => "cycles",
     }
-}
-
-/// `text` without the generated sections of the shown `diagrams`.
-pub fn strip(text: &str, diagrams: &[Diagram], format: DiagramFormat) -> String {
-    diagrams
-        .iter()
-        .filter(|d| d.shown)
-        .fold(text.to_string(), |t, d| {
-            t.replacen(&diagram_section(d, format), "", 1)
-        })
 }
 
 /// `hidden` with `id` removed (`show`) or added.
@@ -60,35 +51,18 @@ pub fn write(root: &Path, key: &str, ids: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The document as `archguard doc --arc42` writes it with `hidden`: the
-/// diagrams' `shown` flags and the sections at the start of each chapter.
-pub fn rebase(doc: &mut Arc42Document, hidden: &[String], format: DiagramFormat) {
-    for c in &mut doc.chapters {
-        let mine: Vec<Diagram> = doc
-            .diagrams
-            .iter()
-            .filter(|d| d.chapter == c.number)
-            .cloned()
-            .collect();
-        let mut text = strip(&c.markdown, &mine, format);
-        let prefix: String = mine
-            .iter()
-            .filter(|d| !hidden.contains(&d.id))
-            .map(|d| diagram_section(d, format))
-            .collect();
-        text.insert_str(0, &prefix);
-        c.markdown = text;
-    }
-    for d in &mut doc.diagrams {
-        d.shown = !hidden.contains(&d.id);
-    }
+/// The document as `archguard doc --arc42` writes it with `choice`: the
+/// report's placement rule on the diagrams' sections and `shown` flags.
+pub fn place(doc: &mut Arc42Document, choice: &Arc42Config) {
+    let chapters = doc.chapters.iter_mut().map(|c| (c.number, &mut c.markdown));
+    diagram_place(chapters, &mut doc.diagrams, choice);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_engine::core::DiagramKind;
-    use archguard_engine::report::Arc42Chapter;
+    use archguard_engine::core::{Diagram, DiagramFormat, DiagramKind};
+    use archguard_engine::report::{Arc42Chapter, diagram_section};
 
     fn diagram(id: &str, chapter: u8) -> Diagram {
         Diagram {
@@ -152,13 +126,17 @@ mod tests {
         let f = DiagramFormat::Mermaid;
         let hidden = hidden_after(&["x".into()], "a", false);
         assert_eq!(hidden, ["x", "a"]);
-        rebase(&mut d, &hidden, f);
+        let choice = |hidden_diagrams| Arc42Config {
+            hidden_diagrams,
+            ..Arc42Config::default()
+        };
+        place(&mut d, &choice(hidden.clone()));
         assert!(!d.diagrams[0].shown && d.diagrams[1].shown);
         assert_eq!(
             d.chapters[0].markdown,
             format!("{}Text.", diagram_section(&d.diagrams[1], f))
         );
-        rebase(&mut d, &hidden_after(&hidden, "a", true), f);
+        place(&mut d, &choice(hidden_after(&hidden, "a", true)));
         assert_eq!(d.chapters[0].markdown, doc().chapters[0].markdown);
     }
 

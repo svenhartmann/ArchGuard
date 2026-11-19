@@ -199,11 +199,11 @@ pub(super) fn toggle_diagram(
         Err(e) => e,
     };
     if s.figure_error.is_empty() {
-        if let Ok(doc) = &mut s.doc {
-            catalogue::rebase(doc, &hidden, s.format);
-        }
         s.config.arc42.hidden_diagrams = hidden.clone();
         s.hidden = hidden;
+        if let Ok(doc) = &mut s.doc {
+            catalogue::place(doc, &s.config.arc42);
+        }
     }
 }
 
@@ -282,9 +282,9 @@ fn deliver(doc: DocId, number: u64, result: Result<Arc42Document, String>) -> bo
         let took = st.write == number;
         if took {
             st.doc = result;
-            // A tick since the rewrite started is in `hidden`, not in its document.
+            // A tick since the rewrite started is in `config`, not in its document.
             if let Ok(doc) = &mut st.doc {
-                catalogue::rebase(doc, &st.hidden, st.format);
+                catalogue::place(doc, &st.config.arc42);
             }
         }
         took

@@ -14,7 +14,7 @@ pub use scenarios::class_sequence;
 mod sequences;
 mod services;
 
-use archguard_core::{Diagram, DiagramFormat};
+use archguard_core::{Arc42Config, Diagram, DiagramFormat};
 
 use crate::arc42_blocks::{Arc42Inputs, Blocks};
 
@@ -27,20 +27,48 @@ pub(crate) fn add<'c>(
     chapters: impl Iterator<Item = (u8, &'c mut String)>,
     input: &Arc42Inputs<'_>,
 ) -> Vec<Diagram> {
-    let choice = &input.config.arc42;
     let mut diagrams = catalogue(input);
-    for d in &mut diagrams {
+    place(chapters, &mut diagrams, &input.config.arc42);
+    diagrams
+}
+
+/// The one placement rule of every writer (CLI, desktop): the diagrams
+/// `choice` shows open their chapter, in catalogue order; sections of the
+/// `diagrams` a chapter already starts with are replaced, and each
+/// diagram's `shown` follows `choice`.
+pub fn place<'c>(
+    chapters: impl Iterator<Item = (u8, &'c mut String)>,
+    diagrams: &mut [Diagram],
+    choice: &Arc42Config,
+) {
+    let format = choice.diagram_format;
+    for (number, markdown) in chapters {
+        let mine = || diagrams.iter().filter(|d| d.chapter == number);
+        let text = strip(markdown, mine(), format);
+        let mut prefix: String = mine()
+            .filter(|d| choice.shows(&d.id))
+            .map(|d| section(d, format))
+            .collect();
+        prefix.push_str(&text);
+        *markdown = prefix;
+    }
+    for d in diagrams {
         d.shown = choice.shows(&d.id);
     }
-    for (number, markdown) in chapters {
-        let text: String = diagrams
-            .iter()
-            .filter(|d| d.shown && d.chapter == number)
-            .map(|d| section(d, choice.diagram_format))
-            .collect();
-        markdown.insert_str(0, &text);
-    }
+}
+
+/// `text` without the generated sections of the shown `diagrams`.
+pub fn strip<'d>(
+    text: &str,
+    diagrams: impl IntoIterator<Item = &'d Diagram>,
+    format: DiagramFormat,
+) -> String {
     diagrams
+        .into_iter()
+        .filter(|d| d.shown)
+        .fold(text.to_string(), |t, d| {
+            t.replacen(&section(d, format), "", 1)
+        })
 }
 
 /// One diagram as a Markdown section: heading, note, fenced source.
