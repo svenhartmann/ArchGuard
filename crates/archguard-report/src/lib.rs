@@ -14,6 +14,7 @@ mod arc42_blocks;
 mod arc42_chapters;
 mod arc42_diagrams;
 mod arc42_errors;
+pub mod arc42_file;
 mod arc42_goals;
 mod arc42_quality;
 mod arc42_text;

@@ -12,7 +12,7 @@ use std::ops::Range;
 
 use super::super::markdown::{self, Align, Block as Md};
 use super::inline::{self, Inline};
-pub use crate::arc42_file::{diagram_block, diagram_ranges};
+pub use archguard_engine::report::arc42_file::{diagram_block, diagram_ranges};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
@@ -244,7 +244,7 @@ impl Doc {
 pub fn generated(text: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut open = None;
-    for (i, _) in text.match_indices(crate::arc42_file::MARKER) {
+    for (i, _) in text.match_indices(archguard_engine::report::arc42_file::MARKER) {
         let tag = text[i..].split_once("-->").map_or("", |(tag, _)| tag);
         if tag.trim_end().ends_with(":start") {
             open.get_or_insert(i);
@@ -390,7 +390,7 @@ fn writes_back(block: &Block, md: &str) -> bool {
 
 /// Whether a level-2 heading with this text names the chapter.
 pub fn chapter_heading(text: &str) -> bool {
-    crate::arc42_file::heading_number(&format!("## {text}")).is_some()
+    archguard_engine::report::arc42_file::heading_number(&format!("## {text}")).is_some()
 }
 
 /// Inline Markdown whose source line breaks are spaces, as the reader
@@ -698,7 +698,7 @@ Ende.
             let doc = archguard_engine::arc42_document(&dir, &run.config, &run.graph, &run.report)
                 .expect("arc42");
             for n in 1..=12 {
-                let md = crate::arc42_file::generated(&doc, n);
+                let md = archguard_engine::report::arc42_file::generated(&doc, n);
                 let parsed = Doc::parse(&md, &generated(&md));
                 assert_eq!(parsed.to_markdown(), md, "{project} chapter {n}");
             }

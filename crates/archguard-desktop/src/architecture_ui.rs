@@ -214,7 +214,7 @@ fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show
         doc.diagrams
             .iter()
             .any(|d| d.id == id && d.chapter == s.chapter)
-            || crate::arc42_file::diagram_ranges(&s.editor.chapter(doc, s.chapter))
+            || archguard_engine::report::arc42_file::diagram_ranges(&s.editor.chapter(doc, s.chapter))
                 .iter()
                 .any(|(_, i)| i == id)
     });
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn saving_from_the_prompt_writes_the_arc42_draft_too() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let old = crate::arc42_file::tests::doc("Old");
+        let old = edit::tests::doc("Old");
         std::fs::write(dir.path().join("arc42.md"), old.markdown(None)).unwrap();
         let (a, _) = documents::with_store(|s| s.open(dir.path()));
         // The fixture's analysis, but the arc42 text of the temporary project.
@@ -573,7 +573,7 @@ mod tests {
             .expect("a shown diagram")
             .clone();
         let section = archguard_engine::report::diagram_section(&d, state.format);
-        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        let block = archguard_engine::report::arc42_file::diagram_block(&d.id, &section);
         (a, state, d, block)
     }
 
@@ -636,7 +636,7 @@ mod tests {
             .expect("a shown diagram")
             .clone();
         let section = archguard_engine::report::diagram_section(&d, state.format);
-        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        let block = archguard_engine::report::arc42_file::diagram_block(&d.id, &section);
         let n = d.chapter;
         std::fs::write(
             dir.path().join("arc42.md"),
@@ -708,7 +708,7 @@ mod tests {
             .expect("a shown diagram")
             .clone();
         let section = archguard_engine::report::diagram_section(&d, state.format);
-        let block = crate::arc42_file::diagram_block(&d.id, &section);
+        let block = archguard_engine::report::arc42_file::diagram_block(&d.id, &section);
         let n = d.chapter;
         let path = dir.path().join("arc42.md");
         std::fs::write(&path, format!("## {n}. Kapitel\n\nText.\n\n{block}\n")).unwrap();

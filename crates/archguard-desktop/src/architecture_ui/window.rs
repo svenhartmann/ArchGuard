@@ -85,9 +85,9 @@ fn fill_figures(
     // A chapter without a generated block never gets a diagram on its own:
     // it can take one over as text.
     let text = s.editor.chapter(doc, s.chapter);
-    let has_block = text.contains(crate::arc42_file::MARKER);
+    let has_block = text.contains(archguard_engine::report::arc42_file::MARKER);
     // Diagrams in the chapter's text draw there; the rule the save uses.
-    let in_text = |d: &archguard_engine::core::Diagram| crate::arc42_file::in_text(&text, d);
+    let in_text = |d: &archguard_engine::core::Diagram| archguard_engine::report::arc42_file::in_text(&text, d);
     let open = view.as_ref().map(|(_, id)| id.as_str());
     if s.catalogue {
         m.catalogue = true;
@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(own.figures.row_count(), others);
         assert_eq!(own.missing, others as i32 + 1, "the map is not in the text");
         let section = archguard_engine::report::diagram_section(map, s.format);
-        let block = crate::arc42_file::diagram_block(&map.id, &section);
+        let block = archguard_engine::report::arc42_file::diagram_block(&map.id, &section);
         let with_map = own_text(dir.path(), &format!("Eigener Text.\n\n{block}\n"));
         assert!(!with_map.map_insertable);
         assert_eq!(with_map.missing, others as i32, "the map is in the text");

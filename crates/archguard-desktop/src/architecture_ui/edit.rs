@@ -1,5 +1,5 @@
 //! The chapter editor of the Architecture tab, saved into the project's
-//! arc42 text (see [`crate::arc42_file`]). Visual: the chapter as
+//! arc42 text (see [`archguard_engine::arc42_file`]). Visual: the chapter as
 //! formatted text to type in ([`super::rich`]). Markdown: the whole
 //! chapter beside its preview.
 
@@ -15,12 +15,13 @@ use super::rich::layout::Style;
 use super::rich::view::Key;
 use super::rich::view::Rich;
 use super::{blocks, cursor, markdown, sync};
-use crate::arc42_file::{self, Arc42Files, Target, diagram_block};
 use crate::documents::{self, DocId};
 use crate::tab_support::Texts;
 use crate::ui::{
     AppWindow, ArcFigure, ArchitectureData, ArchitectureModel, RichData, RichItem, Theme,
 };
+use archguard_engine::arc42_file::{self, Arc42Files, Target};
+use archguard_engine::report::arc42_file::{diagram_block, generated};
 
 /// The part of a document the chapter editor owns (`documents::mark_dirty`).
 pub(super) const PART: &str = "arc42";
@@ -138,7 +139,7 @@ impl Editor {
     pub fn chapter(&self, doc: &Arc42Document, n: u8) -> String {
         match &self.files {
             Some(f) => f.chapter(doc, n),
-            None => arc42_file::generated(doc, n),
+            None => generated(doc, n),
         }
     }
 
@@ -569,9 +570,28 @@ fn ask_path(ui: &AppWindow, root: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
-    use crate::arc42_file::tests::doc;
+    use archguard_engine::report::Arc42Chapter;
+
+    /// A German document whose chapter `n` says `"{evidence} {n}"`.
+    pub(crate) fn doc(evidence: &str) -> Arc42Document {
+        Arc42Document {
+            schema_version: 1,
+            lang: archguard_engine::core::DocLang::De,
+            scope: "shop".into(),
+            notice: "Notice.\n",
+            chapters: (1..=12)
+                .map(|n| Arc42Chapter {
+                    number: n,
+                    title: "Title",
+                    markdown: format!("{evidence} {n}"),
+                    questions: vec![],
+                })
+                .collect(),
+            diagrams: vec![],
+        }
+    }
 
     /// A project with an `arc42.md`, open as a document.
     fn project() -> (tempfile::TempDir, DocId) {
@@ -783,7 +803,14 @@ mod tests {
             let e = o.as_mut().unwrap();
             let rich = e.rich();
             let c = rich.editor.focus;
-            rich.editor.place(Caret { block: 1, at: 4, ..c }, false);
+            rich.editor.place(
+                Caret {
+                    block: 1,
+                    at: 4,
+                    ..c
+                },
+                false,
+            );
             let offset = e.cursor();
             assert_eq!(&md[..offset], "## 5. Title\n\neins\n\nzwei");
             e.drop_rich();
@@ -896,8 +923,14 @@ mod tests {
         let asked = editor.with_open(|o| o.as_ref().map(|e| e.ask_location));
         assert_eq!(asked, Some(false), "no question where to create it");
         let reason = editor.unsaved_reason();
-        assert!(reason.contains("arc42.md") && reason.contains("UTF-8"), "{reason}");
-        assert_eq!(std::fs::read(&path).unwrap(), b"## 5. Bausteine\n\nGr\xfc\xdfe.\n");
+        assert!(
+            reason.contains("arc42.md") && reason.contains("UTF-8"),
+            "{reason}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"## 5. Bausteine\n\nGr\xfc\xdfe.\n"
+        );
     }
 
     /// A save refused because the chapter changed on disk keeps its

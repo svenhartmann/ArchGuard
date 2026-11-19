@@ -5,7 +5,7 @@ use slint::{SharedString, StyledText};
 
 use super::markdown::{self, Align, Block};
 use super::rich::inline::Inline;
-use crate::arc42_file::{heading_number, line_starts};
+use archguard_engine::report::arc42_file::{heading_number, line_starts};
 use crate::tab_support::model;
 use crate::ui::ArcBlock;
 
