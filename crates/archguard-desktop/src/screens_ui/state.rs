@@ -27,6 +27,8 @@ pub enum List {
     ShownButRefused,
     HiddenButUnprotected,
     Undeclared,
+    /// The unresolved targets of one source: its first unresolved transition.
+    Unreadable(usize),
 }
 
 pub const LISTS: [List; 4] = [
@@ -48,6 +50,8 @@ pub struct ScreensState {
     /// Index into the flow's screens.
     pub selected: Option<usize>,
     pub list: Option<List>,
+    /// Applications whose band shows only its title.
+    pub collapsed: BTreeSet<String>,
 }
 
 pub fn build_from(flow: Result<UiFlow, String>) -> ScreensState {
@@ -68,6 +72,7 @@ pub fn build_from(flow: Result<UiFlow, String>) -> ScreensState {
         role: 0,
         selected: None,
         list: None,
+        collapsed: BTreeSet::new(),
     }
 }
 
@@ -107,6 +112,19 @@ pub fn atoms_of(flow: &UiFlow) -> (Vec<String>, Vec<Atom>) {
     (roles.into_iter().collect(), atoms.into_iter().collect())
 }
 
+/// Anonymous (0), signed in without a role (1), else signed in with
+/// `roles[role - 2]`.
+pub fn role_assignment(role: RoleIndex, roles: &[String]) -> Assignment {
+    let mut a = Assignment {
+        authenticated: role > 0,
+        ..Assignment::default()
+    };
+    if let Some(name) = role.checked_sub(2).and_then(|i| roles.get(i)) {
+        a.roles.insert(name.clone());
+    }
+    a
+}
+
 impl ScreensState {
     pub fn flow(&self) -> Option<&UiFlow> {
         (*self.flow).as_ref().ok()
@@ -114,13 +132,7 @@ impl ScreensState {
 
     /// The simulator input for the chosen user and switches.
     pub fn assignment(&self) -> Assignment {
-        let mut a = Assignment {
-            authenticated: self.role > 0,
-            ..Assignment::default()
-        };
-        if let Some(role) = self.role.checked_sub(2).and_then(|i| self.roles.get(i)) {
-            a.roles.insert(role.clone());
-        }
+        let mut a = role_assignment(self.role, &self.roles);
         for (atom, value) in self.atoms.iter().zip(&self.switches) {
             let Some(v) = *value else { continue };
             let map = if atom.policy {
@@ -159,6 +171,26 @@ impl ScreensState {
 
     pub fn open_list(&mut self, i: usize) {
         self.list = LISTS.get(i).copied();
+    }
+
+    /// The list of the unresolved targets of a source (transition index).
+    pub fn open_group(&mut self, k: usize) {
+        if self.flow().is_some_and(|f| k < f.transitions.len()) {
+            self.list = Some(List::Unreadable(k));
+        }
+    }
+
+    /// Collapse or expand the band at `i` (band order of the layout).
+    pub fn toggle_band(&mut self, i: usize) {
+        let Some(name) = self
+            .flow()
+            .and_then(|f| super::layout::band_names(f).get(i).cloned())
+        else {
+            return;
+        };
+        if !self.collapsed.remove(&name) {
+            self.collapsed.insert(name);
+        }
     }
 
     pub fn close_details(&mut self) {

@@ -7,6 +7,7 @@ import { EmptyState, SectionHeading } from "widgets.slint";
 import { Fmt } from "format.slint";
 import { Para, LinkLine, SummaryBar, PanelTitle, Heading } from "flow_parts.slint";
 import { EntityCanvas, StateDiagram, DomainKinds, DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+import { RoleRow, FlowRole } from "screens_view.slint";
 
 export { DomCard, DomArrow, DomBand, DomState, DomStateArrow }
 
@@ -17,12 +18,28 @@ export struct DomField {
 
 export struct DomTransition {
     number: string,
+    to: string,
     from-to: string,
     method: string,
     guard: string,
     events: string,
     location: string,
     file: string,
+}
+
+// One element of a chain; `tone` colours the endpoint for the simulated
+// user: 0 allowed, 1 denied, 2 unknown, -1 none.
+export struct DomStep {
+    kind: string,
+    text: string,
+    location: string,
+    file: string,
+    tone: int,
+}
+
+// action → endpoint → use cases → transitions → events (ADR 0022 decision 4).
+export struct DomChain {
+    steps: [DomStep],
 }
 
 export struct DomEvent {
@@ -60,6 +77,13 @@ export struct DomainViewModel {
     state-h: float,
     rows: [DomTransition],
     events: [DomEvent],
+    // The state picked in the diagram or table, its chains, the entity's chains.
+    chosen-state: string,
+    triggers: [DomChain],
+    chains: [DomChain],
+    roles: [FlowRole],
+    // Why there are no chains: the UI flow could not be read.
+    flow-note: string,
 }
 
 export global DomainData {
@@ -67,6 +91,9 @@ export global DomainData {
     callback select-entity(int);
     callback close-details();
     callback open-file(string);
+    // A state of the shown state machine, by name.
+    callback select-state(string);
+    callback select-role(int);
 }
 
 component Cell inherits Text {
@@ -81,13 +108,15 @@ component Cell inherits Text {
 component TransitionRow inherits Rectangle {
     in property <DomTransition> item;
     in property <bool> head;
+    in property <bool> chosen;
     callback open-file(string);
+    callback select();
     height: cells.preferred-height;
-    background: !head && t.has-hover ? Theme.panel-2 : transparent;
+    background: !head && chosen ? Theme.accent.with-alpha(0.16) : !head && t.has-hover ? Theme.panel-2 : transparent;
     t := TouchArea {
         enabled: !root.head;
         mouse-cursor: pointer;
-        clicked => { root.open-file(item.file); }
+        clicked => { root.select(); }
     }
     cells := HorizontalLayout {
         padding-top: 5px;
@@ -98,11 +127,42 @@ component TransitionRow inherits Rectangle {
         Cell { head: root.head; width: 200px; text: root.head ? @tr("method") : item.method; font-family: root.head ? "" : Theme.mono-family; }
         Cell { head: root.head; horizontal-stretch: 2; text: root.head ? @tr("allowed when") : item.guard; font-family: root.head ? "" : Theme.mono-family; }
         Cell { head: root.head; horizontal-stretch: 1; text: root.head ? @tr("events") : item.events; }
-        Cell { head: root.head; width: 210px; text: root.head ? @tr("file") : item.location; color: root.head ? Theme.muted : Theme.accent; }
+        Cell {
+            head: root.head;
+            width: 210px;
+            text: root.head ? @tr("file") : item.location;
+            color: root.head ? Theme.muted : Theme.accent;
+            TouchArea {
+                enabled: !root.head;
+                mouse-cursor: pointer;
+                clicked => { root.open-file(item.file); }
+            }
+        }
     }
 }
 
-// The selected entity's state machine: diagram, then the table.
+component ChainBox inherits VerticalLayout {
+    in property <DomChain> chain;
+    spacing: 3px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    Rectangle { height: 1px; background: Theme.border; }
+    for s in chain.steps: HorizontalLayout {
+        spacing: 10px;
+        Text { text: s.kind; width: 110px; color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: top; }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            Para {
+                text: s.text;
+                color: s.tone == 0 ? Theme.success : s.tone == 1 ? Theme.priority : s.tone == 2 ? Theme.outgoing : Theme.text;
+            }
+            if s.location != "": LinkLine { text: s.location; mono: true; clicked => { DomainData.open-file(s.file); } }
+        }
+    }
+}
+
+// The selected entity's state machine: diagram, then the table, then the
+// chains into the chosen state and of the entity.
 component MachinePanel inherits ScrollView {
     property <DomainViewModel> m: DomainData.model;
     VerticalLayout {
@@ -117,12 +177,29 @@ component MachinePanel inherits ScrollView {
             arrows: m.state-arrows;
             canvas-w: m.state-w;
             canvas-h: m.state-h;
+            select(s) => { DomainData.select-state(s); }
         }
         TransitionRow { head: true; }
         for r in m.rows: VerticalLayout {
             Rectangle { height: 1px; background: Theme.border; }
-            TransitionRow { item: r; open-file(f) => { DomainData.open-file(f); } }
+            TransitionRow {
+                item: r;
+                chosen: r.to == m.chosen-state;
+                open-file(f) => { DomainData.open-file(f); }
+                select => { DomainData.select-state(r.to); }
+            }
         }
+        Rectangle { height: 10px; }
+        SectionHeading { label: @tr("Who can cause this"); }
+        if m.flow-note != "": Para { text: m.flow-note; muted: true; }
+        if m.chosen-state == "": Para { text: @tr("Select a state in the diagram or a row of the table."); muted: true; }
+        if m.chosen-state != "": Para { text: @tr("Chains into {}: screen action → endpoint → use case → transition → events. The endpoint shows what it says to the simulated user.", m.chosen-state); muted: true; }
+        if m.chosen-state != "" && m.triggers.length == 0: Para { text: @tr("No endpoint chain leads into this state."); muted: true; }
+        for c in m.triggers: ChainBox { chain: c; }
+        Rectangle { height: 10px; }
+        SectionHeading { label: @tr("Chains of this entity ({})", Fmt.int(m.chains.length)); }
+        if m.chains.length == 0: Para { text: @tr("No endpoint chain changes this entity."); muted: true; }
+        for c in m.chains: ChainBox { chain: c; }
     }
 }
 
@@ -143,6 +220,16 @@ component SidePanel inherits ScrollView {
             spacing: 8px;
             Para { text: f.name; horizontal-stretch: 1; }
             Para { text: f.type; mono: true; muted: true; horizontal-alignment: right; }
+        }
+        if m.states.length > 0: Rectangle { height: 8px; }
+        if m.states.length > 0: SectionHeading { label: @tr("Simulate as"); }
+        if m.states.length > 0: Para { text: @tr("Colours each chain's endpoint, as in the Screens view."); muted: true; }
+        if m.states.length > 0: VerticalLayout {
+            spacing: 6px;
+            for r[i] in m.roles: RoleRow {
+                role: r;
+                clicked => { DomainData.select-role(i); }
+            }
         }
         Rectangle { height: 8px; }
         SectionHeading { label: @tr("Events"); }

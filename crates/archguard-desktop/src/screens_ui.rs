@@ -9,14 +9,15 @@ mod inspector;
 mod layout;
 mod state;
 mod view;
-mod words;
+pub mod words;
 
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::tab_support::{self, Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, ScreensData, ScreensModel};
-pub use state::ScreensState;
+pub use state::{ScreensState, atoms_of, role_assignment};
+pub use view::role_rows;
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
@@ -36,6 +37,16 @@ pub fn wire(ui: &AppWindow) {
     d.on_open_list(a.on(|s, _, i: i32| {
         if let Some(i) = index(i) {
             s.open_list(i)
+        }
+    }));
+    d.on_open_group(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.open_group(i)
+        }
+    }));
+    d.on_toggle_band(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.toggle_band(i)
         }
     }));
     d.on_close_details(a.on0(|s, _| s.close_details()));

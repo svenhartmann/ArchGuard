@@ -1,10 +1,12 @@
 //! A layered left-to-right diagram per application: start screens (route
 //! `/`) and the "every screen" source of layouts and menus in the first
 //! column, each screen one column right of the nearest screen leading to
-//! it, unresolved targets one column right of their source. Applications
-//! are stacked as bands.
+//! it, one card for all unresolved targets of a source one column right of
+//! it. Applications are stacked as bands: those with a start screen first,
+//! most reached screens first, then the rest, ties by name; a collapsed
+//! band shows only its title.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use archguard_engine::core::{Origin, Target, UiFlow, normalize_path_pattern};
 
@@ -25,7 +27,8 @@ pub enum Node {
     Screen(usize),
     /// Layouts and menus of the band's application.
     Every,
-    /// Index into the flow's transitions (the first with this source and text).
+    /// The unresolved targets of one source: index into the flow's
+    /// transitions (the first unresolved one of that source).
     Unresolved(usize),
 }
 
@@ -47,6 +50,8 @@ pub struct Band {
     pub application: String,
     pub y: f32,
     pub h: f32,
+    pub screens: usize,
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -89,7 +94,7 @@ fn applications(flow: &UiFlow) -> BTreeMap<&str, App> {
             app.starts.push(Node::Screen(i));
         }
     }
-    let mut texts: HashMap<(Node, &str), usize> = HashMap::new();
+    let mut unresolved: HashMap<Node, usize> = HashMap::new();
     for (k, t) in flow.transitions.iter().enumerate() {
         let Some((from, name)) = source(flow, &ids, &t.from) else {
             continue;
@@ -102,7 +107,7 @@ fn applications(flow: &UiFlow) -> BTreeMap<&str, App> {
                 Some(&j) if app_of(flow, j) == name => Node::Screen(j),
                 _ => continue,
             },
-            Target::Unresolved(text) => Node::Unresolved(*texts.entry((from, text)).or_insert(k)),
+            Target::Unresolved(_) => Node::Unresolved(*unresolved.entry(from).or_insert(k)),
         };
         app.add(from, to);
     }
@@ -138,8 +143,9 @@ impl App {
 }
 
 /// Column of every node: breadth first from the start screens and the
-/// "every screen" source; unreached screens after the last column.
-fn columns(app: &App) -> HashMap<Node, usize> {
+/// "every screen" source; unreached screens after the last column. Also
+/// the number of screens reached from a start screen.
+fn columns(app: &App) -> (HashMap<Node, usize>, usize) {
     let mut col: HashMap<Node, usize> = HashMap::new();
     let mut queue: Vec<Node> = app.starts.clone();
     if app.nodes.contains(&Node::Every) {
@@ -159,6 +165,13 @@ fn columns(app: &App) -> HashMap<Node, usize> {
             }
         }
     }
+    let reached = if app.starts.is_empty() {
+        0
+    } else {
+        (col.keys())
+            .filter(|n| matches!(n, Node::Screen(_)))
+            .count()
+    };
     let last = col.values().max().map_or(0, |m| m + 1);
     for n in app.nodes.iter().filter(|n| matches!(n, Node::Screen(_))) {
         col.entry(*n).or_insert(last);
@@ -168,15 +181,50 @@ fn columns(app: &App) -> HashMap<Node, usize> {
             col.insert(*to, col[from] + 1);
         }
     }
-    col
+    (col, reached)
 }
 
-/// The diagram of all applications.
-pub fn layout(flow: &UiFlow) -> Graph {
+/// The applications in band order, each with its columns and reach.
+type Ordered<'a> = Vec<(&'a str, App, HashMap<Node, usize>, usize)>;
+
+fn ordered(flow: &UiFlow) -> Ordered<'_> {
+    let mut apps: Ordered = (applications(flow).into_iter())
+        .map(|(name, app)| {
+            let (col, reached) = columns(&app);
+            (name, app, col, reached)
+        })
+        .collect();
+    apps.sort_by(|a, b| {
+        let key = |x: &(&str, App, _, usize)| (x.1.starts.is_empty(), std::cmp::Reverse(x.3));
+        key(a).cmp(&key(b)).then(a.0.cmp(b.0))
+    });
+    apps
+}
+
+/// The application of each band, in band order.
+pub fn band_names(flow: &UiFlow) -> Vec<String> {
+    ordered(flow).into_iter().map(|a| a.0.to_string()).collect()
+}
+
+/// The diagram of all applications; `collapsed` bands show only their title.
+pub fn layout(flow: &UiFlow, collapsed: &BTreeSet<String>) -> Graph {
     let mut g = Graph::default();
     let mut top = BAND_GAP;
-    for (name, app) in applications(flow) {
-        let col = columns(&app);
+    for (name, app, col, _) in ordered(flow) {
+        let screens = (app.nodes.iter())
+            .filter(|n| matches!(n, Node::Screen(_)))
+            .count();
+        if collapsed.contains(name) {
+            g.bands.push(Band {
+                application: name.to_string(),
+                y: top,
+                h: HEAD,
+                screens,
+                collapsed: true,
+            });
+            top += HEAD + BAND_GAP;
+            continue;
+        }
         let mut rows: HashMap<usize, usize> = HashMap::new();
         let mut at: HashMap<Node, (f32, f32)> = HashMap::new();
         let ordered = app
@@ -205,10 +253,13 @@ pub fn layout(flow: &UiFlow) -> Graph {
             application: name.to_string(),
             y: top,
             h,
+            screens,
+            collapsed: false,
         });
         top += h + BAND_GAP;
     }
     g.height = top;
+    g.width = g.width.max(2.0 * (CARD_W + PAD));
     g
 }
 
@@ -289,15 +340,16 @@ mod tests {
 
     #[test]
     fn screens_go_one_column_right_of_their_nearest_source() {
-        let g = layout(&shop());
+        let g = layout(&shop(), &BTreeSet::new());
         assert_eq!(
             g.bands
                 .iter()
                 .map(|b| b.application.as_str())
                 .collect::<Vec<_>>(),
-            ["Admin", "Web"]
+            ["Web", "Admin"],
+            "the app reaching more screens first"
         );
-        let web = g.bands[1].y + HEAD;
+        let web = g.bands[0].y + HEAD;
         let col = |n| ((at(&g, n).0 - PAD) / (CARD_W + GAP_X)).round() as usize;
         assert_eq!(at(&g, Node::Screen(0)), (PAD, web), "start screen first");
         assert_eq!(col(Node::Every), 0, "every screen beside the start");
@@ -309,13 +361,45 @@ mod tests {
     }
 
     #[test]
+    fn apps_with_a_start_come_first_by_reached_screens() {
+        let mut f = shop();
+        // Admin keeps its start but reaches only itself; Client has no start.
+        f.screens.push(screen("client", "Client", "/client"));
+        let g = layout(&f, &BTreeSet::new());
+        let names: Vec<&str> = g.bands.iter().map(|b| b.application.as_str()).collect();
+        assert_eq!(names, ["Web", "Admin", "Client"]);
+        f.screens.push(screen("b", "B", "/"));
+        let g = layout(&f, &BTreeSet::new());
+        let names: Vec<&str> = g.bands.iter().map(|b| b.application.as_str()).collect();
+        assert_eq!(names, ["Web", "Admin", "B", "Client"], "ties by name");
+    }
+
+    #[test]
+    fn unreadable_targets_of_one_source_share_one_card() {
+        let mut f = shop();
+        let from = Origin::Screen("cart".into());
+        f.transitions
+            .push(go(from, Target::Unresolved("@Url(y)".into())));
+        let g = layout(&f, &BTreeSet::new());
+        let unresolved = g
+            .cards
+            .iter()
+            .filter(|c| matches!(c.node, Node::Unresolved(_)));
+        assert_eq!(unresolved.count(), 1);
+    }
+
+    #[test]
     fn edges_are_deduplicated_and_stay_in_their_application() {
-        let g = layout(&shop());
+        let g = layout(&shop(), &BTreeSet::new());
         // home→cart once, cart→pay, pay→home, cart→unresolved, every→cart;
         // home→admin crosses applications and is left out.
         assert_eq!(g.arrows.len(), 5);
         assert_eq!(g.arrows.iter().filter(|a| a.unresolved).count(), 1);
         assert!(g.height > g.bands[1].y + g.bands[1].h);
         assert_eq!(g.width, PAD + 3.0 * (CARD_W + GAP_X) + CARD_W + PAD);
+        let collapsed = BTreeSet::from(["Web".to_string()]);
+        let g = layout(&shop(), &collapsed);
+        assert!(g.bands[0].collapsed);
+        assert_eq!(g.cards.len(), 1, "only Admin's card");
     }
 }

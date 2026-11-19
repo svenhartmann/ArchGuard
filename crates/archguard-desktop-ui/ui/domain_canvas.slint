@@ -34,6 +34,7 @@ export struct DomBand {
 export struct DomState {
     name: string,
     initial: bool,
+    selected: bool,
     // The "any state" source of transitions without a from-state.
     any: bool,
     x: float,
@@ -207,6 +208,8 @@ export component StateDiagram inherits Rectangle {
     in property <[DomStateArrow]> arrows;
     in property <float> canvas-w;
     in property <float> canvas-h;
+    // A state node was clicked (its name).
+    callback select(string);
     width: canvas-w * 1px;
     height: canvas-h * 1px;
     for a in root.arrows: Path {
@@ -227,9 +230,14 @@ export component StateDiagram inherits Rectangle {
         width: s.w * 1px;
         height: s.h * 1px;
         border-radius: self.height / 2;
-        background: s.any ? transparent : s.initial ? Theme.accent.with-alpha(0.16) : Theme.panel;
-        border-width: s.initial ? 2px : 1px;
-        border-color: s.initial ? Theme.accent : s.any ? Theme.muted : Theme.border;
+        background: s.any ? transparent : s.selected ? Theme.accent.with-alpha(0.32) : s.initial ? Theme.accent.with-alpha(0.16) : st.has-hover ? Theme.panel-2 : Theme.panel;
+        border-width: s.initial || s.selected ? 2px : 1px;
+        border-color: s.initial || s.selected ? Theme.accent : s.any ? Theme.muted : Theme.border;
+        st := TouchArea {
+            enabled: !s.any;
+            mouse-cursor: pointer;
+            clicked => { root.select(s.name); }
+        }
         Text {
             text: s.any ? @tr("any state") : s.name;
             color: s.any ? Theme.muted : Theme.text;
