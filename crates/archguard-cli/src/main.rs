@@ -44,6 +44,7 @@ mod cycle_view;
 mod db;
 mod diagram_cmd;
 mod doctor_cmd;
+mod domain_cmd;
 mod dsm_cmd;
 mod engineering_cmd;
 mod evaluate_cmd;
@@ -61,6 +62,7 @@ mod security_cmd;
 mod service_cmd;
 mod simulate_cmd;
 mod trend_cmd;
+mod ui_flow_cmd;
 mod update_cmd;
 mod view_util;
 mod workspace_cmd;
@@ -179,21 +181,6 @@ fn run(cli: &Cli) -> i32 {
     }
     if let Some(code) = standalone(cli, &root) {
         return code;
-    }
-    if let Command::Contracts {
-        report,
-        service,
-        usage,
-        ..
-    } = &cli.command
-    {
-        return engineering_cmd::contracts(
-            cli,
-            &root,
-            report.as_deref(),
-            service.as_deref(),
-            usage.as_deref(),
-        );
     }
     if let Command::QualityHistory { record: false, .. } = &cli.command {
         return engineering_cmd::history(cli, &root);
@@ -386,6 +373,8 @@ fn run(cli: &Cli) -> i32 {
         | Command::Trend { .. }
         | Command::Services { .. }
         | Command::Runtime { .. }
+        | Command::UiFlow { .. }
+        | Command::Domain { .. }
         | Command::Workspace { .. }
         | Command::Contracts { .. }
         | Command::Security { .. }
@@ -437,6 +426,22 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
     Some(match &cli.command {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
+        Command::UiFlow {
+            role, anonymous, ..
+        } => ui_flow_cmd::run(cli, root, role, *anonymous),
+        Command::Domain { entity, .. } => domain_cmd::run(cli, root, entity.as_deref()),
+        Command::Contracts {
+            report,
+            service,
+            usage,
+            ..
+        } => engineering_cmd::contracts(
+            cli,
+            root,
+            report.as_deref(),
+            service.as_deref(),
+            usage.as_deref(),
+        ),
         Command::Security {
             cached,
             offline,
