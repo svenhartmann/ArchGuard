@@ -22,15 +22,18 @@
 //!   `[Inject] T Name { get; set; }`, then `Name.Method(...)` is followed into
 //!   the C# class `T` down to `HttpClient` calls.
 //!
-//! - A component without `@page` (layout, menu) acts on every screen of its
-//!   application: its transitions and actions start at `any_screen`.
+//! - A component without `@page` acts where it is used, see [`usage`]: on each
+//!   page that renders it (with the `<AuthorizeView>` condition around the
+//!   tag), on every screen when a layout renders it, else on every screen of
+//!   its application with a note.
+//! - Triggers of handlers, see [`triggers`]: `@onclick` and the `EditForm`
+//!   submit handlers name the actions and navigations their handler makes.
 //! - A literal target matches parameter routes (`item/42` -> `/item/{id:int}`);
 //!   an exact literal route wins, and a tie of equally good routes stays
 //!   unresolved. An HTTP call with a computed path is a `Call::Unresolved` action.
 //!
 //! Not recognized: routes from constants or `[Route]`, targets built by helper
-//! methods (they stay unresolved), buttons whose handler navigates or calls
-//! (no trigger), commented-out C# code in `.razor` files, `@inject` in
+//! methods (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
 //! `_Imports.razor`, components of referenced Razor class libraries (targets
 //! resolve within one application).
 use crate::project_files::read_repo_file;
@@ -55,6 +58,12 @@ const VERBS: [&str; 5] = ["Get", "Post", "Put", "Delete", "Patch"];
 struct Component {
     /// The component's screen, or every screen of its application without `@page`.
     origin: Origin,
+    /// Where its transitions and actions start, with the condition of the
+    /// usage site; set by [`usage::place`].
+    contexts: Vec<(Origin, Option<Condition>)>,
+    /// `@inherits LayoutComponentBase`.
+    layout: bool,
+    triggers: triggers::Triggers,
     application: Option<String>,
     /// Directory of the owning `.csproj` (`""` for the root or none).
     project: String,
@@ -81,19 +90,21 @@ struct Files {
 /// Screens, transitions and actions of every Blazor component below `root`.
 ///
 /// Components without `@page` (layouts, menus) have no screen of their own:
-/// their transitions and actions start at `any_screen` of their application.
+/// their transitions and actions start where they are used ([`usage`]).
 pub fn extract(root: &Path) -> UiFlow {
     let mut flow = UiFlow::default();
     let Some(files) = discover(root, &mut flow) else {
         return flow;
     };
-    let components = load(root, &files, &mut flow);
+    let mut components = load(root, &files, &mut flow);
     let index = services::Index::build(root, &files, &components, &mut flow);
+    let notes = usage::place(&index, &mut components, &mut flow);
     let mut grpc = BTreeSet::new();
     for c in &components {
         navigation(&mut flow, c, &components);
         services::actions(&index, c, &mut flow, &mut grpc);
     }
+    usage::note(&mut flow, &components, notes);
     // A guard around several links reports its unknown condition once.
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
@@ -183,17 +194,20 @@ fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component]) {
                 }
             };
             let condition = guard(text, &views, at, file, flow);
-            flow.transitions.push(Transition {
-                from: c.origin.clone(),
-                target,
-                trigger,
-                file: file.clone(),
-                line,
-                condition,
-                source: SOURCE.into(),
-            });
+            let trigger = trigger.or_else(|| c.triggers.at(index, at));
+            for (from, condition) in c.placed(condition) {
+                flow.transitions.push(Transition {
+                    from,
+                    target: target.clone(),
+                    trigger: trigger.clone(),
+                    file: file.clone(),
+                    line,
+                    condition,
+                    source: SOURCE.into(),
+                });
+            }
         }
-        http(flow, c, file, text, &views);
+        http(flow, c, (index, file), text, &views);
     }
 }
 
@@ -233,6 +247,10 @@ fn component(
     let injected = services::injections(&texts);
     let (file, text) = &texts[0];
     let (routes, first) = routes(file, text, flow);
+    let layout = text.lines().any(|l| {
+        (l.trim().strip_prefix("@inherits")).is_some_and(|r| r.contains("LayoutComponentBase"))
+    });
+    let triggers = triggers::of(&texts);
     let id = match &application {
         Some(app) => format!("{app}:{inner}"),
         None => inner.to_string(),
@@ -260,7 +278,10 @@ fn component(
         });
     }
     Component {
+        contexts: vec![(origin.clone(), None)],
         origin,
+        layout,
+        triggers,
         application,
         project: project_of(rel, projects).unwrap_or_default().into(),
         texts,
@@ -395,6 +416,35 @@ fn roles_condition(roles: &str) -> Condition {
     }
 }
 
+impl Component {
+    /// One (origin, condition) per usage context for a site whose own
+    /// condition inside the component is `inner`.
+    fn placed(&self, inner: Option<Condition>) -> Vec<(Origin, Option<Condition>)> {
+        (self.contexts.iter())
+            .map(|(origin, outer)| (origin.clone(), join(outer.clone(), inner.clone())))
+            .collect()
+    }
+
+    /// File name without `.razor`: the tag name that renders it.
+    fn name(&self) -> &str {
+        let file = &self.texts[0].0;
+        let file = file.rsplit('/').next().unwrap_or(file);
+        file.strip_suffix(".razor").unwrap_or(file)
+    }
+}
+
+/// Both conditions under one flat `All`, outer first.
+fn join(outer: Option<Condition>, inner: Option<Condition>) -> Option<Condition> {
+    let mut items = Vec::new();
+    for c in outer.into_iter().chain(inner) {
+        match c {
+            Condition::All(nested) => items.extend(nested),
+            c => items.push(c),
+        }
+    }
+    all(items)
+}
+
 fn all(mut items: Vec<Condition>) -> Option<Condition> {
     match items.len() {
         0 => None,
@@ -434,7 +484,7 @@ fn resolve(
 }
 
 /// Actions for direct HTTP client calls with a literal path.
-fn http(flow: &mut UiFlow, c: &Component, file: &str, text: &str, views: &Blocks) {
+fn http(flow: &mut UiFlow, c: &Component, (n, file): (usize, &str), text: &str, views: &Blocks) {
     for (at, receiver, verb, arg) in csharp::http_calls(text) {
         // shortcut: without a visible declaration the name decides, until `@code` fields are read.
         let client = match c.injected.get(receiver) {
@@ -458,15 +508,18 @@ fn http(flow: &mut UiFlow, c: &Component, file: &str, text: &str, views: &Blocks
             }
         };
         let condition = guard(text, views, at, file, flow);
-        flow.actions.push(Action {
-            screen: c.origin.clone(),
-            trigger: None,
-            call,
-            file: file.into(),
-            line,
-            condition,
-            source: SOURCE.into(),
-        });
+        let trigger = c.triggers.at(n, at);
+        for (screen, condition) in c.placed(condition) {
+            flow.actions.push(Action {
+                screen,
+                trigger: trigger.clone(),
+                call: call.clone(),
+                file: file.into(),
+                line,
+                condition,
+                source: SOURCE.into(),
+            });
+        }
     }
 }
 
@@ -639,7 +692,7 @@ mod text {
         None
     }
 
-    fn strip_tags(s: &str) -> String {
+    pub(super) fn strip_tags(s: &str) -> String {
         let mut out = String::new();
         let mut depth = 0;
         for c in s.chars() {
@@ -653,7 +706,7 @@ mod text {
         out
     }
 
-    fn words(s: &str) -> String {
+    pub(super) fn words(s: &str) -> String {
         s.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
@@ -794,6 +847,7 @@ mod csharp {
         pub(super) body: (usize, usize),
     }
 
+    #[derive(Default)]
     pub(super) struct Class {
         pub(super) name: String,
         pub(super) namespace: String,
@@ -1104,6 +1158,40 @@ mod csharp {
         });
     }
 
+    /// Methods of a `.cs` file's classes, or of a Razor file's `@code` and
+    /// `@functions` blocks; body offsets are into `text`.
+    pub(super) fn methods(file: &str, text: &str) -> Vec<Method> {
+        if file.ends_with(".cs") {
+            let (code, mask) = clean(text);
+            return (classes(0, &code, &mask).into_iter())
+                .flat_map(|c| c.methods)
+                .collect();
+        }
+        let mut found = Vec::new();
+        for keyword in ["@code", "@functions"] {
+            for (at, _) in text.match_indices(keyword) {
+                // Only the block is C#; the markup before it is not cleaned.
+                let (code, mask) = clean(&text[at..]);
+                let Some(open) = mask.find('{') else {
+                    continue;
+                };
+                if !mask[keyword.len()..open].trim().is_empty() {
+                    continue;
+                }
+                let end = open + 1 + balanced(&mask[open + 1..], '}').len();
+                let mut block = Class::default();
+                for segment in segments(&mask, open + 1, end) {
+                    member(&mut block, (&code, &mask), segment);
+                }
+                found.extend(block.methods.into_iter().map(|mut m| {
+                    m.body = (m.body.0 + at, m.body.1 + at);
+                    m
+                }));
+            }
+        }
+        found
+    }
+
     /// Parts of a whole `$"..."` argument; `None` for anything else.
     pub(super) fn interpolation(arg: &str) -> Option<Vec<Part>> {
         let body = arg.strip_prefix("$\"")?;
@@ -1271,8 +1359,8 @@ mod csharp {
 ///   service line.
 /// - gRPC clients (`Outer.OuterClient`, also through a `using` alias) are no
 ///   HTTP: one note per client type, no action.
-/// - The action is placed at the call site in the component, with its screen
-///   and `<AuthorizeView>` condition; trigger is none.
+/// - The action is placed at the call site in the component, with its usage
+///   contexts, `<AuthorizeView>` condition and handler trigger.
 mod services {
     use super::csharp::{self, Class, Method, Part};
     use super::text::{
@@ -1371,7 +1459,7 @@ mod services {
         }
 
         /// `project` and every project it references, transitively.
-        fn scope(&self, project: &str) -> BTreeSet<String> {
+        pub(super) fn scope(&self, project: &str) -> BTreeSet<String> {
             let mut seen = BTreeSet::new();
             let mut queue = vec![project.to_string()];
             while let Some(p) = queue.pop() {
@@ -1545,7 +1633,7 @@ mod services {
     ) {
         let scope = index.scope(&c.project);
         let none = BTreeMap::new();
-        for (file, text) in &c.texts {
+        for (n, (file, text)) in c.texts.iter().enumerate() {
             let views = guards(text);
             for (at, receiver, method, arity) in csharp::invocations(text) {
                 let Some(ty) = receiver.and_then(|r| c.injected.get(r)) else {
@@ -1561,17 +1649,20 @@ mod services {
                     calls: BTreeSet::new(),
                 };
                 walk.call(ty, &none, (method, arity), (file, line), 1);
+                let trigger = c.triggers.at(n, at);
                 for call in walk.calls {
                     let condition = guard(text, &views, at, file, flow);
-                    flow.actions.push(Action {
-                        screen: c.origin.clone(),
-                        trigger: None,
-                        call,
-                        file: file.clone(),
-                        line,
-                        condition,
-                        source: SOURCE.into(),
-                    });
+                    for (screen, condition) in c.placed(condition) {
+                        flow.actions.push(Action {
+                            screen,
+                            trigger: trigger.clone(),
+                            call: call.clone(),
+                            file: file.clone(),
+                            line,
+                            condition,
+                            source: SOURCE.into(),
+                        });
+                    }
                 }
             }
         }
@@ -1810,6 +1901,381 @@ mod services {
             }
         }
         found
+    }
+}
+
+/// Where a component without `@page` acts, by fixed rules:
+///
+/// - Usage sites are `<Name` tags in the markup of `.razor` files whose
+///   project scope (the project and its `<ProjectReference>`s, as for
+///   services) holds exactly one component file `Name.razor`. Several such
+///   files make the name ambiguous: no usage is followed, a note says so.
+/// - A page that renders it: its transitions and actions start at that page,
+///   under the `<AuthorizeView>` condition around the tag, joined with the
+///   conditions inside the component by a flat `All` (outer first).
+/// - A layout (`@inherits LayoutComponentBase`, or named by `@layout`):
+///   `any_screen` of the layout's application, under the condition of the tag.
+/// - Another component: its own contexts, followed upward up to
+///   [`MAX_DEPTH`] components; a usage that returns to a component already on
+///   the path is skipped.
+/// - No usage found, an ambiguous name or a chain too deep anywhere on the
+///   way: `any_screen` of its own application without a condition, as before,
+///   and a note on components that emit a transition or action.
+mod usage {
+    use super::services::Index;
+    use super::text::guards;
+    use super::{Component, guard, join};
+    use archguard_core::{Condition, DiagnosticSeverity, Origin, UiFlow, UiFlowDiagnostic};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Components followed upward from one component.
+    pub(super) const MAX_DEPTH: usize = 5;
+
+    type Contexts = BTreeSet<(Origin, Option<Condition>)>;
+
+    struct Graph {
+        /// Per component: (using component, condition around the tag).
+        uses: Vec<Vec<(usize, Option<Condition>)>>,
+        ambiguous: BTreeMap<usize, String>,
+        layouts: BTreeSet<usize>,
+    }
+
+    /// Sets the contexts of every component; returns the notes of those that
+    /// fell back to `any_screen`.
+    pub(super) fn place(
+        index: &Index,
+        components: &mut [Component],
+        flow: &mut UiFlow,
+    ) -> Vec<(usize, String)> {
+        let graph = graph(index, components, flow);
+        let mut notes = Vec::new();
+        for i in 0..components.len() {
+            match contexts(&graph, components, i, 0, &mut vec![]) {
+                Ok(found) => components[i].contexts = found.into_iter().collect(),
+                Err(reason) => notes.push((i, reason)),
+            }
+        }
+        notes
+    }
+
+    /// One note per fallen-back component that emitted something.
+    pub(super) fn note(flow: &mut UiFlow, components: &[Component], notes: Vec<(usize, String)>) {
+        for (i, reason) in notes {
+            let c = &components[i];
+            let own = |file: &String| c.texts.iter().any(|(f, _)| f == file);
+            let emits = (flow.transitions.iter().map(|t| &t.file))
+                .chain(flow.actions.iter().map(|a| &a.file))
+                .any(own);
+            if emits {
+                flow.diagnostics.push(UiFlowDiagnostic {
+                    file: c.texts[0].0.clone(),
+                    line: 1,
+                    message: format!(
+                        "Component {}: {reason}; its transitions and actions start from every screen of its application.",
+                        c.name()
+                    ),
+                    severity: DiagnosticSeverity::Note,
+                });
+            }
+        }
+    }
+
+    impl Graph {
+        /// Marks every component a tag `<name>` in `file` could mean.
+        fn ambiguous(
+            &mut self,
+            components: &[Component],
+            several: &[usize],
+            name: &str,
+            file: &str,
+        ) {
+            let files: Vec<&str> = (several.iter())
+                .map(|&i| components[i].texts[0].0.as_str())
+                .collect();
+            for &i in several {
+                self.ambiguous.entry(i).or_insert_with(|| {
+                    format!(
+                        "<{name}> in {file} matches several components ({})",
+                        files.join(", ")
+                    )
+                });
+            }
+        }
+    }
+
+    fn graph(index: &Index, components: &[Component], flow: &mut UiFlow) -> Graph {
+        let mut graph = Graph {
+            uses: components.iter().map(|_| vec![]).collect(),
+            ambiguous: BTreeMap::new(),
+            layouts: (0..components.len())
+                .filter(|&i| components[i].layout)
+                .collect(),
+        };
+        let names: BTreeSet<&str> = components.iter().map(Component::name).collect();
+        for (by, c) in components.iter().enumerate() {
+            let scope = index.scope(&c.project);
+            let named = |name: &str| -> Vec<usize> {
+                (0..components.len())
+                    .filter(|&i| components[i].name() == name)
+                    .filter(|&i| scope.contains(&components[i].project))
+                    .collect()
+            };
+            let (file, text) = &c.texts[0];
+            let views = guards(text);
+            for (at, name) in tags(text).filter(|(_, n)| names.contains(n)) {
+                match named(name)[..] {
+                    [] => {}
+                    [one] => {
+                        let condition = guard(text, &views, at, file, flow);
+                        graph.uses[one].push((by, condition));
+                    }
+                    ref several => graph.ambiguous(components, several, name, file),
+                }
+            }
+            for name in layout_names(text) {
+                graph.layouts.extend(named(name));
+            }
+        }
+        graph
+    }
+
+    fn contexts(
+        graph: &Graph,
+        components: &[Component],
+        i: usize,
+        depth: usize,
+        path: &mut Vec<usize>,
+    ) -> Result<Contexts, String> {
+        let c = &components[i];
+        if matches!(c.origin, Origin::Screen(_)) || graph.layouts.contains(&i) {
+            return Ok([(c.origin.clone(), None)].into());
+        }
+        if let Some(reason) = graph.ambiguous.get(&i) {
+            return Err(reason.clone());
+        }
+        if depth == MAX_DEPTH {
+            return Err(format!(
+                "its usage chain is deeper than {MAX_DEPTH} components"
+            ));
+        }
+        path.push(i);
+        let mut found = Contexts::new();
+        for (by, condition) in &graph.uses[i] {
+            if path.contains(by) {
+                continue;
+            }
+            let outer = contexts(graph, components, *by, depth + 1, path).map_err(|reason| {
+                format!("used in {}, and there {reason}", components[*by].name())
+            });
+            let outer = match outer {
+                Ok(outer) => outer,
+                Err(reason) => {
+                    path.pop();
+                    return Err(reason);
+                }
+            };
+            for (origin, outer) in outer {
+                found.insert((origin, join(outer, condition.clone())));
+            }
+        }
+        path.pop();
+        match found.is_empty() {
+            true => Err("component usage not found".into()),
+            false => Ok(found),
+        }
+    }
+
+    /// Opening tags with an upper-case name: (offset of `<`, name). A `<`
+    /// right after an identifier is a generic (`List<Item>`), no tag.
+    fn tags(text: &str) -> impl Iterator<Item = (usize, &str)> {
+        text.match_indices('<').filter_map(|(at, _)| {
+            if text[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+                return None;
+            }
+            let after = &text[at + 1..];
+            let end = after
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            let (name, rest) = after.split_at(end);
+            (name.starts_with(|c: char| c.is_ascii_uppercase())
+                && rest.starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>'))
+            .then_some((at, name))
+        })
+    }
+
+    /// Last segment of every `@layout X.Y.Name` line.
+    fn layout_names(text: &str) -> impl Iterator<Item = &str> {
+        text.lines().filter_map(|l| {
+            let rest = l.trim().strip_prefix("@layout ")?.trim();
+            rest.rsplit('.').next()
+        })
+    }
+}
+
+/// The trigger of an action or navigation made by an event handler:
+///
+/// - Elements: `@onclick` on any tag, `OnValidSubmit` or else `OnSubmit` on
+///   `<EditForm>`. The value `Handler`, `@Handler`, `() => Handler(...)`,
+///   `@(e => await Handler(...))` names the handler method; a lambda calling
+///   something else (`() => Svc.Run()`) triggers the calls inside its text.
+/// - The handler, and the methods of the component it calls unqualified (or
+///   via `this.`), transitively, carry the trigger. A method claimed by an
+///   earlier element in the markup keeps that element's trigger.
+/// - Label: `aria-label`, else `data-testid`, else the element's text with
+///   tags and Razor expressions (`@x.Y`, `@(...)`) removed; for an `EditForm`
+///   instead of its text the label of its first `<button type="submit">`.
+///   An element without a label gives no trigger.
+mod triggers {
+    use super::csharp;
+    use super::text::{attr, balanced, strip_tags, tag_end, words};
+    use std::collections::BTreeSet;
+
+    /// (text index, start, end, label) ranges of handler bodies and lambdas.
+    #[derive(Default)]
+    pub(super) struct Triggers(Vec<(usize, usize, usize, String)>);
+
+    impl Triggers {
+        /// The label of the first range around offset `at` of text `n`.
+        pub(super) fn at(&self, n: usize, at: usize) -> Option<String> {
+            (self.0.iter())
+                .find(|(t, s, e, _)| *t == n && *s <= at && at < *e)
+                .map(|(.., label)| label.clone())
+        }
+    }
+
+    pub(super) fn of(texts: &[(String, String)]) -> Triggers {
+        let methods: Vec<(usize, csharp::Method)> = (texts.iter().enumerate())
+            .flat_map(|(n, (file, text))| {
+                csharp::methods(file, text).into_iter().map(move |m| (n, m))
+            })
+            .collect();
+        let mut found = Vec::new();
+        let mut claimed = BTreeSet::new();
+        for (start, end, label, handler) in elements(&texts[0].1) {
+            found.push((0, start, end, label.clone()));
+            let mut queue: Vec<String> = handler.into_iter().collect();
+            while let Some(name) = queue.pop() {
+                if !claimed.insert(name.clone()) {
+                    continue;
+                }
+                for (n, m) in methods.iter().filter(|(_, m)| m.name == name) {
+                    found.push((*n, m.body.0, m.body.1, label.clone()));
+                    queue.extend(local_calls(&texts[*n].1[m.body.0..m.body.1], &methods));
+                }
+            }
+        }
+        Triggers(found)
+    }
+
+    /// Names of the component's own methods called unqualified or via `this.`.
+    fn local_calls(body: &str, methods: &[(usize, csharp::Method)]) -> Vec<String> {
+        (csharp::invocations(body).into_iter())
+            .filter(|(_, receiver, ..)| matches!(receiver, None | Some("this")))
+            .filter(|(_, _, called, _)| methods.iter().any(|(_, m)| m.name == *called))
+            .map(|(_, _, called, _)| called.to_string())
+            .collect()
+    }
+
+    /// Handler elements with a label, in text order: (value start, value end,
+    /// label, handler method).
+    fn elements(text: &str) -> Vec<(usize, usize, String, Option<String>)> {
+        let mut found = Vec::new();
+        for (at, _) in text.match_indices('<') {
+            let after = &text[at + 1..];
+            let name = &after[..after
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(after.len())];
+            let rest = &after[name.len()..];
+            let Some(end) = tag_end(rest).filter(|_| !name.is_empty()) else {
+                continue;
+            };
+            let attrs = &rest[..end];
+            let form = name == "EditForm";
+            let value = match form {
+                true => attr(attrs, "OnValidSubmit").or_else(|| attr(attrs, "OnSubmit")),
+                false => attr(attrs, "@onclick"),
+            };
+            let Some(value) = value else {
+                continue;
+            };
+            let inner = content(&rest[end + 1..], name, attrs);
+            let label = label(attrs).or_else(|| match form {
+                true => submit(inner),
+                false => Some(plain(inner)).filter(|l| !l.is_empty()),
+            });
+            if let Some(label) = label {
+                let start = value.as_ptr() as usize - text.as_ptr() as usize;
+                found.push((
+                    start,
+                    start + value.len(),
+                    label,
+                    handler(value).map(String::from),
+                ));
+            }
+        }
+        found
+    }
+
+    /// Text up to `</name>`; empty for a self-closing tag.
+    fn content<'a>(body: &'a str, name: &str, attrs: &str) -> &'a str {
+        match attrs.trim_end().ends_with('/') {
+            true => "",
+            false => &body[..body.find(&format!("</{name}>")).unwrap_or(0)],
+        }
+    }
+
+    fn label(attrs: &str) -> Option<String> {
+        ["aria-label", "data-testid"]
+            .iter()
+            .filter_map(|name| attr(attrs, name).map(words))
+            .find(|l| !l.is_empty() && !l.starts_with('@'))
+    }
+
+    /// Label of the first `<button type="submit">` in a form body.
+    fn submit(form: &str) -> Option<String> {
+        form.match_indices("<button").find_map(|(at, _)| {
+            let rest = &form[at + "<button".len()..];
+            let attrs = &rest[..tag_end(rest)?];
+            (attr(attrs, "type") == Some("submit")).then_some(())?;
+            let inner = content(&rest[attrs.len() + 1..], "button", attrs);
+            label(attrs).or_else(|| Some(plain(inner)).filter(|l| !l.is_empty()))
+        })
+    }
+
+    /// Literal text: Razor expressions and tags removed, whitespace collapsed.
+    fn plain(s: &str) -> String {
+        let mut out = String::new();
+        let mut rest = s;
+        while let Some(at) = rest.find('@') {
+            out.push_str(&rest[..at]);
+            let after = &rest[at + 1..];
+            let skip = match after.strip_prefix('(') {
+                Some(inner) => balanced(inner, ')').len() + 2,
+                None => {
+                    (after.find(|c: char| c.is_whitespace() || c == '<')).unwrap_or(after.len())
+                }
+            };
+            rest = &after[skip.min(after.len())..];
+        }
+        out.push_str(rest);
+        words(&strip_tags(&out))
+    }
+
+    /// The method a handler value names, if it names one.
+    fn handler(value: &str) -> Option<&str> {
+        let mut v = value.trim().trim_start_matches('@').trim();
+        if let Some(inner) = v.strip_prefix('(')
+            && balanced(inner, ')').len() + 2 == v.len()
+        {
+            v = inner[..inner.len() - 1].trim();
+        }
+        let v = v.split_once("=>").map_or(v, |(_, body)| body.trim());
+        let v = v.strip_prefix("await ").unwrap_or(v).trim_start();
+        let name = &v[..v
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(v.len())];
+        let rest = &v[name.len()..];
+        (!name.is_empty() && (rest.trim().is_empty() || rest.starts_with('('))).then_some(name)
     }
 }
 
@@ -2519,5 +2985,271 @@ public class PongService(PingService ping, HttpClient client)
             application: "WebApp".into(),
         };
         assert_eq!(menu, [(&any, &http("GET", "/api/pong"))]);
+    }
+
+    #[test]
+    fn onclick_lambda_with_a_service_call_names_the_trigger() {
+        let flow = extract(fixture().path());
+        let trigger = |file: &str| {
+            let action = flow.actions.iter().find(|a| a.file == file).unwrap();
+            action.trigger.as_deref()
+        };
+        assert_eq!(trigger("WebApp/Layout/PingMenu.razor"), Some("Ping"));
+        assert_eq!(trigger("WebApp/Pages/Checkout.razor"), Some("Place order"));
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use archguard_core::{AccessState, EndpointAccess, UiFlowFindingKind, ui_flow_findings};
+
+    const HOME: &str = r#"@page "/"
+<AuthorizeView>
+    <Authorized>
+        <Hooks />
+    </Authorized>
+</AuthorizeView>
+<Shared />
+<Card />
+"#;
+
+    const OTHER: &str = r#"@page "/other"
+@inject HttpClient Http
+<Shared Title="x"></Shared>
+<button @onclick="Clear" aria-label="Clear cart" data-testid="clear">X</button>
+<button @onclick="Reset" data-testid="reset-btn">Reset</button>
+@code {
+    List<Lonely> generic = new();
+    void Clear() => Http.DeleteAsync("api/cart");
+    void Reset() => Http.PutAsync("api/reset", null);
+}
+"#;
+
+    const CHECKOUT: &str = r#"@page "/checkout"
+@inject HttpClient Http
+@inject NavigationManager Nav
+<EditForm Model="@m" OnValidSubmit="@Submit">
+    <button class="b" type="submit">Place <i>@n</i> order</button>
+</EditForm>
+<button @onclick="Submit">Also</button>
+@code {
+    async Task Submit() { await Save(); Nav.NavigateTo("other"); }
+    async Task Save() => await Http.PostAsync("api/orders", null);
+}
+"#;
+
+    const HOOKS: &str = r#"@inject HttpClient Http
+@code {
+    protected override async Task OnInitializedAsync() => await Http.GetAsync("api/hooks");
+}
+"#;
+
+    const SHARED: &str =
+        "@inject HttpClient Http\n@code {\n    void Load() => Http.GetAsync(\"api/shared\");\n}\n";
+
+    const LAYOUT: &str = r#"@inherits LayoutComponentBase
+<AuthorizeView Roles="Admin"><AdminMenu /></AuthorizeView>
+@Body
+"#;
+
+    const DEEP: &str =
+        "@page \"/deep\"\n<AuthorizeView Roles=\"Admin\"><Panel /></AuthorizeView>\n";
+    const PANEL: &str = "<AuthorizeView>\n    <Authorized>\n        <Widget />\n    </Authorized>\n</AuthorizeView>\n";
+    const WIDGET: &str = r#"@inject HttpClient Http
+<AuthorizeView Policy="P"><a href="other">W</a></AuthorizeView>
+<button @onclick="() => Remove(1)">Remove <b>@Name</b> now</button>
+@code {
+    async Task Remove(int id) { await Http.DeleteAsync("api/widget"); }
+}
+"#;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let files: &[(&str, &str)] = &[
+            ("App/App.csproj", "<Project />"),
+            ("App/Pages/Home.razor", HOME),
+            ("App/Pages/Other.razor", OTHER),
+            ("App/Pages/Checkout.razor", CHECKOUT),
+            ("App/Pages/Deep.razor", DEEP),
+            ("App/Parts/Hooks.razor", HOOKS),
+            ("App/Parts/Shared.razor", SHARED),
+            ("App/Parts/Panel.razor", PANEL),
+            ("App/Parts/Widget.razor", WIDGET),
+            ("App/Parts/Lonely.razor", "<a href=\"other\">L</a>\n"),
+            ("App/Layout/MainLayout.razor", LAYOUT),
+            ("App/Layout/AdminMenu.razor", "<a href=\"deep\">Admin</a>\n"),
+            ("App/A/Card.razor", "<a href=\"other\">A</a>\n"),
+            ("App/B/Card.razor", "<a href=\"other\">B</a>\n"),
+        ];
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
+    fn page(name: &str) -> Origin {
+        Origin::Screen(format!("App:Pages/{name}.razor"))
+    }
+
+    fn any() -> Origin {
+        Origin::AnyScreen {
+            application: "App".into(),
+        }
+    }
+
+    fn actions<'a>(flow: &'a UiFlow, file: &str) -> Vec<&'a Action> {
+        flow.actions.iter().filter(|a| a.file == file).collect()
+    }
+
+    fn transitions<'a>(flow: &'a UiFlow, file: &str) -> Vec<&'a Transition> {
+        flow.transitions.iter().filter(|t| t.file == file).collect()
+    }
+
+    fn notes<'a>(flow: &'a UiFlow, file: &str) -> Vec<&'a str> {
+        (flow.diagnostics.iter())
+            .filter(|d| d.file == file && d.severity == DiagnosticSeverity::Note)
+            .map(|d| d.message.as_str())
+            .collect()
+    }
+
+    fn http(method: &str, path: &str) -> Call {
+        Call::Http {
+            method: method.into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn component_inside_authorize_view_on_one_page_starts_there_with_the_condition() {
+        let mut flow = extract(fixture().path());
+        let placed: Vec<(&Origin, Option<&Condition>)> = (actions(&flow, "App/Parts/Hooks.razor"))
+            .into_iter()
+            .map(|a| (&a.screen, a.condition.as_ref()))
+            .collect();
+        assert_eq!(placed, [(&page("Home"), Some(&Condition::Authenticated))]);
+        flow.endpoints.push(EndpointAccess {
+            method: "GET".into(),
+            path: "/api/hooks".into(),
+            access: AccessState::Protected(Condition::Authenticated),
+            application: None,
+            file: "Api/Hooks.cs".into(),
+            line: 1,
+            source: "test".into(),
+        });
+        let refused: Vec<_> = (ui_flow_findings(&flow).into_iter())
+            .filter(|f| f.kind == UiFlowFindingKind::ShownButRefused)
+            .collect();
+        assert!(refused.is_empty(), "{refused:#?}");
+    }
+
+    #[test]
+    fn component_on_two_pages_acts_on_each() {
+        let flow = extract(fixture().path());
+        let placed: Vec<(&Origin, Option<&Condition>)> = (actions(&flow, "App/Parts/Shared.razor"))
+            .into_iter()
+            .map(|a| (&a.screen, a.condition.as_ref()))
+            .collect();
+        assert_eq!(placed, [(&page("Home"), None), (&page("Other"), None)]);
+    }
+
+    #[test]
+    fn component_in_a_layout_acts_on_every_screen_with_the_usage_condition() {
+        let flow = extract(fixture().path());
+        let menu = transitions(&flow, "App/Layout/AdminMenu.razor");
+        let placed: Vec<(&Origin, Option<&Condition>)> = menu
+            .iter()
+            .map(|t| (&t.from, t.condition.as_ref()))
+            .collect();
+        assert_eq!(placed, [(&any(), Some(&Condition::Role("Admin".into())))]);
+        assert!(notes(&flow, "App/Layout/MainLayout.razor").is_empty());
+        assert!(notes(&flow, "App/Layout/AdminMenu.razor").is_empty());
+    }
+
+    #[test]
+    fn nested_components_follow_usage_up_to_the_page_and_join_conditions() {
+        let flow = extract(fixture().path());
+        let widget = transitions(&flow, "App/Parts/Widget.razor");
+        let placed: Vec<(&Origin, Option<&Condition>)> = widget
+            .iter()
+            .map(|t| (&t.from, t.condition.as_ref()))
+            .collect();
+        let joined = Condition::All(vec![
+            Condition::Role("Admin".into()),
+            Condition::Authenticated,
+            Condition::Policy("P".into()),
+        ]);
+        assert_eq!(placed, [(&page("Deep"), Some(&joined))]);
+        let remove = actions(&flow, "App/Parts/Widget.razor");
+        let placed: Vec<(&Origin, Option<&Condition>, Option<&str>)> = (remove.iter())
+            .map(|a| (&a.screen, a.condition.as_ref(), a.trigger.as_deref()))
+            .collect();
+        let outer = Condition::All(vec![
+            Condition::Role("Admin".into()),
+            Condition::Authenticated,
+        ]);
+        // The lambda calls a local method; tags are stripped, `@Name` is no text.
+        assert_eq!(placed, [(&page("Deep"), Some(&outer), Some("Remove now"))]);
+    }
+
+    #[test]
+    fn unused_component_keeps_any_screen_with_a_note() {
+        let flow = extract(fixture().path());
+        let lonely = transitions(&flow, "App/Parts/Lonely.razor");
+        assert_eq!(lonely.len(), 1);
+        assert_eq!((&lonely[0].from, &lonely[0].condition), (&any(), &None));
+        let notes = notes(&flow, "App/Parts/Lonely.razor");
+        assert!(
+            notes
+                .iter()
+                .any(|m| m.contains("component usage not found")),
+            "{notes:#?}"
+        );
+    }
+
+    #[test]
+    fn ambiguous_component_name_keeps_any_screen_with_a_note() {
+        let flow = extract(fixture().path());
+        for file in ["App/A/Card.razor", "App/B/Card.razor"] {
+            let placed: Vec<&Origin> = (transitions(&flow, file).into_iter())
+                .map(|t| &t.from)
+                .collect();
+            assert_eq!(placed, [&any()], "{file}");
+            let notes = notes(&flow, file);
+            assert!(notes.iter().any(|m| m.contains("several")), "{notes:#?}");
+        }
+    }
+
+    #[test]
+    fn edit_form_submit_button_names_the_trigger_through_local_calls() {
+        let flow = extract(fixture().path());
+        let file = "App/Pages/Checkout.razor";
+        let found: Vec<(&Call, Option<&str>)> = (actions(&flow, file).into_iter())
+            .map(|a| (&a.call, a.trigger.as_deref()))
+            .collect();
+        // The form comes first; the later button with the same handler loses.
+        assert_eq!(found, [(&http("POST", "/api/orders"), Some("Place order"))]);
+        let nav: Vec<Option<&str>> = (transitions(&flow, file).into_iter())
+            .map(|t| t.trigger.as_deref())
+            .collect();
+        assert_eq!(nav, [Some("Place order")]);
+    }
+
+    #[test]
+    fn aria_label_wins_over_test_id_and_text() {
+        let flow = extract(fixture().path());
+        let found: Vec<(&Call, Option<&str>)> = (actions(&flow, "App/Pages/Other.razor"))
+            .into_iter()
+            .map(|a| (&a.call, a.trigger.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (&http("DELETE", "/api/cart"), Some("Clear cart")),
+                (&http("PUT", "/api/reset"), Some("reset-btn")),
+            ]
+        );
     }
 }
