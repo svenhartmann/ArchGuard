@@ -82,6 +82,7 @@ pub fn graph_data(
                 kpi::SHOWN_ACD.item(&texts, kpi::Value::Real(v.acd(&g.tree))),
             ],
         ),
+        more_kpis: sync_rows(&old.more_kpis, more_kpis(&texts, g)),
         count_in: cin as i32,
         count_out: cout as i32,
         count_both: cboth as i32,
@@ -284,4 +285,78 @@ fn neighbors(g: &GraphState, old: &GraphData) -> (ModelRc<Neighbor>, ModelRc<Nei
         )
     };
     (list(&old.incoming, inc), list(&old.outgoing, out))
+}
+
+/// Graph → More metrics: the review summary of the shown modules, `—`
+/// while there is none.
+fn more_kpis(texts: &Texts, g: &GraphState) -> [KpiItem; 5] {
+    let s = g.review.as_ref().map(|r| &r.summary);
+    let count = |f: fn(&archguard_engine::core::ReviewSummary) -> u64| {
+        kpi::Value::from(s.map(|s| f(s) as usize))
+    };
+    let nccd = s.map_or(kpi::Value::Unknown, |s| kpi::Value::Real(s.nccd));
+    [
+        kpi::SHOWN_CCD.item(texts, count(|s| s.ccd)),
+        kpi::SHOWN_NCCD.item(texts, nccd),
+        kpi::LARGEST_CYCLE_GROUP.item(texts, count(|s| s.largest_scc.into())),
+        kpi::MODULES_IN_CYCLES.item(texts, count(|s| s.cyclic_nodes.into())),
+        kpi::HIGH_PRIORITY.item(texts, count(|s| s.high_priority.into())),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_engine::core::{Edge, Graph, Node, NodeId, NodeKind};
+
+    /// The figures are the engine's Lakos metrics and cycle groups of the
+    /// shown modules: a ↔ b → c.
+    #[test]
+    fn more_metrics_measure_the_shown_modules() {
+        let node = |id: u32, name: &str| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind: NodeKind::Module,
+            parent: None,
+            lang: None,
+        };
+        let edge = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: Some(1),
+        };
+        let graph = Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: vec![node(0, "a"), node(1, "b"), node(2, "c")],
+            edges: vec![edge(0, 1), edge(1, 0), edge(1, 2)],
+            semantic: None,
+            review_kpis: None,
+        };
+        let g = GraphState::new(crate::tree::Tree::from_graph(&graph));
+        let (ccd, _, nccd) = archguard_engine::analysis::lakos_metrics(&g.view.as_graph(&g.tree));
+        let values: Vec<String> = more_kpis(&Texts::default(), &g)
+            .iter()
+            .map(|k| k.value.to_string())
+            .collect();
+        assert_eq!(ccd, 7, "a and b reach 3 each, c itself");
+        assert_eq!(
+            values,
+            [
+                ccd.to_string(),
+                format!("{nccd:.2}"),
+                "2".into(),
+                "2".into(),
+                "0".into()
+            ]
+        );
+        let mut g = g;
+        g.review = None;
+        assert!(
+            more_kpis(&Texts::default(), &g)
+                .iter()
+                .all(|k| k.value == "—")
+        );
+    }
 }

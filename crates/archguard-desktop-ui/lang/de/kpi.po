@@ -126,3 +126,39 @@ msgstr "Dienst"
 
 msgid "{{acd}} and the cycle figures of this chapter are counted on modules (depth 2). {{shown}} is in the Graph tab; package cycles are in the chapter 5 diagram."
 msgstr "{{acd}} und die Zyklus-Kennzahlen dieses Kapitels werden auf Modulen (Tiefe 2) gezählt. {{shown}} steht im Graph-Tab, Paketzyklen im Diagramm von Kapitel 5."
+
+msgid "CCD (shown level)"
+msgstr "CCD (angezeigte Ebene)"
+
+msgid "Cumulative component dependency (Lakos) of the shown modules: for every shown module, the shown modules it reaches, itself included, summed up. Structural coupling, not measured compilation time."
+msgstr "Kumulierte Komponentenabhängigkeit (Lakos) der angezeigten Module: für jedes angezeigte Modul die angezeigten Module, die es erreicht, sich selbst eingeschlossen, aufsummiert. Strukturelle Kopplung, keine gemessene Kompilierungszeit."
+
+msgid "NCCD (shown level)"
+msgstr "NCCD (angezeigte Ebene)"
+
+msgid "Normalized CCD: CCD divided by (N + 1) × log2(N + 1) − N, the balanced-tree reference for N shown modules. Dimensionless; a comparison of structure, not a runtime or build-time measurement."
+msgstr "Normalisierte CCD: CCD geteilt durch (N + 1) × log2(N + 1) − N, die Referenz eines ausgeglichenen Baums mit N angezeigten Modulen. Dimensionsloser Strukturvergleich, keine Messung von Laufzeit oder Build-Dauer."
+
+msgid "Shown modules in the largest group that depends on itself in a cycle; each member reaches every other. Size shows structural entanglement."
+msgstr "Angezeigte Module der größten Gruppe, die zyklisch voneinander abhängt; jedes Mitglied erreicht jedes andere. Die Größe zeigt strukturelle Verflechtung."
+
+msgid "Modules in cycles"
+msgstr "Module in Zyklen"
+
+msgid "Shown modules that belong to any cycle group. Package cycles and file cycles can differ."
+msgstr "Angezeigte Module, die zu einer Zyklusgruppe gehören. Paketzyklen und Dateizyklen können sich unterscheiden."
+
+msgid "High review priority"
+msgstr "Hohe Prüfpriorität"
+
+msgid "Shown modules with a review priority of at least 40 of 100: a transparent heuristic from cycles, coupling, impact and Git change touches, not a probability of defects."
+msgstr "Angezeigte Module mit einer Prüfpriorität von mindestens 40 von 100: eine nachvollziehbare Heuristik aus Zyklen, Kopplung, Auswirkung und Git-Änderungen, keine Fehlerwahrscheinlichkeit."
+
+msgid "More metrics"
+msgstr "Weitere Kennzahlen"
+
+msgid "All figures describe the shown modules; expanding a package changes them."
+msgstr "Alle Kennzahlen beschreiben die angezeigten Module; ein aufgeklapptes Paket ändert sie."
+
+msgid "Largest cycle group"
+msgstr "Größte Zyklusgruppe"

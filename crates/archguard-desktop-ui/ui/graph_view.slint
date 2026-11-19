@@ -49,6 +49,9 @@ export struct GraphData {
     dep-count: int,
     // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
     kpis: [KpiItem],
+    // More metrics: CCD, NCCD, largest cycle group, modules in cycles,
+    // high review priority (`kpi.rs`).
+    more-kpis: [KpiItem],
     count-in: int,
     count-out: int,
     count-both: int,
@@ -228,6 +231,8 @@ export component GraphView inherits HorizontalLayout {
     property <int> hovered: root.hover-hint;
     changed hover-hint => { self.hovered = self.hover-hint; }
     property <int> fit-local;
+    // The "More metrics" popover of the scope bar.
+    in-out property <bool> more-open;
     // A narrow pane (a split) hides the explorer and narrows the details,
     // decided from the view's own width only (no layout loop).
     // Below 600px the graph itself needs the whole pane.
@@ -398,6 +403,14 @@ export component GraphView inherits HorizontalLayout {
                         for k in root.data.kpis: StatInline { kpi: k; }
                     }
                 }
+                Button {
+                    compact: true;
+                    text: @tr("More metrics");
+                    pressed-state: root.more-open;
+                    y: (parent.height - self.height) / 2;
+                    height: Theme.control-h-sm;
+                    clicked => { root.more-open = !root.more-open; }
+                }
             }
         }
         // Toolbar: display, sort and dependency filter. The groups are
@@ -507,6 +520,35 @@ export component GraphView inherits HorizontalLayout {
                 deps: root.data.deps;
                 reference: root.data.reference;
                 total: root.data.dep-count;
+            }
+            if root.more-open: Rectangle {
+                x: parent.width - self.width - 12px;
+                y: 8px;
+                width: 300px;
+                height: more-list.preferred-height;
+                background: Theme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 18px;
+                drop-shadow-color: Theme.shadow;
+                // Clicks stay in the popover.
+                TouchArea { }
+                more-list := VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text { text: @tr("More metrics"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.more-open = false; } }
+                    }
+                    for k in root.data.more-kpis: HorizontalLayout { alignment: start; StatInline { kpi: k; } }
+                    Text {
+                        text: @tr("All figures describe the shown modules; expanding a package changes them.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
         SimStrip { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
