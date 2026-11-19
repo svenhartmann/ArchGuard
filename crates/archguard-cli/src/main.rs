@@ -429,7 +429,12 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
         Command::UiFlow {
             role, anonymous, ..
         } => ui_flow_cmd::run(cli, root, role, *anonymous),
-        Command::Domain { entity, .. } => domain_cmd::run(cli, root, entity.as_deref()),
+        Command::Domain {
+            entity,
+            chain,
+            state,
+            ..
+        } => domain_cmd::run(cli, root, entity.as_deref(), *chain, state.as_deref()),
         Command::Contracts {
             report,
             service,

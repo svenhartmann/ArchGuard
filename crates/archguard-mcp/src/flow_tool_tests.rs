@@ -5,7 +5,7 @@ use crate::ui_flow_tools::UiFlowParams;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
-const FILES: [(&str, &str); 13] = [
+const FILES: [(&str, &str); 14] = [
     ("Web/Web.csproj", "<Project />"),
     (
         "Web/Pages/Home.razor",
@@ -44,6 +44,10 @@ const FILES: [(&str, &str); 13] = [
     (
         "App/SubmitOrderCommandHandler.cs",
         "namespace Shop.App;\npublic class SubmitOrderCommandHandler : IRequestHandler<SubmitOrderCommand, bool>\n{\n    public async Task<bool> Handle(SubmitOrderCommand c, CancellationToken t)\n    {\n        var order = await _repo.GetAsync(c.Id);\n        order.Submit();\n        return true;\n    }\n}\n",
+    ),
+    (
+        "Api/OrdersApi.cs",
+        "public static class OrdersApi\n{\n    public static void Map(this IEndpointRouteBuilder app)\n    {\n        app.MapPost(\"api/submit\", SubmitAsync);\n    }\n    public static Task<bool> SubmitAsync(SubmitOrderCommand command, IMediator mediator) => mediator.Send(command);\n}\n",
     ),
     (
         "App/OrderSubmittedHandler.cs",
@@ -129,7 +133,15 @@ fn both_tools_are_registered_read_only_with_their_parameters() {
         ),
         (
             "domain_model",
-            &["path", "entity", "offset", "limit", "expected_revision"][..],
+            &[
+                "path",
+                "entity",
+                "chain",
+                "state",
+                "offset",
+                "limit",
+                "expected_revision",
+            ][..],
         ),
     ] {
         let tool = tools.iter().find(|t| t.name == name).expect(name);
@@ -273,4 +285,38 @@ async fn domain_model_entity_filter_adds_event_chain_and_use_cases() {
             .any(|r| r["kind"] == "entity" && r["entity"]["id"] == "Customer")
     );
     assert!(domain(&tools, json!({"entity": "Nope"})).await.is_err());
+}
+
+#[tokio::test]
+async fn domain_model_chain_and_triggers_of_a_state() {
+    let (_dir, tools) = project();
+    let (last, rows) = all_rows(&tools, "domain_model", json!({"chain": true})).await;
+    assert!(rows.iter().all(|r| r["kind"] == "chain"), "{rows:#?}");
+    assert_eq!(rows.len() as u64, last["total"].as_u64().unwrap());
+    let submit = (rows.iter())
+        .find(|r| r["endpoint"]["path"] == "/api/submit")
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    assert_eq!(submit["endpoint"]["handler"], "OrdersApi.SubmitAsync");
+    assert_eq!(submit["use_cases"][0]["id"], "SubmitOrderCommandHandler");
+    assert_eq!(submit["transitions"][0]["transition"]["to"], "Submitted");
+    assert_eq!(
+        submit["events"][0],
+        json!({"event": "OrderSubmitted", "handlers": ["OrderSubmittedHandler"]})
+    );
+    let (_, submitted) = all_rows(
+        &tools,
+        "domain_model",
+        json!({"entity": "Order", "state": "Submitted"}),
+    )
+    .await;
+    assert_eq!(submitted.len(), 1, "{submitted:#?}");
+    assert_eq!(submitted[0]["endpoint"]["path"], "/api/submit");
+    let (_, cancelled) = all_rows(
+        &tools,
+        "domain_model",
+        json!({"entity": "Order", "state": "Cancelled"}),
+    )
+    .await;
+    assert!(cancelled.is_empty(), "{cancelled:#?}");
+    assert!(domain(&tools, json!({"state": "Submitted"})).await.is_err());
 }
