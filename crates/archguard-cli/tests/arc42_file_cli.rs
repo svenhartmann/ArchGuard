@@ -1,7 +1,7 @@
 //! `doc --arc42` applies the desktop's rules for the project's arc42 text
 //! (`archguard_engine::arc42_file`): it finds the document where the app
 //! does, refreshes the diagram blocks "Insert into chapter" put into own
-//! text, puts in every shown diagram, and exports the merged document.
+//! text, puts in the diagrams chosen for it, and exports the merged document.
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -157,12 +157,17 @@ fn the_export_converts_the_found_document_with_its_own_text() {
     assert_eq!(refused.status.code(), Some(2));
 }
 
-/// The document holds every shown diagram: an own-text chapter without
-/// its diagram gets it as a diagram block, as a desktop save does.
+/// An own-text chapter without a diagram listed in `shown_diagrams` gets
+/// it as a diagram block, as a desktop save does.
 #[test]
 fn a_shown_diagram_missing_from_own_text_is_put_in() {
     let dir = project();
     let root = dir.path();
+    fs::write(
+        root.join("archguard.toml"),
+        "[arc42]\nshown_diagrams = [\"building-blocks\"]\n",
+    )
+    .unwrap();
     ok(&cli(root, &["doc", "--arc42"]));
     let path = root.join("arc42.md");
     let own = "## 5. Building Block View\n\nOnly our words.\n";
@@ -190,4 +195,52 @@ fn a_shown_diagram_missing_from_own_text_is_put_in() {
         !hidden.contains("archguard:diagram:building-blocks"),
         "{hidden}"
     );
+}
+
+/// Two Python packages, one calling the other: chapter 6 has a static
+/// call map (`runtime-calls`) and a scenario.
+fn calling_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for pkg in ["app", "lib"] {
+        fs::create_dir(dir.path().join(pkg)).unwrap();
+        fs::write(dir.path().join(pkg).join("__init__.py"), "").unwrap();
+    }
+    fs::write(
+        dir.path().join("app/a.py"),
+        "from lib.b import b\n\ndef a():\n    return b()\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("lib/b.py"), "def b():\n    return 1\n").unwrap();
+    dir
+}
+
+/// A chapter of own text expects only the diagrams listed in
+/// `shown_diagrams`; the default-shown ones are only offered.
+#[test]
+fn own_text_expects_only_diagrams_chosen_by_name() {
+    let dir = calling_project();
+    let root = dir.path();
+    let folder = root.join("docs/arc42");
+    fs::create_dir_all(&folder).unwrap();
+    let six = folder.join("06-laufzeitsicht.md");
+    let own = "## 6. Laufzeitsicht\n\nUnser Ablauf.\n";
+    fs::write(&six, own).unwrap();
+    ok(&cli(root, &["doc", "--arc42", "--check"]));
+    ok(&cli(root, &["doc", "--arc42"]));
+    assert_eq!(fs::read_to_string(&six).unwrap(), own, "nothing put in");
+    fs::write(
+        root.join("archguard.toml"),
+        "[arc42]\nshown_diagrams = [\"runtime-calls\"]\n",
+    )
+    .unwrap();
+    outdated(&cli(root, &["doc", "--arc42", "--check"]), "chapter 6");
+    ok(&cli(root, &["doc", "--arc42"]));
+    let written = fs::read_to_string(&six).unwrap();
+    assert!(written.starts_with(own), "{written}");
+    assert!(
+        written.contains("<!-- archguard:diagram:runtime-calls:start -->"),
+        "{written}"
+    );
+    assert!(!written.contains("runtime-scenario"), "{written}");
+    ok(&cli(root, &["doc", "--arc42", "--check"]));
 }

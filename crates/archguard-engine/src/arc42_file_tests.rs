@@ -26,6 +26,7 @@ fn saving_puts_in_shown_diagrams_and_takes_out_hidden_ones() {
         shown,
     };
     new.diagrams = vec![diagram("shown", true), diagram("hidden", false)];
+    new.chosen = vec!["shown".into()];
     let section = |d| archguard_report::diagram_section(d, DiagramFormat::Plantuml);
     let hidden = diagram_block("hidden", &section(&new.diagrams[1]));
     std::fs::write(
@@ -79,6 +80,7 @@ fn saving_keeps_a_removed_or_detached_diagram_out() {
     let path = d.path().join("arc42.md");
     let mut new = doc("New");
     new.diagrams = vec![shown_diagram("gone"), shown_diagram("own")];
+    new.chosen = vec!["gone".into(), "own".into()];
     let section = |d| archguard_report::diagram_section(d, DiagramFormat::Mermaid);
     let gone = diagram_block("gone", &section(&new.diagrams[0]));
     let own = diagram_block("own", &section(&new.diagrams[1]));
@@ -133,6 +135,28 @@ fn saving_refreshes_diagram_blocks_from_the_analysis() {
     assert!(text.contains(&gone), "{text}");
 }
 
+/// A chapter file of own text is stale only for a missing diagram chosen
+/// by name (`shown_diagrams`); an update puts that one in.
+#[test]
+fn own_text_is_stale_only_for_a_chosen_diagram() {
+    let d = dir();
+    std::fs::write(d.path().join("06-laufzeit.md"), "## 6. Laufzeit\n\nText.\n").unwrap();
+    let mut new = doc("New");
+    new.diagrams = vec![archguard_core::Diagram {
+        chapter: 6,
+        ..shown_diagram("calls")
+    }];
+    let files = Arc42Files::load(Target::Folder(d.path().into())).unwrap();
+    assert!(files.stale(&new, None).unwrap().is_empty());
+    new.chosen = vec!["calls".into()];
+    assert_eq!(files.stale(&new, None).unwrap(), [6]);
+    for c in files.update(&new, None).unwrap() {
+        std::fs::write(&c.path, &c.new).unwrap();
+    }
+    let files = Arc42Files::load(Target::Folder(d.path().into())).unwrap();
+    assert!(files.stale(&new, None).unwrap().is_empty());
+}
+
 fn doc(evidence: &str) -> Arc42Document {
     Arc42Document {
         schema_version: 1,
@@ -148,6 +172,7 @@ fn doc(evidence: &str) -> Arc42Document {
             })
             .collect(),
         diagrams: vec![],
+        chosen: vec![],
     }
 }
 

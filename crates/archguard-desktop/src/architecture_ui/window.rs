@@ -89,6 +89,19 @@ fn fill_figures(
     // Diagrams in the chapter's text draw there; the rule the save uses.
     let in_text = |d: &archguard_engine::core::Diagram| archguard_engine::report::arc42_file::in_text(&text, d);
     let open = view.as_ref().map(|(_, id)| id.as_str());
+    // The switch: expected in its chapter by the rule save and `--check`
+    // use, or already in its text.
+    let switch = |d: &archguard_engine::core::Diagram| {
+        let own;
+        let chapter = if d.chapter == s.chapter {
+            &text
+        } else {
+            own = s.editor.chapter(doc, d.chapter);
+            &own
+        };
+        archguard_engine::report::arc42_file::expected(doc, d, chapter)
+            || (d.shown && archguard_engine::report::arc42_file::in_text(chapter, d))
+    };
     if s.catalogue {
         m.catalogue = true;
         m.chapter_title = texts.t("Diagrams").into();
@@ -102,7 +115,7 @@ fn fill_figures(
         m.map_title = entry
             .map_or_else(|| id.replace('@', " · "), |d| d.title.clone())
             .into();
-        m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), |d| d.shown);
+        m.map_shown = entry.map_or(s.shown.iter().any(|x| x == id), switch);
         let map_in_text = entry.is_some_and(in_text);
         m.map_insertable = !has_block && entry.is_some() && !map_in_text;
         m.missing = i32::from(!map_in_text);
@@ -123,6 +136,7 @@ fn fill_figures(
             let insertable = !s.catalogue && !has_block;
             ArcFigure {
                 insertable,
+                shown: switch(d),
                 ..figure::figure(d, s.format, chapter, texts)
             }
         });
