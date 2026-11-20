@@ -47,8 +47,8 @@ struct Writer {
     quotes: Vec<usize>,
     /// Output length right after the marker of the open list item.
     item: usize,
-    /// Open fenced block: its closing delimiter.
-    code: Option<&'static str>,
+    /// Open fenced block: its attribute line and delimiter character.
+    code: Option<(String, char)>,
     cell: bool,
     /// Targets of the open links and images: `link:` or `image:` plus URL.
     links: Vec<String>,
@@ -242,13 +242,14 @@ impl Writer {
             CodeBlockKind::Fenced(l) => l.split_whitespace().next().unwrap_or("").to_owned(),
             CodeBlockKind::Indented => String::new(),
         };
-        let (head, delim) = match lang.as_str() {
-            "mermaid" | "plantuml" => (format!("[{lang}]\n"), "...."),
-            "" => (String::new(), "----"),
-            l => (format!("[source,{l}]\n"), "----"),
+        let code = match lang.as_str() {
+            "mermaid" | "plantuml" => (format!("[{lang}]\n"), '.'),
+            "" => (String::new(), '-'),
+            l => (format!("[source,{l}]\n"), '-'),
         };
-        self.top().push_str(&format!("{head}{delim}\n"));
-        self.code = Some(delim);
+        self.code = Some(code);
+        // The content decides the delimiter length, so it is collected first.
+        self.out.push(String::new());
     }
 
     fn table_start(&mut self, aligns: &[Alignment]) {
@@ -275,10 +276,10 @@ impl Writer {
                 self.top().push_str("____\n");
             }
             TagEnd::CodeBlock => {
-                self.line_start();
-                let delim = self.code.take().unwrap_or("----");
-                self.top().push_str(delim);
-                self.top().push('\n');
+                let content = self.out.pop().unwrap_or_default();
+                let (head, ch) = self.code.take().unwrap_or_default();
+                let block = head + &delimited(ch, &content);
+                self.top().push_str(&block);
             }
             TagEnd::List(_) => {
                 self.lists.pop();
@@ -324,15 +325,39 @@ impl Writer {
             self.line_start();
             let inner = inner.trim();
             if inner.contains('\n') {
-                self.top().push_str(&format!("////\n{inner}\n////\n"));
+                self.top().push_str(&delimited('/', inner));
             } else {
                 self.top().push_str(&format!("// {inner}\n"));
             }
         } else {
             self.block_start();
-            self.top().push_str(&format!("++++\n{t}\n++++\n"));
+            self.top().push_str(&delimited('+', t));
         }
     }
+}
+
+/// `content` as a delimited block of `ch`: the delimiter is longer than any
+/// content line made of `ch` alone, so none closes the block early, and a
+/// line-start preprocessor directive is escaped, as Asciidoctor would run
+/// it (e.g. `include::/etc/passwd[]`) in any block; the `\` does not render.
+fn delimited(ch: char, content: &str) -> String {
+    const DIRECTIVES: [&str; 5] = ["include::", "ifdef::", "ifndef::", "ifeval::", "endif::"];
+    let longest = content
+        .lines()
+        .filter(|l| !l.is_empty() && l.chars().all(|c| c == ch))
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    let delim = ch.to_string().repeat(longest.max(3) + 1);
+    let mut out = format!("{delim}\n");
+    for line in content.lines() {
+        if DIRECTIVES.iter().any(|d| line.starts_with(d)) {
+            out.push('\\');
+        }
+        out += line;
+        out.push('\n');
+    }
+    out + &delim + "\n"
 }
 
 /// Text that contains AsciiDoc markup characters or one of `extra`,
@@ -552,5 +577,31 @@ mod tests {
     fn adjacent_lists_stay_apart() {
         assert_eq!(adoc("- a\n\n1. b\n"), "* a\n\n//\n\n. b\n");
         assert_eq!(adoc("- a\n\ntext\n\n1. b\n"), "* a\n\ntext\n\n. b\n");
+    }
+
+    /// Repository Markdown in verbatim blocks never becomes a live
+    /// preprocessor directive, and no content line closes its block.
+    #[test]
+    fn verbatim_blocks_cannot_include_files_or_close_early() {
+        let code = adoc("```\ninclude::/etc/passwd[]\n----\nifdef::x[]\n```\n");
+        assert_eq!(
+            code,
+            "-----\n\\include::/etc/passwd[]\n----\n\\ifdef::x[]\n-----\n"
+        );
+        let diagram = adoc("```mermaid\n....\n......\nendif::[]\n```\n");
+        assert_eq!(
+            diagram,
+            "[mermaid]\n.......\n....\n......\n\\endif::[]\n.......\n"
+        );
+        let html = adoc("<div>\n++++\ninclude::/etc/passwd[]\n</div>\n");
+        assert_eq!(
+            html,
+            "+++++\n<div>\n++++\n\\include::/etc/passwd[]\n</div>\n+++++\n"
+        );
+        let comment = adoc("<!-- a\n////\nifeval::[1 == 1]\nifndef::y[] -->\n");
+        assert_eq!(
+            comment,
+            "/////\na\n////\n\\ifeval::[1 == 1]\n\\ifndef::y[]\n/////\n"
+        );
     }
 }
