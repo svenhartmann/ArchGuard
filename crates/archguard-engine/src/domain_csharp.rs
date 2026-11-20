@@ -57,8 +57,7 @@
 //! pattern or Stateless, and constructor events as part of `initial`. The
 //! marker names are the constants below with the ADR 0022 defaults; reading
 //! them from the configuration comes later.
-use crate::project_files::read_repo_file;
-use crate::services::support::{excluded, relative, test_path};
+use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, MessageHandler,
@@ -89,8 +88,6 @@ const COLLECTIONS: [&str; 7] = [
     "HashSet",
 ];
 const ID_TYPES: [&str; 2] = ["int", "Guid"];
-const MAX_BYTES: u64 = 1 << 20;
-const MAX_FILES: usize = 5_000;
 const MODIFIERS: [&str; 16] = [
     "public",
     "private",
@@ -117,6 +114,12 @@ type Pending = Vec<(usize, usize, String, bool)>;
 
 /// The domain model of the C# sources below `root`.
 pub fn extract(root: &Path) -> DomainModel {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> DomainModel {
+    let root = ctx.root;
     let mut x = Extractor::default();
     x.read(root);
     for f in 0..x.files.len() {
@@ -253,45 +256,21 @@ struct Extractor {
 
 impl Extractor {
     fn read(&mut self, root: &Path) {
-        let mut paths = vec![];
-        for entry in walker(root) {
-            match entry {
-                Ok(e) if e.file_type().is_some_and(|t| t.is_file()) => {
-                    let rel = relative(root, e.path());
-                    if rel.ends_with(".cs") && !test_path(&rel) {
-                        paths.push(rel);
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => self.push_diag("", format!("Directory not read: {e}")),
-            }
-        }
-        paths.sort();
-        if paths.len() > MAX_FILES {
-            let message =
-                format!("Domain scan stopped after {MAX_FILES} C# files; later files are unknown.");
-            self.push_diag(&paths[MAX_FILES], message);
-            paths.truncate(MAX_FILES);
+        let (sources, gaps) =
+            domain_sources(root, &["bin", "obj"], |rel| rel.ends_with(".cs"), "C#");
+        for (file, message) in gaps {
+            self.push_diag(&file, message);
         }
         let mut projects = BTreeMap::new();
-        for rel in paths {
-            match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
-                Ok(bytes) => {
-                    let raw = String::from_utf8_lossy(&bytes).into_owned();
-                    let text = lex::strip(&raw);
-                    let project = crate::domain_csharp::code::project_of(root, &rel, &[".csproj"], &mut projects);
-                    self.files.push(Src {
-                        rel,
-                        text,
-                        raw,
-                        project,
-                    });
-                }
-                Err(_) => self.push_diag(
-                    &rel,
-                    "Source file not read: larger than 1 MiB, not a regular file or not readable; its domain elements are unknown.".into(),
-                ),
-            }
+        for (rel, raw) in sources {
+            let text = crate::lang_csharp::mask(&raw);
+            let project = code::project_of(root, &rel, &[".csproj"], &mut projects);
+            self.files.push(Src {
+                rel,
+                text,
+                raw,
+                project,
+            });
         }
     }
 
@@ -738,20 +717,6 @@ impl Extractor {
         m.diagnostics.dedup();
         self.model
     }
-}
-
-fn walker(root: &Path) -> ignore::Walk {
-    ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .follow_links(false)
-        .require_git(false)
-        .git_global(false)
-        .max_depth(Some(64))
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            e.depth() == 0 || !(excluded(&name) || matches!(name.as_ref(), "bin" | "obj"))
-        })
-        .build()
 }
 
 fn marker_kind(decl: &Decl) -> Option<EntityKind> {
@@ -1540,156 +1505,9 @@ mod states {
     }
 }
 
-/// Navigation in blanked source text.
+/// Navigation in blanked source text, plus what only C# needs.
 pub(crate) mod text {
-    pub(super) fn is_id(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
-    }
-
-    /// Identifiers in `s[from..to]` with their offsets.
-    pub(super) fn idents(s: &str, from: usize, to: usize) -> Vec<(usize, &str)> {
-        let b = s.as_bytes();
-        let mut out = vec![];
-        let mut k = from;
-        while k < to {
-            if !is_id(b[k]) {
-                k += 1;
-                continue;
-            }
-            let start = k;
-            while k < to && is_id(b[k]) {
-                k += 1;
-            }
-            if !b[start].is_ascii_digit() {
-                out.push((start, &s[start..k]));
-            }
-        }
-        out
-    }
-
-    /// Only whitespace between token `a` and offset `b`.
-    pub(super) fn gap(s: &str, a: (usize, &str), b: usize) -> bool {
-        s[a.0 + a.1.len()..b].trim().is_empty()
-    }
-
-    pub(super) fn next_nonws(b: &[u8], from: usize) -> Option<usize> {
-        (from..b.len()).find(|&k| !b[k].is_ascii_whitespace())
-    }
-
-    pub(super) fn prev_nonws(b: &[u8], before: usize) -> Option<usize> {
-        (0..before).rev().find(|&k| !b[k].is_ascii_whitespace())
-    }
-
-    /// The identifier ending right before `before` (whitespace skipped).
-    pub(super) fn prev_word(s: &str, before: usize) -> &str {
-        let b = s.as_bytes();
-        let Some(end) = prev_nonws(b, before).map(|k| k + 1) else {
-            return "";
-        };
-        let start = (0..end).rev().find(|&k| !is_id(b[k])).map_or(0, |k| k + 1);
-        &s[start..end]
-    }
-
-    fn pair(c: u8) -> Option<(u8, u8)> {
-        [(b'(', b')'), (b'{', b'}'), (b'[', b']'), (b'<', b'>')]
-            .into_iter()
-            .find(|&(o, z)| c == o || c == z)
-    }
-
-    /// The bracket closing the one at `open`.
-    pub(super) fn matching(b: &[u8], open: usize) -> Option<usize> {
-        let (o, z) = pair(b[open]).filter(|p| p.0 == b[open])?;
-        let mut depth = 0;
-        for (k, &c) in b.iter().enumerate().skip(open) {
-            depth += i32::from(c == o) - i32::from(c == z);
-            if depth == 0 {
-                return Some(k);
-            }
-        }
-        None
-    }
-
-    /// The bracket opening the one at `close`.
-    pub(super) fn matching_back(b: &[u8], close: usize) -> Option<usize> {
-        let (o, z) = pair(b[close]).filter(|p| p.1 == b[close])?;
-        let mut depth = 0;
-        for k in (0..=close).rev() {
-            depth += i32::from(b[k] == z) - i32::from(b[k] == o);
-            if depth == 0 {
-                return Some(k);
-            }
-        }
-        None
-    }
-
-    /// Splits at `sep` outside (), <>, [] and {}.
-    pub(super) fn split_top<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
-        let b = s.as_bytes();
-        let mut out = vec![];
-        let (mut depth, mut start, mut k) = (0i32, 0, 0);
-        while k < b.len() {
-            match b[k] {
-                b'(' | b'<' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                b'>' if k == 0 || b[k - 1] != b'=' => depth -= 1,
-                _ if depth == 0 && b[k..].starts_with(sep.as_bytes()) => {
-                    out.push(&s[start..k]);
-                    k += sep.len();
-                    start = k;
-                    continue;
-                }
-                _ => {}
-            }
-            k += 1;
-        }
-        out.push(&s[start..]);
-        out
-    }
-
-    /// First `pat` outside parentheses and brackets.
-    pub(super) fn find_top(s: &str, pat: &str) -> Option<usize> {
-        let b = s.as_bytes();
-        let mut depth = 0i32;
-        for k in 0..b.len() {
-            if depth == 0 && b[k..].starts_with(pat.as_bytes()) {
-                return Some(k);
-            }
-            match b[k] {
-                b'(' | b'[' => depth += 1,
-                b')' | b']' => depth -= 1,
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// First plain `=` (not `==`, `=>`, `!=`, `<=`, `>=`) outside parentheses.
-    pub(super) fn first_assign(s: &str) -> Option<usize> {
-        let b = s.as_bytes();
-        let mut depth = 0i32;
-        for k in 0..b.len() {
-            match b[k] {
-                b'(' | b'[' => depth += 1,
-                b')' | b']' => depth -= 1,
-                b'=' if depth == 0
-                    && !matches!(b.get(k + 1), Some(b'=' | b'>'))
-                    && !(k > 0 && matches!(b[k - 1], b'=' | b'!' | b'<')) =>
-                {
-                    return Some(k);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    pub(super) fn unparen(s: &str) -> &str {
-        let mut s = s.trim();
-        while s.starts_with('(') && matching(s.as_bytes(), 0) == Some(s.len() - 1) {
-            s = s[1..s.len() - 1].trim();
-        }
-        s
-    }
+    pub(crate) use crate::lang_text::*;
 
     pub(super) fn skip_attributes(s: &str) -> &str {
         let mut s = s.trim_start();
@@ -1702,140 +1520,11 @@ pub(crate) mod text {
         s
     }
 
-    /// `Ns.Type<T>?` → `Type`.
-    pub(super) fn simple(t: &str) -> String {
-        let t = t.trim();
-        let t = &t[..t.find('<').unwrap_or(t.len())];
-        let t = t.trim_end_matches('?').trim_end_matches("[]");
-        t.rsplit('.').next().unwrap_or(t).trim().to_string()
-    }
-
-    pub(super) fn mentions(cond: &str, field: &str) -> bool {
-        idents(cond, 0, cond.len()).iter().any(|x| x.1 == field)
-    }
-
     pub(super) fn common_prefix(a: &str, b: &str) -> usize {
         a.split('.')
             .zip(b.split('.'))
             .take_while(|(x, y)| x == y)
             .count()
-    }
-
-    pub(super) fn line(s: &str, pos: usize) -> u32 {
-        let newlines = s.as_bytes()[..pos.min(s.len())]
-            .iter()
-            .filter(|&&c| c == b'\n')
-            .count();
-        u32::try_from(newlines + 1).unwrap_or(u32::MAX)
-    }
-
-    pub(super) fn collapse(s: &str) -> String {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-}
-
-/// Blanking of comments, preprocessor lines and literal contents.
-mod lex {
-    /// `src` with comments, preprocessor lines and the contents of string and
-    /// char literals replaced by spaces (newlines kept), so offsets and lines
-    /// stay those of the source.
-    pub(super) fn strip(src: &str) -> String {
-        let mut b = src.as_bytes().to_vec();
-        // A byte order mark would glue onto the first identifier (`namespace`).
-        if b.starts_with("\u{FEFF}".as_bytes()) {
-            b[..3].fill(b' ');
-        }
-        let mut i = 0;
-        while i < b.len() {
-            match literal_at(&b, i) {
-                Some((from, to, next)) => {
-                    blank(&mut b, from, to);
-                    i = next;
-                }
-                None => i += 1,
-            }
-        }
-        String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
-    }
-
-    /// A comment, preprocessor line or literal at `i`: (blank from, blank to,
-    /// continue at).
-    fn literal_at(b: &[u8], i: usize) -> Option<(usize, usize, usize)> {
-        let next = b.get(i + 1).copied();
-        match b[i] {
-            b'/' if next == Some(b'/') => Some((i, line_end(b, i), line_end(b, i))),
-            b'/' if next == Some(b'*') => {
-                let end = find(b, i + 2, b"*/").map_or(b.len(), |p| p + 2);
-                Some((i, end, end))
-            }
-            b'#' if at_line_start(b, i) => Some((i, line_end(b, i), line_end(b, i))),
-            b'\'' => Some(char_literal(b, i)),
-            b'"' => Some(string_literal(b, i)),
-            _ => None,
-        }
-    }
-
-    fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
-        b.get(from..)?
-            .windows(pat.len())
-            .position(|w| w == pat)
-            .map(|p| from + p)
-    }
-
-    fn line_end(b: &[u8], i: usize) -> usize {
-        b[i..]
-            .iter()
-            .position(|&c| c == b'\n')
-            .map_or(b.len(), |p| i + p)
-    }
-
-    fn at_line_start(b: &[u8], i: usize) -> bool {
-        b[..i]
-            .iter()
-            .rev()
-            .take_while(|&&c| c != b'\n')
-            .all(|c| c.is_ascii_whitespace())
-    }
-
-    fn char_literal(b: &[u8], i: usize) -> (usize, usize, usize) {
-        let mut j = i + 1;
-        while j < b.len() && b[j] != b'\'' && b[j] != b'\n' {
-            j += if b[j] == b'\\' { 2 } else { 1 };
-        }
-        (i + 1, j, j + 1)
-    }
-
-    /// Regular, verbatim (`@"…"`), interpolated and raw (`"""…"""`) strings.
-    fn string_literal(b: &[u8], i: usize) -> (usize, usize, usize) {
-        let quotes = b[i..].iter().take_while(|&&c| c == b'"').count();
-        if quotes >= 3 {
-            let end = find(b, i + quotes, &b[i..i + quotes]).unwrap_or(b.len());
-            return (i + quotes, end, end + quotes);
-        }
-        let verbatim = b[..i]
-            .iter()
-            .rev()
-            .take_while(|&&c| matches!(c, b'@' | b'$'))
-            .any(|&c| c == b'@');
-        let mut j = i + 1;
-        while j < b.len() {
-            match (b[j], verbatim) {
-                (b'"', true) if b.get(j + 1) == Some(&b'"') => j += 2,
-                (b'"', _) | (b'\n', false) => break,
-                (b'\\', false) => j += 2,
-                _ => j += 1,
-            }
-        }
-        (i + 1, j, j + 1)
-    }
-
-    fn blank(b: &mut [u8], from: usize, to: usize) {
-        let to = to.min(b.len());
-        for c in &mut b[from.min(to)..to] {
-            if *c != b'\n' {
-                *c = b' ';
-            }
-        }
     }
 }
 

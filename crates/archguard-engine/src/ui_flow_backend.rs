@@ -48,11 +48,11 @@
 //! SpEL (`unknown`), non-constant routes or roles (diagnostic, the endpoint
 //! is skipped or the condition is `unknown`), actions inherited from a base
 //! controller under conventional routing, `MapIdentityApi`.
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
+use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
+use crate::services::support::test_path;
 use archguard_core::{
-    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess,
-    ServiceTopology, UiFlow, UiFlowDiagnostic,
+    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
+    UiFlowDiagnostic,
 };
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -68,16 +68,18 @@ const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 /// Endpoints with their declared access, plus diagnostics. `[views.access]`
 /// comes from the root's configuration; an unreadable one is a note.
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] with the run's `[views.access]`.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut out = Out(UiFlow::default());
-    let access = match views_access(root) {
-        Ok(access) => access,
-        Err(e) => {
-            let message = format!("Configuration not read; [views.access] not applied: {e}");
-            out.note(".", 0, message);
-            BTreeMap::new()
-        }
-    };
-    let projects = read_projects(root, &mut out);
+    if let Some(e) = &ctx.config_error {
+        let message = format!("Configuration not read; [views.access] not applied: {e}");
+        out.note(".", 0, message);
+    }
+    let projects = read_projects(ctx.root, &mut out);
+    let access = ctx.config.views.access.clone();
     let index = Index::new(projects.values().flat_map(|(_, s)| s), access);
     for (application, sources) in projects.values() {
         let first = out.0.endpoints.len();
@@ -105,29 +107,9 @@ pub fn extract(root: &Path) -> UiFlow {
     out.0
 }
 
-/// What one run reads: the configuration and the projects with their sources.
+/// What one run reads: the projects with their sources.
 mod projects {
     use super::*;
-
-    /// `[views.access]` of the configuration `load_config` would discover:
-    /// `.archguard/archguard.toml`, then the legacy `archguard.toml`, without
-    /// following links. Not through `crate::config`: that module reaches `check`,
-    /// `check` reaches this extractor, and the architecture gate refuses the cycle.
-    pub(super) fn views_access(root: &Path) -> Result<BTreeMap<String, AccessMeaning>, String> {
-        for rel in [".archguard/archguard.toml", "archguard.toml"] {
-            match read_repo_file(root, Path::new(rel), MAX_BYTES) {
-                Ok(bytes) => {
-                    let text = String::from_utf8(bytes).map_err(|e| format!("{rel}: {e}"))?;
-                    return (toml::from_str::<archguard_core::Config>(&text))
-                        .map(|c| c.views.access)
-                        .map_err(|e| format!("{rel}: {e}"));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("{rel}: {e}")),
-            }
-        }
-        Ok(BTreeMap::new())
-    }
 
     /// Application name and source files by project directory; unreadable files
     /// become diagnostics.
@@ -135,12 +117,12 @@ mod projects {
         let (projects, files) = discover(root, out);
         let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
         for rel in files {
-            match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
-                Ok(bytes) => by_project
+            match read_text(root, &rel, MAX_BYTES) {
+                Ok(text) => by_project
                     .entry(project_of(&rel, &projects))
                     .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
                     .1
-                    .push(Source::new(rel, &String::from_utf8_lossy(&bytes))),
+                    .push(Source::new(rel, &text)),
                 Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
             }
         }
@@ -153,46 +135,28 @@ mod projects {
     /// The project directory's name (the root's for a build file at the root);
     /// none for files outside every project.
     fn application(root: &Path, dir: &str, projects: &BTreeSet<String>) -> Option<String> {
-        if !projects.contains(dir) {
-            return None;
-        }
-        match dir.rsplit_once('/') {
-            Some((_, name)) => Some(name.into()),
-            None if dir.is_empty() => root.file_name().map(|n| n.to_string_lossy().into_owned()),
-            None => Some(dir.into()),
-        }
+        projects.contains(dir).then(|| dir_name(root, dir))
     }
 
     fn project_of(rel: &str, projects: &BTreeSet<String>) -> String {
-        let mut dir = rel;
-        loop {
-            dir = dir.rsplit_once('/').map_or("", |(d, _)| d);
-            if dir.is_empty() || projects.contains(dir) {
-                return dir.to_string();
-            }
-        }
+        let dir = ancestors(rel).find(|d| d.is_empty() || projects.contains(*d));
+        dir.unwrap_or_default().to_string()
     }
 
     /// Directories holding a build file, and the source files to scan.
     fn discover(root: &Path, out: &mut Out) -> (BTreeSet<String>, Vec<String>) {
         let (mut projects, mut files) = (BTreeSet::new(), Vec::new());
-        let discovery = match Discovery::new(root, &mut ServiceTopology::default()) {
-            Ok(d) => d,
+        let walk = match walk(root) {
+            Ok(walk) => walk,
             Err(e) => {
                 out.diag(".", 0, format!("Discovery settings not read: {e}"));
                 return (projects, files);
             }
         };
-        for entry in discovery.walk(root) {
-            let entry = match entry {
-                Ok(entry) if entry.file_type().is_some_and(|t| t.is_file()) => entry,
-                Ok(_) => continue,
-                Err(e) => {
-                    out.diag(".", 0, format!("Directory entry not read: {e}"));
-                    continue;
-                }
-            };
-            let rel = relative(root, entry.path());
+        for e in walk.errors {
+            out.diag(".", 0, format!("Directory entry not read: {e}"));
+        }
+        for rel in walk.files {
             let (dir, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
             if name.ends_with(".csproj") || BUILD_FILES.contains(&name) {
                 projects.insert(dir.to_string());
@@ -209,7 +173,7 @@ mod projects {
         (projects, files)
     }
 }
-use projects::{read_projects, views_access};
+use projects::read_projects;
 
 struct Out(UiFlow);
 impl Out {
@@ -587,77 +551,7 @@ fn base_names(header: &str) -> Vec<String> {
 
 /// Literals, brackets, identifiers and argument lists on raw text.
 mod lex {
-    /// End (exclusive) of the string or char literal starting at `i`, if one does.
-    pub(super) fn literal_end(b: &[u8], i: usize) -> Option<usize> {
-        match b[i] {
-            b'"' if b[i..].starts_with(b"\"\"\"") => {
-                Some(find(b, i + 3, b"\"\"\"").map_or(b.len(), |e| e + 3))
-            }
-            b'"' => Some(string_end(b, i)),
-            b'\'' => char_end(b, i),
-            _ => None,
-        }
-    }
-
-    fn string_end(b: &[u8], i: usize) -> usize {
-        let verbatim = i > 0 && b[i - 1] == b'@' || i > 1 && b[i - 1] == b'$' && b[i - 2] == b'@';
-        let mut j = i + 1;
-        while j < b.len() {
-            match b[j] {
-                b'\\' if !verbatim => j += 2,
-                b'"' if verbatim && b.get(j + 1) == Some(&b'"') => j += 2,
-                b'"' => return j + 1,
-                b'\n' if !verbatim => return j,
-                _ => j += 1,
-            }
-        }
-        b.len()
-    }
-
-    fn char_end(b: &[u8], i: usize) -> Option<usize> {
-        let mut j = i + 1;
-        while j < b.len().min(i + 10) {
-            match b[j] {
-                b'\\' => j += 2,
-                b'\'' => return Some(j + 1),
-                b'\n' => return None,
-                _ => j += 1,
-            }
-        }
-        None
-    }
-
-    fn find(b: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
-        b.get(from..)?
-            .windows(needle.len())
-            .position(|w| w == needle)
-            .map(|p| p + from)
-    }
-
-    pub(super) fn strip_comments(text: &str) -> String {
-        let mut b = text.as_bytes().to_vec();
-        let mut i = 0;
-        while i < b.len() {
-            if let Some(end) = literal_end(&b, i) {
-                i = end;
-                continue;
-            }
-            let end = if b[i..].starts_with(b"//") {
-                find(&b, i, b"\n").unwrap_or(b.len())
-            } else if b[i..].starts_with(b"/*") {
-                find(&b, i + 2, b"*/").map_or(b.len(), |e| e + 2)
-            } else {
-                i += 1;
-                continue;
-            };
-            b[i..end]
-                .iter_mut()
-                .filter(|c| **c != b'\n')
-                .for_each(|c| *c = b' ');
-            i = end;
-        }
-        String::from_utf8_lossy(&b).into_owned()
-    }
+    pub(super) use crate::lang_csharp::{code as strip_comments, literal, literal_end};
 
     pub(super) fn is_ident(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_'
@@ -758,15 +652,6 @@ mod lex {
         split_top(args)
             .into_iter()
             .find(|p| named_part(p).is_none())
-    }
-
-    /// The content of a plain string literal; `None` for anything computed.
-    pub(super) fn literal(s: &str) -> Option<String> {
-        let s = s.trim();
-        let s = s.strip_prefix('@').unwrap_or(s);
-        let b = s.as_bytes();
-        let plain = b.len() >= 2 && b[0] == b'"' && !s.starts_with("\"\"\"");
-        (plain && literal_end(b, 0) == Some(b.len())).then(|| s[1..s.len() - 1].to_string())
     }
 
     /// A literal or an array (`{…}`, `[…]`, `arrayOf(…)`) of literals.

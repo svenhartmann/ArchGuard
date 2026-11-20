@@ -24,11 +24,10 @@
 //! - TypeScript: `enum` or `const … = {…}` named `Authority`, `Role`, `Roles`
 //!   (roles) or `Permission`, `Permissions` (permissions); a member is a def only
 //!   when `Name.MEMBER` is used in a `.ts` or `.html` file. `ROLE_` is dropped.
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
+use crate::extract_ctx::{ExtractContext, read_text, walk, with_root_config};
+use crate::services::support::test_path;
 use archguard_core::{
-    Condition, DiagnosticSeverity, PolicyDef, RoleDef, RoleKind, ServiceTopology, UiFlow,
-    UiFlowDiagnostic,
+    Condition, DiagnosticSeverity, PolicyDef, RoleDef, RoleKind, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -52,8 +51,13 @@ const SPRING_SITES: [&str; 8] = [
 
 /// Role and policy defs below `root`, with notes for what is not readable.
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut out = Out::default();
-    let sources = read_sources(root, &mut out);
+    let sources = read_sources(ctx.root, &mut out);
     let consts = Consts::read(&sources);
     let mut used = BTreeSet::new();
     for src in &sources {
@@ -128,8 +132,8 @@ impl Source {
 }
 
 fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
-    let discovery = match Discovery::new(root, &mut ServiceTopology::default()) {
-        Ok(d) => d,
+    let walk = match walk(root) {
+        Ok(walk) => walk,
         Err(e) => {
             out.note(".", 0, format!("Discovery settings not read: {e}"));
             return vec![];
@@ -142,9 +146,7 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
         Some("html") => Some(Lang::Html),
         _ => None,
     };
-    let mut files: Vec<(String, Lang)> = (discovery.walk(root).flatten())
-        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
-        .map(|e| relative(root, e.path()))
+    let mut files: Vec<(String, Lang)> = (walk.files.into_iter())
         .filter(|rel| !test_path(rel))
         .filter_map(|rel| lang(&rel).map(|l| (rel, l)))
         .collect();
@@ -159,8 +161,8 @@ fn read_sources(root: &Path, out: &mut Out) -> Vec<Source> {
     }
     let mut sources = Vec::new();
     for (rel, lang) in files {
-        match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
-            Ok(bytes) => sources.push(Source::new(rel, lang, &String::from_utf8_lossy(&bytes))),
+        match read_text(root, &rel, MAX_BYTES) {
+            Ok(text) => sources.push(Source::new(rel, lang, &text)),
             Err(e) => out.note(
                 &rel,
                 0,

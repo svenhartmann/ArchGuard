@@ -71,18 +71,20 @@
 //! Not followed: handlers in other files or called from a handler, calls through
 //! helper functions or services, `<a href>`, Nuxt `router.options.ts`, links to
 //! catch-all routes.
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
+use crate::extract_ctx::{
+    ExtractContext, dir_name as app_name, finish, read_source as read, walk, with_root_config,
+};
+use crate::lang_ts::*;
+use crate::lang_ts_decl::*;
+use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess, Origin,
-    Screen, ScreenKind, ServiceTopology, Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
+    Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
-use js::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const SOURCE: &str = "vue";
-const MAX_BYTES: u64 = 1 << 20;
 const MAX_FILES: usize = 5_000;
 /// Nesting bound for parsed literals and route trees.
 const MAX_DEPTH: usize = 32;
@@ -105,15 +107,18 @@ const LINK_TAGS: [&str; 4] = ["router-link", "RouterLink", "NuxtLink", "nuxt-lin
 const TRIGGER_EVENTS: [&str; 2] = ["click", "submit"];
 const FETCHES: [&str; 4] = ["fetch", "$fetch", "useFetch", "useLazyFetch"];
 const HTTP_METHODS: [&str; 7] = ["get", "post", "put", "patch", "delete", "head", "options"];
-const PARAM: &str = ":param";
-
 /// Screens, transitions, HTTP actions and Nuxt server endpoints of every Vue
 /// application below `root`. Read errors and everything not literal become diagnostics.
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    match Discovery::new(root, &mut ServiceTopology::default()) {
-        Ok(discovery) => {
-            for app in applications(root, &discovery, &mut flow.diagnostics) {
+    match walk(ctx.root) {
+        Ok(walk) => {
+            for app in applications(ctx.root, walk.files, &mut flow.diagnostics) {
                 app.extract(&mut flow);
             }
         }
@@ -124,20 +129,7 @@ pub fn extract(root: &Path) -> UiFlow {
             format!("Discovery exclusions not read; no Vue application analyzed: {e}"),
         ),
     }
-    flow.screens.sort();
-    flow.screens.dedup();
-    flow.transitions.sort();
-    flow.transitions.dedup();
-    flow.actions.sort();
-    flow.actions.dedup();
-    flow.endpoints.sort();
-    flow.endpoints.dedup();
-    flow.diagnostics.sort();
-    flow.diagnostics.dedup();
-    flow.complete = !flow
-        .diagnostics
-        .iter()
-        .any(|d| d.severity == DiagnosticSeverity::Gap);
+    finish(&mut flow);
     flow
 }
 
@@ -159,34 +151,8 @@ fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: &str) {
     });
 }
 
-fn read(root: &Path, rel: &str) -> Result<String, String> {
-    read_repo_file(root, Path::new(rel), MAX_BYTES)
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .map_err(|e| {
-            format!("File not read ({e}): larger than 1 MiB, not a regular file or not readable; its routes, links and calls are unknown.")
-        })
-}
-
-/// `"name"` as a key in `package.json` text.
-fn has_dep(text: &str, name: &str) -> bool {
-    let key = format!("\"{name}\"");
-    text.match_indices(&key)
-        .any(|(i, _)| text[i + key.len()..].trim_start().starts_with(':'))
-}
-
 fn is_source(rel: &str, name: &str) -> bool {
     EXTENSIONS.iter().any(|e| name.ends_with(e)) && !name.ends_with(".d.ts") && !test_path(rel)
-}
-
-fn app_name(root: &Path, dir: &str) -> String {
-    match dir.rsplit('/').next() {
-        Some(last) if !last.is_empty() => last.to_string(),
-        _ => root
-            .canonicalize()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "app".into()),
-    }
 }
 
 struct App {
@@ -207,14 +173,11 @@ struct Route {
     name: Option<String>,
 }
 
-fn applications(root: &Path, discovery: &Discovery, out: &mut Vec<UiFlowDiagnostic>) -> Vec<App> {
+fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>) -> Vec<App> {
     let mut apps: BTreeMap<String, App> = BTreeMap::new();
     let mut sources = Vec::new();
-    for entry in discovery.walk(root).flatten() {
-        let rel = relative(root, entry.path());
-        if !entry.file_type().is_some_and(|t| t.is_file())
-            || rel.split('/').any(|p| SKIPPED_DIRS.contains(&p))
-        {
+    for rel in files {
+        if rel.split('/').any(|p| SKIPPED_DIRS.contains(&p)) {
             continue;
         }
         let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
@@ -451,110 +414,6 @@ fn meta_access(
         }
     }
     found
-}
-
-/// One `import … from '…'`: `imported` is `None` for the default import and
-/// `Some("*")` for a namespace import.
-struct Import {
-    local: String,
-    imported: Option<String>,
-    module: String,
-}
-
-fn imports(text: &str) -> Vec<Import> {
-    let mut out = Vec::new();
-    for pos in words(text, "import") {
-        if let Some((clause, module)) = import_at(&text[pos + "import".len()..]) {
-            import_names(clause, &module, &mut out);
-        }
-    }
-    out
-}
-
-/// The clause and module of the import whose text follows `import`.
-fn import_at(rest: &str) -> Option<(&str, String)> {
-    let from = *words(rest, "from").first()?;
-    let clause = rest[..from].trim();
-    if clause.contains(';') || clause.starts_with('(') || clause.starts_with("type ") {
-        return None;
-    }
-    // The module string alone: imports without `;` (usual in Vue) run into the next line.
-    let mut p = Parser {
-        s: rest,
-        i: skip_ws(rest.as_bytes(), from + "from".len()),
-    };
-    matches!(p.peek(), b'\'' | b'"').then(|| (clause, p.string()))
-}
-
-/// The names an import clause (`A, { b, c as d }`, `* as X`) binds.
-fn import_names(clause: &str, module: &str, out: &mut Vec<Import>) {
-    let (head, braces) = match (clause.find('{'), clause.rfind('}')) {
-        (Some(open), Some(close)) if open < close => (&clause[..open], &clause[open + 1..close]),
-        _ => (clause, ""),
-    };
-    let mut push = |local: &str, imported: Option<&str>| {
-        if is_name(local) {
-            out.push(Import {
-                local: local.into(),
-                imported: imported.map(str::to_string),
-                module: module.into(),
-            });
-        }
-    };
-    for part in head.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-        match part.strip_prefix("* as ") {
-            Some(local) => push(local.trim(), Some("*")),
-            None => push(part, None),
-        }
-    }
-    for part in braces.split(',') {
-        let part = part.trim().trim_start_matches("type ").trim();
-        match part.split_once(" as ") {
-            Some((name, local)) => push(local.trim(), Some(name.trim())),
-            None => push(part, Some(part)),
-        }
-    }
-}
-
-/// What `… = hook()` binds: a name, or destructured `(key, local)` pairs.
-enum Binding {
-    Name(String),
-    Destructure(Vec<(String, String)>),
-}
-
-fn bindings(text: &str, hook: &str) -> Vec<Binding> {
-    let b = text.as_bytes();
-    let mut out = Vec::new();
-    for pos in words(text, hook) {
-        let open = skip_ws(b, pos + hook.len());
-        if b.get(open) != Some(&b'(') || b.get(skip_ws(b, open + 1)) != Some(&b')') {
-            continue;
-        }
-        let Some(lhs) = text[..pos].trim_end().strip_suffix('=') else {
-            continue;
-        };
-        if lhs.ends_with(['=', '!', '<', '>']) {
-            continue;
-        }
-        let lhs = lhs.trim_end();
-        if let Some(body) = lhs.strip_suffix('}') {
-            let Some(open) = body.rfind('{') else {
-                continue;
-            };
-            let pairs = body[open + 1..]
-                .split(',')
-                .filter_map(|p| {
-                    let (key, local) = p.split_once(':').unwrap_or((p, p));
-                    let (key, local) = (key.trim(), local.trim());
-                    (is_name(key) && is_name(local)).then(|| (key.into(), local.into()))
-                })
-                .collect();
-            out.push(Binding::Destructure(pairs));
-        } else if let Some(name) = trailing_ident(lhs) {
-            out.push(Binding::Name(name));
-        }
-    }
-    out
 }
 
 /// A template start tag: its attributes, whether it closes itself, the offset after `>`.
@@ -1744,404 +1603,6 @@ mod http {
             }
         }
         calls
-    }
-}
-
-/// Text helpers and a literal parser, as in the React extractor.
-mod js {
-    use super::{MAX_DEPTH, PARAM};
-
-    /// Path of a URL: scheme and host, query and fragment dropped, leading `/`.
-    pub(super) fn url_path(url: &str) -> String {
-        let url = url.split(['?', '#']).next().unwrap_or("");
-        let url = match url.split_once("://") {
-            Some((_, rest)) => rest.find('/').map_or("", |i| &rest[i..]),
-            None => url,
-        };
-        format!("/{}", url.trim_start_matches('/'))
-    }
-
-    /// `dir` and `rel` joined with `.` and `..` applied; `..` stops at the top.
-    pub(super) fn join(dir: &str, rel: &str) -> String {
-        let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
-        for s in rel.split('/') {
-            match s {
-                "" | "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                s => parts.push(s),
-            }
-        }
-        parts.join("/")
-    }
-
-    pub(super) fn dir(file: &str) -> &str {
-        file.rsplit_once('/').map_or("", |(d, _)| d)
-    }
-
-    pub(super) fn is_ident_char(c: char) -> bool {
-        c.is_ascii_alphanumeric() || c == '_' || c == '$'
-    }
-
-    /// A plain identifier or dotted name.
-    pub(super) fn is_name(s: &str) -> bool {
-        !s.is_empty()
-            && !s.starts_with(|c: char| c.is_ascii_digit())
-            && s.chars().all(|c| is_ident_char(c) || c == '.')
-    }
-
-    pub(super) fn ident_at(text: &str, at: usize) -> &str {
-        let Some(rest) = text.get(at..) else {
-            return "";
-        };
-        &rest[..rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len())]
-    }
-
-    pub(super) fn trailing_ident(text: &str) -> Option<String> {
-        let start = text.rfind(|c: char| !is_ident_char(c)).map_or(0, |i| i + 1);
-        let name = &text[start..];
-        (!name.is_empty()).then(|| name.to_string())
-    }
-
-    /// Offsets of `word` with no identifier character on either side.
-    pub(super) fn words(text: &str, word: &str) -> Vec<usize> {
-        let b = text.as_bytes();
-        let edge = |i: Option<&u8>| i.is_none_or(|c| !is_ident_char(*c as char));
-        text.match_indices(word)
-            .map(|(i, _)| i)
-            .filter(|&i| (i == 0 || edge(b.get(i - 1))) && edge(b.get(i + word.len())))
-            .collect()
-    }
-
-    pub(super) fn skip_ws(b: &[u8], mut i: usize) -> usize {
-        while b.get(i).is_some_and(u8::is_ascii_whitespace) {
-            i += 1;
-        }
-        i
-    }
-
-    /// Past a `<…>` type argument list; stops early at `(`, `;` or after 200 bytes.
-    pub(super) fn skip_generic(b: &[u8], start: usize) -> usize {
-        let mut depth = 0;
-        for (i, c) in b.iter().enumerate().skip(start).take(200) {
-            match c {
-                b'<' => depth += 1,
-                b'>' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return i + 1;
-                    }
-                }
-                b'(' | b';' => return i,
-                _ => {}
-            }
-        }
-        start
-    }
-
-    /// Offset after the bracket that closes the one at `at`, skipping strings and comments.
-    pub(super) fn close(text: &str, at: usize) -> usize {
-        let b = text.as_bytes();
-        let (mut i, mut depth) = (at, 0usize);
-        while i < b.len() {
-            match b[i] {
-                b'\'' | b'"' | b'`' => {
-                    i = Parser { s: text, i }.string_end();
-                    continue;
-                }
-                b'/' if matches!(b.get(i + 1), Some(b'/' | b'*')) => {
-                    let mut p = Parser { s: text, i };
-                    p.ws();
-                    i = p.i;
-                    continue;
-                }
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return i + 1;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        b.len()
-    }
-
-    pub(super) fn line_of(text: &str, at: usize) -> u32 {
-        let at = at.min(text.len());
-        text.as_bytes()[..at]
-            .iter()
-            .filter(|&&c| c == b'\n')
-            .count() as u32
-            + 1
-    }
-
-    /// Offset of the `[` that `const|let|var name … = [` binds.
-    pub(super) fn local_array(text: &str, name: &str) -> Option<usize> {
-        let b = text.as_bytes();
-        for kw in ["const", "let", "var"] {
-            for pos in words(text, kw) {
-                let j = skip_ws(b, pos + kw.len());
-                if ident_at(text, j) != name {
-                    continue;
-                }
-                let k = j + name.len();
-                let Some(eq) = text[k..].find(['=', ';']).map(|e| k + e) else {
-                    continue;
-                };
-                let after = skip_ws(b, eq + 1);
-                if b[eq] == b'=' && b.get(after) == Some(&b'[') {
-                    return Some(after);
-                }
-            }
-        }
-        None
-    }
-
-    /// A JavaScript literal as far as this scanner reads it; `at..end` is its source.
-    pub(super) struct Item {
-        pub(super) at: usize,
-        pub(super) end: usize,
-        pub(super) value: Value,
-    }
-
-    impl Item {
-        pub(super) fn source(&self, text: &str) -> String {
-            text.get(self.at..self.end).unwrap_or("").trim().to_string()
-        }
-    }
-
-    pub(super) enum Value {
-        Str(String),
-        /// Template literal with `${…}` holes, raw.
-        Tpl(String),
-        Arr(Vec<Item>),
-        Obj(Vec<(String, Item)>),
-        /// Any other expression, as source text.
-        Raw(String),
-    }
-
-    impl Value {
-        /// A string literal, or a template literal that starts literal, holes as `:param`.
-        pub(super) fn literal(&self) -> Option<String> {
-            match self {
-                Value::Str(s) => Some(s.clone()),
-                Value::Tpl(t) if !t.starts_with("${") => Some(Self::holes(t)),
-                _ => None,
-            }
-        }
-
-        fn holes(t: &str) -> String {
-            let mut out = String::new();
-            let mut rest = t;
-            while let Some(i) = rest.find("${") {
-                out.push_str(&rest[..i]);
-                out.push_str(PARAM);
-                let mut depth = 0;
-                let mut end = rest.len();
-                for (j, c) in rest[i + 1..].char_indices() {
-                    match c {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = i + 1 + j + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                rest = &rest[end..];
-            }
-            out.push_str(rest);
-            out
-        }
-    }
-
-    pub(super) struct Parser<'a> {
-        pub(super) s: &'a str,
-        pub(super) i: usize,
-    }
-
-    impl Parser<'_> {
-        pub(super) fn peek(&self) -> u8 {
-            self.s.as_bytes().get(self.i).copied().unwrap_or(0)
-        }
-
-        /// Skips whitespace and comments.
-        pub(super) fn ws(&mut self) {
-            let b = self.s.as_bytes();
-            loop {
-                self.i = skip_ws(b, self.i);
-                let rest = b.get(self.i..).unwrap_or_default();
-                self.i = if rest.starts_with(b"//") {
-                    self.s[self.i..].find('\n').map_or(b.len(), |e| self.i + e)
-                } else if rest.starts_with(b"/*") {
-                    self.s[self.i + 2..]
-                        .find("*/")
-                        .map_or(b.len(), |e| self.i + 2 + e + 2)
-                } else {
-                    return;
-                };
-            }
-        }
-
-        /// Offset after the string literal at the cursor; the end for an open one.
-        pub(super) fn string_end(&self) -> usize {
-            let b = self.s.as_bytes();
-            let quote = b[self.i];
-            let mut i = self.i + 1;
-            while i < b.len() {
-                match b[i] {
-                    b'\\' => i += 2,
-                    c if c == quote => return i + 1,
-                    _ => i += 1,
-                }
-            }
-            b.len()
-        }
-
-        /// Content of the string literal at the cursor; moves past it.
-        pub(super) fn string(&mut self) -> String {
-            let at = self.i;
-            self.i = self.string_end();
-            self.s.get(at + 1..self.i - 1).unwrap_or("").to_string()
-        }
-
-        /// One value; anything followed by more than a separator is `Raw`.
-        pub(super) fn value(&mut self, depth: usize) -> Item {
-            self.ws();
-            let at = self.i;
-            let value = match self.peek() {
-                b'[' if depth < MAX_DEPTH => Value::Arr(self.array(depth + 1)),
-                b'{' if depth < MAX_DEPTH => Value::Obj(self.object(depth + 1)),
-                q @ (b'\'' | b'"' | b'`') => {
-                    let inner = self.string();
-                    if q == b'`' && inner.contains("${") {
-                        Value::Tpl(inner)
-                    } else {
-                        Value::Str(inner)
-                    }
-                }
-                _ => return self.raw(at),
-            };
-            let end = self.i;
-            self.ws();
-            if matches!(self.peek(), b',' | b']' | b'}' | b')' | b';' | 0) {
-                Item { at, end, value }
-            } else {
-                self.raw(at)
-            }
-        }
-
-        /// Source text up to the next separator outside brackets and strings.
-        fn raw(&mut self, at: usize) -> Item {
-            let b = self.s.as_bytes();
-            self.i = at;
-            let mut depth = 0usize;
-            while self.i < b.len() {
-                match b[self.i] {
-                    b'\'' | b'"' | b'`' => {
-                        self.i = self.string_end();
-                        continue;
-                    }
-                    b'/' if matches!(b.get(self.i + 1), Some(b'/' | b'*')) => {
-                        self.ws();
-                        continue;
-                    }
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' if depth == 0 => break,
-                    b')' | b']' | b'}' => depth -= 1,
-                    b',' | b';' if depth == 0 => break,
-                    _ => {}
-                }
-                self.i += 1;
-            }
-            let text = self.s[at..self.i].trim_end();
-            Item {
-                at,
-                end: at + text.len(),
-                value: Value::Raw(text.into()),
-            }
-        }
-
-        /// Items of the array whose `[` is at the cursor.
-        pub(super) fn array(&mut self, depth: usize) -> Vec<Item> {
-            self.i += 1;
-            let mut items = Vec::new();
-            loop {
-                self.ws();
-                match self.peek() {
-                    b']' => {
-                        self.i += 1;
-                        break;
-                    }
-                    0 => break,
-                    _ => {}
-                }
-                let item = self.value(depth);
-                if item.end > item.at {
-                    items.push(item);
-                }
-                self.ws();
-                match self.peek() {
-                    b',' => self.i += 1,
-                    b']' => {}
-                    _ => break,
-                }
-            }
-            items
-        }
-
-        /// Fields of the object whose `{` is at the cursor; shorthand and methods are `Raw`.
-        fn object(&mut self, depth: usize) -> Vec<(String, Item)> {
-            self.i += 1;
-            let mut fields = Vec::new();
-            loop {
-                self.ws();
-                match self.peek() {
-                    b'}' => {
-                        self.i += 1;
-                        break;
-                    }
-                    0 => break,
-                    _ => {}
-                }
-                let at = self.i;
-                let key = if matches!(self.peek(), b'\'' | b'"') {
-                    self.string()
-                } else {
-                    let key = ident_at(self.s, at).to_string();
-                    self.i += key.len();
-                    key
-                };
-                self.ws();
-                let item = match self.peek() {
-                    b':' if !key.is_empty() => {
-                        self.i += 1;
-                        self.value(depth)
-                    }
-                    b',' | b'}' if !key.is_empty() => Item {
-                        at,
-                        end: at + key.len(),
-                        value: Value::Raw(key.clone()),
-                    },
-                    _ => self.raw(at),
-                };
-                fields.push((key, item));
-                self.ws();
-                match self.peek() {
-                    b',' => self.i += 1,
-                    b'}' => {}
-                    _ => break,
-                }
-            }
-            fields
-        }
     }
 }
 

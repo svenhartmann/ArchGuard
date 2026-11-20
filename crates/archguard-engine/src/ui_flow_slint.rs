@@ -60,11 +60,11 @@
 //! component properties (`ViewBarTab { view: "start"; navigate(v) => … }`),
 //! Rust code that names the property by another path (`invoke_…`, models
 //! changed in place), `slint!` macros inside Rust, and actions (no HTTP).
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
-use archguard_core::{
-    DiagnosticSeverity, Origin, ServiceTopology, Target, Transition, UiFlow, UiFlowDiagnostic,
+use crate::extract_ctx::{
+    ExtractContext, ancestors, dir_name as app_name, read_text, walk, with_root_config,
 };
+use crate::services::support::test_path;
+use archguard_core::{DiagnosticSeverity, Origin, Target, Transition, UiFlow, UiFlowDiagnostic};
 use model::Ui;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -78,8 +78,13 @@ const LABELS: [&str; 3] = ["accessible-label", "text", "title"];
 
 /// Screens and transitions of every Slint application below `root`.
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    let (apps, rust) = files::discover(root, &mut flow);
+    let (apps, rust) = files::discover(ctx.root, &mut flow);
     let uis: Vec<Ui> = (apps.into_iter())
         .map(|(app, files)| Ui::new(app, files))
         .collect();
@@ -167,9 +172,8 @@ mod files {
     /// The Slint applications (name, `.slint` files) and the Rust files of
     /// the packages that use Slint.
     pub(super) fn discover(root: &Path, flow: &mut UiFlow) -> (Apps, Vec<Src>) {
-        let mut scratch = ServiceTopology::default();
-        let discovery = match Discovery::new(root, &mut scratch) {
-            Ok(discovery) => discovery,
+        let walk = match walk(root) {
+            Ok(walk) => walk,
             Err(error) => {
                 let message = format!("Slint files not scanned: {error}");
                 diagnostic(flow, "", 0, message, true);
@@ -177,9 +181,8 @@ mod files {
             }
         };
         let (mut packages, mut paths) = (BTreeMap::new(), Vec::new());
-        for entry in discovery.walk(root).flatten() {
-            let rel = relative(root, entry.path());
-            if !entry.file_type().is_some_and(|t| t.is_file()) || test_path(&rel) {
+        for rel in walk.files {
+            if test_path(&rel) {
                 continue;
             }
             if rel == "Cargo.toml" || rel.ends_with("/Cargo.toml") {
@@ -220,34 +223,17 @@ mod files {
     /// The nearest package folder of `rel` and whether it uses Slint; `""`
     /// without a package.
     fn owner<'a>(rel: &str, packages: &'a BTreeMap<String, bool>) -> (&'a str, bool) {
-        let mut dir = rel;
-        loop {
-            dir = parent(dir);
-            if let Some((key, slint)) = packages.get_key_value(dir) {
-                return (key, *slint);
-            }
-            if dir.is_empty() {
-                return ("", false);
-            }
-        }
-    }
-
-    fn app_name(root: &Path, dir: &str) -> String {
-        match dir.rsplit('/').next() {
-            Some(name) if !name.is_empty() => name.to_string(),
-            _ => (root.file_name()).map_or(String::new(), |n| n.to_string_lossy().into_owned()),
-        }
+        (ancestors(rel).find_map(|dir| packages.get_key_value(dir)))
+            .map_or(("", false), |(key, slint)| (key, *slint))
     }
 
     fn read(root: &Path, rel: &str, flow: &mut UiFlow) -> Option<String> {
-        match read_repo_file(root, Path::new(rel), MAX_BYTES) {
-            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
-            Err(_) => {
-                let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
-                diagnostic(flow, rel, 0, message.into(), true);
-                None
-            }
+        let text = read_text(root, rel, MAX_BYTES);
+        if text.is_err() {
+            let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
+            diagnostic(flow, rel, 0, message.into(), true);
         }
+        text.ok()
     }
 }
 

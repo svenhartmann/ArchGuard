@@ -2,6 +2,11 @@
 //! blanked, then state assignments, domain-event types and their creation.
 use std::collections::BTreeSet;
 
+/// `src` with comments and literal contents blanked, quotes kept, so
+/// `new X("…")` still has its shape.
+pub(super) use crate::lang_csharp::mask as blank;
+pub(super) use crate::lang_text::line;
+
 /// The raise function of the C# domain extractor (`domain_csharp.rs`).
 pub(super) const RAISE_FUNCTION: &str = "AddDomainEvent";
 
@@ -117,85 +122,4 @@ fn is_id(c: u8) -> bool {
 
 fn ident(s: &str) -> &str {
     &s[..s.bytes().take_while(|c| is_id(*c)).count()]
-}
-
-pub(super) fn line(s: &str, pos: usize) -> u32 {
-    1 + s[..pos].matches('\n').count() as u32
-}
-
-/// `src` with comments and the contents of string and char literals replaced
-/// by spaces (newlines kept), so offsets and lines stay those of the source.
-/// shortcut: raw (`"""`) and interpolated strings are blanked like plain ones,
-/// expressions inside `{…}` included; good enough to hide text, not to read it.
-pub(super) fn blank(src: &str) -> String {
-    let mut b = src.as_bytes().to_vec();
-    let mut i = 0;
-    let wipe = |b: &mut [u8], from: usize, to: usize| {
-        // An unterminated string ends before its own content starts.
-        let to = to.min(b.len()).max(from);
-        b[from..to]
-            .iter_mut()
-            .filter(|c| **c != b'\n')
-            .for_each(|c| *c = b' ');
-    };
-    while i < b.len() {
-        let end = match (b[i], b.get(i + 1).copied()) {
-            (b'/', Some(b'/')) => b[i..]
-                .iter()
-                .position(|c| *c == b'\n')
-                .map_or(b.len(), |n| i + n),
-            (b'/', Some(b'*')) => find(&b, i + 2, b"*/").map_or(b.len(), |n| n + 2),
-            (b'"', _) => {
-                let verbatim = i > 0 && (b[i - 1] == b'@' || (i > 1 && b[i - 2] == b'@'));
-                string_end(&b, i + 1, verbatim)
-            }
-            (b'\'', _) => {
-                let close = if b.get(i + 1) == Some(&b'\\') {
-                    i + 3
-                } else {
-                    i + 2
-                };
-                b.get(close..)
-                    .unwrap_or_default()
-                    .iter()
-                    .take(8)
-                    .position(|c| *c == b'\'')
-                    .map_or(i + 1, |n| close + n + 1)
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        // Keep the quotes so `new X("…")` still has its shape.
-        let quoted = b[i] == b'"';
-        wipe(
-            &mut b,
-            if quoted { i + 1 } else { i },
-            if quoted { end.saturating_sub(1) } else { end },
-        );
-        i = end.max(i + 1);
-    }
-    String::from_utf8_lossy(&b).into_owned()
-}
-
-fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
-    b.get(from..)?
-        .windows(pat.len())
-        .position(|w| w == pat)
-        .map(|n| from + n)
-}
-
-/// Offset just past the closing quote of a string whose content starts at `i`.
-fn string_end(b: &[u8], mut i: usize, verbatim: bool) -> usize {
-    while i < b.len() {
-        match b[i] {
-            b'\\' if !verbatim => i += 2,
-            b'"' if verbatim && b.get(i + 1) == Some(&b'"') => i += 2,
-            b'"' => return i + 1,
-            b'\n' if !verbatim => return i,
-            _ => i += 1,
-        }
-    }
-    b.len()
 }

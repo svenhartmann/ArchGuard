@@ -31,8 +31,7 @@ use archguard_core::{
     UiFlowFindingKind, ui_flow_findings,
 };
 
-use crate::project_files::read_repo_file;
-use crate::services::support::{excluded, relative, test_path};
+use crate::extract_ctx::{ExtractContext, domain_sources};
 use csharp::{
     RAISE_FUNCTION, blank, constructions, event_types, line, member_assignments, passed_to_raise,
     raise_arguments,
@@ -41,7 +40,6 @@ use csharp::{
 #[path = "view_conventions_csharp.rs"]
 mod csharp;
 
-const MAX_BYTES: u64 = 1024 * 1024;
 const UI_RULES: [&str; 4] = [
     "navigation_literal",
     "endpoint_access_declared",
@@ -56,14 +54,15 @@ const EVENTS: &str = "events_through_raise_function";
 pub fn convention_findings(root: &Path, config: &Config) -> Vec<Finding> {
     let on: BTreeSet<&str> = config.views.conventions.iter().map(|c| c.name()).collect();
     let mut out = Vec::new();
+    let ctx = ExtractContext::new(root, config);
     if UI_RULES.iter().any(|r| on.contains(r)) {
-        match crate::ui_flow::analyze(root) {
+        match crate::ui_flow::analyze_with(&ctx) {
             Ok(flow) => out.extend(ui_findings(&flow, &on)),
             Err(e) => out.push(unreadable("ui-flow", e)),
         }
     }
     if on.contains(STATE) || on.contains(EVENTS) {
-        match crate::domain_model::analyze(root) {
+        match crate::domain_model::analyze_with(&ctx) {
             Ok(model) => {
                 let sources = csharp_sources(root);
                 if on.contains(STATE) {
@@ -157,35 +156,14 @@ fn frontend_backend_agree(flow: &UiFlow) -> Vec<Finding> {
     out
 }
 
-/// `(relative path, text with comments and string contents blanked)` of every
-/// non-test `*.cs` file, sorted.
+/// `(relative path, text with comments and string contents blanked)` of the
+/// C# files the domain extractor reads, sorted.
 fn csharp_sources(root: &Path) -> Vec<(String, String)> {
-    let walk = ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .follow_links(false)
-        .require_git(false)
-        .git_global(false)
-        .max_depth(Some(64))
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            e.depth() == 0 || !(excluded(&name) || matches!(name.as_ref(), "bin" | "obj"))
-        })
-        .build();
-    let mut paths: Vec<String> = walk
-        .flatten()
-        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
-        .map(|e| relative(root, e.path()))
-        .filter(|rel| rel.ends_with(".cs") && !test_path(rel))
-        .collect();
-    paths.sort();
-    // shortcut: unreadable or oversized files are skipped silently; the domain
-    // extractor already reports them as diagnostics.
-    paths
-        .into_iter()
-        .filter_map(|rel| {
-            let bytes = read_repo_file(root, Path::new(&rel), MAX_BYTES).ok()?;
-            Some((rel.clone(), blank(&String::from_utf8_lossy(&bytes))))
-        })
+    // Unreadable or oversized files are skipped: the domain extractor already
+    // reports them as diagnostics.
+    let (sources, _) = domain_sources(root, &["bin", "obj"], |r| r.ends_with(".cs"), "C#");
+    (sources.into_iter())
+        .map(|(rel, text)| (rel, blank(&text)))
         .collect()
 }
 
