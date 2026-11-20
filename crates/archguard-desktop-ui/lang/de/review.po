@@ -231,3 +231,72 @@ msgstr "Akzeptierte Kompromisse: {}"
 
 msgid "No goals, constraints or decisions in the configuration. Priorities are not inferred from the graph."
 msgstr "Keine Ziele, Randbedingungen oder Entscheidungen in der Konfiguration. Prioritäten werden nicht aus dem Graphen abgeleitet."
+
+msgid "Accepted risks"
+msgstr "Akzeptierte Risiken"
+
+msgid "Evidence gaps"
+msgstr "Beleglücken"
+
+msgid "Source status: {}"
+msgstr "Quellstatus: {}"
+
+msgid "Source evidence"
+msgstr "Quellbelege"
+
+msgid "Recorded decision: {}"
+msgstr "Gespeicherte Entscheidung: {}"
+
+msgid "Affected components, files and tests"
+msgstr "Betroffene Komponenten, Dateien und Tests"
+
+msgid "No mapped logical component in this selection."
+msgstr "Keine zugeordnete logische Komponente in dieser Auswahl."
+
+msgid "Test evidence: {}"
+msgstr "Testbelege: {}"
+
+msgid "Evidence status and origin"
+msgstr "Belegstatus und Herkunft"
+
+msgid "Architecture questions and decisions"
+msgstr "Architekturfragen und Entscheidungen"
+
+msgid "{} earlier decisions have no matching current finding; they stay in the exported record."
+msgstr "{} frühere Entscheidungen haben keinen passenden aktuellen Befund; sie bleiben im exportierten Datensatz."
+
+msgid "Review scope and limits"
+msgstr "Review-Umfang und Grenzen"
+
+msgid "Recorded observations. Graph simulations and draft decisions change neither measurements nor CI gates."
+msgstr "Festgehaltene Beobachtungen. Graphsimulationen und Entscheidungsentwürfe verändern weder Messungen noch CI-Gates."
+
+msgid "Search finding, owner or source"
+msgstr "Befund, Verantwortliche oder Quelle suchen"
+
+msgid "All findings"
+msgstr "Alle Befunde"
+
+msgid "Needs action"
+msgstr "Maßnahme nötig"
+
+msgid "New architecture findings"
+msgstr "Neue Architekturbefunde"
+
+msgid "Impact & evidence"
+msgstr "Reichweite & Belege"
+
+msgid "Review written to {}."
+msgstr "Review nach {} geschrieben."
+
+msgid "Compared with: {}"
+msgstr "Verglichen mit: {}"
+
+msgid "Review: {}"
+msgstr "Review: {}"
+
+msgid "{} of {} findings shown; filters change neither totals nor exports."
+msgstr "{} von {} Befunden angezeigt; Filter ändern weder Gesamtzahlen noch Exporte."
+
+msgid "Export Markdown…"
+msgstr "Markdown exportieren…"

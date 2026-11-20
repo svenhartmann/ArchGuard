@@ -122,6 +122,18 @@ impl Session {
     pub fn export_path(&self) -> PathBuf {
         self.root.join(".archguard/review-decisions-draft.json")
     }
+
+    /// Where Export Markdown suggests to save.
+    pub fn markdown_path(&self) -> PathBuf {
+        self.root.join(".archguard/review.md")
+    }
+
+    /// Write the review as Markdown to `path`; recorded decisions only,
+    /// as drafts are not part of the review yet.
+    pub fn write_markdown(&self, path: &Path) -> Result<(), String> {
+        let text = archguard_engine::review_markdown(&self.report);
+        std::fs::write(path, text).map_err(|e| e.to_string())
+    }
 }
 
 /// `git config user.name` in `root`; empty without Git or a name.
@@ -220,5 +232,31 @@ mod tests {
         archguard_engine::import_review_decisions(root.path(), &mut fresh, &path, NOW)
             .expect("the import accepts the export");
         assert_eq!(fresh.findings[0].disposition, "deferred");
+    }
+
+    /// The dialog's summary, impact and limits come from the generated
+    /// review; Export Markdown writes the engine's rendering of it.
+    #[test]
+    fn the_overview_and_markdown_describe_the_generated_review() {
+        let root = project();
+        let s = Session::generate(root.path(), NOW).expect("review");
+        let o = crate::review_findings::overview(&s.report);
+        assert_eq!(
+            o.cards[0],
+            s.report.summary["open"].as_i64().unwrap_or(-1) as i32
+        );
+        assert!(o.cards[0] >= 1, "the cycle is open");
+        assert!(o.files.iter().any(|f| f.ends_with("a.ts")), "{:?}", o.files);
+        assert!(!o.limits.is_empty() && !o.origin.is_empty());
+        assert_eq!(o.gaps.len(), s.report.gaps.len());
+        assert_eq!(
+            crate::review_findings::kept(&s.report, "", 0).len(),
+            s.report.findings.len()
+        );
+        let path = root.path().join("review.md");
+        s.write_markdown(&path).expect("markdown");
+        let md = std::fs::read_to_string(&path).expect("written");
+        assert!(md.starts_with("# Architecture review\n"));
+        assert!(md.contains(&s.report.findings[0].title.replace('|', "&#124;")));
     }
 }
