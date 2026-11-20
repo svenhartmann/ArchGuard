@@ -152,8 +152,59 @@ struct App {
     prefix: String,
     next: bool,
     tanstack: bool,
+    /// `paths` of the application's `tsconfig.json`.
+    aliases: Vec<Alias>,
     /// Sources by path relative to the analysis root.
     files: BTreeMap<String, String>,
+}
+
+/// A tsconfig `paths` entry: the import pattern and its targets as paths below
+/// the analysis root, `*` kept in both (`@/*` to `fe/src/*`).
+struct Alias {
+    pattern: String,
+    targets: Vec<String>,
+}
+
+/// The `paths` of a tsconfig text in directory `dir`, below its `baseUrl`.
+fn tsconfig_aliases(dir: &str, text: &str) -> Vec<Alias> {
+    let value_after = |key: &str| {
+        let at = text.find(&format!("\"{key}\""))? + key.len() + 2;
+        let colon = skip_ws(text.as_bytes(), at);
+        (text.as_bytes().get(colon) == Some(&b':')).then(|| {
+            Parser {
+                s: text,
+                i: colon + 1,
+            }
+            .value(0)
+        })
+    };
+    let base = match value_after("baseUrl").map(|i| i.value) {
+        Some(Value::Str(b)) => join(dir, &b),
+        _ => dir.to_string(),
+    };
+    let Some(Item {
+        value: Value::Obj(fields),
+        ..
+    }) = value_after("paths")
+    else {
+        return Vec::new();
+    };
+    fields
+        .into_iter()
+        .map(|(pattern, item)| {
+            let targets = match item.value {
+                Value::Arr(items) => items
+                    .into_iter()
+                    .filter_map(|t| match t.value {
+                        Value::Str(t) => Some(join(&base, &t)),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Alias { pattern, targets }
+        })
+        .collect()
 }
 
 /// Who owns a screen's links and calls.
@@ -167,6 +218,7 @@ enum Owner {
 fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>) -> Vec<App> {
     let mut apps: BTreeMap<String, App> = BTreeMap::new();
     let mut sources = Vec::new();
+    let mut tsconfigs = Vec::new();
     for rel in files {
         if rel.split('/').any(|p| SKIPPED_DIRS.contains(&p)) {
             continue;
@@ -176,8 +228,18 @@ fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>
             if let Some(app) = manifest_app(root, dir, &rel) {
                 apps.insert(dir.to_string(), app);
             }
+        } else if name == "tsconfig.json" {
+            tsconfigs.push(rel);
         } else if is_source(&rel, name) {
             sources.push(rel);
+        }
+    }
+    for rel in tsconfigs {
+        let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
+        if let Some(app) = apps.get_mut(dir)
+            && let Ok(text) = read(root, &rel)
+        {
+            app.aliases = tsconfig_aliases(dir, &text);
         }
     }
     read_sources(root, &mut apps, sources, out);
@@ -204,6 +266,7 @@ fn manifest_app(root: &Path, dir: &str, rel: &str) -> Option<App> {
         prefix,
         next: deps.contains(&"next"),
         tanstack: deps.contains(&"@tanstack/react-router"),
+        aliases: Vec::new(),
         files: BTreeMap::new(),
     })
 }
@@ -270,7 +333,7 @@ impl App {
             screens: &screens,
         };
         let clients = Clients::new(&self.files);
-        let sdk = sdk::index(self);
+        let sdk = sdk::Sdk::new(self);
         for (file, text) in &self.files {
             if self.next && next::is_backend(self, file) {
                 continue;
@@ -309,12 +372,34 @@ impl App {
         }
     }
 
+    /// An import resolved to a scanned file: relative, or through a tsconfig `paths` entry.
+    fn resolve(&self, from: &str, spec: &str) -> Option<&str> {
+        if spec.starts_with('.') {
+            return self.module(from, spec);
+        }
+        self.aliases.iter().find_map(|a| {
+            let rest = match a.pattern.split_once('*') {
+                Some((head, tail)) => spec.strip_prefix(head)?.strip_suffix(tail)?,
+                None if a.pattern == spec => "",
+                None => return None,
+            };
+            a.targets
+                .iter()
+                .find_map(|t| self.file_at(&t.replace('*', rest)))
+        })
+    }
+
     /// A relative import resolved to a scanned file.
     fn module(&self, from: &str, spec: &str) -> Option<&str> {
         if !spec.starts_with('.') {
             return None;
         }
-        let base = join(dir(from), spec);
+        self.file_at(&join(dir(from), spec))
+    }
+
+    /// The scanned file a module path names: with an extension, or an index file.
+    fn file_at(&self, base: &str) -> Option<&str> {
+        let base = base.to_string();
         let mut candidates = vec![base.clone()];
         for ext in EXTENSIONS {
             candidates.push(format!("{base}{ext}"));
@@ -1470,48 +1555,382 @@ mod tanstack {
         }
     }
 
-    /// What the module's `beforeLoad` requires: each `if (c)` whose branch calls
-    /// `redirect(` needs `not c`. A redirect without `if` is a forwarding page.
-    fn guards(m: &Module, access: &Access, out: &mut Vec<UiFlowDiagnostic>) -> Vec<Condition> {
-        let (text, b) = (m.text, m.text.as_bytes());
-        let Some(start) = words(text, "beforeLoad").first().copied() else {
-            return Vec::new();
+    /// A readable function: the interior of its block body, or a function name.
+    enum Callable {
+        Body(usize, usize),
+        Reference(String),
+        Unreadable,
+    }
+
+    /// The interior of the `{ … }` after offset `at` (a `: Type` may come first).
+    fn block_after(m: &str, at: usize) -> Callable {
+        let b = m.as_bytes();
+        let j = skip_ws(b, at);
+        let open = match b.get(j) {
+            Some(b'{') => j,
+            Some(b':') => match m[j..].find('{') {
+                Some(i) => j + i,
+                None => return Callable::Unreadable,
+            },
+            _ => return Callable::Unreadable,
         };
-        let Some(arrow) = text[start..].find("=>").map(|i| start + i + 2) else {
-            return Vec::new();
-        };
-        let open = skip_ws(b, arrow);
-        if b.get(open) != Some(&b'{') {
-            return Vec::new();
+        Callable::Body(open + 1, block_end(m, open, b'{', b'}') - 1)
+    }
+
+    /// The function expression starting at `at`: `async`, `function`, an arrow with a
+    /// block body, or a name.
+    fn callable_at(m: &str, at: usize) -> Callable {
+        let b = m.as_bytes();
+        let mut i = skip_ws(b, at);
+        if ident_at(m, i) == "async" {
+            i = skip_ws(b, i + "async".len());
         }
-        let end = block_end(text, open, b'{', b'}');
-        let mut found = Vec::new();
-        for pos in words(&text[..end], "if").into_iter().filter(|&p| p > open) {
-            let paren = skip_ws(b, pos + 2);
-            if b.get(paren) != Some(&b'(') {
-                continue;
+        let arrow = |after_params: usize| {
+            let j = skip_ws(b, after_params);
+            if !m[j..].starts_with("=>") {
+                return Callable::Unreadable;
             }
-            let cond_end = block_end(text, paren, b'(', b')');
-            let cond = &text[paren + 1..cond_end.saturating_sub(1).max(paren + 1)];
-            let branch = skip_ws(b, cond_end);
-            let branch_end = if b.get(branch) == Some(&b'{') {
-                block_end(text, branch, b'{', b'}')
-            } else {
-                text[branch..].find([';', '\n']).map_or(end, |i| branch + i)
+            match b.get(skip_ws(b, j + 2)) {
+                Some(b'{') => block_after(m, j + 2),
+                _ => Callable::Unreadable,
+            }
+        };
+        if ident_at(m, i) == "function" {
+            i = skip_ws(b, i + "function".len());
+            i = skip_ws(b, i + ident_at(m, i).len());
+            return match b.get(i) {
+                Some(b'(') => block_after(m, block_end(m, i, b'(', b')')),
+                _ => Callable::Unreadable,
             };
-            if !text[branch..branch_end.min(text.len())].contains("redirect(") {
+        }
+        if b.get(i) == Some(&b'(') {
+            return arrow(block_end(m, i, b'(', b')'));
+        }
+        let name = ident_at(m, i);
+        let j = skip_ws(b, i + name.len());
+        if name.is_empty() {
+            Callable::Unreadable
+        } else if m[j..].starts_with("=>") {
+            arrow(i + name.len())
+        } else if matches!(b.get(j), Some(b',' | b'}' | b'\n') | None) {
+            Callable::Reference(name.to_string())
+        } else {
+            Callable::Unreadable
+        }
+    }
+
+    /// The body of `function name(…) {…}` or `const name = (…) => {…}` in `m`.
+    fn declared_body(m: &str, name: &str) -> Option<(usize, usize)> {
+        let b = m.as_bytes();
+        for pos in words(m, name) {
+            let before = m[..pos].trim_end();
+            let j = skip_ws(b, pos + name.len());
+            let callable = if before.ends_with("function") && b.get(j) == Some(&b'(') {
+                block_after(m, block_end(m, j, b'(', b')'))
+            } else if matches!(
+                trailing_ident(before).as_deref(),
+                Some("const" | "let" | "var")
+            ) && b.get(j) == Some(&b'=')
+            {
+                callable_at(m, j + 1)
+            } else {
                 continue;
+            };
+            return match callable {
+                Callable::Body(s, e) => Some((s, e)),
+                _ => None,
+            };
+        }
+        None
+    }
+
+    /// How a module's `beforeLoad` is written; `None` when it has none.
+    fn before_load(m: &str) -> Option<(usize, Callable)> {
+        let b = m.as_bytes();
+        let pos = words(m, "beforeLoad")
+            .into_iter()
+            .find(|&p| !m[..p].trim_end().ends_with('.'))?;
+        let j = skip_ws(b, pos + "beforeLoad".len());
+        let callable = match b.get(j) {
+            Some(b':') => callable_at(m, j + 1),
+            Some(b'(') => block_after(m, block_end(m, j, b'(', b')')),
+            _ => Callable::Unreadable,
+        };
+        Some((pos, callable))
+    }
+
+    /// The statements of one `beforeLoad` body, read with fixed rules: `if`/`else`
+    /// chains, early `return`, `throw redirect(…)`. A redirect anywhere else is not read.
+    struct Walker<'a> {
+        m: &'a str,
+        file: &'a str,
+        access: &'a Access,
+        out: &'a mut Vec<UiFlowDiagnostic>,
+        /// `not (path conditions)` for each redirect found.
+        found: Vec<Condition>,
+    }
+
+    /// How control leaves a statement list.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Ended {
+        /// It runs on.
+        No,
+        /// It throws a redirect under exactly the condition the list started with.
+        Redirect,
+        /// It returns, throws, or redirects under a narrower condition.
+        Stop,
+    }
+
+    fn has_redirect(text: &str) -> bool {
+        words(text, "redirect")
+            .into_iter()
+            .any(|p| text[p + "redirect".len()..].trim_start().starts_with('('))
+    }
+
+    /// Whether the line break at `k` continues the statement that began at `i`.
+    fn continues(m: &str, i: usize, k: usize) -> bool {
+        let b = m.as_bytes();
+        let last = m[i..k].trim_end().bytes().last();
+        let next = b.get(skip_ws(b, k)).copied();
+        last.is_some_and(|c| b",(=+-*/&|?:.!<>".contains(&c))
+            || next.is_some_and(|c| b".?:&|+*/".contains(&c))
+    }
+
+    /// End of the simple statement at `i`: `;`, a line break, or the closing `}`.
+    fn simple_end(m: &str, i: usize) -> usize {
+        let b = m.as_bytes();
+        let (mut depth, mut k) = (0usize, i);
+        while k < b.len() {
+            match b[k] {
+                b'\'' | b'"' | b'`' => {
+                    k = Parser { s: m, i: k }.string_end();
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b'}' if depth == 0 => return k,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b';' if depth == 0 => return k + 1,
+                b'\n' if depth == 0 && !continues(m, i, k) => return k,
+                _ => {}
             }
-            match check(cond, access) {
-                Ok(c) => found.extend(negate(c)),
+            k += 1;
+        }
+        b.len()
+    }
+
+    impl Walker<'_> {
+        /// End of the statement at `i`: a block, an `if` chain or a simple statement.
+        fn stmt_end(&self, i: usize) -> usize {
+            let (m, b) = (self.m, self.m.as_bytes());
+            if b.get(i) == Some(&b'{') {
+                return block_end(m, i, b'{', b'}');
+            }
+            if ident_at(m, i) == "if" {
+                let paren = skip_ws(b, i + 2);
+                let after = self.stmt_end(skip_ws(b, block_end(m, paren, b'(', b')')));
+                let j = skip_ws(b, after);
+                return match ident_at(m, j) {
+                    "else" => self.stmt_end(skip_ws(b, j + 4)),
+                    _ => after,
+                };
+            }
+            simple_end(m, i)
+        }
+
+        /// The condition `text` as a path element; `None` is always true.
+        fn cond(&mut self, text: &str, at: usize) -> Option<Condition> {
+            match check(text, self.access) {
+                Ok(c) => c,
                 Err(t) => {
                     let message = format!(
                         "Check {t} is not a name or listed in [views.access]; the condition is unknown."
                     );
-                    diag(out, m.file, line_of(text, pos), message);
-                    found.push(Condition::Unknown(t));
+                    diag(self.out, self.file, line_of(self.m, at), message);
+                    Some(Condition::Unknown(t))
                 }
             }
+        }
+
+        /// A redirect reached under `path`: the screen requires that `path` does not hold.
+        fn reached(&mut self, path: &[Option<Condition>]) {
+            let held: Vec<Condition> = path.iter().flatten().cloned().collect();
+            if held.is_empty() || held.contains(&Condition::Never) {
+                return;
+            }
+            self.found.push(match held.len() {
+                1 => negate(held.into_iter().next()).expect("a single condition has a negation"),
+                _ => Condition::Not(Box::new(Condition::All(held))),
+            });
+        }
+
+        /// The `if` at `i` (ending at `end`): both branches walked, and what follows
+        /// it learns from a branch that always leaves.
+        fn walk_if(
+            &mut self,
+            (i, end): (usize, usize),
+            path: &mut Vec<Option<Condition>>,
+        ) -> Result<Ended, String> {
+            let (m, b) = (self.m, self.m.as_bytes());
+            let paren = skip_ws(b, i + 2);
+            if b.get(paren) != Some(&b'(') {
+                return Err(format!("if without a condition: {}", m[i..end].trim()));
+            }
+            let ce = block_end(m, paren, b'(', b')');
+            let c = self.cond(&m[paren + 1..ce - 1], i);
+            let then_start = skip_ws(b, ce);
+            let then_end = self.stmt_end(then_start).min(end);
+            let j = skip_ws(b, then_end);
+            path.push(c.clone());
+            let then_ends = self.walk(then_start, then_end, path);
+            path.pop();
+            let else_ends = if ident_at(m, j) == "else" && j < end {
+                path.push(negate(c.clone()));
+                let r = self.walk(skip_ws(b, j + 4), end, path);
+                path.pop();
+                r?
+            } else {
+                Ended::No
+            };
+            // A branch that redirects under exactly its condition already makes the
+            // screen require the opposite: the path needs no more.
+            Ok(match (then_ends?, else_ends) {
+                (Ended::No, Ended::No)
+                | (Ended::Redirect, Ended::No)
+                | (Ended::No, Ended::Redirect) => Ended::No,
+                (Ended::Stop, Ended::No) => {
+                    path.push(negate(c));
+                    Ended::No
+                }
+                (Ended::No, Ended::Stop) => {
+                    path.push(c);
+                    Ended::No
+                }
+                _ => Ended::Stop,
+            })
+        }
+
+        /// A statement that holds `redirect(`: only `throw redirect(…)` is read.
+        fn throw_redirect(
+            &mut self,
+            stmt: &str,
+            path: &[Option<Condition>],
+        ) -> Result<Ended, String> {
+            let rest = stmt.trim_start().strip_prefix("throw").map(str::trim_start);
+            if !rest.is_some_and(|r| r.starts_with("redirect")) {
+                return Err(format!(
+                    "redirect outside `throw redirect(…)`: {}",
+                    stmt.trim()
+                ));
+            }
+            self.reached(path);
+            Ok(Ended::Redirect)
+        }
+
+        /// How control leaves the statement `i..end`.
+        fn statement(
+            &mut self,
+            (i, end): (usize, usize),
+            path: &mut Vec<Option<Condition>>,
+        ) -> Result<Ended, String> {
+            let (m, stmt) = (self.m, &self.m[i..end]);
+            Ok(match ident_at(m, i) {
+                _ if m.as_bytes()[i] == b'{' => self.walk(i + 1, end - 1, path)?,
+                "if" => self.walk_if((i, end), path)?,
+                _ if has_redirect(stmt) => self.throw_redirect(stmt, path)?,
+                "throw" | "return" => Ended::Stop,
+                _ => Ended::No,
+            })
+        }
+
+        /// Walks the statements in `s..e` and tells how control leaves them.
+        fn walk(
+            &mut self,
+            s: usize,
+            e: usize,
+            path: &mut Vec<Option<Condition>>,
+        ) -> Result<Ended, String> {
+            let b = self.m.as_bytes();
+            let base = path.len();
+            let (mut i, mut ended) = (s, Ended::No);
+            loop {
+                i = skip_ws(b, i);
+                while b.get(i) == Some(&b';') {
+                    i = skip_ws(b, i + 1);
+                }
+                if i >= e {
+                    break;
+                }
+                let end = self.stmt_end(i).min(e);
+                let here = self.statement((i, end), path)?;
+                if here != Ended::No {
+                    // Only a redirect under the walk's own start path is exact.
+                    let exact = here == Ended::Redirect && path.len() == base;
+                    ended = if exact { here } else { Ended::Stop };
+                    break;
+                }
+                i = end;
+            }
+            path.truncate(base);
+            Ok(ended)
+        }
+    }
+
+    /// What the module's `beforeLoad` requires: each redirect needs `not (the
+    /// conditions of the `if`s it sits under)`. A `beforeLoad` that is present but
+    /// not read in full adds an unknown condition and a gap, never none.
+    fn guards(
+        app: &App,
+        m: &Module,
+        access: &Access,
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> Vec<Condition> {
+        let masked = mask(m.text, true);
+        let Some((pos, callable)) = before_load(&masked) else {
+            return Vec::new();
+        };
+        let head = masked[pos..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches(',');
+        // The text and body to read: the module's own, or a declared function's.
+        let mut other = None;
+        let body = match callable {
+            Callable::Body(s, e) => Some((s, e)),
+            Callable::Reference(name) => declared_body(&masked, &name).or_else(|| {
+                let import = imports(m.text).into_iter().find(|i| i.local == name)?;
+                let file = app.resolve(m.file, &import.module)?;
+                let text = mask(app.files.get(file)?, true);
+                let range = declared_body(&text, import.imported.as_deref()?)?;
+                other = Some((file.to_string(), text));
+                Some(range)
+            }),
+            Callable::Unreadable => None,
+        };
+        let (file, text) = match &other {
+            Some((f, t)) => (f.as_str(), t.as_str()),
+            None => (m.file, masked.as_str()),
+        };
+        let mut walker = Walker {
+            m: text,
+            file,
+            access,
+            out,
+            found: Vec::new(),
+        };
+        let read = match body {
+            Some((s, e)) => walker.walk(s, e, &mut Vec::new()).map(|_| ()),
+            None => Err(
+                "beforeLoad is not a function with a block body or a function declared in the scan"
+                    .into(),
+            ),
+        };
+        let mut found = walker.found;
+        if let Err(why) = read {
+            let message = format!("{why}; the module's access is unknown.");
+            diag(out, m.file, line_of(&masked, pos), message);
+            found.push(Condition::Unknown(head.to_string()));
         }
         found
     }
@@ -1539,7 +1958,7 @@ mod tanstack {
     ) -> bool {
         let mut mods = modules(app);
         for m in &mut mods {
-            m.guards = guards(m, access, out);
+            m.guards = guards(app, m, access, out);
         }
         for m in &mods {
             let layout = m.id.is_empty() || m.text.contains("<Outlet");
@@ -1576,6 +1995,15 @@ mod sdk {
 
     /// `Class.method` or `function` to its call, or why it is unknown.
     pub(super) type Index = BTreeMap<String, Result<Call, String>>;
+
+    const VERBS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+    /// The indexed client and the modules that export it: module file to exported
+    /// name to the name in the generated file.
+    pub(super) struct Sdk {
+        index: Index,
+        exports: Exports,
+    }
 
     /// `OpenAPI.BASE` (`core/OpenAPI.ts`) as a path prefix, else `""`.
     fn base(app: &App) -> String {
@@ -1647,26 +2075,89 @@ mod sdk {
         out
     }
 
-    /// `method: Method.DELETE`, `method: 'delete'` or a `.delete<…>(` call.
-    fn method(body: &str) -> Option<String> {
-        if let Some(item) = field(body, "method") {
-            return match item.value {
-                Value::Str(m) => Some(m.to_ascii_uppercase()),
-                Value::Raw(r) => r.rsplit('.').next().map(str::to_ascii_uppercase),
-                _ => None,
-            };
+    fn verb(m: &str) -> Result<String, String> {
+        let upper = m.to_ascii_uppercase();
+        match VERBS.contains(&upper.as_str()) {
+            true => Ok(upper),
+            false => Err(format!("method {m} is not an HTTP verb")),
         }
-        HTTP_METHODS
-            .into_iter()
-            .filter_map(|m| {
-                let at = [format!(".{m}<"), format!(".{m}(")]
-                    .iter()
-                    .filter_map(|p| body.find(p.as_str()))
-                    .min()?;
-                Some((at, m))
-            })
-            .min()
-            .map(|(_, m)| m.to_ascii_uppercase())
+    }
+
+    /// The string `member` of the enum body `{ A = 'a', … }` at `open`.
+    fn enum_member(text: &str, open: usize, member: &str) -> Option<String> {
+        let body = &text[open + 1..block_end(text, open, b'{', b'}') - 1];
+        body.split(',').find_map(|part| {
+            let (name, value) = part.split_once('=')?;
+            let item = Parser { s: value, i: 0 }.value(0);
+            match item.value {
+                Value::Str(v) if name.trim() == member => Some(v),
+                _ => None,
+            }
+        })
+    }
+
+    /// The string `member` of the object literal after `=` at `eq`.
+    fn object_member(text: &str, eq: usize, member: &str) -> Option<String> {
+        let Value::Obj(fields) = (Parser { s: text, i: eq + 1 }.value(0)).value else {
+            return None;
+        };
+        fields.into_iter().find_map(|(k, v)| match v.value {
+            Value::Str(s) if k == member => Some(s),
+            _ => None,
+        })
+    }
+
+    /// The string `member` of `enum obj { … }` or `const obj = { … }` in the scan.
+    fn member_value(app: &App, obj: &str, member: &str) -> Option<String> {
+        let declared = |text: &str, p: usize| {
+            let before = text[..p].trim_end();
+            let next = skip_ws(text.as_bytes(), p + obj.len());
+            let at = text.as_bytes().get(next).copied();
+            match (at, trailing_ident(before).as_deref()) {
+                (Some(b'{'), Some("enum")) => enum_member(text, next, member),
+                (Some(b'='), Some("const" | "let" | "var")) => object_member(text, next, member),
+                _ => None,
+            }
+        };
+        app.files
+            .values()
+            .find_map(|text| words(text, obj).into_iter().find_map(|p| declared(text, p)))
+    }
+
+    /// `method: Method.DELETE` (the enum or const object's value), `method: 'delete'`
+    /// or a `.delete<…>(` call; only HTTP verbs count.
+    fn method(app: &App, body: &str) -> Result<String, String> {
+        let Some(item) = field(body, "method") else {
+            return HTTP_METHODS
+                .into_iter()
+                .filter_map(|m| {
+                    let at = [format!(".{m}<"), format!(".{m}(")]
+                        .iter()
+                        .filter_map(|p| body.find(p.as_str()))
+                        .min()?;
+                    Some((at, m))
+                })
+                .min()
+                .map(|(_, m)| m.to_ascii_uppercase())
+                .ok_or_else(|| "has no literal method".into());
+        };
+        match item.value {
+            Value::Str(m) => verb(&m),
+            Value::Raw(r) => {
+                let (obj, member) = r.trim().split_once('.').unwrap_or(("", ""));
+                match (is_name(obj) && is_name(member))
+                    .then(|| member_value(app, obj, member))
+                    .flatten()
+                {
+                    Some(v) => verb(&v),
+                    None => Err(format!(
+                        "method {} is not a literal or a declared enum value",
+                        r.trim()
+                    )),
+                }
+            }
+            _ => Err("method is not a literal".into()),
+        }
     }
 
     pub(super) fn index(app: &App) -> Index {
@@ -1680,13 +2171,13 @@ mod sdk {
                 let Some(url) = field(body, "url") else {
                     continue;
                 };
-                let call = match (url.value.literal(), method(body)) {
-                    (Some(url), Some(method)) => Ok(Call::Http {
+                let call = match (url.value.literal(), method(app, body)) {
+                    (Some(url), Ok(method)) => Ok(Call::Http {
                         method,
                         path: format!("{base}{}", url_path(&holes(&url))),
                     }),
                     (None, _) => Err(format!("{key} has a url that is not a literal")),
-                    (_, None) => Err(format!("{key} has a method that is not a literal")),
+                    (_, Err(why)) => Err(format!("{key} {why}")),
                 };
                 out.insert(key.clone(), call);
             }
@@ -1694,35 +2185,157 @@ mod sdk {
         out
     }
 
-    /// `(offset, source, call)` of each call of an indexed function in `text`: a
-    /// named import from a `client`/`sdk` module, or `Class.method` of an imported class.
-    pub(super) fn calls(index: &Index, text: &str) -> Vec<(usize, String, Result<Call, String>)> {
+    /// `(module, names)` of each `export * from` (`None`) and `export { a as b } from`.
+    type ReExport = (String, Option<Vec<(String, String)>>);
+
+    fn reexports(text: &str) -> Vec<ReExport> {
+        words(text, "export")
+            .into_iter()
+            .filter(|&p| text[p + 6..].trim_start().starts_with(['*', '{']))
+            .filter_map(|p| {
+                let (clause, module) = import_at(&text[p + 6..])?;
+                if clause == "*" {
+                    return Some((module, None));
+                }
+                let inner = clause.strip_prefix('{')?.strip_suffix('}')?;
+                let names = inner
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty() && !n.starts_with("type "))
+                    .map(|n| match n.split_once(" as ") {
+                        Some((orig, exported)) => (orig.trim().into(), exported.trim().into()),
+                        None => (n.into(), n.into()),
+                    })
+                    .collect();
+                Some((module, Some(names)))
+            })
+            .collect()
+    }
+
+    type Exports = BTreeMap<String, BTreeMap<String, String>>;
+    type Names = Vec<(String, String)>;
+    /// Per re-exporting module: the modules it re-exports from, and which names.
+    type Chains<'a> = Vec<(&'a str, Vec<(&'a str, Option<Names>)>)>;
+
+    /// The modules of `app` with `export … from` of a module in the scan.
+    fn chains<'a>(app: &'a App, generated: &Exports) -> Chains<'a> {
+        let resolved = |f: &'a str, text: &str| -> Vec<(&'a str, Option<Names>)> {
+            reexports(text)
+                .into_iter()
+                .filter_map(|(spec, names)| Some((app.resolve(f, &spec)?, names)))
+                .collect()
+        };
+        (app.files.iter())
+            .filter(|(f, _)| !generated.contains_key(*f))
+            .map(|(f, text)| (f.as_str(), resolved(f, text)))
+            .filter(|(_, items)| !items.is_empty())
+            .collect()
+    }
+
+    /// Adds to `got` what `from` exports, all of it or the listed names.
+    fn carry(
+        from: &BTreeMap<String, String>,
+        names: &Option<Names>,
+        got: &mut BTreeMap<String, String>,
+    ) {
+        let listed: Vec<(&String, &String)> = match names {
+            None => from.iter().collect(),
+            Some(names) => (names.iter())
+                .filter_map(|(orig, exported)| Some((exported, from.get(orig)?)))
+                .collect(),
+        };
+        for (exported, original) in listed {
+            got.entry(exported.clone()).or_insert(original.clone());
+        }
+    }
+
+    /// One round over the re-exporting modules; whether anything was added.
+    fn propagate(exports: &mut Exports, chains: &Chains) -> bool {
+        let mut changed = false;
+        for (file, items) in chains {
+            let mut got = exports.get(*file).cloned().unwrap_or_default();
+            for (target, names) in items {
+                if let Some(from) = exports.get(*target) {
+                    carry(from, names, &mut got);
+                }
+            }
+            if !got.is_empty() && exports.get(*file) != Some(&got) {
+                exports.insert(file.to_string(), got);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    impl Sdk {
+        pub(super) fn new(app: &App) -> Sdk {
+            let index = index(app);
+            let names: BTreeMap<String, String> = (index.keys())
+                .map(|k| k.split('.').next().unwrap_or(k))
+                .map(|n| (n.to_string(), n.to_string()))
+                .collect();
+            let mut exports: Exports = (app.files.keys())
+                .filter(|f| f.ends_with("sdk.gen.ts"))
+                .map(|f| (f.clone(), names.clone()))
+                .collect();
+            if !exports.is_empty() {
+                // Re-export chains of any length, up to a fixed depth.
+                let chains = chains(app, &exports);
+                for _ in 0..8 {
+                    if !propagate(&mut exports, &chains) {
+                        break;
+                    }
+                }
+            }
+            Sdk { index, exports }
+        }
+    }
+
+    /// `(offset, source, call)` of each use of the client in `file`: names imported
+    /// from a module that resolves to the generated file or re-exports it. A name
+    /// the index lacks is unresolved, never dropped.
+    pub(super) fn calls(
+        app: &App,
+        sdk: &Sdk,
+        file: &str,
+        text: &str,
+    ) -> Vec<(usize, String, Result<Call, String>)> {
         let b = text.as_bytes();
         let mut out = Vec::new();
-        if index.is_empty() {
+        if sdk.exports.is_empty() {
             return out;
         }
         for i in imports(text) {
-            let Some(name) = i.imported.as_deref().filter(|n| *n != "*") else {
+            let Some(names) = app
+                .resolve(file, &i.module)
+                .and_then(|m| sdk.exports.get(m))
+            else {
                 continue;
             };
-            if !(i.module.contains("client") || i.module.contains("sdk")) {
+            let first = words(text, &i.local).first().copied().unwrap_or(0);
+            let Some(orig) = i.imported.as_deref().filter(|n| *n != "*") else {
+                let why = "default and namespace imports of the generated client are not read";
+                out.push((first, i.local.clone(), Err(why.into())));
                 continue;
-            }
+            };
+            let Some(orig) = names.get(orig) else {
+                continue;
+            };
             for pos in words(text, &i.local) {
                 let after = pos + i.local.len();
                 let (key, end) = if text[after..].starts_with('.') {
                     let member = ident_at(text, after + 1);
-                    (format!("{name}.{member}"), after + 1 + member.len())
+                    (format!("{orig}.{member}"), after + 1 + member.len())
                 } else if text[..pos].ends_with('.') {
                     continue;
                 } else {
-                    (name.to_string(), after)
+                    (orig.clone(), after)
                 };
-                if b.get(skip_ws(b, end)) == Some(&b'(')
-                    && let Some(call) = index.get(&key)
-                {
-                    out.push((pos, key, call.clone()));
+                if b.get(skip_ws(b, end)) == Some(&b'(') {
+                    let found = sdk.index.get(&key).cloned().unwrap_or_else(|| {
+                        Err(format!("{key} is not in the generated client's index"))
+                    });
+                    out.push((pos, key, found));
                 }
             }
         }
@@ -1753,7 +2366,7 @@ mod http {
         app: &App,
         file: &str,
         text: &str,
-        (clients, sdk): (&Clients, &sdk::Index),
+        (clients, sdk): (&Clients, &sdk::Sdk),
         froms: &[(Origin, Option<String>)],
         flow: &mut UiFlow,
     ) {
@@ -1773,7 +2386,7 @@ mod http {
                 calls.push(record(found, url.source(text), at, out));
             }
         }
-        for (pos, key, found) in sdk::calls(sdk, text) {
+        for (pos, key, found) in sdk::calls(app, sdk, file, text) {
             let at = (file, line_of(text, pos));
             calls.push(record(found, key, at, out));
         }
@@ -2367,6 +2980,15 @@ import { Link as RouterLink } from '@tanstack/react-router'
 ",
             ),
             ("fe/src/client/core/OpenAPI.ts", "export const OpenAPI = { BASE: '/be' };\n"),
+            (
+                "fe/src/client/types.gen.ts",
+                "export enum Method { GET = 'GET', DELETE = 'DELETE' }\n",
+            ),
+            ("fe/src/client/index.ts", "export * from './sdk.gen';\n"),
+            (
+                "fe/tsconfig.json",
+                "{ \"compilerOptions\": { /* c */ \"paths\": { \"@/*\": [\"./src/*\"] } } }\n",
+            ),
         ])
     }
 
@@ -2455,7 +3077,11 @@ import { Link as RouterLink } from '@tanstack/react-router'
     fn tanstack_app() -> App {
         let dir = tanstack_project("");
         let mut files = BTreeMap::new();
-        for p in ["fe/src/client/sdk.gen.ts", "fe/src/client/core/OpenAPI.ts"] {
+        for p in [
+            "fe/src/client/sdk.gen.ts",
+            "fe/src/client/core/OpenAPI.ts",
+            "fe/src/client/types.gen.ts",
+        ] {
             files.insert(
                 p.to_string(),
                 std::fs::read_to_string(dir.path().join(p)).unwrap(),
@@ -2466,8 +3092,255 @@ import { Link as RouterLink } from '@tanstack/react-router'
             prefix: "fe/".into(),
             next: false,
             tanstack: true,
+            aliases: Vec::new(),
             files,
         }
+    }
+
+    /// An app with a hey-api client, `@/` alias, an `@/api` re-export and one
+    /// route module `src/routes/x.tsx` holding `route`.
+    fn sdk_app(sdk: &str, route: &str) -> UiFlow {
+        let dir = project(&[
+            ("fe/package.json", TANSTACK_PKG),
+            (
+                "fe/tsconfig.json",
+                "{ \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } } }",
+            ),
+            ("fe/src/client/sdk.gen.ts", sdk),
+            ("fe/src/client/index.ts", "export * from './sdk.gen';\n"),
+            (
+                "fe/src/api.ts",
+                "export { ItemsService as Items } from './client';\n",
+            ),
+            (
+                "fe/src/lib/client/utils.ts",
+                "export function listUsers() { return []; }\n",
+            ),
+            (
+                "fe/src/client/types.gen.ts",
+                "export enum Method { Del = 'DEL', Remove = 'DELETE', GET = 'GET' }\n",
+            ),
+            ("fe/src/routes/x.tsx", route),
+        ]);
+        extract(dir.path())
+    }
+
+    const SDK: &str = "export class ItemsService {
+    public static getItems() {
+        return (options?.client ?? client).get<A, B>({ url: '/api/items' });
+    }
+}
+export const listUsers = () => client.get<A, B>({ url: '/api/users' });
+";
+
+    fn calls(flow: &UiFlow) -> Vec<Call> {
+        flow.actions.iter().map(|a| a.call.clone()).collect()
+    }
+
+    fn http(method: &str, path: &str) -> Call {
+        Call::Http {
+            method: method.into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn sdk_calls_need_an_import_that_resolves_to_the_sdk_module() {
+        let route = "import { ItemsService } from '@apollo/client';
+import { listUsers } from '../lib/client/utils';
+import { Items } from '@/api';
+export const Route = createFileRoute('/x')({ component: X })
+function X() { ItemsService.getItems(); listUsers(); Items.getItems(); }
+";
+        let flow = sdk_app(SDK, route);
+        assert_eq!(calls(&flow), vec![http("GET", "/api/items")]);
+        assert_eq!(flow.actions[0].line, 5);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn sdk_members_missing_from_the_index_are_unresolved_gaps() {
+        let route = "import { ItemsService } from '@/client';
+import { Items } from '@/api';
+export const Route = createFileRoute('/x')({ component: X })
+function X() { ItemsService.notInIndex(); Items.alsoMissing(); }
+";
+        let flow = sdk_app(SDK, route);
+        assert_eq!(
+            calls(&flow),
+            vec![
+                Call::Unresolved("ItemsService.alsoMissing".into()),
+                Call::Unresolved("ItemsService.notInIndex".into()),
+            ]
+        );
+        assert!(has_diag(&flow, "fe/src/routes/x.tsx", 4));
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn sdk_methods_resolve_through_the_enum_to_a_verb() {
+        let sdk = "export class S {
+    public static a() { return request({ method: Method.Remove, url: '/a' }); }
+    public static b() { return request({ method: Method.Del, url: '/b' }); }
+    public static c() { return request({ method: verb, url: '/c' }); }
+    public static d() { return request({ method: Method.Nope, url: '/d' }); }
+}
+";
+        let route = "import { S } from '@/client';
+export const Route = createFileRoute('/x')({ component: X })
+function X() { S.a(); S.b(); S.c(); S.d(); }
+";
+        let flow = sdk_app(sdk, route);
+        let unresolved = |m: &str| Call::Unresolved(format!("S.{m}"));
+        assert_eq!(
+            calls(&flow),
+            vec![
+                http("DELETE", "/a"),
+                unresolved("b"),
+                unresolved("c"),
+                unresolved("d"),
+            ]
+        );
+        assert!(!flow.complete);
+    }
+
+    /// Access of the only screen, `/x`, of a TanStack app, with the route module.
+    fn route_access(route: &str) -> (Option<Condition>, UiFlow) {
+        let dir = project(&[
+            ("fe/package.json", TANSTACK_PKG),
+            ("fe/src/routes/x.tsx", route),
+            (
+                "fe/src/lib/guards.ts",
+                "export function viaImport() { if (!ready()) throw redirect({ to: '/login' }) }\n",
+            ),
+        ]);
+        let flow = extract(dir.path());
+        let access = flow
+            .screens
+            .iter()
+            .find(|s| s.id == "fe:/x")
+            .unwrap()
+            .access
+            .clone();
+        (access, flow)
+    }
+
+    fn custom(name: &str) -> Condition {
+        Condition::Custom(name.into())
+    }
+
+    fn unknown(c: &Option<Condition>) -> bool {
+        matches!(c, Some(Condition::Unknown(_)))
+    }
+
+    #[test]
+    fn before_load_forms_are_read_or_unknown() {
+        let shorthand = "export const Route = createFileRoute('/x')({
+  component: X,
+  async beforeLoad({ context }) {
+    if (!context.auth.ok) throw redirect({ to: '/login' })
+  },
+})
+";
+        assert_eq!(route_access(shorthand).0, Some(custom("context.auth.ok")));
+        let local =
+            "const guard = async () => { if (!isLoggedIn()) { throw redirect({ to: '/' }) } }
+export const Route = createFileRoute('/x')({ component: X, beforeLoad: guard })
+";
+        assert_eq!(route_access(local).0, Some(custom("isLoggedIn")));
+        let imported = "import { viaImport } from '../lib/guards';
+export const Route = createFileRoute('/x')({ component: X, beforeLoad: viaImport })
+";
+        assert_eq!(route_access(imported).0, Some(custom("ready")));
+        let opaque = "import { requireAuth } from 'some-lib';
+export const Route = createFileRoute('/x')({ component: X, beforeLoad: requireAuth })
+";
+        let (access, flow) = route_access(opaque);
+        assert!(unknown(&access), "{access:?}");
+        assert!(!flow.complete);
+        let expression = "export const Route = createFileRoute('/x')({ component: X, beforeLoad: () => check() })
+";
+        assert!(unknown(&route_access(expression).0));
+    }
+
+    #[test]
+    fn before_load_early_return_and_else_redirects_are_read() {
+        let early = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad: ({ context }) => {
+    if (context.auth.ok) return
+    throw redirect({ to: '/login' })
+  },
+})
+";
+        assert_eq!(route_access(early).0, Some(custom("context.auth.ok")));
+        let other = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad: ({ context }) => {
+    if (context.auth.ok) { log() } else { throw redirect({ to: '/login' }) }
+  },
+})
+";
+        assert_eq!(route_access(other).0, Some(custom("context.auth.ok")));
+        let odd = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad: () => {
+    try { go() } catch { throw redirect({ to: '/login' }) }
+  },
+})
+";
+        let (access, flow) = route_access(odd);
+        assert!(unknown(&access), "{access:?}");
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn before_load_reading_stops_at_its_own_value() {
+        let route = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad() { return },
+  loader: () => { if (!hasData()) throw redirect({ to: '/' }) },
+})
+";
+        let (access, flow) = route_access(route);
+        assert_eq!(access, None);
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn consecutive_before_load_redirects_each_add_their_own_condition() {
+        let route = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad: async ({ search }) => {
+    if (isLoggedIn()) {
+      throw redirect({ to: '/' })
+    }
+    if (!search.token) {
+      throw redirect({ to: '/login' })
+    }
+  },
+})
+";
+        let want = Condition::All(vec![
+            Condition::Not(Box::new(custom("isLoggedIn"))),
+            custom("search.token"),
+        ]);
+        assert_eq!(route_access(route).0, Some(want));
+    }
+
+    #[test]
+    fn nested_before_load_ifs_negate_the_whole_path() {
+        let route = "export const Route = createFileRoute('/x')({
+  component: X,
+  beforeLoad: () => {
+    if (isTrial()) {
+      if (isExpired()) throw redirect({ to: '/pay' })
+    }
+  },
+})
+";
+        let both = Condition::All(vec![custom("isTrial"), custom("isExpired")]);
+        assert_eq!(route_access(route).0, Some(Condition::Not(Box::new(both))));
     }
 
     #[test]
