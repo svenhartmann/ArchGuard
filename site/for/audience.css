@@ -1,0 +1,39 @@
+/* Audience pages share the site's palette and type, with readable editorial spacing. */
+.audience-page .eyebrow{font-size:.875rem;letter-spacing:.1em;line-height:1.5}
+.audience-page .header{height:auto;min-height:100px;padding-top:20px;padding-bottom:20px}
+.audience-page .header nav{font-size:.875rem;flex-wrap:wrap;gap:18px}
+.audience-page .header nav>a.language-switch{display:block;text-decoration:underline;text-underline-offset:4px}
+.audience-hero h1{max-width:1050px;font-size:clamp(2.75rem,6vw,5rem);line-height:1.08;letter-spacing:-.045em;text-wrap:balance;overflow-wrap:anywhere}
+.audience-intro{display:grid;grid-template-columns:1.2fr 1fr;gap:64px;margin:36px 0}
+.audience-lead{font-size:1.125rem;line-height:1.8;color:var(--muted);margin:0}
+.audience-question{border-left:3px solid var(--accent);padding:8px 0 8px 28px}
+.audience-question h2{font-size:1.4rem;letter-spacing:-.02em;line-height:1.35;margin:0 0 12px}
+.audience-question p{font-size:1rem;color:var(--muted);margin:0}
+.audience-evidence{font-size:1rem;line-height:1.7;margin:0;padding:20px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--muted)}
+.audience-evidence strong{color:var(--ink)}
+.audience-features{padding-top:44px;padding-bottom:20px}
+.audience-feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:36px}
+.audience-feature h3{font-size:1.25rem;line-height:1.4;font-weight:650;margin:0 0 14px;letter-spacing:-.02em}
+.audience-feature p{font-size:1rem;line-height:1.75;margin:0;color:var(--muted)}
+.audience-example .section-heading{align-items:start}
+.audience-example .section-heading>div{flex:1;min-width:0}
+.audience-example .section-heading>p{max-width:530px;flex:1;font-size:1rem}
+.audience-example h2,.audience-try h2{font-size:clamp(1.85rem,3.5vw,2.65rem);line-height:1.2;letter-spacing:-.03em;text-wrap:balance}
+.audience-example .gallery figcaption{align-items:center;flex-wrap:wrap;gap:20px}
+.audience-example .gallery p{font-size:.875rem;line-height:1.7}
+.audience-example .gallery .audience-example-link{display:inline;background:none;color:var(--accent);font-size:.875rem;font-weight:650}
+.audience-try p{font-size:1rem}
+.audience-try .text-link{font-size:1rem;text-decoration:underline;line-height:1.6}
+.audience-command{min-width:0;align-self:start}
+.audience-command pre{background:var(--ink);color:#fff;border-radius:10px;padding:24px;margin:0;overflow:auto;font-size:.875rem;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+.audience-command h3{font-size:1.1rem;margin:26px 0 12px}
+.audience-prompt{font-size:1rem;line-height:1.7;border:0;border-left:3px solid var(--accent);padding:0 0 0 20px;margin:0;letter-spacing:normal}
+.audience-exercise{margin:0;padding-left:24px;font-size:1rem;line-height:1.75}
+.audience-exercise li+li{margin-top:12px}
+.audience-limits h2{font-size:1.6rem;letter-spacing:-.025em}
+.audience-limits>p{max-width:900px;font-size:1rem;color:var(--muted);margin:22px 0 36px}
+.audience-related{display:flex;flex-wrap:wrap;gap:14px 28px;border-top:1px solid var(--line);padding-top:28px;font-size:1rem;line-height:1.7;color:var(--accent)}
+.audience-page .footer{font-size:.875rem}
+.audience-page .footer p{max-width:460px;font-size:.875rem}
+@media(max-width:900px){.audience-intro{gap:32px}.audience-feature-grid{gap:24px}.audience-page .header{flex-wrap:wrap}.audience-example .section-heading{flex-direction:column}.audience-example .section-heading>p{max-width:none}}
+@media(max-width:650px){.audience-intro,.audience-feature-grid{grid-template-columns:1fr}.audience-intro{gap:28px;margin:28px 0}.audience-hero{padding-top:42px}.audience-hero h1{font-size:2.75rem}.audience-feature-grid{gap:28px}.audience-feature+.audience-feature{border-top:1px solid var(--line);padding-top:25px}.audience-page .header{gap:16px}.audience-page .header nav{gap:15px;justify-content:flex-start}.audience-page .header nav>a.nav-cta{display:block}.audience-page .header nav>a.repo-link{display:none}.audience-page .header .brand{font-size:1.3rem}.audience-question{padding-left:20px}.audience-page .footer{gap:18px}.audience-page .footer p{min-width:100%}.audience-command pre{padding:20px}}
