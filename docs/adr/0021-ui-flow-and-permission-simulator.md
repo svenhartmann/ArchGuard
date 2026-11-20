@@ -434,3 +434,32 @@ builds endpoints literally (the desktop tests, the other extractors) keeps
 compiling, as with `start_screens`. eShop: `POST /api/orders` →
 `Ordering.API/Apis/OrdersApi.cs:118` (`CreateOrderAsync`); all 48 endpoints
 with a handler have a site.
+
+### 2026-11-20: NestJS, SvelteKit, FastAPI, Django, Laravel and Rust UIs
+
+Six more extractors, one module each, on the shared run context and language
+modules (`lang_python`, `lang_php`, `lang_rust` are new):
+
+- NestJS: controllers, global prefix with excludes, URI versioning, guards
+  (`@UseGuards`, `APP_GUARD`, per root module), `@Roles`, and project
+  decorators followed one level into `SetMetadata` options (Immich's
+  `@Authenticated({ permission, admin, public })`).
+- SvelteKit: file routes, `redirect` guards in `load` and `hooks.server`,
+  `+server` and form actions as endpoints, one-hop route helpers and generated
+  fetch clients (`@immich/sdk`). Immich web and server join 152 of 153 calls.
+- FastAPI: routers and includes with composed prefixes and dependencies;
+  `Security` scopes are all required, as FastAPI hands every scope on.
+- Django and DRF: `urlpatterns` from `ROOT_URLCONF`, includes, namespaces,
+  routers, template views as screens, mixins, decorators and permission
+  classes with the settings default; runtime view registries (NetBox's
+  `register_model_view`) stay gaps.
+- Laravel: route files, groups, resources, middleware incl. Kernel aliases,
+  controller middleware and top-level authorize calls, Blade links with
+  `@can`/`@auth` conditions; checks inside `if` blocks are notes.
+- Rust: Tauri commands as `INVOKE` endpoints joined to `invoke()` calls with
+  capability-based access, Dioxus/Yew routable enums, Leptos routes and
+  server functions, egui/iced screen enums.
+
+Project-specific checks (BookStack `checkPermission`, NetBox mixins, Immich's
+`AuthGuard`) are read only through `[views.access]`; nothing is inferred from
+names.
