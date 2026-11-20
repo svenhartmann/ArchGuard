@@ -1,0 +1,324 @@
+// Help → Metrics, commands & MCP…: the web viewer's KPI help
+// (`renderKpiHelp`, `renderCliHelp`, `renderMcpHelp`). The KPI
+// definitions and the MCP entry come from src/help_ui.rs (the same texts
+// as the tooltips); the CLI, language, coverage and MCP prompt texts are
+// here. Every code block has a Copy button.
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, Icons, Tab } from "widgets.slint";
+
+// A heading (title only), a paragraph or a copyable code block.
+export struct HelpBlock { title: string, text: string, code: string }
+
+export global HelpData {
+    in-out property <bool> open;
+    // 0 Graph KPIs, 1 classes & methods, 2 test coverage, 3 CLI, 4 MCP.
+    in-out property <int> tab;
+    // From kpi.rs and the class metric definitions of the Quality tab.
+    in-out property <[HelpBlock]> graph;
+    in-out property <[HelpBlock]> classes;
+    // `development_guide` for this project and view, and the server entry.
+    in-out property <string> mcp-call;
+    in-out property <string> mcp-server;
+    callback show();
+    out property <[HelpBlock]> languages: [
+        { title: "", text: @tr("Class and method KPIs need the language’s compiler context where named; ArchGuard computes the metrics itself, no separate metrics service is needed."), code: "" },
+        { title: "Go · .go · Go SDK", text: @tr("Go SDK with go on PATH, or ARCHGUARD_GO pointing to the executable. Package imports work without the SDK."), code: "go version\narchguard calls . --format json" },
+        { title: "", text: @tr("The bundled go/parser and go/types helper reads selected source snapshots offline. It measures structs, interfaces, receiver methods and file-level function groups. WMC, nesting, Cognitive, Halstead, MI and field-based cohesion use source evidence. CBO/RFC remain partial for unresolved calls/types. DIT/NOC are not applicable: Go embedding is composition. Dynamic dispatch, missing external modules and combined build variants remain explicit gaps. Project code, generators and dependency downloads are never executed."), code: "" },
+        { title: "Java · .java · JDK 17+", text: @tr("A full JDK 17+ with java on PATH; the selected Java release and dependency JARs must match the project. The javac scanner is included in ArchGuard. Maven/Gradle are only needed to prepare the project context or run tests."), code: "java -version\nmkdir -p .archguard\nmvn dependency:build-classpath -Dmdep.outputFile=.archguard/java-classpath.txt\narchguard calls . --format json" },
+        { title: "", text: @tr("For Maven projects, export the existing dependency classpath. For Gradle or custom builds, supply the corresponding existing JARs/class directories through the configuration instead. ArchGuard does not run builds or annotation processors."), code: "" },
+        { title: "", text: @tr("Optional example in .archguard/archguard.toml: replace release and paths with your project values. Do not add nonexistent directories."), code: "[semantic.java]\nrelease = 21\nclasspath = [\"lib/contracts.jar\", \"target/classes\"]" },
+        { title: "C# / .NET · .cs · .NET SDK 8+", text: @tr("dotnet on PATH, .NET SDK 8+ and the reference packs required by the project target. Roslyn comes with the SDK; ArchGuard supplies its scanner. Restore project dependencies so obj/project.assets.json and the NuGet references exist."), code: "dotnet --list-sdks\ndotnet restore\narchguard calls . --format json" },
+        { title: "", text: @tr("Run restore yourself for the intended project or solution. ArchGuard does not start project builds, restore, analyzers or source generators. Check global.json and the selected target framework if analysis is partial."), code: "" },
+        { title: "", text: @tr("Optional example in .archguard/archguard.toml; use your actual project path and target framework."), code: "[semantic.csharp]\nproject = \"src/App/App.csproj\"\nconfiguration = \"Debug\"\ntarget_framework = \"net8.0\"" },
+        { title: "TypeScript · .ts · .tsx · Node.js + TypeScript", text: @tr("Node.js on PATH and the project’s installed typescript package. ArchGuard uses the nearest node_modules/typescript/lib/typescript.js, or the explicitly configured compiler, once ARCHGUARD_TRUST_PROJECT_COMPILER=1 marks the repository as trusted. Dependencies and tsconfig.json provide type resolution."), code: "node --version\nnpm install --save-dev typescript\narchguard calls . --format json" },
+        { title: "", text: @tr("Use versions compatible with the project. Without tsconfig, only TypeScript is analyzed in a limited ES2020/CommonJS context. No application code, build scripts or compiler plugins are run by ArchGuard; the compiler itself comes from the project and only runs after the opt-in."), code: "" },
+        { title: "", text: @tr("Optional explicit configuration in .archguard/archguard.toml."), code: "[semantic.typescript]\nproject = \"tsconfig.json\"\ncompiler = \"node_modules/typescript/lib/typescript.js\"" },
+        { title: "JavaScript · .js · .jsx · .mjs · Node.js + TypeScript + allowJs", text: @tr("JavaScript also needs Node.js and the installed TypeScript compiler for class/method KPIs. The actual tsconfig project must enable allowJs and include the JavaScript files. Installing Node.js alone is insufficient."), code: "node --version\nnpm install --save-dev typescript\narchguard calls . --format json" },
+        { title: "", text: @tr("Merge the example into the project’s tsconfig, preserving its module, JSX and include settings. A jsconfig.json can be selected explicitly through [semantic.typescript].project. Dynamic or ambiguous targets remain unresolved."), code: "" },
+        { title: "", text: @tr("Example for tsconfig.json; adapt include to the actual source paths."), code: "{\n  \"compilerOptions\": { \"allowJs\": true, \"noEmit\": true },\n  \"include\": [\"src/**/*\"]\n}" },
+        { title: "Python · .py · Python 3.9+", text: @tr("Python 3.9+ on PATH, or ARCHGUARD_PYTHON pointing to it. Classes, functions, Complexity, Cognitive and Halstead per function come from the standard ast module; project code is never imported. Call targets are resolved statically from imports, module functions, classes, self/cls and super(); other calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."), code: "" },
+        { title: "PHP · .php", text: @tr("No PHP installation needed. Classes, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically from namespaces, use imports and the project class hierarchy; calls on other variables, dynamic calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."), code: "" },
+        { title: "Kotlin · .kt", text: @tr("No Kotlin compiler needed. Classes, objects, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically from imports, packages and the project class hierarchy; with a JDK also into Java classes of the project, from the javac declarations. Calls on variables, extension functions and lambdas, and without a JDK calls into Java classes, stay unresolved, so CBO, RFC, DIT and NOC stay partial. Gradle .kts scripts are not scanned."), code: "" },
+        { title: "C / C++ · .c · .h · .cc · .cpp · .cxx · .hpp · .hh · .hxx", text: @tr("No compiler or preprocessor needed. Classes, structs, unions, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Preprocessor directives are skipped and every #if branch is measured as written. Includes resolve against the including directory and the include directories of compile_commands.json and literal CMake include_directories. Calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."), code: "" },
+        { title: "Swift · .swift", text: @tr("No Swift compiler needed. Types, extensions, functions, Complexity, Cognitive and Halstead per function come from ArchGuard’s own token scanner; nothing is executed. Modules are the targets of Package.swift with literal names; Xcode projects are not read. Only Type(…) and Type.staticMethod(…) of a unique project type are resolved; other calls and types stay unresolved, so CBO, RFC, DIT and NOC stay partial."), code: "" },
+        { title: "Ruby · .rb", text: @tr("No Ruby installation needed. Classes, modules, methods, Complexity, Cognitive and Halstead per method come from ArchGuard’s own token scanner; nothing is executed. Call targets are resolved statically for Const.method and Const.new on unique project classes, self.method, bare calls and super along included and prepended modules and superclasses; calls on variables, send, define_method and method_missing stay unresolved, so CBO, RFC, DIT and NOC stay partial. Ruby has no abstract classes: abstractness does not apply. Constant references become import edges only in Rails/Zeitwerk projects."), code: "" },
+        { title: "Scala · .scala", text: @tr("No Scala compiler or sbt needed. Classes, traits, objects, defs, Complexity, Cognitive and Halstead per def come from ArchGuard’s own token scanner for Scala 2 and 3 syntax; nothing is executed. Call targets are resolved statically from imports, packages and the project class hierarchy; calls on values, implicits and givens, extension methods and calls into Java or Kotlin classes stay unresolved, so CBO, RFC, DIT and NOC stay partial. Scripts and worksheets (.sc) are not scanned."), code: "" },
+        { title: "Rust · .rs · rust-analyzer (optional)", text: @tr("No compiler needed for Complexity, Cognitive and Halstead per function, or for abstractness and implemented traits; these come from syntax. Precise call targets and type references need rust-analyzer on PATH (or ARCHGUARD_RUST_ANALYZER) and ARCHGUARD_TRUST_PROJECT_COMPILER=1 set outside the repository; build scripts and proc macros never run, so calls and types in code they generate stay unresolved and CBO and RFC stay partial. DIT and NOC are not applicable: Rust has no implementation inheritance."), code: "" }
+    ];
+    out property <[HelpBlock]> coverage: [
+        { title: "", text: @tr("Run the tests with a coverage tool, then import its report. ArchGuard reads JaCoCo, Cobertura, Clover and LCOV. This is optional and separate from the compiler setup; missing coverage stays unknown, never 0 %."), code: "" },
+        { title: "Go · Optional external report → LCOV / Cobertura", text: @tr("Import an existing converted coverage report with paths matching the Go sources. Native Go coverprofiles are not currently accepted. No coverage is inferred from source metrics."), code: "archguard coverage . --report coverage.xml" },
+        { title: "Java · JaCoCo → JaCoCo XML", text: @tr("Maven example with the JaCoCo plugin already configured in pom.xml. For Gradle, enable XML in jacocoTestReport. Import the XML report, not jacoco.exec or the HTML page."), code: "mvn jacoco:prepare-agent test jacoco:report\narchguard coverage . --report target/site/jacoco/jacoco.xml --source-root src/main/java" },
+        { title: "C# / .NET · Coverlet → Cobertura XML", text: @tr("Example for VSTest with coverlet.collector and a compatible Microsoft.NET.Test.Sdk in the test project. Microsoft.Testing.Platform uses a different integration. Replace Tests.csproj and RUN-ID with the actual paths."), code: "dotnet test tests/Tests.csproj --collect:\"XPlat Code Coverage\" --results-directory TestResults\narchguard coverage . --report TestResults/RUN-ID/coverage.cobertura.xml" },
+        { title: "TypeScript · Vitest + @vitest/coverage-v8 → LCOV", text: @tr("Example for an existing Vitest project. Install its matching coverage provider. Other runners such as c8/nyc can also export LCOV; TypeScript paths must map back to the original sources."), code: "npx --no-install vitest run --coverage --coverage.reporter=lcov\narchguard coverage . --report coverage/lcov.info" },
+        { title: "JavaScript · Vitest + @vitest/coverage-v8 → LCOV", text: @tr("Example for an existing Vitest project. Install its matching coverage provider. Other runners such as c8/nyc can also export LCOV; TypeScript paths must map back to the original sources."), code: "npx --no-install vitest run --coverage --coverage.reporter=lcov\narchguard coverage . --report coverage/lcov.info" },
+        { title: "Python · coverage.py + pytest → Cobertura XML", text: @tr("Example for a pytest project with coverage.py and pytest installed in the active Python environment. Adapt the test runner and source selection to your project. --branch records branch data as well."), code: "python -m coverage run --branch -m pytest\npython -m coverage xml -o coverage.xml\narchguard coverage . --report coverage.xml" },
+        { title: "PHP · PHPUnit + Xdebug / PCOV → Clover / Cobertura XML", text: @tr("PHPUnit needs a coverage driver in PHP CLI. The example uses an installed Xdebug with coverage mode. PCOV is an alternative for line coverage only. Configure the source filter in PHPUnit; a missing driver cannot produce measurements."), code: "php -d xdebug.mode=coverage vendor/bin/phpunit --coverage-clover coverage.xml\narchguard coverage . --report coverage.xml" },
+        { title: "Kotlin · JaCoCo (Gradle) → JaCoCo XML", text: @tr("Gradle example with the jacoco plugin applied and XML enabled in jacocoTestReport (reports.xml.required = true). Import the XML report, not the .exec file or the HTML page."), code: "./gradlew test jacocoTestReport\narchguard coverage . --report build/reports/jacoco/test/jacocoTestReport.xml --source-root src/main/kotlin" },
+        { title: "C / C++ · gcovr → Cobertura XML", text: @tr("Example for a build compiled with --coverage (GCC or Clang) whose tests already ran. gcovr reads the .gcda files next to the objects. Use paths relative to the repository root."), code: "gcovr --root . --cobertura coverage.xml\narchguard coverage . --report coverage.xml" },
+        { title: "Swift · swift test + llvm-cov → LCOV", text: @tr("Swift Package Manager example on macOS; replace ShopPackageTests with the test bundle of your package. On Linux, call llvm-cov without xcrun and pass the .xctest file itself."), code: "swift test --enable-code-coverage\nxcrun llvm-cov export -format=lcov .build/debug/ShopPackageTests.xctest/Contents/MacOS/ShopPackageTests -instr-profile .build/debug/codecov/default.profdata > lcov.info\narchguard coverage . --report lcov.info" },
+        { title: "Ruby · SimpleCov + simplecov-lcov → LCOV", text: @tr("Requires the simplecov and simplecov-lcov gems in the test group. Start SimpleCov before the application code is loaded (top of spec_helper.rb or test_helper.rb) with the LCOV formatter writing a single report, for example SimpleCov::Formatter::LcovFormatter.config.report_with_single_file = true and single_report_path = \"coverage/lcov.info\". The command runs the project tests."), code: "bundle exec rspec\narchguard coverage . --report coverage/lcov.info" },
+        { title: "Scala · sbt-scoverage → Cobertura XML", text: @tr("sbt example with the sbt-scoverage plugin added to project/plugins.sbt. The command builds and runs the project tests; replace <version> with the Scala version directory under target."), code: "sbt clean coverage test coverageReport\narchguard coverage . --report target/scala-<version>/coverage-report/cobertura.xml --source-root src/main/scala" },
+        { title: "Rust · cargo-llvm-cov → LCOV", text: @tr("Requires the Rust toolchain, cargo-llvm-cov and the matching LLVM tools (usually the rustup component llvm-tools-preview). The command builds and runs the project tests. cargo-tarpaulin with Cobertura XML is another compatible producer."), code: "cargo llvm-cov --lcov --output-path lcov.info\narchguard coverage . --report lcov.info" }
+    ];
+    out property <[HelpBlock]> cli: [
+        { title: "", text: @tr("Run from the project directory; the dot means the current project. For everyday use doctor, init, check and report are enough; the other commands serve focused analyses, imports and automation."), code: "archguard doctor\narchguard init .\narchguard check .\narchguard report . --out archguard-report.md" },
+        { title: @tr("Everyday commands"), text: "", code: "" },
+        { title: "archguard doctor", text: @tr("Check installed external tools. Does not validate project setup; always exits 0."), code: "archguard doctor --help" },
+        { title: "archguard update", text: @tr("Replace this binary with the latest published GitHub release after verifying its SHA-256 checksums."), code: "archguard update --help" },
+        { title: "archguard init", text: @tr("Create project configuration once; existing configuration is not overwritten."), code: "archguard init --help" },
+        { title: "archguard check", text: @tr("CI gate for cycles, layer rules and configured thresholds. Use the exit status to fail a pipeline."), code: "archguard check --help" },
+        { title: "archguard graph", text: @tr("Export the graph to stdout and to .archguard/reports/ (DOT, Mermaid, JSON, Structurizr …) for other tools."), code: "archguard graph --help" },
+        { title: "archguard report", text: @tr("Write a shareable single-file report (Markdown with Mermaid diagrams): KPIs, gate findings, cycles, review priorities, services and diagrams."), code: "archguard report --help" },
+        { title: @tr("Targeted source analysis"), text: "", code: "" },
+        { title: "archguard scan", text: @tr("Extract the original graph as JSON with --out; useful for downstream tools."), code: "archguard scan --help" },
+        { title: "archguard cycles", text: @tr("List dependency cycles without a full CI check."), code: "archguard cycles --help" },
+        { title: "archguard metrics", text: @tr("Read module coupling metrics; --extended includes additional metrics."), code: "archguard metrics --help" },
+        { title: "archguard hotspots", text: @tr("Rank review candidates using coupling, cycles and Git churn."), code: "archguard hotspots --help" },
+        { title: "archguard co-change", text: @tr("Find source files that change together without a static import relationship. Needs Git history."), code: "archguard co-change --help" },
+        { title: "archguard ownership", text: @tr("Inspect CODEOWNERS boundaries and configured forbidden team directions."), code: "archguard ownership --help" },
+        { title: "archguard performance", text: @tr("Inspect structural load and heavy dependencies; not runtime profiling."), code: "archguard performance --help" },
+        { title: "archguard calls", text: @tr("Read compiler-backed classes, methods, calls and analysis coverage/diagnostics."), code: "archguard calls --help" },
+        { title: "archguard cohesion", text: @tr("Inspect cohesion of package members and candidates for splitting a package."), code: "archguard cohesion --help" },
+        { title: "archguard patterns", text: @tr("Assess architecture pattern candidates from evidence. These are hypotheses, not a configured target architecture."), code: "archguard patterns --help" },
+        { title: "archguard dsm", text: @tr("Export/read the dependency-structure matrix of modules. The desktop app also has a Matrix tab."), code: "archguard dsm --help" },
+        { title: @tr("Optional evidence imports"), text: "", code: "" },
+        { title: "archguard coverage", text: @tr("Import JaCoCo, Cobertura, Clover or LCOV with --report; without it, read saved coverage. Does not run tests."), code: "archguard coverage --help" },
+        { title: "archguard test-evidence", text: @tr("Import JUnit XML test results and optional source mappings; inspect affected-test recommendations."), code: "archguard test-evidence --help" },
+        { title: "archguard mutations", text: @tr("Import mutation-testing-elements JSON or read saved evidence. Does not run mutation tests."), code: "archguard mutations --help" },
+        { title: "archguard duplicates", text: @tr("Import CPD XML duplication groups or read the saved report. Does not invoke a duplicate scanner."), code: "archguard duplicates --help" },
+        { title: "archguard quality", text: @tr("Import SARIF findings, read saved findings, or gate changed-code quality with --base and thresholds."), code: "archguard quality --help" },
+        { title: "archguard contracts", text: @tr("Import OpenAPI with --report and an exact --service ID; inspect saved contract comparisons."), code: "archguard contracts --help" },
+        { title: "archguard security", text: @tr("Run Trivy dependency-advisory scanning and save .archguard/security.json. Requires Trivy."), code: "archguard security --help" },
+        { title: "archguard runtime", text: @tr("Read the runtime profile from recorded OTLP traces in .archguard/runtime. Does not run or instrument the application."), code: "archguard runtime --help" },
+        { title: "archguard sbom", text: @tr("List third-party dependencies from lockfiles and manifests as CycloneDX 1.6, JSON or text; licences only where the files state them. Never fetches from a registry."), code: "archguard sbom --help" },
+        { title: @tr("Architecture, services & documentation"), text: "", code: "" },
+        { title: "archguard architecture", text: @tr("Compare explicitly modeled components and allowed directions with actual imports."), code: "archguard architecture --help" },
+        { title: "archguard services", text: @tr("Discover projects, applications and Compose HTTP/startup dependencies."), code: "archguard services --help" },
+        { title: "archguard workspace", text: @tr("Inspect declared dependencies between local projects; --sources opts into source analysis."), code: "archguard workspace --help" },
+        { title: "archguard doc", text: @tr("Generate arc42 Markdown. --stdout only prints it; --check checks whether the saved document is missing or outdated."), code: "archguard doc --help" },
+        { title: "archguard diagram", text: @tr("List the arc42 diagram catalogue, or draw one diagram as text in the terminal."), code: "archguard diagram ." },
+        { title: @tr("Reviews, changes & history"), text: "", code: "" },
+        { title: "archguard review", text: @tr("Assemble findings, change impact and evidence gaps for a review, optionally against --base."), code: "archguard review --help" },
+        { title: "archguard review-decision", text: @tr("record persists a review decision; show reads the decisions in .archguard/reviews.json."), code: "archguard review-decision --help" },
+        { title: "archguard evaluate", text: @tr("Compare findings with an expert assessment in .archguard/assessment.toml: recall, precision and unjudged findings. --init writes a template; not a gate."), code: "archguard evaluate --help" },
+        { title: "archguard diff", text: @tr("Compare Git refs with --from/--to or compare a ref with --staged. Does not compare the working tree."), code: "archguard diff --help" },
+        { title: "archguard suggest", text: @tr("Suggest cuts for cycles as review candidates, not automatic source edits; --plans prints up to three repair plans per cycle."), code: "archguard suggest . --plans" },
+        { title: "archguard simulate", text: @tr("Simulate cut/move/merge operations and report their effect without changing source files."), code: "archguard simulate --help" },
+        { title: "archguard baseline", text: @tr("write accepts existing cycles as the baseline; diff compares against it to identify new cycles."), code: "archguard baseline --help" },
+        { title: "archguard snapshot", text: @tr("Append a project summary snapshot to .archguard/history/."), code: "archguard snapshot --help" },
+        { title: "archguard trend", text: @tr("Read the summary snapshots and their deltas. Does not record a new measurement."), code: "archguard trend --help" },
+        { title: "archguard quality-history", text: @tr("Read per-package quality history; --record explicitly adds current measurements. More granular than snapshot/trend."), code: "archguard quality-history --help" },
+        { title: @tr("Configuration & integrations"), text: "", code: "" },
+        { title: "archguard config", text: @tr("Show effective configuration and where its sections came from. Does not write configuration."), code: "archguard config --help" },
+        { title: "archguard db", text: @tr("sync mirrors analysis into the graph database; query runs openCypher. Requires a build with the db feature."), code: "archguard db --help" },
+        { title: "archguard mcp", text: @tr("Start the stdio MCP server for assistant/tool integration; --root sets the project."), code: "archguard mcp --help" }
+    ];
+    out property <[HelpBlock]> mcp: [
+        { title: "", text: @tr("Copy a request below into your agent chat. ArchGuard must be connected through MCP; the agent selects the matching tools and retrieves the project evidence. References such as “the package we just discussed” refer to your conversation."), code: "" },
+        { title: @tr("Start & project structure"), text: "", code: "" },
+        { title: "development_guide", text: @tr("Task-oriented routes through the tools and current analysis coverage."), code: "Use ArchGuard to give me an overview of this project. Where should I start to understand its architecture, and which analyses are available?" },
+        { title: "scan", text: @tr("Count nodes, dependencies, languages and cycles."), code: "Use ArchGuard to summarize the size and structure of this project: files, packages, dependencies, languages and cycles." },
+        { title: "service_topology", text: @tr("Discover projects, applications and configured service relationships."), code: "Use ArchGuard to show the services and projects in this repository. Distinguish applications, libraries and test tools, and explain their configured relationships." },
+        { title: "workspace_context", text: @tr("Read dependencies between local projects. sources enables bounded source analysis; no builds are run."), code: "Use ArchGuard to examine dependencies between the projects in this monorepo, including available source evidence. Explain where cross-project analysis is incomplete." },
+        { title: "architecture_atlas", text: @tr("Explore packages and their connections; use returned area names to drill down."), code: "Use ArchGuard to show the main packages and their relationships. Then explore the package with the most connections and explain its responsibilities from the available evidence." },
+        { title: "architecture_world", text: @tr("Inspect class/file evidence and complexity. Missing measurements remain unknown."), code: "Use ArchGuard to explain the most complex classes in this project. Name the measured values and source files, and distinguish missing measurements from low complexity." },
+        { title: "graph_expand", text: @tr("Expand one exact module name from the graph."), code: "Use ArchGuard to expand the package we just discussed by one level. Show its direct subpackages and their dependencies." },
+        { title: "dsm", text: @tr("Read the dependency matrix; within optionally selects a package."), code: "Use ArchGuard to show a dependency matrix for the package we just discussed. Explain the strongest connections and visible cycles." },
+        { title: @tr("Dependencies & cycles"), text: "", code: "" },
+        { title: "cycles_list", text: @tr("List cycle IDs; level=file distinguishes file cycles from module aggregation."), code: "Use ArchGuard to find the largest dependency cycles. Distinguish file cycles from cycles that only appear when packages are aggregated." },
+        { title: "cycle_get", text: @tr("Read members and source evidence for an ID returned by cycles_list."), code: "Use ArchGuard to examine the cycle we just found. List its members and show a closed dependency path with the corresponding source locations." },
+        { title: "module_neighborhood", text: @tr("Follow incoming, outgoing or both dependency directions."), code: "Use ArchGuard to show what depends directly on the package we just discussed and what that package itself depends on. Explain incoming and outgoing relationships separately." },
+        { title: "edge_evidence", text: @tr("Read import locations behind one directed module connection."), code: "Use ArchGuard to explain why the two packages we just discussed are connected. Show the direction and the import locations that establish this dependency." },
+        { title: "suggest_cuts", text: @tr("Suggest dependency cuts for a returned cycle ID; does not edit sources."), code: "Use ArchGuard to suggest three ways to break the cycle we just discussed. Explain the evidence and trade-offs for each suggestion without editing files." },
+        { title: "simulate", text: @tr("Evaluate a virtual refactoring on a graph copy without editing files."), code: "Use ArchGuard to simulate removing the dependency we just discussed. Compare cycles and coupling before and after, without changing source files." },
+        { title: @tr("Architecture & documentation"), text: "", code: "" },
+        { title: "architecture_context", text: @tr("Read declared goals, constraints, target model and missing context."), code: "Use ArchGuard to summarize the declared architecture goals, constraints and target structure. Clearly separate documented decisions from assumptions and missing information." },
+        { title: "architecture_document", text: @tr("Return evidence-backed arc42 Markdown; concatenate pages in order. No file is written."), code: "Use ArchGuard to produce the arc42 building block view for this project. Retrieve the complete chapter, explain its packages and mark information that cannot be inferred from the code." },
+        { title: "architecture_patterns", text: @tr("Inspect pattern hypotheses with supporting and contradicting evidence."), code: "Use ArchGuard to investigate which architecture patterns are supported by this project. For each candidate, show supporting evidence, counter-evidence and what is still unknown." },
+        { title: "config_view", text: @tr("Show effective configuration and its provenance."), code: "Use ArchGuard to explain the architecture rules currently applied to this project. Show which settings were explicitly declared and which were derived or defaulted." },
+        { title: "architecture_findings", text: @tr("Find current problems, stable finding IDs and evidence freshness."), code: "Use ArchGuard to find the current architecture problems. Prioritize the most important findings and explain their evidence, affected components and analysis gaps." },
+        { title: "architecture_finding", text: @tr("Read evidence and repair context for a finding_id from architecture_findings."), code: "Use ArchGuard to examine the finding we just discussed in detail. Show the relevant source locations, the violated rule and possible repair steps." },
+        { title: "check", text: @tr("Check architecture rules, optionally considering the configured baseline."), code: "Use ArchGuard to check this project against its architecture rules and configured baseline. Explain which findings fail the check and which are covered by the baseline." },
+        { title: "baseline_diff", text: @tr("Compare current cycles with an existing baseline. Requires a baseline file/configuration."), code: "Use ArchGuard to compare the current cycles with the existing baseline. Which cycles are new, which have disappeared, and is a usable baseline available?" },
+        { title: @tr("Metrics & code understanding"), text: "", code: "" },
+        { title: "metrics", text: @tr("Read module coupling and instability."), code: "Use ArchGuard to compare the coupling and instability of the main packages. Explain the values and identify packages that deserve a closer look." },
+        { title: "quality_metrics", text: @tr("Read class/source metrics with explicit measurement coverage."), code: "Use ArchGuard to show the available class metrics and complexity measurements. Explain conspicuous values with source evidence and identify missing measurements." },
+        { title: "review_kpis", text: @tr("Read available review KPIs; unmeasured values are not zero."), code: "Use ArchGuard to summarize the available architecture review KPIs. Explain the most concerning measured values and which KPIs could not be measured." },
+        { title: "semantic_model", text: @tr("Inspect compiler-backed classes, methods or calls; provider gaps remain visible."), code: "Use ArchGuard to show the methods and callers of the class we just discussed. Distinguish compiler-resolved calls from unresolved or external targets." },
+        { title: "package_cohesion", text: @tr("Inspect structural package cohesion and disconnected groups."), code: "Use ArchGuard to examine the cohesion of the package we just discussed. Are there disconnected groups of classes, and what evidence would support splitting the package?" },
+        { title: "hotspots", text: @tr("Rank review candidates using dependency and Git evidence."), code: "Use ArchGuard to identify ten review priorities from dependencies, cycles and Git changes. Explain why each is ranked highly without treating the ranking as proof of a defect." },
+        { title: "co_change", text: @tr("Find Git co-change candidates; shared changes do not prove a dependency."), code: "Use ArchGuard to find files that are frequently changed together despite having no recorded direct dependency. Explain the Git evidence and possible reasons." },
+        { title: "ownership", text: @tr("Read CODEOWNERS assignments and cross-team dependencies."), code: "Use ArchGuard to show team ownership from CODEOWNERS. Identify unassigned files and dependencies across team boundaries." },
+        { title: "performance", text: @tr("Review structural dependency costs; does not measure runtime performance."), code: "Use ArchGuard to investigate structural performance risks such as large dependency closures and heavy imports. Distinguish static indicators from measured runtime performance." },
+        { title: @tr("Changes & review"), text: "", code: "" },
+        { title: "change_context", text: @tr("Read dependencies, policies and impact for files changed since a Git base."), code: "Use ArchGuard to assess my uncommitted changes against HEAD. Which components depend on the changed code, and which architecture constraints should I consider?" },
+        { title: "staged_architecture_diff", text: @tr("Compare the complete staged index with HEAD; excludes unstaged changes."), code: "Use ArchGuard to review only my staged changes against HEAD. Which architecture findings and dependency changes would this commit introduce?" },
+        { title: "compare", text: @tr("Compare the working tree against a Git ref; optional target compares two exact branch tips."), code: "Use ArchGuard to compare my working tree with HEAD. Explain new and resolved architecture findings and changes in coupling." },
+        { title: "review_context", text: @tr("Read the last saved review and check its freshness. Create it with archguard review --save."), code: "Use ArchGuard to summarize the last saved architecture review. Which findings and decisions remain relevant, and is the review still current?" },
+        { title: "review_decisions", text: @tr("List decisions. action=record writes .archguard/reviews.json and requires finding and decision; accept-risk may require adr. This example only reads."), code: "Use ArchGuard to list the recorded review decisions. Which findings were deferred or accepted as risks, and which explanations and ADR references were recorded? Do not change the register." },
+        { title: "pr_comment", text: @tr("Return a Markdown PR summary against a Git base; does not post a comment."), code: "Use ArchGuard to draft an architecture review comment for my changes against HEAD. Include new and resolved findings and recorded accepted risks, but do not publish the comment." },
+        { title: "quality_history", text: @tr("Read explicitly recorded package metric history; does not create snapshots."), code: "Use ArchGuard to compare the recorded quality history of the packages. Which measured values improved or worsened, and which comparisons are not reliable?" },
+        { title: "trend", text: @tr("Read the snapshot history recorded by archguard snapshot."), code: "Use ArchGuard to show the trend in cycles, coupling and dependency counts over the last ten recorded snapshots. Explain any gaps in the history." },
+        { title: @tr("Imported quality, tests & security"), text: "", code: "" },
+        { title: "quality_findings", text: @tr("Read saved SARIF findings; does not start linters or import reports."), code: "Use ArchGuard to summarize the imported quality findings and show the most relevant source locations. Identify stale reports and do not start a new scan." },
+        { title: "security_findings", text: @tr("Read saved dependency advisories. Refresh explicitly with archguard security."), code: "Use ArchGuard to summarize the saved dependency vulnerability findings. Show affected packages, versions and available fixes, and state when the scan was recorded." },
+        { title: "duplication_findings", text: @tr("Read imported CPD groups and source occurrences."), code: "Use ArchGuard to show the largest imported code duplication groups. List the affected files and explain where shared code might be worth considering." },
+        { title: "test_coverage", text: @tr("Read imported coverage and uncovered-file priorities; does not run tests."), code: "Use ArchGuard to identify important files with test coverage gaps, considering how much code depends on them. Distinguish missing coverage data from measured uncovered lines." },
+        { title: "test_impact", text: @tr("Read imported test identities/durations; targets optionally requests impact-based recommendations."), code: "Use ArchGuard to recommend tests for the file we just discussed. Explain the recorded source mappings and dependencies, and which additional tests cannot safely be ruled out." },
+        { title: "mutation_findings", text: @tr("Read imported mutation outcomes; does not execute mutation tests."), code: "Use ArchGuard to examine the imported mutation test results. Show surviving mutations and their source locations without executing new mutation tests." },
+        { title: "api_contracts", text: @tr("Read imported OpenAPI contracts, changes and declared consumers."), code: "Use ArchGuard to compare the imported API contract with its previous import. Explain contract changes and identify declared consumers that may be affected." }
+    ];
+}
+
+component BlockView inherits VerticalLayout {
+    in property <HelpBlock> item;
+    callback copy(string);
+    property <bool> heading: root.item.text == "" && root.item.code == "";
+    spacing: 4px;
+    padding-top: root.heading ? 10px : 2px;
+    if root.item.title != "": Text {
+        text: root.item.title;
+        color: root.heading ? Theme.accent : Theme.text;
+        font-size: root.heading ? Theme.font-section : Theme.font-body;
+        font-weight: Theme.weight-strong;
+        wrap: word-wrap;
+    }
+    if root.item.text != "": Text {
+        text: root.item.text;
+        color: Theme.muted;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+    if root.item.code != "": Rectangle {
+        background: Theme.panel-2;
+        border-radius: 6px;
+        height: code.preferred-height;
+        code := HorizontalLayout {
+            padding: 8px;
+            spacing: 8px;
+            Text {
+                text: root.item.code;
+                color: Theme.text;
+                font-family: Theme.mono-family;
+                font-size: Theme.font-mono;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+            Button {
+                compact: true;
+                text: @tr("Copy");
+                vertical-stretch: 0;
+                clicked => { root.copy(root.item.code); }
+            }
+        }
+    }
+}
+
+// Modal over the window, as the review decisions.
+export component HelpDialog inherits Rectangle {
+    // What the last Copy put on the clipboard.
+    property <string> copied;
+    function copy(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
+        self.copied = text;
+    }
+    property <[HelpBlock]> blocks: HelpData.tab == 0 ? HelpData.graph
+        : HelpData.tab == 1 ? HelpData.classes
+        : HelpData.tab == 2 ? HelpData.coverage
+        : HelpData.tab == 3 ? HelpData.cli : HelpData.mcp;
+    background: Theme.shadow;
+    TouchArea { }
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                HelpData.open = false;
+                return accept;
+            }
+            reject
+        }
+    }
+    clipboard := TextInput {
+        width: 0;
+        height: 0;
+        opacity: 0;
+        read-only: true;
+    }
+    Rectangle {
+        x: (root.width - self.width) / 2;
+        y: 30px;
+        width: min(860px, root.width - 32px);
+        height: root.height - 60px;
+        background: Theme.panel;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.shadow;
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: @tr("Metrics, commands & MCP"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; vertical-alignment: center; horizontal-stretch: 1; }
+                if root.copied != "": Text { text: @tr("Copied"); color: Theme.success; font-size: Theme.font-small; vertical-alignment: center; }
+                Button { icon: Icons.close; compact: true; width: 28px; tip: @tr("Close"); clicked => { HelpData.open = false; } }
+            }
+            HorizontalLayout {
+                spacing: 2px;
+                alignment: start;
+                Tab { text: @tr("Graph KPIs"); active: HelpData.tab == 0; clicked => { HelpData.tab = 0; } }
+                Tab { text: @tr("Classes & methods"); active: HelpData.tab == 1; clicked => { HelpData.tab = 1; } }
+                Tab { text: @tr("Test coverage"); active: HelpData.tab == 2; clicked => { HelpData.tab = 2; } }
+                Tab { text: "CLI"; active: HelpData.tab == 3; clicked => { HelpData.tab = 3; } }
+                Tab { text: "MCP"; active: HelpData.tab == 4; clicked => { HelpData.tab = 4; } }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    padding-right: 14px;
+                    if HelpData.tab == 4: BlockView {
+                        item: { title: @tr("This project and view"), text: @tr("The development_guide request for the shown view, and the MCP server entry for this project. Paste the entry into the mcpServers configuration of your MCP client."), code: HelpData.mcp-call };
+                        copy(t) => { root.copy(t); }
+                    }
+                    if HelpData.tab == 4: BlockView {
+                        item: { title: "", text: "", code: HelpData.mcp-server };
+                        copy(t) => { root.copy(t); }
+                    }
+                    if HelpData.tab == 0: Text {
+                        text: @tr("The Graph tab counts its figures on the shown modules: rows that are not expanded. The Matrix and Start figures name their level in their label.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    if HelpData.tab == 1: Text {
+                        text: @tr("Class metrics of the Quality tab's heatmap. Missing compiler evidence leaves a value unknown (—), never 0.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    for b in root.blocks: BlockView {
+                        item: b;
+                        copy(t) => { root.copy(t); }
+                    }
+                    if HelpData.tab == 1: Text { text: @tr("Requirements by language"); color: Theme.accent; font-size: Theme.font-section; font-weight: Theme.weight-strong; }
+                    if HelpData.tab == 1: VerticalLayout {
+                        spacing: 8px;
+                        for b in HelpData.languages: BlockView {
+                            item: b;
+                            copy(t) => { root.copy(t); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

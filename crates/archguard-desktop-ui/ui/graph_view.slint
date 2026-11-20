@@ -51,6 +51,9 @@ export struct GraphData {
     dep-count: int,
     // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
     kpis: [KpiItem],
+    // More metrics: CCD, NCCD, largest cycle group, modules in cycles,
+    // high review priority (`kpi.rs`).
+    more-kpis: [KpiItem],
     count-in: int,
     count-out: int,
     count-both: int,
@@ -90,11 +93,15 @@ export struct GraphData {
 component ExplorerRow inherits Rectangle {
     in property <TreeRow> data;
     in property <bool> selected;
+    // The keyboard's row while the explorer has focus.
+    in property <bool> focus-ring;
     callback select();
     callback toggle();
     callback node-tab(string, bool);
     height: 32px;
     border-radius: 6px;
+    border-width: root.focus-ring ? 2px : 0;
+    border-color: Theme.accent;
     background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
     menu := NodeMenu {
         package: !root.data.file;
@@ -243,6 +250,8 @@ export component GraphView inherits HorizontalLayout {
     property <int> hovered: root.hover-hint;
     changed hover-hint => { self.hovered = self.hover-hint; }
     property <int> fit-local;
+    // The "More metrics" popover of the scope bar.
+    in-out property <bool> more-open;
     // A narrow pane (a split) hides the explorer and narrows the details,
     // decided from the view's own width only (no layout loop).
     // Below 600px the graph itself needs the whole pane.
@@ -298,14 +307,76 @@ export component GraphView inherits HorizontalLayout {
                 color: Theme.muted;
                 font-size: Theme.font-small;
             }
-            if root.data.explorer-tab == 0 && !root.searching: ListView {
+            // The web viewer's tree keys: arrows, Home/End, Left/Right
+            // collapse/expand, Enter selects (opens the details), Escape
+            // clears the selection (closes them).
+            if root.data.explorer-tab == 0 && !root.searching: keys := FocusScope {
                 vertical-stretch: 1;
-                for r in root.data.rows: ExplorerRow {
-                    data: r;
-                    selected: r.row == root.data.selected-row;
-                    select => { root.select-row(r.row); }
-                    toggle => { root.toggle-row(r.row); }
-                    node-tab(kind, side) => { root.node-tab(kind, r.node, side); }
+                property <int> cursor: root.data.selected-row;
+                property <int> selected: root.data.selected-row;
+                changed selected => { if self.pending < 0 { self.cursor = self.selected; } }
+                // The node whose row the cursor keeps while a toggle
+                // re-sorts the rows (-1: none); the next key clears it.
+                property <int> pending: -1;
+                function move(to: int) {
+                    self.pending = -1;
+                    self.cursor = to;
+                }
+                function toggle(at: int) {
+                    self.cursor = at;
+                    self.pending = root.data.rows[at].node;
+                    root.toggle-row(at);
+                }
+                for r[i] in self.pending >= 0 ? root.data.rows : []: Rectangle {
+                    width: 0;
+                    height: 0;
+                    property <bool> hit: r.node == keys.pending;
+                    init => { if self.hit { keys.cursor = i; } }
+                    changed hit => { if self.hit { keys.cursor = i; } }
+                }
+                changed cursor => { self.reveal(); }
+                function reveal() {
+                    // Explorer rows are 32px.
+                    if self.cursor < 0 || list.visible-height <= 0 { return; }
+                    if self.cursor * 32px >= -list.content-y && (self.cursor + 1) * 32px <= -list.content-y + list.visible-height { return; }
+                    list.content-y = -max(0px, min(self.cursor * 32px - list.visible-height / 3, list.content-height - list.visible-height));
+                }
+                key-pressed(event) => {
+                    let n = root.data.rows.length;
+                    if (n == 0) { return reject; }
+                    let at = max(0, min(n - 1, self.cursor));
+                    let r = root.data.rows[at];
+                    if (event.text == Key.DownArrow) { self.move(self.cursor < 0 ? 0 : min(n - 1, at + 1)); return accept; }
+                    if (event.text == Key.UpArrow) { self.move(max(0, at - 1)); return accept; }
+                    if (event.text == Key.Home) { self.move(0); return accept; }
+                    if (event.text == Key.End) { self.move(n - 1); return accept; }
+                    if (event.text == Key.RightArrow) {
+                        if (r.expandable && !r.expanded) { self.toggle(at); }
+                        else if (r.expanded) { self.move(min(n - 1, at + 1)); }
+                        return accept;
+                    }
+                    if (event.text == Key.LeftArrow) {
+                        if (r.expanded) { self.toggle(at); }
+                        else if (r.parent >= 0) { self.move(r.parent); }
+                        return accept;
+                    }
+                    if (event.text == Key.Return || event.text == " ") { root.select-row(at); return accept; }
+                    if (event.text == Key.Escape && root.data.selected-row >= 0) { root.select-row(-1); return accept; }
+                    reject
+                }
+                list := ListView {
+                    for r in root.data.rows: ExplorerRow {
+                        data: r;
+                        selected: r.row == root.data.selected-row;
+                        focus-ring: keys.has-focus && r.row == keys.cursor;
+                        select => {
+                            keys.focus();
+                            keys.move(r.row);
+                            root.select-row(r.row);
+                        }
+                        toggle => { root.toggle-row(r.row); }
+                        node-tab(kind, side) => { root.node-tab(kind, r.node, side); }
+                    }
                 }
             }
             if root.data.explorer-tab == 0 && root.searching: ListView {
@@ -412,6 +483,14 @@ export component GraphView inherits HorizontalLayout {
                         spacing: 16px;
                         for k in root.data.kpis: StatInline { kpi: k; }
                     }
+                }
+                Button {
+                    compact: true;
+                    text: @tr("More metrics");
+                    pressed-state: root.more-open;
+                    y: (parent.height - self.height) / 2;
+                    height: Theme.control-h-sm;
+                    clicked => { root.more-open = !root.more-open; }
                 }
             }
         }
@@ -523,6 +602,35 @@ export component GraphView inherits HorizontalLayout {
                 reference: root.data.reference;
                 total: root.data.dep-count;
                 explain(k) => { root.action("dep-explain", k); }
+            }
+            if root.more-open: Rectangle {
+                x: parent.width - self.width - 12px;
+                y: 8px;
+                width: 300px;
+                height: more-list.preferred-height;
+                background: Theme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 18px;
+                drop-shadow-color: Theme.shadow;
+                // Clicks stay in the popover.
+                TouchArea { }
+                more-list := VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text { text: @tr("More metrics"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.more-open = false; } }
+                    }
+                    for k in root.data.more-kpis: HorizontalLayout { alignment: start; StatInline { kpi: k; } }
+                    Text {
+                        text: @tr("All figures describe the shown modules; expanding a package changes them.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
         SimStrip { sim: root.data.sim; action(a, b) => { root.action(a, b); } }

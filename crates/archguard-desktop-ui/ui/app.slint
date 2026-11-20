@@ -20,6 +20,7 @@ import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
 import { CompareView, CompareData, CompareRow, CompareRelation, CompareCounts } from "compare_view.slint";
 import { CompareDialog } from "compare_dialog.slint";
+import { HelpDialog, HelpData, HelpBlock } from "help_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
@@ -44,6 +45,7 @@ export { UpdateNotice }
 export { ReviewDecisionsData, DecisionRow }
 // File → Compare architecture… (src/compare_ui.rs).
 export { CompareData, CompareRow, CompareRelation, CompareCounts }
+export { HelpData, HelpBlock }
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -103,7 +105,7 @@ export component AppWindow inherits Window {
     // Markdown and JSON need a view with an export snapshot; SVG is drawn
     // from Graph → Tree and Services, as in the web viewer.
     property <bool> export-data: root.focused-view == "graph" || root.focused-view == "dsm" || root.focused-view == "services"
-        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture";
+        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture" || root.focused-view == "calls";
     property <bool> export-svg: root.focused-view == "services"
         || (root.focused-view == "graph" && root.graph-panes[root.focused-pane].display == 0);
     // The panes' top edge in the window, for the PNG of a pane.
@@ -213,7 +215,7 @@ export component AppWindow inherits Window {
         if root.notice-kind == 5 { return @tr("Exported {} from the original project evidence.", root.notice); }
         if root.notice-kind == 6 { return @tr("Could not export: {}", root.notice); }
         if root.notice-kind == 7 { return @tr("SVG is available in Graph → Tree and Services."); }
-        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."); }
+        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture."); }
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
         if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
         if root.notice-kind == 11 { return @tr("Nothing to save."); }
@@ -295,7 +297,7 @@ export component AppWindow inherits Window {
                     activated => { root.export("json"); }
                 }
                 if root.ready && !root.export-data: MenuItem {
-                    title: @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture.");
+                    title: @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture.");
                     enabled: false;
                 }
                 MenuItem {
@@ -435,6 +437,10 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: @tr("Help");
+            MenuItem {
+                title: @tr("Metrics, commands & MCP…");
+                activated => { HelpData.show(); }
+            }
             MenuItem {
                 title: @tr("Check for updates…");
                 enabled: UpdateNotice.kind != 1 && UpdateNotice.kind != 5;
@@ -847,6 +853,7 @@ export component AppWindow inherits Window {
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
     if CompareData.dialog: CompareDialog { }
+    if HelpData.open: HelpDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.
     TipLayer { }

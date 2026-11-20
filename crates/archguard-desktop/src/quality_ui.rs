@@ -12,7 +12,7 @@ mod evidence;
 pub(crate) mod findings;
 mod follow;
 mod heatmap;
-mod heatmap_text;
+pub(crate) mod heatmap_text;
 mod inputs;
 mod lang;
 mod notes;

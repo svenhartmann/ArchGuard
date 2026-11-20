@@ -60,6 +60,7 @@ pub fn view(kind: &str) -> Option<View> {
         "security" => View::Security,
         "quality" => View::Quality,
         "architecture" => View::Architecture,
+        "calls" => View::Calls,
         _ => return None,
     })
 }
@@ -101,11 +102,12 @@ mod tests {
             "security",
             "quality",
             "architecture",
+            "calls",
         ] {
             assert_eq!(check(kind, 0, Choice::Markdown), Ok(()), "{kind}");
             assert_eq!(check(kind, 0, Choice::Json), Ok(()), "{kind}");
         }
-        for kind in ["start", "calls", "file"] {
+        for kind in ["start", "file"] {
             assert_eq!(check(kind, 0, Choice::Json), Err(Hint::Data), "{kind}");
         }
         assert_eq!(check("graph", 0, Choice::Svg), Ok(()));

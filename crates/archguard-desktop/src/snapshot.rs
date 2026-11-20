@@ -26,7 +26,8 @@
 //! Export without the save dialog: [`export_hook`]. View → Settings:
 //! `crate::settings_view_ui::snapshot_hook`. View → Review decisions…:
 //! `crate::review_decisions_ui::snapshot_hook`. File → Compare
-//! architecture…: `crate::compare_ui::snapshot_hook`.
+//! architecture…: `crate::compare_ui::snapshot_hook`. Help → Metrics,
+//! commands & MCP…: `crate::help_ui::snapshot_hook`.
 
 use std::cell::Cell;
 
@@ -69,6 +70,7 @@ pub fn schedule(ui: &AppWindow) {
     export_hook(ui);
     crate::review_decisions_ui::snapshot_hook(ui);
     crate::compare_ui::snapshot_hook(ui);
+    crate::help_ui::snapshot_hook(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
@@ -432,7 +434,8 @@ fn apply_shell_hooks(ui: &AppWindow) {
 }
 
 /// `ARCHGUARD_DESKTOP_TYPE=<text>`: keys for the focused field, sent once
-/// the clicks took effect (`<esc>`: Escape).
+/// the clicks took effect (`<esc>` Escape, `<enter>` Return, `<up>`,
+/// `<down>`, `<left>`, `<right>`, `<home>`, `<end>`: those keys).
 fn type_hook(ui: &AppWindow) {
     use slint::platform::WindowEvent;
     let Ok(text) = std::env::var("ARCHGUARD_DESKTOP_TYPE") else {
@@ -441,7 +444,18 @@ fn type_hook(ui: &AppWindow) {
     let weak = ui.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
         let Some(ui) = weak.upgrade() else { return };
-        for c in text.replace("<esc>", "\u{1b}").chars() {
+        let keys = [
+            ("<esc>", "\u{1b}"),
+            ("<enter>", "\n"),
+            ("<up>", "\u{F700}"),
+            ("<down>", "\u{F701}"),
+            ("<left>", "\u{F702}"),
+            ("<right>", "\u{F703}"),
+            ("<home>", "\u{F729}"),
+            ("<end>", "\u{F72B}"),
+        ];
+        let text = keys.iter().fold(text.clone(), |t, (k, c)| t.replace(k, c));
+        for c in text.chars() {
             let text = slint::SharedString::from(c);
             let pressed = WindowEvent::KeyPressed { text: text.clone() };
             ui.window().dispatch_event(pressed);
