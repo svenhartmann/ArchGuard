@@ -791,19 +791,15 @@ fn baseline(
 ) -> i32 {
     match action {
         BaselineAction::Write { file, .. } => {
-            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
             let hashes: BTreeSet<String> = cycle_hashes(report).into_values().collect();
             let baseline = Baseline {
                 schema_version: 1,
                 hashes,
             };
-            let json = match serde_json::to_string_pretty(&baseline) {
-                Ok(json) => json,
+            let file = match check_cmd::write_baseline(root, loaded, file.as_deref(), &baseline) {
+                Ok(file) => file,
                 Err(err) => return analysis_error(err),
             };
-            if let Err(err) = write_json_file(file, &json) {
-                return analysis_error(err);
-            }
             if !cli.quiet {
                 outln!(
                     "wrote {} cycle hashes to {}",
@@ -814,8 +810,9 @@ fn baseline(
             EXIT_OK
         }
         BaselineAction::Diff { file, .. } => {
-            let file = &check_cmd::baseline_path(root, loaded, file.as_deref());
-            let baseline = match read_baseline(file) {
+            let baseline = match check_cmd::baseline_path(root, loaded, file.as_deref())
+                .and_then(|file| read_baseline(&file))
+            {
                 Ok(baseline) => baseline,
                 Err(err) => return analysis_error(err),
             };

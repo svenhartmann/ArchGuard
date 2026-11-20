@@ -157,3 +157,80 @@ fn sarif_reports_baselined_cycles_as_notes() {
         report(&out)
     );
 }
+
+/// A hostile `[rules].baseline` must not let `baseline write` (no file
+/// argument) replace a file outside the project; `outside` keeps its bytes.
+fn assert_write_refused(dir: &Path, outside: &Path) {
+    let out = archguard(dir, &["baseline", "write"]);
+    assert_ne!(out.status.code(), Some(0), "{}", report(&out));
+    assert_eq!(
+        fs::read_to_string(outside).expect("outside file"),
+        "keep",
+        "{}",
+        report(&out)
+    );
+}
+
+#[test]
+fn configured_baseline_escaping_the_root_is_refused() {
+    let base = tempdir().expect("tempdir");
+    let dir = base.path().join("repo");
+    cyclic(&dir);
+    write(base.path(), "victim.json", "keep");
+    write(
+        &dir,
+        "archguard.toml",
+        &format!("{TOLERATE_SCC_SIZE}baseline = \"../victim.json\"\n"),
+    );
+    assert_write_refused(&dir, &base.path().join("victim.json"));
+
+    // An explicit operator file argument stays unrestricted.
+    let out = archguard(&dir, &["baseline", "write", ".", "../chosen.json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", report(&out));
+    assert!(
+        base.path().join("chosen.json").is_file(),
+        "{}",
+        report(&out)
+    );
+}
+
+#[test]
+fn configured_absolute_baseline_is_refused() {
+    let base = tempdir().expect("tempdir");
+    let dir = base.path().join("repo");
+    cyclic(&dir);
+    let victim = base.path().join("victim.json");
+    write(base.path(), "victim.json", "keep");
+    write(
+        &dir,
+        "archguard.toml",
+        &format!(
+            "{TOLERATE_SCC_SIZE}baseline = {:?}\n",
+            victim.display().to_string()
+        ),
+    );
+    assert_write_refused(&dir, &victim);
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_archguard_directory_does_not_redirect_the_baseline() {
+    let base = tempdir().expect("tempdir");
+    let dir = base.path().join("repo");
+    cyclic(&dir);
+    let elsewhere = base.path().join("elsewhere");
+    write(&elsewhere, "baseline.json", "keep");
+    std::os::unix::fs::symlink(&elsewhere, dir.join(".archguard")).expect("symlink");
+    assert_write_refused(&dir, &elsewhere.join("baseline.json"));
+
+    // Nor is a baseline read through the link.
+    write(
+        &elsewhere,
+        "baseline.json",
+        "{\"schema_version\":1,\"hashes\":[]}",
+    );
+    for args in [&["baseline", "diff"][..], &["check", "--baseline"][..]] {
+        let out = archguard(&dir, args);
+        assert_eq!(out.status.code(), Some(3), "{args:?}: {}", report(&out));
+    }
+}
