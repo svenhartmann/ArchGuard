@@ -1,4 +1,6 @@
 'use strict';
+const german = document.documentElement.lang === 'de';
+const assetBase = new URL('assets/', document.currentScript.src);
 const views = {
  'world-complexity': {title:'Spot complex code at a glance.', description:'Surfaces are coloured from low to high by the maximum cyclomatic complexity of their methods. The status line names the highest recorded value: 29, in the map package.', project:'Apache Commons Collections · Java · Explore lens', alt:'Apache Commons Collections in World View, class surfaces coloured by cyclomatic complexity'},
  'world-cbo': {title:'See which classes depend on too many others.', description:'Coupling Between Objects counts the other classes a class uses. Green, amber and red mark low, elevated and high values. The highest recorded CBO is 75, in IteratorUtils.java.', project:'Apache Commons Collections · Java · Explore lens', alt:'World View with class surfaces coloured by CBO: low, elevated and high coupling'},
@@ -16,10 +18,11 @@ const views = {
 };
 for(const block of document.querySelectorAll('[data-gallery]'))for(const button of block.querySelectorAll('[data-view]'))button.addEventListener('click',()=>{
  const key=button.dataset.view, view=views[key], part=name=>block.querySelector(`[data-gallery-${name}]`);
+ if(!view)return;
  for(const other of block.querySelectorAll('[data-view]'))other.setAttribute('aria-pressed',String(other===button));
- part('image').src=`assets/${key}.png`;
+ part('image').src=new URL(`${key}.png`,assetBase).href;
  part('image').alt=view.alt;
- part('link').href=`assets/${key}.png`;
+ part('link').href=new URL(`${key}.png`,assetBase).href;
  part('title').textContent=view.title;
  part('description').textContent=view.description;
  part('project').textContent=view.project;
@@ -34,9 +37,10 @@ for(const group of document.querySelectorAll('.os-tabs')){
 let statusTimeout;
 for(const button of document.querySelectorAll('.copy'))button.addEventListener('click',async()=>{
  const code=button.closest('.code,.terminal').querySelector('pre:not([hidden]) code');const text=code.innerText;
- const status=document.getElementById('copy-status');
- try{await navigator.clipboard.writeText(text);status.textContent='Command copied.';}
- catch{const range=document.createRange();range.selectNodeContents(code);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);status.textContent='Command selected. Press Ctrl+C or ⌘C to copy.';}
+ let status=document.getElementById('copy-status');
+ if(!status){status=document.createElement('div');status.id='copy-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');document.body.append(status);}
+ try{await navigator.clipboard.writeText(text);status.textContent=german?'Befehl kopiert.':'Command copied.';}
+ catch{const range=document.createRange();range.selectNodeContents(code);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);status.textContent=german?'Befehl markiert. Mit Strg+C oder ⌘C kopieren.':'Command selected. Press Ctrl+C or ⌘C to copy.';}
  clearTimeout(statusTimeout);statusTimeout=setTimeout(()=>{status.textContent='';},3500);
 });
 
