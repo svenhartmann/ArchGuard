@@ -42,6 +42,10 @@ pub struct DomainModel {
     /// [`DomainModel::event_handler_sites`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub event_handler_sites: Vec<EventHandlerSite>,
+    /// Classes read as API models (wire contracts of controller actions), not
+    /// as entities: listed so that nothing is silently left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub api_models: Vec<ApiModel>,
 }
 impl Default for DomainModel {
     /// Empty and complete, so it is the identity of [`merge_domain_models`].
@@ -60,6 +64,7 @@ impl Default for DomainModel {
             validations: vec![],
             integration_events: vec![],
             event_handler_sites: vec![],
+            api_models: vec![],
         }
     }
 }
@@ -206,6 +211,18 @@ pub struct EventHandlerSite {
     pub handler: String,
     pub file: String,
     pub line: u32,
+}
+
+/// A class read as the wire contract of a controller action instead of a
+/// domain model: a candidate for the entities that was set aside, with the
+/// rule that did it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ApiModel {
+    pub name: String,
+    pub file: String,
+    pub line: u32,
+    /// E.g. `action body of X.Y`, `returned by X.Y`, `only reachable through api model Z`.
+    pub reason: String,
 }
 
 /// A class or method that handles a message from outside a request (an
@@ -412,6 +429,7 @@ pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
         validations: union(a.validations, b.validations),
         integration_events: union(a.integration_events, b.integration_events),
         event_handler_sites: union(a.event_handler_sites, b.event_handler_sites),
+        api_models: union(a.api_models, b.api_models),
     };
     link_integration_events(&mut merged);
     merged.integration_events.dedup();
@@ -670,6 +688,33 @@ mod tests {
                 .unwrap()
                 .contains("event_handler_sites")
         );
+    }
+
+    #[test]
+    fn api_models_round_trip_merge_and_stay_out_of_old_json() {
+        let api = |name: &str| ApiModel {
+            name: name.into(),
+            file: format!("{name}.cs"),
+            line: 3,
+            reason: "returned by A.B".into(),
+        };
+        let a = DomainModel {
+            api_models: vec![api("Y"), api("X")],
+            ..DomainModel::default()
+        };
+        let b = DomainModel {
+            api_models: vec![api("X")],
+            ..DomainModel::default()
+        };
+        let merged = merge_domain_models(a, b);
+        let names: Vec<&str> = merged.api_models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["X", "Y"]);
+        let json = serde_json::to_string(&merged).unwrap();
+        assert_eq!(serde_json::from_str::<DomainModel>(&json).unwrap(), merged);
+        let old: DomainModel =
+            serde_json::from_str(r#"{"definition":"domain-model/v1","complete":true}"#).unwrap();
+        assert!(old.api_models.is_empty());
+        assert!(!serde_json::to_string(&old).unwrap().contains("api_models"));
     }
 
     #[test]

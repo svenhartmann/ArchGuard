@@ -60,8 +60,9 @@
 use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
-    MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
+    ApiModel, DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite,
+    Field, MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase,
+    UseCaseKind,
 };
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -111,6 +112,8 @@ const MODIFIERS: [&str; 16] = [
 pub(crate) type Span = (usize, usize);
 /// Diagnostics found on the way: file index, offset, message, drops an element.
 type Pending = Vec<(usize, usize, String, bool)>;
+/// Declaration index and entity kind, and API models with their reason.
+type Classified = (Vec<(usize, EntityKind)>, Vec<(usize, String)>);
 
 /// The domain model of the C# sources below `root`.
 pub fn extract(root: &Path) -> DomainModel {
@@ -305,7 +308,20 @@ impl Extractor {
     }
 
     fn entities(&mut self) {
-        let kinds = self.classify();
+        let (kinds, api) = self.classify();
+        self.model.api_models = api
+            .into_iter()
+            .map(|(d, reason)| {
+                let (decl, src) = (&self.decls[d], &self.files[self.decls[d].file]);
+                ApiModel {
+                    name: decl.name.clone(),
+                    file: src.rel.clone(),
+                    line: line(&src.text, decl.pos),
+                    reason,
+                }
+            })
+            .collect();
+        self.model.api_models.sort();
         let unknown = self.dbset_targets(&kinds);
         let mut ents: Vec<Ent> = kinds.into_iter().map(|(d, k)| self.ent(d, k)).collect();
         ents.extend(unknown.into_iter().map(|(d, f, pos, t)| match d {
@@ -329,7 +345,7 @@ impl Extractor {
     }
 
     /// Declarations with a marker, then records in an aggregate root's folder.
-    fn classify(&self) -> Vec<(usize, EntityKind)> {
+    fn classify(&self) -> Classified {
         let mut kinds: Vec<(usize, EntityKind)> = self
             .decls
             .iter()
@@ -353,9 +369,9 @@ impl Extractor {
             .map(|(d, _)| (d, EntityKind::ValueObject))
             .collect();
         kinds.extend(records);
-        let plain = rich::plain_models(self, &kinds);
+        let (plain, api) = rich::plain_models(self, &kinds);
         kinds.extend(plain);
-        kinds
+        (kinds, api)
     }
 
     /// `DbSet<T>` targets not classified otherwise: (class, file, offset, `T`).
@@ -1856,30 +1872,32 @@ pub(crate) mod code {
 ///
 /// 1. State: the class carries state ([`rich::carries_state`]; `const` and `static readonly` never). A stateless
 ///    class stays when a kept model names it as property type or base class.
-/// 2. API DTO: a controller is a class carrying `[ApiController]` or `[Route]`,
+/// 2. API model: a controller is a class carrying `[ApiController]` or `[Route]`,
 ///    or whose base is ASP.NET `Controller`/`ControllerBase` (`Microsoft.AspNetCore.Mvc`
 ///    in the file or the base name), or a scanned class that is one; not a name
 ///    suffix. A plain model that is the return type or a body-bound parameter
 ///    (`[FromBody]`, or any parameter of an `[ApiController]` without
 ///    `[FromQuery]`/`[FromRoute]`/`[FromServices]`/`[FromHeader]`) of a public
-///    action is the wire contract, not a domain model; so is a plain model only
+///    action is the wire contract, not a domain model, and is listed in
+///    `api_models` with the reason instead of among the entities; so is a plain model only
 ///    reachable through the properties of such a DTO. Never DTOs: a type in a
 ///    folder segment ending in `Domain`/`Entities`, a type with
 ///    behaviour (a public method besides `ToString`/`Equals`/`GetHashCode`/
 ///    `Validate`), a type persistence names (`DbSet<T>`,
-///    `IEntityTypeConfiguration<T>`, `.Entity<T>()`, Dapper `Query*<T>`, a
-///    `[Table]` attribute), a marker entity, and every type a kept model has as
-///    property type or base class.
+///    `IEntityTypeConfiguration<T>`, `.Entity<T>()`, Dapper `Query*<T>`, Mongo
+///    `IMongoCollection<T>`/`GetCollection<T>`, a `[Table]`, `[BsonId]` or
+///    `[BsonElement]` member), a marker entity, and every type a kept model has as
+///    property type, base class or public method signature type.
 mod api {
     use super::rich::{carries_state, unique};
     use super::*;
 
-    /// The models among `cands`.
+    /// The models among `cands`, and the API models set aside with their reason.
     pub(super) fn select(
         x: &Extractor,
         cands: Vec<usize>,
         kinds: &[(usize, EntityKind)],
-    ) -> Vec<usize> {
+    ) -> (Vec<usize>, Vec<(usize, String)>) {
         let (stateful, stateless): (Vec<usize>, Vec<usize>) =
             (cands.into_iter()).partition(|&d| carries_state(x, d, &mut vec![]));
         let mapped = mapped_types(x);
@@ -1893,52 +1911,87 @@ mod api {
         let seeds = action_types(x);
         let dto = reach(
             (free.iter().copied())
-                .filter(|&d| seeds.contains(&x.decls[d].name))
+                .filter(|&d| seeds.contains_key(&x.decls[d].name))
                 .collect(),
-            &|d| next(x, &free, d),
+            &|d| next(x, &free, d, false),
         );
         let mut kept: Vec<usize> = kinds.iter().map(|k| k.0).collect();
-        kept.extend(stateful.iter().copied().filter(|d| !dto.contains(d)));
-        let rescued = reach(kept.clone(), &|d| next(x, &free, d));
+        kept.extend(stateful.iter().copied().filter(|d| !dto.contains_key(d)));
+        // A class persistence names counts as kept in every namespace (a twin
+        // of the mapped EF class is still the domain class).
+        kept.extend(
+            (0..x.decls.len())
+                .filter(|&d| mapped.contains(&x.decls[d].name) && x.decls[d].kw == "class"),
+        );
+        let rescued = reach(kept.clone(), &|d| next(x, &free, d, true));
         let mut out: Vec<usize> = (stateful.iter().copied())
-            .filter(|d| !dto.contains(d) || rescued.contains(d))
+            .filter(|d| !dto.contains_key(d) || rescued.contains_key(d))
             .collect();
         // Only a name that means one class: partial parts and namesakes are not guessed.
         let single: Vec<usize> = (stateless.iter().copied())
             .filter(|&d| unique(x, &x.decls[d].name).is_some())
             .collect();
         let named = reach(out.iter().copied().chain(kept).collect(), &|d| {
-            next(x, &single, d)
+            next(x, &single, d, true)
         });
-        out.extend(single.iter().copied().filter(|d| named.contains(d)));
+        out.extend(single.iter().copied().filter(|d| named.contains_key(d)));
         out.sort();
         out.dedup();
-        out
+        let api = (dto.iter().filter(|(d, _)| !rescued.contains_key(d)))
+            .map(|(&d, parent)| {
+                let reason = match parent {
+                    Some(p) => format!("only reachable through api model {}", x.decls[*p].name),
+                    None => seeds[&x.decls[d].name].clone(),
+                };
+                (d, reason)
+            })
+            .collect();
+        (out, api)
     }
 
-    /// The classes of `universe` that `d` names as property type or base class.
-    fn next(x: &Extractor, universe: &[usize], d: usize) -> Vec<usize> {
-        let bases = x.decls[d]
-            .bases
-            .iter()
-            .map(|b| b.split('<').next().unwrap_or(b));
+    /// The classes of `universe` that `d` names as property type or base class,
+    /// and with `sigs` in the signature of a public method.
+    fn next(x: &Extractor, universe: &[usize], d: usize, sigs: bool) -> Vec<usize> {
+        let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+        let bases = decl.bases.iter().map(|b| b.split('<').next().unwrap_or(b));
         let fields = x.ent(d, EntityKind::Entity).fields;
-        let names: Vec<String> = (fields.iter().map(|f| f.type_name.as_str()))
+        let mut names: Vec<String> = (fields.iter().map(|f| f.type_name.as_str()))
             .chain(bases)
             .map(simple)
             .collect();
+        if sigs {
+            for m in (decl.body.into_iter())
+                .flat_map(|body| members(s, body, &decl.name))
+                .filter(|m| m.public)
+            {
+                if let Kind::Method { name, .. } = &m.kind {
+                    let head = idents(s, m.head.0, m.head.1);
+                    names.extend(
+                        head.into_iter()
+                            .map(|w| w.1)
+                            .filter(|w| w != name)
+                            .map(String::from),
+                    );
+                }
+            }
+        }
         (universe.iter().copied())
             .filter(|&n| names.contains(&x.decls[n].name))
             .collect()
     }
 
-    /// `from` and every declaration reachable from it through `next`.
-    fn reach(from: Vec<usize>, next: &dyn Fn(usize) -> Vec<usize>) -> BTreeSet<usize> {
-        let mut seen: BTreeSet<usize> = from.iter().copied().collect();
+    /// `from` and every declaration reachable from it through `next`, each with
+    /// the declaration it was first reached from.
+    fn reach(
+        from: Vec<usize>,
+        next: &dyn Fn(usize) -> Vec<usize>,
+    ) -> BTreeMap<usize, Option<usize>> {
+        let mut seen: BTreeMap<usize, Option<usize>> = from.iter().map(|&d| (d, None)).collect();
         let mut todo = from;
         while let Some(d) = todo.pop() {
             for n in next(d) {
-                if seen.insert(n) {
+                if let std::collections::btree_map::Entry::Vacant(v) = seen.entry(n) {
+                    v.insert(Some(d));
                     todo.push(n);
                 }
             }
@@ -1992,20 +2045,29 @@ mod api {
 
     /// Simple names in the return type of public actions of controllers and in
     /// their body-bound parameters (`[FromBody]`, or any parameter of an
-    /// `[ApiController]` without another binding source); an MVC form model
-    /// bound without either is not read.
-    fn action_types(x: &Extractor) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
+    /// `[ApiController]` without another binding source), each with the reason
+    /// of its first action; an MVC form model bound without either is not read.
+    fn action_types(x: &Extractor) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
         for d in (0..x.decls.len()).filter(|&d| is_controller(x, d, 0)) {
             let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
             let Some(body) = decl.body else { continue };
             let api_controller = attrs(s, decl.pos).contains("ApiController");
             for m in members(s, body, &decl.name).iter().filter(|m| m.public) {
-                if let Kind::Method {
+                let Kind::Method {
                     name, ctor: false, ..
                 } = &m.kind
-                {
-                    out.extend(head_types(&s[m.head.0..m.head.1], name, api_controller));
+                else {
+                    continue;
+                };
+                for (ty, bound) in head_types(&s[m.head.0..m.head.1], name, api_controller) {
+                    let how = if bound {
+                        "action body of"
+                    } else {
+                        "returned by"
+                    };
+                    out.entry(ty)
+                        .or_insert_with(|| format!("{how} {}.{name}", decl.name));
                 }
             }
         }
@@ -2013,8 +2075,8 @@ mod api {
     }
 
     /// Identifiers of an action head `Ret Name(params)`: the return type and the
-    /// body-bound parameters, without the action's own name.
-    fn head_types(head: &str, name: &str, api_controller: bool) -> Vec<String> {
+    /// body-bound parameters (flagged), without the action's own name.
+    fn head_types(head: &str, name: &str, api_controller: bool) -> Vec<(String, bool)> {
         const OTHER: [&str; 4] = ["FromQuery", "FromRoute", "FromServices", "FromHeader"];
         let Some(open) = head.find('(') else {
             return vec![];
@@ -2024,11 +2086,14 @@ mod api {
         let bound = (params.iter().copied()).filter(|p| {
             p.contains("FromBody") || (api_controller && !OTHER.iter().any(|o| p.contains(o)))
         });
-        (std::iter::once(&head[..open]).chain(bound))
-            .flat_map(|text| idents(text, 0, text.len()))
-            .map(|w| w.1)
-            .filter(|w| *w != name)
-            .map(String::from)
+        (std::iter::once((&head[..open], false)).chain(bound.map(|p| (p, true))))
+            .flat_map(|(text, b)| {
+                idents(text, 0, text.len())
+                    .into_iter()
+                    .map(move |w| (w.1, b))
+            })
+            .filter(|(w, _)| *w != name)
+            .map(|(w, b)| (w.to_string(), b))
             .collect()
     }
 
@@ -2043,13 +2108,20 @@ mod api {
                         .flatten(),
                 );
             }
-            if attrs(&x.files[decl.file].text, decl.pos).contains("[Table") {
+            let text = &x.files[decl.file].text;
+            let in_body = decl.body.map_or("", |(a, z)| &text[a..z]);
+            if attrs(text, decl.pos).contains("[Table")
+                || in_body.contains("[BsonId")
+                || in_body.contains("[BsonElement")
+            {
                 out.insert(decl.name.clone());
             }
         }
         for f in &x.files {
             generics_after(&f.text, ".Entity", false, &mut out);
             generics_after(&f.text, "Query", true, &mut out);
+            generics_after(&f.text, "IMongoCollection", false, &mut out);
+            generics_after(&f.text, "GetCollection", false, &mut out);
         }
         out
     }
@@ -2152,10 +2224,7 @@ mod rich {
     /// Plain models among the declarations not in `kinds`. A name an entity in
     /// `kinds` has, or a `DbSet<T>` resolving to another class, keeps the plain
     /// class out (client copies of a model must not qualify the domain's ids).
-    pub(super) fn plain_models(
-        x: &Extractor,
-        kinds: &[(usize, EntityKind)],
-    ) -> Vec<(usize, EntityKind)> {
+    pub(super) fn plain_models(x: &Extractor, kinds: &[(usize, EntityKind)]) -> Classified {
         let marker = |n: &str| {
             AGGREGATE_MARKERS.contains(&n) || [ENTITY_BASE, VALUE_OBJECT_BASE].contains(&n)
         };
@@ -2180,12 +2249,14 @@ mod rich {
             })
             .map(|(d, _)| d)
             .collect();
-        (api::select(x, cands, kinds).into_iter())
+        let (models, api) = api::select(x, cands, kinds);
+        let kinds = (models.into_iter())
             .map(|d| match x.decls[d].kw.as_str() {
                 "class" => (d, EntityKind::Entity),
                 _ => (d, EntityKind::ValueObject),
             })
-            .collect()
+            .collect();
+        (kinds, api)
     }
 
     /// One of `words` among the modifiers before the type keyword at `pos`.
@@ -2198,9 +2269,11 @@ mod rich {
     /// field or property (any visibility), or state inherited from a base class.
     /// Not `static`/`const` members, nor a `readonly` field holding an injected
     /// dependency (a scanned interface, or a scanned class without state).
-    /// Conservative for fields: an unresolvable field type counts as state. A
-    /// base class outside the scan does not (collections, framework bases): the
-    /// kept model naming the type rescues those.
+    /// Conservative for fields: an unresolvable field type counts as state, and
+    /// so does a readonly field whose class has a base outside the scan
+    /// (unknown). A base class outside the scan adds no state to its own
+    /// subclass (collections, framework bases): the kept model naming the type
+    /// rescues those.
     pub(super) fn carries_state(x: &Extractor, d: usize, path: &mut Vec<usize>) -> bool {
         if path.contains(&d) {
             return false;
@@ -2233,8 +2306,15 @@ mod rich {
         unique(x, &simple(ty)).is_some_and(|d| {
             x.decls[d].kw == "interface"
                 || (matches!(x.decls[d].kw.as_str(), "class" | "record" | "struct")
+                    && (x.decls[d].bases.iter()).all(|b| scanned(x, b))
                     && !carries_state(x, d, path))
         })
+    }
+
+    /// A declaration of that type name is in the scan.
+    fn scanned(x: &Extractor, base: &str) -> bool {
+        let name = simple(base.split('<').next().unwrap_or(base));
+        x.decls.iter().any(|d| d.name == name)
     }
 
     /// A base class counts when it is the one scanned non-static class of that
@@ -3782,6 +3862,135 @@ public class NotAHandler : INotificationHandler<OrderShipped> { }
             ),
         ]);
         assert_eq!(names(&m), ["Child", "Options"]);
+    }
+
+    fn api_names(m: &DomainModel) -> Vec<(&str, &str)> {
+        let mut v: Vec<_> = (m.api_models.iter())
+            .map(|a| (a.name.as_str(), a.reason.as_str()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn api_models_list_what_the_dto_rule_sets_aside_with_the_reason() {
+        let m = api(&[]);
+        assert_eq!(
+            api_names(&m),
+            [
+                ("CreateThing", "action body of ThingsController.Get"),
+                ("ThingView", "returned by ThingsController.Get"),
+            ]
+        );
+        assert!(m.api_models[0].file.ends_with(".cs"));
+    }
+
+    #[test]
+    fn a_reachable_only_model_names_the_api_model_it_hangs_on() {
+        let m = run_owned(&[
+            (
+                "Models/Inner.cs",
+                "public class Inner { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Models/Outer.cs",
+                "public class Outer { public Inner Inner { get; set; } }".into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller(
+                    "[ApiController]\n",
+                    "ControllerBase",
+                    "public Outer Get() { return null; }",
+                ),
+            ),
+        ]);
+        assert_eq!(
+            api_names(&m),
+            [
+                ("Inner", "only reachable through api model Outer"),
+                ("Outer", "returned by OrdersController.Get"),
+            ]
+        );
+        assert!(m.entities.is_empty());
+    }
+
+    #[test]
+    fn mongo_collections_and_bson_attributes_keep_a_type() {
+        let ctl = controller(
+            "[ApiController]\n",
+            "ControllerBase",
+            "public Task<List<Book>> Get() { return null; }\npublic Task<List<Shelf>> Shelves() { return null; }\npublic Task<List<Note>> Notes() { return null; }",
+        );
+        let m = run_owned(&[
+            ("Models/Book.cs", "public class Book { [BsonId] public string Id { get; set; } }".into()),
+            ("Models/Shelf.cs", "public class Shelf { public string Id { get; set; } }".into()),
+            ("Models/Note.cs", "public class Note { public string Id { get; set; } }".into()),
+            (
+                "Services/S.cs",
+                "public class S { public S(IMongoDatabase d) { _a = d.GetCollection<Shelf>(\"s\"); IMongoCollection<Note> n; } }".into(),
+            ),
+            ("Api/BooksController.cs", ctl),
+        ]);
+        assert_eq!(names(&m), ["Book", "Note", "Shelf"]);
+    }
+
+    #[test]
+    fn an_injected_readonly_needs_a_scanned_interface_or_a_scanned_stateless_class() {
+        let m = run(&[
+            (
+                "Domain/Street.cs",
+                "public class Street : ValueOf<string, Street> { }",
+            ),
+            (
+                "Domain/City.cs",
+                "public class City : ValueOf<string, City> { }",
+            ),
+            (
+                "Domain/Address.cs",
+                "public class Address { private readonly Street _street; private readonly City _city; }",
+            ),
+            (
+                "Domain/Priority.cs",
+                "public class Priority : SmartEnum<Priority> { }",
+            ),
+            (
+                "Domain/Ticket.cs",
+                "public class Ticket { private readonly Priority _priority; }",
+            ),
+        ]);
+        assert_eq!(
+            names(&m),
+            ["Address", "City", "Priority", "Street", "Ticket"]
+        );
+    }
+
+    #[test]
+    fn a_type_in_a_method_signature_of_a_kept_model_is_rescued() {
+        let m = run_owned(&[
+            (
+                "Models/ReportFile.cs",
+                "public class ReportFile { public string Name { get; set; } }".into(),
+            ),
+            (
+                "Models/ReportOut.cs",
+                "public class ReportOut { public ReportFile File { get; set; } }".into(),
+            ),
+            (
+                "Domain/Report.cs",
+                "public class Report : Entity { public int Id { get; set; } public void SetFile(ReportFile f) { } public ReportFile GetFile() { return null; } }".into(),
+            ),
+            ("Domain/Seed.cs", "public class Entity { }".into()),
+            (
+                "Api/ReportsController.cs",
+                controller("[ApiController]\n", "ControllerBase", "public ReportOut Get() { return null; }"),
+            ),
+        ]);
+        assert!(names(&m).contains(&"ReportFile"), "{:?}", names(&m));
+        assert_eq!(
+            api_names(&m),
+            [("ReportOut", "returned by OrdersController.Get")]
+        );
     }
 
     #[test]
