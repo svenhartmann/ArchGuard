@@ -54,6 +54,7 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<DomainModel, ArchguardError>
         crate::domain_csharp::extract_with,
         crate::domain_java::extract_with,
         crate::domain_typescript::extract_with,
+        crate::domain_python::extract_with,
     ];
     let model = (extractors.into_iter())
         .map(|extract| extract(ctx))
