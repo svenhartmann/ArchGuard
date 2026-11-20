@@ -133,6 +133,7 @@ Martin A/I zones need abstractness from compiler evidence (Java, C#) or Rust dec
 | The arc42 document and its diagram catalogue as JSON | `archguard doc . --arc42 --format json` |
 | Export the service topology as a Structurizr (C4) workspace | `archguard graph . --format structurizr [--service orders]` |
 | Compare with a Git revision | `archguard review . --base main` or `archguard diff . --to main` |
+| Review as Markdown (as the desktop exports it) | `archguard review . --format markdown` |
 | Inspect effective configuration | `archguard config . --format json` |
 | SBOM of third-party dependencies (CycloneDX 1.6, offline) | `archguard sbom . --format cyclonedx` |
 | A shareable single-file report (Markdown with Mermaid; desktop: File → Export → Report…) | `archguard report . --out report.md` |

@@ -72,6 +72,8 @@ pub(crate) enum Format {
     Asciidoc,
     /// Word document of `doc --arc42`, e.g. for a Confluence import.
     Docx,
+    /// Markdown assessment of `review`, as the desktop exports it.
+    Markdown,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -828,5 +830,6 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Structurizr => "structurizr",
         Format::Asciidoc => "asciidoc",
         Format::Docx => "docx",
+        Format::Markdown => "markdown",
     }
 }
