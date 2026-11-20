@@ -432,6 +432,17 @@ fn helm(root: &Path, chart: &str, helm: Option<&Path>) -> Result<Render, String>
         .and_then(|text| serde_yaml_ng::from_str::<Value>(&text).ok())
         .and_then(|doc| doc["name"].as_str().map(str::to_owned))
         .ok_or("Chart.yaml has no readable name.")?;
+    // Repository data in an argv slot: helm's own release name rule (<= 53
+    // bytes, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`),
+    // so a name like `--enable-dns` never becomes a flag; otherwise helm's default.
+    let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let valid = name.len() <= 53
+        && name.split('.').all(|label| {
+            label.starts_with(alnum)
+                && label.ends_with(alnum)
+                && label.chars().all(|c| alnum(c) || c == '-')
+        });
+    let name = if valid { name } else { "release-name".into() };
     if let Some(link) = escaping_symlink(root, &root.join(dir)) {
         return Err(format!(
             "{link} could not be checked or is a symlink outside the analyzed root (limit {MAX_CHART_ENTRIES} entries per chart); helm would read it."

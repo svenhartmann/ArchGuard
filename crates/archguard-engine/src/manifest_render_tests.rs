@@ -622,3 +622,46 @@ fn kustomize_renders_an_overlay_and_prefers_it_over_the_plain_base() {
             .contains("payments-secret-host")
     );
 }
+
+/// A Chart.yaml name is repository data: one helm would read as a flag
+/// (`--enable-dns`) or reject is replaced by helm's default release name.
+#[cfg(unix)]
+#[test]
+fn chart_names_never_reach_helm_as_options() {
+    use std::os::unix::fs::PermissionsExt;
+    let tools_dir = tempfile::tempdir().unwrap();
+    let argv = tools_dir.path().join("argv");
+    let tool = tools_dir.path().join("helm");
+    fs::write(
+        &tool,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\"; done > '{}'\n",
+            argv.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let tools = Tools {
+        enabled: true,
+        helm: Some(tool),
+        kustomize: None,
+    };
+    for (name, release) in [
+        ("--enable-dns", "release-name"),
+        ("-h", "release-name"),
+        ("Shop", "release-name"),
+        ("shop.v2", "shop.v2"),
+        ("shop-api", "shop-api"),
+    ] {
+        let (_dir, root) = root();
+        put(
+            &root,
+            "chart/Chart.yaml",
+            &format!("apiVersion: v2\nname: '{name}'\nversion: 0.1.0\n"),
+        );
+        analyze(&root, &tools);
+        let args = fs::read_to_string(&argv).unwrap();
+        let args: Vec<&str> = args.lines().collect();
+        assert_eq!(args[..2], ["template", release], "{name}: {args:?}");
+    }
+}
