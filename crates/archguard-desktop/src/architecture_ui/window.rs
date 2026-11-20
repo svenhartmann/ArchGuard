@@ -17,7 +17,12 @@ use crate::ui::{ArcFigure, ArchitectureModel};
 pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
     let _span = archguard_engine::self_trace::tracing::info_span!("model").entered();
     let mut m = ArchitectureModel {
-        has_model: s.has_model,
+        target_view: s.target_open,
+        target: if s.target_open {
+            super::target_view::model(&s.target, &s.graph)
+        } else {
+            Default::default()
+        },
         saved: s.saved.as_str().into(),
         ..Default::default()
     };
@@ -67,7 +72,7 @@ pub(super) fn model(s: &ArchitectureState, texts: &Texts) -> ArchitectureModel {
     m.figure_error = s.figure_error.as_str().into();
     s.editor.fill(&mut m);
     // The diagram view shows no chapter; its unsaved changes keep the save bar.
-    m.editing &= !s.catalogue;
+    m.editing &= !s.catalogue && !s.target_open;
     m
 }
 
@@ -87,7 +92,9 @@ fn fill_figures(
     let text = s.editor.chapter(doc, s.chapter);
     let has_block = text.contains(archguard_engine::report::arc42_file::MARKER);
     // Diagrams in the chapter's text draw there; the rule the save uses.
-    let in_text = |d: &archguard_engine::core::Diagram| archguard_engine::report::arc42_file::in_text(&text, d);
+    let in_text = |d: &archguard_engine::core::Diagram| {
+        archguard_engine::report::arc42_file::in_text(&text, d)
+    };
     let open = view.as_ref().map(|(_, id)| id.as_str());
     // The switch: expected in its chapter by the rule save and `--check`
     // use, or already in its text.
@@ -243,7 +250,11 @@ mod tests {
     /// Chapter 5 of a project's own arc42 text `chapter5`, open in the tab.
     fn own_text(dir: &std::path::Path, chapter5: &str) -> ArchitectureModel {
         let (a, _) = crate::documents::with_store(|s| s.open(dir));
-        std::fs::write(dir.join("arc42.md"), format!("## 5. Bausteine\n\n{chapter5}")).unwrap();
+        std::fs::write(
+            dir.join("arc42.md"),
+            format!("## 5. Bausteine\n\n{chapter5}"),
+        )
+        .unwrap();
         let mut s = fixture_state(Some(dir));
         s.editor = super::super::edit::Editor::new(a, dir).with_format(s.format);
         s.chapter = 5;

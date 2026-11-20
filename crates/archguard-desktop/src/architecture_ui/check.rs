@@ -150,7 +150,6 @@ fn model() -> ArchitectureModel {
         map_shown: true,
         figures: rows(vec![figure()]),
         saved: "/a/very/long/path/to/the/project/folder/arc42-05.md".into(),
-        has_model: true,
         ..Default::default()
     }
 }
