@@ -1,6 +1,7 @@
-// Services → architecture pattern candidates: the web viewer's
-// renderPatternAssessments (viewer_patterns.js). Set from
-// src/services_ui/patterns.rs.
+// Services → architecture pattern candidates and API contracts: the web
+// viewer's renderPatternAssessments (viewer_patterns.js) and
+// renderApiContracts (viewer_engineering_quality.js). Set from
+// src/services_ui/patterns.rs and contracts.rs.
 import { Theme } from "theme.slint";
 import { Icons, Icon, Button } from "widgets.slint";
 import { Fmt } from "format.slint";
@@ -205,5 +206,91 @@ export component PatternsSection inherits VerticalLayout {
     if data.more: More { text: @tr("Show more pattern assessments"); clicked => { root.more(); } }
     if data.state == 1: Note { text: @tr("{} / {} assessments", Fmt.int(data.rows.length), Fmt.int(data.total)); }
     if data.state == 1: Mono { text: data.coverage; }
+    for n in data.notes: Note { text: n; }
+}
+
+export struct SvcOperation { title: string, pointer: string, schemas: string, consumers: string, unmapped: string }
+export struct SvcChange { title: string, message: string, consumers: string }
+
+export struct SvcContract {
+    provider: string,
+    // source path · source status · comparison status
+    source: string,
+    operations: int,
+    callers: string,
+    usage-status: string,
+    mapped: bool,
+    no-baseline: bool,
+    open: bool,
+}
+
+// The open contract.
+export struct SvcContractDetail {
+    operations: [SvcOperation],
+    changes: [SvcChange],
+    more: bool,
+    notes: [string],
+}
+
+export struct SvcContracts {
+    // 0 not read, 1 read.
+    state: int,
+    status: string,
+    total: int,
+    contracts: [SvcContract],
+    more: bool,
+    detail: SvcContractDetail,
+    notes: [string],
+}
+
+export component ContractsSection inherits VerticalLayout {
+    in property <SvcContracts> data;
+    callback choose(int);
+    callback more();
+    callback more-details();
+    spacing: 4px;
+
+    if data.state == 0: Note { text: @tr("Reading the API contracts …"); }
+    if data.state == 1: Note {
+        muted: false;
+        text: data.status + " · " + @tr("Compared with the previous explicit import; declared usage is not a runtime trace.");
+    }
+    if data.state == 1 && data.total == 0: Note { text: @tr("No OpenAPI contract imported yet. Import one per provider service:"); }
+    if data.state == 1 && data.total == 0: Mono { text: "archguard contracts . --report openapi.yaml --service SERVICE_ID --usage api-usage.json"; }
+    for c[i] in data.contracts: VerticalLayout {
+        Head {
+            text: c.provider + " · " + @tr("{0} declared HTTP operation" | "{0} declared HTTP operations" % c.operations, Fmt.int(c.operations));
+            open: c.open;
+            clicked => { root.choose(i); }
+        }
+        if c.open: VerticalLayout {
+            padding-left: 22px;
+            padding-bottom: 6px;
+            spacing: 3px;
+            Mono { text: c.source; }
+            for op in data.detail.operations: VerticalLayout {
+                Heading { text: op.title; }
+                if op.pointer != "": Mono { text: op.pointer; }
+                if op.schemas != "": Note { text: @tr("Referenced schemas: {}", op.schemas); }
+                Note { text: @tr("Declared consumers: {}", op.consumers != "" ? op.consumers : @tr("unknown")); }
+                if op.unmapped != "": Note { text: @tr("Not mapped to a service: {}", op.unmapped); }
+            }
+            Note { text: @tr("Configured callers (operation usage unverified): {}", c.callers != "" ? c.callers : "—"); }
+            Note { text: @tr("Usage mapping: {}", c.usage-status); }
+            if !c.mapped: Note { text: @tr("Provider is not mapped to the current service inventory."); }
+            for ch in data.detail.changes: VerticalLayout {
+                Heading { text: ch.title; }
+                Note { text: ch.message; muted: false; }
+                Note { text: @tr("Declared consumers: {}", ch.consumers != "" ? ch.consumers : @tr("unknown")); }
+            }
+            if data.detail.changes.length == 0: Note {
+                text: c.no-baseline ? @tr("Record another import to compare changes.")
+                    : @tr("No changes in the compared contract projection; this is not a complete compatibility proof.");
+            }
+            if data.detail.more: More { text: @tr("Show next 20 operations and changes"); clicked => { root.more-details(); } }
+            for n in data.detail.notes: Note { text: n; }
+        }
+    }
+    if data.more: More { text: @tr("Show next 20 contracts"); clicked => { root.more(); } }
     for n in data.notes: Note { text: n; }
 }

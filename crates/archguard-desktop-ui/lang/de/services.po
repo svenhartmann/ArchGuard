@@ -343,3 +343,47 @@ msgstr "Weitere Musterbewertungen"
 
 msgid "{} / {} assessments"
 msgstr "{} / {} Bewertungen"
+
+msgid "Reading the API contracts …"
+msgstr "API-Verträge werden gelesen …"
+
+msgid "Compared with the previous explicit import; declared usage is not a runtime trace."
+msgstr "Vergleich mit dem vorherigen expliziten Import; deklarierte Nutzung ist kein Laufzeit-Trace."
+
+msgid "No OpenAPI contract imported yet. Import one per provider service:"
+msgstr "Noch kein OpenAPI-Vertrag importiert. Einen pro Provider-Dienst importieren:"
+
+msgid "{0} declared HTTP operation"
+msgid_plural "{0} declared HTTP operations"
+msgstr[0] "{0} deklarierte HTTP-Operation"
+msgstr[1] "{0} deklarierte HTTP-Operationen"
+
+msgid "Referenced schemas: {}"
+msgstr "Referenzierte Schemas: {}"
+
+msgid "Declared consumers: {}"
+msgstr "Deklarierte Konsumenten: {}"
+
+msgid "Not mapped to a service: {}"
+msgstr "Keinem Dienst zugeordnet: {}"
+
+msgid "Configured callers (operation usage unverified): {}"
+msgstr "Konfigurierte Aufrufer (Operationsnutzung unverifiziert): {}"
+
+msgid "Usage mapping: {}"
+msgstr "Nutzungszuordnung: {}"
+
+msgid "Provider is not mapped to the current service inventory."
+msgstr "Provider ist im aktuellen Dienstinventar nicht zugeordnet."
+
+msgid "Record another import to compare changes."
+msgstr "Für einen Änderungsvergleich erneut importieren."
+
+msgid "No changes in the compared contract projection; this is not a complete compatibility proof."
+msgstr "Keine Änderungen in der verglichenen Vertragsprojektion; dies ist kein vollständiger Kompatibilitätsnachweis."
+
+msgid "Show next 20 operations and changes"
+msgstr "Nächste 20 Operationen und Änderungen"
+
+msgid "Show next 20 contracts"
+msgstr "Nächste 20 Verträge"
