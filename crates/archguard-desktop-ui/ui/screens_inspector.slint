@@ -40,15 +40,9 @@ export struct FlowInspector {
     untriggered: [FlowAction],
     list-note: string,
     rows: [FlowRow],
-}
-
-// A button of phase 5 (ADR 0021 decision 7): shown, not yet usable.
-component Later inherits Rectangle {
-    in property <string> text;
-    width: b.preferred-width;
-    height: b.preferred-height;
-    b := Button { text: root.text; compact: true; enabled: false; }
-    TipArea { tip: @tr("phase 5"); pin-on-click: false; }
+    // The guard in words and where that meaning comes from.
+    meaning: string,
+    meaning-from: string,
 }
 
 component ActionBox inherits VerticalLayout {
@@ -97,7 +91,6 @@ export component ScreensInspector inherits Rectangle {
                     Text { text: @tr("File"); color: Theme.muted; font-size: Theme.font-caption; }
                     LinkLine { text: data.location; mono: true; clicked => { root.open-file(data.file); } }
                 }
-                Fact { label: @tr("Access condition"); value: data.access; }
                 VerticalLayout {
                     spacing: 1px;
                     Text { text: @tr("For the simulated user"); color: Theme.muted; font-size: Theme.font-caption; }
@@ -107,12 +100,9 @@ export component ScreensInspector inherits Rectangle {
                         color: data.result-tone == 0 ? Theme.success : data.result-tone == 1 ? Theme.priority : Theme.outgoing;
                     }
                 }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: start;
-                    Later { text: @tr("Open in browser"); }
-                    Later { text: @tr("Replay path"); }
-                }
+                SectionHeading { label: @tr("Where the meaning comes from"); }
+                Para { text: data.meaning; }
+                Para { text: data.meaning-from; muted: true; }
                 SectionHeading { label: @tr("Actions"); }
                 if data.actions.length == 0: Para { text: @tr("No backend calls read on this screen."); muted: true; }
                 for a in data.actions: ActionBox {

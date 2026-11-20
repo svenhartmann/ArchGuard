@@ -1,18 +1,19 @@
-//! The Screens tab's window model from its state: the left panel, the
-//! diagram with each screen's reach for the simulated user, the details.
+//! The Screens tab's window model from its state: the top bar, the route
+//! tree, the focus view or the whole diagram with each screen's reach for
+//! the simulated user, the path from start, the details.
 
 use std::collections::BTreeMap;
 
 use archguard_engine::core::{
-    DiagnosticSeverity, Screen, ScreenReach, UiFlow, UiFlowFindingKind, screen_reaches,
+    DiagnosticSeverity, ScreenReach, UiFlow, UiFlowFindingKind, screen_reaches,
 };
 
-use super::layout::{self, CARD_H, CARD_W, Node};
-use super::state::ScreensState;
-use super::{inspector, words};
-use crate::diagram::dash_rect;
+use super::card::card;
+use super::layout::{self, Node};
+use super::state::{Mode, ScreensState, applications};
+use super::{center, inspector};
 use crate::tab_support::{Texts, model};
-use crate::ui::{FlowArrow, FlowBand, FlowCard, FlowRole, FlowSwitch, ScreensModel};
+use crate::ui::{FlowArrow, FlowBand, FlowRole, FlowSwitch, ScreensModel};
 
 pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
     let flow = match &*s.flow {
@@ -44,6 +45,20 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
         refused: kind(UiFlowFindingKind::ShownButRefused),
         unprotected: kind(UiFlowFindingKind::HiddenButUnprotected),
         roles: model(role_rows(texts, &s.roles, s.role)),
+        role: s.role as i32,
+        role_names: model(
+            std::iter::once(texts.t("Role …").into())
+                .chain(s.roles.iter().map(|r| r.as_str().into())),
+        ),
+        apps: model(apps(s, flow, texts)),
+        app_index: (applications(&s.sim).iter().position(|a| *a == s.app)).map_or(0, |i| i as i32),
+        // Fieldless enums in the order of the window's choices.
+        unknown: s.unknown as i32,
+        mode: s.mode as i32,
+        can_back: !s.back.is_empty(),
+        selected: s.selected.map_or(-1, |i| i as i32),
+        search: s.search.as_str().into(),
+        filter: s.filter as i32,
         switches: model(s.atoms.iter().zip(&s.switches).map(|(a, v)| FlowSwitch {
             label: a.name.as_str().into(),
             policy: a.policy,
@@ -56,8 +71,33 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
         inspector: inspector::build(s, flow, texts),
         ..Default::default()
     };
-    diagram(&mut m, s, flow, texts);
+    let reaches = screen_reaches(&s.sim, &s.assignment());
+    if s.mode == Mode::Whole {
+        diagram(&mut m, s, &reaches, texts);
+    } else {
+        center::focus_cards(&mut m, s, &reaches, texts);
+    }
+    center::tree_rows(&mut m, s, &reaches, texts);
+    center::path(&mut m, s, texts);
     m
+}
+
+/// The application picker: "frontend · 92 screens", in band order.
+fn apps(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<slint::SharedString> {
+    (applications(&s.sim).into_iter())
+        .map(|name| {
+            let n = (flow.screens.iter())
+                .filter(|x| x.application.as_deref().unwrap_or("") == name)
+                .count();
+            let count = texts.plural(n, "{count} screen", "{count} screens");
+            let name = if name.is_empty() {
+                texts.t("Screens without an application").to_string()
+            } else {
+                name
+            };
+            format!("{name} · {count}").into()
+        })
+        .collect()
 }
 
 /// The simulated users: anonymous, signed in without a role, each role.
@@ -73,11 +113,16 @@ pub fn role_rows(texts: &Texts, roles: &[String], chosen: usize) -> Vec<FlowRole
         .collect()
 }
 
-fn diagram(m: &mut ScreensModel, s: &ScreensState, flow: &UiFlow, texts: &Texts) {
+fn diagram(
+    m: &mut ScreensModel,
+    s: &ScreensState,
+    reaches: &BTreeMap<String, ScreenReach>,
+    texts: &Texts,
+) {
+    let flow = &s.sim;
     let g = layout::layout(flow, &s.collapsed);
-    let reaches = screen_reaches(flow, &s.assignment());
     let cards = g.cards.iter().map(|c| {
-        let mut card = card(flow, c.node, &reaches, texts);
+        let mut card = card(flow, c.node, reaches, texts);
         card.x = c.x;
         card.y = c.y;
         card.selected = matches!(c.node, Node::Screen(i) if Some(i) == s.selected);
@@ -106,91 +151,10 @@ fn diagram(m: &mut ScreensModel, s: &ScreensState, flow: &UiFlow, texts: &Texts)
     m.height = g.height;
 }
 
-fn at(file: &str, line: u32) -> String {
-    format!("{file}:{line}")
-}
-
-/// A card without its place.
-pub fn card(
-    flow: &UiFlow,
-    node: Node,
-    reaches: &BTreeMap<String, ScreenReach>,
-    texts: &Texts,
-) -> FlowCard {
-    let mut c = FlowCard {
-        w: CARD_W,
-        h: CARD_H,
-        screen: -1,
-        state: 4,
-        ..Default::default()
-    };
-    match node {
-        Node::Screen(i) => screen_card(&mut c, &flow.screens[i], reaches, texts, i),
-        Node::Every => {
-            c.kind = 1;
-            c.title = texts.t("Every screen").into();
-            c.file = texts.t("layouts and menus").into();
-        }
-        Node::Unresolved(k) => {
-            let n = super::inspector::unreadable(flow, k).count();
-            c.kind = 2;
-            c.group = k as i32;
-            c.title = texts
-                .plural(
-                    n,
-                    "{count} target not readable",
-                    "{count} targets not readable",
-                )
-                .into();
-            c.file = texts.t("click for the list with file and line").into();
-        }
-    }
-    if c.kind == 2 || c.state == 3 {
-        c.border = dash_rect(CARD_W, CARD_H).into();
-    }
-    c
-}
-
-fn screen_card(
-    c: &mut FlowCard,
-    screen: &Screen,
-    reaches: &BTreeMap<String, ScreenReach>,
-    texts: &Texts,
-    i: usize,
-) {
-    c.screen = i as i32;
-    c.title = screen.name.as_str().into();
-    c.route = screen.route.clone().unwrap_or_default().into();
-    c.file = at(&screen.file, screen.line).into();
-    let (state, note) = match reaches.get(&screen.id) {
-        Some(ScreenReach::Sure) => (0, String::new()),
-        Some(ScreenReach::Possible) => (1, texts.t("only if an open condition holds").into()),
-        Some(ScreenReach::Denied) => {
-            let needs = words::access(texts, screen.access.as_ref());
-            (2, texts.f("needs: {name}", &[("name", needs)]))
-        }
-        Some(ScreenReach::NoKnownPath {
-            unresolved_transitions_in_application: n,
-        }) => (
-            3,
-            texts.plural(
-                *n,
-                "no known path, {count} link in this app unresolved",
-                "no known path, {count} links in this app unresolved",
-            ),
-        ),
-        Some(ScreenReach::NoStartScreen) | None => {
-            (3, texts.t("no start screen in this app").into())
-        }
-    };
-    c.state = state;
-    c.note = note.into();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archguard_engine::core::{Condition, Origin, Target, Transition};
+    use archguard_engine::core::{Condition, Origin, Screen, Target, Transition};
 
     fn screen(id: &str, route: &str, access: Option<Condition>) -> Screen {
         Screen {
@@ -240,6 +204,7 @@ mod tests {
     #[test]
     fn cards_show_the_reach_of_the_simulated_user() {
         let mut s = super::super::state::build_from(Ok(shop()));
+        s.set_mode(2);
         let m = build(&s, &Texts::default());
         assert_eq!(
             states(&m),
@@ -262,7 +227,8 @@ mod tests {
 
     #[test]
     fn unresolved_and_unreached_cards_are_dashed() {
-        let s = super::super::state::build_from(Ok(shop()));
+        let mut s = super::super::state::build_from(Ok(shop()));
+        s.set_mode(2);
         let m = build(&s, &Texts::default());
         use slint::Model;
         let dashed: Vec<bool> = m.cards.iter().map(|c| !c.border.is_empty()).collect();
@@ -276,6 +242,7 @@ mod tests {
     fn unreadable_targets_list_with_file_and_line_and_bands_collapse() {
         use slint::Model;
         let mut s = super::super::state::build_from(Ok(shop()));
+        s.set_mode(2);
         s.open_group(1);
         let m = build(&s, &Texts::default());
         assert_eq!(m.inspector.title, "Targets not readable");
