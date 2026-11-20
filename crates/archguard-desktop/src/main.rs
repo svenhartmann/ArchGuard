@@ -28,6 +28,7 @@ mod fullscreen;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
+mod help_ui;
 mod instances;
 mod kpi;
 mod matrix;
@@ -91,6 +92,7 @@ fn main() -> Result<(), slint::PlatformError> {
     documents_ui::wire(&ui);
     shell_ui::wire(&ui);
     review_decisions_ui::wire(&ui);
+    help_ui::wire(&ui);
     shell_ui::start(&ui, args);
     let _update = update_ui::wire(&ui); // kept until run() returns: starts a restart or installer
 

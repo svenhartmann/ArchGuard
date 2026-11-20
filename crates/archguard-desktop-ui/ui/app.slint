@@ -18,6 +18,7 @@ import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "setting
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
+import { HelpDialog, HelpData, HelpBlock } from "help_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
@@ -40,6 +41,7 @@ export { Tips }
 export { UpdateNotice }
 // View → Review decisions… (src/review_decisions_ui.rs).
 export { ReviewDecisionsData, DecisionRow }
+export { HelpData, HelpBlock }
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -405,6 +407,10 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: @tr("Help");
+            MenuItem {
+                title: @tr("Metrics, commands & MCP…");
+                activated => { HelpData.show(); }
+            }
             MenuItem {
                 title: @tr("Check for updates…");
                 enabled: UpdateNotice.kind != 1 && UpdateNotice.kind != 5;
@@ -813,6 +819,7 @@ export component AppWindow inherits Window {
     }
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
+    if HelpData.open: HelpDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.
     TipLayer { }

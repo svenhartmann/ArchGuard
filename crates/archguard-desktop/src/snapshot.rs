@@ -25,7 +25,8 @@
 //! `ARCHGUARD_DESKTOP_CONFIG_DIR` only; without it nothing is persisted.
 //! Export without the save dialog: [`export_hook`]. View → Settings:
 //! `crate::settings_view_ui::snapshot_hook`. View → Review decisions…:
-//! `crate::review_decisions_ui::snapshot_hook`.
+//! `crate::review_decisions_ui::snapshot_hook`. Help → Metrics, commands
+//! & MCP…: `crate::help_ui::snapshot_hook`.
 
 use std::cell::Cell;
 
@@ -67,6 +68,7 @@ pub fn schedule(ui: &AppWindow) {
     apply_shell_hooks(ui);
     export_hook(ui);
     crate::review_decisions_ui::snapshot_hook(ui);
+    crate::help_ui::snapshot_hook(ui);
     let weak = ui.as_weak();
     // `ARCHGUARD_DESKTOP_HOLD=<seconds>`: keep the prepared view open that
     // long without writing a PNG (for renderer measurements), then quit.
