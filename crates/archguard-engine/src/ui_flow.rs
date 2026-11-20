@@ -256,6 +256,7 @@ fn extract_all(ctx: &ExtractContext) -> UiFlow {
         crate::ui_flow_vue::extract_with,
         crate::ui_flow_slint::extract_with,
         crate::ui_flow_nestjs::extract_with,
+        crate::ui_flow_express::extract_with,
         crate::ui_flow_svelte::extract_with,
         crate::ui_flow_django::extract_with,
         crate::ui_flow_fastapi::extract_with,

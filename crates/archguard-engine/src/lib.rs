@@ -142,6 +142,7 @@ pub mod ui_flow_angular;
 pub mod ui_flow_backend;
 pub mod ui_flow_blazor;
 pub mod ui_flow_django;
+pub mod ui_flow_express;
 pub mod ui_flow_fastapi;
 pub mod ui_flow_laravel;
 pub mod ui_flow_nestjs;
