@@ -24,7 +24,15 @@
 //!   whose children hold an index route is a layout (no screen of its own);
 //!   `<Navigate>` elements are redirects (no screen).
 //!
+//! - TanStack Router file routes: a module with `createFileRoute('/a/$id')` is a screen
+//!   (`$id` is `:id`, `_x` and `(x)` segments drop out) unless it renders `<Outlet`
+//!   (layout) or is the root. The screen name is the `component:` identifier.
+//!
 //! Access:
+//! - TanStack `beforeLoad`: `if (c) { throw redirect(…) }` in the module and its
+//!   ancestor routes (by route id) requires `not c`; `c` is `custom(name)` unless
+//!   `[views.access]` lists it. A redirect without `if` is no access. Only arrow
+//!   functions with a block body are read.
 //! - A route element wrapped in `RequireAuth`, `ProtectedRoute`, `PrivateRoute` or
 //!   `AuthGuard` (also as pathless parent route) is `custom(name)`; children
 //!   inherit it, several are `all`.
@@ -56,6 +64,13 @@
 //! the file or imported from a relative module (named or default export); a
 //! literal `baseURL` path is prefixed. No other receiver counts.
 //!
+//! Generated hey-api clients (`sdk.gen.ts`, optional `core/OpenAPI.ts` `BASE`): each
+//! exported function or static method with a literal `url:` and a method (`method:
+//! Method.X`, `'x'` or a `.get<…>(` call) is indexed one hop; `Class.method(` or an
+//! imported function from a `client`/`sdk` module is that `Call::Http` (`{id}` holes
+//! are `:param`). A non-literal url or method is `Call::Unresolved` and a diagnostic.
+//! TanStack links resolve `$id` as `:id`; `navigate({ to })` is read like `{ pathname }`.
+//!
 //! Origin: links and calls in a file that defines a screen (its Next.js page file,
 //! or a file declaring the route's component) start at those screens; any other
 //! file (layout, menu, shared component, helper) acts on every screen of the
@@ -63,8 +78,8 @@
 //!
 //! Not recognized; each case is a diagnostic and makes the flow incomplete:
 //! non-literal paths, targets, URLs, methods and `baseURL`s, route `lazy`, route
-//! elements that are not JSX, TanStack Router route trees (only a note that they
-//! are not read). Not followed: descendant `<Routes>` in other components, calls
+//! elements that are not JSX, TanStack code-based route trees (a note) and
+//! `<Link to={Route.x}>` (unresolved). Not followed: descendant `<Routes>` in other components, calls
 //! through helper functions or services (`request({ url })`), links to catch-all
 //! routes (`*` matches no literal segment), `<a href>`.
 use crate::extract_ctx::{
@@ -76,13 +91,14 @@ use crate::lang_ts_decl::*;
 use crate::lang_ts_http::*;
 use crate::services::support::test_path;
 use archguard_core::{
-    ANY_METHOD, AccessState, Action, Call, Condition, EndpointAccess, Origin, Screen, ScreenKind,
-    Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
+    ANY_METHOD, AccessMeaning, AccessState, Action, Call, Condition, EndpointAccess, Origin,
+    Screen, ScreenKind, Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const SOURCE: &str = "react";
+type Access = BTreeMap<String, AccessMeaning>;
 const MAX_FILES: usize = 5_000;
 /// Nesting bound for parsed literals and route trees.
 const MAX_DEPTH: usize = 32;
@@ -108,7 +124,7 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     match walk(ctx.root) {
         Ok(walk) => {
             for app in applications(ctx.root, walk.files, &mut flow.diagnostics) {
-                app.extract(&mut flow);
+                app.extract(&ctx.config.views.access, &mut flow);
             }
         }
         Err(e) => diag(
@@ -230,7 +246,7 @@ fn read_sources(
 }
 
 impl App {
-    fn extract(&self, flow: &mut UiFlow) {
+    fn extract(&self, access: &Access, flow: &mut UiFlow) {
         let mut screens: Vec<(Screen, Owner)> = Vec::new();
         let mut endpoints = Vec::new();
         let out = &mut flow.diagnostics;
@@ -243,8 +259,9 @@ impl App {
         if self.next {
             next::middleware(self, &mut screens, &mut endpoints, out);
         }
-        if self.tanstack {
-            let message = "TanStack Router route trees are not read; their screens are unknown.";
+        if self.tanstack && !tanstack::file_routes(self, access, &mut screens, out) {
+            let message =
+                "No createFileRoute module found; TanStack code-based route trees are not read.";
             diag(out, &format!("{}package.json", self.prefix), 0, message);
         }
         let routes = nav::Routes {
@@ -253,6 +270,7 @@ impl App {
             screens: &screens,
         };
         let clients = Clients::new(&self.files);
+        let sdk = sdk::index(self);
         for (file, text) in &self.files {
             if self.next && next::is_backend(self, file) {
                 continue;
@@ -271,7 +289,7 @@ impl App {
                 froms.push((Origin::AnyScreen { application }, None));
             }
             nav::transitions(&routes, file, text, &froms, flow);
-            http::actions(self, file, text, &clients, &froms, flow);
+            http::actions(self, file, text, (&clients, &sdk), &froms, flow);
         }
         flow.screens.extend(screens.into_iter().map(|(s, _)| s));
         flow.endpoints.extend(endpoints);
@@ -1033,7 +1051,7 @@ mod nav {
         match value {
             Value::Obj(fields) => fields
                 .iter()
-                .find(|(k, _)| k == "pathname")
+                .find(|(k, _)| k == "pathname" || k == "to")
                 .and_then(|(_, v)| v.value.literal()),
             v => v.literal(),
         }
@@ -1044,7 +1062,10 @@ mod nav {
         let mut names: BTreeSet<String> = ["Link", "NavLink"].map(String::from).into();
         for text in app.files.values() {
             for import in imports(text) {
-                if import.module == "next/link" && import.imported.is_none() {
+                let next = import.module == "next/link" && import.imported.is_none();
+                let tanstack = import.module == "@tanstack/react-router"
+                    && import.imported.as_deref() == Some("Link");
+                if next || tanstack {
                     names.insert(import.local);
                 }
             }
@@ -1272,8 +1293,11 @@ mod nav {
             base: Option<&str>,
             out: &mut Vec<UiFlowDiagnostic>,
         ) -> Option<Target> {
-            let path = nav
-                .path
+            let literal = nav.path.as_deref().map(|p| match self.app.tanstack {
+                true => tanstack::route_params(p),
+                false => p.to_string(),
+            });
+            let path = literal
                 .as_deref()
                 .map(|p| p.split(['?', '#']).next().unwrap_or(""));
             if path.is_some_and(external) {
@@ -1328,6 +1352,384 @@ mod nav {
     }
 }
 
+/// TanStack Router file routes (`createFileRoute('/a/$id')`) and `beforeLoad` guards.
+mod tanstack {
+    use super::*;
+
+    /// A route module: its id (`/_layout/items/$id`, `""` for the root), the
+    /// `createFileRoute` offset and what its `beforeLoad` requires.
+    struct Module<'f> {
+        id: String,
+        file: &'f str,
+        text: &'f str,
+        at: usize,
+        guards: Vec<Condition>,
+    }
+
+    /// `$id` becomes `:id`, a bare `$` the catch-all `*`.
+    pub(super) fn route_params(path: &str) -> String {
+        let segment = |s: &str| match s.strip_prefix('$') {
+            Some("") => "*".to_string(),
+            Some(name) => format!(":{name}"),
+            None => s.to_string(),
+        };
+        path.split('/').map(segment).collect::<Vec<_>>().join("/")
+    }
+
+    /// The route path of an id: layout (`_x`) and group (`(x)`) segments drop out.
+    fn route_of(id: &str) -> String {
+        let segments: Vec<String> = id
+            .split('/')
+            .filter(|s| {
+                !s.is_empty() && !s.starts_with('_') && !(s.starts_with('(') && s.ends_with(')'))
+            })
+            .map(|s| route_params(s.trim_end_matches('_')))
+            .collect();
+        format!("/{}", segments.join("/"))
+    }
+
+    fn modules(app: &App) -> Vec<Module<'_>> {
+        let mut out = Vec::new();
+        for (file, text) in &app.files {
+            let at = words(text, "createFileRoute").into_iter().find_map(|p| {
+                let open = skip_ws(text.as_bytes(), p + "createFileRoute".len());
+                (text.as_bytes().get(open) == Some(&b'(')).then(|| {
+                    (
+                        p,
+                        Parser {
+                            s: text,
+                            i: open + 1,
+                        }
+                        .value(0),
+                    )
+                })
+            });
+            let (at, id) = match at {
+                Some((p, item)) => match item.value {
+                    Value::Str(id) => (p, id),
+                    _ => continue,
+                },
+                None => match words(text, "createRootRoute")
+                    .into_iter()
+                    .chain(words(text, "createRootRouteWithContext"))
+                    .next()
+                {
+                    Some(p) => (p, String::new()),
+                    None => continue,
+                },
+            };
+            out.push(Module {
+                id,
+                file,
+                text,
+                at,
+                guards: Vec::new(),
+            });
+        }
+        out
+    }
+
+    /// The condition that check `text` is true; `Ok(None)` is always true.
+    fn check(text: &str, access: &Access) -> Result<Option<Condition>, String> {
+        let t = text.trim();
+        let t = t
+            .strip_prefix('(')
+            .and_then(|r| r.strip_suffix(')'))
+            .unwrap_or(t)
+            .trim();
+        if let Some(rest) = t.strip_prefix('!')
+            && !rest.starts_with('=')
+        {
+            return check(rest, access).map(negate);
+        }
+        let (name, args) = match call_parts(t) {
+            Some((f, args)) => (f.to_string(), args),
+            None => (t.replace("?.", "."), Vec::new()),
+        };
+        if !is_name(&name) {
+            return Err(t.to_string());
+        }
+        match access.get(&name).map(|m| m.at_use_site(!args.is_empty())) {
+            None => Ok(Some(Condition::Custom(name))),
+            Some(AccessMeaning::Open) => Ok(None),
+            Some(AccessMeaning::Authenticated) => Ok(Some(Condition::Authenticated)),
+            Some(AccessMeaning::Never) => Ok(Some(Condition::Never)),
+            Some(AccessMeaning::Role(n)) => Ok(Some(Condition::Role(n.clone()))),
+            Some(AccessMeaning::Policy(n)) => Ok(Some(Condition::Policy(n.clone()))),
+            // shortcut: `$arg` meanings are not read in beforeLoad checks, add when a project needs them
+            Some(_) => Err(t.to_string()),
+        }
+    }
+
+    fn negate(c: Option<Condition>) -> Option<Condition> {
+        match c {
+            None => Some(Condition::Never),
+            Some(Condition::Never) => None,
+            Some(Condition::Not(inner)) => Some(*inner),
+            Some(c) => Some(Condition::Not(Box::new(c))),
+        }
+    }
+
+    /// What the module's `beforeLoad` requires: each `if (c)` whose branch calls
+    /// `redirect(` needs `not c`. A redirect without `if` is a forwarding page.
+    fn guards(m: &Module, access: &Access, out: &mut Vec<UiFlowDiagnostic>) -> Vec<Condition> {
+        let (text, b) = (m.text, m.text.as_bytes());
+        let Some(start) = words(text, "beforeLoad").first().copied() else {
+            return Vec::new();
+        };
+        let Some(arrow) = text[start..].find("=>").map(|i| start + i + 2) else {
+            return Vec::new();
+        };
+        let open = skip_ws(b, arrow);
+        if b.get(open) != Some(&b'{') {
+            return Vec::new();
+        }
+        let end = block_end(text, open, b'{', b'}');
+        let mut found = Vec::new();
+        for pos in words(&text[..end], "if").into_iter().filter(|&p| p > open) {
+            let paren = skip_ws(b, pos + 2);
+            if b.get(paren) != Some(&b'(') {
+                continue;
+            }
+            let cond_end = block_end(text, paren, b'(', b')');
+            let cond = &text[paren + 1..cond_end.saturating_sub(1).max(paren + 1)];
+            let branch = skip_ws(b, cond_end);
+            let branch_end = if b.get(branch) == Some(&b'{') {
+                block_end(text, branch, b'{', b'}')
+            } else {
+                text[branch..].find([';', '\n']).map_or(end, |i| branch + i)
+            };
+            if !text[branch..branch_end.min(text.len())].contains("redirect(") {
+                continue;
+            }
+            match check(cond, access) {
+                Ok(c) => found.extend(negate(c)),
+                Err(t) => {
+                    let message = format!(
+                        "Check {t} is not a name or listed in [views.access]; the condition is unknown."
+                    );
+                    diag(out, m.file, line_of(text, pos), message);
+                    found.push(Condition::Unknown(t));
+                }
+            }
+        }
+        found
+    }
+
+    fn all(conditions: Vec<Condition>) -> Option<Condition> {
+        let mut kept: Vec<Condition> = Vec::new();
+        for c in conditions {
+            if !kept.contains(&c) {
+                kept.push(c);
+            }
+        }
+        match kept.len() {
+            0 => None,
+            1 => kept.pop(),
+            _ => Some(Condition::All(kept)),
+        }
+    }
+
+    /// Screens of the route modules; `false` when the app has none.
+    pub(super) fn file_routes(
+        app: &App,
+        access: &Access,
+        screens: &mut Vec<(Screen, Owner)>,
+        out: &mut Vec<UiFlowDiagnostic>,
+    ) -> bool {
+        let mut mods = modules(app);
+        for m in &mut mods {
+            m.guards = guards(m, access, out);
+        }
+        for m in &mods {
+            let layout = m.id.is_empty() || m.text.contains("<Outlet");
+            if layout {
+                continue;
+            }
+            let own = format!("{}/", m.id);
+            let mut parents: Vec<&Module> = mods
+                .iter()
+                .filter(|p| p.id.is_empty() || own.starts_with(&format!("{}/", p.id)))
+                .collect();
+            parents.sort_by_key(|p| p.id.len());
+            let conditions = parents.iter().flat_map(|p| p.guards.clone()).collect();
+            let name = words(m.text, "component")
+                .into_iter()
+                .find_map(|p| {
+                    let colon = skip_ws(m.text.as_bytes(), p + "component".len());
+                    (m.text.as_bytes().get(colon) == Some(&b':'))
+                        .then(|| ident_at(m.text, skip_ws(m.text.as_bytes(), colon + 1)))
+                })
+                .filter(|n| !n.is_empty())
+                .map_or_else(|| m.file.to_string(), str::to_string);
+            let mut screen = app.screen(route_of(&m.id), name, m.file, line_of(m.text, m.at));
+            screen.access = all(conditions);
+            screens.push((screen, Owner::File(m.file.to_string())));
+        }
+        !mods.is_empty()
+    }
+}
+
+/// hey-api (`@hey-api/openapi-ts`) generated clients, read one hop.
+mod sdk {
+    use super::*;
+
+    /// `Class.method` or `function` to its call, or why it is unknown.
+    pub(super) type Index = BTreeMap<String, Result<Call, String>>;
+
+    /// `OpenAPI.BASE` (`core/OpenAPI.ts`) as a path prefix, else `""`.
+    fn base(app: &App) -> String {
+        let found = app
+            .files
+            .iter()
+            .find(|(f, _)| f.ends_with("core/OpenAPI.ts"));
+        found
+            .and_then(|(_, text)| {
+                let colon = words(text, "BASE").into_iter().find_map(|p| {
+                    let j = skip_ws(text.as_bytes(), p + 4);
+                    (text.as_bytes().get(j) == Some(&b':')).then_some(j + 1)
+                })?;
+                Parser { s: text, i: colon }.value(0).value.literal()
+            })
+            .map_or(String::new(), |b| {
+                url_path(&b).trim_end_matches('/').to_string()
+            })
+    }
+
+    /// `(key, offset of the line)` of each exported function or static method.
+    fn entries(text: &str) -> Vec<(String, usize)> {
+        let (mut class, mut at, mut out) = (String::new(), 0, Vec::new());
+        for line in text.split_inclusive('\n') {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix("export class ") {
+                class = ident_at(rest, 0).to_string();
+            } else if let Some(rest) = t
+                .strip_prefix("public static ")
+                .or_else(|| t.strip_prefix("static "))
+            {
+                let name = ident_at(rest.strip_prefix("async ").unwrap_or(rest), 0);
+                out.push((format!("{class}.{name}"), at));
+            } else if let Some(rest) = t
+                .strip_prefix("export const ")
+                .or_else(|| t.strip_prefix("export function "))
+                .or_else(|| t.strip_prefix("export async function "))
+            {
+                out.push((ident_at(rest, 0).to_string(), at));
+            }
+            at += line.len();
+        }
+        out
+    }
+
+    /// The value of `key:` in `body`.
+    fn field(body: &str, key: &str) -> Option<Item> {
+        words(body, key).into_iter().find_map(|p| {
+            let j = skip_ws(body.as_bytes(), p + key.len());
+            (body.as_bytes().get(j) == Some(&b':')).then(|| Parser { s: body, i: j + 1 }.value(0))
+        })
+    }
+
+    /// `{id}` holes become `:param`.
+    fn holes(url: &str) -> String {
+        let mut out = String::new();
+        let mut open = false;
+        for c in url.chars() {
+            match (c, open) {
+                ('{', _) => {
+                    open = true;
+                    out.push_str(PARAM);
+                }
+                ('}', true) => open = false,
+                (_, false) => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// `method: Method.DELETE`, `method: 'delete'` or a `.delete<…>(` call.
+    fn method(body: &str) -> Option<String> {
+        if let Some(item) = field(body, "method") {
+            return match item.value {
+                Value::Str(m) => Some(m.to_ascii_uppercase()),
+                Value::Raw(r) => r.rsplit('.').next().map(str::to_ascii_uppercase),
+                _ => None,
+            };
+        }
+        HTTP_METHODS
+            .into_iter()
+            .filter_map(|m| {
+                let at = [format!(".{m}<"), format!(".{m}(")]
+                    .iter()
+                    .filter_map(|p| body.find(p.as_str()))
+                    .min()?;
+                Some((at, m))
+            })
+            .min()
+            .map(|(_, m)| m.to_ascii_uppercase())
+    }
+
+    pub(super) fn index(app: &App) -> Index {
+        let (base, mut out) = (base(app), Index::new());
+        for (_, text) in app.files.iter().filter(|(f, _)| f.ends_with("sdk.gen.ts")) {
+            let entries = entries(text);
+            for (i, (key, start)) in entries.iter().enumerate() {
+                let end = entries.get(i + 1).map_or(text.len(), |e| e.1);
+                let body = &text[*start..end];
+                // An export without a `url` field is no operation.
+                let Some(url) = field(body, "url") else {
+                    continue;
+                };
+                let call = match (url.value.literal(), method(body)) {
+                    (Some(url), Some(method)) => Ok(Call::Http {
+                        method,
+                        path: format!("{base}{}", url_path(&holes(&url))),
+                    }),
+                    (None, _) => Err(format!("{key} has a url that is not a literal")),
+                    (_, None) => Err(format!("{key} has a method that is not a literal")),
+                };
+                out.insert(key.clone(), call);
+            }
+        }
+        out
+    }
+
+    /// `(offset, source, call)` of each call of an indexed function in `text`: a
+    /// named import from a `client`/`sdk` module, or `Class.method` of an imported class.
+    pub(super) fn calls(index: &Index, text: &str) -> Vec<(usize, String, Result<Call, String>)> {
+        let b = text.as_bytes();
+        let mut out = Vec::new();
+        if index.is_empty() {
+            return out;
+        }
+        for i in imports(text) {
+            let Some(name) = i.imported.as_deref().filter(|n| *n != "*") else {
+                continue;
+            };
+            if !(i.module.contains("client") || i.module.contains("sdk")) {
+                continue;
+            }
+            for pos in words(text, &i.local) {
+                let after = pos + i.local.len();
+                let (key, end) = if text[after..].starts_with('.') {
+                    let member = ident_at(text, after + 1);
+                    (format!("{name}.{member}"), after + 1 + member.len())
+                } else if text[..pos].ends_with('.') {
+                    continue;
+                } else {
+                    (name.to_string(), after)
+                };
+                if b.get(skip_ws(b, end)) == Some(&b'(')
+                    && let Some(call) = index.get(&key)
+                {
+                    out.push((pos, key, call.clone()));
+                }
+            }
+        }
+        out
+    }
+}
+
 /// `fetch`, axios and axios instances.
 mod http {
     use super::*;
@@ -1351,7 +1753,7 @@ mod http {
         app: &App,
         file: &str,
         text: &str,
-        clients: &Clients,
+        (clients, sdk): (&Clients, &sdk::Index),
         froms: &[(Origin, Option<String>)],
         flow: &mut UiFlow,
     ) {
@@ -1370,6 +1772,10 @@ mod http {
                 let at = (file, line_of(text, pos));
                 calls.push(record(found, url.source(text), at, out));
             }
+        }
+        for (pos, key, found) in sdk::calls(sdk, text) {
+            let at = (file, line_of(text, pos));
+            calls.push(record(found, key, at, out));
         }
         for (from, _) in froms {
             for (line, call) in &calls {
@@ -1901,6 +2307,167 @@ export function Orders() {
         );
         assert!(has_diag(&flow, "dash/src/router.tsx", 7));
         assert!(!flow.complete);
+    }
+
+    const TANSTACK_PKG: &str = r#"{"dependencies":{"@tanstack/react-router":"1.0.0"}}"#;
+
+    fn tanstack_project(config: &str) -> tempfile::TempDir {
+        project(&[
+            ("archguard.toml", config),
+            ("fe/package.json", TANSTACK_PKG),
+            (
+                "fe/src/routes/__root.tsx",
+                "export const Route = createRootRoute({ component: () => <Outlet /> })\n",
+            ),
+            (
+                "fe/src/routes/_layout.tsx",
+                "export const Route = createFileRoute(\"/_layout\")({
+  component: Layout,
+  beforeLoad: async () => {
+    if (!isLoggedIn()) {
+      throw redirect({ to: \"/login\" })
+    }
+  },
+})
+function Layout() { return <main><Link to=\"/items/$id\" params={{ id }}>Item</Link><Outlet /></main> }
+",
+            ),
+            (
+                "fe/src/routes/_layout/items.$id.tsx",
+                "import { ItemsService } from '@/client'
+export const Route = createFileRoute('/_layout/items/$id')({ component: Item })
+function Item() {
+  const navigate = useNavigate()
+  const go = () => navigate({ to: '/login' })
+  const load = () => ItemsService.deleteItem({ path: { id } })
+  return <Link to={dynamic}>x</Link>
+}
+",
+            ),
+            (
+                "fe/src/routes/login.tsx",
+                "export const Route = createFileRoute('/login')({ component: Login })
+function Login() { return <RouterLink to=\"/items/$id\">Items</RouterLink> }
+import { Link as RouterLink } from '@tanstack/react-router'
+",
+            ),
+            (
+                "fe/src/client/sdk.gen.ts",
+                "export class ItemsService {
+    public static deleteItem(options) {
+        return request({ baseUrl: OpenAPI.BASE, method: Method.DELETE, url: '/api/v1/items/{id}' });
+    }
+    public static readItems(options) {
+        return (options?.client ?? client).get<A, B>({ url: '/api/v1/items/' });
+    }
+    public static odd(options) {
+        return request({ method: Method.GET, url: path });
+    }
+}
+",
+            ),
+            ("fe/src/client/core/OpenAPI.ts", "export const OpenAPI = { BASE: '/be' };\n"),
+        ])
+    }
+
+    #[test]
+    fn tanstack_file_routes_layouts_and_before_load_guards() {
+        let dir = tanstack_project("[views.access]\nisLoggedIn = \"authenticated\"\n");
+        let flow = extract(dir.path());
+        let got: Vec<_> = flow
+            .screens
+            .iter()
+            .map(|s| (s.id.clone(), s.name.clone(), s.access.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "fe:/items/:id".to_string(),
+                    "Item".to_string(),
+                    Some(Condition::Authenticated)
+                ),
+                ("fe:/login".to_string(), "Login".to_string(), None),
+            ]
+        );
+        let custom = tanstack_project("");
+        let flow = extract(custom.path());
+        assert_eq!(
+            flow.screens[0].access,
+            Some(Condition::Custom("isLoggedIn".into()))
+        );
+    }
+
+    #[test]
+    fn tanstack_links_and_navigate_resolve_with_params() {
+        let dir = tanstack_project("");
+        let flow = extract(dir.path());
+        let mut expected = vec![
+            (any("fe"), to("fe:/items/:id"), Some("Item".into())),
+            (page("fe:/items/:id"), to("fe:/login"), None),
+            (
+                page("fe:/items/:id"),
+                unresolved("dynamic"),
+                Some("x".into()),
+            ),
+            (page("fe:/login"), to("fe:/items/:id"), Some("Items".into())),
+        ];
+        expected.sort();
+        assert_eq!(transitions(&flow), expected);
+    }
+
+    #[test]
+    fn hey_api_sdk_calls_become_http_actions() {
+        let dir = tanstack_project("");
+        let flow = extract(dir.path());
+        let got: Vec<_> = flow
+            .actions
+            .iter()
+            .map(|a| (a.screen.clone(), a.call.clone(), a.line))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(
+                page("fe:/items/:id"),
+                Call::Http {
+                    method: "DELETE".into(),
+                    path: "/be/api/v1/items/:param".into()
+                },
+                6
+            )]
+        );
+    }
+
+    #[test]
+    fn hey_api_index_reads_verb_calls_and_flags_unreadable_urls() {
+        let sdk = sdk::index(&tanstack_app());
+        let call = |k: &str| sdk.get(k).cloned();
+        assert_eq!(
+            call("ItemsService.readItems"),
+            Some(Ok(Call::Http {
+                method: "GET".into(),
+                path: "/be/api/v1/items/".into()
+            }))
+        );
+        assert!(matches!(call("ItemsService.odd"), Some(Err(_))));
+    }
+
+    fn tanstack_app() -> App {
+        let dir = tanstack_project("");
+        let mut files = BTreeMap::new();
+        for p in ["fe/src/client/sdk.gen.ts", "fe/src/client/core/OpenAPI.ts"] {
+            files.insert(
+                p.to_string(),
+                std::fs::read_to_string(dir.path().join(p)).unwrap(),
+            );
+        }
+        App {
+            name: "fe".into(),
+            prefix: "fe/".into(),
+            next: false,
+            tanstack: true,
+            files,
+        }
     }
 
     #[test]
