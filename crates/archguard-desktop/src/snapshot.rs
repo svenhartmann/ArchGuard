@@ -27,7 +27,8 @@
 //! `crate::settings_view_ui::snapshot_hook`. View → Review decisions…:
 //! `crate::review_decisions_ui::snapshot_hook`. File → Compare
 //! architecture…: `crate::compare_ui::snapshot_hook`. Help → Metrics,
-//! commands & MCP…: `crate::help_ui::snapshot_hook`.
+//! commands & MCP…: `crate::help_ui::snapshot_hook`. View → Analyze again,
+//! after the dirty and simulation hooks: `ARCHGUARD_DESKTOP_REANALYZE=1`.
 
 use std::cell::Cell;
 
@@ -66,6 +67,9 @@ pub fn schedule(ui: &AppWindow) {
     }
     apply_view_hooks(ui);
     sim_hook(ui);
+    if env::<String>("ARCHGUARD_DESKTOP_REANALYZE").as_deref() == Some("1") {
+        ui.invoke_analyze_again();
+    }
     apply_shell_hooks(ui);
     export_hook(ui);
     crate::review_decisions_ui::snapshot_hook(ui);

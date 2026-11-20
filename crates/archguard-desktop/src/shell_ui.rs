@@ -54,6 +54,7 @@ fn apply_settings(ui: &AppWindow) {
         ui.invoke_set_look(family, dark);
     }
     select_language(ui, &language);
+    crate::graph_panels_ui::apply(ui);
     if let Some((w, h)) = window {
         ui.window()
             .set_size(slint::LogicalSize::new(w as f32, h as f32));
@@ -90,6 +91,7 @@ pub fn wire(ui: &AppWindow) {
     ui.on_choose_theme(|family, dark| {
         settings_file::update(|s| s.theme = Theme::from_look(family, dark));
     });
+    ui.on_follow_system_theme(|| settings_file::update(|s| s.theme = Theme::System));
     ui.on_choose_language(with_ui(ui, |ui, lang: SharedString| {
         settings_file::update(|s| s.language = lang.to_string());
         select_language(ui, &lang);
@@ -106,6 +108,7 @@ pub fn wire(ui: &AppWindow) {
     });
     route_app_quit();
     crate::settings_view_ui::wire(ui);
+    crate::graph_panels_ui::wire(ui);
 }
 
 /// File → Save: everything unsaved in the active project; the notice

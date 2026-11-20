@@ -46,6 +46,8 @@ export { ReviewDecisionsData, DecisionRow }
 // File → Compare architecture… (src/compare_ui.rs).
 export { CompareData, CompareRow, CompareRelation, CompareCounts }
 export { HelpData, HelpBlock }
+// The Graph panels' widths (src/graph_panels_ui.rs).
+export { GraphPanels } from "graph_panels.slint";
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -72,6 +74,9 @@ export component AppWindow inherits Window {
     callback close-doc(int);
     callback add-doc();
     callback open-sub-project(int);
+    // View → Analyze again on the active document (src/reanalyze_ui.rs,
+    // notices 12 to 15).
+    callback analyze-again();
 
     // App shell: menu, recent projects, settings, the save prompt
     // (src/shell_ui.rs).
@@ -91,6 +96,8 @@ export component AppWindow inherits Window {
     callback quit-app();
     // Theme.family and Theme.dark, saved as the chosen theme.
     callback choose-theme(int, bool);
+    // View → Theme → System: drop the stored choice (src/shell_ui.rs).
+    callback follow-system-theme();
     callback choose-language(string);
     // 0 Save, 1 Don't save, 2 Cancel.
     callback prompt-answered(int);
@@ -205,7 +212,12 @@ export component AppWindow inherits Window {
     callback file-select(int, int);
     callback show-in-graph(int);
 
-    init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
+    // The system's scheme at start; "System theme" returns to it.
+    property <bool> system-dark;
+    init => {
+        root.system-dark = Palette.color-scheme == ColorScheme.dark;
+        Theme.dark = root.system-dark;
+    }
 
     // The notice bar's text for `notice-kind`; `notice` is its argument.
     pure function notice-text() -> string {
@@ -219,6 +231,10 @@ export component AppWindow inherits Window {
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
         if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
         if root.notice-kind == 11 { return @tr("Nothing to save."); }
+        if root.notice-kind == 12 { return @tr("The project's sources changed since the analysis."); }
+        if root.notice-kind == 13 { return @tr("Not analyzed again: the Graph has simulated changes. Clear them first."); }
+        if root.notice-kind == 14 { return @tr("Not analyzed again: save or discard the unsaved changes first ({}).", root.notice); }
+        if root.notice-kind == 15 { return @tr("Analyzing again; the views update when it is done."); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 
@@ -358,6 +374,13 @@ export component AppWindow inherits Window {
         Menu {
             title: @tr("View");
             MenuItem {
+                title: @tr("Analyze again");
+                shortcut: @keys(Control + R);
+                enabled: root.ready;
+                activated => { root.analyze-again(); }
+            }
+            MenuSeparator { }
+            MenuItem {
                 title: @tr("Split right");
                 shortcut: @keys(Control + "\\");
                 enabled: root.ready;
@@ -416,6 +439,10 @@ export component AppWindow inherits Window {
                     title: @tr("Solarized Dark");
                     checked: Theme.family == 1 && Theme.dark == true;
                     activated => { root.set-look(1, true); root.choose-theme(1, true); }
+                }
+                MenuItem {
+                    title: @tr("System theme");
+                    activated => { root.set-look(0, root.system-dark); root.follow-system-theme(); }
                 }
             }
             MenuSeparator { }
@@ -657,7 +684,10 @@ export component AppWindow inherits Window {
 
         if root.notice != "": NoticeBar {
             text: root.notice-text();
-            done: (root.notice-kind >= 3 && root.notice-kind <= 5) || root.notice-kind >= 10;
+            done: (root.notice-kind >= 3 && root.notice-kind <= 5)
+                || (root.notice-kind >= 10 && root.notice-kind != 13 && root.notice-kind != 14);
+            action: root.notice-kind == 12 ? @tr("Analyze again") : "";
+            act => { root.analyze-again(); }
             dismiss => { root.notice = ""; }
         }
 

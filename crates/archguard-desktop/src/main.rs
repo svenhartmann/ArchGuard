@@ -27,6 +27,7 @@ mod follow;
 mod follow_ui;
 mod format;
 mod fullscreen;
+mod graph_panels_ui;
 mod graph_ui;
 #[cfg(feature = "snapshot")]
 mod headless;
@@ -44,6 +45,7 @@ mod panes_ui;
 mod platform;
 mod quality_ui;
 mod rating;
+mod reanalyze_ui;
 mod review_decisions;
 mod review_decisions_ui;
 mod review_findings;
