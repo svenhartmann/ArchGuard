@@ -11,13 +11,20 @@
 //! events and handlers (`event_chain`). Actions come from
 //! `join_actions_to_endpoints`; an endpoint without one still forms a chain.
 //!
+//! A chain continues across services: an integration event published by the
+//! chain's start (endpoint handler method or message-handler class, same
+//! file), one of its use cases (same file) or a handler of one of its domain
+//! events (by class name) starts a nested chain at each message handler of
+//! that event, up to [`MAX_HOPS`] deep and never through a handler already on
+//! the path. [`triggers_of_state`] and [`touches`] look into nested chains.
+//!
 //! [`rights`] answers "can this user cause it" per chain: the endpoint access
 //! and, with an action, the reach of its screen and the action's condition,
 //! in three-valued logic. A message-handler chain is no user path.
 use std::collections::{BTreeMap, BTreeSet};
 
 use archguard_core::domain_model::{
-    DomainModel, MessageHandler, StateTransition, UseCase, event_chain,
+    DomainModel, MessageHandler, Publisher, StateTransition, UseCase, event_chain,
 };
 use archguard_core::{
     AccessState, Action, Assignment, EndpointAccess, Origin, Outcome, ScreenReach, UiFlow,
@@ -34,7 +41,17 @@ pub struct Chain<'a> {
     pub use_cases: Vec<&'a UseCase>,
     pub transitions: Vec<ChainTransition<'a>>,
     pub events: Vec<ChainEvent<'a>>,
+    /// For a nested chain: the publish site of the integration event its
+    /// message handler handles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<&'a Publisher>,
+    /// Nested chains of the integration events this chain publishes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub continues: Vec<Chain<'a>>,
 }
+
+/// How many integration-event hops a chain follows.
+pub const MAX_HOPS: usize = 3;
 
 /// Where a chain starts. JSON: the variant's fields beside the chain's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -84,17 +101,7 @@ pub struct ChainEvent<'a> {
 pub fn chains<'a>(flow: &'a UiFlow, model: &'a DomainModel) -> Vec<Chain<'a>> {
     let joined = join_actions_to_endpoints(flow);
     let mut found = Vec::new();
-    let chain = |start, sends: &[String]| {
-        let use_cases = use_cases_of(model, sends);
-        let transitions = transitions_of(model, &use_cases);
-        let events = events_of(model, &transitions);
-        Chain {
-            start,
-            use_cases,
-            transitions,
-            events,
-        }
-    };
+    let chain = |start, sends: &[String]| build(model, start, sends, None, &mut vec![]);
     for endpoint in &flow.endpoints {
         let mut actions: Vec<Option<&Action>> = (joined.iter())
             .filter(|(_, hits)| hits.contains(&endpoint))
@@ -128,8 +135,75 @@ pub fn triggers_of_state<'a>(
         .map_or(entity, |e| e.id.as_str());
     chains(flow, model)
         .into_iter()
-        .filter(|c| (c.transitions.iter()).any(|t| t.entity == id && t.transition.to == state))
+        .filter(|c| reaches(c, &|t| t.entity == id && t.transition.to == state))
         .collect()
+}
+
+/// Whether `c` or a nested chain changes `entity` (id).
+pub fn touches(c: &Chain, entity: &str) -> bool {
+    reaches(c, &|t| t.entity == entity)
+}
+
+fn reaches(c: &Chain, hit: &dyn Fn(&ChainTransition) -> bool) -> bool {
+    c.transitions.iter().any(hit) || c.continues.iter().any(|n| reaches(n, hit))
+}
+
+/// The chain from `start` and, while `path` (message handlers already on
+/// it) is shorter than [`MAX_HOPS`], its nested chains.
+fn build<'a>(
+    model: &'a DomainModel,
+    start: ChainStart<'a>,
+    sends: &[String],
+    via: Option<&'a Publisher>,
+    path: &mut Vec<&'a MessageHandler>,
+) -> Chain<'a> {
+    let use_cases = use_cases_of(model, sends);
+    let transitions = transitions_of(model, &use_cases);
+    let events = events_of(model, &transitions);
+    let mut chain = Chain {
+        start,
+        use_cases,
+        transitions,
+        events,
+        via,
+        continues: vec![],
+    };
+    if path.len() >= MAX_HOPS {
+        return chain;
+    }
+    for event in &model.integration_events {
+        let Some(publisher) = event.published_by.iter().find(|p| publishes(&chain, p)) else {
+            continue;
+        };
+        for handler in (model.message_handlers.iter()).filter(|h| h.message == event.type_name) {
+            if path.iter().any(|h| h == &handler) {
+                continue;
+            }
+            path.push(handler);
+            let start = ChainStart::Message {
+                message_handler: handler,
+            };
+            let next = build(model, start, &handler.sends, Some(publisher), path);
+            path.pop();
+            chain.continues.push(next);
+        }
+    }
+    chain
+}
+
+/// Whether the publish site belongs to the chain: its start, a use case (same
+/// class and file) or a handler of one of its domain events (same class).
+fn publishes(c: &Chain, p: &Publisher) -> bool {
+    let class = p.by.split_once('.').map_or(p.by.as_str(), |(c, _)| c);
+    let start = match c.start {
+        ChainStart::Endpoint { endpoint, .. } => endpoint.handler.as_deref() == Some(p.by.as_str()),
+        ChainStart::Message { message_handler: m } => {
+            (m.id == p.by || m.id == class) && m.file == p.file
+        }
+    };
+    start
+        || (c.use_cases.iter()).any(|u| (u.id == class || u.name == class) && u.file == p.file)
+        || (c.events.iter()).any(|e| e.handlers.iter().any(|h| h == class))
 }
 
 /// Whether a simulated user can run a chain.
@@ -628,5 +702,101 @@ public class AdminController : ControllerBase
                 "not a user path: OrderPaymentSucceededIntegrationEventHandler handles OrderPaymentSucceededIntegrationEvent inside the system"
             ]})
         );
+    }
+
+    /// Ordering publishes the paid integration event from a domain-event
+    /// handler; Catalog handles it and publishes one Ordering handles again,
+    /// which sends the pay command once more (a cycle).
+    const CROSS: &[(&str, &str)] = &[
+        (
+            "Ordering.API/Application/PublishPaid.cs",
+            r#"public record OrderStatusChangedToPaidIntegrationEvent(int OrderId) : IntegrationEvent;
+public class PublishPaidDomainEventHandler : INotificationHandler<OrderStatusChangedToPaidDomainEvent>
+{
+    public async Task Handle(OrderStatusChangedToPaidDomainEvent domainEvent, CancellationToken token)
+    {
+        var integrationEvent = new OrderStatusChangedToPaidIntegrationEvent(domainEvent.OrderId);
+        await _orderingIntegrationEventService.AddAndSaveEventAsync(integrationEvent);
+    }
+}
+public class StockReservedIntegrationEventHandler(IMediator mediator) : IIntegrationEventHandler<StockReservedIntegrationEvent>
+{
+    public async Task Handle(StockReservedIntegrationEvent @event)
+    {
+        await mediator.Send(new SetPaidOrderStatusCommand(@event.OrderId));
+    }
+}
+"#,
+        ),
+        ("Catalog.API/Catalog.API.csproj", "<Project />"),
+        (
+            "Catalog.API/PaidHandler.cs",
+            r#"public class OrderStatusChangedToPaidIntegrationEventHandler : IIntegrationEventHandler<OrderStatusChangedToPaidIntegrationEvent>
+{
+    public async Task Handle(OrderStatusChangedToPaidIntegrationEvent @event)
+    {
+        await eventBus.PublishAsync(new StockReservedIntegrationEvent(@event.OrderId));
+    }
+}
+"#,
+        ),
+    ];
+
+    /// `start (service) > nested …` per path through `continues`.
+    fn paths(c: &Chain, prefix: &str, out: &mut Vec<String>) {
+        let here = match c.start {
+            ChainStart::Endpoint { endpoint, .. } => {
+                format!("{} {}", endpoint.method, endpoint.path)
+            }
+            ChainStart::Message { message_handler: m } => format!("{} ({})", m.id, m.service),
+        };
+        let here = format!("{prefix}{here}");
+        if c.continues.is_empty() {
+            out.push(here.clone());
+        }
+        for next in &c.continues {
+            paths(next, &format!("{here} > "), out);
+        }
+    }
+
+    #[test]
+    fn a_chain_continues_across_services_through_integration_events() {
+        let more: Vec<_> = MORE.iter().chain(CROSS).copied().collect();
+        let (flow, model) = analyzed_with(&more);
+        let paid = triggers_of_state(&flow, &model, "Order", "Paid");
+        let pay = chain(&paid, "PUT", "/api/orders/pay");
+        let mut found = vec![];
+        paths(pay, "", &mut found);
+        assert_eq!(
+            found,
+            [
+                "PUT /api/orders/pay > OrderStatusChangedToPaidIntegrationEventHandler (Catalog.API) > StockReservedIntegrationEventHandler (Ordering.API)"
+            ]
+        );
+        let catalog = &pay.continues[0];
+        let via = catalog.via.expect("publish site");
+        assert_eq!(via.by, "PublishPaidDomainEventHandler.Handle");
+        assert_eq!(via.service, "Ordering.API");
+        // The cycle back to Paid stops at the handler already on the path.
+        let back = &catalog.continues[0];
+        assert_eq!(back.transitions[0].transition.to, "Paid");
+        assert!(back.continues.is_empty());
+        // Chains that reach Paid only through a hop count as triggers too.
+        assert!(
+            paid.iter().any(|c| matches!(c.start, ChainStart::Message { message_handler } if message_handler.id == "OrderStatusChangedToPaidIntegrationEventHandler")),
+            "{paid:#?}"
+        );
+        let json = serde_json::to_value(pay).unwrap();
+        assert_eq!(json["continues"][0]["via"]["service"], "Ordering.API");
+        assert_eq!(
+            json["continues"][0]["message_handler"]["service"],
+            "Catalog.API"
+        );
+        assert!(
+            json["continues"][0]["continues"][0]
+                .get("continues")
+                .is_none()
+        );
+        assert!(touches(pay, "Order"));
     }
 }

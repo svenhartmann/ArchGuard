@@ -29,6 +29,15 @@ pub struct DomainModel {
     /// bus messages (ADR 0022 decision 4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub message_handlers: Vec<MessageHandler>,
+    /// Invariants of entity methods: the throws that guard them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<DomainRule>,
+    /// Declared input validation (FluentValidation, Bean Validation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validations: Vec<Validation>,
+    /// Integration events with their publish sites and handlers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integration_events: Vec<IntegrationEvent>,
 }
 impl Default for DomainModel {
     /// Empty and complete, so it is the identity of [`merge_domain_models`].
@@ -43,6 +52,9 @@ impl Default for DomainModel {
             diagnostics: vec![],
             complete: true,
             message_handlers: vec![],
+            rules: vec![],
+            validations: vec![],
+            integration_events: vec![],
         }
     }
 }
@@ -185,6 +197,70 @@ pub struct MessageHandler {
     pub file: String,
     pub line: u32,
     pub source: String,
+    /// The project (folder with the build file) it runs in.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub service: String,
+}
+
+/// A rule an entity method enforces by throwing (or, for
+/// `IValidatableObject`, by adding a `ValidationResult`). Shown as source
+/// text, never evaluated (ADR 0022, decision 5).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DomainRule {
+    /// Entity id.
+    pub entity: String,
+    /// `Entity.Method`, as on transitions.
+    pub method: String,
+    /// The condition under which the method throws, as source text; none for
+    /// an unconditional throw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    /// The message literal (interpolations kept) or the argument's source text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Exception type or guard helper, e.g. `OrderingDomainException`.
+    pub exception: String,
+    pub file: String,
+    pub line: u32,
+    pub source: String,
+}
+
+/// The declared checks on one property of a request or entity type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Validation {
+    /// The validated type, e.g. `CreateOrderCommand`.
+    pub target_type: String,
+    pub property: String,
+    /// Each check as source text, e.g. `Length(12, 19)` or `@Size(max = 50)`.
+    #[serde(default)]
+    pub rules: Vec<String>,
+    pub file: String,
+    pub line: u32,
+    pub source: String,
+}
+
+/// An event sent between services through a bus or broker.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct IntegrationEvent {
+    #[serde(rename = "type")]
+    pub type_name: String,
+    #[serde(default)]
+    pub published_by: Vec<Publisher>,
+    /// Ids of the message handlers of this type.
+    #[serde(default)]
+    pub handled_by: Vec<String>,
+    pub source: String,
+}
+
+/// One publish site of an integration event.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Publisher {
+    /// `Class.method`.
+    pub by: String,
+    /// The project (folder with the build file) the site is in.
+    pub service: String,
+    pub file: String,
+    pub line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -273,8 +349,21 @@ pub fn event_chain<'a>(
         .collect()
 }
 
+/// Sets each integration event's `handled_by` to its own entries plus the
+/// message handlers of the same type, sorted and once.
+pub fn link_integration_events(model: &mut DomainModel) {
+    for event in &mut model.integration_events {
+        let handlers = (model.message_handlers.iter())
+            .filter(|h| h.message == event.type_name)
+            .map(|h| h.id.clone());
+        let all: BTreeSet<String> = event.handled_by.drain(..).chain(handlers).collect();
+        event.handled_by = all.into_iter().collect();
+    }
+    model.integration_events.sort();
+}
+
 /// Union of two models (extractor result + import): sorted, identical entries
-/// once, complete only when both are.
+/// once, complete only when both are; integration events linked to handlers.
 pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
     fn union<T: Ord>(mut a: Vec<T>, b: Vec<T>) -> Vec<T> {
         a.extend(b);
@@ -282,7 +371,7 @@ pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
         a.dedup();
         a
     }
-    DomainModel {
+    let mut merged = DomainModel {
         definition: DOMAIN_MODEL_DEFINITION.into(),
         entities: union(a.entities, b.entities),
         relations: union(a.relations, b.relations),
@@ -292,7 +381,13 @@ pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
         diagnostics: union(a.diagnostics, b.diagnostics),
         complete: a.complete && b.complete,
         message_handlers: union(a.message_handlers, b.message_handlers),
-    }
+        rules: union(a.rules, b.rules),
+        validations: union(a.validations, b.validations),
+        integration_events: union(a.integration_events, b.integration_events),
+    };
+    link_integration_events(&mut merged);
+    merged.integration_events.dedup();
+    merged
 }
 
 #[cfg(test)]
@@ -569,6 +664,7 @@ mod tests {
                 file: "OrderPaymentSucceededIntegrationEventHandler.cs".into(),
                 line: 3,
                 source: "csharp".into(),
+                service: String::new(),
             }],
             ..order_model(Some("Submitted"))
         };
@@ -595,5 +691,78 @@ mod tests {
         let minimal: DomainModel =
             serde_json::from_str(r#"{"definition":"domain-model/v1","complete":true}"#).unwrap();
         assert_eq!(minimal, DomainModel::default());
+    }
+
+    #[test]
+    fn rules_validations_and_integration_events_round_trip_and_link() {
+        let handler = |id: &str, message: &str| MessageHandler {
+            id: id.into(),
+            message: message.into(),
+            sends: vec![],
+            file: "h.cs".into(),
+            line: 1,
+            source: "csharp".into(),
+            service: String::new(),
+        };
+        let paid = IntegrationEvent {
+            type_name: "OrderStatusChangedToPaidIntegrationEvent".into(),
+            published_by: vec![Publisher {
+                by: "OrderStatusChangedToPaidDomainEventHandler.Handle".into(),
+                service: "Ordering.API".into(),
+                file: "P.cs".into(),
+                line: 39,
+            }],
+            handled_by: vec![],
+            source: "csharp".into(),
+        };
+        let a = DomainModel {
+            rules: vec![DomainRule {
+                entity: "OrderItem".into(),
+                method: "OrderItem.SetNewDiscount".into(),
+                condition: Some("discount < 0".into()),
+                message: Some("Discount is not valid".into()),
+                exception: "OrderingDomainException".into(),
+                file: "OrderItem.cs".into(),
+                line: 48,
+                source: "csharp".into(),
+            }],
+            validations: vec![Validation {
+                target_type: "CreateOrderCommand".into(),
+                property: "CardNumber".into(),
+                rules: s(&["NotEmpty()", "Length(12, 19)"]),
+                file: "V.cs".into(),
+                line: 10,
+                source: "csharp".into(),
+            }],
+            integration_events: vec![paid.clone()],
+            ..DomainModel::default()
+        };
+        let b = DomainModel {
+            message_handlers: vec![
+                handler("Catalog.PaidHandler", &paid.type_name),
+                handler("Webhooks.PaidHandler", &paid.type_name),
+                handler("Other", "OtherEvent"),
+            ],
+            ..DomainModel::default()
+        };
+        let merged = merge_domain_models(a.clone(), b);
+        assert_eq!(
+            merged.integration_events[0].handled_by,
+            ["Catalog.PaidHandler", "Webhooks.PaidHandler"]
+        );
+        // Handled-only types are not invented.
+        assert_eq!(merged.integration_events.len(), 1);
+        let json = serde_json::to_string(&merged).unwrap();
+        assert!(json.contains(r#""condition":"discount < 0","message":"Discount is not valid","exception":"OrderingDomainException""#), "{json}");
+        assert!(
+            json.contains(r#""rules":["NotEmpty()","Length(12, 19)"]"#),
+            "{json}"
+        );
+        assert!(json.contains(r#""type":"OrderStatusChangedToPaidIntegrationEvent","published_by":[{"by":"OrderStatusChangedToPaidDomainEventHandler.Handle","service":"Ordering.API""#), "{json}");
+        assert_eq!(serde_json::from_str::<DomainModel>(&json).unwrap(), merged);
+        let empty = serde_json::to_string(&DomainModel::default()).unwrap();
+        for key in ["rules", "validations", "integration_events"] {
+            assert!(!empty.contains(key), "{empty}");
+        }
     }
 }

@@ -240,3 +240,80 @@ from the list, fails on the others, and turns each baselined id without a
 finding into an `info` note "remove it from the baseline", which does not
 fail. The `view-conventions:…` finding for an unreadable import is never
 recorded. `baseline diff` still compares cycles only; no ratchet beyond that.
+
+### 2026-11-20: rules, validations, integration events, plain models
+
+eShop showed only `Order` and its state machine: the rules in `OrderItem`,
+`PaymentMethod` and `CatalogItem`, the FluentValidation validators and the
+events between services were not in the model. `DomainModel` gains three
+lists (serde default, left out when empty), `MessageHandler` a `service`
+(likewise), and the summary their counts:
+
+- `rules: [DomainRule { entity, method, condition, message, exception, file,
+  line, source }]`. `condition` is the source text under which the method
+  throws (decision 5: shown, never evaluated); `message` is the literal's
+  content (interpolations kept) or the argument's source text (`nameof(x)`).
+  C#: in methods of found entities, `throw new X(…)` when `X` ends in
+  `DomainException`, is `ArgumentException`/`ArgumentNullException`/
+  `ArgumentOutOfRangeException` or an `*Exception` class declared in a model
+  folder (CleanArchitecture's `UnsupportedColourException`); `new
+  ValidationResult(…)` of `IValidatableObject`; a call of an entity method
+  whose body only throws (the rule sits at the guarded call, as for
+  `Order.StatusChangeException`); `XException.ThrowIf…(…)` and
+  `Guard.Against.…(…)`. The condition is the enclosing `if` (an `else` block
+  gives `!(…)`), `!(c)` for `c ? v : throw`, `v == null` for `v ?? throw`,
+  else none. Java: `throw new …Exception` in entity methods,
+  `Objects.requireNonNull`, `Assert.*`/`Preconditions.check*` with a literal
+  message. Throws in pipeline behaviours, repositories and other non-entity
+  classes are no domain rules. The exception families are constants, not yet
+  configuration.
+- `validations: [Validation { target_type, property, rules, file, line,
+  source }]`: per `RuleFor(x => x.P)`/`RuleForEach` in an
+  `AbstractValidator<T>` every chained call as written (`NotEmpty()`,
+  `Length(12, 19)`, `WithMessage("…")`); Java Bean Validation annotations
+  (`@NotNull`, `@Size(max = 50)`, `@Pattern(…)`, …) on fields of any class.
+  C# data annotations (`[Required]`) are not read.
+- `integration_events: [IntegrationEvent { type, published_by: [Publisher {
+  by, service, file, line }], handled_by, source }]`. C#: types deriving from
+  `IntegrationEvent`, and publish sites `r.PublishAsync`, `r.Publish`
+  (`Publish<X>` too), `r.AddAndSaveEventAsync`, `r.SaveEventAnd…Async` with
+  `new X(…)` or a local variable assigned `new X(…)` (every top-level `new` of
+  each assignment, so eShop's if/else and ternary yield both types); a
+  receiver named `*mediator*` is in-process and skipped, a parameter or member
+  argument (the forwarding wrappers in `*IntegrationEventService`) adds
+  nothing; `Send` is not read. Java: `send`/`convertAndSend` on a receiver
+  named `*kafka*`, `*rabbit*`, `*jms*`, `*template*` or `*bridge*` with a
+  literal payload type. `service` is the folder of the nearest `*.csproj`
+  (`pom.xml`, `build.gradle`). `handled_by` is linked to `message_handlers`
+  by type in `merge_domain_models` and the extractors.
+- Plain models: a C# class (`entity`) or record/struct (`value_object`)
+  without a marker in a folder with a path segment ending in `Domain`,
+  `Model`, `Models` or `Entities`, with a field, not `abstract`/`static` and
+  not named `*Dto`, `*Request`, `*Response`, `*Command`, `*Query`,
+  `*ViewModel`, `*Event` or `*Exception`. A name a marker entity already has,
+  or a `DbSet<T>` resolving to another class, keeps the plain class out, so a
+  client copy (`ClientApp/Models/Order.cs`) does not qualify the domain's
+  ids. Java is unchanged (JPA `@Entity` covers it).
+- The C# member reader no longer drops a method whose parameter is the
+  verbatim identifier `@event`; eShop's integration-event handlers were
+  invisible to every member-based rule before.
+
+`domain_chain`: a chain continues across services. An integration event
+published by the chain's start (endpoint handler method, or message-handler
+class in the same file), one of its use cases (same file) or a handler of
+one of its domain events (by class name) starts a nested chain (`continues`,
+with `via` the publish site) at each message handler of that type, at most
+`MAX_HOPS = 3` deep, never through a handler already on the path.
+`triggers_of_state` and the entity filter look into nested chains, so on
+eShop `Order → Paid` now also lists the Catalog and PaymentProcessor handlers
+that lead to it. CLI `domain` prints a second summary line and the sections
+Rules, Validations and Integration events (`--entity` filters them); MCP
+`domain_model` returns row kinds `rule`, `validation`, `integration_event`.
+
+On eShop: 16 rules (11 of the 13 `…DomainException` throws; the two in
+`ValidatorBehavior` and `RequestManager` are outside entities; `Order.cs:182`
+becomes the two guarded calls at `:134` and `:147`), 14 validations, 13
+integration events with publish sites in four services and handlers in six. Not done: the
+desktop view of rules, validations, integration events and nested chains;
+jobs (`BackgroundService`) as chain starts; configuration of the exception
+families and model folders.

@@ -55,6 +55,7 @@
 //!   `ConsumerRecord<K, V>` reads `ConsumerRecord`); `sends` by the backend
 //!   extractor's send rule over the method body. Spring Cloud Stream
 //!   functional beans (`Consumer<T>` beans) are not read.
+//! - Rules, Bean Validation and broker publish sites: see `rich`.
 //!
 //! Not recognized: nested-type qualification, state changes outside the
 //! entity's own methods (setters called from services assign a variable and
@@ -123,6 +124,7 @@ const COLLECTIONS: [&str; 16] = [
     "Bag",
 ];
 const ID_TYPES: [&str; 3] = ["Long", "long", "UUID"];
+const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
 const MAX_BYTES: u64 = 1 << 20;
 const MAX_FILES: usize = 5_000;
 const MODIFIERS: [&str; 30] = [
@@ -175,6 +177,9 @@ pub fn extract(root: &Path) -> DomainModel {
     x.machines_and_events();
     x.use_cases();
     x.message_handlers();
+    x.model.rules = rich::rules(&x);
+    x.model.validations = rich::validations(&x);
+    x.model.integration_events = rich::integration_events(&x);
     x.finish()
 }
 
@@ -185,6 +190,10 @@ struct Src {
     kotlin: bool,
     /// `a.b.C.*` / `a.b.C.D` per `import` line, `static` dropped.
     imports: Vec<String>,
+    /// The source as read, for messages and rule text.
+    raw: String,
+    /// The folder of the nearest `pom.xml`/`build.gradle(.kts)`.
+    project: String,
 }
 
 struct Decl {
@@ -267,17 +276,22 @@ impl Extractor {
             self.push_diag(&paths[MAX_FILES], message);
             paths.truncate(MAX_FILES);
         }
+        let mut projects = BTreeMap::new();
         for rel in paths {
             match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
                 Ok(bytes) => {
-                    let text = lex::strip(&String::from_utf8_lossy(&bytes));
+                    let raw = String::from_utf8_lossy(&bytes).into_owned();
+                    let text = lex::strip(&raw);
                     let imports = decls::imports(&text);
                     let kotlin = rel.ends_with(".kt");
+                    let project = crate::domain_csharp::code::project_of(root, &rel, &BUILD_FILES, &mut projects);
                     self.files.push(Src {
                         rel,
                         text,
                         kotlin,
                         imports,
+                        raw,
+                        project,
                     });
                 }
                 Err(_) => self.push_diag(
@@ -665,6 +679,7 @@ impl Extractor {
                     file: src.rel.clone(),
                     line: line(&src.text, body.0),
                     source: SOURCE.into(),
+                    service: src.project.clone(),
                 });
             }
         }
@@ -682,7 +697,10 @@ impl Extractor {
             });
             self.model.complete &= !drops;
         }
+        archguard_core::domain_model::link_integration_events(&mut self.model);
         let m = &mut self.model;
+        m.rules.sort();
+        m.validations.sort();
         m.entities.sort();
         m.relations.sort();
         m.relations.dedup();
@@ -2217,6 +2235,463 @@ mod lex {
             if *c != b'\n' {
                 *c = b' ';
             }
+        }
+    }
+}
+
+mod rich {
+    //! Rules, Bean Validation and broker publish sites of the Java extractor
+    //! (ADR 0022, Verlauf 2026-11-20). Rules and validations read Java files
+    //! only; Kotlin `require`/`check`, `throw X(…)` and `@field:` targets are not
+    //! read.
+    //!
+    //! - Rules: in methods of found entities, `throw new X(…)` with `X` ending in
+    //!   `Exception`; `Objects.requireNonNull(v, …)` (condition `v == null`);
+    //!   `Assert.m(…)` and `Preconditions.m(…)` whose last argument is a string
+    //!   literal: condition `!(c)` for `isTrue`/`state`/`checkArgument`/
+    //!   `checkState`, `v == null` for `notNull`/`checkNotNull`, else
+    //!   `!Assert.m(v)`. Condition of a throw and message as in C#
+    //!   ([`crate::domain_csharp::code`]).
+    //! - Validations: the Bean Validation annotations of [`BEAN_VALIDATION`] on
+    //!   the fields of any Java class (entities, DTOs, view models).
+    //! - Integration events: `r.send(…)` and `r.convertAndSend(…)` where `r`'s
+    //!   name contains `kafka`, `rabbit`, `jms`, `template` or `bridge` (any case);
+    //!   the payload is the last argument, `new X(…)` or a local variable assigned
+    //!   one. A computed payload or a Kotlin constructor call adds nothing.
+    use super::*;
+    use crate::domain_csharp::code::{
+        Code, assigned_news, condition, created_at, message, raw, split_args, top_news,
+    };
+    use archguard_core::domain_model::{DomainRule, IntegrationEvent, Publisher, Validation};
+
+    const BEAN_VALIDATION: [&str; 22] = [
+        "NotNull",
+        "NotBlank",
+        "NotEmpty",
+        "Null",
+        "Size",
+        "Pattern",
+        "Min",
+        "Max",
+        "DecimalMin",
+        "DecimalMax",
+        "Digits",
+        "Email",
+        "Positive",
+        "PositiveOrZero",
+        "Negative",
+        "NegativeOrZero",
+        "Past",
+        "PastOrPresent",
+        "Future",
+        "FutureOrPresent",
+        "AssertTrue",
+        "AssertFalse",
+    ];
+    const CHECKERS: [&str; 2] = ["Assert", "Preconditions"];
+    const PUBLISH: [&str; 2] = ["send", "convertAndSend"];
+    const BROKER_RECEIVERS: [&str; 5] = ["kafka", "rabbit", "jms", "template", "bridge"];
+
+    /// One rule site: offset, exception or check, condition, message.
+    type Site = (usize, String, Option<String>, Option<String>);
+
+    fn code(src: &Src) -> Code<'_> {
+        Code {
+            text: &src.text,
+            raw: &src.raw,
+        }
+    }
+
+    /// The span of `part`, a slice of `s`.
+    fn span_of(s: &str, part: &str) -> Span {
+        let at = part.as_ptr() as usize - s.as_ptr() as usize;
+        let trimmed = part.trim_start();
+        let at = at + (part.len() - trimmed.len());
+        (at, at + trimmed.trim_end().len())
+    }
+
+    pub(super) fn rules(x: &Extractor) -> Vec<DomainRule> {
+        let mut out = vec![];
+        for ent in &x.ents {
+            let d = &x.decls[ent.decl];
+            let src = &x.files[d.file];
+            if src.kotlin {
+                continue;
+            }
+            for (_, name, _, body, _) in d.methods() {
+                for (pos, exception, condition, message) in sites(src, body) {
+                    out.push(DomainRule {
+                        entity: ent.id.clone(),
+                        method: format!("{}.{name}", ent.id),
+                        condition,
+                        message,
+                        exception,
+                        file: src.rel.clone(),
+                        line: line(&src.text, pos),
+                        source: SOURCE.into(),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn sites(src: &Src, body: Span) -> Vec<Site> {
+        let (s, b, c) = (src.text.as_str(), src.text.as_bytes(), code(src));
+        let mut out = vec![];
+        for (pos, w) in idents(s, body.0, body.1) {
+            if w == "throw" {
+                let thrown = created_at(s, pos + w.len()).filter(|t| t.0.ends_with("Exception"));
+                if let Some((ex, args)) = thrown {
+                    out.push((pos, ex, condition(c, body, pos), message(c, args)));
+                }
+                continue;
+            }
+            let Some(dot) = prev_nonws(b, pos).filter(|&k| b[k] == b'.') else {
+                continue;
+            };
+            let receiver = prev_word(s, dot);
+            let open = next_nonws(b, pos + w.len()).filter(|&k| b[k] == b'(');
+            let Some(close) = open.and_then(|o| matching(b, o)) else {
+                continue;
+            };
+            let args: Vec<Span> = (split_args(&s[open.unwrap_or(pos) + 1..close]))
+                .into_iter()
+                .map(|a| span_of(s, a))
+                .collect();
+            let first = raw(c, args[0]);
+            let last = args.last().filter(|_| args.len() >= 2);
+            let literal = last.is_some_and(|&a| raw(c, a).starts_with('"'));
+            let checked = match (receiver, w) {
+                ("Objects", "requireNonNull") => Some(format!("{first} == null")),
+                (r, _) if CHECKERS.contains(&r) && literal => Some(match w {
+                    "isTrue" | "state" | "checkArgument" | "checkState" => format!("!({first})"),
+                    "notNull" | "checkNotNull" => format!("{first} == null"),
+                    _ => format!("!{r}.{w}({first})"),
+                }),
+                _ => None,
+            };
+            if let Some(cond) = checked {
+                let msg = last.and_then(|&a| message(c, a));
+                out.push((pos, format!("{receiver}.{w}"), Some(cond), msg));
+            }
+        }
+        out
+    }
+
+    pub(super) fn validations(x: &Extractor) -> Vec<Validation> {
+        let mut out = vec![];
+        for d in x.decls.iter().filter(|d| d.kw == "class") {
+            let (src, Some(body)) = (&x.files[d.file], d.body) else {
+                continue;
+            };
+            if src.kotlin {
+                continue;
+            }
+            for (property, rules, pos) in bean_fields(src, body) {
+                out.push(Validation {
+                    target_type: d.name.clone(),
+                    property,
+                    rules,
+                    file: src.rel.clone(),
+                    line: line(&src.text, pos),
+                    source: SOURCE.into(),
+                });
+            }
+        }
+        out
+    }
+
+    /// Fields of the class body `{…}` with Bean Validation annotations: (field,
+    /// annotations as written, offset of the first one).
+    fn bean_fields(src: &Src, (open, close): Span) -> Vec<(String, Vec<String>, usize)> {
+        let (s, b) = (src.text.as_str(), src.text.as_bytes());
+        let mut out = vec![];
+        let mut pending: Vec<(usize, String)> = vec![];
+        let mut k = open + 1;
+        while k < close {
+            match b[k] {
+                b'@' => {
+                    let end = (k + 1..close)
+                        .find(|&j| !(is_id(b[j]) || b[j] == b'.'))
+                        .unwrap_or(close);
+                    let paren = next_nonws(b, end).filter(|&o| b[o] == b'(');
+                    let stop = paren.and_then(|o| matching(b, o)).map_or(end, |c| c + 1);
+                    if BEAN_VALIDATION.contains(&simple(&s[k + 1..end]).as_str()) {
+                        pending.push((k, raw(code(src), (k, stop))));
+                    }
+                    k = stop;
+                    continue;
+                }
+                // Method parameters and bodies, nested types, initializer blocks.
+                b'(' | b'{' => {
+                    k = matching(b, k).map_or(close, |c| c + 1);
+                    pending.clear();
+                    continue;
+                }
+                b';' | b'=' if !pending.is_empty() => {
+                    let at = pending[0].0;
+                    let rules = pending.drain(..).map(|p| p.1).collect();
+                    out.push((prev_word(s, k).to_string(), rules, at));
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        out
+    }
+
+    pub(super) fn integration_events(x: &Extractor) -> Vec<IntegrationEvent> {
+        let mut found: BTreeMap<String, BTreeSet<Publisher>> = BTreeMap::new();
+        for d in &x.decls {
+            let src = &x.files[d.file];
+            for (_, name, _, body, _) in d.methods() {
+                for (t, pos) in publishes(&src.text, body) {
+                    found.entry(t).or_default().insert(Publisher {
+                        by: format!("{}.{name}", d.name),
+                        service: src.project.clone(),
+                        file: src.rel.clone(),
+                        line: line(&src.text, pos),
+                    });
+                }
+            }
+        }
+        (found.into_iter())
+            .map(|(type_name, by)| IntegrationEvent {
+                type_name,
+                published_by: by.into_iter().collect(),
+                handled_by: vec![],
+                source: SOURCE.into(),
+            })
+            .collect()
+    }
+
+    /// Payload types sent to a broker in `body`: (type, offset of the call).
+    fn publishes(s: &str, body: Span) -> Vec<(String, usize)> {
+        let b = s.as_bytes();
+        let mut out = vec![];
+        for (pos, w) in idents(s, body.0, body.1) {
+            let Some(dot) = prev_nonws(b, pos).filter(|&k| PUBLISH.contains(&w) && b[k] == b'.')
+            else {
+                continue;
+            };
+            let receiver = prev_word(s, dot).to_lowercase();
+            if !BROKER_RECEIVERS.iter().any(|r| receiver.contains(r)) {
+                continue;
+            }
+            let open = next_nonws(b, pos + w.len()).filter(|&k| b[k] == b'(');
+            let Some((open, close)) = open.and_then(|o| Some((o, matching(b, o)?))) else {
+                continue;
+            };
+            let Some(&last) = split_args(&s[open + 1..close]).last() else {
+                continue;
+            };
+            let span = span_of(s, last);
+            let arg = &s[span.0..span.1];
+            let types = if !arg.is_empty() && arg.bytes().all(is_id) {
+                assigned_news(s, (body.0, pos), arg)
+            } else {
+                top_news(s, span)
+            };
+            out.extend(types.into_iter().map(|t| (t, pos)));
+        }
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::extract;
+
+        const ACCOUNT: &str = r#"package shop.domain;
+
+import jakarta.persistence.*;
+import jakarta.validation.constraints.*;
+
+@Entity
+public class BankAccount {
+    @Id
+    private Long id;
+
+    @NotNull
+    @Size(max = 50, message = "a, b")
+    @Column(name = "name", nullable = false)
+    private String name;
+
+    @NotNull
+    private BigDecimal balance = BigDecimal.ZERO;
+
+    @OneToMany(mappedBy = "account")
+    private Set<Operation> operations = new HashSet<>();
+
+    public void withdraw(BigDecimal amount) {
+        Objects.requireNonNull(amount, "amount is required");
+        Assert.isTrue(amount.signum() > 0, "amount must be positive");
+        Assert.hasText(name, "named");
+        Preconditions.checkState(open, computed());
+        if (balance.compareTo(amount) < 0) {
+            throw new InsufficientFundsException("Balance " + balance + " too low");
+        }
+        balance = balance.subtract(amount);
+        kafkaTemplate.send("accounts", new AccountDebited(id, amount));
+    }
+
+    @NotNull
+    public String getName(@Valid @NotBlank String x) { return name; }
+}
+"#;
+
+        const SERVICE: &str = r#"package shop.service;
+
+public class TransferService {
+    public void transfer(Long id) {
+        var event = new TransferRequested(id);
+        rabbitTemplate.convertAndSend("x", "y", event);
+        streamBridge.send("out", payloadFactory.create());
+        mailSender.send(new Mail());
+    }
+    public void fail() { throw new IllegalStateException("not an entity"); }
+}
+"#;
+
+        const DTO: &str = r#"package shop.service.dto;
+
+public class AdminUserDTO {
+    @NotBlank
+    @Pattern(regexp = Constants.LOGIN_REGEX)
+    @Size(min = 1, max = 50)
+    private String login;
+
+    private String plain;
+}
+"#;
+
+        fn run() -> archguard_core::domain_model::DomainModel {
+            let dir = tempfile::tempdir().unwrap();
+            for (path, text) in [
+                ("bank/pom.xml", "<project/>"),
+                ("bank/src/main/java/shop/domain/BankAccount.java", ACCOUNT),
+                (
+                    "bank/src/main/java/shop/service/TransferService.java",
+                    SERVICE,
+                ),
+                ("bank/src/main/java/shop/service/dto/AdminUserDTO.java", DTO),
+            ] {
+                let path = dir.path().join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            extract(dir.path())
+        }
+
+        #[test]
+        fn java_rules_in_entity_methods_with_condition_and_literal_message() {
+            let model = run();
+            type Row<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a str, u32);
+            let rows: Vec<Row> = (model.rules.iter())
+                .map(|r| {
+                    (
+                        r.method.as_str(),
+                        r.condition.as_deref(),
+                        r.message.as_deref(),
+                        r.exception.as_str(),
+                        r.line,
+                    )
+                })
+                .collect();
+            let mut rows = rows;
+            rows.sort_by_key(|r| r.4);
+            assert_eq!(
+                rows,
+                [
+                    (
+                        "BankAccount.withdraw",
+                        Some("amount == null"),
+                        Some("amount is required"),
+                        "Objects.requireNonNull",
+                        23
+                    ),
+                    (
+                        "BankAccount.withdraw",
+                        Some("!(amount.signum() > 0)"),
+                        Some("amount must be positive"),
+                        "Assert.isTrue",
+                        24
+                    ),
+                    (
+                        "BankAccount.withdraw",
+                        Some("!Assert.hasText(name)"),
+                        Some("named"),
+                        "Assert.hasText",
+                        25
+                    ),
+                    (
+                        "BankAccount.withdraw",
+                        Some("balance.compareTo(amount) < 0"),
+                        Some(r#""Balance " + balance + " too low""#),
+                        "InsufficientFundsException",
+                        28
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn bean_validation_on_entity_and_dto_fields() {
+            let model = run();
+            let rows: Vec<(&str, &str, Vec<&str>, u32)> = (model.validations.iter())
+                .map(|v| {
+                    let rules = v.rules.iter().map(String::as_str).collect();
+                    (v.target_type.as_str(), v.property.as_str(), rules, v.line)
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                [
+                    (
+                        "AdminUserDTO",
+                        "login",
+                        vec![
+                            "@NotBlank",
+                            "@Pattern(regexp = Constants.LOGIN_REGEX)",
+                            "@Size(min = 1, max = 50)"
+                        ],
+                        4
+                    ),
+                    ("BankAccount", "balance", vec!["@NotNull"], 16),
+                    (
+                        "BankAccount",
+                        "name",
+                        vec!["@NotNull", r#"@Size(max = 50, message = "a, b")"#],
+                        11
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn broker_sends_with_a_literal_payload_type_are_integration_events() {
+            let model = run();
+            let rows: Vec<(&str, Vec<String>)> = (model.integration_events.iter())
+                .map(|e| {
+                    let by = (e.published_by.iter())
+                        .map(|p| format!("{} [{}] :{}", p.by, p.service, p.line))
+                        .collect();
+                    (e.type_name.as_str(), by)
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                [
+                    (
+                        "AccountDebited",
+                        vec!["BankAccount.withdraw [bank] :31".to_string()]
+                    ),
+                    (
+                        "TransferRequested",
+                        vec!["TransferService.transfer [bank] :6".to_string()]
+                    ),
+                ]
+            );
         }
     }
 }
