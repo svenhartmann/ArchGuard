@@ -75,3 +75,12 @@ msgstr "In diesem Projekt wurden keine Dienste gefunden."
 
 msgid "Nothing to save."
 msgstr "Nichts zu speichern."
+
+msgid "Theme"
+msgstr "Design"
+
+msgid "Solarized Light"
+msgstr "Solarized hell"
+
+msgid "Solarized Dark"
+msgstr "Solarized dunkel"

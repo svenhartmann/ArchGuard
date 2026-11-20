@@ -966,6 +966,7 @@ pub fn apply_review_decisions(
     }
     let mut document: ReviewDecisionImport = serde_json::from_slice(bytes).map_err(error)?;
     validate_decisions(&document.decisions)?;
+    crate::review_register::check_adr_gate(root, &document.decisions)?;
     document.check(&report.revision, &report.decision_fingerprint)?;
     stamp_and_check_new_decisions(report, &mut document.decisions, now)?;
     crate::review_register::replace_review_decisions(

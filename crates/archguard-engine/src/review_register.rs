@@ -239,6 +239,27 @@ fn open_lock_file(root: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+/// `[review] adr_required_on_accept_risk` (R30): with the gate on, an
+/// accepted risk without an ADR link is refused. The one rule for every
+/// way a decision is recorded: CLI, MCP, the import and the desktop.
+pub fn check_adr_gate(root: &Path, decisions: &[ReviewDecision]) -> Result<(), ArchguardError> {
+    let missing = decisions.iter().any(|d| {
+        d.decision == DecisionKind::AcceptRisk && d.adr_link.as_deref().is_none_or(str::is_empty)
+    });
+    if missing
+        && crate::config::load_config(None, root)?
+            .config
+            .review
+            .adr_required_on_accept_risk
+    {
+        return Err(ArchguardError::Analysis(
+            "[review] adr_required_on_accept_risk is set: an accept-risk decision needs an ADR link"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Load, upsert the decision by id and persist; returns the register
 /// as stored. An exclusive lock on `.archguard/reviews.lock` keeps two
 /// concurrent writers (e.g. two MCP sessions) from losing an entry.
@@ -246,6 +267,7 @@ pub fn upsert_decision(
     root: &Path,
     decision: ReviewDecision,
 ) -> Result<ReviewRegister, ArchguardError> {
+    check_adr_gate(root, std::slice::from_ref(&decision))?;
     let _lock = lock_register(root)?;
     let mut register = load_register(root)?;
     register.upsert(decision);

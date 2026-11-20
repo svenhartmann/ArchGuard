@@ -67,8 +67,8 @@ pub struct Diagram {
     pub edges: Vec<DiagramEdge>,
 }
 
-/// The colour tokens of `ui/theme.slint` (the web viewer's `:root` and
-/// dark override) that a diagram uses.
+/// The colour tokens of `ui/theme.slint` that a diagram uses
+/// (`panel` is the window's `panel-2`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: &'static str,
@@ -106,9 +106,37 @@ impl Theme {
         cycle: "#FF6B61",
     };
 
-    /// The theme the window shows (`Theme.dark` in Slint).
-    pub fn of(dark: bool) -> Theme {
-        if dark { Theme::DARK } else { Theme::LIGHT }
+    pub const SOLARIZED_LIGHT: Theme = Theme {
+        bg: "#EEE8D5",
+        panel: "#F5EFDC",
+        text: "#073642",
+        border: "#DDD6C1",
+        accent: "#1F6FA8",
+        edge: "#657B83",
+        incoming: "#1A7A73",
+        outgoing: "#6C71C4",
+        cycle: "#DC322F",
+    };
+    pub const SOLARIZED_DARK: Theme = Theme {
+        bg: "#002B36",
+        panel: "#04303C",
+        text: "#EEE8D5",
+        border: "#1A4955",
+        accent: "#4FA3E0",
+        edge: "#839496",
+        incoming: "#3DBDB3",
+        outgoing: "#9A9EE0",
+        cycle: "#F0605D",
+    };
+
+    /// The theme the window shows (`Theme.family` and `Theme.dark` in Slint).
+    pub fn of(family: i32, dark: bool) -> Theme {
+        match (family, dark) {
+            (1, false) => Theme::SOLARIZED_LIGHT,
+            (1, true) => Theme::SOLARIZED_DARK,
+            (_, false) => Theme::LIGHT,
+            (_, true) => Theme::DARK,
+        }
     }
 
     fn stroke(&self, kind: EdgeKind) -> &'static str {
@@ -286,7 +314,15 @@ mod tests {
 
     #[test]
     fn light_theme_changes_the_background() {
-        let text = svg(&diagram(), Theme::of(false));
+        let text = svg(&diagram(), Theme::of(0, false));
         assert!(text.contains("style=\"fill:#F5F7FB\""), "{text}");
+    }
+
+    #[test]
+    fn solarized_follows_the_window() {
+        let light = svg(&diagram(), Theme::of(1, false));
+        assert!(light.contains("style=\"fill:#EEE8D5\""), "{light}");
+        let dark = svg(&diagram(), Theme::of(1, true));
+        assert!(dark.contains("style=\"fill:#002B36\""), "{dark}");
     }
 }

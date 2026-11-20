@@ -48,6 +48,38 @@ fn an_exported_document_round_trips_through_the_import() {
         Some(fresh.decision_fingerprint.as_str())
     );
 }
+/// `[review] adr_required_on_accept_risk` holds for the import (desktop,
+/// `review --decisions`) as for `review-decision record` and MCP.
+#[test]
+fn the_import_keeps_the_adr_gate_on_accepted_risks() {
+    let root = project();
+    let toml = root.path().join("archguard.toml");
+    let gated = fs::read_to_string(&toml).unwrap() + "[review]\nadr_required_on_accept_risk=true\n";
+    fs::write(&toml, gated).unwrap();
+    let (mut r, _) = generate_review(root.path(), None, None, NOW).unwrap();
+    let mut risk = draft(&r);
+    risk.decision = DecisionKind::AcceptRisk;
+    risk.expires_on = Some("2099-12-31".into());
+    risk.adr_link = None;
+    let bytes = serde_json::to_vec(&review_decision_document(&r, &[risk.clone()])).unwrap();
+    let err = apply_review_decisions(root.path(), &mut r, &bytes, NOW).unwrap_err();
+    assert!(
+        err.to_string().contains("adr_required_on_accept_risk"),
+        "{err}"
+    );
+    assert!(
+        !root.path().join(".archguard/reviews.json").exists(),
+        "nothing recorded"
+    );
+    assert!(
+        upsert_decision(root.path(), risk.clone()).is_err(),
+        "the register refuses too"
+    );
+    risk.adr_link = Some("docs/adr/0007.md".into());
+    let bytes = serde_json::to_vec(&review_decision_document(&r, &[risk])).unwrap();
+    apply_review_decisions(root.path(), &mut r, &bytes, NOW).unwrap();
+}
+
 #[test]
 fn a_document_exported_before_a_newer_decision_is_refused() {
     let root = project();

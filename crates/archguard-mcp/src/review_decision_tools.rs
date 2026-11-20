@@ -186,17 +186,6 @@ pub fn record_value(root: &Path, params: &ReviewDecisionParams) -> Result<Value,
             ));
         }
     };
-    if kind == DecisionKind::AcceptRisk && params.adr.as_deref().is_none_or(str::is_empty) {
-        // R30's gate, mirrored from the CLI (R29): with the gate on, an
-        // accept-risk without an ADR is rejected (-32602), not recorded;
-        // with the gate off it is recorded like any other decision.
-        let loaded = crate::tools::load_config_at(root)?;
-        if loaded.config.review.adr_required_on_accept_risk {
-            return Err(crate::tools::invalid_params(
-                "[review] adr_required_on_accept_risk is set — pass `adr` (e.g. docs/adr/NNN.md) to record an accept-risk decision",
-            ));
-        }
-    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -219,6 +208,10 @@ pub fn record_value(root: &Path, params: &ReviewDecisionParams) -> Result<Value,
         ts: iso_from_unix(now),
         ..Default::default()
     };
+    // R30's gate (the engine's one rule): rejected (-32602), not recorded.
+    archguard_engine::check_adr_gate(root, std::slice::from_ref(&decision)).map_err(|e| {
+        crate::tools::invalid_params(format!("{e} — pass `adr` (e.g. docs/adr/NNN.md)"))
+    })?;
     let id = decision.id.clone();
     let register = upsert_decision(root, decision).map_err(register_error)?;
     let stored = register

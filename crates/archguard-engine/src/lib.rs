@@ -208,8 +208,8 @@ pub use reference_paths::source_reference_paths;
 pub use review_decision_doc::review_decision_document;
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
-    LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, iso_from_unix, load_register, register_path,
-    save_register, upsert_decision,
+    LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, check_adr_gate, iso_from_unix, load_register,
+    register_path, save_register, upsert_decision,
 };
 pub use review_session::{
     ReviewDecisionImport, ReviewFinding, ReviewReport, SavedReview, apply_review_decisions,
