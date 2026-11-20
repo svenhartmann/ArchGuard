@@ -248,6 +248,8 @@ conventions = [
   "frontend_backend_agree",        # no shown_but_refused / hidden_but_unprotected mismatch
   "state_changes_in_entity",       # C#: `x.Field = Enum.Value` on a state field only inside its entity, always a literal
   "events_through_raise_function", # C#: a `*DomainEvent`/`INotification` type is created only for AddDomainEvent(…)
+  "navigation_resolves",           # a literal navigation target matches a screen route of its application
+  "endpoint_called",               # an endpoint is called by some frontend action (only when screens/actions exist)
 ]
 ```
 

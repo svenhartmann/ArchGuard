@@ -10,6 +10,14 @@
 //! - `http_url_literal`: a `Call::Unresolved` action.
 //! - `frontend_backend_agree`: a `shown_but_refused` or
 //!   `hidden_but_unprotected` finding of [`ui_flow_findings`].
+//! - `navigation_resolves`: a navigation target that is readable but matches
+//!   no route of its application (the extractors' "matches no route" /
+//!   "is not a route" diagnostics, so the route matching is theirs); not for an
+//!   application with no route read at all, nor for non-path expressions.
+//! - `endpoint_called`: an endpoint no action of [`join_actions_to_endpoints`]
+//!   hits, only when the flow has a frontend (a screen or an action). No
+//!   endpoint can be marked open-for-external-use yet. `ANY` (MVC page) routes
+//!   are skipped; calls without a literal URL are named in the message.
 //! - `state_changes_in_entity`: in a C# file other than the entity's,
 //!   `x.Field = Enum.Value` for a state field of a found state machine; and
 //!   every non-literal state assignment the domain extractor reports.
@@ -27,8 +35,8 @@ use std::path::Path;
 
 use archguard_core::domain_model::DomainModel;
 use archguard_core::{
-    AccessState, Call, Config, Finding, FindingKind, Ref, Severity, Target, UiFlow,
-    UiFlowFindingKind, ui_flow_findings,
+    ANY_METHOD, AccessState, Call, Config, EndpointAccess, Finding, FindingKind, Ref, Severity,
+    Target, UiFlow, UiFlowFindingKind, join_actions_to_endpoints, ui_flow_findings,
 };
 
 use crate::extract_ctx::{ExtractContext, domain_sources};
@@ -40,11 +48,13 @@ use csharp::{
 #[path = "view_conventions_csharp.rs"]
 mod csharp;
 
-const UI_RULES: [&str; 4] = [
+const UI_RULES: [&str; 6] = [
     "navigation_literal",
     "endpoint_access_declared",
     "http_url_literal",
     "frontend_backend_agree",
+    "navigation_resolves",
+    "endpoint_called",
 ];
 const STATE: &str = "state_changes_in_entity";
 const EVENTS: &str = "events_through_raise_function";
@@ -92,11 +102,13 @@ pub fn convention_findings_in(
 type UiRule = fn(&UiFlow) -> Vec<Finding>;
 
 fn ui_findings(flow: &UiFlow, on: &BTreeSet<&str>) -> Vec<Finding> {
-    let rules: [(&str, UiRule); 4] = [
+    let rules: [(&str, UiRule); 6] = [
         ("navigation_literal", navigation_literal),
         ("endpoint_access_declared", endpoint_access_declared),
         ("http_url_literal", http_url_literal),
         ("frontend_backend_agree", frontend_backend_agree),
+        ("navigation_resolves", navigation_resolves),
+        ("endpoint_called", endpoint_called),
     ];
     rules
         .into_iter()
@@ -165,6 +177,58 @@ fn frontend_backend_agree(flow: &UiFlow) -> Vec<Finding> {
         ));
     }
     out
+}
+
+/// Only a path-shaped target counts for the "is not a route" message of the
+/// Blazor, XAML and Laravel extractors, which also use it for expressions.
+fn path_shaped(text: &str) -> bool {
+    text.starts_with('/') && (text.chars()).all(|c| c.is_alphanumeric() || "/-_.{}:*".contains(c))
+}
+
+fn navigation_resolves(flow: &UiFlow) -> Vec<Finding> {
+    // An application whose extractor read no route (a route table it cannot
+    // follow) says nothing about a missing route.
+    let routed = |app: &str| {
+        (flow.screens.iter()).any(|s| s.route.is_some() && s.application.as_deref() == Some(app))
+    };
+    let missing = flow.diagnostics.iter().filter_map(|d| {
+        let rest = d.message.strip_prefix("Navigation target ")?;
+        if let Some((target, app)) = rest.split_once(" matches no route of application ") {
+            return routed(app.trim_end_matches('.')).then_some((d, target));
+        }
+        let target = rest.split_once(" is not a route")?.0;
+        path_shaped(target).then_some((d, target))
+    });
+    missing.map(|(d, target)| finding("navigation_resolves", &d.file, d.line, target, format!(
+        "Navigation target `{target}` matches no screen route of its application. Fix: point it at an existing route, or add the screen."
+    ))).collect()
+}
+
+fn endpoint_called(flow: &UiFlow) -> Vec<Finding> {
+    if flow.screens.is_empty() && flow.actions.is_empty() {
+        return Vec::new();
+    }
+    let called: BTreeSet<*const EndpointAccess> = join_actions_to_endpoints(flow)
+        .into_iter()
+        .flat_map(|(_, hits)| hits)
+        .map(|e| e as *const _)
+        .collect();
+    // `ANY` endpoints are MVC page routes reached by navigation, not calls.
+    let uncalled = (flow.endpoints.iter())
+        .filter(|e| e.method != ANY_METHOD && !called.contains(&(*e as *const _)));
+    let blind = (flow.actions.iter())
+        .filter(|a| matches!(a.call, Call::Unresolved(_)))
+        .count();
+    let caveat = match blind {
+        0 => String::new(),
+        n => format!(" ({n} call(s) without a literal URL might reach it; see http_url_literal)"),
+    };
+    uncalled.map(|e| {
+        let subject = format!("{} {}", e.method, e.path);
+        finding("endpoint_called", &e.file, e.line, &subject, format!(
+            "Endpoint {subject} is called by no action of the frontend{caveat}. Fix: call it from a screen, or remove it."
+        ))
+    }).collect()
 }
 
 /// `(relative path, text with comments and string contents blanked)` of the
@@ -287,13 +351,15 @@ mod tests {
     use super::*;
     use archguard_core::{FindingKind, Severity};
 
-    const RULES: [&str; 6] = [
+    const RULES: [&str; 8] = [
         "navigation_literal",
         "endpoint_access_declared",
         "http_url_literal",
         "frontend_backend_agree",
         "state_changes_in_entity",
         "events_through_raise_function",
+        "navigation_resolves",
+        "endpoint_called",
     ];
 
     fn write(dir: &Path, files: &[(&str, &str)]) {
@@ -586,6 +652,64 @@ public class ShipOrderCommandHandler
         );
         let message = findings[0].message.as_deref().unwrap();
         assert!(message.contains("AddDomainEvent"), "{message}");
+    }
+
+    /// One lost link, one endpoint nobody calls.
+    const LINK_FLOW: &str = r#"{"definition":"ui-flow/v1","complete":true,
+"screens":[
+ {"id":"home","name":"Home","kind":"page","route":"/","application":"web","file":"Web/Home.razor","line":1,"source":"x"}],
+"transitions":[
+ {"from":{"screen":"home"},"target":{"unresolved":"/nowhere"},"file":"Web/Home.razor","line":3,"source":"x"}],
+"actions":[
+ {"screen":{"screen":"home"},"call":{"http":{"method":"GET","path":"/api/orders"}},"file":"Web/Home.razor","line":4,"source":"x"}],
+"endpoints":[
+ {"method":"GET","path":"/api/orders","access":"open","file":"Api/Orders.cs","line":7,"source":"x"},
+ {"method":"GET","path":"/api/unused","access":"open","file":"Api/Unused.cs","line":9,"source":"x"}],
+"diagnostics":[
+ {"file":"Web/Home.razor","line":3,"message":"Navigation target /nowhere matches no route of application web."},
+ {"file":"Web/Home.razor","line":5,"message":"Navigation target is not a literal: x"},
+ {"file":"Web/Home.razor","line":6,"message":"Navigation target returnUrl.ToString() is not a route of this application."},
+ {"file":"Web/Home.razor","line":7,"message":"Navigation target /x matches no route of application other."}]}"#;
+
+    fn linked(flow: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), &[(".archguard/ui-flow.json", flow)]);
+        dir
+    }
+
+    #[test]
+    fn navigation_resolves_names_the_target_without_a_route() {
+        let findings = run(linked(LINK_FLOW).path(), &["navigation_resolves"]);
+        assert_eq!(
+            ids_and_places(&findings),
+            [(
+                "view-navigation_resolves:Web/Home.razor:/nowhere".into(),
+                "Web/Home.razor".into(),
+                3
+            )]
+        );
+        assert!(run(kept().path(), &["navigation_resolves"]).is_empty());
+    }
+
+    #[test]
+    fn endpoint_called_names_the_endpoint_no_action_calls() {
+        let findings = run(linked(LINK_FLOW).path(), &["endpoint_called"]);
+        assert_eq!(
+            ids_and_places(&findings),
+            [(
+                "view-endpoint_called:Api/Unused.cs:GET /api/unused".into(),
+                "Api/Unused.cs".into(),
+                9
+            )]
+        );
+        assert!(run(kept().path(), &["endpoint_called"]).is_empty());
+    }
+
+    #[test]
+    fn endpoint_called_is_silent_without_a_frontend() {
+        let api = r#"{"definition":"ui-flow/v1","complete":true,
+"endpoints":[{"method":"GET","path":"/api/x","access":"open","file":"Api/X.cs","line":1,"source":"x"}]}"#;
+        assert!(run(linked(api).path(), &["endpoint_called"]).is_empty());
     }
 
     #[test]
