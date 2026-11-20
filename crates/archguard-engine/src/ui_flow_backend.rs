@@ -1930,6 +1930,15 @@ mod spring {
         use super::super::lex::{skip_ws, skip_ws_back};
         use super::super::*;
 
+        /// Whether the identifier at `s` is called as a method (`.name(`) or as a
+        /// statement (Kotlin receiver block: at a line start or after `{`/`;`),
+        /// not a declaration or a constructor (`new X(`, `Type name(`).
+        pub(super) fn call_position(src: &Source, s: usize) -> bool {
+            let b = src.bytes();
+            let q = skip_ws_back(b, s);
+            q == 0 || matches!(b[q - 1], b'.' | b'{' | b';') || b[q..s].contains(&b'\n')
+        }
+
         /// End of the call chain starting at `from`: the `;`, or (Kotlin has none) a
         /// line end outside brackets whose next code line does not continue the
         /// chain with a leading `.` (comment lines skipped; a trailing `.` continues).
@@ -2221,12 +2230,13 @@ mod spring {
                 .filter_map(|open| block(src, open))
                 .map(|(from, to, _)| (from, to))
                 .collect();
-            (0..b.len()).filter(|&i| b[i] == b'.').any(|i| {
-                let s = skip_ws(b, i + 1);
+            (0..b.len()).any(|s| {
                 let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
                 let name = &src.text[s..e];
-                (name.ends_with("Matcher") || name.ends_with("Matchers"))
+                (s == 0 || !lex::is_ident(b[s - 1]))
+                    && (name.ends_with("Matcher") || name.ends_with("Matchers"))
                     && b.get(skip_ws(b, e)) == Some(&b'(')
+                    && super::chain_span::call_position(src, s)
                     && !inside.iter().any(|&(from, to)| from <= s && s < to)
             })
         }
@@ -4415,6 +4425,43 @@ public class TicketController {
         }
         let flow = kotlin(
             "        http.csrf().disable()\n        http.authorizeRequests()\n            .antMatchers(\"/api/v1/open/**\").permitAll()\n            .anyRequest().authenticated()\n            .and().httpBasic()",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn kotlin_receiver_blocks_call_scoping_matchers_without_a_dot() {
+        let chain = "authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            .anyRequest().permitAll()";
+        for body in [
+            format!(
+                "        http.apply {{\n            {chain}\n            antMatcher(\"/api/**\")\n        }}"
+            ),
+            format!(
+                "        http.apply {{\n            antMatcher(\"/api/**\")\n            {chain}\n        }}"
+            ),
+            format!("        with(http) {{ antMatcher(\"/api/**\"); {chain} }}"),
+            format!(
+                "        http.run {{\n            {chain}\n            mvcMatcher(\"/api/**\")\n        }}"
+            ),
+        ] {
+            let flow = kotlin(&body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{body}"
+            );
+        }
+        let flow = kotlin(
+            "        http.apply {\n            authorizeRequests()\n                .antMatchers(\"/api/v1/open/**\").permitAll()\n                .anyRequest().authenticated()\n        }",
         );
         assert_eq!(
             access(&flow, "GET", "/api/v1/open/ping"),
