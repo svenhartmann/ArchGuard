@@ -429,3 +429,33 @@ async fn a_symlinked_backend_configuration_leaks_no_content_through_the_tools() 
     let topology = tools.service_topology(Parameters(params)).await.unwrap();
     assert!(!topology.contains("LEAKMARK"), "{topology}");
 }
+
+#[tokio::test]
+async fn domain_model_counts_and_lists_controller_only_dtos() {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, text) in [
+        (
+            "Api/ThingsController.cs",
+            "using Microsoft.AspNetCore.Mvc;\nnamespace S;\npublic class ThingsController : Controller\n{\n    public int Get([FromBody] CreateThing c) { return 0; }\n}\n",
+        ),
+        (
+            "Models/CreateThing.cs",
+            "namespace S;\npublic class CreateThing { public string Name { get; set; } }\n",
+        ),
+    ] {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let tools = ArchguardTools::new(dir.path().into());
+    let (last, rows) = all_rows(&tools, "domain_model", json!({"query": "creatething"})).await;
+    assert_eq!(last["metadata"]["summary"]["api_models"], 1);
+    let api = of_kind(&rows, "api_model");
+    assert_eq!(api.len(), 1, "{rows:#?}");
+    assert_eq!(api[0]["api_model"]["name"], "CreateThing");
+    assert_eq!(
+        api[0]["api_model"]["reason"],
+        "action body of ThingsController.Get"
+    );
+    assert!(of_kind(&rows, "entity").is_empty());
+}

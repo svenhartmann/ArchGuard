@@ -77,6 +77,14 @@ pub struct DomainModelSummary {
     pub validations: usize,
     #[serde(default)]
     pub integration_events: usize,
+    /// Controller DTOs listed in `api_models` instead of as entities; absent
+    /// from the JSON when zero, so apps without any keep their output.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub api_models: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 pub fn summary(model: &DomainModel) -> DomainModelSummary {
@@ -92,6 +100,7 @@ pub fn summary(model: &DomainModel) -> DomainModelSummary {
         rules: model.rules.len(),
         validations: model.validations.len(),
         integration_events: model.integration_events.len(),
+        api_models: model.api_models.len(),
     }
 }
 

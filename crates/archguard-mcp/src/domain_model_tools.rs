@@ -178,6 +178,10 @@ pub fn domain_model_value(
         .map(|e| json!({"kind":"event","event":e})),
     );
     rows.extend(rich_rows(model, entity));
+    // Set aside from the entities; they belong to no single entity.
+    if entity.is_none() {
+        rows.extend((model.api_models.iter()).map(|a| json!({"kind":"api_model","api_model":a})));
+    }
     rows.extend(
         model
             .diagnostics
@@ -249,7 +253,7 @@ fn page(
 #[tool_router(router = domain_model_router, vis = "pub(crate)")]
 impl ArchguardTools {
     #[tool(
-        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text of when it is allowed, raised events), use cases with the entity methods they call, domain events with raisers and handlers, rules (kind rule: entity method, condition under which it throws as source text, message, exception, file:line), validations (kind validation: FluentValidation RuleFor chains, Bean Validation annotations per property) and integration events (kind integration_event: publish sites Class.method with service, handling message handlers), plus summary and gap diagnostics. Built-in rules for C#, Java/Kotlin and TypeScript plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. chain=true returns instead one row per endpoint (and calling UI action) and per message handler (integration event, MassTransit/NServiceBus consumer, Kafka/Rabbit/JMS listener): its handler, the request types it sends, the use cases handling them, their state transitions, events and handlers, and in continues the chains of the message handlers of integration events it publishes (across services); entity+state returns the chains that cause that state (which endpoints, screens and message handlers can cause Order -> Paid). With roles or anonymous: true each chain also gets right = allowed/denied/unknown with reasons (endpoint access, screen reach), or not_a_user_path for a message handler. Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
+        description = "Read the domain model from code (ADR 0022): entities (aggregate root, entity, value object), relations, state machines with their transitions (from, to, method, guard as source text of when it is allowed, raised events), use cases with the entity methods they call, domain events with raisers and handlers, rules (kind rule: entity method, condition under which it throws as source text, message, exception, file:line), validations (kind validation: FluentValidation RuleFor chains, Bean Validation annotations per property) and integration events (kind integration_event: publish sites Class.method with service, handling message handlers), api models (kind api_model: name, file, line, reason; controller DTOs set aside from the entities, counted in summary.api_models), plus summary and gap diagnostics. Built-in rules for C#, Java/Kotlin and TypeScript plus .archguard/domain-model.json. entity narrows to one entity and adds to each transition its event chain (event -> handlers) and the use cases calling its method. chain=true returns instead one row per endpoint (and calling UI action) and per message handler (integration event, MassTransit/NServiceBus consumer, Kafka/Rabbit/JMS listener): its handler, the request types it sends, the use cases handling them, their state transitions, events and handlers, and in continues the chains of the message handlers of integration events it publishes (across services); entity+state returns the chains that cause that state (which endpoints, screens and message handlers can cause Order -> Paid). With roles or anonymous: true each chain also gets right = allowed/denied/unknown with reasons (endpoint access, screen reach), or not_a_user_path for a message handler. Static evidence, not a runtime trace; guards are never evaluated. Read-only; flattened 4 KiB pages, follow next_offset with metadata.revision as expected_revision."
     )]
     pub(crate) async fn domain_model(
         &self,
@@ -279,8 +283,8 @@ impl ArchguardTools {
 mod tests {
     use super::*;
     use archguard_engine::core::domain_model::{
-        DomainRule, Entity, EntityKind, IntegrationEvent, Publisher, UseCase, UseCaseKind,
-        Validation,
+        ApiModel, DomainRule, Entity, EntityKind, IntegrationEvent, Publisher, UseCase,
+        UseCaseKind, Validation,
     };
 
     fn model() -> DomainModel {
@@ -350,6 +354,31 @@ mod tests {
             ],
             ..DomainModel::default()
         }
+    }
+
+    #[test]
+    fn api_models_are_counted_and_listed_with_their_reason() {
+        let mut model = DomainModel::default();
+        let empty = domain_model_value(&model, None, &DomainModelParams::default()).unwrap();
+        assert!(empty["metadata"]["summary"].get("api_models").is_none());
+        assert!(rows(&model, json!({})).is_empty());
+        model.api_models = vec![ApiModel {
+            name: "CreateOrderRequest".into(),
+            file: "OrdersController.cs".into(),
+            line: 12,
+            reason: "action body of OrdersController.Create".into(),
+        }];
+        let page = domain_model_value(&model, None, &DomainModelParams::default()).unwrap();
+        assert_eq!(page["metadata"]["summary"]["api_models"], 1);
+        let all = rows(&model, json!({"query": "createorder"}));
+        let api = kinds(&all, "api_model");
+        assert_eq!(api.len(), 1);
+        assert_eq!(api[0]["api_model"]["name"], "CreateOrderRequest");
+        assert_eq!(api[0]["api_model"]["line"], 12);
+        assert_eq!(
+            api[0]["api_model"]["reason"],
+            "action body of OrdersController.Create"
+        );
     }
 
     fn rows(model: &DomainModel, args: Value) -> Vec<Value> {
