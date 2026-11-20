@@ -228,6 +228,15 @@ ApiPermissionOrAnonymous = "policy:$arg|open"
 
 A fallback (`|…`) follows only `role:$arg` or `policy:$arg` and is itself no `$arg` form; anything else is a configuration error. Without a fallback, a `$arg` guard or attribute without arguments is unknown.
 
+A frontend whose backend lives in another repository joins it with `[views] backends` (opt-in; without it nothing outside the project is read):
+
+```toml
+[views]
+backends = ["../bitwarden-server"]   # relative to the project root, or absolute
+```
+
+For each listed directory all extractors run and only its endpoints (with their access) join the actions of this project; application and file carry the configured path as prefix (`../bitwarden-server/Api`), so equally named applications do not collide. The backend's own `[views.access]` comes from its own `archguard.toml` when it has one, else from this project's. A path that is no directory or yields no endpoint, and every gap of the backend, is a diagnostic; the flow is then not complete. The backend must not be the project itself. Foreign endpoints belong to this project's flow, so they can make `endpoint_access_declared` of `archguard check` fail. Ids, notes and baselines contain the configured string: relative paths stay portable between machines, absolute ones are machine-specific. The MCP server reads a backend only inside its server root (any other path, and any path through a symlink, is a diagnostic and not read); the CLI reads what the configuration says.
+
 Conventions keep both views complete when an agent writes the code and `archguard check` runs after each of its steps. They are opt-in; without `[views]` nothing is checked:
 
 ```toml

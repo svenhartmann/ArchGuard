@@ -80,7 +80,9 @@ pub struct ViewsConfig {
     pub conventions: Vec<ViewConvention>,
     /// `backends = ["../server"]`: other repositories whose HTTP endpoints
     /// join the actions of this one (ADR 0021). Paths are relative to the
-    /// project root and may leave it: only because the user wrote them.
+    /// project root (or absolute) and may leave it: only because the user
+    /// wrote them. The MCP server reads a backend only inside its server
+    /// root and not through a symlink; the CLI reads what is written.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backends: Vec<String>,
     /// `[views.run.<application>]`: where the locally running application

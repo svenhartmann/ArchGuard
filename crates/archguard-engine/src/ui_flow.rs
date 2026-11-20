@@ -57,11 +57,13 @@ pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
 pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
     let import = read_ui_flow(ctx.root)?.unwrap_or_default();
     let mut flow = merge_ui_flows(import, extract_all(ctx));
+    let own = absolute(ctx.root, ".");
     let mut seen = std::collections::BTreeSet::new();
     for configured in &ctx.config.views.backends {
         let name = normalise(configured);
-        if seen.insert(name.clone()) {
-            add_backend(&mut flow, ctx, &name);
+        let same = absolute(ctx.root, &name);
+        if seen.insert(same.clone()) {
+            add_backend(&mut flow, ctx, &name, same == own);
         }
     }
     Ok(flow)
@@ -81,16 +83,21 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
 /// a backend configuration that does not parse is a gap and the frontend's
 /// rules apply. A backend's own `backends` are not followed.
 ///
-/// Paths are normalised lexically (see [`normalise`]) and equal ones read
-/// once. With `ctx.allowed_root` set (the MCP server root) a backend outside
-/// it is not read at all, not even checked for existence.
+/// Paths are normalised lexically (see [`normalise`]); ones that name the same
+/// directory (compared as normalised absolute forms, so an absolute and a
+/// relative spelling too) are read once, and one naming the project itself is a
+/// gap. A backend that lies inside the project also yields endpoints the local
+/// extractors found; they stay (prefixed, so ids differ) and are not skipped.
+/// With `ctx.allowed_root` set (the MCP server root) a backend outside it, or
+/// reached through a symlink, is not read at all, with one message that does
+/// not depend on the target.
 ///
 /// IDs, notes and baselines built from these elements contain the configured
 /// path: relative paths keep them portable between machines, absolute paths
 /// make them machine-specific. Foreign endpoints are part of the flow, so they
 /// can make `endpoint_access_declared` of the frontend's `check` fail; that is
 /// intended.
-fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str) {
+fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str, itself: bool) {
     let config_file =
         (ctx.config_file.clone()).unwrap_or_else(|| config_file_in(ctx.root).to_string());
     let mut fail = |message: String| {
@@ -98,20 +105,10 @@ fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str) {
         flow.complete = false;
     };
     let dir = ctx.root.join(name);
-    if ctx.allowed_root.is_some_and(|a| !inside(&dir, a, ctx.root)) {
-        return fail(format!(
-            "views.backends `{name}`: a backend outside the server root is not read."
-        ));
+    if let Some(why) = not_read(ctx, &dir, itself) {
+        return fail(format!("views.backends `{name}`: {why}"));
     }
-    if !dir.is_dir() {
-        return fail(format!(
-            "views.backends `{name}`: not an existing directory; its endpoints are unknown."
-        ));
-    }
-    let prefixed = |file: &str| match file {
-        "" => name.to_string(),
-        file => format!("{name}/{file}"),
-    };
+    let prefixed = |file: &str| prefix(name, file);
     let own = match found_root_config(&dir) {
         Ok(own) => own,
         Err((rel, e)) => {
@@ -163,6 +160,27 @@ fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str) {
     flow.diagnostics.dedup();
 }
 
+/// `file` below the backend `name`; the backend itself for no file.
+fn prefix(name: &str, file: &str) -> String {
+    match file {
+        "" => name.to_string(),
+        file => format!("{name}/{file}"),
+    }
+}
+
+/// Why the backend `dir` is not read at all, if so (see [`add_backend`]).
+fn not_read(ctx: &ExtractContext, dir: &Path, itself: bool) -> Option<&'static str> {
+    if itself {
+        return Some("a backend must not be the project itself.");
+    }
+    match ctx.allowed_root.and_then(|a| refusal(dir, a, ctx.root)) {
+        Some(Refusal::Outside) => Some("a backend outside the server root is not read."),
+        Some(Refusal::Link) => Some("a backend path through a symlink is not read."),
+        None if !dir.is_dir() => Some("not an existing directory; its endpoints are unknown."),
+        None => None,
+    }
+}
+
 /// `path` written lexically: `.` dropped, `x/..` collapsed, no trailing `/`;
 /// a leading `..` stays. Links are not looked at.
 fn normalise(path: &str) -> String {
@@ -192,18 +210,40 @@ fn normalise(path: &str) -> String {
     }
 }
 
-/// Whether `dir` (the root joined with a backend path) lies below the
-/// canonical `allowed`: first as written, without touching the file system,
-/// then, when it exists, where its links really lead.
-fn inside(dir: &Path, allowed: &Path, root: &Path) -> bool {
+/// Why a confined run does not read a backend.
+enum Refusal {
+    /// Lexically outside the allowed root; decided without the file system.
+    Outside,
+    /// A component below the allowed root is a symlink: refused whatever it
+    /// points to (never followed), so nothing outside tells existence.
+    Link,
+}
+
+/// The canonical form of the root joined with a backend path, written
+/// lexically (an absolute `name` replaces the root).
+fn absolute(root: &Path, name: &str) -> String {
     let base = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let rel = dir.strip_prefix(root).unwrap_or(dir);
-    let absolute = base.join(rel); // an absolute `rel` replaces `base`
-    let written = Path::new(&normalise(&absolute.to_string_lossy())).starts_with(allowed);
-    written
-        && dir
-            .canonicalize()
-            .map_or(true, |real| real.starts_with(allowed))
+    normalise(&base.join(name).to_string_lossy())
+}
+
+/// [`Refusal`] of `dir` (the root joined with a backend path) against the
+/// canonical `allowed` root; `None` when it may be read.
+fn refusal(dir: &Path, allowed: &Path, root: &Path) -> Option<Refusal> {
+    let name = dir.strip_prefix(root).unwrap_or(dir).to_string_lossy();
+    let written = absolute(root, &name);
+    let Ok(below) = Path::new(&written).strip_prefix(allowed) else {
+        return Some(Refusal::Outside);
+    };
+    let mut current = allowed.to_path_buf();
+    for component in below.components() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => return Some(Refusal::Link),
+            Ok(_) => {}
+            Err(_) => break, // absent: reported as not a directory
+        }
+    }
+    None
 }
 
 fn extract_all(ctx: &ExtractContext) -> UiFlow {
@@ -607,6 +647,62 @@ public class OrdersController : ControllerBase
         let flow =
             analyze_with(&ExtractContext::new(&front, &config).confined_to(&allowed)).unwrap();
         assert_eq!(flow.endpoints.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_backends_behind_a_symlink_give_one_message_whatever_the_target() {
+        let dir = two_repos("", &[BACK_ENDPOINT]);
+        let front = dir.path().join("front");
+        std::os::unix::fs::symlink(dir.path().join("back"), front.join("valid_link")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("nothing"), front.join("dangling_link"))
+            .unwrap();
+        let config: archguard_core::Config = toml::from_str(
+            "[views]\nbackends = [\"valid_link\", \"dangling_link\", \"valid_link/Api\"]\n",
+        )
+        .unwrap();
+        let allowed = front.canonicalize().unwrap();
+        let flow =
+            analyze_with(&ExtractContext::new(&front, &config).confined_to(&allowed)).unwrap();
+        assert!(flow.endpoints.is_empty(), "{:#?}", flow.endpoints);
+        let messages: Vec<String> = flow
+            .diagnostics
+            .iter()
+            .map(|d| d.message.clone())
+            .filter(|m| m.contains("views.backends"))
+            .collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        let generic = |m: &String| m.split_once(": ").map(|(_, rest)| rest.to_string());
+        let rests: std::collections::BTreeSet<_> = messages.iter().filter_map(generic).collect();
+        assert_eq!(rests.len(), 1, "{messages:?}");
+        assert!(
+            rests.iter().next().unwrap().contains("symlink"),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn a_backend_must_not_be_the_project_itself_and_equal_directories_read_once() {
+        let dir = two_repos("", &[BACK_ENDPOINT]);
+        let front = dir.path().join("front");
+        write(&front, &[BACK_ENDPOINT]);
+        let back = dir.path().join("back").canonicalize().unwrap();
+        let own = front.canonicalize().unwrap();
+        let toml = format!(
+            "[views]\nbackends = [\".\", \"\", \"./\", {:?}, \"../back\", {:?}]\n",
+            own.to_string_lossy(),
+            back.to_string_lossy()
+        );
+        let config: archguard_core::Config = toml::from_str(&toml).unwrap();
+        let flow = analyze_with(&ExtractContext::new(&front, &config)).unwrap();
+        let itself = flow
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("must not be the project itself"))
+            .count();
+        assert_eq!(itself, 1, "{:#?}", flow.diagnostics);
+        // The local controller once, the backend's once: no double read.
+        assert_eq!(flow.endpoints.len(), 2, "{:#?}", flow.endpoints);
     }
 
     fn project(json: Option<&str>) -> tempfile::TempDir {
