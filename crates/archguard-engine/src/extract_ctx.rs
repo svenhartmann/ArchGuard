@@ -52,17 +52,24 @@ pub fn with_root_config<T>(root: &Path, run: impl FnOnce(&ExtractContext) -> T) 
 /// `crate::config`: that module reaches `check`, `check` reaches the
 /// extractors, and the architecture gate refuses the cycle.
 pub fn root_config(root: &Path) -> Result<Config, String> {
+    Ok(found_root_config(root)?.unwrap_or_default())
+}
+
+/// [`root_config`], `None` when `root` has no configuration file.
+pub fn found_root_config(root: &Path) -> Result<Option<Config>, String> {
     for rel in [".archguard/archguard.toml", "archguard.toml"] {
         match read_repo_file(root, Path::new(rel), 1 << 20) {
             Ok(bytes) => {
                 let text = String::from_utf8(bytes).map_err(|e| format!("{rel}: {e}"))?;
-                return toml::from_str::<Config>(&text).map_err(|e| format!("{rel}: {e}"));
+                return toml::from_str::<Config>(&text)
+                    .map(Some)
+                    .map_err(|e| format!("{rel}: {e}"));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("{rel}: {e}")),
         }
     }
-    Ok(Config::default())
+    Ok(None)
 }
 
 /// The regular files below `root` in walk order, as paths relative to it,

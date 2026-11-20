@@ -2,7 +2,7 @@
 //! without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{ExtractContext, with_root_config};
+use crate::extract_ctx::{ExtractContext, found_root_config, gap, with_root_config};
 
 use archguard_core::{
     ArchguardError, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow, merge_ui_flows,
@@ -54,6 +54,73 @@ pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
 /// [`analyze`] for one run, e.g. with the configuration given by `--config`.
 pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
     let import = read_ui_flow(ctx.root)?.unwrap_or_default();
+    let mut flow = merge_ui_flows(import, extract_all(ctx));
+    for configured in &ctx.config.views.backends {
+        add_backend(&mut flow, ctx, configured);
+    }
+    Ok(flow)
+}
+
+/// `[views] backends` (ADR 0021): runs the extractors on the backend
+/// directory `configured` (relative to the root, or absolute; it may leave
+/// the root because the user wrote it, nothing else may) and adds ONLY its
+/// endpoints, so frontend actions join them like local ones. Application
+/// and file are prefixed with `configured`, which marks them as external
+/// and keeps equally named applications of both sides apart. A path that
+/// is no directory or yields no endpoint is a gap, never silent.
+///
+/// Access rule: the backend's own `[views.access]` comes from ITS
+/// `archguard.toml` when it has one, else from the frontend's configuration.
+/// A backend's own `backends` are not followed.
+fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, configured: &str) {
+    let mut fail = |message: String| {
+        gap(&mut flow.diagnostics, "archguard.toml", 0, message);
+        flow.complete = false;
+    };
+    let dir = ctx.root.join(configured);
+    if !dir.is_dir() {
+        return fail(format!(
+            "views.backends `{configured}`: not an existing directory; its endpoints are unknown."
+        ));
+    }
+    let own = match found_root_config(&dir) {
+        Ok(own) => own,
+        Err(e) => {
+            return fail(format!(
+                "views.backends `{configured}`: configuration not read ({e}); \
+                 the frontend's access rules apply."
+            ));
+        }
+    };
+    let backend = extract_all(&ExtractContext::new(
+        &dir,
+        own.as_ref().unwrap_or(ctx.config),
+    ));
+    if backend.endpoints.is_empty() {
+        return fail(format!(
+            "views.backends `{configured}`: no HTTP endpoints found."
+        ));
+    }
+    let name = configured.trim_end_matches('/');
+    for mut e in backend.endpoints {
+        e.application = Some(match e.application {
+            Some(app) => format!("{name}/{app}"),
+            None => name.to_string(),
+        });
+        e.file = format!("{name}/{}", e.file);
+        flow.endpoints.push(e);
+    }
+    for mut site in backend.handler_sites {
+        site.endpoint_file = format!("{name}/{}", site.endpoint_file);
+        flow.handler_sites.push(site);
+    }
+    flow.endpoints.sort();
+    flow.endpoints.dedup();
+    flow.handler_sites.sort();
+    flow.handler_sites.dedup();
+}
+
+fn extract_all(ctx: &ExtractContext) -> UiFlow {
     let extractors = [
         crate::ui_flow_blazor::extract_with,
         crate::ui_flow_angular::extract_with,
@@ -70,9 +137,9 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
         crate::ui_flow_rust::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
-    Ok(extractors
-        .into_iter()
-        .fold(import, |flow, extract| merge_ui_flows(flow, extract(ctx))))
+    (extractors.into_iter()).fold(UiFlow::default(), |flow, extract| {
+        merge_ui_flows(flow, extract(ctx))
+    })
 }
 
 #[cfg(test)]
@@ -197,6 +264,138 @@ public class OrdersController : ControllerBase
         write(dir.path(), &[(UI_FLOW_FILE, "{not json")]);
         let err = analyze(dir.path()).unwrap_err();
         assert!(err.to_string().contains(UI_FLOW_FILE), "{err}");
+    }
+
+    const FRONT_CALL: &str = r#"{"definition":"ui-flow/v1","complete":true,
+        "actions":[{"screen":{"screen":"Web:Pages/Orders.razor"},"call":{"http":{"method":"GET","path":"/api/orders"}},
+        "file":"x.json","line":1,"source":"x"}]}"#;
+    const PERMISSION_API: &str = "[ApiController]\n[Route(\"api/orders\")]\n\
+        [ApiPermission(\"orders.read\")]\npublic class OrdersController : ControllerBase\n\
+        {\n    [HttpGet]\n    public IActionResult List() => Ok();\n}\n";
+
+    /// `front/` calls `/api/orders`; `back/` serves it; `front` lists `back`.
+    fn two_repos(front_toml: &str, back_files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                ("front/Web/Web.csproj", "<Project />"),
+                ("front/Web/Pages/Orders.razor", BLAZOR_ORDERS),
+                ("front/archguard.toml", front_toml),
+                ("front/.archguard/ui-flow.json", FRONT_CALL),
+                ("back/Api/Api.csproj", "<Project />"),
+            ],
+        );
+        write(&dir.path().join("back"), back_files);
+        dir
+    }
+
+    fn joined(flow: &UiFlow) -> usize {
+        archguard_core::join_actions_to_endpoints(flow)
+            .iter()
+            .filter(|(_, hits)| !hits.is_empty())
+            .count()
+    }
+
+    #[test]
+    fn backends_join_only_when_configured() {
+        let back = [("Api/OrdersController.cs", API)];
+        let without = two_repos("", &back);
+        let flow = analyze(&without.path().join("front")).unwrap();
+        assert_eq!(joined(&flow), 0);
+        let with = two_repos("[views]\nbackends = [\"../back\"]\n", &back);
+        let flow = analyze(&with.path().join("front")).unwrap();
+        assert_eq!(joined(&flow), 1, "{:#?}", flow.endpoints);
+        let e = &flow.endpoints[0];
+        assert_eq!(e.application.as_deref(), Some("../back/Api"));
+        assert_eq!(e.file, "../back/Api/OrdersController.cs");
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn a_missing_or_empty_backend_is_a_gap() {
+        let dir = two_repos(
+            "[views]\nbackends = [\"../nope\", \"../back\", \"web/Pages/Orders.razor\"]\n",
+            &[("README.md", "x")],
+        );
+        let flow = analyze(&dir.path().join("front")).unwrap();
+        let messages: Vec<&str> = flow
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(!flow.complete);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`../nope`: not an existing")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`../back`: no HTTP endpoints")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Orders.razor`: not an existing")),
+            "{messages:?}"
+        );
+        assert!(flow.endpoints.is_empty());
+    }
+
+    #[test]
+    fn same_named_applications_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                ("front/Api/Api.csproj", "<Project />"),
+                ("front/Api/OrdersController.cs", API),
+                (
+                    "front/archguard.toml",
+                    "[views]\nbackends = [\"../back\"]\n",
+                ),
+                ("back/Api/Api.csproj", "<Project />"),
+                ("back/Api/OrdersController.cs", API),
+            ],
+        );
+        let flow = analyze(&dir.path().join("front")).unwrap();
+        let apps: Vec<_> = flow
+            .endpoints
+            .iter()
+            .map(|e| e.application.as_deref())
+            .collect();
+        assert_eq!(
+            apps,
+            [Some("../back/Api"), Some("Api")],
+            "{:#?}",
+            flow.endpoints
+        );
+    }
+
+    #[test]
+    fn backend_access_comes_from_its_own_config_else_the_frontends() {
+        let mapped = AccessState::Protected(Condition::Policy("orders.read".into()));
+        let front = |meaning: &str| {
+            format!(
+                "[views]\nbackends = [\"../back\"]\n[views.access]\nApiPermission = \"{meaning}\"\n"
+            )
+        };
+        // Its own configuration wins over the frontend's.
+        let own = "[views.access]\nApiPermission = \"policy:$arg\"\n";
+        let dir = two_repos(
+            &front("open"),
+            &[("Api/O.cs", PERMISSION_API), ("archguard.toml", own)],
+        );
+        let flow = analyze(&dir.path().join("front")).unwrap();
+        assert_eq!(flow.endpoints[0].access, mapped, "{:#?}", flow.diagnostics);
+        // Without one, the frontend's applies.
+        let dir = two_repos(&front("policy:$arg"), &[("Api/O.cs", PERMISSION_API)]);
+        let flow = analyze(&dir.path().join("front")).unwrap();
+        assert_eq!(flow.endpoints[0].access, mapped, "{:#?}", flow.diagnostics);
     }
 
     fn project(json: Option<&str>) -> tempfile::TempDir {
