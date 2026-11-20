@@ -39,12 +39,12 @@ pub struct Form {
     pub adr: String,
 }
 
-fn id(rule: &str, file: &str, subject: &str) -> String {
+pub fn id(rule: &str, file: &str, subject: &str) -> String {
     format!("view-{rule}:{file}:{subject}")
 }
 
 /// `#2`, `#3` … on repeated ids, in order, as `check` numbers them.
-fn numbered(ids: impl Iterator<Item = String>) -> Vec<String> {
+pub fn numbered(ids: impl Iterator<Item = String>) -> Vec<String> {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     ids.map(|id| {
         let n = seen.entry(id.clone()).or_default();
@@ -151,11 +151,12 @@ pub fn load(root: &Path) -> BTreeMap<String, ReviewDecision> {
         .collect()
 }
 
-/// The badge of a note: "noted: fix", "intentional", "noted: later".
+/// The badge of a note: "noted: fix", "accepted (intentional)" (as `check`
+/// accepts the finding), "noted: later".
 pub fn badge(d: &ReviewDecision) -> &'static str {
     match d.decision {
         DecisionKind::Fix => "noted: fix",
-        DecisionKind::AcceptRisk => "intentional",
+        DecisionKind::AcceptRisk => "accepted (intentional)",
         DecisionKind::Defer => "noted: later",
     }
 }
@@ -172,6 +173,28 @@ pub fn form(d: Option<&ReviewDecision>) -> Form {
         change: change.to_string(),
         adr: d.adr_link.clone().unwrap_or_default(),
     }
+}
+
+/// [`save`] by the git author (else "desktop") at the current time, with
+/// the project's ADR gate; the notes as read again.
+pub fn save_here(
+    root: &Path,
+    config: Option<&archguard_engine::core::Config>,
+    finding: &str,
+    form: &Form,
+) -> Result<BTreeMap<String, ReviewDecision>, String> {
+    let author = crate::review_decisions::git_author(root);
+    let author = if author.is_empty() {
+        "desktop".into()
+    } else {
+        author
+    };
+    let gate = config.is_some_and(|c| c.review.adr_required_on_accept_risk);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    save(root, finding, form, &author, gate, now)?;
+    Ok(load(root))
 }
 
 /// Record the note on `finding` in the register (upsert by id). With
@@ -323,7 +346,7 @@ mod tests {
         let notes = load(dir.path());
         let d = &notes["view-x:a:b"];
         assert_eq!(d.decision, DecisionKind::AcceptRisk);
-        assert_eq!(badge(d), "intentional");
+        assert_eq!(badge(d), "accepted (intentional)");
         assert_eq!(
             d.note,
             "Checked by hand in the handler\n\nSuggested change:\nAdd [Authorize] to OrdersApi"

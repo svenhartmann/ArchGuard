@@ -190,6 +190,9 @@ fn merge_others(path: &Path, doc: &DocumentMut, settings: &mut Settings) -> Resu
         std::mem::take(&mut s.language),
     );
     s.window = pick(base.window, disk.window, s.window);
+    s.graph = pick(base.graph, disk.graph, s.graph);
+    s.screens = pick(base.screens, disk.screens, s.screens);
+    s.domain = pick(base.domain, disk.domain, s.domain);
     s.session = pick(base.session, disk.session, s.session.take());
     if s.recent == base.recent {
         s.recent = disk.recent;

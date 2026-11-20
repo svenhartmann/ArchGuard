@@ -224,9 +224,11 @@ fn follow_tick(s: &mut ArchitectureState, ui: Option<&AppWindow>, id: &str, show
         doc.diagrams
             .iter()
             .any(|d| d.id == id && d.chapter == s.chapter)
-            || archguard_engine::report::arc42_file::diagram_ranges(&s.editor.chapter(doc, s.chapter))
-                .iter()
-                .any(|(_, i)| i == id)
+            || archguard_engine::report::arc42_file::diagram_ranges(
+                &s.editor.chapter(doc, s.chapter),
+            )
+            .iter()
+            .any(|(_, i)| i == id)
     });
     if !level
         && ours

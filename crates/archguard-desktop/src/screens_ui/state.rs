@@ -118,8 +118,10 @@ pub struct ScreensState {
     pub note_for: Option<(String, String)>,
     /// Why the last note or editor jump failed.
     pub problem: String,
-    /// "Show here": the file and line the code panel shows.
-    pub code: Option<(String, u32)>,
+    /// "Show here": the jumps the code overlay shows.
+    pub code: super::code::Code,
+    /// The tree's "Details" section is open; open until the user closes it.
+    pub details_open: bool,
 }
 
 pub fn build_from(flow: Result<UiFlow, String>) -> ScreensState {
@@ -145,7 +147,8 @@ pub fn build_from(flow: Result<UiFlow, String>) -> ScreensState {
         notes: BTreeMap::new(),
         note_for: None,
         problem: String::new(),
-        code: None,
+        code: Default::default(),
+        details_open: true,
         sim,
         config: None,
         app,
@@ -281,6 +284,20 @@ pub fn with_prefix(flow: &UiFlow, a: &mut Assignment) {
     a.roles.extend(extra);
 }
 
+/// The simulated user the Screens and Domain tabs share, per document: each
+/// tab records its choice here and takes it over before it shows.
+pub struct SharedRole(pub RoleIndex);
+
+/// Record `role` as the document's simulated user.
+pub fn share_role(role: RoleIndex) {
+    crate::documents::with_active_state_or(|| SharedRole(role), |r: &mut SharedRole| r.0 = role);
+}
+
+/// The document's simulated user, when a tab chose one.
+pub fn shared_role() -> Option<RoleIndex> {
+    crate::documents::with_active_state(|r: &mut SharedRole| r.0)
+}
+
 /// Anonymous (0), signed in without a role (1), else signed in with
 /// `roles[role - 2]`.
 pub fn role_assignment(role: RoleIndex, roles: &[String]) -> Assignment {
@@ -363,17 +380,13 @@ impl ScreensState {
         self.list = None;
         self.drill = None;
         self.note_for = None;
-        self.code = None;
         self.hide_details = false;
         self.browser_note.clear();
     }
 
-    /// Show `file` at `line` in the code panel; Back returns.
+    /// Show `file` at `line` in the code overlay; Back returns.
     pub fn show_code(&mut self, file: &str, line: u32) {
-        if !file.is_empty() {
-            self.code = Some((file.to_string(), line));
-            self.hide_details = false;
-        }
+        self.code.show(&self.root, file, line);
     }
 
     /// Show the drill-down of action `a` (index into the flow's actions).
@@ -487,8 +500,7 @@ impl ScreensState {
     /// Close a list back to the screen; else close the screen's details.
     pub fn close_details(&mut self) {
         self.problem.clear();
-        if self.code.take().is_none()
-            && self.note_for.take().is_none()
+        if self.note_for.take().is_none()
             && self.drill.take().is_none()
             && self.list.take().is_none()
         {
@@ -529,6 +541,17 @@ mod tests {
             ],
             ..UiFlow::default()
         }
+    }
+
+    #[test]
+    fn the_details_section_starts_open_and_keeps_the_choice() {
+        let mut s = build_from(Ok(flow()));
+        assert!(s.details_open, "open by default");
+        let texts = crate::tab_support::Texts::default();
+        assert!(super::super::view::build(&s, &texts).details_open);
+        s.details_open = false;
+        s.select_screen(1);
+        assert!(!super::super::view::build(&s, &texts).details_open, "kept");
     }
 
     #[test]

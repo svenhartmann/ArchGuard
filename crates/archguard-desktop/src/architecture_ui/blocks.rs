@@ -5,9 +5,9 @@ use slint::{SharedString, StyledText};
 
 use super::markdown::{self, Align, Block};
 use super::rich::inline::Inline;
-use archguard_engine::report::arc42_file::{heading_number, line_starts};
 use crate::tab_support::model;
 use crate::ui::ArcBlock;
+use archguard_engine::report::arc42_file::{heading_number, line_starts};
 
 /// The chapter body after its `## N.` heading, as the web's `update()`;
 /// with a derived diagram, chapter 5 drops its Mermaid source.

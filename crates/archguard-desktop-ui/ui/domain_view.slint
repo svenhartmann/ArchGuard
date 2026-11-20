@@ -1,252 +1,186 @@
-// Domain tab (ADR 0022): entities by aggregate, the selected entity's
-// fields and state machine, and the domain events. Data and callbacks live
-// in DomainData, set from src/domain_ui.rs.
-import { ScrollView } from "std-widgets.slint";
+// Domain tab (ADR 0022), laid out like the Screens tab. Top: service,
+// simulated user (shared with the Screens tab), summary. Left: the tree by
+// service and aggregate, the events. Centre: the focused entity, event or
+// use case, or the whole model. Right: the note form. "Show here" opens
+// the file over the view. Data and callbacks live in DomainData, set from
+// src/domain_ui.rs.
+import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { EmptyState, SectionHeading } from "widgets.slint";
+import { EmptyState, SectionHeading, Legend, Disclosure, TipArea } from "widgets.slint";
 import { Fmt } from "format.slint";
-import { Para, LinkLine, SummaryBar, PanelTitle, Heading } from "flow_parts.slint";
-import { EntityCanvas, StateDiagram, DomainKinds, DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
-import { RoleRow, FlowRole } from "screens_view.slint";
+import { Para, Segments, BarLabel, RoleChoice } from "flow_parts.slint";
+import { ComboBox } from "combo.slint";
+import { EntityCanvas, DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+import { ScreensInspector } from "screens_inspector.slint";
+import { CodeOverlay } from "code_overlay.slint";
+import { GraphPanels, SideHandles } from "graph_panels.slint";
+import { DomainData, DomainViewModel, DomTreeRow, DomField, DomTransition, DomChain, DomLink, DomRuleGroup } from "domain_data.slint";
+import { EntityFocus, EventFocus, UseCaseFocus } from "domain_focus.slint";
 
-export { DomCard, DomArrow, DomBand, DomState, DomStateArrow }
+export { DomCard, DomArrow, DomBand, DomState, DomStateArrow, DomainData, DomainViewModel, DomTreeRow, DomField, DomTransition, DomChain, DomLink, DomRuleGroup }
 
-export struct DomField {
-    name: string,
-    type: string,
-}
-
-export struct DomTransition {
-    number: string,
-    to: string,
-    from-to: string,
-    method: string,
-    guard: string,
-    events: string,
-    location: string,
-    file: string,
-}
-
-// One element of a chain; `tone` colours the endpoint for the simulated
-// user: 0 allowed, 1 denied, 2 unknown, -1 none.
-export struct DomStep {
-    kind: string,
-    text: string,
-    location: string,
-    file: string,
-    tone: int,
-}
-
-// action → endpoint → use cases → transitions → events (ADR 0022 decision 4).
-export struct DomChain {
-    steps: [DomStep],
-}
-
-export struct DomEvent {
-    name: string,
-    raised: string,
-    handled: string,
-}
-
-export struct DomainViewModel {
-    // 0 loading, 1 ready, 2 the model could not be read.
-    state: int,
-    error: string,
-    entities: int,
-    machines: int,
-    transitions: int,
-    use-cases: int,
-    event-count: int,
-    complete: bool,
-    cards: [DomCard],
-    arrows: [DomArrow],
-    bands: [DomBand],
-    width: float,
-    height: float,
-    // The selected entity (index into the model's entities), or -1.
-    selected: int,
-    title: string,
-    kind: int,
-    location: string,
-    file: string,
-    fields: [DomField],
-    machine-title: string,
-    states: [DomState],
-    state-arrows: [DomStateArrow],
-    state-w: float,
-    state-h: float,
-    rows: [DomTransition],
-    events: [DomEvent],
-    // The state picked in the diagram or table, its chains, the entity's chains.
-    chosen-state: string,
-    triggers: [DomChain],
-    chains: [DomChain],
-    roles: [FlowRole],
-    // Why there are no chains: the UI flow could not be read.
-    flow-note: string,
-}
-
-export global DomainData {
-    in-out property <DomainViewModel> model;
-    callback select-entity(int);
-    callback close-details();
-    callback open-file(string);
-    // A state of the shown state machine, by name.
-    callback select-state(string);
-    callback select-role(int);
-}
-
-component Cell inherits Text {
-    in property <bool> head;
-    color: head ? Theme.muted : Theme.text;
-    font-size: head ? Theme.font-caption : Theme.font-small;
-    font-weight: head ? Theme.weight-strong : Theme.weight-regular;
-    wrap: word-wrap;
-    vertical-alignment: top;
-}
-
-component TransitionRow inherits Rectangle {
-    in property <DomTransition> item;
-    in property <bool> head;
-    in property <bool> chosen;
-    callback open-file(string);
-    callback select();
-    height: cells.preferred-height;
-    background: !head && chosen ? Theme.accent.with-alpha(0.16) : !head && t.has-hover ? Theme.panel-2 : transparent;
-    t := TouchArea {
-        enabled: !root.head;
-        mouse-cursor: pointer;
-        clicked => { root.select(); }
-    }
-    cells := HorizontalLayout {
-        padding-top: 5px;
-        padding-bottom: 5px;
-        spacing: 12px;
-        Cell { head: root.head; width: 22px; text: root.head ? "#" : item.number; }
-        Cell { head: root.head; width: 190px; text: root.head ? @tr("from → to") : item.from-to; }
-        Cell { head: root.head; width: 200px; text: root.head ? @tr("method") : item.method; font-family: root.head ? "" : Theme.mono-family; }
-        Cell { head: root.head; horizontal-stretch: 2; text: root.head ? @tr("allowed when") : item.guard; font-family: root.head ? "" : Theme.mono-family; }
-        Cell { head: root.head; horizontal-stretch: 1; text: root.head ? @tr("events") : item.events; }
-        Cell {
-            head: root.head;
-            width: 210px;
-            text: root.head ? @tr("file") : item.location;
-            color: root.head ? Theme.muted : Theme.accent;
-            TouchArea {
-                enabled: !root.head;
-                mouse-cursor: pointer;
-                clicked => { root.open-file(item.file); }
-            }
-        }
-    }
-}
-
-component ChainBox inherits VerticalLayout {
-    in property <DomChain> chain;
-    spacing: 3px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-    Rectangle { height: 1px; background: Theme.border; }
-    for s in chain.steps: HorizontalLayout {
+component TopBar inherits Rectangle {
+    property <DomainViewModel> m: DomainData.model;
+    // The picker keeps what the user chose; a new model must not reset it.
+    property <int> service: m.service-index;
+    changed service => { svc.current-index = root.service; }
+    height: row.preferred-height;
+    row := HorizontalLayout {
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: 8px;
+        padding-bottom: 8px;
         spacing: 10px;
-        Text { text: s.kind; width: 110px; color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: top; }
-        VerticalLayout {
+        BarLabel { text: @tr("Domain" => "Service"); }
+        svc := ComboBox {
+            width: 210px;
+            model: m.services;
+            current-index: m.service-index;
+            selected => { DomainData.select-service(self.current-index); }
+        }
+        Rectangle { width: 6px; }
+        RoleChoice {
+            role: m.role;
+            names: m.role-names;
+            picked(i) => { DomainData.select-role(i); }
+        }
+        Rectangle { horizontal-stretch: 1; min-width: 6px; }
+        if !m.complete: BarLabel {
+            text: @tr("Analysis incomplete");
+            color: Theme.warning;
+            TipArea { tip: @tr("Some elements could not be read by the rules; the model is not complete."); }
+        }
+        BarLabel {
+            text: @tr("{0} entity" | "{0} entities" % m.entities, Fmt.int(m.entities))
+                + " · " + @tr("{0} rule" | "{0} rules" % m.rule-count, Fmt.int(m.rule-count))
+                + " · " + @tr("{0} validation" | "{0} validations" % m.validation-count, Fmt.int(m.validation-count))
+                + " · " + @tr("{0} event" | "{0} events" % m.event-count, Fmt.int(m.event-count))
+                + " · " + @tr("{0} state machine" | "{0} state machines" % m.machines, Fmt.int(m.machines));
+            color: Theme.text;
+            overflow: elide;
+            min-width: 80px;
+        }
+        Text {
+            text: @tr("Static evidence from code");
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            font-italic: true;
+            vertical-alignment: center;
+            overflow: elide;
+            min-width: 60px;
+            TipArea { tip: @tr("Read from source files by fixed rules, not observed at run time."); }
+        }
+    }
+}
+
+// A tree row: indent, open/close for groups, marks, label.
+component TreeLine inherits Rectangle {
+    in property <DomTreeRow> item;
+    height: 28px;
+    border-radius: 5px;
+    background: item.selected ? Theme.package-selected : touch.has-hover ? Theme.panel-2 : transparent;
+    if item.selected: Rectangle { x: 0; width: 2px; background: Theme.accent; }
+    HorizontalLayout {
+        padding-left: 4px + item.depth * 14px;
+        // Clear of the list's scroll bar.
+        padding-right: 14px;
+        spacing: 5px;
+        Text {
+            width: 12px;
+            text: item.group ? (item.open ? "▾" : "▸") : "";
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+        }
+        Text {
+            text: item.label;
+            color: item.group && item.depth == 0 ? Theme.text : item.group ? Theme.muted : Theme.text;
+            font-size: Theme.font-small;
+            font-weight: item.selected || (item.group && item.depth == 0) ? Theme.weight-strong : Theme.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
             horizontal-stretch: 1;
-            Para {
-                text: s.text;
-                color: s.tone == 0 ? Theme.success : s.tone == 1 ? Theme.priority : s.tone == 2 ? Theme.outgoing : Theme.text;
+            min-width: 30px;
+        }
+        if item.note != "": Text { text: item.note; color: Theme.muted; font-size: Theme.font-caption; vertical-alignment: center; }
+        // Marks: state machine (a ring with an arrow head), rules, note.
+        if item.machine: Path {
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: "M 10 6 A 4 4 0 1 1 6 2 M 6 2 L 4 0.5 M 6 2 L 4 3.5";
+            stroke: Theme.accent;
+            stroke-width: 1.3px;
+        }
+        if item.rules > 0: Text { text: @tr("{0} rule" | "{0} rules" % item.rules, Fmt.int(item.rules)); color: Theme.outgoing; font-size: Theme.font-caption; vertical-alignment: center; }
+        if item.noted: Rectangle {
+            width: 8px;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: Theme.priority;
+        }
+        if item.group: Text { text: Fmt.int(item.count); color: Theme.muted; font-size: Theme.font-micro; vertical-alignment: center; }
+    }
+    touch := TipArea {
+        tip: item.label + (item.note != "" ? " · " + item.note : "");
+        pin-on-click: false;
+        mouse-cursor: pointer;
+        activated => {
+            if (item.group) {
+                DomainData.toggle-group(item.key);
+            } else {
+                DomainData.select(item.kind, item.index);
             }
-            if s.location != "": LinkLine { text: s.location; mono: true; clicked => { DomainData.open-file(s.file); } }
         }
     }
 }
 
-// The selected entity's state machine: diagram, then the table, then the
-// chains into the chosen state and of the entity.
-component MachinePanel inherits ScrollView {
+component TreePanel inherits Rectangle {
     property <DomainViewModel> m: DomainData.model;
+    // Starts as stored (open by default), reports each toggle.
+    property <bool> details: true;
+    init => { root.details = m.details-open; }
+    changed details => { DomainData.set-details-open(root.details); }
+    background: Theme.panel;
     VerticalLayout {
-        width: max(root.visible-width, m.state-w * 1px + 2 * Theme.page-pad);
-        padding: Theme.page-pad;
-        spacing: 6px;
-        alignment: start;
-        Heading { text: m.machine-title; }
-        Para { text: @tr("Transitions are numbered as the rows below. Guards are source text, never evaluated."); muted: true; }
-        StateDiagram {
-            states: m.states;
-            arrows: m.state-arrows;
-            canvas-w: m.state-w;
-            canvas-h: m.state-h;
-            select(s) => { DomainData.select-state(s); }
+        padding: 12px;
+        spacing: 8px;
+        if m.tree.length == 0: Para { text: @tr("No entities found."); muted: true; }
+        ListView {
+            vertical-stretch: 1;
+            for r in m.tree: TreeLine { item: r; }
         }
-        TransitionRow { head: true; }
-        for r in m.rows: VerticalLayout {
-            Rectangle { height: 1px; background: Theme.border; }
-            TransitionRow {
-                item: r;
-                chosen: r.to == m.chosen-state;
-                open-file(f) => { DomainData.open-file(f); }
-                select => { DomainData.select-state(r.to); }
+        Rectangle { height: 1px; background: Theme.border; }
+        Disclosure { text: @tr("Details: legend"); open <=> root.details; }
+        if root.details: VerticalLayout {
+            spacing: 4px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Path {
+                    width: 12px;
+                    height: 12px;
+                    viewbox-width: 12;
+                    viewbox-height: 12;
+                    commands: "M 10 6 A 4 4 0 1 1 6 2 M 6 2 L 4 0.5 M 6 2 L 4 3.5";
+                    stroke: Theme.accent;
+                    stroke-width: 1.3px;
+                }
+                Para { text: @tr("has a state machine"); }
             }
-        }
-        Rectangle { height: 10px; }
-        SectionHeading { label: @tr("Who can cause this"); }
-        if m.flow-note != "": Para { text: m.flow-note; muted: true; }
-        if m.chosen-state == "": Para { text: @tr("Select a state in the diagram or a row of the table."); muted: true; }
-        if m.chosen-state != "": Para { text: @tr("Chains into {}: screen action → endpoint → use case → transition → events. The endpoint shows what it says to the simulated user.", m.chosen-state); muted: true; }
-        if m.chosen-state != "" && m.triggers.length == 0: Para { text: @tr("No endpoint chain leads into this state."); muted: true; }
-        for c in m.triggers: ChainBox { chain: c; }
-        Rectangle { height: 10px; }
-        SectionHeading { label: @tr("Chains of this entity ({})", Fmt.int(m.chains.length)); }
-        if m.chains.length == 0: Para { text: @tr("No endpoint chain changes this entity."); muted: true; }
-        for c in m.chains: ChainBox { chain: c; }
-    }
-}
-
-component SidePanel inherits ScrollView {
-    property <DomainViewModel> m: DomainData.model;
-    VerticalLayout {
-        width: root.visible-width;
-        padding: 14px;
-        spacing: 6px;
-        alignment: start;
-        if m.selected < 0: Para { text: @tr("Select an entity to see its fields and states."); muted: true; }
-        if m.selected >= 0: PanelTitle { text: m.title; close => { DomainData.close-details(); } }
-        if m.selected >= 0: Para { text: DomainKinds.label(m.kind); muted: true; }
-        if m.selected >= 0: LinkLine { text: m.location; mono: true; clicked => { DomainData.open-file(m.file); } }
-        if m.selected >= 0: SectionHeading { label: @tr("Fields"); }
-        if m.selected >= 0 && m.fields.length == 0: Para { text: @tr("No fields read."); muted: true; }
-        for f in m.fields: HorizontalLayout {
-            spacing: 8px;
-            Para { text: f.name; horizontal-stretch: 1; }
-            Para { text: f.type; mono: true; muted: true; horizontal-alignment: right; }
-        }
-        if m.states.length > 0: Rectangle { height: 8px; }
-        if m.states.length > 0: SectionHeading { label: @tr("Simulate as"); }
-        if m.states.length > 0: Para { text: @tr("Colours each chain's endpoint, as in the Screens view."); muted: true; }
-        if m.states.length > 0: VerticalLayout {
-            spacing: 6px;
-            for r[i] in m.roles: RoleRow {
-                role: r;
-                clicked => { DomainData.select-role(i); }
-            }
-        }
-        Rectangle { height: 8px; }
-        SectionHeading { label: @tr("Events"); }
-        if m.events.length == 0: Para { text: @tr("No domain events read."); muted: true; }
-        for e in m.events: VerticalLayout {
-            padding-top: 4px;
-            padding-bottom: 4px;
-            spacing: 1px;
-            Para { text: e.name; font-weight: Theme.weight-strong; }
-            Para { text: @tr("raised by {}", e.raised); muted: true; }
-            Para { text: "→ " + @tr("handled by {}", e.handled); muted: true; }
+            Para { text: @tr("“3 rules”: methods that throw a domain exception"); color: Theme.outgoing; }
+            Legend { text: @tr("noted for the coding agent"); swatch: Theme.priority; }
+            Para { text: @tr("Services are the folders of the nearest project file (.csproj, pom.xml, build.gradle)."); muted: true; }
         }
     }
 }
 
 export component DomainView inherits Rectangle {
     property <DomainViewModel> m: DomainData.model;
+    property <bool> details-on: m.inspector.mode > 0;
     background: Theme.bg;
     min-width: 360px;
     preferred-width: 1480px;
@@ -262,39 +196,80 @@ export component DomainView inherits Rectangle {
     }
     if m.state == 2: EmptyState { title: m.error; }
     if m.state == 1: VerticalLayout {
-        SummaryBar {
-            complete: m.complete;
-            gaps-tip: @tr("Some elements could not be read by the rules; the model is not complete.");
-            text: @tr("{0} entity" | "{0} entities" % m.entities, Fmt.int(m.entities))
-                + " · " + @tr("{0} state machine" | "{0} state machines" % m.machines, Fmt.int(m.machines))
-                + " · " + @tr("{0} transition" | "{0} transitions" % m.transitions, Fmt.int(m.transitions))
-                + " · " + @tr("{0} use case" | "{0} use cases" % m.use-cases, Fmt.int(m.use-cases))
-                + " · " + @tr("{0} event" | "{0} events" % m.event-count, Fmt.int(m.event-count));
-        }
+        TopBar { }
         Rectangle { height: 1px; background: Theme.border; }
         HorizontalLayout {
             vertical-stretch: 1;
+            TreePanel { width: GraphPanels.domain-tree-w; }
+            Rectangle { width: 1px; background: Theme.border; }
             VerticalLayout {
                 horizontal-stretch: 1;
-                if m.cards.length == 0: EmptyState {
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-left: 14px;
+                    spacing: 10px;
+                    Segments {
+                        items: [@tr("Focus"), @tr("Whole model")];
+                        chosen: m.whole ? 1 : 0;
+                        tips: [@tr("The selected entity, event or use case"), @tr("Every entity by aggregate with its relations")];
+                        picked(i) => { DomainData.set-whole(i == 1); }
+                    }
+                    BarLabel {
+                        text: m.whole ? @tr("Click an entity to focus it.") : @tr("Pick an entity, event or use case in the tree.");
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if m.problem != "": Text { text: m.problem; color: Theme.danger; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                if m.whole && m.cards.length == 0: EmptyState {
                     vertical-stretch: 1;
                     title: @tr("No entities found.");
                     reason: @tr("Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json.");
                 }
-                if m.cards.length > 0: EntityCanvas {
+                if m.whole && m.cards.length > 0: EntityCanvas {
                     vertical-stretch: 1;
                     cards: m.cards;
                     arrows: m.arrows;
                     bands: m.bands;
                     canvas-w: m.width;
                     canvas-h: m.height;
-                    select(i) => { DomainData.select-entity(i); }
+                    select(i) => { DomainData.select(0, i); }
                 }
-                if m.states.length > 0: Rectangle { height: 1px; background: Theme.border; }
-                if m.states.length > 0: MachinePanel { vertical-stretch: 1.2; }
+                if !m.whole && m.focus < 0: EmptyState {
+                    vertical-stretch: 1;
+                    title: @tr("Pick an entity, event or use case in the tree.");
+                    reason: @tr("Entities come from ORM mappings, aggregate markers and the import file .archguard/domain-model.json.");
+                }
+                if !m.whole && m.focus == 0: EntityFocus { vertical-stretch: 1; }
+                if !m.whole && (m.focus == 1 || m.focus == 2): EventFocus { vertical-stretch: 1; }
+                if !m.whole && m.focus == 3: UseCaseFocus { vertical-stretch: 1; }
             }
-            Rectangle { width: 1px; background: Theme.border; }
-            SidePanel { width: 320px; }
+            if root.details-on: Rectangle { width: 1px; background: Theme.border; }
+            if root.details-on: ScreensInspector {
+                width: GraphPanels.domain-details-w;
+                data: m.inspector;
+                close => { DomainData.close-details(); }
+                open-editor(f, l) => { DomainData.open-editor(f, l); }
+                show-line(f, l) => { DomainData.show-line(f, l); }
+                save-note => { DomainData.save-note(); }
+            }
         }
+    }
+    if m.state == 1: SideHandles {
+        width: root.width;
+        height: root.height;
+        view: 1;
+        top: 50px;
+        tree-w: GraphPanels.domain-tree-w;
+        details-w: GraphPanels.domain-details-w;
+        details-on: root.details-on;
+    }
+    if m.code.open: CodeOverlay {
+        width: root.width;
+        height: root.height;
+        code: m.code;
+        close => { DomainData.close-code(); }
+        open-editor(f, l) => { DomainData.open-editor(f, l); }
     }
 }

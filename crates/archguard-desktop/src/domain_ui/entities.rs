@@ -53,7 +53,7 @@ pub struct Diagram {
 /// Each entity's band (root index or `None`) and column, by breadth first
 /// search from every aggregate root along `has_one`/`has_many`; another
 /// root ends the search.
-fn membership(model: &DomainModel) -> Vec<(Option<usize>, usize)> {
+pub fn membership(model: &DomainModel) -> Vec<(Option<usize>, usize)> {
     let ids: HashMap<&str, usize> = (model.entities.iter().enumerate())
         .map(|(i, e)| (e.id.as_str(), i))
         .collect();

@@ -1,8 +1,10 @@
 // Parts shared by the Screens and Domain views (src/screens_ui.rs,
 // src/domain_ui.rs): text styles, a clickable link line, the panel
-// header and the summary bar with its "static evidence" note.
+// header, the summary bar with its "static evidence" note, the segmented
+// choice and the simulated-user control of both top bars.
 import { Theme } from "theme.slint";
 import { Icons, Button, TipArea } from "widgets.slint";
+import { ComboBox } from "combo.slint";
 
 export component Para inherits Text {
     in property <bool> muted;
@@ -103,4 +105,60 @@ export component Fact inherits VerticalLayout {
     spacing: 1px;
     Text { text: root.label; color: Theme.muted; font-size: Theme.font-caption; }
     Para { text: root.value; mono: root.mono; }
+}
+
+// A segmented choice: one pressed button per option.
+export component Segments inherits HorizontalLayout {
+    in property <[string]> items;
+    in property <int> chosen;
+    in property <[string]> tips;
+    callback picked(int);
+    spacing: 0px;
+    for t[i] in items: Button {
+        text: t;
+        compact: true;
+        pressed-state: i == root.chosen;
+        tip: i < root.tips.length ? root.tips[i] : "";
+        clicked => { root.picked(i); }
+    }
+}
+
+// A muted label in a top bar.
+export component BarLabel inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    vertical-alignment: center;
+}
+
+// "Simulate as": anonymous, signed in, or a role of `names` ("Role …"
+// first). `role`: 0 anonymous, 1 signed in, 2 + index into the roles; the
+// Screens and Domain views share it.
+export component RoleChoice inherits HorizontalLayout {
+    in property <int> role;
+    in property <[string]> names;
+    callback picked(int);
+    spacing: 10px;
+    // Keeps its size; the bar's spacer takes the rest.
+    horizontal-stretch: 0;
+    BarLabel { text: @tr("Simulate as"); }
+    Segments {
+        items: [@tr("Anonymous"), @tr("Signed in")];
+        chosen: root.role;
+        tips: [@tr("Not signed in"), @tr("Signed in without a role")];
+        picked(i) => { root.picked(i); }
+    }
+    if root.names.length > 1: Rectangle {
+        // A new model must not leave an old role shown.
+        property <int> role: root.role;
+        changed role => { box.current-index = root.role >= 2 ? root.role - 1 : 0; }
+        width: 240px;
+        height: box.min-height;
+        box := ComboBox {
+            model: root.names;
+            current-index: root.role >= 2 ? root.role - 1 : 0;
+            selected => {
+                if (self.current-index > 0) { root.picked(self.current-index + 1); }
+            }
+        }
+    }
 }

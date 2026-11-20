@@ -1,0 +1,274 @@
+// The Domain tab's centre: the focused entity (what it is, its rules, who
+// changes its state, who reacts), an event as lanes of services, or a use
+// case. Data in DomainData (domain_data.slint).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SectionHeading, Badge, Disclosure } from "widgets.slint";
+import { Fmt } from "format.slint";
+import { Para, Heading } from "flow_parts.slint";
+import { StateDiagram, DomainKinds } from "domain_canvas.slint";
+import { JumpLine, ListRow, DrillLine, SmallLink } from "screens_inspector.slint";
+import { FlowCanvas } from "screens_canvas.slint";
+import { DomainData, DomainViewModel, DomTransition, DomChain, DomLink } from "domain_data.slint";
+
+component Cell inherits Text {
+    in property <bool> head;
+    color: head ? Theme.muted : Theme.text;
+    font-size: head ? Theme.font-caption : Theme.font-small;
+    font-weight: head ? Theme.weight-strong : Theme.weight-regular;
+    wrap: word-wrap;
+    vertical-alignment: top;
+}
+
+component TransitionRow inherits Rectangle {
+    in property <DomTransition> item;
+    in property <bool> head;
+    in property <bool> chosen;
+    callback select();
+    height: cells.preferred-height;
+    background: !head && chosen ? Theme.accent.with-alpha(0.16) : !head && t.has-hover ? Theme.panel-2 : transparent;
+    t := TouchArea {
+        enabled: !root.head;
+        mouse-cursor: pointer;
+        clicked => { root.select(); }
+    }
+    cells := HorizontalLayout {
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 12px;
+        Cell { head: root.head; width: 22px; text: root.head ? "#" : item.number; }
+        Cell { head: root.head; width: 170px; text: root.head ? @tr("from → to") : item.from-to; }
+        Cell { head: root.head; width: 190px; text: root.head ? @tr("method") : item.method; font-family: root.head ? "" : Theme.mono-family; }
+        Cell { head: root.head; horizontal-stretch: 2; text: root.head ? @tr("allowed when") : item.guard; font-family: root.head ? "" : Theme.mono-family; }
+        Cell { head: root.head; horizontal-stretch: 1; text: root.head ? @tr("events") : item.events; }
+        if root.head: Cell { head: true; width: 200px; text: @tr("file"); }
+        if !root.head: JumpLine {
+            width: 200px;
+            location: item.location;
+            file: item.file;
+            line: item.line;
+            open-editor(f, l) => { DomainData.open-editor(f, l); }
+            show-line(f, l) => { DomainData.show-line(f, l); }
+        }
+    }
+}
+
+// A chain: its verdict for the simulated user, then its steps.
+component ChainBox inherits VerticalLayout {
+    in property <DomChain> chain;
+    spacing: 2px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    Rectangle { height: 1px; background: Theme.border; }
+    Text {
+        text: chain.verdict;
+        font-size: Theme.font-small;
+        font-weight: Theme.weight-strong;
+        color: chain.tone == 0 ? Theme.success : chain.tone == 1 ? Theme.priority : chain.tone == 2 ? Theme.outgoing : Theme.muted;
+        wrap: word-wrap;
+    }
+    for st in chain.steps: DrillLine {
+        step: st;
+        open-editor(f, l) => { DomainData.open-editor(f, l); }
+        show-line(f, l) => { DomainData.show-line(f, l); }
+    }
+}
+
+component LinkRow inherits Rectangle {
+    in property <DomLink> link;
+    height: col.preferred-height;
+    border-radius: 4px;
+    background: t.has-hover ? Theme.panel-2 : transparent;
+    col := VerticalLayout {
+        padding: 3px;
+        Text { text: link.text; color: Theme.accent; font-size: Theme.font-small; wrap: word-wrap; }
+        if link.note != "": Text { text: link.note; color: Theme.muted; font-size: Theme.font-caption; wrap: word-wrap; }
+    }
+    t := TouchArea { mouse-cursor: pointer; clicked => { DomainData.select(link.kind, link.index); } }
+}
+
+// Title, kind · service, file with its jumps.
+component Header inherits VerticalLayout {
+    in property <string> title;
+    in property <string> sub;
+    in property <string> location;
+    in property <string> file;
+    in property <int> line;
+    spacing: 2px;
+    Heading { text: root.title; }
+    Para { text: root.sub; muted: true; }
+    if root.file != "": JumpLine {
+        location: root.location;
+        file: root.file;
+        line: root.line;
+        open-editor(f, l) => { DomainData.open-editor(f, l); }
+        show-line(f, l) => { DomainData.show-line(f, l); }
+    }
+}
+
+export component EntityFocus inherits ScrollView {
+    property <DomainViewModel> m: DomainData.model;
+    property <bool> all-chains;
+    VerticalLayout {
+        width: max(root.visible-width, m.state-w * 1px + 2 * Theme.page-pad);
+        padding: Theme.page-pad;
+        spacing: 6px;
+        alignment: start;
+        Header {
+            title: m.title;
+            sub: DomainKinds.label(m.kind) + (m.service != "" ? " · " + m.service : "");
+            location: m.location;
+            file: m.file;
+            line: m.line;
+        }
+        HorizontalLayout {
+            spacing: 28px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                max-width: 460px;
+                spacing: 3px;
+                alignment: start;
+                SectionHeading { label: @tr("Fields ({})", Fmt.int(m.fields.length)); }
+                if m.fields.length == 0: Para { text: @tr("No fields read."); muted: true; }
+                for f in m.fields: HorizontalLayout {
+                    spacing: 8px;
+                    Para { text: f.name; horizontal-stretch: 1; }
+                    Para { text: f.type; mono: true; muted: true; horizontal-alignment: right; }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 3px;
+                alignment: start;
+                SectionHeading { label: @tr("Domain" => "Relations"); }
+                if m.relations.length == 0: Para { text: @tr("No relations to other entities."); muted: true; }
+                for r in m.relations: LinkRow { link: r; }
+            }
+        }
+        Rectangle { height: 8px; }
+        SectionHeading { label: @tr("Rules ({})", Fmt.int(m.entity-rules)); }
+        if m.rule-groups.length == 0: Para { text: @tr("No rule found: no method of this entity throws a domain exception."); muted: true; }
+        if m.rule-groups.length > 0: Para { text: @tr("Each rule: the method, the condition under which it throws, the message. Source text, never evaluated."); muted: true; }
+        for g in m.rule-groups: VerticalLayout {
+            padding-top: 4px;
+            spacing: 0px;
+            Text { text: g.method; color: Theme.text; font-size: Theme.font-small; font-weight: Theme.weight-strong; font-family: Theme.mono-family; }
+            for r in g.rules: HorizontalLayout {
+                padding-left: 14px;
+                ListRow {
+                    r: r;
+                    open-editor(f, l) => { DomainData.open-editor(f, l); }
+                    show-line(f, l) => { DomainData.show-line(f, l); }
+                    open-note(id, what) => { DomainData.open-note(id, g.method + " · " + what); }
+                }
+            }
+        }
+        if m.states.length > 0: VerticalLayout {
+            spacing: 6px;
+            Rectangle { height: 8px; }
+            SectionHeading { label: @tr("States"); }
+            Heading { text: m.machine-title; font-size: Theme.font-small; }
+            Para { text: @tr("Click a state to see who can cause it. Transitions are numbered as the rows below; guards are source text, never evaluated."); muted: true; }
+            StateDiagram {
+                states: m.states;
+                arrows: m.state-arrows;
+                canvas-w: m.state-w;
+                canvas-h: m.state-h;
+                select(s) => { DomainData.select-state(s); }
+            }
+            TransitionRow { head: true; }
+            for r in m.rows: VerticalLayout {
+                Rectangle { height: 1px; background: Theme.border; }
+                TransitionRow {
+                    item: r;
+                    chosen: r.to == m.chosen-state;
+                    select => { DomainData.select-state(r.to); }
+                }
+            }
+            Rectangle { height: 8px; }
+            SectionHeading { label: m.chosen-state == "" ? @tr("Who can cause a state") : @tr("Who can cause {}", m.chosen-state); }
+            if m.flow-note != "": Para { text: m.flow-note; muted: true; }
+            if m.chosen-state == "": Para { text: @tr("Select a state in the diagram or a row of the table."); muted: true; }
+            if m.chosen-state != "": Para { text: @tr("Each chain: start → use case → transition → events, with the service of each step; a chain continued through an integration event follows indented. The first line says what it means for the simulated user."); muted: true; }
+            if m.chosen-state != "" && m.triggers.length == 0: Para { text: @tr("No chain leads into this state."); muted: true; }
+            for c in m.triggers: ChainBox { chain: c; }
+            Disclosure { text: @tr("Every chain that changes this entity ({})", Fmt.int(m.chains.length)); open <=> root.all-chains; }
+            if root.all-chains: VerticalLayout {
+                for c in m.chains: ChainBox { chain: c; }
+            }
+        }
+        Rectangle { height: 8px; }
+        SectionHeading { label: @tr("Who reacts"); }
+        if m.reactions.length == 0: Para { text: @tr("This entity raises no domain event."); muted: true; }
+        for r in m.reactions: LinkRow { link: r; }
+        Rectangle { height: 8px; }
+        SectionHeading { label: @tr("Validations ({})", Fmt.int(m.validations.length)); }
+        if m.validations.length == 0: Para { text: @tr("No validator of a request that reaches this entity."); muted: true; }
+        if m.validations.length > 0: Para { text: @tr("Checked on the request before the use case runs (FluentValidation, Bean Validation)."); muted: true; }
+        for v in m.validations: ListRow {
+            r: v;
+            open-editor(f, l) => { DomainData.open-editor(f, l); }
+            show-line(f, l) => { DomainData.show-line(f, l); }
+        }
+    }
+}
+
+export component EventFocus inherits VerticalLayout {
+    property <DomainViewModel> m: DomainData.model;
+    HorizontalLayout {
+        padding: Theme.page-pad;
+        padding-bottom: 6px;
+        spacing: 12px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Heading { text: m.title; }
+            Para { text: m.service + " · " + @tr("published by → event → handled by; one lane per service, an arrow leaving its lane crosses a service boundary."); muted: true; }
+            if m.note.note != "": Para { text: m.note.note; muted: true; }
+        }
+        VerticalLayout {
+            alignment: start;
+            spacing: 4px;
+            if m.note.badge != "": Badge { text: m.note.badge; variant: "accent"; }
+            SmallLink {
+                text: m.note.badge != "" ? @tr("Edit note for agent…") : @tr("Note for agent…");
+                clicked => { DomainData.open-note(m.note.id, m.note.text); }
+            }
+        }
+    }
+    FlowCanvas {
+        vertical-stretch: 1;
+        cards: m.flow-cards;
+        arrows: m.flow-arrows;
+        bands: m.flow-bands;
+        canvas-w: m.flow-w;
+        canvas-h: m.flow-h;
+        fit-width: true;
+        open-editor(f, l) => { DomainData.open-editor(f, l); }
+        show-line(f, l) => { DomainData.show-line(f, l); }
+    }
+}
+
+export component UseCaseFocus inherits ScrollView {
+    property <DomainViewModel> m: DomainData.model;
+    VerticalLayout {
+        width: root.visible-width;
+        padding: Theme.page-pad;
+        spacing: 6px;
+        alignment: start;
+        Header {
+            title: m.title;
+            sub: @tr("use case") + (m.service != "" ? " · " + m.service : "");
+            location: m.location;
+            file: m.file;
+            line: m.line;
+        }
+        SectionHeading { label: @tr("What it does"); }
+        if m.items.length == 0: Para { text: @tr("No request and no entity method read."); muted: true; }
+        for r in m.items: ListRow {
+            r: r;
+            open-editor(f, l) => { DomainData.open-editor(f, l); }
+            show-line(f, l) => { DomainData.show-line(f, l); }
+        }
+    }
+}
