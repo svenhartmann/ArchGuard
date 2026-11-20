@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Welche Werkzeuge du für Sprachen, Frameworks und importierte Berichte benötigst, damit die Analyse über den Importgraphen hinausgeht.">
+ <title>Werkzeuge und Voraussetzungen — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/prerequisites.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/prerequisites.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html" aria-current="page">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Werkzeuge und Voraussetzungen</h1><p class="docs-lead">Welche Werkzeuge du für Sprachen, Frameworks und importierte Berichte benötigst, damit die Analyse über den Importgraphen hinausgeht.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#baseline">Was ohne zusätzliche Werkzeuge funktioniert</a><a href="#languages">Sprachen</a><a href="#frameworks">Frameworks und Services</a><a href="#features">Git-Historie und Sicherheitsprüfung</a><a href="#reports">Importierte Berichte</a><a href="#check">Deine Umgebung prüfen</a></nav>
+
+<h2 id="baseline">Was ohne zusätzliche Werkzeuge funktioniert</h2>
+<p>Die ausführbare ArchGuard-Datei liest Quell- und Konfigurationsdateien direkt. Importgraphen aller unterstützten Sprachen, Zyklen, Matrix, World View, Regeln und statische Service-Erkennung benötigen keine weiteren Werkzeuge. ArchGuard lädt dein Projekt nicht herunter, baut es nicht und stellt keine Pakete wieder her. Fehlt ein Werkzeug oder eine Projektvoraussetzung, wird die betroffene Analyse als nicht verfügbar oder teilweise ausgewiesen, statt den Lauf fehlschlagen zu lassen.</p>
+<h2 id="languages">Sprachen</h2>
+<p>Die Analyse kombiniert compilerbasierte Adapter und Syntax-Scanner. Die Tabelle nennt Werkzeug und Grenzen jeder Sprache; ein installierter Compiler garantiert keine vollständige Abdeckung.</p>
+@@LANGUAGE_TABLE@@
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code># Java: export the classpath once, e.g. with Maven
+mvn -q dependency:build-classpath -Dmdep.outputFile=.archguard/java-classpath.txt
+
+# C#: restore packages so obj/project.assets.json exists
+dotnet restore
+
+# TypeScript: install the project compiler, then allow ArchGuard to run it
+npm install
+ARCHGUARD_TRUST_PROJECT_COMPILER=1 archguard calls . --format json</code></pre></div>
+<p class="small">Der Maven-Befehl ist eine Möglichkeit, die Classpath-Zeile zu erzeugen; bei Gradle schreibst du den aufgelösten Runtime-Classpath in dieselbe Datei. <code>archguard calls . --format json</code> zeigt den Status pro Sprache und verbleibende Lücken.</p>
+<h2 id="frameworks">Frameworks und Services</h2>
+<p>Die Service-Erkennung liest Quellen und Konfiguration, ohne Container zu starten oder einen Cluster zu kontaktieren. Das Rendern von Helm und Kustomize muss ausdrücklich aktiviert werden und startet dein installiertes Rendering-Werkzeug; siehe unten.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Framework oder Format</th><th scope="col">Was gelesen wird</th><th scope="col">Benötigtes Werkzeug</th></tr></thead><tbody>
+<tr><th scope="row">Docker Compose</th><td><code>compose.yaml</code> / <code>docker-compose.yml</code> und ihre Varianten: Services, Startabhängigkeiten, HTTP-Konfiguration</td><td>Keines</td></tr>
+<tr><th scope="row">Kubernetes</th><td>Manifeste (<code>Deployment</code>, <code>StatefulSet</code>, <code>DaemonSet</code>, <code>Job</code>, <code>CronJob</code>, <code>Pod</code>, <code>Service</code>), Replikas sowie CPU- und Speichergrenzen. Helm und Kustomize benötigen eine ausdrückliche Aktivierung des Renderings.</td><td>Keines</td></tr>
+<tr><th scope="row">Helm / Kustomize</th><td>Lokale Charts und Overlays, gerendert mit isolierten Werkzeugen; fehlende Abhängigkeiten und nicht unterstützte Eingaben bleiben Analyselücken. Kein Cluster-Zugriff, keine Secrets.</td><td>helm / kustomize (oder kubectl kustomize) sowie <code>ARCHGUARD_RENDER_MANIFESTS=1</code></td></tr>
+<tr><th scope="row">Terraform</th><td>Unterstützte AWS-, GCP-, Azure- und Kubernetes-Workloads und Datastores aus literalen .tf-Ressourcen. Kein State, keine tfvars, keine Provider-Downloads und keine Ausführung von terraform.</td><td>Keines</td></tr>
+<tr><th scope="row">GraphQL</th><td>Schemadateien und Tagged Templates; konservative Zuordnung von Operationen zu Schemata und Baseline-Vergleiche. Federation-Direktiven werden nicht interpretiert.</td><td>Keines</td></tr>
+<tr><th scope="row">.NET Aspire</th><td>Der AppHost: jede Ressource mit literalem oder konstantem Namen (Projekte, JavaScript- und Python-Anwendungen, Container, ausführbare Dateien, Datenbanken, Cloud- und externe Services; Parameter ausgenommen), Referenzen, <code>WaitFor</code>, HTTP- und gRPC-Clients sowie RabbitMQ-Ereignisse</td><td>Keines (für diesen Teil ist kein <code>dotnet</code> nötig)</td></tr>
+<tr><th scope="row">Spring</th><td><code>application*</code>- / <code>bootstrap*</code>-Konfiguration, Feign, WebClient, RestClient, RestTemplate sowie Kafka- und RabbitMQ-Templates und -Listener</td><td>Keines</td></tr>
+<tr><th scope="row">Go-Service-Clients</th><td>HTTP- und gRPC-Clients über lokalen Wertefluss</td><td>Keines</td></tr>
+<tr><th scope="row">Projektgrenzen</th><td><code>Cargo.toml</code>, <code>package.json</code> (Skripte werden nie ausgeführt), <code>go.mod</code>, <code>pom.xml</code>, Python-Projektdateien sowie <code>.csproj</code> / <code>.fsproj</code> / <code>.vbproj</code></td><td>Keines</td></tr>
+<tr><th scope="row">OpenAPI</th><td>Ein mit <code>archguard contracts</code> für einen Service importierter Vertrag</td><td>Keines</td></tr>
+<tr><th scope="row">OpenTelemetry</th><td>Eine exportierte Trace-Datei in OTLP JSON unter <code>.archguard/otel-traces.json</code> (bis 16 MiB, 100.000 Spans). Jaeger- und Zipkin-Formate werden nicht akzeptiert.</td><td>Ein Trace-Export aus deinem Collector oder SDK; keine Collector-Verbindung</td></tr>
+</tbody></table></div>
+<h2 id="features">Git-Historie und Sicherheitsprüfung</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Funktion</th><th scope="col">Zu installierendes Werkzeug</th><th scope="col">Hinweise</th></tr></thead><tbody>
+<tr><th scope="row">Hotspots, Co-Change, Snapshots, <code>diff</code>, Qualitäts-Gates gegen eine Basis</th><td><strong>Git</strong> im <code>PATH</code></td><td>Das Projekt muss ein Git-Repository mit Historie sein. Ein flacher Klon mit nur einem Commit hat keine Änderungshistorie, die angezeigt werden könnte.</td></tr>
+<tr><th scope="row"><code>archguard security</code></th><td><strong>Trivy</strong> als <code>trivy</code> im <code>PATH</code></td><td>Führt <code>trivy fs</code> für bekannte Schwachstellen in Abhängigkeiten aus. Trivy lädt seine Datenbank herunter, sofern du nicht <code>--offline</code> angibst (benötigt eine vorhandene Datenbank). <code>--cache-dir</code> wählt den Speicherort; <code>--cached</code> liest das zuletzt gespeicherte Ergebnis, ohne Trivy auszuführen. Lockfiles decken transitive, Manifeste nur direkte Abhängigkeiten ab.</td></tr>
+</tbody></table></div>
+<h2 id="reports">Importierte Berichte</h2>
+<p>ArchGuard liest diese Berichte; das erzeugende Werkzeug wird nie ausgeführt. Erzeuge die Berichte mit deinem üblichen Test- oder Analyseaufbau und importiere sie anschließend.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Beleg</th><th scope="col">Akzeptiertes Format</th><th scope="col">Befehl</th></tr></thead><tbody>
+<tr><th scope="row">Testabdeckung</th><td>JaCoCo XML, Cobertura XML, Clover XML, LCOV</td><td><code>archguard coverage</code></td></tr>
+<tr><th scope="row">Statische Analysebefunde</th><td>SARIF 2.1.0 (bis 32 MiB)</td><td><code>archguard quality</code></td></tr>
+<tr><th scope="row">Testergebnisse</th><td>JUnit XML</td><td><code>archguard test-evidence</code></td></tr>
+<tr><th scope="row">Mutationstests</th><td>mutation-testing-elements JSON (zum Beispiel aus Stryker)</td><td><code>archguard mutations</code></td></tr>
+<tr><th scope="row">Duplizierter Code</th><td>PMD CPD XML</td><td><code>archguard duplicates</code></td></tr>
+</tbody></table></div>
+<p><code>--help</code> führt die Optionen jedes Befehls auf. <a href="languages.html#imported">Sprachen und Messgrenzen</a> erklärt, wie importierte Messungen eingeordnet werden.</p>
+<h2 id="check">Deine Umgebung prüfen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard doctor
+archguard calls /path/to/project --format json</code></pre></div>
+<p><code>archguard doctor</code> meldet, ob <code>git</code>, <code>java</code>, <code>dotnet</code> und <code>node</code> gefunden werden, und gibt ihre Versionen aus. Mindestversionen, Go und Trivy werden nicht geprüft; der Exit-Status ist immer null. Der <code>calls</code>-Bericht zeigt, was jede Sprachanalyse für dein Projekt tatsächlich erreicht hat, einschließlich Teilergebnissen und ihrer Gründe.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>
