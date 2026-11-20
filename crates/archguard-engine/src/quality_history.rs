@@ -8,7 +8,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -443,10 +443,8 @@ pub fn build_quality_snapshot(
     let mut quality_tools = quality.tools.clone();
     quality_tools.sort();
     quality_tools.dedup();
-    let git_commit = Command::new("git")
-        .current_dir(root)
+    let git_commit = crate::git_cmd::git(root)
         .args(["rev-parse", "--verify", "HEAD"])
-        .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()

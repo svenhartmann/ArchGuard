@@ -19,7 +19,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use archguard_core::{ArchguardError, FindingKind, Report};
@@ -386,10 +386,8 @@ fn collision_suffix(timestamp: u64, name: &str) -> u32 {
 /// whenever git cannot answer: missing binary, no repository, empty
 /// HEAD, non-zero exit, non-UTF-8 output. Never an error (Kap. 9).
 pub(crate) fn git_sha(root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(root)
+    let output = crate::git_cmd::git(root)
         .args(["rev-parse", "--short", "HEAD"])
-        .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;

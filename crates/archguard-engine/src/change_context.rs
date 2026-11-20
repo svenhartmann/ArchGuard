@@ -9,7 +9,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Component, Path},
-    process::{Command, Stdio},
+    process::Stdio,
     time::Duration,
 };
 
@@ -377,31 +377,12 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
     // A repo-wide reformat lists ~60k paths (several MiB); stay bounded anyway.
     const LIMIT: u64 = 64 * 1024 * 1024;
     let output = tempfile::NamedTempFile::new()?;
-    let mut command = Command::new("git");
-    command
-        .current_dir(root)
-        .args([
-            "--no-pager",
-            "-c",
-            "core.fsmonitor=false",
-            "--literal-pathspecs",
-        ])
+    let mut child = crate::git_cmd::git(root)
+        .arg("--literal-pathspecs")
         .args(args)
-        .stdin(Stdio::null())
         .stdout(output.reopen()?)
         .stderr(Stdio::null())
-        .env("GIT_OPTIONAL_LOCKS", "0");
-    for key in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    ] {
-        command.env_remove(key);
-    }
-    let mut child = command.spawn()?;
+        .spawn()?;
     let bound = Duration::from_secs(60);
     let status = match crate::go_calls::wait(&mut child, &[output.path()], bound, LIMIT) {
         Ok(status) => status,

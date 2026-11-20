@@ -5,7 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,
     path::{Component, Path},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -211,17 +211,10 @@ pub(crate) fn filter_driver_overrides(names: &[u8]) -> Result<Vec<String>, std::
 }
 
 fn git(root: &Path, args: &[&str], overrides: &[String]) -> Result<Vec<u8>, ArchguardError> {
-    let mut child = Command::new("git")
-        .current_dir(root)
-        .args([
-            "--no-optional-locks",
-            "--literal-pathspecs",
-            "-c",
-            "core.fsmonitor=false",
-        ])
+    let mut child = crate::git_cmd::git(root)
+        .arg("--literal-pathspecs")
         .args(overrides.iter().flat_map(|value| ["-c", value.as_str()]))
         .args(args)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
