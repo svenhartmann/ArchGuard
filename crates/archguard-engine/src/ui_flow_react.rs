@@ -822,8 +822,147 @@ mod next {
     }
 }
 
+/// Reading `.map` callbacks and where a `<Route>` sits (see `router`).
+mod shape {
+    use super::*;
+
+    /// The object parameter of a callback: its name, or its destructuring.
+    pub(super) type Param<'a> = (Option<&'a str>, Option<(&'a str, &'a str)>);
+
+    /// Offsets of the `<Route` start tags in `text[from..to]`.
+    pub(super) fn route_tags(text: &str, from: usize, to: usize) -> Vec<usize> {
+        text[from..to.min(text.len())]
+            .match_indices("<Route")
+            .map(|(i, _)| from + i)
+            .filter(|i| {
+                !text[i + "<Route".len()..].starts_with(|c: char| is_ident_char(c) || c == '.')
+            })
+            .collect()
+    }
+
+    /// The destructuring `{ element, ...rest }` as `(element, rest)`.
+    pub(super) fn destructured(s: &str) -> Option<(&str, &str)> {
+        let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+        let [element, rest] = parts[..] else {
+            return None;
+        };
+        let rest = rest.strip_prefix("...")?;
+        (element == "element" && is_ident(rest)).then_some((element, rest))
+    }
+
+    /// Parameters and body of an arrow or `function` callback; a `function` has a block.
+    pub(super) fn callback_parts(inner: &str) -> Option<(&str, &str)> {
+        let Some(rest) = inner.strip_prefix("function") else {
+            return inner.split_once("=>");
+        };
+        let rest = rest.trim_start().trim_start_matches(is_ident_char);
+        let (params, body) = rest.trim_start().strip_prefix('(')?.split_once(')')?;
+        let body = body.trim();
+        body.starts_with('{').then_some((params, body))
+    }
+
+    pub(super) fn object_param(params: &str) -> Option<Param<'_>> {
+        let params = params.trim();
+        let params = params
+            .strip_prefix('(')
+            .and_then(|p| p.strip_suffix(')'))
+            .unwrap_or(params);
+        if let Some(rest) = params.strip_prefix('{') {
+            let (inside, tail) = rest.split_once('}')?;
+            let tail = tail.trim();
+            let ok = tail.is_empty() || tail.starts_with([',', ':']);
+            let d = destructured(inside).filter(|_| ok)?;
+            return Some((None, Some(d)));
+        }
+        let name = params.split(',').next()?.split(':').next()?.trim();
+        is_ident(name).then_some((Some(name), None))
+    }
+
+    /// `const { element, ...rest } = param;` at the start of a block: the
+    /// destructuring and what follows.
+    pub(super) fn const_destructure<'a>(
+        block: &'a str,
+        param: Option<&str>,
+    ) -> Option<((&'a str, &'a str), &'a str)> {
+        let decl = block.strip_prefix("const")?.trim();
+        let (inside, tail) = decl.strip_prefix('{')?.split_once('}')?;
+        let tail = tail.trim().strip_prefix('=')?.trim();
+        let name = ident_at(tail, 0);
+        let rest = tail[name.len()..].trim_start().strip_prefix(';')?;
+        (param == Some(name)).then_some(())?;
+        Some((destructured(inside)?, rest))
+    }
+
+    /// The returned element of a callback body, and the destructuring the
+    /// block adds to the parameter's.
+    pub(super) fn returned<'a>(
+        body: &'a str,
+        param: &Param<'a>,
+    ) -> Option<(&'a str, Option<(&'a str, &'a str)>)> {
+        let body = body.trim();
+        let Some(block) = body.strip_prefix('{') else {
+            return Some((body, param.1));
+        };
+        let block = block.strip_suffix('}')?.trim();
+        let (destructure, after) = match const_destructure(block, param.0) {
+            Some(_) if param.1.is_some() => return None,
+            Some((d, rest)) => (Some(d), rest),
+            None => (param.1, block),
+        };
+        let ret = after.trim().strip_prefix("return")?.trim();
+        Some((ret.strip_suffix(';').unwrap_or(ret).trim(), destructure))
+    }
+
+    /// Only the `key` and `element` attributes (as read): the spread carries the rest.
+    pub(super) fn plain_attrs(text: &str, route: &Tag, element: &str) -> bool {
+        route.attrs.iter().all(|a| match (&a.name[..], &a.value) {
+            ("key", _) => true,
+            ("element", AttrValue::Expr(at)) => {
+                Parser { s: text, i: *at }.value(0).source(text) == element
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether the text before `pos` ends in `&&`, `||`, `??`, `?` or `:` (past
+    /// spaces and `(`): the element is one branch of a conditional.
+    pub(super) fn conditional_before(masked: &str, pos: usize) -> bool {
+        let before = masked[..pos].trim_end_matches(|c: char| c.is_whitespace() || c == '(');
+        ["&&", "||", "??", "?", ":"]
+            .iter()
+            .any(|op| before.ends_with(op))
+    }
+
+    /// The name of the innermost JSX element open at `at`; `""` inside a start tag.
+    pub(super) fn enclosing(text: &str, at: usize) -> Option<&str> {
+        let before = &text[..at];
+        let mut events: Vec<(usize, Option<&str>)> = start_tags(before)
+            .into_iter()
+            .map(|(i, name)| (i, Some(name)))
+            .chain(before.match_indices("</").map(|(i, _)| (i, None)))
+            .collect();
+        events.sort();
+        let mut open = Vec::new();
+        for (pos, name) in events {
+            let Some(name) = name else {
+                open.pop();
+                continue;
+            };
+            let t = tag(text, pos + 1 + name.len());
+            if t.end > at {
+                return Some("");
+            }
+            if !t.self_closing {
+                open.push(name);
+            }
+        }
+        open.last().copied()
+    }
+}
+
 /// React Router route trees from JSX and route objects.
 mod router {
+    use super::shape::*;
     use super::*;
 
     const ROUTER_CALLS: [&str; 4] = [
@@ -844,8 +983,8 @@ mod router {
         children: Vec<Node>,
         /// Indices of the `.map` route arrays rendered inside this route.
         maps: Vec<usize>,
-        /// Offset after the start tag: where the children begin.
-        open_end: usize,
+        /// Sits in a conditional expression (`a && <Route/>`): not read.
+        stray: bool,
     }
 
     struct Ctx<'a> {
@@ -900,107 +1039,54 @@ mod router {
         name: Option<String>,
         span: (usize, usize),
         route: (&'t str, Tag),
+        /// The call is the whole `{…}` container: nothing before or after.
+        exact: bool,
+        /// `.flatMap`, which is never read.
+        flat: bool,
     }
 
     fn mapped(text: &str) -> Vec<Mapped<'_>> {
+        let masked = mask(text, true);
+        let mut calls: Vec<(usize, usize, bool)> = text
+            .match_indices(".map(")
+            .map(|(i, _)| (i, i + 4, false))
+            .chain(
+                text.match_indices(".flatMap(")
+                    .map(|(i, _)| (i, i + 8, true)),
+            )
+            .collect();
+        calls.sort();
         let mut out = Vec::new();
-        for (pos, _) in text.match_indices(".map(") {
-            let (open, before) = (pos + 4, &text[..pos]);
+        for (pos, open, flat) in calls {
+            let before = &text[..pos];
             let span = (open, close(text, open));
             let route = route_tags(text, span.0, span.1).into_iter().find_map(|i| {
                 let tag = tag(text, i + "<Route".len());
                 let head = &text[i..tag.end];
-                head.contains("{...").then_some((head, tag))
+                (flat || head.contains("{...")).then_some((head, tag))
             });
             let Some(route) = route else {
                 continue;
             };
             let name =
                 trailing_ident(before).filter(|n| !before[..before.len() - n.len()].ends_with('.'));
+            let exact = name.as_ref().is_some_and(|n| {
+                let (head, tail) = (
+                    &masked[..pos - n.len()],
+                    &masked[span.1.min(masked.len())..],
+                );
+                head.trim_end().ends_with('{') && tail.trim_start().starts_with('}')
+            });
             out.push(Mapped {
                 at: pos,
                 name,
                 span,
                 route,
+                exact,
+                flat,
             });
         }
         out
-    }
-
-    /// Offsets of the `<Route` start tags in `text[from..to]`.
-    fn route_tags(text: &str, from: usize, to: usize) -> Vec<usize> {
-        text[from..to.min(text.len())]
-            .match_indices("<Route")
-            .map(|(i, _)| from + i)
-            .filter(|i| {
-                !text[i + "<Route".len()..].starts_with(|c: char| is_ident_char(c) || c == '.')
-            })
-            .collect()
-    }
-
-    /// The destructuring `{ element, ...rest }` as `(element, rest)`.
-    fn destructured(s: &str) -> Option<(&str, &str)> {
-        let parts: Vec<&str> = s.split(',').map(str::trim).collect();
-        let [element, rest] = parts[..] else {
-            return None;
-        };
-        let rest = rest.strip_prefix("...")?;
-        (is_ident(element) && is_ident(rest)).then_some((element, rest))
-    }
-
-    /// The object parameter of a callback: its name, or its destructuring.
-    type Param<'a> = (Option<&'a str>, Option<(&'a str, &'a str)>);
-
-    fn object_param(params: &str) -> Option<Param<'_>> {
-        let params = params.trim();
-        let params = params
-            .strip_prefix('(')
-            .and_then(|p| p.strip_suffix(')'))
-            .unwrap_or(params);
-        if let Some(rest) = params.strip_prefix('{') {
-            let (inside, tail) = rest.split_once('}')?;
-            let tail = tail.trim();
-            let ok = tail.is_empty() || tail.starts_with(',');
-            let d = destructured(inside).filter(|_| ok)?;
-            return Some((None, Some(d)));
-        }
-        let name = params.split(',').next()?.trim();
-        is_ident(name).then_some((Some(name), None))
-    }
-
-    /// `const { element, ...rest } = param;` at the start of a block: the
-    /// destructuring and what follows.
-    fn const_destructure<'a>(
-        block: &'a str,
-        param: Option<&str>,
-    ) -> Option<((&'a str, &'a str), &'a str)> {
-        let decl = block.strip_prefix("const")?.trim();
-        let (inside, tail) = decl.strip_prefix('{')?.split_once('}')?;
-        let tail = tail.trim().strip_prefix('=')?.trim();
-        let name = ident_at(tail, 0);
-        let rest = tail[name.len()..].trim_start().strip_prefix(';')?;
-        (param == Some(name)).then_some(())?;
-        Some((destructured(inside)?, rest))
-    }
-
-    /// The returned element of a callback body, and the destructuring the
-    /// block adds to the parameter's.
-    fn returned<'a>(
-        body: &'a str,
-        param: &Param<'a>,
-    ) -> Option<(&'a str, Option<(&'a str, &'a str)>)> {
-        let body = body.trim();
-        let Some(block) = body.strip_prefix('{') else {
-            return Some((body, param.1));
-        };
-        let block = block.strip_suffix('}')?.trim();
-        let (destructure, after) = match const_destructure(block, param.0) {
-            Some(_) if param.1.is_some() => return None,
-            Some((d, rest)) => (Some(d), rest),
-            None => (param.1, block),
-        };
-        let ret = after.trim().strip_prefix("return")?.trim();
-        Some((ret.strip_suffix(';').unwrap_or(ret).trim(), destructure))
     }
 
     /// Whether the callback of `m` is one of the two shapes that render the
@@ -1014,7 +1100,7 @@ mod router {
         let inner = text[open + 1..end.saturating_sub(1).max(open + 1)].trim();
         let offset = |s: &str| s.as_ptr() as usize - text.as_ptr() as usize;
         let one_route = route_tags(text, open, end).len() == 1 && head.matches("{...").count() == 1;
-        let parsed = inner.split_once("=>").and_then(|(params, body)| {
+        let parsed = callback_parts(inner).and_then(|(params, body)| {
             let param = object_param(params)?;
             Some((returned(body, &param)?, param.0))
         });
@@ -1043,26 +1129,19 @@ mod router {
             && plain_attrs(text, route, &element)
     }
 
-    /// Only the `key` and `element` attributes (as read): the spread carries the rest.
-    fn plain_attrs(text: &str, route: &Tag, element: &str) -> bool {
-        route.attrs.iter().all(|a| match (&a.name[..], &a.value) {
-            ("key", _) => true,
-            ("element", AttrValue::Expr(at)) => {
-                Parser { s: text, i: *at }.value(0).source(text) == element
-            }
-            _ => false,
-        })
-    }
-
     /// The routes of the array literal a `.map` call renders as `<Route {...x}>`:
     /// local, or imported (default or named) from a scanned file. Any other
     /// shape is a gap.
     fn map_routes(ctx: &mut Ctx, m: &Mapped, prefix: &str, inherited: &[Condition]) {
         let (app, text, file) = (ctx.app, ctx.text, ctx.file);
         let head = m.route.0;
-        let Some(name) = m.name.as_deref().filter(|_| callback_is_read(text, m)) else {
+        let Some(name) = m
+            .name
+            .as_deref()
+            .filter(|_| m.exact && !m.flat && callback_is_read(text, m))
+        else {
             let message = format!(
-                "Routes rendered by .map are not an array literal of route objects; they are unknown: {head}"
+                "Routes rendered by .map are not read (only `{{array.map(plain callback)}}` as a whole container); they are unknown: {head}"
             );
             return ctx.diag(m.at, message);
         };
@@ -1124,7 +1203,6 @@ mod router {
     fn jsx_node(text: &str, pos: usize, tag: &Tag) -> Node {
         let mut node = Node {
             at: pos,
-            open_end: tag.end,
             ..Node::default()
         };
         let expr = |at: usize| Parser { s: text, i: at }.value(0);
@@ -1153,6 +1231,7 @@ mod router {
     /// The `<Route>` tree of `text`, and the `.map` arrays outside any route.
     fn jsx(text: &str, mapped: &[Mapped]) -> (Vec<Node>, Vec<usize>, Vec<usize>) {
         let skip = |i: &usize| !mapped.iter().any(|m| (m.span.0..m.span.1).contains(i));
+        let masked = mask(text, true);
         // (offset, 0 closes a route, 1 opens one, 2 + n is `.map` number n)
         let mut events: Vec<(usize, usize)> = text
             .match_indices("<Route")
@@ -1181,16 +1260,17 @@ mod router {
                 }
                 1 => {
                     let tag = tag(text, pos + "<Route".len());
-                    let node = jsx_node(text, pos, &tag);
+                    let mut node = jsx_node(text, pos, &tag);
+                    node.stray = conditional_before(&masked, pos);
                     if tag.self_closing {
                         attach(&mut stack, &mut roots, node);
                     } else {
                         stack.push(node);
                     }
                 }
-                n => match stack.last_mut() {
-                    Some(parent) if pos >= parent.open_end => parent.maps.push(n - 2),
-                    None if enclosing(text, pos) == Some("Routes") => loose.push(n - 2),
+                n => match (enclosing(text, pos), stack.last_mut()) {
+                    (Some("Route"), Some(parent)) => parent.maps.push(n - 2),
+                    (Some("Routes"), None) => loose.push(n - 2),
                     _ => stray.push(n - 2),
                 },
             }
@@ -1199,32 +1279,6 @@ mod router {
             attach(&mut stack, &mut roots, node);
         }
         (roots, loose, stray)
-    }
-
-    /// The name of the innermost JSX element open at `at`; `""` inside a start tag.
-    fn enclosing(text: &str, at: usize) -> Option<&str> {
-        let before = &text[..at];
-        let mut events: Vec<(usize, Option<&str>)> = start_tags(before)
-            .into_iter()
-            .map(|(i, name)| (i, Some(name)))
-            .chain(before.match_indices("</").map(|(i, _)| (i, None)))
-            .collect();
-        events.sort();
-        let mut open = Vec::new();
-        for (pos, name) in events {
-            let Some(name) = name else {
-                open.pop();
-                continue;
-            };
-            let t = tag(text, pos + 1 + name.len());
-            if t.end > at {
-                return Some("");
-            }
-            if !t.self_closing {
-                open.push(name);
-            }
-        }
-        open.last().copied()
     }
 
     fn objects(ctx: &mut Ctx) -> Vec<Node> {
@@ -1311,7 +1365,7 @@ mod router {
                 .filter(|n| is_name(n)),
             children,
             maps: Vec::new(),
-            open_end: 0,
+            stray: false,
         })
     }
 
@@ -1374,6 +1428,30 @@ mod router {
         ctx.screens.push((screen, Owner::Component(name)));
     }
 
+    /// Why a route is not read where it stands: in a conditional expression,
+    /// or an absolute path outside its parent's (React Router v6 throws).
+    fn misplaced(node: &Node, path: Option<&str>, prefix: &str) -> Option<String> {
+        if node.stray {
+            return Some("Route inside a conditional expression is not read; the route and its children are unknown.".into());
+        }
+        let p = path.filter(|p| p.starts_with('/') && !prefix.is_empty())?;
+        let t = p.trim_matches('/');
+        (t != prefix && !t.starts_with(&format!("{prefix}/"))).then(|| {
+            format!("Absolute route path {p} does not start with its parent's path /{prefix}; the route and its children are unknown.")
+        })
+    }
+
+    /// The children of `node` and the `.map` arrays rendered in it.
+    fn descend(ctx: &mut Ctx, node: &Node, full: &str, guards: &[Condition], depth: usize) {
+        for child in &node.children {
+            walk(ctx, child, full, guards, depth + 1);
+        }
+        let maps = ctx.maps;
+        for &i in &node.maps {
+            map_routes(ctx, &maps[i], full, guards);
+        }
+    }
+
     fn walk(ctx: &mut Ctx, node: &Node, prefix: &str, inherited: &[Condition], depth: usize) {
         if depth >= MAX_DEPTH {
             let message = "Routes nest too deep; deeper routes are unknown.";
@@ -1389,6 +1467,9 @@ mod router {
                 return ctx.diag(node.at, message);
             }
         };
+        if let Some(message) = misplaced(node, path, prefix) {
+            return ctx.diag(node.at, message);
+        }
         let full = match path {
             Some(p) if p.starts_with('/') => p.trim_matches('/').to_string(),
             Some(p) => [prefix, p.trim_matches('/')]
@@ -1408,13 +1489,7 @@ mod router {
         {
             push_screen(ctx, node, &full, name, &guards);
         }
-        for child in &node.children {
-            walk(ctx, child, &full, &guards, depth + 1);
-        }
-        let maps = ctx.maps;
-        for &i in &node.maps {
-            map_routes(ctx, &maps[i], &full, &guards);
-        }
+        descend(ctx, node, &full, &guards, depth);
     }
 }
 
@@ -3960,18 +4035,127 @@ export function Page() { items.map((i) => i); load(); return null; }
     }
 
     #[test]
-    fn mapped_routes_in_a_wrapper_inside_a_route_are_still_read() {
+    fn a_wrapper_element_between_a_route_and_its_mapped_routes_is_a_gap() {
         let flow = map_app(
             "<Routes><Route path=\"/l\" element={<ProtectedRoute />}><Layout>\n{xs.map((r) => <Route key={r.path} {...r} />)}\n</Layout></Route></Routes>",
         );
-        let ids: Vec<_> = screens(&flow).into_iter().map(|s| (s.0, s.2)).collect();
         assert!(
-            ids.contains(&(
-                "c:/priv".to_string(),
-                Some(Condition::Custom("ProtectedRoute".into()))
-            )),
-            "{ids:?} {:?}",
+            flow.screens.iter().all(|s| s.id != "c:/priv"),
+            "{:?}",
+            screens(&flow)
+        );
+        assert!(
+            has_diag(&flow, "c/src/App.jsx", 4),
+            "{:?}",
             flow.diagnostics
         );
+    }
+
+    fn array_app(array: &str, callback: &str) -> UiFlow {
+        let app = format!(
+            "{array}\nexport const App = () => (\n<Routes>{{xs.map({callback})}}</Routes>);\n"
+        );
+        let dir = project(&[("c/package.json", ROUTER_PKG), ("c/src/App.jsx", &app)]);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn a_destructured_name_other_than_element_is_a_gap() {
+        let array = "const xs = [{ path: '/priv', element: <Priv />, guarded: <RequireAuth><Priv /></RequireAuth> }];";
+        for callback in [
+            "({ guarded, ...rest }) => <Route {...rest} element={guarded} />",
+            "(r) => { const { guarded, ...rest } = r; return <Route {...rest} element={guarded} />; }",
+        ] {
+            is_gap_without_screens(&array_app(array, callback));
+        }
+    }
+
+    #[test]
+    fn a_map_is_read_only_as_the_whole_jsx_container() {
+        let cb = "(r) => <Route key={r.path} {...r} />";
+        for body in [
+            format!("<Routes>{{user && xs.map({cb})}}</Routes>"),
+            format!("<Routes>{{user ? xs.map({cb}) : null}}</Routes>"),
+            format!("<Routes>{{xs.map({cb}).filter(() => user)}}</Routes>"),
+            format!("<Routes>{{xs.map({cb})[0]}}</Routes>"),
+        ] {
+            let flow = map_app(&body);
+            assert!(flow.screens.is_empty(), "{body}: {:?}", screens(&flow));
+            assert!(has_diag(&flow, "c/src/App.jsx", 3), "{body}");
+        }
+        let flow = map_app(&format!(
+            "<Routes>{{/* all */ xs.map({cb}) /* done */}}</Routes>"
+        ));
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/priv", "Priv", None)],
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn routes_inside_a_conditional_expression_are_gaps() {
+        for body in [
+            "<Routes>{user && <Route path='/plain' element={<Plain />} />}</Routes>",
+            "<Routes>{user ? <Route path='/plain' element={<Plain />} /> : null}</Routes>",
+            "<Routes>{user && (<Route path='/plain' element={<Plain />} />)}</Routes>",
+            "<Routes>{user || <Route path='/plain' element={<Plain />} />}</Routes>",
+        ] {
+            let flow = map_app(body);
+            assert!(flow.screens.is_empty(), "{body}: {:?}", screens(&flow));
+            assert!(has_diag(&flow, "c/src/App.jsx", 3), "{body}");
+            assert!(!flow.complete);
+        }
+    }
+
+    #[test]
+    fn flat_map_routes_are_gaps() {
+        let flow = map_app("<Routes>{xs.flatMap((r) => [<Route key={r.path} {...r} />])}</Routes>");
+        is_gap_without_screens(&flow);
+    }
+
+    #[test]
+    fn absolute_child_paths_must_start_with_the_parent_path() {
+        let app = "export const App = () => (
+<Routes><Route path=\"/l\" element={<L />}>
+  <Route path=\"/other\" element={<Other />} />
+  <Route path=\"/l/ok\" element={<Ok />} />
+</Route></Routes>);
+";
+        let dir = project(&[("c/package.json", ROUTER_PKG), ("c/src/App.jsx", app)]);
+        let flow = extract(dir.path());
+        let ids: Vec<String> = screens(&flow).into_iter().map(|s| s.0).collect();
+        assert_eq!(ids, vec!["c:/l", "c:/l/ok"], "{:?}", flow.diagnostics);
+        assert!(
+            has_diag(&flow, "c/src/App.jsx", 3),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn typed_and_function_callbacks_are_read_when_equivalent() {
+        for callback in [
+            "(r: RouteObject) => <Route key={r.path} {...r} />",
+            "({ element, ...rest }: RouteObject, i: number) => <Route {...rest} element={element} />",
+            "function (r) { return <Route key={r.path} {...r} />; }",
+            "function named(r: RouteObject) { const { element, ...rest } = r; return <Route {...rest} element={element} />; }",
+        ] {
+            let flow = routes_map(callback);
+            assert_eq!(
+                screens(&flow),
+                vec![screen("c:/priv", "Priv", None)],
+                "{callback}: {:?}",
+                flow.diagnostics
+            );
+        }
+        for callback in [
+            "function (r) { if (!user) return null; return <Route {...r} />; }",
+            "function (r) { return user && <Route {...r} />; }",
+            "(r: RouteObject): JSX.Element => <Route {...r} />",
+        ] {
+            is_gap_without_screens(&routes_map(callback));
+        }
     }
 }
