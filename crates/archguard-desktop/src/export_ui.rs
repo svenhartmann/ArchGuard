@@ -281,8 +281,11 @@ fn svg(ui: &AppWindow, tab: &Tab) -> Result<String, Failure> {
         description: snapshot.description(),
         ..diagram
     };
-    let dark = ui.global::<crate::ui::Theme>().get_dark();
-    Ok(export::svg(&diagram, Theme::of(dark)))
+    let theme = ui.global::<crate::ui::Theme>();
+    Ok(export::svg(
+        &diagram,
+        Theme::of(theme.get_family(), theme.get_dark()),
+    ))
 }
 
 fn active_analysis() -> Result<Arc<Analysis>, Failure> {

@@ -41,6 +41,38 @@ pub enum Theme {
     System,
     Dark,
     Light,
+    SolarizedLight,
+    SolarizedDark,
+}
+
+impl Theme {
+    const NAMED: [(Theme, &'static str, i32, bool); 4] = [
+        (Theme::Dark, "dark", 0, true),
+        (Theme::Light, "light", 0, false),
+        (Theme::SolarizedLight, "solarized-light", 1, false),
+        (Theme::SolarizedDark, "solarized-dark", 1, true),
+    ];
+
+    /// The name in the settings file and `ARCHGUARD_DESKTOP_THEME`.
+    pub fn parse(name: &str) -> Option<Theme> {
+        Self::NAMED.iter().find(|n| n.1 == name).map(|n| n.0)
+    }
+
+    fn name(self) -> Option<&'static str> {
+        Self::NAMED.iter().find(|n| n.0 == self).map(|n| n.1)
+    }
+
+    /// `Theme.family` and `Theme.dark` in Slint; `None` follows the system.
+    pub fn look(self) -> Option<(i32, bool)> {
+        Self::NAMED.iter().find(|n| n.0 == self).map(|n| (n.2, n.3))
+    }
+
+    pub fn from_look(family: i32, dark: bool) -> Theme {
+        Self::NAMED
+            .iter()
+            .find(|n| n.2 == family && n.3 == dark)
+            .map_or(if dark { Theme::Dark } else { Theme::Light }, |n| n.0)
+    }
 }
 
 /// The last view of one project.
@@ -157,11 +189,11 @@ pub fn parse(text: &str) -> Result<(DocumentMut, Settings), String> {
 }
 
 fn read(doc: &DocumentMut) -> Settings {
-    let theme = match doc.get("theme").and_then(Item::as_str) {
-        Some("dark") => Theme::Dark,
-        Some("light") => Theme::Light,
-        _ => Theme::System,
-    };
+    let theme = doc
+        .get("theme")
+        .and_then(Item::as_str)
+        .and_then(Theme::parse)
+        .unwrap_or_default();
     let window = doc.get("window").and_then(|w| {
         let side = |k: &str| u32::try_from(w.get(k)?.as_integer()?).ok();
         Some((side("width")?, side("height")?))
@@ -232,10 +264,9 @@ fn read_projects(item: Option<&Item>) -> BTreeMap<String, ProjectView> {
 /// Write `settings` into `doc` and return the file text. Keys and
 /// comments ArchGuard does not know stay as they were.
 pub fn render(doc: &mut DocumentMut, settings: &Settings) -> String {
-    match settings.theme {
-        Theme::System => remove(doc.as_table_mut(), "theme"),
-        Theme::Dark => set(doc.as_table_mut(), "theme", value("dark")),
-        Theme::Light => set(doc.as_table_mut(), "theme", value("light")),
+    match settings.theme.name() {
+        None => remove(doc.as_table_mut(), "theme"),
+        Some(name) => set(doc.as_table_mut(), "theme", value(name)),
     }
     if settings.language.is_empty() {
         remove(doc.as_table_mut(), "language");
@@ -492,6 +523,26 @@ mod tests {
         assert!(out.contains("theme = \"light\""), "{out}");
         assert!(out.contains("width = 1300"), "{out}");
         assert!(out.contains("tab = \"graph\""), "{out}");
+    }
+
+    #[test]
+    fn every_theme_survives_writing_and_reading() {
+        for theme in [
+            Theme::Dark,
+            Theme::Light,
+            Theme::SolarizedLight,
+            Theme::SolarizedDark,
+        ] {
+            let (mut doc, mut s) = parse("").expect("valid");
+            s.theme = theme;
+            let out = render(&mut doc, &s);
+            assert_eq!(parse(&out).expect("valid").1.theme, theme, "{out}");
+        }
+        assert_eq!(Theme::parse("solarized-dark"), Some(Theme::SolarizedDark));
+        assert_eq!(Theme::SolarizedLight.look(), Some((1, false)));
+        assert_eq!(Theme::from_look(1, true), Theme::SolarizedDark);
+        assert_eq!(Theme::from_look(0, false), Theme::Light);
+        assert_eq!(Theme::System.look(), None);
     }
 
     #[test]

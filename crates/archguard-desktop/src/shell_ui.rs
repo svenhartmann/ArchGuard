@@ -45,10 +45,13 @@ pub fn start(ui: &AppWindow, args: Vec<PathBuf>) {
 /// (`ARCHGUARD_DESKTOP_THEME`, `ARCHGUARD_DESKTOP_LANG`) wins.
 fn apply_settings(ui: &AppWindow) {
     let (theme, language, window) = settings_file::get(|s| (s.theme, s.language.clone(), s.window));
-    match std::env::var("ARCHGUARD_DESKTOP_THEME") {
-        Ok(theme) => ui.invoke_set_dark(theme != "light"),
-        Err(_) if theme != Theme::System => ui.invoke_set_dark(theme == Theme::Dark),
-        Err(_) => {}
+    // An unknown name in the environment means dark, as before.
+    let theme = match std::env::var("ARCHGUARD_DESKTOP_THEME") {
+        Ok(name) => Theme::parse(&name).unwrap_or(Theme::Dark),
+        Err(_) => theme,
+    };
+    if let Some((family, dark)) = theme.look() {
+        ui.invoke_set_look(family, dark);
     }
     select_language(ui, &language);
     if let Some((w, h)) = window {
@@ -84,8 +87,8 @@ pub fn wire(ui: &AppWindow) {
         documents_ui::push_recent(ui);
     });
     ui.on_clear_recent(move || clear(()));
-    ui.on_choose_theme(|dark| {
-        settings_file::update(|s| s.theme = if dark { Theme::Dark } else { Theme::Light });
+    ui.on_choose_theme(|family, dark| {
+        settings_file::update(|s| s.theme = Theme::from_look(family, dark));
     });
     ui.on_choose_language(with_ui(ui, |ui, lang: SharedString| {
         settings_file::update(|s| s.language = lang.to_string());
