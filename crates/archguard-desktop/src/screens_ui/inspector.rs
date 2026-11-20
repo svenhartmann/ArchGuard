@@ -3,8 +3,8 @@
 //! a list of the left panel.
 
 use archguard_engine::core::{
-    AccessState, Action, DiagnosticSeverity, EndpointAccess, Origin, Outcome, Screen, Target,
-    Transition, UiFlow, UiFlowFinding, UiFlowFindingKind, evaluate_condition,
+    AccessState, Action, Condition, DiagnosticSeverity, EndpointAccess, Origin, Outcome, Screen,
+    Target, Transition, UiFlow, UiFlowFinding, UiFlowFindingKind, evaluate_condition,
     join_actions_to_endpoints,
 };
 
@@ -21,15 +21,22 @@ pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     if let Some(list) = s.list {
         return list_panel(s, flow, list, texts);
     }
+    if s.hide_details {
+        return FlowInspector::default();
+    }
     let Some(screen) = s.selected.and_then(|i| flow.screens.get(i)) else {
         return FlowInspector::default();
     };
-    let outcome = screen
-        .access
-        .as_ref()
-        .map_or(Outcome::Allowed, |c| evaluate_condition(c, &s.assignment()));
+    // The simulated copy: an unreadable guard follows the switches too.
+    let guard = s
+        .selected
+        .and_then(|i| s.sim.screens.get(i)?.access.as_ref());
+    let outcome = guard.map_or(Outcome::Allowed, |c| evaluate_condition(c, &s.assignment()));
     let triggered = actions(s, flow, screen, texts);
+    let (meaning, meaning_from, _) = meaning(s, screen, texts);
     FlowInspector {
+        meaning: meaning.into(),
+        meaning_from: meaning_from.into(),
         mode: 1,
         title: screen.name.as_str().into(),
         route: screen.route.clone().unwrap_or_default().into(),
@@ -48,9 +55,9 @@ pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     }
 }
 
-/// Whether `action` starts on `screen`, itself or as a layout of its app.
-fn on(action: &Action, screen: &Screen) -> bool {
-    match &action.screen {
+/// Whether `origin` is `screen`, itself or as a layout of its app.
+fn on(origin: &Origin, screen: &Screen) -> bool {
+    match origin {
         Origin::Screen(id) => *id == screen.id,
         Origin::AnyScreen { application } => {
             *application == screen.application.clone().unwrap_or_default()
@@ -60,7 +67,7 @@ fn on(action: &Action, screen: &Screen) -> bool {
 
 fn actions(s: &ScreensState, flow: &UiFlow, screen: &Screen, texts: &Texts) -> Vec<FlowAction> {
     let joined = join_actions_to_endpoints(flow);
-    (flow.actions.iter().filter(|a| on(a, screen)))
+    (flow.actions.iter().filter(|a| on(&a.screen, screen)))
         .map(|a| {
             let hits: &[&EndpointAccess] = (joined.iter())
                 .find(|(j, _)| std::ptr::eq(*j, a))
@@ -169,13 +176,23 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
         List::Unreadable(k) => (
             "Targets not readable",
             "Navigation targets of this source the rules could not read literally. Each one may hide a path.",
-            unreadable(flow, k)
-                .map(|t| match &t.target {
-                    Target::Unresolved(text) | Target::Screen(text) => {
-                        row(text.clone(), &t.file, t.line)
-                    }
-                })
-                .collect(),
+            target_rows(unreadable(flow, k)),
+        ),
+        List::UnreadableFrom(i) => (
+            "Targets not readable",
+            "Navigation targets of this screen and of its layouts and menus the rules could not read literally. Each one may hide a path.",
+            target_rows((flow.transitions.iter()).filter(|t| {
+                matches!(t.target, Target::Unresolved(_)) && on(&t.from, &flow.screens[i])
+            })),
+        ),
+        List::Mismatches => (
+            "Mismatches",
+            "Where frontend and backend disagree: an action a simulated user reaches but every matching endpoint refuses, or an action the frontend guards but a matching endpoint leaves open.",
+            [
+                findings(UiFlowFindingKind::ShownButRefused),
+                findings(UiFlowFindingKind::HiddenButUnprotected),
+            ]
+            .concat(),
         ),
         List::Undeclared => (
             "Endpoints without a declared guard",
@@ -193,6 +210,84 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
         rows: model(rows),
         ..Default::default()
     }
+}
+
+/// The screen's guard in words and where that meaning comes from: code,
+/// an entry of `[views.access]` named in the screen's file, or unknown;
+/// and the origin short enough for a card.
+pub fn meaning(s: &ScreensState, screen: &Screen, texts: &Texts) -> (String, String, String) {
+    let Some(c) = &screen.access else {
+        return (
+            texts
+                .t("No guard: everyone who reaches the screen may open it.")
+                .into(),
+            texts
+                .t("No guard was read in the code for this screen.")
+                .into(),
+            String::new(),
+        );
+    };
+    let mut opaque = vec![];
+    let mut todo = vec![c];
+    while let Some(c) = todo.pop() {
+        match c {
+            Condition::All(items) | Condition::Any(items) => todo.extend(items),
+            Condition::Not(inner) => todo.push(inner),
+            Condition::Custom(name) | Condition::Unknown(name) => opaque.push(name.clone()),
+            _ => {}
+        }
+    }
+    let words = words::condition(texts, c);
+    if !opaque.is_empty() {
+        opaque.reverse();
+        let short = texts.plural(
+            opaque.len(),
+            "{count} guard the rules cannot read: see the details panel",
+            "{count} guards the rules cannot read: see the details panel",
+        );
+        let names = opaque.join(", ");
+        return (
+            words,
+            texts.f(
+                "Unknown: the rules cannot tell what {name} checks. Give it a meaning in [views.access] of the project configuration.",
+                &[("name", names)],
+            ),
+            short,
+        );
+    }
+    // shortcut: a listed name anywhere in the screen's file counts, not only at
+    // its route; upgrade when the model records where a condition came from.
+    let text = std::fs::read_to_string(s.root.join(&screen.file)).unwrap_or_default();
+    let listed = (s.config.iter())
+        .flat_map(|c| &c.views.access)
+        .find(|(key, _)| text.contains(key.as_str()));
+    let from = match listed {
+        Some((key, m)) => texts.f(
+            "From [views.access]: {name}",
+            &[("name", format!("{key} = {}", String::from(m.clone())))],
+        ),
+        None => texts.f(
+            "From code: {name}",
+            &[(
+                "name",
+                format!("{} ({})", at(&screen.file, screen.line), screen.source),
+            )],
+        ),
+    };
+    (words, from.clone(), from)
+}
+
+/// A list row per transition: its target text, file and line.
+fn target_rows<'a>(ts: impl Iterator<Item = &'a Transition>) -> Vec<FlowRow> {
+    ts.map(|t| {
+        let (Target::Unresolved(text) | Target::Screen(text)) = &t.target;
+        FlowRow {
+            text: text.as_str().into(),
+            location: at(&t.file, t.line).into(),
+            file: t.file.as_str().into(),
+        }
+    })
+    .collect()
 }
 
 /// The unresolved transitions from the source of transition `k`.

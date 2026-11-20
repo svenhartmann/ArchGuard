@@ -262,3 +262,196 @@ msgstr "Navigationsziele dieser Quelle, die die Regeln nicht wörtlich lesen kon
 
 msgid "Calls without a readable trigger ({})"
 msgstr "Aufrufe ohne lesbaren Auslöser ({})"
+
+msgid "Without a route"
+msgstr "Ohne Route"
+
+msgid "Two steps back"
+msgstr "Zwei Schritte zurück"
+
+msgid "Comes from"
+msgstr "Kommt von"
+
+msgid "Leads to"
+msgstr "Führt zu"
+
+msgid "Two steps ahead"
+msgstr "Zwei Schritte weiter"
+
+msgid "needs no sign-in or role"
+msgstr "braucht keine Anmeldung und keine Rolle"
+
+msgid "reached {{name}}"
+msgstr "erreicht {{name}}"
+
+msgid "no trigger read"
+msgstr "kein Auslöser gelesen"
+
+msgid "from the layout or menu"
+msgstr "aus Layout oder Menü"
+
+msgid "from the layout or menu: {{name}}"
+msgstr "aus Layout oder Menü: {{name}}"
+
+msgid "No known path from a start screen for this user."
+msgstr "Für diesen Benutzer ist kein Weg von einem Startbildschirm bekannt."
+
+msgid "This is a start screen."
+msgstr "Dies ist ein Startbildschirm."
+
+msgid "The project configuration could not be read."
+msgstr "Die Projektkonfiguration konnte nicht gelesen werden."
+
+msgid "Role …"
+msgstr "Rolle …"
+
+msgid "Where frontend and backend disagree: an action a simulated user reaches but every matching endpoint refuses, or an action the frontend guards but a matching endpoint leaves open."
+msgstr "Wo Frontend und Backend sich widersprechen: eine Aktion, die ein simulierter Benutzer erreicht, die aber jeder passende Endpunkt ablehnt, oder eine Aktion, die das Frontend schützt, die ein passender Endpunkt aber offen lässt."
+
+msgid "Navigation targets of this screen and of its layouts and menus the rules could not read literally. Each one may hide a path."
+msgstr "Navigationsziele dieses Bildschirms und seiner Layouts und Menüs, die die Regeln nicht wörtlich lesen konnten. Jedes kann einen Weg verbergen."
+
+msgid "No guard: everyone who reaches the screen may open it."
+msgstr "Kein Schutz: Wer den Bildschirm erreicht, darf ihn öffnen."
+
+msgid "No guard was read in the code for this screen."
+msgstr "Im Code wurde für diesen Bildschirm kein Schutz gelesen."
+
+msgid "Unknown: the rules cannot tell what {{name}} checks. Give it a meaning in [views.access] of the project configuration."
+msgstr "Unbekannt: Die Regeln können nicht sagen, was {{name}} prüft. Gib ihm eine Bedeutung in [views.access] der Projektkonfiguration."
+
+msgid "From [views.access]: {{name}}"
+msgstr "Aus [views.access]: {{name}}"
+
+msgid "From code: {{name}}"
+msgstr "Aus dem Code: {{name}}"
+
+msgid "Signed in"
+msgstr "Angemeldet"
+
+msgid "Not signed in"
+msgstr "Nicht angemeldet"
+
+msgid "Unknown conditions"
+msgstr "Unbekannte Bedingungen"
+
+msgid "Leave open ({})"
+msgstr "Offen lassen ({})"
+
+msgid "All hold"
+msgstr "Alle gelten"
+
+msgid "None hold"
+msgstr "Keine gilt"
+
+msgid "Guards the rules cannot evaluate stay unknown: such a screen counts as reached only possibly."
+msgstr "Schutzbedingungen, die die Regeln nicht auswerten können, bleiben unbekannt: Ein solcher Bildschirm gilt nur als möglicherweise erreicht."
+
+msgid "Assume every unknown guard lets the user through."
+msgstr "Annehmen, dass jede unbekannte Schutzbedingung den Benutzer durchlässt."
+
+msgid "Assume every unknown guard refuses the user."
+msgstr "Annehmen, dass jede unbekannte Schutzbedingung den Benutzer abweist."
+
+msgid "{} of {} navigations readable"
+msgstr "{} von {} Navigationen lesbar"
+
+msgid "Navigations whose target the rules could read literally. The others may hide a path."
+msgstr "Navigationen, deren Ziel die Regeln wörtlich lesen konnten. Die anderen können einen Weg verbergen."
+
+msgid "Filter by route or name"
+msgstr "Nach Route oder Name filtern"
+
+msgid "All {}"
+msgstr "Alle {}"
+
+msgid "Denied {}"
+msgstr "Verweigert {}"
+
+msgid "No path {}"
+msgstr "Kein Weg {}"
+
+msgid "Every screen of the application"
+msgstr "Jeder Bildschirm der Anwendung"
+
+msgid "Screens this user may not open"
+msgstr "Bildschirme, die dieser Benutzer nicht öffnen darf"
+
+msgid "Screens without a known path from a start screen"
+msgstr "Bildschirme ohne bekannten Weg von einem Startbildschirm"
+
+msgid "No screen matches."
+msgstr "Kein Bildschirm passt."
+
+msgid "Details: conditions, legend, lists"
+msgstr "Details: Bedingungen, Legende, Listen"
+
+msgid "Each condition"
+msgstr "Jede Bedingung einzeln"
+
+msgid "A switch set here wins over the choice for unknown conditions."
+msgstr "Ein hier gesetzter Schalter geht der Wahl für unbekannte Bedingungen vor."
+
+msgid "Lists"
+msgstr "Listen"
+
+msgid "via “{}”"
+msgstr "über „{}“"
+
+msgid "Path from start"
+msgstr "Weg vom Start"
+
+msgid "Replaying the path in a browser comes with the replay hookup; until then use: archguard ui-flow replay"
+msgstr "Das Nachspielen im Browser kommt mit der Replay-Anbindung; bis dahin: archguard ui-flow replay"
+
+msgid "‹ Back"
+msgstr "‹ Zurück"
+
+msgid "The screen shown before"
+msgstr "Der zuvor gezeigte Bildschirm"
+
+msgid "Focus"
+msgstr "Fokus"
+
+msgid "2 steps"
+msgstr "2 Schritte"
+
+msgid "Whole graph"
+msgstr "Ganzer Graph"
+
+msgid "The selected screen, where it comes from and where it leads"
+msgstr "Der gewählte Bildschirm, woher er kommt und wohin er führt"
+
+msgid "Also the screens one step further on both sides"
+msgstr "Dazu die Bildschirme einen Schritt weiter auf beiden Seiten"
+
+msgid "Every screen of every application with all navigations"
+msgstr "Jeder Bildschirm jeder Anwendung mit allen Navigationen"
+
+msgid "Click a screen for its details."
+msgstr "Klicke einen Bildschirm für seine Details."
+
+msgid "Click a card to move the focus there."
+msgstr "Klicke eine Karte, um den Fokus dorthin zu setzen."
+
+msgid "Pick a screen in the route tree."
+msgstr "Wähle einen Bildschirm im Routenbaum."
+
+msgid "Where the meaning comes from"
+msgstr "Woher die Bedeutung kommt"
+
+msgid "{0} gap"
+msgid_plural "{0} gaps"
+msgstr[0] "{0} Lücke"
+msgstr[1] "{0} Lücken"
+
+msgid "{0} mismatch"
+msgid_plural "{0} mismatches"
+msgstr[0] "{0} Widerspruch"
+msgstr[1] "{0} Widersprüche"
+
+msgid "{{count}} guard the rules cannot read: see the details panel"
+msgstr "{{count}} Schutz, den die Regeln nicht lesen können: siehe Detailbereich"
+
+msgid "{{count}} guards the rules cannot read: see the details panel"
+msgstr "{{count}} Schutzbedingungen, die die Regeln nicht lesen können: siehe Detailbereich"

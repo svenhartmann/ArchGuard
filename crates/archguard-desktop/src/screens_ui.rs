@@ -5,9 +5,15 @@
 //! All tab state is one [`ScreensState`]; [`push`] shows it as one
 //! `ScreensModel` value.
 
+mod card;
+mod center;
+mod focus;
 mod inspector;
 mod layout;
 mod state;
+#[cfg(test)]
+mod tests;
+mod tree;
 mod view;
 pub mod words;
 
@@ -50,6 +56,17 @@ pub fn wire(ui: &AppWindow) {
         }
     }));
     d.on_close_details(a.on0(|s, _| s.close_details()));
+    d.on_select_app(a.on(|s, _, i: i32| s.select_app(index(i).unwrap_or(0))));
+    d.on_set_unknown(a.on(|s, _, i: i32| s.set_unknown(index(i).unwrap_or(0))));
+    d.on_set_mode(a.on(|s, _, i: i32| s.set_mode(index(i).unwrap_or(0))));
+    d.on_set_filter(a.on(|s, _, i: i32| s.set_filter(index(i).unwrap_or(0))));
+    d.on_search(a.on(|s, _, t: slint::SharedString| s.search = t.to_string()));
+    d.on_toggle_group(a.on(|s, _, k: slint::SharedString| s.toggle_group(&k)));
+    d.on_go_back(a.on0(|s, _| s.go_back()));
+    d.on_open_mismatches(a.on0(|s, _| s.open_mismatches()));
+    d.on_open_browser(a.on(|s, _, url: slint::SharedString| {
+        s.browser_note = crate::web::open_in_browser(&url).err().unwrap_or_default();
+    }));
     d.on_open_file(open_file(ui));
 }
 
@@ -88,6 +105,10 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         move || {
             let flow = archguard_engine::ui_flow::analyze(&root).map_err(|e| e.to_string());
             let mut s = state::build_from(flow);
+            s.config = archguard_engine::load_config(None, &root)
+                .ok()
+                .map(|l| l.config);
+            s.root = root;
             snapshot_overrides(&mut s);
             s
         }
@@ -100,8 +121,13 @@ pub fn push(ui: &AppWindow, s: &ScreensState) {
 }
 
 /// `ARCHGUARD_DESKTOP_FLOW_ROLE=<index>` (0 anonymous, 1 signed in, then
-/// the roles) and `ARCHGUARD_DESKTOP_FLOW_SCREEN=<name>` set the view for
-/// snapshot runs.
+/// the roles), `ARCHGUARD_DESKTOP_FLOW_APP=<name>`,
+/// `ARCHGUARD_DESKTOP_FLOW_SCREEN=<name>` or `…_FLOW_ROUTE=<route>` (in the
+/// shown application), `ARCHGUARD_DESKTOP_FLOW_UNKNOWN=<0 open, 1 all
+/// hold, 2 none hold>`, `ARCHGUARD_DESKTOP_FLOW_MODE=<0 focus, 1 two
+/// steps, 2 whole graph>`, `ARCHGUARD_DESKTOP_FLOW_FILTER=<0 all, 1
+/// denied, 2 no path>` and `ARCHGUARD_DESKTOP_FLOW_SEARCH=<text>` set the
+/// view for snapshot runs.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut ScreensState) {
     if let Some(r) = std::env::var("ARCHGUARD_DESKTOP_FLOW_ROLE")
@@ -110,11 +136,37 @@ fn snapshot_overrides(s: &mut ScreensState) {
     {
         s.select_role(r);
     }
-    if let Ok(name) = std::env::var("ARCHGUARD_DESKTOP_FLOW_SCREEN") {
-        let i = (s.flow()).and_then(|f| f.screens.iter().position(|x| x.name == name));
-        if let Some(i) = i {
-            s.select_screen(i);
+    let var = |k: &str| std::env::var(format!("ARCHGUARD_DESKTOP_FLOW_{k}")).ok();
+    let num = |k: &str| var(k).and_then(|v| v.parse::<usize>().ok());
+    if let Some(name) = var("APP") {
+        let apps = s.flow().map(state::applications).unwrap_or_default();
+        if let Some(i) = apps.iter().position(|a| *a == name) {
+            s.select_app(i);
         }
+    }
+    let app = s.app.clone();
+    let pick = |f: &dyn Fn(&archguard_engine::core::Screen) -> bool| {
+        let of_app = |x: &&archguard_engine::core::Screen| {
+            x.application.as_deref().unwrap_or("") == app && f(x)
+        };
+        (s.flow()?.screens.iter()).position(|x| of_app(&x))
+    };
+    let screen = (var("SCREEN").and_then(|n| pick(&|x| x.name == n)))
+        .or_else(|| var("ROUTE").and_then(|r| pick(&|x| x.route.as_deref() == Some(&r))));
+    if let Some(i) = screen {
+        s.select_screen(i);
+    }
+    if let Some(i) = num("UNKNOWN") {
+        s.set_unknown(i);
+    }
+    if let Some(i) = num("MODE") {
+        s.set_mode(i);
+    }
+    if let Some(i) = num("FILTER") {
+        s.set_filter(i);
+    }
+    if let Some(q) = var("SEARCH") {
+        s.search = q;
     }
 }
 
