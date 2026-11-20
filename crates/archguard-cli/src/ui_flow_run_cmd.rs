@@ -71,7 +71,8 @@ pub(crate) fn run(config_file: Option<&Path>, root: &Path, action: &UiFlowAction
         Ok(loaded) => loaded.config,
         Err(error) => return analysis_error(error),
     };
-    let ctx = archguard_engine::extract_ctx::ExtractContext::new(root, &config);
+    let mut ctx = archguard_engine::extract_ctx::ExtractContext::new(root, &config);
+    ctx.config_file = config_file.map(|f| f.display().to_string());
     let flow = match archguard_engine::ui_flow::analyze_with(&ctx) {
         Ok(flow) => flow,
         Err(error) => return analysis_error(error),

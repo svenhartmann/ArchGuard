@@ -146,6 +146,17 @@ pub fn noted_gaps_value(notes: &ViewNotes) -> Value {
 /// state, so they apply even when a comparison replaced the finding list;
 /// an unconfigured `[licenses]` section reads no lockfile.
 pub fn check_gate_findings(root: &Path, config: &Config, report: &Report) -> Vec<Finding> {
+    check_gate_findings_in(root, config, report, None)
+}
+
+/// [`check_gate_findings`]; with `allowed_root` (the MCP server root) a
+/// `[views] backends` path outside it is not read.
+pub fn check_gate_findings_in(
+    root: &Path,
+    config: &Config,
+    report: &Report,
+    allowed_root: Option<&Path>,
+) -> Vec<Finding> {
     let mut findings = review_gate_findings(config, report);
     let policy = &config.licenses;
     if policy.is_active() {
@@ -154,7 +165,11 @@ pub fn check_gate_findings(root: &Path, config: &Config, report: &Report) -> Vec
             policy,
         ));
     }
-    findings.extend(crate::view_conventions::convention_findings(root, config));
+    findings.extend(crate::view_conventions::convention_findings_in(
+        root,
+        config,
+        allowed_root,
+    ));
     findings
 }
 

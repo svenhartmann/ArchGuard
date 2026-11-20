@@ -307,8 +307,13 @@ impl ArchguardTools {
                 tools::read_baseline(&path)
             })
             .transpose()?;
-        let gates =
-            archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
+        let server_root = tools::resolve_root(&self.root, None)?;
+        let gates = archguard_engine::check_gate_findings_in(
+            &run.root,
+            &run.loaded.config,
+            &run.report,
+            Some(&server_root),
+        );
         run.report.findings.extend(gates);
         archguard_engine::apply_convention_baseline(&mut run.report.findings, baseline.as_ref());
         let notes = archguard_engine::view_notes(&run.root, &run.loaded.config)

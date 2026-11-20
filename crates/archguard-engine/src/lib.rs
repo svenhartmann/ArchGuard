@@ -171,8 +171,9 @@ pub use cache::{fingerprint, load_graph_if_fresh, save_graph, source_fingerprint
 pub use change_context::{ChangeContext, ChangeContextOptions, build_change_context};
 pub use check_gate::{
     ViewNotes, accepted_by_baseline, accepted_by_note, apply_convention_baseline,
-    baseline_convention_ids, check_gate_findings, empty_analysis_error, gate_fails, note_value,
-    note_word, noted_gaps, noted_gaps_value, read_baseline, review_gate_findings, view_notes,
+    baseline_convention_ids, check_gate_findings, check_gate_findings_in, empty_analysis_error,
+    gate_fails, note_value, note_word, noted_gaps, noted_gaps_value, read_baseline,
+    review_gate_findings, view_notes,
 };
 pub use co_change::{CoChangeFile, CoChangeOptions, CoChangePair, CoChangeReport, co_change};
 pub use cohesion::{

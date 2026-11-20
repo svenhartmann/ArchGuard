@@ -2,7 +2,9 @@
 //! without an extractor.
 use std::path::Path;
 
-use crate::extract_ctx::{ExtractContext, found_root_config, gap, with_root_config};
+use crate::extract_ctx::{
+    ExtractContext, config_file_in, found_root_config, gap, with_root_config,
+};
 
 use archguard_core::{
     ArchguardError, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow, merge_ui_flows,
@@ -55,69 +57,153 @@ pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
 pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
     let import = read_ui_flow(ctx.root)?.unwrap_or_default();
     let mut flow = merge_ui_flows(import, extract_all(ctx));
+    let mut seen = std::collections::BTreeSet::new();
     for configured in &ctx.config.views.backends {
-        add_backend(&mut flow, ctx, configured);
+        let name = normalise(configured);
+        if seen.insert(name.clone()) {
+            add_backend(&mut flow, ctx, &name);
+        }
     }
     Ok(flow)
 }
 
 /// `[views] backends` (ADR 0021): runs the extractors on the backend
-/// directory `configured` (relative to the root, or absolute; it may leave
-/// the root because the user wrote it, nothing else may) and adds ONLY its
-/// endpoints, so frontend actions join them like local ones. Application
-/// and file are prefixed with `configured`, which marks them as external
-/// and keeps equally named applications of both sides apart. A path that
-/// is no directory or yields no endpoint is a gap, never silent.
+/// directory `name` (relative to the root, or absolute; it may leave the root
+/// because the user wrote it, nothing else may) and adds ONLY its endpoints,
+/// so frontend actions join them like local ones. Application and file are
+/// prefixed with the configured path, which marks them as external and keeps
+/// equally named applications of both sides apart. A path that is no
+/// directory or yields no endpoint is a gap, never silent; the backend's own
+/// gaps and incompleteness are carried over (files prefixed).
 ///
 /// Access rule: the backend's own `[views.access]` comes from ITS
-/// `archguard.toml` when it has one, else from the frontend's configuration.
-/// A backend's own `backends` are not followed.
-fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, configured: &str) {
+/// `archguard.toml` when it has one, else from the frontend's configuration;
+/// a backend configuration that does not parse is a gap and the frontend's
+/// rules apply. A backend's own `backends` are not followed.
+///
+/// Paths are normalised lexically (see [`normalise`]) and equal ones read
+/// once. With `ctx.allowed_root` set (the MCP server root) a backend outside
+/// it is not read at all, not even checked for existence.
+///
+/// IDs, notes and baselines built from these elements contain the configured
+/// path: relative paths keep them portable between machines, absolute paths
+/// make them machine-specific. Foreign endpoints are part of the flow, so they
+/// can make `endpoint_access_declared` of the frontend's `check` fail; that is
+/// intended.
+fn add_backend(flow: &mut UiFlow, ctx: &ExtractContext, name: &str) {
+    let config_file =
+        (ctx.config_file.clone()).unwrap_or_else(|| config_file_in(ctx.root).to_string());
     let mut fail = |message: String| {
-        gap(&mut flow.diagnostics, "archguard.toml", 0, message);
+        gap(&mut flow.diagnostics, &config_file, 0, message);
         flow.complete = false;
     };
-    let dir = ctx.root.join(configured);
-    if !dir.is_dir() {
+    let dir = ctx.root.join(name);
+    if ctx.allowed_root.is_some_and(|a| !inside(&dir, a, ctx.root)) {
         return fail(format!(
-            "views.backends `{configured}`: not an existing directory; its endpoints are unknown."
+            "views.backends `{name}`: a backend outside the server root is not read."
         ));
     }
+    if !dir.is_dir() {
+        return fail(format!(
+            "views.backends `{name}`: not an existing directory; its endpoints are unknown."
+        ));
+    }
+    let prefixed = |file: &str| match file {
+        "" => name.to_string(),
+        file => format!("{name}/{file}"),
+    };
     let own = match found_root_config(&dir) {
         Ok(own) => own,
-        Err(e) => {
-            return fail(format!(
-                "views.backends `{configured}`: configuration not read ({e}); \
+        Err((rel, e)) => {
+            let message = format!(
+                "views.backends `{name}`: configuration not read ({e}); \
                  the frontend's access rules apply."
-            ));
+            );
+            gap(&mut flow.diagnostics, &prefixed(&rel), 0, message);
+            flow.complete = false;
+            None
         }
     };
     let backend = extract_all(&ExtractContext::new(
         &dir,
         own.as_ref().unwrap_or(ctx.config),
     ));
-    if backend.endpoints.is_empty() {
-        return fail(format!(
-            "views.backends `{configured}`: no HTTP endpoints found."
-        ));
+    flow.complete &= backend.complete;
+    for mut d in backend.diagnostics {
+        d.file = prefixed(&d.file);
+        flow.diagnostics.push(d);
     }
-    let name = configured.trim_end_matches('/');
+    if backend.endpoints.is_empty() {
+        gap(
+            &mut flow.diagnostics,
+            &config_file,
+            0,
+            format!("views.backends `{name}`: no HTTP endpoints found."),
+        );
+        flow.complete = false;
+    }
     for mut e in backend.endpoints {
         e.application = Some(match e.application {
             Some(app) => format!("{name}/{app}"),
             None => name.to_string(),
         });
-        e.file = format!("{name}/{}", e.file);
+        e.file = prefixed(&e.file);
         flow.endpoints.push(e);
     }
     for mut site in backend.handler_sites {
-        site.endpoint_file = format!("{name}/{}", site.endpoint_file);
+        site.endpoint_file = prefixed(&site.endpoint_file);
+        site.file = prefixed(&site.file);
         flow.handler_sites.push(site);
     }
     flow.endpoints.sort();
     flow.endpoints.dedup();
     flow.handler_sites.sort();
     flow.handler_sites.dedup();
+    flow.diagnostics.sort();
+    flow.diagnostics.dedup();
+}
+
+/// `path` written lexically: `.` dropped, `x/..` collapsed, no trailing `/`;
+/// a leading `..` stays. Links are not looked at.
+fn normalise(path: &str) -> String {
+    use std::path::Component::{CurDir, Normal, ParentDir, Prefix, RootDir};
+    let mut parts: Vec<String> = Vec::new();
+    let mut rooted = false;
+    for c in Path::new(path).components() {
+        match c {
+            CurDir => {}
+            ParentDir => match parts.last() {
+                Some(last) if last != ".." => {
+                    parts.pop();
+                }
+                _ if rooted => {}
+                _ => parts.push("..".into()),
+            },
+            RootDir => rooted = true,
+            Prefix(p) => parts.push(p.as_os_str().to_string_lossy().into_owned()),
+            Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+        }
+    }
+    let joined = parts.join("/");
+    match (rooted, joined.is_empty()) {
+        (true, _) => format!("/{joined}"),
+        (false, true) => ".".into(),
+        (false, false) => joined,
+    }
+}
+
+/// Whether `dir` (the root joined with a backend path) lies below the
+/// canonical `allowed`: first as written, without touching the file system,
+/// then, when it exists, where its links really lead.
+fn inside(dir: &Path, allowed: &Path, root: &Path) -> bool {
+    let base = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let rel = dir.strip_prefix(root).unwrap_or(dir);
+    let absolute = base.join(rel); // an absolute `rel` replaces `base`
+    let written = Path::new(&normalise(&absolute.to_string_lossy())).starts_with(allowed);
+    written
+        && dir
+            .canonicalize()
+            .map_or(true, |real| real.starts_with(allowed))
 }
 
 fn extract_all(ctx: &ExtractContext) -> UiFlow {
@@ -396,6 +482,131 @@ public class OrdersController : ControllerBase
         let dir = two_repos(&front("policy:$arg"), &[("Api/O.cs", PERMISSION_API)]);
         let flow = analyze(&dir.path().join("front")).unwrap();
         assert_eq!(flow.endpoints[0].access, mapped, "{:#?}", flow.diagnostics);
+    }
+
+    fn frontend_flow(front_toml: &str, back: &[(&str, &str)]) -> UiFlow {
+        let dir = two_repos(front_toml, back);
+        let flow = analyze(&dir.path().join("front")).unwrap();
+        drop(dir);
+        flow
+    }
+
+    const BACK_ENDPOINT: (&str, &str) = ("Api/OrdersController.cs", API);
+
+    #[test]
+    fn backend_gaps_and_incompleteness_are_carried_over() {
+        let flow = frontend_flow(
+            "[views]\nbackends = [\"../back\"]\n",
+            &[
+                BACK_ENDPOINT,
+                ("W/A.razor", "@page \"/\"\n<a href=\"@X\">x</a>\n"),
+            ],
+        );
+        assert!(!flow.complete, "{:#?}", flow.diagnostics);
+        assert!(
+            flow.diagnostics
+                .iter()
+                .any(|d| d.file == "../back/W/A.razor"),
+            "{:#?}",
+            flow.diagnostics
+        );
+        assert_eq!(flow.endpoints.len(), 1);
+    }
+
+    #[test]
+    fn handler_sites_of_a_backend_are_prefixed_in_both_files() {
+        let flow = frontend_flow("[views]\nbackends = [\"../back\"]\n", &[BACK_ENDPOINT]);
+        assert!(!flow.handler_sites.is_empty(), "{:#?}", flow.endpoints);
+        for s in &flow.handler_sites {
+            assert!(s.file.starts_with("../back/"), "{s:?}");
+            assert!(s.endpoint_file.starts_with("../back/"), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn an_unparsable_backend_config_is_a_gap_and_the_frontends_rules_apply() {
+        let flow = frontend_flow(
+            "[views]\nbackends = [\"../back\"]\n",
+            &[BACK_ENDPOINT, ("archguard.toml", "[future]\nx = 1\n")],
+        );
+        assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.diagnostics);
+        assert!(!flow.complete);
+        let gap = flow
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("configuration not read"));
+        assert_eq!(
+            gap.map(|d| d.file.as_str()),
+            Some("../back/archguard.toml"),
+            "{:#?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn gaps_about_the_setting_name_the_config_file_in_use() {
+        let dir = two_repos("", &[]);
+        let front = dir.path().join("front");
+        std::fs::remove_file(front.join("archguard.toml")).unwrap();
+        write(
+            &front,
+            &[(
+                ".archguard/archguard.toml",
+                "[views]\nbackends = [\"../nope\"]\n",
+            )],
+        );
+        let flow = analyze(&front).unwrap();
+        assert_eq!(
+            flow.diagnostics[0].file, ".archguard/archguard.toml",
+            "{:#?}",
+            flow.diagnostics
+        );
+        let config: archguard_core::Config =
+            toml::from_str("[views]\nbackends = [\"../nope\"]\n").unwrap();
+        let ctx = ExtractContext::new(&front, &config).with_config_file("other.toml");
+        let flow = analyze_with(&ctx).unwrap();
+        assert_eq!(flow.diagnostics[0].file, "other.toml");
+    }
+
+    #[test]
+    fn equal_backends_written_differently_join_once() {
+        let flow = frontend_flow(
+            "[views]\nbackends = [\"../back/\", \"./../back\", \"../back/x/..\"]\n",
+            &[BACK_ENDPOINT],
+        );
+        assert_eq!(flow.endpoints.len(), 1, "{:#?}", flow.endpoints);
+        assert_eq!(
+            flow.endpoints[0].application.as_deref(),
+            Some("../back/Api")
+        );
+    }
+
+    #[test]
+    fn a_confined_run_does_not_read_a_backend_outside_its_root() {
+        let dir = two_repos(
+            "[views]\nbackends = [\"../back\", \"../back/Api/..\"]\n",
+            &[BACK_ENDPOINT],
+        );
+        let front = dir.path().join("front");
+        let config: archguard_core::Config =
+            toml::from_str("[views]\nbackends = [\"../back\", \"/\", \"../nope\"]\n").unwrap();
+        let allowed = front.canonicalize().unwrap();
+        let ctx = ExtractContext::new(&front, &config).confined_to(&allowed);
+        let flow = analyze_with(&ctx).unwrap();
+        assert!(flow.endpoints.is_empty(), "{:#?}", flow.endpoints);
+        let outside = flow
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("outside the server root"))
+            .count();
+        assert_eq!(outside, 3, "{:#?}", flow.diagnostics);
+        // Inside the allowed root a backend is read.
+        let allowed = dir.path().canonicalize().unwrap();
+        let config: archguard_core::Config =
+            toml::from_str("[views]\nbackends = [\"../back\"]\n").unwrap();
+        let flow =
+            analyze_with(&ExtractContext::new(&front, &config).confined_to(&allowed)).unwrap();
+        assert_eq!(flow.endpoints.len(), 1);
     }
 
     fn project(json: Option<&str>) -> tempfile::TempDir {
