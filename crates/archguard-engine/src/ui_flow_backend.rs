@@ -33,19 +33,26 @@
 //! Each endpoint also gets its handler method and the request types it sends
 //! (`handlers`, ADR 0022 decision 4).
 //!
+//! Also read: `[views.access]` of the root's configuration for attributes and
+//! annotations (`index`), string constants of the scan in routes and roles,
+//! attributes and `[Route]` of base controllers, conventional MVC routes
+//! (`conventional`), CleanArchitecture endpoint groups (`minimal`), request
+//! attributes a MediatR pipeline behaviour enforces (`index`), and Spring
+//! `SecurityFilterChain` rules (`spring::chain`).
+//!
 //! A project is the nearest directory with a `.csproj`, `pom.xml` or
 //! `build.gradle(.kts)`; its directory name is the endpoint's `application`.
-//! Not recognized (left `undeclared`, or a diagnostic):
-//! conventional routing (actions skipped with a diagnostic), `[AcceptVerbs]`,
-//! `MapMethods`, `MapGroup` prefixes passed in from a call site, central rules
-//! (`FallbackPolicy`; Spring `SecurityFilterChain` only gets one `note` per
-//! project), other SpEL (`unknown`), constants as routes or roles (diagnostic,
-//! the endpoint is skipped or the condition is `unknown`).
+//! Not recognized (left `undeclared`, or a diagnostic): `[AcceptVerbs]`,
+//! `MapMethods`, `MapGroup` prefixes passed in from a call site, guards added
+//! inside helper extension methods, `[Authorize<T>]`, `FallbackPolicy`, other
+//! SpEL (`unknown`), non-constant routes or roles (diagnostic, the endpoint
+//! is skipped or the condition is `unknown`), actions inherited from a base
+//! controller under conventional routing, `MapIdentityApi`.
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
-    ANY_METHOD, AccessState, Condition, DiagnosticSeverity, EndpointAccess, ServiceTopology,
-    UiFlow, UiFlowDiagnostic,
+    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess,
+    ServiceTopology, UiFlow, UiFlowDiagnostic,
 };
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -58,25 +65,38 @@ const MAX_FILES: usize = 20_000;
 const BUILD_FILES: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
 const SOURCES: [&str; 3] = [".cs", ".java", ".kt"];
 
-/// Endpoints with their declared access, plus diagnostics.
+/// Endpoints with their declared access, plus diagnostics. `[views.access]`
+/// comes from the root's configuration; an unreadable one is a note.
 pub fn extract(root: &Path) -> UiFlow {
     let mut out = Out(UiFlow::default());
-    for (application, sources) in read_projects(root, &mut out).values() {
+    let access = match views_access(root) {
+        Ok(access) => access,
+        Err(e) => {
+            let message = format!("Configuration not read; [views.access] not applied: {e}");
+            out.note(".", 0, message);
+            BTreeMap::new()
+        }
+    };
+    let projects = read_projects(root, &mut out);
+    let index = Index::new(projects.values().flat_map(|(_, s)| s), access);
+    for (application, sources) in projects.values() {
         let first = out.0.endpoints.len();
         let mut call_sites = HashMap::new();
+        let routes = conventional::routes(sources, &index, &mut out);
         for src in sources {
             if src.rel.ends_with(".cs") {
-                controllers::scan(src, &mut out);
-                minimal::scan(src, sources, &mut call_sites, &mut out);
+                controllers::scan(src, &index, &routes, &mut out);
+                minimal::scan(src, sources, &index, &mut call_sites, &mut out);
             } else {
-                spring::scan(src, &mut out);
+                spring::scan(src, &index, &mut out);
             }
         }
-        spring::central_rules(sources, &mut out);
+        spring::central_rules(sources, &index, &mut out, first);
         for e in &mut out.0.endpoints[first..] {
             e.application = application.clone();
         }
     }
+    index.apply_request_access(&mut out);
     let flow = &mut out.0;
     flow.endpoints.sort();
     flow.endpoints.dedup();
@@ -85,85 +105,111 @@ pub fn extract(root: &Path) -> UiFlow {
     out.0
 }
 
-/// Application name and source files by project directory; unreadable files
-/// become diagnostics.
-fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
-    let (projects, files) = discover(root, out);
-    let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
-    for rel in files {
-        match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
-            Ok(bytes) => by_project
-                .entry(project_of(&rel, &projects))
-                .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
-                .1
-                .push(Source::new(rel, &String::from_utf8_lossy(&bytes))),
-            Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
+/// What one run reads: the configuration and the projects with their sources.
+mod projects {
+    use super::*;
+
+    /// `[views.access]` of the configuration `load_config` would discover:
+    /// `.archguard/archguard.toml`, then the legacy `archguard.toml`, without
+    /// following links. Not through `crate::config`: that module reaches `check`,
+    /// `check` reaches this extractor, and the architecture gate refuses the cycle.
+    pub(super) fn views_access(root: &Path) -> Result<BTreeMap<String, AccessMeaning>, String> {
+        for rel in [".archguard/archguard.toml", "archguard.toml"] {
+            match read_repo_file(root, Path::new(rel), MAX_BYTES) {
+                Ok(bytes) => {
+                    let text = String::from_utf8(bytes).map_err(|e| format!("{rel}: {e}"))?;
+                    return (toml::from_str::<archguard_core::Config>(&text))
+                        .map(|c| c.views.access)
+                        .map_err(|e| format!("{rel}: {e}"));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{rel}: {e}")),
+            }
+        }
+        Ok(BTreeMap::new())
+    }
+
+    /// Application name and source files by project directory; unreadable files
+    /// become diagnostics.
+    pub(super) fn read_projects(root: &Path, out: &mut Out) -> BTreeMap<String, Project> {
+        let (projects, files) = discover(root, out);
+        let mut by_project: BTreeMap<String, Project> = BTreeMap::new();
+        for rel in files {
+            match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
+                Ok(bytes) => by_project
+                    .entry(project_of(&rel, &projects))
+                    .or_insert_with_key(|dir| (application(root, dir, &projects), vec![]))
+                    .1
+                    .push(Source::new(rel, &String::from_utf8_lossy(&bytes))),
+                Err(e) => out.diag(&rel, 0, format!("Source file not read (limit 1 MiB): {e}")),
+            }
+        }
+        by_project
+    }
+
+    /// The owning application of a project directory, and its sources.
+    pub(super) type Project = (Option<String>, Vec<Source>);
+
+    /// The project directory's name (the root's for a build file at the root);
+    /// none for files outside every project.
+    fn application(root: &Path, dir: &str, projects: &BTreeSet<String>) -> Option<String> {
+        if !projects.contains(dir) {
+            return None;
+        }
+        match dir.rsplit_once('/') {
+            Some((_, name)) => Some(name.into()),
+            None if dir.is_empty() => root.file_name().map(|n| n.to_string_lossy().into_owned()),
+            None => Some(dir.into()),
         }
     }
-    by_project
-}
 
-/// The owning application of a project directory, and its sources.
-type Project = (Option<String>, Vec<Source>);
-
-/// The project directory's name (the root's for a build file at the root);
-/// none for files outside every project.
-fn application(root: &Path, dir: &str, projects: &BTreeSet<String>) -> Option<String> {
-    if !projects.contains(dir) {
-        return None;
-    }
-    match dir.rsplit_once('/') {
-        Some((_, name)) => Some(name.into()),
-        None if dir.is_empty() => root.file_name().map(|n| n.to_string_lossy().into_owned()),
-        None => Some(dir.into()),
-    }
-}
-
-fn project_of(rel: &str, projects: &BTreeSet<String>) -> String {
-    let mut dir = rel;
-    loop {
-        dir = dir.rsplit_once('/').map_or("", |(d, _)| d);
-        if dir.is_empty() || projects.contains(dir) {
-            return dir.to_string();
+    fn project_of(rel: &str, projects: &BTreeSet<String>) -> String {
+        let mut dir = rel;
+        loop {
+            dir = dir.rsplit_once('/').map_or("", |(d, _)| d);
+            if dir.is_empty() || projects.contains(dir) {
+                return dir.to_string();
+            }
         }
     }
-}
 
-/// Directories holding a build file, and the source files to scan.
-fn discover(root: &Path, out: &mut Out) -> (BTreeSet<String>, Vec<String>) {
-    let (mut projects, mut files) = (BTreeSet::new(), Vec::new());
-    let discovery = match Discovery::new(root, &mut ServiceTopology::default()) {
-        Ok(d) => d,
-        Err(e) => {
-            out.diag(".", 0, format!("Discovery settings not read: {e}"));
-            return (projects, files);
-        }
-    };
-    for entry in discovery.walk(root) {
-        let entry = match entry {
-            Ok(entry) if entry.file_type().is_some_and(|t| t.is_file()) => entry,
-            Ok(_) => continue,
+    /// Directories holding a build file, and the source files to scan.
+    fn discover(root: &Path, out: &mut Out) -> (BTreeSet<String>, Vec<String>) {
+        let (mut projects, mut files) = (BTreeSet::new(), Vec::new());
+        let discovery = match Discovery::new(root, &mut ServiceTopology::default()) {
+            Ok(d) => d,
             Err(e) => {
-                out.diag(".", 0, format!("Directory entry not read: {e}"));
-                continue;
+                out.diag(".", 0, format!("Discovery settings not read: {e}"));
+                return (projects, files);
             }
         };
-        let rel = relative(root, entry.path());
-        let (dir, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
-        if name.ends_with(".csproj") || BUILD_FILES.contains(&name) {
-            projects.insert(dir.to_string());
-        } else if SOURCES.iter().any(|e| name.ends_with(e)) && !test_path(&rel) {
-            files.push(rel);
+        for entry in discovery.walk(root) {
+            let entry = match entry {
+                Ok(entry) if entry.file_type().is_some_and(|t| t.is_file()) => entry,
+                Ok(_) => continue,
+                Err(e) => {
+                    out.diag(".", 0, format!("Directory entry not read: {e}"));
+                    continue;
+                }
+            };
+            let rel = relative(root, entry.path());
+            let (dir, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
+            if name.ends_with(".csproj") || BUILD_FILES.contains(&name) {
+                projects.insert(dir.to_string());
+            } else if SOURCES.iter().any(|e| name.ends_with(e)) && !test_path(&rel) {
+                files.push(rel);
+            }
         }
+        files.sort();
+        if files.len() > MAX_FILES {
+            let message = format!("More than {MAX_FILES} source files; the rest were not scanned.");
+            out.diag(".", 0, message);
+            files.truncate(MAX_FILES);
+        }
+        (projects, files)
     }
-    files.sort();
-    if files.len() > MAX_FILES {
-        let message = format!("More than {MAX_FILES} source files; the rest were not scanned.");
-        out.diag(".", 0, message);
-        files.truncate(MAX_FILES);
-    }
-    (projects, files)
 }
+use projects::{read_projects, views_access};
 
 struct Out(UiFlow);
 impl Out {
@@ -175,6 +221,15 @@ impl Out {
             line,
             message,
             severity: DiagnosticSeverity::Gap,
+        });
+    }
+    /// Information only: the flow stays complete.
+    fn note(&mut self, file: &str, line: u32, message: String) {
+        self.0.diagnostics.push(UiFlowDiagnostic {
+            file: file.into(),
+            line,
+            message,
+            severity: DiagnosticSeverity::Note,
         });
     }
     fn at(&mut self, src: &Source, at: usize, message: String) {
@@ -307,8 +362,30 @@ struct Decl {
     class: bool,
     name: String,
     attrs: Vec<Attr>,
-    /// Offset of a method's parameter list; 0 for a class.
+    /// Offset of a method's parameter list; a class's header start.
     open: usize,
+    /// A class's body end (`}`, or `;` without a body); 0 for a method.
+    end: usize,
+    /// A class's base list as simple names (`: Base<T>, IFoo`, `extends`,
+    /// `implements`); empty for a method.
+    bases: Vec<String>,
+    /// `interface` for a class; `public` and not `static` for a method.
+    flag: bool,
+}
+
+/// Calls `f(class, method)` for each method with the innermost class around it.
+fn each_method(src: &Source, annotations: bool, mut f: impl FnMut(&Decl, &Decl)) {
+    let mut open: Vec<Decl> = Vec::new();
+    for d in decls(src, annotations) {
+        while open.last().is_some_and(|c| c.end < d.open) {
+            open.pop();
+        }
+        if d.class {
+            open.push(d);
+        } else if let Some(class) = open.last() {
+            f(class, &d);
+        }
+    }
 }
 
 fn has(attrs: &[Attr], name: &str) -> bool {
@@ -402,37 +479,110 @@ fn header_end(src: &Source, mut j: usize) -> usize {
     b.len()
 }
 
+/// A class, or a method with attributes; in C# also a method without any
+/// (conventional routing needs every public action).
 fn declaration(src: &Source, start: usize, end: usize, attrs: Vec<Attr>) -> Option<Decl> {
     let header = &src.text[start..end];
-    if let Some(name) = class_name(header, src.rel.ends_with(".kt")) {
+    if let Some((interface, name)) = class_name(header, src.rel.ends_with(".kt")) {
+        let (bases, end) = class_shape(src, start);
         return Some(Decl {
             class: true,
             name,
             attrs,
-            open: 0,
+            open: start,
+            end,
+            bases,
+            flag: interface,
         });
     }
-    let p = header.find('(').filter(|_| !attrs.is_empty())?;
+    let p = header.find('(')?;
+    let modifiers: Vec<String> = (header[..p].split_whitespace())
+        .map(str::to_owned)
+        .collect();
+    let has = |w: &str| modifiers.iter().any(|m| m == w);
+    let public = has("public") && !has("static") && !header[..p].contains('=');
+    if attrs.is_empty() && !(public && src.rel.ends_with(".cs")) {
+        return None;
+    }
     let (s, e) = ident_before(header.as_bytes(), p);
     (s < e).then(|| Decl {
         class: false,
         name: header[s..e].into(),
         attrs,
         open: start + p,
+        end: 0,
+        bases: vec![],
+        flag: public,
     })
 }
 
-fn class_name(header: &str, kotlin: bool) -> Option<String> {
+/// `(is an interface, name)` of a type declaration header.
+fn class_name(header: &str, kotlin: bool) -> Option<(bool, String)> {
     let head = header.split('(').next().unwrap_or(header);
     let mut words = head
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|w| !w.is_empty());
     while let Some(w) = words.next() {
         if matches!(w, "class" | "interface" | "record" | "struct") || kotlin && w == "object" {
-            return words.next().map(str::to_owned);
+            return words.next().map(|n| (w == "interface", n.to_owned()));
         }
     }
     None
+}
+
+/// The base list and body end of the type declared at `start`.
+fn class_shape(src: &Source, start: usize) -> (Vec<String>, usize) {
+    let b = src.bytes();
+    let mut j = start;
+    while j < b.len() && !matches!(b[j], b'{' | b';') {
+        if let Some(end) = literal_end(b, j) {
+            j = end;
+            continue;
+        }
+        j = match b[j] {
+            b'(' | b'[' => src.pair(j).map_or(j + 1, |c| c + 1),
+            _ => j + 1,
+        };
+    }
+    let end = match b.get(j) {
+        Some(b'{') => src.pair(j).unwrap_or(b.len()),
+        _ => j,
+    };
+    (base_names(&src.text[start..j.min(b.len())]), end)
+}
+
+/// Simple names in the base list of a type header (`: Base<T>, IFoo`,
+/// `extends`, `implements`), primary constructors and generics left out.
+fn base_names(header: &str) -> Vec<String> {
+    let (mut head, mut depth) = (String::new(), 0i32);
+    for c in header.chars() {
+        match c {
+            '(' | '[' | '<' => depth += 1,
+            ')' | ']' | '>' => depth -= 1,
+            _ if depth == 0 => head.push(c),
+            _ => {}
+        }
+    }
+    let head = head.split(" where ").next().unwrap_or("");
+    let list = match head.find(':') {
+        Some(p) => &head[p + 1..],
+        None => match head.find(" extends ").or_else(|| head.find(" implements ")) {
+            Some(p) => &head[p..],
+            None => "",
+        },
+    };
+    (list.replace(" implements ", ",").replace(" extends ", ","))
+        .split(',')
+        .filter_map(|item| {
+            let item = item.split_whitespace().next()?;
+            let name = item.rsplit('.').next().unwrap_or(item);
+            let name: String = name
+                .chars()
+                .take_while(|c| lex::is_ident(*c as u8))
+                .collect();
+            (!name.is_empty()).then_some(name)
+        })
+        .collect()
 }
 
 /// Literals, brackets, identifiers and argument lists on raw text.
@@ -559,6 +709,11 @@ mod lex {
 
     /// Splits on commas outside brackets and literals.
     pub(super) fn split_top(s: &str) -> Vec<&str> {
+        split_by(s, b',')
+    }
+
+    /// Splits on `sep` outside brackets and literals; empty parts are dropped.
+    pub(super) fn split_by(s: &str, sep: u8) -> Vec<&str> {
         let b = s.as_bytes();
         let (mut parts, mut depth, mut start, mut i) = (Vec::new(), 0i32, 0, 0);
         while i < b.len() {
@@ -569,7 +724,7 @@ mod lex {
             match b[i] {
                 b'(' | b'[' | b'{' => depth += 1,
                 b')' | b']' | b'}' => depth -= 1,
-                b',' if depth == 0 => {
+                c if c == sep && depth == 0 => {
                     parts.push(s[start..i].trim());
                     start = i + 1;
                 }
@@ -583,7 +738,7 @@ mod lex {
     }
 
     /// `name = value` (Java/Kotlin/C# attribute) or `name: value` (C# argument).
-    fn named_part(part: &str) -> Option<(&str, &str)> {
+    pub(super) fn named_part(part: &str) -> Option<(&str, &str)> {
         let b = part.as_bytes();
         let end = b.iter().take_while(|c| is_ident(**c)).count();
         let k = skip_ws(b, end);
@@ -627,9 +782,352 @@ mod lex {
     }
 }
 
-/// ASP.NET Core attribute-routed controllers.
+/// `access` that must also satisfy `extra`: both checks run in turn.
+fn require(access: &AccessState, extra: Condition) -> AccessState {
+    let mut items = vec![extra];
+    if let AccessState::Protected(c) = access {
+        items.push(c.clone());
+    }
+    let flat = (items.into_iter())
+        .flat_map(|c| match c {
+            Condition::All(v) => v,
+            c => vec![c],
+        })
+        .collect();
+    combine(flat, Condition::All).map_or(AccessState::Undeclared, AccessState::Protected)
+}
+
+/// What the scans read across all projects of one run: `[views.access]`,
+/// string constants, and types by simple name (base classes, request types).
+///
+/// - A constant is `const string X = …` (C#), `static final String X = …`
+///   (Java) or `const val X = …` (Kotlin), referenced as `Class.X`; its value
+///   is a literal, `nameof(Y)`, another constant or `+` of these. Two
+///   different initializers for the same `Class.X` resolve to nothing.
+/// - Bases are followed by simple name; a name declared twice is ambiguous
+///   (a note) and stops the walk; a name outside the scan stops it silently.
+/// - Requests: a class implementing `IPipelineBehavior<,>` whose file names
+///   `AuthorizeAttribute` (or `<Listed>Attribute`) enforces that attribute on
+///   every request type the endpoint sends, read as the CleanArchitecture
+///   `AuthorizationBehaviour` does: signed in, any role of all attributes,
+///   every policy; a listed attribute adds its meaning.
+mod index {
+    use super::lex::{literal, named, named_part, positional, split_by, split_top, words};
+    use super::*;
+
+    /// Bound for constant-to-constant and base-class hops.
+    const MAX_DEPTH: usize = 8;
+
+    pub(super) struct Index<'a> {
+        access: BTreeMap<String, AccessMeaning>,
+        /// `Class.Member` → the initializer texts found for it.
+        constants: HashMap<String, BTreeSet<String>>,
+        classes: HashMap<String, Vec<(&'a Source, Decl)>>,
+        /// Attribute names a pipeline behaviour reads from requests.
+        enforced: BTreeSet<String>,
+    }
+
+    impl<'a> Index<'a> {
+        pub(super) fn new(
+            sources: impl Iterator<Item = &'a Source>,
+            access: BTreeMap<String, AccessMeaning>,
+        ) -> Self {
+            let mut index = Index {
+                access,
+                constants: HashMap::new(),
+                classes: HashMap::new(),
+                enforced: BTreeSet::new(),
+            };
+            for src in sources {
+                let decls = decls(src, !src.rel.ends_with(".cs"));
+                for (key, init) in constants(src, &decls) {
+                    index.constants.entry(key).or_default().insert(init);
+                }
+                for d in decls.into_iter().filter(|d| d.class && !d.flag) {
+                    if d.bases.iter().any(|b| b == "IPipelineBehavior") {
+                        let names = std::iter::once("Authorize")
+                            .chain(index.access.keys().map(String::as_str));
+                        let read: Vec<String> = names
+                            .filter(|n| words(&src.text, &format!("{n}Attribute")).next().is_some())
+                            .map(str::to_owned)
+                            .collect();
+                        index.enforced.extend(read);
+                    }
+                    index
+                        .classes
+                        .entry(d.name.clone())
+                        .or_default()
+                        .push((src, d));
+                }
+            }
+            index
+        }
+
+        /// A string value: a literal, `nameof(X)`, a constant of the scan, or `+` of these.
+        pub(super) fn text(&self, raw: &str) -> Option<String> {
+            self.text_at(raw, 0)
+        }
+
+        fn text_at(&self, raw: &str, depth: usize) -> Option<String> {
+            let parts = split_by(raw, b'+');
+            if depth > MAX_DEPTH || parts.is_empty() {
+                return None;
+            }
+            (parts.iter().map(|p| self.atom(p, depth)))
+                .collect::<Option<Vec<_>>>()
+                .map(|v| v.concat())
+        }
+
+        fn atom(&self, p: &str, depth: usize) -> Option<String> {
+            if let Some(s) = literal(p) {
+                return Some(unescape(&s, p.starts_with('@')));
+            }
+            if let Some(inner) = p.strip_prefix("nameof(").and_then(|r| r.strip_suffix(')')) {
+                let last = inner.rsplit('.').next().unwrap_or(inner).trim();
+                return member_path(inner).then(|| last.to_string());
+            }
+            let mut segments = p.rsplit('.');
+            let (member, class) = (segments.next()?, segments.next()?);
+            let inits = self.constants.get(&format!("{class}.{member}"))?;
+            match (member_path(p), inits.len()) {
+                (true, 1) => self.text_at(inits.first()?, depth + 1),
+                _ => None,
+            }
+        }
+
+        pub(super) fn is_open(&self, name: &str) -> bool {
+            self.access.get(name) == Some(&AccessMeaning::Open)
+        }
+
+        /// A listed attribute's condition: `None` when not listed, `Some(None)` for open.
+        pub(super) fn listed(
+            &self,
+            out: &mut Out,
+            src: &Source,
+            a: &Attr,
+        ) -> Option<Option<Condition>> {
+            use AccessMeaning as M;
+            Some(match self.access.get(&a.name)? {
+                M::Open => None,
+                M::Authenticated => Some(Condition::Authenticated),
+                M::Never => Some(Condition::Never),
+                M::Role(n) => Some(Condition::Role(n.clone())),
+                M::Policy(n) => Some(Condition::Policy(n.clone())),
+                M::RoleFromArguments => Some(self.arguments(out, src, a, Condition::Role)),
+                M::PolicyFromArguments => Some(self.arguments(out, src, a, Condition::Policy)),
+            })
+        }
+
+        /// `$arg`: any of the arguments; a constant that is no literal keeps its member path.
+        fn arguments(
+            &self,
+            out: &mut Out,
+            src: &Source,
+            a: &Attr,
+            atom: fn(String) -> Condition,
+        ) -> Condition {
+            let args: Vec<&str> = (split_top(&a.args).into_iter())
+                .map(|p| named_part(p).map_or(p, |(_, v)| v))
+                .collect();
+            if args.is_empty() {
+                return out.unknown(src, a.at, &format!("{} without arguments", a.name));
+            }
+            let names: Option<Vec<Condition>> = (args.iter())
+                .map(|p| {
+                    let name = self
+                        .text(p)
+                        .or_else(|| member_path(p).then(|| p.trim().into()));
+                    name.map(atom)
+                })
+                .collect();
+            (names.and_then(|n| combine(n, Condition::Any)))
+                .unwrap_or_else(|| out.unknown(src, a.at, &a.args))
+        }
+
+        /// Base classes of `class` (declared in `src`), nearest first.
+        pub(super) fn ancestors<'s>(
+            &'s self,
+            out: &mut Out,
+            src: &Source,
+            class: &Decl,
+        ) -> Vec<(&'a Source, &'s Decl)> {
+            let mut found: Vec<(&'a Source, &'s Decl)> = Vec::new();
+            let mut seen = BTreeSet::from([class.name.clone()]);
+            let mut base = class.bases.first();
+            while let Some(name) = base {
+                let Some(candidates) = self.classes.get(name) else {
+                    break;
+                };
+                if found.len() >= MAX_DEPTH || !seen.insert(name.clone()) {
+                    break;
+                }
+                if candidates.len() > 1 {
+                    let message = format!(
+                        "Base class {name} is ambiguous ({} classes of that name); its \
+                         attributes are not applied to {}.",
+                        candidates.len(),
+                        class.name
+                    );
+                    out.note(&src.rel, src.line(class.open), message);
+                    break;
+                }
+                let (s, d) = &candidates[0];
+                found.push((*s, d));
+                base = d.bases.first();
+            }
+            found
+        }
+
+        /// The declaration of class `name` in `src`.
+        pub(super) fn class_in(&self, src: &Source, name: &str) -> Option<&Decl> {
+            (self.classes.get(name)?.iter())
+                .find(|(s, _)| std::ptr::eq(*s, src))
+                .map(|(_, d)| d)
+        }
+
+        /// Endpoints must also satisfy the enforced attributes of the requests they send.
+        pub(super) fn apply_request_access(&self, out: &mut Out) {
+            if self.enforced.is_empty() {
+                return;
+            }
+            for i in 0..out.0.endpoints.len() {
+                let sends = out.0.endpoints[i].sends.clone();
+                let conditions = (sends.iter())
+                    .filter_map(|t| self.request(out, simple_type(t)))
+                    .collect();
+                if let Some(c) = combine(conditions, Condition::All) {
+                    let e = &mut out.0.endpoints[i];
+                    e.access = require(&e.access, c);
+                }
+            }
+        }
+
+        fn request(&self, out: &mut Out, name: &str) -> Option<Condition> {
+            let candidates = self.classes.get(name)?;
+            let enforced = |d: &Decl| d.attrs.iter().any(|a| self.enforced.contains(&a.name));
+            let [(src, d)] = candidates.as_slice() else {
+                if let Some((s, d)) = candidates.iter().find(|(_, d)| enforced(d)) {
+                    let message = format!(
+                        "Request type {name} is declared {} times; its attributes are not applied.",
+                        candidates.len()
+                    );
+                    out.note(&s.rel, s.line(d.open), message);
+                }
+                return None;
+            };
+            let mut attrs: Vec<(&Source, &Attr)> = d.attrs.iter().map(|a| (*src, a)).collect();
+            for (s, base) in self.ancestors(out, src, d) {
+                attrs.extend(base.attrs.iter().map(|a| (s, a)));
+            }
+            let (mut items, mut roles, mut authorize) = (Vec::new(), Vec::new(), false);
+            for (s, a) in attrs
+                .into_iter()
+                .filter(|(_, a)| self.enforced.contains(&a.name))
+            {
+                if a.name != "Authorize" {
+                    items.extend(self.listed(out, s, a).flatten());
+                    continue;
+                }
+                authorize = true;
+                if let Some(raw) = named(&a.args, "Roles") {
+                    match self.text(raw) {
+                        Some(r) => roles.extend(
+                            (r.split(',').map(str::trim))
+                                .filter(|r| !r.is_empty())
+                                .map(|r| Condition::Role(r.into())),
+                        ),
+                        None => items.push(out.unknown(s, a.at, raw)),
+                    }
+                }
+                if let Some(raw) = named(&a.args, "Policy").or_else(|| positional(&a.args)) {
+                    let policy = self.text(raw).map(Condition::Policy);
+                    items.push(policy.unwrap_or_else(|| out.unknown(s, a.at, raw)));
+                }
+            }
+            if authorize {
+                items.push(Condition::Authenticated);
+            }
+            items.extend(combine(roles, Condition::Any));
+            combine(items, Condition::All)
+        }
+    }
+
+    /// `A.B.C` or `X`: identifiers joined by dots.
+    pub(super) fn member_path(p: &str) -> bool {
+        let p = p.trim();
+        !p.is_empty() && (p.split('.')).all(|s| !s.is_empty() && s.bytes().all(lex::is_ident))
+    }
+
+    fn unescape(s: &str, verbatim: bool) -> String {
+        if verbatim {
+            return s.replace("\"\"", "\"");
+        }
+        let (mut out, mut chars) = (String::new(), s.chars());
+        while let Some(c) = chars.next() {
+            match (c, chars.clone().next()) {
+                ('\\', Some(n @ ('"' | '\\' | '\''))) => {
+                    out.push(n);
+                    chars.next();
+                }
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// `(Class.Member, initializer)` of each string constant in `src`.
+    fn constants(src: &Source, decls: &[Decl]) -> Vec<(String, String)> {
+        const NOT_NAMES: [&str; 7] = [
+            "static", "string", "String", "val", "final", "readonly", "new",
+        ];
+        let mut found = Vec::new();
+        for kw in ["const", "final"] {
+            for p in words(&src.text, kw) {
+                let from = p + kw.len();
+                let Some(eq) = src.text[from..].find('=').map(|e| from + e) else {
+                    continue;
+                };
+                let head = &src.text[from..eq];
+                let typed = (head.split_whitespace())
+                    .any(|t| matches!(t.trim_end_matches(':'), "string" | "String" | "val"));
+                let name = (head.split_whitespace().map(|t| t.trim_end_matches(':')))
+                    .find(|t| !NOT_NAMES.contains(t));
+                let class = (decls.iter())
+                    .filter(|d| d.class && d.open < p && p < d.end)
+                    .max_by_key(|d| d.open);
+                let (Some(name), Some(class), true) = (name, class, typed) else {
+                    continue;
+                };
+                if head.contains([';', '(', '{', '}', '\n'])
+                    || src.bytes().get(eq + 1) == Some(&b'=')
+                {
+                    continue;
+                }
+                let end = if src.rel.ends_with(".kt") {
+                    src.text[eq..]
+                        .find(['\n', ';'])
+                        .map_or(src.text.len(), |e| eq + e)
+                } else {
+                    minimal::statement_end(src, eq + 1)
+                };
+                found.push((
+                    format!("{}.{name}", class.name),
+                    src.text[eq + 1..end].trim().to_string(),
+                ));
+            }
+        }
+        found
+    }
+}
+use index::Index;
+
+/// ASP.NET Core controllers: attribute routes, else the project's
+/// conventional routes ([`conventional`]). A class without its own `[Route]`
+/// takes the one of its nearest base class; `[Authorize]`, `[AllowAnonymous]`,
+/// `[Area]` and listed attributes of base classes apply too.
 mod controllers {
-    use super::lex::{literal, named, positional};
+    use super::conventional::Route;
+    use super::lex::{named, positional};
     use super::*;
 
     const VERBS: [(&str, &str); 7] = [
@@ -642,18 +1140,23 @@ mod controllers {
         ("HttpOptions", "OPTIONS"),
     ];
 
-    pub(super) fn scan(src: &Source, out: &mut Out) {
-        let mut class: Option<Decl> = None;
-        for d in decls(src, false) {
-            if d.class {
-                let controller = d.name.ends_with("Controller")
-                    || has(&d.attrs, "ApiController")
-                    || has(&d.attrs, "Controller");
-                class = (controller && !has(&d.attrs, "NonController")).then_some(d);
-            } else if let Some(class) = &class {
-                action(src, out, class, &d);
+    /// Attributes with the file they are written in.
+    type Attrs<'a> = Vec<(&'a Source, &'a Attr)>;
+
+    fn own<'a>(decl: &'a Decl, src: &'a Source) -> Attrs<'a> {
+        decl.attrs.iter().map(|a| (src, a)).collect()
+    }
+
+    pub(super) fn scan(src: &Source, index: &Index, routes: &[Route], out: &mut Out) {
+        each_method(src, false, |class, d| {
+            let controller = class.name.ends_with("Controller")
+                || has(&class.attrs, "ApiController")
+                || has(&class.attrs, "Controller");
+            if controller && !has(&class.attrs, "NonController") {
+                let ancestors = index.ancestors(out, src, class);
+                action(src, index, routes, out, (class, &ancestors), d);
             }
-        }
+        });
     }
 
     fn verbs(attrs: &[Attr]) -> Vec<(&Attr, &'static str)> {
@@ -668,52 +1171,64 @@ mod controllers {
             .collect()
     }
 
-    fn action(src: &Source, out: &mut Out, class: &Decl, d: &Decl) {
+    fn action(
+        src: &Source,
+        index: &Index,
+        routes: &[Route],
+        out: &mut Out,
+        (class, ancestors): (&Decl, &[(&Source, &Decl)]),
+        d: &Decl,
+    ) {
+        // `[ApiController]` demands attribute routes; conventional ones never reach it.
+        let api = std::iter::once(class)
+            .chain(ancestors.iter().map(|(_, b)| *b))
+            .any(|c| has(&c.attrs, "ApiController"));
+        let routes = if api { &[] } else { routes };
         let verbs = verbs(&d.attrs);
-        if verbs.is_empty() {
+        let conventional = verbs.is_empty() && !has(&d.attrs, "Route") && !routes.is_empty();
+        if d.name == class.name || has(&d.attrs, "NonAction") || verbs.is_empty() && !conventional {
             return;
         }
-        let class_routes = route_templates(src, out, &class.attrs);
-        let (Some(class_routes), Some(method_routes)) =
-            (class_routes, route_templates(src, out, &d.attrs))
-        else {
+        let route_level = std::iter::once((src, class))
+            .chain(ancestors.iter().copied())
+            .find(|(_, c)| has(&c.attrs, "Route"));
+        let class_attrs: Attrs = route_level.map_or_else(Vec::new, |(s, c)| own(c, s));
+        let (Some(class_routes), Some(method_routes)) = (
+            route_templates(index, out, &class_attrs),
+            route_templates(index, out, &own(d, src)),
+        ) else {
             return;
         };
-        let access = access(src, out, &class.attrs, &d.attrs);
+        if verbs.is_empty() && !class_routes.is_empty() {
+            return;
+        }
+        let mut levels = own(class, src);
+        for (s, base) in ancestors {
+            levels.extend(own(base, s));
+        }
+        let area = (levels.iter())
+            .find(|(_, a)| a.name == "Area")
+            .map(|(s, a)| {
+                let name = positional(&a.args).and_then(|r| index.text(r));
+                name.ok_or((*s, a.at, a.args.clone()))
+            });
+        levels.extend(own(d, src));
+        let emit = Emit {
+            src,
+            routes,
+            class_routes,
+            method_routes,
+            area: area.transpose(),
+            access: access(index, out, &levels),
+            class: &class.name,
+            method: &d.name,
+        };
         let first = out.0.endpoints.len();
-        let tokens = [
-            (
-                "[controller]",
-                class.name.strip_suffix("Controller").unwrap_or(&class.name),
-            ),
-            ("[action]", d.name.strip_suffix("Async").unwrap_or(&d.name)),
-        ];
+        if verbs.is_empty() {
+            emit.conventional(out, d.open, ANY_METHOD);
+        }
         for (attr, method) in verbs {
-            let templates = match template(attr) {
-                Ok(own) => own.map_or_else(|| method_routes.clone(), |t| vec![t]),
-                Err(raw) => {
-                    out.at(
-                        src,
-                        attr.at,
-                        format!("Route template is not a literal: {raw}"),
-                    );
-                    continue;
-                }
-            };
-            if templates.is_empty() && class_routes.is_empty() {
-                let message = format!(
-                    "{}.{} has no route attribute (conventional routing); endpoint skipped.",
-                    class.name, d.name
-                );
-                out.at(src, attr.at, message);
-                continue;
-            }
-            for full in routes(&class_routes, &templates) {
-                let full = tokens
-                    .iter()
-                    .fold(full, |p, (t, v)| replace_token(&p, t, v));
-                out.endpoint(src, attr.at, method, full, &access);
-            }
+            emit.verb(index, out, attr, method);
         }
         out.link(
             first,
@@ -721,8 +1236,73 @@ mod controllers {
         );
     }
 
+    /// One action's routes and access, ready to give endpoints.
+    struct Emit<'a> {
+        src: &'a Source,
+        routes: &'a [Route],
+        class_routes: Vec<String>,
+        method_routes: Vec<String>,
+        /// `[Area]` name; `Err` with where it is when not a literal.
+        area: Result<Option<String>, (&'a Source, usize, String)>,
+        access: AccessState,
+        class: &'a str,
+        method: &'a str,
+    }
+
+    impl Emit<'_> {
+        fn names(&self) -> (&str, &str) {
+            let controller = self.class.strip_suffix("Controller").unwrap_or(self.class);
+            (
+                controller,
+                self.method.strip_suffix("Async").unwrap_or(self.method),
+            )
+        }
+
+        fn conventional(&self, out: &mut Out, at: usize, method: &str) {
+            let area = match &self.area {
+                Ok(area) => area.as_deref(),
+                Err((s, a, args)) => {
+                    return out.at(s, *a, format!("Area name is not a literal: {args}"));
+                }
+            };
+            let (controller, action) = self.names();
+            for p in conventional::paths(self.routes, area, controller, action) {
+                out.endpoint(self.src, at, method, p, &self.access);
+            }
+        }
+
+        fn verb(&self, index: &Index, out: &mut Out, attr: &Attr, method: &str) {
+            let src = self.src;
+            let templates = match template(index, attr) {
+                Ok(own) => own.map_or_else(|| self.method_routes.clone(), |t| vec![t]),
+                Err(raw) => {
+                    let message = format!("Route template is not a literal: {raw}");
+                    return out.at(src, attr.at, message);
+                }
+            };
+            if templates.is_empty() && self.class_routes.is_empty() {
+                if !self.routes.is_empty() {
+                    return self.conventional(out, attr.at, method);
+                }
+                let message = format!(
+                    "{}.{} has no route attribute (conventional routing); endpoint skipped.",
+                    self.class, self.method
+                );
+                return out.at(src, attr.at, message);
+            }
+            let (controller, action) = self.names();
+            let tokens = [("[controller]", controller), ("[action]", action)];
+            for full in routes_of(&self.class_routes, &templates) {
+                let full = tokens
+                    .iter()
+                    .fold(full, |p, (t, v)| replace_token(&p, t, v));
+                out.endpoint(src, attr.at, method, full, &self.access);
+            }
+        }
+    }
+
     /// Class × method templates; a method template from the root replaces the class one.
-    fn routes(class: &[String], method: &[String]) -> Vec<String> {
+    fn routes_of(class: &[String], method: &[String]) -> Vec<String> {
         let or_root = |v: &[String]| {
             if v.is_empty() {
                 vec![String::new()]
@@ -751,18 +1331,18 @@ mod controllers {
         }
     }
 
-    /// `Ok(None)` without a template; `Err(raw)` when it is not a literal.
-    fn template(attr: &Attr) -> Result<Option<String>, String> {
+    /// `Ok(None)` without a template; `Err(raw)` when it is not a literal or constant.
+    fn template(index: &Index, attr: &Attr) -> Result<Option<String>, String> {
         match named(&attr.args, "Template").or_else(|| positional(&attr.args)) {
             None => Ok(None),
-            Some(raw) => literal(raw).map(Some).ok_or_else(|| raw.to_string()),
+            Some(raw) => index.text(raw).map(Some).ok_or_else(|| raw.to_string()),
         }
     }
 
-    fn route_templates(src: &Source, out: &mut Out, attrs: &[Attr]) -> Option<Vec<String>> {
+    fn route_templates(index: &Index, out: &mut Out, attrs: &Attrs) -> Option<Vec<String>> {
         let mut found = Vec::new();
-        for a in attrs.iter().filter(|a| a.name == "Route") {
-            match template(a) {
+        for (src, a) in attrs.iter().filter(|(_, a)| a.name == "Route") {
+            match template(index, a) {
                 Ok(t) => found.extend(t),
                 Err(raw) => {
                     out.at(src, a.at, format!("Route template is not a literal: {raw}"));
@@ -773,22 +1353,28 @@ mod controllers {
         Some(found)
     }
 
-    fn access(src: &Source, out: &mut Out, class: &[Attr], method: &[Attr]) -> AccessState {
-        let all = || class.iter().chain(method);
-        if all().any(|a| a.name == "AllowAnonymous") {
+    /// `[AllowAnonymous]` or an `open` listed attribute anywhere wins; otherwise
+    /// every `[Authorize]` and listed attribute must hold.
+    fn access(index: &Index, out: &mut Out, levels: &Attrs) -> AccessState {
+        let open = |a: &Attr| a.name == "AllowAnonymous" || index.is_open(&a.name);
+        if levels.iter().any(|(_, a)| open(a)) {
             return AccessState::Open;
         }
-        let conditions = all()
-            .filter(|a| a.name == "Authorize")
-            .map(|a| authorize(src, out, a))
-            .collect();
+        let mut conditions = Vec::new();
+        for (src, a) in levels {
+            if a.name == "Authorize" {
+                conditions.push(authorize(index, src, out, a));
+            } else {
+                conditions.extend(index.listed(out, src, a).flatten());
+            }
+        }
         combine(conditions, Condition::All).map_or(AccessState::Undeclared, AccessState::Protected)
     }
 
-    fn authorize(src: &Source, out: &mut Out, a: &Attr) -> Condition {
+    fn authorize(index: &Index, src: &Source, out: &mut Out, a: &Attr) -> Condition {
         let mut parts = Vec::new();
         if let Some(raw) = named(&a.args, "Roles") {
-            let roles = literal(raw).map(|r| {
+            let roles = index.text(raw).map(|r| {
                 r.split(',')
                     .map(str::trim)
                     .filter(|r| !r.is_empty())
@@ -799,10 +1385,170 @@ mod controllers {
             parts.push(any.unwrap_or_else(|| out.unknown(src, a.at, raw)));
         }
         if let Some(raw) = named(&a.args, "Policy").or_else(|| positional(&a.args)) {
-            let policy = literal(raw).map(Condition::Policy);
+            let policy = index.text(raw).map(Condition::Policy);
             parts.push(policy.unwrap_or_else(|| out.unknown(src, a.at, raw)));
         }
         combine(parts, Condition::All).unwrap_or(Condition::Authenticated)
+    }
+}
+
+/// Conventional routes of a project: `MapDefaultControllerRoute()` is
+/// `{controller=Home}/{action=Index}/{id?}`; `MapControllerRoute(name,
+/// pattern)` and `MapAreaControllerRoute(name, areaName, pattern)` count with
+/// a literal (or constant) pattern. An action gets endpoints from every route
+/// that reaches it (a route with `{area}` or an area name only for a
+/// controller with that `[Area]`, others only without): the full path without
+/// optional parameters, and each shorter path its default values allow
+/// (`Home/Index` also at `/Home` and `/`). Other parameters stay `{name}`. A
+/// non-literal pattern, `defaults:` or a segment mixing text and tokens is a
+/// note, and that route is not used.
+mod conventional {
+    use super::lex::{named, named_part, split_top, words};
+    use super::*;
+
+    const DEFAULT_ROUTE: &str = "{controller=Home}/{action=Index}/{id?}";
+
+    enum Segment {
+        Literal(String),
+        Area,
+        Controller(Option<String>),
+        Action(Option<String>),
+        /// `{name}` text and whether it has a default value.
+        Param(String, bool),
+        Optional,
+    }
+
+    pub(super) struct Route {
+        area: Option<String>,
+        segments: Vec<Segment>,
+    }
+
+    pub(super) fn routes(sources: &[Source], index: &Index, out: &mut Out) -> Vec<Route> {
+        let mut found = Vec::new();
+        for src in sources.iter().filter(|s| s.rel.ends_with(".cs")) {
+            let calls = [
+                ("MapDefaultControllerRoute", None),
+                ("MapControllerRoute", Some(1)),
+                ("MapAreaControllerRoute", Some(2)),
+            ];
+            for (name, pattern_at) in calls {
+                for p in words(&src.text, name) {
+                    let Some(close) = minimal::call_close(src, p, name) else {
+                        continue;
+                    };
+                    let open = lex::skip_ws(src.bytes(), p + name.len());
+                    let args = &src.text[open + 1..close];
+                    match pattern_at.map(|n| route(index, args, n)) {
+                        None => found.extend(parse(DEFAULT_ROUTE, None)),
+                        Some(Ok(route)) => found.push(route),
+                        Some(Err(why)) => {
+                            let message = format!(
+                                "Conventional route not read ({why}); its endpoints are skipped."
+                            );
+                            out.note(&src.rel, src.line(p), message);
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// The route of `MapControllerRoute`/`MapAreaControllerRoute` arguments.
+    fn route(index: &Index, args: &str, pattern_at: usize) -> Result<Route, String> {
+        let positional: Vec<&str> = (split_top(args).into_iter())
+            .filter(|p| named_part(p).is_none())
+            .collect();
+        if named(args, "defaults").is_some() || positional.len() > pattern_at + 1 {
+            return Err(format!("default values in code: {}", args.trim()));
+        }
+        let raw = named(args, "pattern").or_else(|| positional.get(pattern_at).copied());
+        let area =
+            match pattern_at {
+                2 => {
+                    let raw = named(args, "areaName").or_else(|| positional.get(1).copied());
+                    let name = raw.and_then(|r| index.text(r));
+                    Some(name.ok_or_else(|| {
+                        format!("area name is not a literal: {}", raw.unwrap_or(""))
+                    })?)
+                }
+                _ => None,
+            };
+        let raw = raw.unwrap_or("");
+        let pattern =
+            (index.text(raw)).ok_or_else(|| format!("pattern is not a literal: {raw}"))?;
+        parse(&pattern, area).ok_or_else(|| format!("segment mixes text and tokens: {pattern}"))
+    }
+
+    fn parse(pattern: &str, area: Option<String>) -> Option<Route> {
+        let mut segments = Vec::new();
+        for s in pattern.split('/').filter(|s| !s.is_empty()) {
+            let Some(inner) = s.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+                if s.contains(['{', '}']) {
+                    return None;
+                }
+                segments.push(Segment::Literal(s.into()));
+                continue;
+            };
+            let name_end = inner.find([':', '=', '?']).unwrap_or(inner.len());
+            let name = inner[..name_end].trim_start_matches('*');
+            let default = inner
+                .split_once('=')
+                .map(|(_, d)| d.trim_end_matches('?').to_string());
+            segments.push(match name {
+                "area" => Segment::Area,
+                "controller" => Segment::Controller(default),
+                "action" => Segment::Action(default),
+                _ if inner.ends_with('?') => Segment::Optional,
+                _ => Segment::Param(format!("{{{name}}}"), default.is_some()),
+            });
+        }
+        Some(Route { area, segments })
+    }
+
+    /// The paths at which `controller`/`action` (in `area`) answers.
+    pub(super) fn paths(
+        routes: &[Route],
+        area: Option<&str>,
+        controller: &str,
+        action: &str,
+    ) -> Vec<String> {
+        let same = |default: &Option<String>, value: &str| {
+            default
+                .as_deref()
+                .is_some_and(|d| d.eq_ignore_ascii_case(value))
+        };
+        let mut found = Vec::new();
+        for r in routes {
+            let area_route =
+                r.area.is_some() || r.segments.iter().any(|s| matches!(s, Segment::Area));
+            let other_area = (r.area.as_deref().zip(area))
+                .is_some_and(|(fixed, a)| !fixed.eq_ignore_ascii_case(a));
+            if area_route != area.is_some() || other_area {
+                continue;
+            }
+            let mut parts: Vec<(&str, bool)> = Vec::new();
+            for s in &r.segments {
+                parts.push(match s {
+                    Segment::Literal(l) => (l, false),
+                    Segment::Area => (area.unwrap_or_default(), false),
+                    Segment::Controller(d) => (controller, same(d, controller)),
+                    Segment::Action(d) => (action, same(d, action)),
+                    Segment::Param(text, default) => (text, *default),
+                    Segment::Optional => continue,
+                });
+            }
+            let texts = |n: usize| path(&parts[..n].iter().map(|(t, _)| *t).collect::<Vec<_>>());
+            let mut k = parts.len();
+            found.push(texts(k));
+            while k > 0 && parts[k - 1].1 {
+                k -= 1;
+                found.push(texts(k));
+            }
+        }
+        found.sort();
+        found.dedup();
+        found
     }
 }
 
@@ -835,19 +1581,19 @@ mod minimal {
     pub(super) fn scan(
         src: &Source,
         sources: &[Source],
+        index: &Index,
         cache: &mut HashMap<String, Vec<Mod>>,
         out: &mut Out,
     ) {
         for verb in VERBS {
             for p in words(&src.text, verb.0) {
-                endpoint(src, sources, cache, out, p, verb);
+                endpoint((src, sources, index), cache, out, p, verb);
             }
         }
     }
 
     fn endpoint(
-        src: &Source,
-        sources: &[Source],
+        (src, sources, index): (&Source, &[Source], &Index),
         cache: &mut HashMap<String, Vec<Mod>>,
         out: &mut Out,
         p: usize,
@@ -860,13 +1606,25 @@ mod minimal {
         let open = skip_ws(b, p + name.len());
         let args = split_top(&src.text[open + 1..close]);
         let first = args.first().copied().unwrap_or("");
-        let Some(pattern) = literal(first) else {
-            out.at(src, p, format!("{name} pattern is not a literal: {first}"));
-            return;
+        let (pattern, delegate) = match index.text(first) {
+            Some(pattern) => (pattern, args.get(1)),
+            None => match handler_first(src, sources, name, &args) {
+                Some(pattern) => (pattern, args.first()),
+                None if forwarding(src, p, first) => return,
+                None => {
+                    out.at(src, p, format!("{name} pattern is not a literal: {first}"));
+                    return;
+                }
+            },
         };
         let chain = match group(src, out, skip_ws_back(b, p) - 1) {
             Ok(chain) => chain,
             Err(message) => return out.at(src, p, message),
+        };
+        let group_prefix = match endpoint_group(src, sources, index, p, chain.vars.first()) {
+            Some(Ok(prefix)) => Some(prefix),
+            Some(Err(message)) => return out.at(src, p, message),
+            None => None,
         };
         let mut mods = chain.mods;
         mods.extend(trailing(src, out, close, usize::MAX));
@@ -876,13 +1634,149 @@ mod minimal {
                 .or_insert_with(|| call_site_mods(sources, out, m));
             mods.extend(found.iter().cloned());
         }
-        let mut parts: Vec<&str> = chain.prefix.iter().map(String::as_str).collect();
+        let mut parts: Vec<&str> = (group_prefix.iter().chain(&chain.prefix))
+            .map(String::as_str)
+            .collect();
         parts.push(&pattern);
         let n = out.0.endpoints.len();
         out.endpoint(src, p, method, path(&parts), &access(&mods));
-        if let Some(delegate) = args.get(1) {
+        if let Some(delegate) = delegate {
             out.link(n, handlers::of_delegate(src, sources, delegate));
         }
+    }
+
+    /// A project overload `MapGet(this IEndpointRouteBuilder b, Delegate
+    /// handler, string pattern = "")` called with a method group of this file
+    /// first: the pattern is the second argument, else the overload's default.
+    fn handler_first(
+        src: &Source,
+        sources: &[Source],
+        verb: &str,
+        args: &[&str],
+    ) -> Option<String> {
+        let handler = args.first()?.trim();
+        if !handler.bytes().all(lex::is_ident) || !handlers::declares(src, handler) {
+            return None;
+        }
+        let params = sources
+            .iter()
+            .filter(|s| s.rel.ends_with(".cs"))
+            .find_map(|s| {
+                words(&s.text, verb).find_map(|p| {
+                    let open = skip_ws(s.bytes(), p + verb.len());
+                    let close = (s.bytes().get(open) == Some(&b'(')).then(|| s.pair(open))??;
+                    let params = &s.text[open + 1..close];
+                    (params.trim_start().starts_with("this ") && params.contains("Delegate "))
+                        .then_some(params)
+                })
+            })?;
+        match args.get(1) {
+            Some(raw) => literal(raw),
+            None => split_top(params)
+                .last()?
+                .split_once('=')
+                .and_then(|(_, d)| literal(d)),
+        }
+    }
+
+    /// Whether the call at `at` forwards `arg`, a parameter of the enclosing
+    /// extension method that takes a `Delegate` (the overload itself).
+    fn forwarding(src: &Source, at: usize, arg: &str) -> bool {
+        let b = src.bytes();
+        let paren = words(&src.text, "this")
+            .filter(|p| *p < at)
+            .map(|p| skip_ws_back(b, p))
+            .filter(|k| *k > 0 && b[k - 1] == b'(')
+            .last();
+        let Some((open, close)) = paren.and_then(|k| Some((k - 1, src.pair(k - 1)?))) else {
+            return false;
+        };
+        let params = &src.text[open + 1..close];
+        let body = src.text[close..]
+            .find('{')
+            .and_then(|o| src.pair(close + o));
+        params.contains("Delegate")
+            && words(params, arg.trim()).next().is_some()
+            && body.is_some_and(|end| end > at)
+    }
+
+    /// The prefix of an `IEndpointGroup` class (CleanArchitecture template)
+    /// whose `Map(RouteGroupBuilder root)` contains `at`: its own literal
+    /// `RoutePrefix`, else the default the project's registration builds (the
+    /// `?? $"/api/{groupName}"` after `IEndpointGroup.RoutePrefix`, where
+    /// `groupName = type.Name`). `None` outside such a class; `Err` when
+    /// neither is readable.
+    fn endpoint_group(
+        src: &Source,
+        sources: &[Source],
+        index: &Index,
+        at: usize,
+        root: Option<&String>,
+    ) -> Option<Result<String, String>> {
+        let class = handlers::enclosing_class(src, at)?;
+        let decl = index.class_in(src, &class)?;
+        let body = &src.text[decl.open..decl.end.min(src.text.len())];
+        let parameter = format!("RouteGroupBuilder {}", root?);
+        if !decl.bases.iter().any(|b| b == "IEndpointGroup") || !body.contains(&parameter) {
+            return None;
+        }
+        if let Some(p) = body.find("RoutePrefix") {
+            let value = body[p..]
+                .split_once("=>")
+                .map(|(_, v)| v.split(';').next().unwrap_or(""));
+            let prefix = value.and_then(|v| index.text(v));
+            return Some(prefix.ok_or_else(|| format!("{class}.RoutePrefix is not a literal")));
+        }
+        let rule = sources.iter().find_map(registration);
+        Some(rule.map(|(before, after)| format!("{before}{class}{after}")).ok_or_else(|| {
+            format!("{class}: no readable IEndpointGroup prefix rule in the project; endpoints skipped")
+        }))
+    }
+
+    /// Text before and after the class-name hole of the default group prefix.
+    fn registration(src: &Source) -> Option<(String, String)> {
+        let rest = &src.text[src.text.find("IEndpointGroup.RoutePrefix")?..];
+        let start = rest.find("?? $\"")? + 4;
+        let end = literal_end(rest.as_bytes(), start)?;
+        let (before, hole) = rest.get(start + 1..end - 1)?.split_once('{')?;
+        let (hole, after) = hole.split_once('}')?;
+        let assigned = (src.text.find(&format!("{hole} ="))).map(|p| {
+            src.text[p..]
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim_end()
+                .ends_with(".Name")
+        });
+        (assigned == Some(true) && !after.contains('{')).then(|| (before.into(), after.into()))
+    }
+
+    /// The innermost `{…}` block around `at`.
+    fn enclosing_block(src: &Source, at: usize) -> Option<(usize, usize)> {
+        let b = src.bytes();
+        (0..at)
+            .rev()
+            .filter(|&k| b[k] == b'{')
+            .find_map(|k| src.pair(k).filter(|c| *c > at).map(|c| (k, c)))
+    }
+
+    /// Modifiers of `var.X(…);` statements in `(from, until)`.
+    fn statement_mods(
+        src: &Source,
+        out: &mut Out,
+        var: &str,
+        from: usize,
+        until: usize,
+    ) -> Vec<Mod> {
+        let b = src.bytes();
+        let mut mods = Vec::new();
+        for p in words(&src.text, var).filter(|p| *p > from && *p < until) {
+            let k = skip_ws_back(b, p);
+            if k == 0 || b[k - 1] != b'.' {
+                mods.extend(trailing(src, out, p + var.len() - 1, 1));
+            }
+        }
+        mods
     }
 
     fn access(mods: &[Mod]) -> AccessState {
@@ -987,12 +1881,17 @@ mod minimal {
     }
 
     /// A variable: its last assignment before `at`, plus `var.RequireAuthorization();`
-    /// statements until the next assignment. Unassigned (parameters, `app`) is the root.
+    /// statements until the next assignment. Unassigned (parameters, `app`) is
+    /// the root, with the `var.RequireAuthorization();` statements of its block.
     fn var_group(src: &Source, out: &mut Out, var: &str, at: usize) -> Result<Chain, String> {
         let assignments = assignments(src, var);
         let Some(&(start, semi)) = assignments.iter().rev().find(|(_, semi)| *semi < at) else {
+            let mods = enclosing_block(src, at).map_or_else(Vec::new, |(open, close)| {
+                statement_mods(src, out, var, open, close)
+            });
             return Ok(Chain {
                 vars: vec![var.into()],
+                mods,
                 ..Chain::default()
             });
         };
@@ -1003,13 +1902,9 @@ mod minimal {
             .map(|(a, _)| *a)
             .find(|a| *a > start)
             .unwrap_or(src.text.len());
-        let b = src.bytes();
-        for p in words(&src.text, var).filter(|p| *p > semi && *p < until) {
-            let k = skip_ws_back(b, p);
-            if k == 0 || b[k - 1] != b'.' {
-                chain.mods.extend(trailing(src, out, p + var.len() - 1, 1));
-            }
-        }
+        chain
+            .mods
+            .extend(statement_mods(src, out, var, semi, until));
         Ok(chain)
     }
 
@@ -1064,7 +1959,7 @@ mod minimal {
     }
 
     /// The closing parenthesis of a member call `.name(…)` whose name starts at `p`.
-    fn call_close(src: &Source, p: usize, name: &str) -> Option<usize> {
+    pub(super) fn call_close(src: &Source, p: usize, name: &str) -> Option<usize> {
         let b = src.bytes();
         let prev = skip_ws_back(b, p);
         let open = skip_ws(b, p + name.len());
@@ -1103,7 +1998,7 @@ mod minimal {
 
 /// Spring MVC controllers and Spring Security / JSR-250 annotations.
 mod spring {
-    use super::lex::{literal, literals, named, positional};
+    use super::lex::{literals, named, positional};
     use super::*;
 
     const VERBS: [(&str, &str); 5] = [
@@ -1114,35 +2009,393 @@ mod spring {
         ("PatchMapping", "PATCH"),
     ];
 
-    pub(super) fn scan(src: &Source, out: &mut Out) {
-        let mut class: Option<Decl> = None;
-        for d in decls(src, true) {
-            if d.class {
-                let controller = has(&d.attrs, "RestController") || has(&d.attrs, "Controller");
-                class = controller.then_some(d);
-            } else if let Some(class) = &class {
-                method(src, out, class, &d);
+    pub(super) fn scan(src: &Source, index: &Index, out: &mut Out) {
+        each_method(src, true, |class, d| {
+            if has(&class.attrs, "RestController") || has(&class.attrs, "Controller") {
+                method(src, index, out, class, d);
+            }
+        });
+    }
+
+    pub(super) use chain::central_rules;
+
+    /// Central rules of a `SecurityFilterChain` (`authorizeHttpRequests` /
+    /// `authorizeRequests`), applied to the project's endpoints from index
+    /// `first` on.
+    ///
+    /// Rules are read in text order: `requestMatchers`, `mvcMatchers`,
+    /// `antMatchers` (literal or constant paths, `HttpMethod.X`) and
+    /// `anyRequest()`, each followed by `permitAll`, `denyAll`,
+    /// `authenticated`, `fullyAuthenticated`, `anonymous`, `hasRole`,
+    /// `hasAnyRole`, `hasAuthority` or `hasAnyAuthority`. The first rule that
+    /// matches decides (Spring semantics; Ant `*` within a segment, `**` across
+    /// segments). The result combines with the endpoint's annotation as both
+    /// layers check in turn: the filter chain runs before method security, so
+    /// a protected rule and a protected annotation must both hold, a
+    /// protected rule also binds a `@PermitAll` method, and a `permitAll`
+    /// rule leaves the annotation as it is. The endpoint keeps its access,
+    /// with a note, when the first rule that may match is not readable
+    /// (non-literal matcher or other grant), lies inside `if`/`else`, or
+    /// matches only some requests (`/api/users/me` against
+    /// `/api/users/{login}`, a method rule against `ANY`). No matching rule:
+    /// unchanged. Several chains or a `securityMatcher` are not evaluated.
+    mod chain {
+        use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
+        use super::super::*;
+        use super::role;
+
+        const MATCHERS: [&str; 4] = [
+            "requestMatchers",
+            "mvcMatchers",
+            "antMatchers",
+            "anyRequest",
+        ];
+
+        struct Rule {
+            line: u32,
+            file: String,
+            text: String,
+            /// Empty: any method.
+            methods: Vec<String>,
+            /// `None`: not readable, may match anything.
+            patterns: Option<Vec<String>>,
+            /// `None`: not readable.
+            grant: Option<AccessState>,
+            conditional: bool,
+        }
+
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        enum Hit {
+            No,
+            Part,
+            Full,
+        }
+
+        pub(in super::super) fn central_rules(
+            sources: &[Source],
+            index: &Index,
+            out: &mut Out,
+            first: usize,
+        ) {
+            let files: Vec<&Source> = (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs") && s.text.contains("SecurityFilterChain"))
+                .collect();
+            let Some(home) = files.first() else {
+                return;
+            };
+            let at = home.text.find("SecurityFilterChain").unwrap_or(0);
+            let chains: usize = (files.iter())
+                .map(|s| {
+                    words(&s.text, "SecurityFilterChain")
+                        .filter(|p| bean(s, *p))
+                        .count()
+                })
+                .sum();
+            if chains > 1 || files.iter().any(|s| s.text.contains("securityMatcher")) {
+                let message = "Several SecurityFilterChain beans or a securityMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
+                return out.note(&home.rel, home.line(at), message.into());
+            }
+            let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
+            for r in &rules {
+                let why = match (&r.patterns, &r.grant) {
+                    (None, _) => "its matcher is not a literal",
+                    (_, None) => "its grant is not read",
+                    _ if r.conditional => "it is conditional (inside if/else)",
+                    _ => continue,
+                };
+                let message = format!(
+                    "Filter chain rule `{}`: {why}; endpoints it may match keep their declared access.",
+                    r.text
+                );
+                out.note(&r.file, r.line, message);
+            }
+            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
+            for (i, n) in partial {
+                let r = &rules[i];
+                let message = format!(
+                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    r.text
+                );
+                out.note(&r.file, r.line, message);
+            }
+            let message = format!(
+                "Central SecurityFilterChain rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
+                rules.len()
+            );
+            out.note(&home.rel, home.line(at), message);
+        }
+
+        /// Applies the first matching rule to each endpoint; returns how many
+        /// changed and, per rule index, how many it matched only partly.
+        fn apply(
+            rules: &[Rule],
+            endpoints: &mut [EndpointAccess],
+        ) -> (usize, BTreeMap<usize, usize>) {
+            let (mut changed, mut partial) = (0, BTreeMap::new());
+            for e in endpoints {
+                let Some((i, hit)) = (rules.iter().enumerate())
+                    .map(|(i, r)| (i, matches(r, e)))
+                    .find(|(_, h)| *h != Hit::No)
+                else {
+                    continue;
+                };
+                let rule = &rules[i];
+                match (&rule.grant, hit, rule.conditional, &rule.patterns) {
+                    (Some(grant), Hit::Full, false, Some(_)) => {
+                        let before = e.access.clone();
+                        e.access = match grant {
+                            AccessState::Protected(c) => require(&e.access, c.clone()),
+                            _ if e.access == AccessState::Undeclared => AccessState::Open,
+                            _ => e.access.clone(),
+                        };
+                        changed += usize::from(e.access != before);
+                    }
+                    (Some(_), Hit::Part, false, Some(_)) => *partial.entry(i).or_default() += 1,
+                    _ => {}
+                }
+            }
+            (changed, partial)
+        }
+
+        /// A `SecurityFilterChain name(` method declaration at `p`.
+        fn bean(src: &Source, p: usize) -> bool {
+            let b = src.bytes();
+            let s = skip_ws(b, p + "SecurityFilterChain".len());
+            let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
+            e > s && b.get(skip_ws(b, e)) == Some(&b'(')
+        }
+
+        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
+        fn read(src: &Source, index: &Index) -> Vec<Rule> {
+            let mut rules = Vec::new();
+            let b = src.bytes();
+            let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
+                .iter()
+                .flat_map(|kw| words(&src.text, kw).map(move |p| (p, kw.len())))
+                .filter_map(|(p, len)| {
+                    let open = skip_ws(b, p + len);
+                    (b.get(open) == Some(&b'(')).then_some(open)
+                })
+                .collect();
+            sites.sort();
+            for open in sites {
+                site(src, index, open, &mut rules);
+            }
+            rules
+        }
+
+        /// The rules of the `authorize…(` call whose parenthesis opens at `open`.
+        fn site(src: &Source, index: &Index, open: usize, rules: &mut Vec<Rule>) {
+            let b = src.bytes();
+            let Some(close) = src.pair(open) else {
+                return;
+            };
+            let lambda = src.text[open + 1..close].find("->");
+            let (from, to) = match lambda {
+                Some(arrow) => {
+                    let body = skip_ws(b, open + 1 + arrow + 2);
+                    match (b.get(body), src.pair(body)) {
+                        (Some(b'{'), Some(end)) => (body + 1, end),
+                        _ => (body, close),
+                    }
+                }
+                // `authorizeRequests().antMatchers(…)…` up to `.and()` or the statement end.
+                None => (close + 1, minimal::statement_end(src, close + 1)),
+            };
+            let conditional = conditional(src, open);
+            let mut pending: Option<(usize, Vec<String>, Option<Vec<String>>)> = None;
+            for (at, name, args) in calls(src, from, to) {
+                if name == "and" && lambda.is_none() {
+                    break;
+                }
+                if MATCHERS.contains(&name) || pending.is_none() {
+                    pending = Some(matcher(index, at, name, args));
+                    continue;
+                }
+                let Some((start, methods, patterns)) = pending.take() else {
+                    continue;
+                };
+                let end = (at + name.len() + args.len() + 2).min(to);
+                let text = src.text[start..end].split_whitespace().collect();
+                rules.push(Rule {
+                    line: src.line(start),
+                    file: src.rel.clone(),
+                    text,
+                    methods,
+                    patterns,
+                    grant: grant(index, name, args),
+                    conditional,
+                });
+            }
+        }
+
+        /// `(position, name, arguments)` of each `.name(args)` call in `from..to`,
+        /// skipping nested brackets.
+        fn calls(src: &Source, from: usize, to: usize) -> Vec<(usize, &str, &str)> {
+            let b = src.bytes();
+            let (mut found, mut j) = (Vec::new(), from);
+            while j < to {
+                if let Some(end) = literal_end(b, j) {
+                    j = end;
+                    continue;
+                }
+                match b[j] {
+                    b'(' | b'[' | b'{' => j = src.pair(j).map_or(j + 1, |c| c + 1),
+                    b'.' => {
+                        let s = skip_ws(b, j + 1);
+                        let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
+                        let open = skip_ws(b, e);
+                        match (b.get(open) == Some(&b'('))
+                            .then(|| src.pair(open))
+                            .flatten()
+                        {
+                            Some(close) if e > s => {
+                                found.push((s, &src.text[s..e], &src.text[open + 1..close]));
+                                j = close + 1;
+                            }
+                            _ => j = e.max(j + 1),
+                        }
+                    }
+                    _ => j += 1,
+                }
+            }
+            found
+        }
+
+        /// Whether the call at `at` sits in a block opened by `if (…)` or `else`.
+        fn conditional(src: &Source, at: usize) -> bool {
+            let b = src.bytes();
+            let Some(open) = (0..at)
+                .rev()
+                .find(|&k| b[k] == b'{' && src.pair(k).is_some_and(|c| c > at))
+            else {
+                return false;
+            };
+            let k = skip_ws_back(b, open);
+            let head = if k > 0 && b[k - 1] == b')' {
+                src.pair(k - 1).unwrap_or(k)
+            } else {
+                k
+            };
+            let (s, e) = ident_before(b, head);
+            matches!(&src.text[s..e], "if" | "else")
+        }
+
+        fn matcher(
+            index: &Index,
+            at: usize,
+            name: &str,
+            args: &str,
+        ) -> (usize, Vec<String>, Option<Vec<String>>) {
+            match name {
+                "anyRequest" => return (at, vec![], Some(vec!["/**".into()])),
+                // Forwards and error dispatches, never a controller request.
+                "dispatcherTypeMatchers" => return (at, vec![], Some(vec![])),
+                _ => {}
+            }
+            if !MATCHERS.contains(&name) {
+                return (at, vec![], None);
+            }
+            let (mut methods, mut patterns) = (Vec::new(), Some(Vec::new()));
+            for part in split_top(args) {
+                if let Some(m) = part.trim().strip_prefix("HttpMethod.") {
+                    methods.push(m.to_string());
+                    continue;
+                }
+                match (index.text(part), patterns.as_mut()) {
+                    (Some(p), Some(list)) => list.push(p),
+                    _ => patterns = None,
+                }
+            }
+            if patterns.as_ref().is_some_and(Vec::is_empty) {
+                patterns = Some(vec!["/**".into()]);
+            }
+            (at, methods, patterns)
+        }
+
+        fn grant(index: &Index, name: &str, args: &str) -> Option<AccessState> {
+            let roles = || -> Option<Condition> {
+                let names: Option<Vec<Condition>> = split_top(args)
+                    .into_iter()
+                    .map(|a| index.text(a).map(|n| role(&n)))
+                    .collect();
+                combine(names?, Condition::Any)
+            };
+            let protected = |c: Condition| Some(AccessState::Protected(c));
+            match name {
+                "permitAll" => Some(AccessState::Open),
+                "denyAll" => protected(Condition::Never),
+                "authenticated" | "fullyAuthenticated" => protected(Condition::Authenticated),
+                "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
+                "hasRole" | "hasAuthority" | "hasAnyRole" | "hasAnyAuthority" => {
+                    roles().map(AccessState::Protected)
+                }
+                _ => None,
+            }
+        }
+
+        fn matches(rule: &Rule, e: &EndpointAccess) -> Hit {
+            let method = match (rule.methods.is_empty(), e.method.as_str()) {
+                (true, _) => Hit::Full,
+                (false, ANY_METHOD) => Hit::Part,
+                (false, m) if rule.methods.iter().any(|r| r == m) => Hit::Full,
+                _ => Hit::No,
+            };
+            let Some(patterns) = &rule.patterns else {
+                return method.min(Hit::Part);
+            };
+            let segments = |p: &str| -> Vec<String> {
+                p.split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            };
+            let path = segments(&e.path);
+            let best = (patterns.iter())
+                .map(|p| ant(&segments(p), &path))
+                .max()
+                .unwrap_or(Hit::No);
+            method.min(best)
+        }
+
+        /// An Ant pattern against an endpoint path whose `{x}` segments stand
+        /// for any value.
+        fn ant(rule: &[String], path: &[String]) -> Hit {
+            match rule.split_first() {
+                None if path.is_empty() => Hit::Full,
+                None => Hit::No,
+                Some((r, rest)) if r == "**" => (0..=path.len())
+                    .map(|k| ant(rest, &path[k..]))
+                    .max()
+                    .unwrap_or(Hit::No),
+                Some((r, rest)) => match path.split_first() {
+                    None => Hit::No,
+                    Some((p, tail)) => segment(r, p).min(ant(rest, tail)),
+                },
+            }
+        }
+
+        fn segment(rule: &str, path: &str) -> Hit {
+            let param = |s: &str| s.starts_with('{') && s.ends_with('}');
+            match (param(rule) || rule == "*", param(path)) {
+                (true, _) => Hit::Full,
+                (false, true) => Hit::Part,
+                (false, false) if glob(rule.as_bytes(), path.as_bytes()) => Hit::Full,
+                _ => Hit::No,
+            }
+        }
+
+        fn glob(p: &[u8], s: &[u8]) -> bool {
+            match p.split_first() {
+                None => s.is_empty(),
+                Some((b'*', rest)) => (0..=s.len()).any(|k| glob(rest, &s[k..])),
+                Some((b'?', rest)) => !s.is_empty() && glob(rest, &s[1..]),
+                Some((c, rest)) => s.first() == Some(c) && glob(rest, &s[1..]),
             }
         }
     }
 
-    /// One diagnostic per project with a central `SecurityFilterChain`.
-    pub(super) fn central_rules(sources: &[Source], out: &mut Out) {
-        let found = sources
-            .iter()
-            .filter(|s| !s.rel.ends_with(".cs"))
-            .find_map(|s| s.text.find("SecurityFilterChain").map(|at| (s, at)));
-        if let Some((src, at)) = found {
-            out.0.diagnostics.push(UiFlowDiagnostic {
-                file: src.rel.clone(),
-                line: src.line(at),
-                message: "Central SecurityFilterChain rules exist and are not evaluated; endpoints marked undeclared may be protected there.".into(),
-                severity: DiagnosticSeverity::Note,
-            });
-        }
-    }
-
-    fn method(src: &Source, out: &mut Out, class: &Decl, d: &Decl) {
+    fn method(src: &Source, index: &Index, out: &mut Out, class: &Decl, d: &Decl) {
         let bases = match class.attrs.iter().find(|a| a.name == "RequestMapping") {
             Some(a) => match paths(src, out, a) {
                 Some(p) => p,
@@ -1156,8 +2409,8 @@ mod spring {
             let Some(paths) = paths(src, out, a) else {
                 continue;
             };
-            let access = level(src, out, &d.attrs)
-                .or_else(|| level(src, out, &class.attrs))
+            let access = level(src, index, out, &d.attrs)
+                .or_else(|| level(src, index, out, &class.attrs))
                 .unwrap_or(AccessState::Undeclared);
             let full: Vec<String> = bases
                 .iter()
@@ -1219,9 +2472,11 @@ mod spring {
     }
 
     /// Access declared by one level's annotations; `None` when there is none.
-    fn level(src: &Source, out: &mut Out, attrs: &[Attr]) -> Option<AccessState> {
-        let items: Vec<Option<Condition>> =
-            attrs.iter().filter_map(|a| item(src, out, a)).collect();
+    fn level(src: &Source, index: &Index, out: &mut Out, attrs: &[Attr]) -> Option<AccessState> {
+        let items: Vec<Option<Condition>> = attrs
+            .iter()
+            .filter_map(|a| item(src, index, out, a))
+            .collect();
         if items.is_empty() {
             return None;
         }
@@ -1236,12 +2491,12 @@ mod spring {
     }
 
     /// One security annotation: `Some(None)` declares open access.
-    fn item(src: &Source, out: &mut Out, a: &Attr) -> Option<Option<Condition>> {
+    fn item(src: &Source, index: &Index, out: &mut Out, a: &Attr) -> Option<Option<Condition>> {
         let raw = named(&a.args, "value")
             .or_else(|| positional(&a.args))
             .unwrap_or("");
         match a.name.as_str() {
-            "PreAuthorize" => Some(pre_authorize(src, out, a, raw)),
+            "PreAuthorize" => Some(pre_authorize(src, index, out, a, raw)),
             "Secured" | "RolesAllowed" => {
                 let roles = literals(raw)
                     .and_then(|r| combine(r.iter().map(|x| role(x)).collect(), Condition::Any));
@@ -1249,13 +2504,19 @@ mod spring {
             }
             "PermitAll" => Some(None),
             "DenyAll" => Some(Some(Condition::Never)),
-            _ => None,
+            _ => index.listed(out, src, a),
         }
     }
 
     /// `None` for `permitAll()`.
-    fn pre_authorize(src: &Source, out: &mut Out, a: &Attr, raw: &str) -> Option<Condition> {
-        let Some(expr) = literal(raw) else {
+    fn pre_authorize(
+        src: &Source,
+        index: &Index,
+        out: &mut Out,
+        a: &Attr,
+        raw: &str,
+    ) -> Option<Condition> {
+        let Some(expr) = index.text(raw) else {
             return Some(out.unknown(src, a.at, raw));
         };
         if matches!(expr.trim(), "permitAll" | "permitAll()") {
@@ -1478,6 +2739,11 @@ mod handlers {
         None
     }
 
+    /// Whether `src` declares a method named `name` with a body.
+    pub(super) fn declares(src: &Source, name: &str) -> bool {
+        definition(src, name).is_some()
+    }
+
     /// The parameter list of a method named `name` declared in `src`.
     fn definition(src: &Source, name: &str) -> Option<usize> {
         let b = src.bytes();
@@ -1492,7 +2758,7 @@ mod handlers {
     }
 
     /// The innermost class, record or struct whose body contains `at`.
-    fn enclosing_class(src: &Source, at: usize) -> Option<String> {
+    pub(super) fn enclosing_class(src: &Source, at: usize) -> Option<String> {
         let b = src.bytes();
         let mut found = None;
         for kw in ["class", "record", "struct"] {
@@ -2237,51 +3503,61 @@ class KController(private val repo: Repo) {
         ]);
         let flow = extract(dir.path());
         let base = "/api/owners";
+        // The filter chain's `/api/**` sign-in holds next to every annotation.
+        let signed_in = |c: Condition| protected(Condition::All(vec![Condition::Authenticated, c]));
         assert_eq!(
             access(&flow, "GET", base),
             &protected(Condition::Authenticated)
         );
         let admin_read = protected(Condition::All(vec![
             Condition::Any(vec![role("SCOPE_x"), role("owner:read")]),
+            Condition::Authenticated,
             role("ADMIN"),
         ]));
         assert_eq!(access(&flow, "GET", "/api/owners/{id}"), &admin_read);
         assert_eq!(access(&flow, "GET", "/api/owners/by-id/{id}"), &admin_read);
         assert_eq!(
             access(&flow, "POST", "/api/owners/new"),
-            &protected(Condition::Any(vec![
-                Condition::Not(Box::new(Condition::All(vec![
-                    Condition::Authenticated,
-                    role("BLOCKED"),
-                ]))),
-                role("ADMIN"),
+            &protected(Condition::All(vec![
+                Condition::Any(vec![
+                    Condition::Not(Box::new(Condition::All(vec![
+                        Condition::Authenticated,
+                        role("BLOCKED"),
+                    ]))),
+                    role("ADMIN"),
+                ]),
+                Condition::Authenticated,
             ]))
         );
+        // `permitAll()` on the method does not lift the chain's sign-in.
         assert_eq!(
             access(&flow, "PUT", "/api/owners/legacy"),
-            &AccessState::Open
+            &protected(Condition::Authenticated)
         );
         assert_eq!(
             access(&flow, "PATCH", "/api/owners/legacy"),
-            &AccessState::Open
+            &protected(Condition::Authenticated)
         );
         assert_eq!(
             access(&flow, "DELETE", "/api/owners/{id}"),
-            &protected(Condition::Unknown("@guard.isOwner(#id)".into()))
+            &signed_in(Condition::Unknown("@guard.isOwner(#id)".into()))
         );
         assert_eq!(
             access(&flow, "PUT", "/api/owners/{id}/editor"),
-            &protected(Condition::Any(vec![role("ADMIN"), role("EDITOR")]))
+            &protected(Condition::All(vec![
+                Condition::Any(vec![role("ADMIN"), role("EDITOR")]),
+                Condition::Authenticated,
+            ]))
         );
         assert_eq!(
             access(&flow, "PATCH", "/api/owners/{id}/audit"),
-            &protected(role("AUDITOR"))
+            &signed_in(role("AUDITOR"))
         );
         assert_eq!(access(&flow, "GET", "/plain"), &AccessState::Undeclared);
         assert_eq!(access(&flow, "GET", "/k/a"), &protected(role("USER")));
         assert_eq!(
             access(&flow, "ANY", "/api/owners/closed"),
-            &protected(Condition::Never)
+            &signed_in(Condition::Never)
         );
         assert_eq!(flow.endpoints.len(), 12, "{:#?}", flow.endpoints);
         assert!(flow.endpoints.iter().all(|e| e.source == "spring"));
@@ -2326,5 +3602,604 @@ class KController(private val repo: Repo) {
         assert_eq!(flow.endpoints[0].application, None);
         assert!(!flow.complete);
         assert!(extract(&dir.path().join("missing")).endpoints.is_empty());
+    }
+
+    fn notes(flow: &UiFlow, part: &str) -> usize {
+        (flow.diagnostics.iter())
+            .filter(|d| d.message.contains(part))
+            .count()
+    }
+
+    const PERMISSION_IDS: &str = r#"
+namespace Squidex.Shared;
+public static class PermissionIds
+{
+    public const string AppContentsRead = "squidex.apps.{app}.contents.{schema}.read";
+    public const string Computed = Prefix + ".x";
+}
+"#;
+    const SQUIDEX: &str = r#"
+[SignedIn]
+public sealed class ContentsController : ControllerBase
+{
+    [HttpGet("api/content")]
+    [ApiPermission(PermissionIds.AppContentsRead)]
+    public IActionResult Read() => Ok();
+
+    [HttpGet("api/computed")]
+    [ApiPermission(PermissionIds.Computed, "squidex.other")]
+    public IActionResult Computed() => Ok();
+
+    [HttpGet("api/bare")]
+    [ApiPermission]
+    public IActionResult Bare() => Ok();
+
+    [HttpGet("api/public")]
+    [Public(PermissionIds.AppContentsRead)]
+    public IActionResult Public() => Ok();
+
+    [HttpGet("api/plain")]
+    public IActionResult Plain() => Ok();
+}
+
+public sealed class OtherController : ControllerBase
+{
+    [HttpGet("api/custom")]
+    [Custom("x")]
+    public IActionResult Custom() => Ok();
+}
+"#;
+
+    #[test]
+    fn views_access_maps_listed_attributes_and_constants() {
+        let config = "[views.access]\nApiPermission = \"policy:$arg\"\nPublic = \"open\"\n\
+                      SignedIn = \"authenticated\"\n";
+        let dir = project(&[
+            (".archguard/archguard.toml", config),
+            ("Web/Web.csproj", "<Project />"),
+            ("Web/PermissionIds.cs", PERMISSION_IDS),
+            ("Web/ContentsController.cs", SQUIDEX),
+        ]);
+        let flow = extract(dir.path());
+        let signed_in = |c: Condition| protected(Condition::All(vec![Condition::Authenticated, c]));
+        assert_eq!(
+            access(&flow, "GET", "/api/content"),
+            &signed_in(policy("squidex.apps.{app}.contents.{schema}.read"))
+        );
+        // A constant that is no literal keeps its member path as the name.
+        assert_eq!(
+            access(&flow, "GET", "/api/computed"),
+            &protected(Condition::All(vec![
+                Condition::Any(vec![
+                    policy("PermissionIds.Computed"),
+                    policy("squidex.other")
+                ]),
+                Condition::Authenticated,
+            ]))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/bare"),
+            &signed_in(Condition::Unknown("ApiPermission without arguments".into()))
+        );
+        assert_eq!(access(&flow, "GET", "/api/public"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/api/plain"),
+            &protected(Condition::Authenticated)
+        );
+        // Not listed: never guessed from the name.
+        assert_eq!(
+            access(&flow, "GET", "/api/custom"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(&flow, "ApiPermission without arguments"), 1);
+        assert_eq!(flow.diagnostics.len(), 1, "{:#?}", flow.diagnostics);
+
+        // An invalid configuration: no access entries, one note, no panic.
+        let invalid = "[views.access]\nx = 1\n";
+        std::fs::write(dir.path().join(".archguard/archguard.toml"), invalid).unwrap();
+        let flow = extract(dir.path());
+        assert_eq!(
+            access(&flow, "GET", "/api/content"),
+            &AccessState::Undeclared
+        );
+        let note = (flow.diagnostics.iter())
+            .find(|d| d.message.contains("Configuration not read"))
+            .unwrap();
+        assert_eq!(note.severity, DiagnosticSeverity::Note);
+    }
+
+    const BASE: &str = r#"
+public static class Constants
+{
+    public const string PrefixApi = "/api";
+}
+
+[ApiController]
+[Route(Constants.PrefixApi)]
+[Authorize]
+public abstract class ApiController : Controller
+{
+}
+
+public abstract class Twin : Controller { }
+"#;
+    const DERIVED: &str = r#"
+public sealed class CommentsController(ICommandBus commandBus)
+    : ApiController(commandBus)
+{
+    private sealed class Helper
+    {
+        public int X { get; set; }
+    }
+
+    [HttpGet]
+    [Route("users/collaboration")]
+    public IActionResult Collaboration() => Ok();
+
+    [HttpPost("users/open"), AllowAnonymous]
+    public IActionResult Open() => Ok();
+}
+
+[Authorize(Roles = "Admin")]
+public abstract class Twin : Controller { }
+
+[Route("twins")]
+public class TwinsController : Twin
+{
+    [HttpGet]
+    public IActionResult List() => Ok();
+}
+"#;
+
+    #[test]
+    fn base_controller_attributes_and_routes_are_inherited() {
+        let dir = project(&[
+            ("Web/Web.csproj", "<Project />"),
+            ("Web/ApiController.cs", BASE),
+            ("Api/Api.csproj", "<Project />"),
+            ("Api/CommentsController.cs", DERIVED),
+        ]);
+        let flow = extract(dir.path());
+        assert_eq!(
+            access(&flow, "GET", "/api/users/collaboration"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "POST", "/api/users/open"), &AccessState::Open);
+        // Two classes named Twin: the base is ambiguous, nothing is inherited.
+        assert_eq!(access(&flow, "GET", "/twins"), &AccessState::Undeclared);
+        assert_eq!(
+            notes(&flow, "Base class Twin is ambiguous"),
+            1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        assert_eq!(flow.endpoints.len(), 3, "{:#?}", flow.endpoints);
+    }
+
+    const GROUP_INFRA: &str = r#"
+public interface IEndpointGroup
+{
+    static virtual string? RoutePrefix => null;
+    static abstract void Map(RouteGroupBuilder groupBuilder);
+}
+
+public static class WebApplicationExtensions
+{
+    public static WebApplication MapEndpoints(this WebApplication app, Assembly assembly)
+    {
+        foreach (var type in endpointGroupTypes)
+        {
+            var groupName = type.Name;
+            var routePrefix = type.GetProperty(nameof(IEndpointGroup.RoutePrefix))
+                ?.GetValue(null) as string ?? $"/api/{groupName}";
+            var group = app.MapGroup(routePrefix).WithTags(groupName);
+        }
+        return app;
+    }
+}
+
+public static class EndpointRouteBuilderExtensions
+{
+    public static RouteHandlerBuilder MapGet(this IEndpointRouteBuilder builder, Delegate handler, [StringSyntax("Route")] string pattern = "")
+    {
+        return builder.MapGet(pattern, handler).WithName(handler.Method.Name);
+    }
+    public static RouteHandlerBuilder MapPost(this IEndpointRouteBuilder builder, Delegate handler, [StringSyntax("Route")] string pattern = "")
+    {
+        return builder.MapPost(pattern, handler).WithName(handler.Method.Name);
+    }
+    public static RouteHandlerBuilder MapDelete(this IEndpointRouteBuilder builder, Delegate handler, [StringSyntax("Route")] string pattern)
+    {
+        return builder.MapDelete(pattern, handler).WithName(handler.Method.Name);
+    }
+}
+"#;
+    const TODO_LISTS: &str = r#"
+public class TodoLists : IEndpointGroup
+{
+    public static void Map(RouteGroupBuilder groupBuilder)
+    {
+        groupBuilder.RequireAuthorization();
+
+        groupBuilder.MapGet(GetTodoLists);
+        groupBuilder.MapDelete(DeleteTodoList, "{id}");
+        groupBuilder.MapPost(PurgeTodoLists, "purge");
+    }
+
+    public static async Task<Ok<TodosVm>> GetTodoLists(ISender sender)
+    {
+        var vm = await sender.Send(new GetTodosQuery());
+        return TypedResults.Ok(vm);
+    }
+
+    public static async Task<NoContent> DeleteTodoList(ISender sender, int id)
+    {
+        await sender.Send(new DeleteTodoListCommand(id));
+        return TypedResults.NoContent();
+    }
+
+    public static async Task<NoContent> PurgeTodoLists(ISender sender)
+    {
+        await sender.Send(new PurgeTodoListsCommand());
+        return TypedResults.NoContent();
+    }
+}
+
+public class Users : IEndpointGroup
+{
+    public static string? RoutePrefix => "/api/people";
+
+    public static void Map(RouteGroupBuilder groupBuilder)
+    {
+        groupBuilder.MapPost(Logout, "logout").RequireAuthorization();
+        groupBuilder.MapGet(Info);
+    }
+
+    public static Task<Ok> Logout(SignInManager<ApplicationUser> signInManager) => Task.FromResult(TypedResults.Ok());
+    public static Ok Info() => TypedResults.Ok();
+}
+"#;
+    const REQUESTS: &str = r#"
+public abstract class Roles
+{
+    public const string Administrator = nameof(Administrator);
+}
+public abstract class Policies
+{
+    public const string CanPurge = "CanPurge";
+}
+
+[Authorize]
+public record GetTodosQuery : IRequest<TodosVm>;
+
+[Authorize(Roles = Roles.Administrator)]
+[Authorize(Policy = Policies.CanPurge)]
+public record PurgeTodoListsCommand : IRequest;
+
+public record DeleteTodoListCommand(int Id) : IRequest;
+"#;
+    const BEHAVIOUR: &str = r#"
+public class AuthorizationBehaviour<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : notnull
+{
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+    {
+        var authorizeAttributes = request.GetType().GetCustomAttributes<AuthorizeAttribute>();
+        return await next();
+    }
+}
+"#;
+
+    #[test]
+    fn endpoint_groups_and_roles_on_enforced_requests() {
+        let files = [
+            ("src/Web/Web.csproj", "<Project />"),
+            ("src/Web/Infrastructure/Groups.cs", GROUP_INFRA),
+            ("src/Web/Endpoints/TodoLists.cs", TODO_LISTS),
+            ("src/Application/Application.csproj", "<Project />"),
+            ("src/Application/Requests.cs", REQUESTS),
+        ];
+        let dir = project(&files);
+        let flow = extract(dir.path());
+        let authenticated = protected(Condition::Authenticated);
+        // Without a pipeline behaviour the request attributes are not enforced.
+        assert_eq!(access(&flow, "GET", "/api/TodoLists"), &authenticated);
+        assert_eq!(
+            access(&flow, "POST", "/api/TodoLists/purge"),
+            &authenticated
+        );
+        assert_eq!(
+            access(&flow, "DELETE", "/api/TodoLists/{id}"),
+            &authenticated
+        );
+        assert_eq!(access(&flow, "POST", "/api/people/logout"), &authenticated);
+        assert_eq!(
+            access(&flow, "GET", "/api/people"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(flow.endpoints.len(), 5, "{:#?}", flow.endpoints);
+        let purge = (flow.endpoints.iter())
+            .find(|e| e.path == "/api/TodoLists/purge")
+            .unwrap();
+        assert_eq!(purge.handler.as_deref(), Some("TodoLists.PurgeTodoLists"));
+        assert_eq!(purge.sends, vec!["PurgeTodoListsCommand".to_string()]);
+        assert!(flow.diagnostics.is_empty(), "{:#?}", flow.diagnostics);
+
+        let mut with_behaviour = files.to_vec();
+        with_behaviour.push(("src/Application/AuthorizationBehaviour.cs", BEHAVIOUR));
+        let dir = project(&with_behaviour);
+        let flow = extract(dir.path());
+        assert_eq!(access(&flow, "GET", "/api/TodoLists"), &authenticated);
+        assert_eq!(
+            access(&flow, "POST", "/api/TodoLists/purge"),
+            &protected(Condition::All(vec![
+                Condition::Authenticated,
+                role("Administrator"),
+                policy("CanPurge"),
+            ]))
+        );
+        assert_eq!(
+            access(&flow, "DELETE", "/api/TodoLists/{id}"),
+            &authenticated
+        );
+    }
+
+    const AUTHORITIES: &str = r#"
+public final class AuthoritiesConstants {
+    public static final String ADMIN = "ROLE_ADMIN";
+}
+"#;
+    const FILTER_CHAIN: &str = r#"
+@Configuration
+public class SecurityConfiguration {
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) {
+        http.authorizeHttpRequests(authz ->
+                authz
+                    .requestMatchers("/index.html", "/*.js").permitAll()
+                    .requestMatchers(HttpMethod.POST, "/api/authenticate").permitAll()
+                    .requestMatchers("/api/register").permitAll()
+                    .requestMatchers("/api/users/me").permitAll()
+                    .requestMatchers(props.getOpenPath()).permitAll()
+                    .requestMatchers("/api/admin/**").hasAuthority(AuthoritiesConstants.ADMIN)
+                    .requestMatchers("/api/**").authenticated()
+                    .requestMatchers("/management/info").permitAll()
+                    .requestMatchers("/management/**").access(custom)
+            );
+        if (dev) {
+            http.authorizeHttpRequests(authz -> authz.requestMatchers("/h2/**").permitAll());
+        }
+        return http.build();
+    }
+}
+"#;
+    const RESOURCES: &str = r#"
+@RestController
+@RequestMapping("/api")
+public class AccountResource {
+    private static class AccountResourceException extends RuntimeException {
+        AccountResourceException(String message) { super(message); }
+    }
+
+    @PostMapping("/register")
+    public void register() {}
+
+    @GetMapping("/account")
+    public void account() {}
+
+    @PostMapping("/authenticate")
+    public void login() {}
+
+    @GetMapping("/authenticate")
+    public void check() {}
+
+    @GetMapping("/users/{login}")
+    public void user() {}
+
+    @GetMapping("/admin/users")
+    @PreAuthorize("hasAuthority(\"" + AuthoritiesConstants.ADMIN + "\")")
+    public void users() {}
+
+    @GetMapping("/authorities")
+    @PreAuthorize("hasRole('AUDITOR')")
+    public void authorities() {}
+
+    @PostMapping("/public")
+    @PermitAll
+    public void open() {}
+}
+
+@RestController
+public class ManagementResource {
+    @GetMapping("/management/info")
+    public void info() {}
+
+    @GetMapping("/management/env")
+    public void env() {}
+
+    @GetMapping("/h2/console")
+    public void h2() {}
+
+    @GetMapping("/other")
+    public void other() {}
+}
+"#;
+
+    #[test]
+    fn spring_filter_chain_stops_at_an_unreadable_rule() {
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
+            ("src/main/java/app/SecurityConfiguration.java", FILTER_CHAIN),
+            ("src/main/java/app/AccountResource.java", RESOURCES),
+        ]);
+        let flow = extract(dir.path());
+        assert_eq!(access(&flow, "POST", "/api/register"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "POST", "/api/authenticate"),
+            &AccessState::Open
+        );
+        // The POST rule does not match GET; the non-literal matcher after it
+        // may match anything, so every later rule decides nothing.
+        assert_eq!(
+            access(&flow, "GET", "/api/authenticate"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/account"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(
+            access(&flow, "GET", "/management/info"),
+            &AccessState::Undeclared
+        );
+        // The annotation keeps its own reading; the constant resolves.
+        assert_eq!(
+            access(&flow, "GET", "/api/admin/users"),
+            &protected(role("ADMIN"))
+        );
+        assert_eq!(flow.endpoints.len(), 12, "{:#?}", flow.endpoints);
+        assert_eq!(notes(&flow, "not a literal"), 1, "{:#?}", flow.diagnostics);
+        assert_eq!(notes(&flow, "conditional"), 1, "{:#?}", flow.diagnostics);
+        assert_eq!(notes(&flow, "access(custom)"), 1, "{:#?}", flow.diagnostics);
+        assert!(
+            (flow.diagnostics.iter())
+                .filter(|d| d.message.contains("ilter chain"))
+                .all(|d| d.severity == DiagnosticSeverity::Note)
+        );
+    }
+
+    #[test]
+    fn spring_filter_chain_combines_with_annotations() {
+        let chain = FILTER_CHAIN.replace(".requestMatchers(props.getOpenPath()).permitAll()\n", "");
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/AuthoritiesConstants.java", AUTHORITIES),
+            ("src/main/java/app/SecurityConfiguration.java", &chain),
+            ("src/main/java/app/AccountResource.java", RESOURCES),
+        ]);
+        let flow = extract(dir.path());
+        let authenticated = protected(Condition::Authenticated);
+        assert_eq!(access(&flow, "GET", "/api/account"), &authenticated);
+        assert_eq!(access(&flow, "GET", "/api/authenticate"), &authenticated);
+        // `/api/users/me` matches only some values of `{login}`: undecided.
+        assert_eq!(
+            access(&flow, "GET", "/api/users/{login}"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(&flow, "/api/users/me"), 1, "{:#?}", flow.diagnostics);
+        assert_eq!(
+            access(&flow, "GET", "/api/authorities"),
+            &protected(Condition::All(vec![
+                Condition::Authenticated,
+                role("AUDITOR")
+            ]))
+        );
+        // `@PermitAll` does not lift the chain's sign-in.
+        assert_eq!(access(&flow, "POST", "/api/public"), &authenticated);
+        assert_eq!(
+            access(&flow, "GET", "/api/admin/users"),
+            &protected(role("ADMIN"))
+        );
+        assert_eq!(access(&flow, "GET", "/management/info"), &AccessState::Open);
+        // `access(custom)` and the rule inside `if` are not read.
+        assert_eq!(
+            access(&flow, "GET", "/management/env"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(
+            access(&flow, "GET", "/h2/console"),
+            &AccessState::Undeclared
+        );
+        // No rule matches: unchanged.
+        assert_eq!(access(&flow, "GET", "/other"), &AccessState::Undeclared);
+    }
+
+    const MVC_PROGRAM: &str = r#"
+var app = builder.Build();
+app.MapDefaultControllerRoute();
+app.MapControllerRoute(name: "areas", pattern: "{area:exists}/{controller=Home}/{action=Index}/{id?}");
+app.MapControllerRoute("dynamic", Routes.Dynamic);
+app.Run();
+"#;
+    const MVC: &str = r#"
+public class HomeController : Controller
+{
+    public HomeController(ILogger logger) { }
+
+    public IActionResult Index() => View();
+
+    [Authorize]
+    public IActionResult Privacy() => View();
+
+    [NonAction]
+    public string Helper() => "";
+
+    public static string Version() => "1";
+
+    private IActionResult Hidden() => View();
+}
+
+[AllowAnonymous]
+public class AccountController : Controller
+{
+    [HttpGet]
+    public IActionResult Login(string returnUrl) => View();
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public IActionResult Login(LoginInputModel model) => View();
+
+    public async Task<IActionResult> LogoutAsync() => View();
+}
+
+[Area("Admin")]
+public class UsersController : Controller
+{
+    public IActionResult Index() => View();
+}
+
+[ApiController]
+public class ApiOnlyController : Controller
+{
+    public IActionResult Hidden() => Ok();
+}
+"#;
+
+    #[test]
+    fn conventional_routes_give_endpoints_with_defaults() {
+        let dir = project(&[
+            ("Identity/Identity.csproj", "<Project />"),
+            ("Identity/Program.cs", MVC_PROGRAM),
+            ("Identity/Controllers/Controllers.cs", MVC),
+        ]);
+        let flow = extract(dir.path());
+        let paths: Vec<String> = (flow.endpoints.iter())
+            .map(|e| format!("{} {}", e.method, e.path))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                "ANY /",
+                "ANY /Account/Logout",
+                "ANY /Admin/Users",
+                "ANY /Admin/Users/Index",
+                "ANY /Home",
+                "ANY /Home/Index",
+                "ANY /Home/Privacy",
+                "GET /Account/Login",
+                "POST /Account/Login",
+            ]
+        );
+        assert_eq!(access(&flow, "ANY", "/"), &AccessState::Undeclared);
+        assert_eq!(
+            access(&flow, "ANY", "/Home/Privacy"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(access(&flow, "POST", "/Account/Login"), &AccessState::Open);
+        let login = (flow.endpoints.iter()).find(|e| e.method == "GET").unwrap();
+        assert_eq!(login.handler.as_deref(), Some("AccountController.Login"));
+        assert_eq!(notes(&flow, "Routes.Dynamic"), 1, "{:#?}", flow.diagnostics);
+        assert_eq!(flow.diagnostics.len(), 1, "{:#?}", flow.diagnostics);
     }
 }
