@@ -11,7 +11,9 @@ use crate::tab_support::Texts;
 use crate::ui::{FlowArrow, FlowBand, FlowCard};
 
 pub const W: f32 = 340.0;
-pub const H: f32 = 92.0;
+pub const H: f32 = 120.0;
+/// Characters of a title line at the card's width.
+const LINE: usize = 32;
 const GAP_X: f32 = 90.0;
 const GAP_Y: f32 = 12.0;
 const HEAD: f32 = 34.0;
@@ -41,7 +43,7 @@ fn card(n: &Node, x: f32, y: f32, state: i32) -> FlowCard {
     FlowCard {
         kind: 0,
         state,
-        title: n.title.as_str().into(),
+        title: two_lines(&n.title).into(),
         file: if n.file.is_empty() {
             Default::default()
         } else {
@@ -58,6 +60,40 @@ fn card(n: &Node, x: f32, y: f32, state: i32) -> FlowCard {
         line: n.line as i32,
         ..Default::default()
     }
+}
+
+/// `name` on at most two lines of [`LINE`] characters, split at a capital
+/// near the middle (`OrderStatusChangedToPaid` / `IntegrationEventHandler`);
+/// a longer name loses its middle, so both ends stay readable.
+pub fn two_lines(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let chars: Vec<char> = if chars.len() > 2 * LINE {
+        let tail = &chars[chars.len() - LINE..];
+        (chars[..LINE - 1].iter().chain(['…'].iter()).chain(tail))
+            .copied()
+            .collect()
+    } else {
+        chars
+    };
+    let n = chars.len();
+    if n <= LINE {
+        return chars.into_iter().collect();
+    }
+    let at = (1..n)
+        .filter(|&i| chars[i].is_uppercase() && i <= LINE && n - i <= LINE)
+        .min_by_key(|&i| i.abs_diff(n - i))
+        .unwrap_or(n / 2);
+    let (a, b) = chars.split_at(at);
+    format!(
+        "{}\n{}",
+        a.iter().collect::<String>(),
+        b.iter().collect::<String>()
+    )
+}
+
+/// The class of `Class.method`.
+fn class(by: &str) -> &str {
+    by.split_once('.').map_or(by, |(c, _)| c)
 }
 
 /// Lanes in order of first use: publishers, the event (in its first
@@ -134,7 +170,7 @@ pub fn integration(d: &DomainModel, i: usize, texts: &Texts) -> Lanes {
     let e = &d.integration_events[i];
     let publishers: Vec<Node> = (e.published_by.iter())
         .map(|p| Node {
-            title: p.by.clone(),
+            title: class(&p.by).into(),
             service: p.service.clone(),
             what: texts.t("publishes").into(),
             file: p.file.clone(),
@@ -168,20 +204,17 @@ pub fn integration(d: &DomainModel, i: usize, texts: &Texts) -> Lanes {
     layout(&event, &publishers, &handlers, texts.t("service not read"))
 }
 
-/// The raising methods and the handler classes of domain event `i`; a
-/// handler's file comes from its integration-event publish site or its
-/// use case, else it stays in the lane "service not read".
+/// The raising methods and the handler classes of domain event `i`.
 pub fn domain(d: &DomainModel, i: usize, services: &Services, texts: &Texts) -> Lanes {
     let e = &d.events[i];
     let transitions = || d.state_machines.iter().flat_map(|m| &m.transitions);
     let publishers: Vec<Node> = (e.raised_by.iter())
         .map(|m| {
-            let class = m.split_once('.').map_or(m.as_str(), |(c, _)| c);
             let (file, line) = (transitions().find(|t| t.method == *m))
                 .map(|t| (t.file.clone(), t.line))
                 .or_else(|| {
                     (d.entities.iter())
-                        .find(|x| x.name == class)
+                        .find(|x| x.name == class(m))
                         .map(|x| (x.file.clone(), x.line))
                 })
                 .unwrap_or_default();
@@ -195,64 +228,47 @@ pub fn domain(d: &DomainModel, i: usize, services: &Services, texts: &Texts) -> 
         })
         .collect();
     let handlers: Vec<Node> = (e.handled_by.iter())
-        .map(|h| {
-            let publish = (d.integration_events.iter())
-                .flat_map(|ie| ie.published_by.iter().map(move |p| (ie, p)))
-                .find(|(_, p)| p.by.split_once('.').map_or(p.by.as_str(), |(c, _)| c) == h);
-            let site = d
-                .event_handler_sites(&e.type_name)
-                .find(|s| s.handler == *h);
-            let (file, line, service, what) = match (site, publish) {
-                (Some(s), publish) => (
-                    s.file.clone(),
-                    s.line,
-                    services.of(&s.file).to_string(),
-                    match publish {
-                        Some((ie, _)) => texts.f(
-                            "handles · publishes {what}",
-                            &[("what", short(&ie.type_name).to_string())],
-                        ),
-                        None => texts.t("handles").into(),
-                    },
-                ),
-                (None, Some((ie, p))) => (
-                    p.file.clone(),
-                    p.line,
-                    p.service.clone(),
-                    texts.f(
-                        "handles · publishes {what}",
-                        &[("what", short(&ie.type_name).to_string())],
-                    ),
-                ),
-                (None, None) => match d.use_cases.iter().find(|u| u.name == *h) {
-                    Some(u) => (
-                        u.file.clone(),
-                        u.line,
-                        services.of(&u.file).into(),
-                        texts.t("handles").into(),
-                    ),
-                    None => (String::new(), 0, String::new(), texts.t("handles").into()),
-                },
-            };
-            Node {
-                title: h.clone(),
-                service,
-                what,
-                file,
-                line,
-            }
-        })
+        .map(|h| handler(d, &e.type_name, h, services, texts))
         .collect();
     let event = Node {
         title: short(&e.type_name).into(),
-        service: publishers
-            .first()
-            .map_or(String::new(), |n| n.service.clone()),
+        service: (publishers.first()).map_or(String::new(), |n| n.service.clone()),
         what: texts.t("domain event").into(),
         file: String::new(),
         line: 0,
     };
     layout(&event, &publishers, &handlers, texts.t("service not read"))
+}
+
+/// Handler class `h` of domain event `event`: placed by its declaration,
+/// else by its integration-event publish site or its use case, else in the
+/// lane "service not read".
+fn handler(d: &DomainModel, event: &str, h: &str, services: &Services, texts: &Texts) -> Node {
+    let publish = (d.integration_events.iter())
+        .flat_map(|ie| ie.published_by.iter().map(move |p| (ie, p)))
+        .find(|(_, p)| class(&p.by) == h);
+    let what = match publish {
+        Some((ie, _)) => {
+            let ie = short(&ie.type_name).to_string();
+            texts.f("handles · publishes {what}", &[("what", ie)])
+        }
+        None => texts.t("handles").into(),
+    };
+    let site = d.event_handler_sites(event).find(|s| s.handler == h);
+    let use_case = d.use_cases.iter().find(|u| u.name == h);
+    let (file, line, service) = match (site, publish, use_case) {
+        (Some(s), _, _) => (s.file.clone(), s.line, services.of(&s.file).into()),
+        (None, Some((_, p)), _) => (p.file.clone(), p.line, p.service.clone()),
+        (None, None, Some(u)) => (u.file.clone(), u.line, services.of(&u.file).into()),
+        (None, None, None) => (String::new(), 0, String::new()),
+    };
+    Node {
+        title: h.into(),
+        service,
+        what,
+        file,
+        line,
+    }
 }
 
 #[cfg(test)]
@@ -309,7 +325,7 @@ mod tests {
         let d = shop();
         let l = integration(&d, 0, &Texts::default());
         let titles: Vec<&str> = l.cards.iter().map(|c| c.title.as_str()).collect();
-        assert_eq!(titles, ["P.Handle", "OrderPaid", "C"]);
+        assert_eq!(titles, ["P", "OrderPaid", "C"], "class names");
         assert_eq!(l.cards[2].file, "Catalog/C.cs:2");
         let services = Services::of_pairs(&[("Ordering/Order.cs", "Ordering")]);
         let l = domain(&d, 0, &services, &Texts::default());
@@ -333,5 +349,18 @@ mod tests {
         let l = domain(&d, 0, &services, &Texts::default());
         assert_eq!(l.bands.len(), 1, "the handler's declaration places it");
         assert_eq!(l.cards[2].file, "Ordering/H.cs:9");
+    }
+
+    #[test]
+    fn long_names_wrap_at_a_capital_and_lose_their_middle_only_when_too_long() {
+        assert_eq!(two_lines("PayHandler"), "PayHandler");
+        assert_eq!(
+            two_lines("OrderStatusChangedToPaidIntegrationEventHandler"),
+            "OrderStatusChangedToPaid\nIntegrationEventHandler"
+        );
+        let long = "OrderStatusChangedToAwaitingValidationIntegrationEventHandlerForWebhooks";
+        let t = two_lines(long);
+        assert!(t.contains('…') && t.ends_with("ForWebhooks"), "{t}");
+        assert!(t.lines().all(|l| l.chars().count() <= LINE), "{t}");
     }
 }

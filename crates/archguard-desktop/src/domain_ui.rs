@@ -53,11 +53,10 @@ pub fn wire(ui: &AppWindow) {
             .err()
             .unwrap_or_default();
     }));
-    d.on_show_line(
-        a.on2(|s, _, file: slint::SharedString, line: i32| s.code.show(&file, line.max(0) as u32)),
-    );
+    d.on_show_line(a.on2(|s, _, file: slint::SharedString, line: i32| {
+        s.code.show(&s.root, &file, line.max(0) as u32)
+    }));
     d.on_close_code(a.on0(|s, _| s.code.close()));
-    d.on_code_back(a.on0(|s, _| s.code.back()));
     d.on_open_note(a.on2(
         |s, ui, id: slint::SharedString, what: slint::SharedString| {
             s.open_note(&id, &what);
@@ -186,7 +185,7 @@ fn snapshot_overrides(s: &mut DomainState) {
         }
     }
     if let Some((file, line)) = var("CODE").as_deref().and_then(|c| c.rsplit_once(':')) {
-        s.code.show(file, line.parse().unwrap_or(1));
+        s.code.show(&s.root, file, line.parse().unwrap_or(1));
     }
 }
 

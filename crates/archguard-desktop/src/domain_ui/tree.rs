@@ -44,68 +44,111 @@ pub fn short(name: &str) -> &str {
         .unwrap_or(name)
 }
 
+/// What every row of the services part needs.
+struct Cx<'a> {
+    s: &'a DomainState,
+    d: &'a DomainModel,
+    texts: &'a Texts,
+    /// Per entity: its aggregate root and column (`entities::membership`).
+    member: Vec<(Option<usize>, usize)>,
+    rule_ids: Vec<String>,
+}
+
 pub fn rows(s: &DomainState, d: &DomainModel, texts: &Texts) -> Vec<DomTreeRow> {
-    let rule_ids = ids::rules(d);
-    let noted = |id: &str| s.notes.contains_key(id);
-    let member = membership(d);
+    let cx = Cx {
+        s,
+        d,
+        texts,
+        member: membership(d),
+        rule_ids: ids::rules(d),
+    };
     let mut out = Vec::new();
-    let services = (s.services.names.iter()).filter(|n| s.service.as_ref().is_none_or(|x| x == *n));
-    for svc in services {
-        let of = |file: &str| s.services.of(file) == svc;
-        let mut ents: Vec<usize> = (0..d.entities.len())
-            .filter(|&i| of(&d.entities[i].file))
-            .collect();
-        let ucs: Vec<usize> = (0..d.use_cases.len())
-            .filter(|&i| of(&d.use_cases[i].file))
-            .collect();
-        if ents.is_empty() && ucs.is_empty() {
-            continue;
-        }
-        let key = format!("s:{svc}");
-        let open = !s.folded.contains(&key);
-        out.push(group(0, key, svc.clone(), ents.len() + ucs.len(), open));
-        if !open {
-            continue;
-        }
-        // Aggregates by root name, entities of none last.
-        let band = |i: usize| member[i].0.map(|r| d.entities[r].name.as_str());
-        ents.sort_by_key(|&i| (band(i).is_none(), band(i), member[i].1, &d.entities[i].name));
-        let mut k = 0;
-        while k < ents.len() {
-            let b = band(ents[k]);
-            let n = ents[k..].iter().take_while(|&&i| band(i) == b).count();
-            let key = format!("a:{svc}:{}", b.unwrap_or("-"));
-            let open = !s.folded.contains(&key);
-            let label = match b {
-                Some(name) => texts.f("Aggregate {name}", &[("name", name.to_string())]),
-                None => texts.t("Not part of an aggregate").to_string(),
-            };
-            out.push(group(1, key, label, n, open));
-            for &i in ents[k..k + n].iter().filter(|_| open) {
-                let e = &d.entities[i];
-                let mut r = item(s, 2, Focus::Entity(i), &e.name);
-                r.machine = d.state_machines.iter().any(|m| m.entity == e.id);
-                let mine = || (d.rules.iter().zip(&rule_ids)).filter(|(x, _)| x.entity == e.id);
-                r.rules = mine().count() as i32;
-                r.noted = mine().any(|(_, id)| noted(id));
-                if e.kind == EntityKind::ValueObject {
-                    r.note = texts.t("value object").into();
-                }
-                out.push(r);
-            }
-            k += n;
-        }
-        if !ucs.is_empty() {
-            let key = format!("u:{svc}");
-            let open = !s.folded.contains(&key);
-            out.push(group(1, key, texts.t("Use cases").into(), ucs.len(), open));
-            for &i in ucs.iter().filter(|_| open) {
-                out.push(item(s, 2, Focus::UseCase(i), &d.use_cases[i].name));
-            }
-        }
+    let named = (s.services.names.iter()).filter(|n| s.service.as_ref().is_none_or(|x| x == *n));
+    // Files in no project folder (top level) show under "(root)" with all services.
+    let root = s.service.is_none().then_some(String::new());
+    for svc in named.chain(root.iter()) {
+        service(&cx, svc, &mut out);
     }
     events(s, d, texts, &mut out);
     out
+}
+
+/// A service with its aggregates and use cases; nothing when it has none.
+fn service(cx: &Cx, svc: &str, out: &mut Vec<DomTreeRow>) {
+    let (s, d) = (cx.s, cx.d);
+    let of = |file: &str| s.services.of(file) == svc;
+    let mut ents: Vec<usize> = (0..d.entities.len())
+        .filter(|&i| of(&d.entities[i].file))
+        .collect();
+    let ucs: Vec<usize> = (0..d.use_cases.len())
+        .filter(|&i| of(&d.use_cases[i].file))
+        .collect();
+    if ents.is_empty() && ucs.is_empty() {
+        return;
+    }
+    let key = format!("s:{svc}");
+    let open = !s.folded.contains(&key);
+    let label = if svc.is_empty() {
+        cx.texts.t("(root)").to_string()
+    } else {
+        svc.to_string()
+    };
+    out.push(group(0, key, label, ents.len() + ucs.len(), open));
+    if !open {
+        return;
+    }
+    // Aggregates by root name, entities of none last.
+    let band = |i: usize| cx.member[i].0.map(|r| d.entities[r].name.as_str());
+    ents.sort_by_key(|&i| {
+        (
+            band(i).is_none(),
+            band(i),
+            cx.member[i].1,
+            &d.entities[i].name,
+        )
+    });
+    for chunk in ents.chunk_by(|&a, &b| band(a) == band(b)) {
+        let b = band(chunk[0]);
+        let key = format!("a:{svc}:{}", b.unwrap_or("-"));
+        let open = !s.folded.contains(&key);
+        let label = match b {
+            Some(name) => cx
+                .texts
+                .f("Aggregate {name}", &[("name", name.to_string())]),
+            None => cx.texts.t("Not part of an aggregate").to_string(),
+        };
+        out.push(group(1, key, label, chunk.len(), open));
+        out.extend(chunk.iter().filter(|_| open).map(|&i| entity(cx, i)));
+    }
+    if !ucs.is_empty() {
+        let key = format!("u:{svc}");
+        let open = !s.folded.contains(&key);
+        out.push(group(
+            1,
+            key,
+            cx.texts.t("Use cases").into(),
+            ucs.len(),
+            open,
+        ));
+        for &i in ucs.iter().filter(|_| open) {
+            out.push(item(s, 2, Focus::UseCase(i), &d.use_cases[i].name));
+        }
+    }
+}
+
+/// An entity row with its marks.
+fn entity(cx: &Cx, i: usize) -> DomTreeRow {
+    let (s, d) = (cx.s, cx.d);
+    let e = &d.entities[i];
+    let mut r = item(s, 2, Focus::Entity(i), &e.name);
+    r.machine = d.state_machines.iter().any(|m| m.entity == e.id);
+    let mine = || (d.rules.iter().zip(&cx.rule_ids)).filter(|(x, _)| x.entity == e.id);
+    r.rules = mine().count() as i32;
+    r.noted = mine().any(|(_, id)| s.notes.contains_key(id));
+    if e.kind == EntityKind::ValueObject {
+        r.note = cx.texts.t("value object").into();
+    }
+    r
 }
 
 /// The integration events published or handled in the shown service, and
@@ -320,7 +363,7 @@ pub(crate) mod tests {
             "the root with a state machine is focused first"
         );
         s.notes.insert(
-            "view-domain_rule:Ordering/Order.cs:Order.Ship#2".into(),
+            "view-domain_rule:Ordering/Order.cs:Order.Ship:always#2".into(),
             Default::default(),
         );
         s.select_service(1);
@@ -356,6 +399,29 @@ pub(crate) mod tests {
             lines(&t)[1],
             "  Not part of an aggregate",
             "a picked service opens"
+        );
+    }
+
+    #[test]
+    fn top_level_files_show_under_root_with_all_services() {
+        let mut d = shop();
+        d.entities
+            .push(entity("Loose", EntityKind::Entity, "Loose.cs"));
+        let mut s = build_from(Ok(d), Err("no flow".into()));
+        s.services = state().services;
+        let got = lines(&s);
+        let at = got
+            .iter()
+            .position(|l| l == "(root)")
+            .expect("a root group");
+        assert_eq!(
+            got[at..at + 3],
+            ["(root)", "  Not part of an aggregate", "    Loose"]
+        );
+        s.select_service(1);
+        assert!(
+            !lines(&s).contains(&"(root)".to_string()),
+            "one service only"
         );
     }
 }

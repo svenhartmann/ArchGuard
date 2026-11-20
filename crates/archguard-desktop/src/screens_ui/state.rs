@@ -119,7 +119,7 @@ pub struct ScreensState {
     /// Why the last note or editor jump failed.
     pub problem: String,
     /// "Show here": the jumps the code overlay shows.
-    pub code: super::code::Jumps,
+    pub code: super::code::Code,
     /// The tree's "Details" section is open; open until the user closes it.
     pub details_open: bool,
 }
@@ -386,7 +386,7 @@ impl ScreensState {
 
     /// Show `file` at `line` in the code overlay; Back returns.
     pub fn show_code(&mut self, file: &str, line: u32) {
-        self.code.show(file, line);
+        self.code.show(&self.root, file, line);
     }
 
     /// Show the drill-down of action `a` (index into the flow's actions).

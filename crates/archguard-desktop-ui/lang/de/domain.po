@@ -137,10 +137,10 @@ msgid "raises"
 msgstr "löst aus"
 
 msgid "{{count}} service"
-msgstr "{{count}} Service"
+msgstr "{{count}} Dienst"
 
 msgid "{{count}} services"
-msgstr "{{count}} Services"
+msgstr "{{count}} Dienste"
 
 msgid "{{count}} handler"
 msgstr "{{count}} Handler"
@@ -170,7 +170,7 @@ msgid "handles · publishes {{what}}"
 msgstr "verarbeitet · veröffentlicht {{what}}"
 
 msgid "service not read"
-msgstr "Service nicht gelesen"
+msgstr "Dienst nicht gelesen"
 
 msgid "{{what}} · {{lanes}}"
 msgstr "{{what}} · {{lanes}}"
@@ -186,9 +186,6 @@ msgstr "kein Benutzerpfad: eine Nachricht startet sie im System"
 
 msgid "Close (Esc)"
 msgstr "Schließen (Esc)"
-
-msgid "The jump before"
-msgstr "Der Sprung davor"
 
 msgid "Fields ({})"
 msgstr "Felder ({})"
@@ -218,7 +215,7 @@ msgid "Who can cause {}"
 msgstr "Wer {} auslösen kann"
 
 msgid "Each chain: start → use case → transition → events, with the service of each step; a chain continued through an integration event follows indented. The first line says what it means for the simulated user."
-msgstr "Jede Kette: Start → Anwendungsfall → Übergang → Ereignisse, mit dem Service jedes Schritts; eine über ein Integrationsereignis fortgesetzte Kette folgt eingerückt. Die erste Zeile sagt, was sie für den simulierten Benutzer bedeutet."
+msgstr "Jede Kette: Start → Anwendungsfall → Übergang → Ereignisse, mit dem Dienst jedes Schritts; eine über ein Integrationsereignis fortgesetzte Kette folgt eingerückt. Die erste Zeile sagt, was sie für den simulierten Benutzer bedeutet."
 
 msgid "No chain leads into this state."
 msgstr "Keine Kette führt in diesen Zustand."
@@ -242,7 +239,7 @@ msgid "Checked on the request before the use case runs (FluentValidation, Bean V
 msgstr "Auf der Anfrage geprüft, bevor der Anwendungsfall läuft (FluentValidation, Bean Validation)."
 
 msgid "published by → event → handled by; one lane per service, an arrow leaving its lane crosses a service boundary."
-msgstr "veröffentlicht von → Ereignis → verarbeitet von; eine Bahn je Service, ein Pfeil, der seine Bahn verlässt, überquert eine Servicegrenze."
+msgstr "veröffentlicht von → Ereignis → verarbeitet von; eine Bahn je Dienst, ein Pfeil, der seine Bahn verlässt, überquert eine Dienstgrenze."
 
 msgid "use case"
 msgstr "Anwendungsfall"
@@ -269,7 +266,7 @@ msgid "noted for the coding agent"
 msgstr "für den Coding-Agenten notiert"
 
 msgid "Services are the folders of the nearest project file (.csproj, pom.xml, build.gradle)."
-msgstr "Services sind die Ordner der nächsten Projektdatei (.csproj, pom.xml, build.gradle)."
+msgstr "Dienste sind die Ordner der nächsten Projektdatei (.csproj, pom.xml, build.gradle)."
 
 msgid "Whole model"
 msgstr "Ganzes Modell"
@@ -295,3 +292,14 @@ msgid "{0} validation"
 msgid_plural "{0} validations"
 msgstr[0] "{0} Validierung"
 msgstr[1] "{0} Validierungen"
+
+msgid "(root)"
+msgstr "(Wurzel)"
+
+msgctxt "Domain"
+msgid "Service"
+msgstr "Dienst"
+
+msgctxt "Domain"
+msgid "Relations"
+msgstr "Beziehungen"

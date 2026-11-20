@@ -131,9 +131,8 @@ export global ScreensData {
     callback toggle-band(int);
     callback close-details();
     callback set-details-open(bool);
-    // The code overlay: close it, or show the jump before.
+    // The code overlay: close it.
     callback close-code();
-    callback code-back();
     // A project-relative file and line: in the configured editor, or in
     // a File view at that line.
     callback open-editor(string, int);
@@ -651,7 +650,6 @@ export component ScreensView inherits Rectangle {
         height: root.height;
         code: m.code;
         close => { ScreensData.close-code(); }
-        back => { ScreensData.code-back(); }
         open-editor(f, l) => { ScreensData.open-editor(f, l); }
     }
 

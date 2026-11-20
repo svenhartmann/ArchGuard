@@ -9,7 +9,7 @@ use archguard_engine::core::domain_model::DomainModel;
 use archguard_engine::core::{Assignment, Config, ReviewDecision, UiFlow, resolve_assignment};
 
 use super::services::Services;
-use crate::screens_ui::code::Jumps;
+use crate::screens_ui::code::Code;
 use crate::screens_ui::{role_assignment, role_names};
 
 /// What the centre shows; the index points into the model's list.
@@ -77,7 +77,7 @@ pub struct DomainState {
     pub note_for: Option<(String, String)>,
     /// Why the last note or editor jump failed.
     pub problem: String,
-    pub code: Jumps,
+    pub code: Code,
 }
 
 pub fn build_from(model: Result<DomainModel, String>, flow: Result<UiFlow, String>) -> DomainState {
@@ -99,7 +99,7 @@ pub fn build_from(model: Result<DomainModel, String>, flow: Result<UiFlow, Strin
         notes: BTreeMap::new(),
         note_for: None,
         problem: String::new(),
-        code: Jumps::default(),
+        code: Code::default(),
     };
     s.focus = s.first_entity().map(Focus::Entity);
     s

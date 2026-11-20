@@ -140,7 +140,7 @@ export component EntityFocus inherits ScrollView {
                 horizontal-stretch: 1;
                 spacing: 3px;
                 alignment: start;
-                SectionHeading { label: @tr("Relations"); }
+                SectionHeading { label: @tr("Domain" => "Relations"); }
                 if m.relations.length == 0: Para { text: @tr("No relations to other entities."); muted: true; }
                 for r in m.relations: LinkRow { link: r; }
             }

@@ -57,6 +57,14 @@ fn model() -> DomainModel {
             handled_by: vec!["Mailer".into()],
             source: "t".into(),
         }],
+        ..across_services()
+    }
+}
+
+/// The integration event the use case publishes, its handler in Catalog,
+/// the domain-event handler's declaration.
+fn across_services() -> DomainModel {
+    DomainModel {
         integration_events: vec![IntegrationEvent {
             type_name: "OrderPaidIntegrationEvent".into(),
             published_by: vec![Publisher {
@@ -145,6 +153,11 @@ fn a_chain_into_a_state_lists_nested_chains_indented_with_the_verdict() {
     let m = build(&s, &Texts::default());
     assert_eq!(m.chosen_state, "Paid");
     assert_eq!(
+        m.role_names.row_count(),
+        2,
+        "\"Role …\" and Admin; anonymous and signed in are the buttons"
+    );
+    assert_eq!(
         m.chains.row_count(),
         1,
         "the message chain alone does not touch Order"
@@ -190,11 +203,19 @@ fn the_entity_shows_its_state_machine_table_and_the_whole_model_on_request() {
     let m = build(&s, &Texts::default());
     assert_eq!((m.focus, m.selected), (0, 0));
     assert_eq!(m.machine_title, "Order.Status (OrderStatus)");
+    assert_eq!(m.states.row_count(), 2);
     let row = m.rows.row_data(0).unwrap();
     assert_eq!(
-        (row.from_to.as_str(), row.location.as_str(), row.line),
-        ("Submitted → Paid", "Order.cs:40", 40)
+        (
+            row.number.as_str(),
+            row.from_to.as_str(),
+            row.location.as_str(),
+            row.line
+        ),
+        ("1", "Submitted → Paid", "Order.cs:40", 40)
     );
+    assert_eq!(row.events, "OrderPaid");
+    assert_eq!(m.state_arrows.row_data(0).unwrap().number, 1);
     assert_eq!(m.flow_note, "no flow");
     assert!(m.cards.row_data(0).unwrap().machine);
     assert_eq!(m.bands.row_data(0).unwrap().title, "Aggregate Order");

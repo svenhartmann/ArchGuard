@@ -52,19 +52,14 @@ pub fn build(s: &DomainState, texts: &Texts) -> DomainViewModel {
             .and_then(|x| s.services.names.iter().position(|n| n == x))
             .map_or(0, |i| i as i32 + 1),
         role: s.role as i32,
-        role_names: model(
-            std::iter::once(texts.t("Role …").into()).chain((s.roles.iter()).map(|r| match flow {
-                Some(f) => crate::screens_ui::role_label(texts, f, r).into(),
-                None => r.as_str().into(),
-            })),
-        ),
+        role_names: crate::screens_ui::role_picker(texts, flow, &s.roles),
         tree: model(tree::rows(s, d, texts)),
         details_open: s.details_open,
         whole: s.whole,
         focus: -1,
         selected: -1,
         problem: s.problem.as_str().into(),
-        code: crate::screens_ui::code::view(&s.root, &s.code),
+        code: s.code.view(),
         ..Default::default()
     };
     if let Some((id, subject)) = &s.note_for {

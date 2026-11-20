@@ -47,10 +47,7 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
         unprotected: kind(UiFlowFindingKind::HiddenButUnprotected),
         roles: model(role_rows(texts, &s.roles, s.role)),
         role: s.role as i32,
-        role_names: model(
-            std::iter::once(texts.t("Role …").into())
-                .chain(s.roles.iter().map(|r| role_label(texts, flow, r).into())),
-        ),
+        role_names: role_picker(texts, Some(flow), &s.roles),
         policies: model(policy_rows(texts, flow)),
         implied: implied(s, texts).into(),
         editor_preset: crate::editor::preset_of(&editor) as i32,
@@ -75,7 +72,7 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
         })),
         inspector: inspector::build(s, flow, texts),
         details_open: s.details_open,
-        code: super::code::view(&s.root, &s.code),
+        code: s.code.view(),
         ..Default::default()
     };
     let reaches = screen_reaches(&s.sim, &s.assignment());
@@ -105,6 +102,17 @@ fn apps(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<slint::SharedStri
             format!("{name} · {count}").into()
         })
         .collect()
+}
+
+/// The role picker of the Screens and Domain top bars: "Role …", then each
+/// role with what the catalog says of it.
+pub fn role_picker(
+    texts: &Texts,
+    flow: Option<&UiFlow>,
+    roles: &[String],
+) -> slint::ModelRc<slint::SharedString> {
+    let label = |r: &String| flow.map_or(r.clone(), |f| role_label(texts, f, r));
+    model(std::iter::once(texts.t("Role …").into()).chain(roles.iter().map(|r| label(r).into())))
 }
 
 /// A role of the picker with what the catalog says of it: "ADMIN · role ·

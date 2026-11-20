@@ -31,7 +31,7 @@ component TopBar inherits Rectangle {
         padding-top: 8px;
         padding-bottom: 8px;
         spacing: 10px;
-        BarLabel { text: @tr("Service"); }
+        BarLabel { text: @tr("Domain" => "Service"); }
         svc := ComboBox {
             width: 210px;
             model: m.services;
@@ -270,7 +270,6 @@ export component DomainView inherits Rectangle {
         height: root.height;
         code: m.code;
         close => { DomainData.close-code(); }
-        back => { DomainData.code-back(); }
         open-editor(f, l) => { DomainData.open-editor(f, l); }
     }
 }

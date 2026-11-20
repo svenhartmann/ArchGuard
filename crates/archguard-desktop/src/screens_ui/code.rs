@@ -1,39 +1,64 @@
 //! "Show here" of the Screens and Domain views: the whole file over the
 //! view (`ui/code_overlay.slint`), read as plain text, so every
 //! extractor's files show (`.razor`, `.ts`, `.html`, `.cs`, `.java`,
-//! `.xaml`, `.vue`, `.slint`). The jumps form a stack: Back returns to the
-//! one before, closing forgets them all.
+//! `.xaml`, `.vue`, `.slint`). The file is read once when it opens, not on
+//! every rebuild of the view.
 
 use std::path::Path;
 
 use crate::tab_support::model;
 use crate::ui::{CodeLine, CodeView};
 
-/// The files and lines shown, the last one on top.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Jumps(Vec<(String, u32)>);
+/// The open file and line with its lines as read; none when closed.
+#[derive(Debug, Clone, Default)]
+pub struct Code(Option<Shown>);
 
-impl Jumps {
-    /// Show `file` at `line` on top of the jumps before.
-    pub fn show(&mut self, file: &str, line: u32) {
-        if !file.is_empty() && self.0.last() != Some(&(file.to_string(), line)) {
-            self.0.push((file.to_string(), line));
-        }
-    }
+#[derive(Debug, Clone)]
+struct Shown {
+    file: String,
+    line: u32,
+    /// [`read`]; none when the file could not be read.
+    read: Option<(Vec<CodeLine>, usize, usize)>,
+}
 
-    /// Back to the jump before; the last one stays.
-    pub fn back(&mut self) {
-        if self.0.len() > 1 {
-            self.0.pop();
+impl Code {
+    /// Open `file` (project-relative under `root`) at `line`.
+    pub fn show(&mut self, root: &Path, file: &str, line: u32) {
+        if !file.is_empty() {
+            let read = read(root, file, line);
+            self.0 = Some(Shown {
+                file: file.into(),
+                line,
+                read,
+            });
         }
     }
 
     pub fn close(&mut self) {
-        self.0.clear();
+        self.0 = None;
     }
 
+    #[cfg(test)]
     pub fn current(&self) -> Option<(&str, u32)> {
-        self.0.last().map(|(f, l)| (f.as_str(), *l))
+        self.0.as_ref().map(|s| (s.file.as_str(), s.line))
+    }
+
+    /// The overlay; closed when nothing is shown.
+    pub fn view(&self) -> CodeView {
+        let Some(s) = &self.0 else {
+            return CodeView::default();
+        };
+        let (lines, hit, columns) = s.read.clone().unwrap_or_default();
+        CodeView {
+            open: true,
+            title: s.file.rsplit('/').next().unwrap_or(&s.file).into(),
+            location: format!("{}:{}", s.file, s.line).into(),
+            file: s.file.as_str().into(),
+            line: s.line as i32,
+            lines: model(lines),
+            hit: hit as i32,
+            columns: columns as i32,
+        }
     }
 }
 
@@ -63,25 +88,6 @@ pub fn read(root: &Path, rel: &str, line: u32) -> Option<(Vec<CodeLine>, usize, 
     let path = crate::editor::inside(root, rel)?;
     let text = std::fs::read(path).ok()?;
     Some(whole(&String::from_utf8_lossy(&text), line))
-}
-
-/// The overlay for the top jump; closed when there is none.
-pub fn view(root: &Path, jumps: &Jumps) -> CodeView {
-    let Some((file, line)) = jumps.current() else {
-        return CodeView::default();
-    };
-    let (lines, hit, columns) = read(root, file, line).unwrap_or_default();
-    CodeView {
-        open: true,
-        title: file.rsplit('/').next().unwrap_or(file).into(),
-        location: format!("{file}:{line}").into(),
-        file: file.into(),
-        line: line as i32,
-        lines: model(lines),
-        hit: hit as i32,
-        columns: columns as i32,
-        can_back: jumps.0.len() > 1,
-    }
 }
 
 #[cfg(test)]
@@ -115,29 +121,25 @@ mod tests {
     }
 
     #[test]
-    fn jumps_open_go_back_and_close() {
+    fn the_overlay_opens_reads_once_and_closes() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("A.cs"), "a\nb\nc\n").expect("file");
-        let mut j = Jumps::default();
-        assert!(!view(dir.path(), &j).open, "closed at first");
-        j.show("A.cs", 2);
-        j.show("A.cs", 2);
-        let v = view(dir.path(), &j);
-        assert!(v.open && !v.can_back, "the same jump twice is one");
+        let file = dir.path().join("A.cs");
+        std::fs::write(&file, "a\nb\nc\n").expect("file");
+        let mut c = Code::default();
+        assert!(!c.view().open, "closed at first");
+        c.show(dir.path(), "A.cs", 2);
+        std::fs::remove_file(&file).expect("removed");
+        let v = c.view();
+        assert!(v.open);
         assert_eq!(
             (v.location.as_str(), v.hit, v.lines.row_count()),
-            ("A.cs:2", 1, 3)
+            ("A.cs:2", 1, 3),
+            "the lines read on opening, not on each rebuild"
         );
-        j.show("A.cs", 3);
-        assert!(view(dir.path(), &j).can_back);
-        j.back();
-        assert_eq!(j.current(), Some(("A.cs", 2)));
-        j.back();
-        assert!(j.current().is_some(), "Back keeps the first jump");
-        j.close();
-        assert!(!view(dir.path(), &j).open);
-        j.show("missing.cs", 1);
-        let v = view(dir.path(), &j);
+        c.close();
+        assert!(!c.view().open && c.current().is_none());
+        c.show(dir.path(), "missing.cs", 1);
+        let v = c.view();
         assert!(
             v.open && v.lines.row_count() == 0,
             "unreadable: open, says so"

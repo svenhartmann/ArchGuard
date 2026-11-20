@@ -1,7 +1,6 @@
 // "Show here" of the Screens and Domain views: the whole file over the
 // view, the asked line marked and scrolled into the middle. Filled from
-// src/screens_ui/code.rs; Esc, ✕ or a click beside the panel closes it,
-// Back returns to the jump before.
+// src/screens_ui/code.rs; Esc, ✕ or a click beside the panel closes it.
 import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Button, Icons } from "widgets.slint";
@@ -25,13 +24,11 @@ export struct CodeView {
     hit: int,
     // The longest line in characters, for the horizontal scroll.
     columns: int,
-    can-back: bool,
 }
 
 export component CodeOverlay inherits Rectangle {
     in property <CodeView> code;
     callback close();
-    callback back();
     callback open-editor(string, int);
     property <length> row-h: 18px;
     background: Theme.shadow;
@@ -64,7 +61,6 @@ export component CodeOverlay inherits Rectangle {
             spacing: 8px;
             HorizontalLayout {
                 spacing: 10px;
-                Button { text: @tr("‹ Back"); compact: true; enabled: code.can-back; tip: @tr("The jump before"); clicked => { root.back(); } }
                 VerticalLayout {
                     horizontal-stretch: 1;
                     Text { text: code.title; color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-strong; overflow: elide; }

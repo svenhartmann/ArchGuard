@@ -26,7 +26,7 @@ use crate::context::Loaded;
 use crate::tab_support::{self, Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, ScreensData, ScreensModel, ScreensNote};
 pub use state::{ScreensState, role_assignment, role_names, share_role, shared_role, with_prefix};
-pub use view::role_label;
+pub use view::role_picker;
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
@@ -65,7 +65,6 @@ pub fn wire(ui: &AppWindow) {
     d.on_close_details(a.on0(|s, _| s.close_details()));
     d.on_set_details_open(a.on(|s, _, open: bool| s.details_open = open));
     d.on_close_code(a.on0(|s, _| s.code.close()));
-    d.on_code_back(a.on0(|s, _| s.code.back()));
     d.on_select_app(a.on(|s, _, i: i32| s.select_app(index(i).unwrap_or(0))));
     d.on_set_unknown(a.on(|s, _, i: i32| s.set_unknown(index(i).unwrap_or(0))));
     d.on_set_mode(a.on(|s, _, i: i32| s.set_mode(index(i).unwrap_or(0))));
