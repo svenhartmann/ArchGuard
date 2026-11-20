@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{
-    Assignment, Condition, UiFlow, evaluate_access, merge_ui_flows, resolve_assignment,
-    screen_reaches, ui_flow_findings, ui_flow_summary,
+    ArchguardError, Assignment, Condition, UiFlow, evaluate_access, merge_ui_flows,
+    resolve_assignment, screen_reaches, ui_flow_findings, ui_flow_summary,
 };
+use archguard_engine::extract_ctx::{ExtractContext, with_root_config};
 use serde_json::{Value, json};
 
 use crate::args::{Cli, Format};
@@ -16,11 +17,28 @@ use crate::output::{EXIT_OK, analysis_error, emit, usage};
 /// Diagnostics shown in text output without `-v`.
 const DIAGNOSTICS_SHOWN: usize = 10;
 
+/// Runs an extraction of `root` with the configuration given by `--config`
+/// (an error when it cannot be read), else with the one `root` holds (an
+/// unreadable one is a note of the extractors that use it).
+pub(crate) fn extract<T>(
+    cli: &Cli,
+    root: &Path,
+    run: impl FnOnce(&ExtractContext) -> Result<T, ArchguardError>,
+) -> Result<T, ArchguardError> {
+    match cli.config.as_deref() {
+        None => with_root_config(root, run),
+        Some(file) => {
+            let loaded = archguard_engine::load_config(Some(file), root)?;
+            run(&ExtractContext::new(root, &loaded.config))
+        }
+    }
+}
+
 pub(crate) fn run(cli: &Cli, root: &Path, roles: &[String], anonymous: bool) -> i32 {
     if !matches!(cli.format, Format::Text | Format::Json) {
         return usage("ui-flow supports --format text|json");
     }
-    let flow = match archguard_engine::ui_flow::analyze(root) {
+    let flow = match extract(cli, root, archguard_engine::ui_flow::analyze_with) {
         Ok(flow) => flow,
         Err(error) => return analysis_error(error),
     };
@@ -269,7 +287,13 @@ pub(crate) fn roles(cli: &Cli, root: &Path) -> i32 {
         Ok(flow) => flow.unwrap_or_default(),
         Err(error) => return analysis_error(error),
     };
-    let flow = merge_ui_flows(import, archguard_engine::ui_flow_roles::extract(root));
+    let roles = extract(cli, root, |ctx| {
+        Ok(archguard_engine::ui_flow_roles::extract_with(ctx))
+    });
+    let flow = match roles {
+        Ok(roles) => merge_ui_flows(import, roles),
+        Err(error) => return analysis_error(error),
+    };
     if cli.quiet {
         return EXIT_OK;
     }
