@@ -1,18 +1,20 @@
 # Marketingplan Website
 
-Stand: 2026-11-20 · Status: Entwurf, keine Umsetzung
+Stand: 2026-11-20 · Status: Umsetzung auf Marketing-Ticket-Branches; Veröffentlichung ausstehend
 
 **Kurz vorweg:** ArchGuard ist nicht-kommerziell. Ziel des Marketings ist deshalb Nutzung (Downloads, Stars, CI-Einsätze, MCP-Nutzer), kein Umsatz. Die Website zeigt heute etwa die Hälfte der Features, und manche Angaben sind veraltet. Der größte Hebel ist, sie auf den Stand des [README](../README.md) zu bringen, nach Zielgruppen zu ordnen und jedes Feature mit einem echten Screenshot aus einem passenden Open-Source-Projekt zu belegen (Abschnitt 8).
+
+Die vorbereiteten Kampagnenmaterialien, Veröffentlichungsschritte und Messgrenzen stehen in [docs/marketing](marketing/README.md). Dieser Plan bleibt die fachliche Arbeitsgrundlage; fertige Texte bedeuten noch keine veröffentlichten Posts oder erhobenen Nutzungszahlen.
 
 ## 1. Ziele und Messgrößen
 
 | Ziel | Messgröße | Quelle |
 |---|---|---|
-| Erstnutzung | Installationen und Release-Downloads | GitHub Releases API |
+| Erstnutzung (Proxy) | Release-Downloads je Asset; keine Installations- oder Nutzerzählung | GitHub Releases API |
 | Wiederkehrende Nutzung | Issues, Diskussionen, Release-Downloads je Version | GitHub |
 | Einsatz in CI | Repos, die `action.yml` nutzen | GitHub Code Search |
 | Agent-Nutzung | Erwähnungen des MCP-Servers, Einträge in MCP-Verzeichnissen | manuell |
-| Sichtbarkeit | Stars, Referrer, Klicks auf „Get started“ | GitHub Traffic |
+| Sichtbarkeit | Stars und verfügbare Repository-Referrer; Website-Klicks nicht gemessen | GitHub / GitHub Traffic |
 
 Website-Tracking schlage ich bewusst nicht vor. Das passt zum Datenschutzversprechen des Projekts (keine Secrets, kein Cluster-Zugriff, keine Telemetrie).
 

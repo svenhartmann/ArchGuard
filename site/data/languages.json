@@ -3,44 +3,52 @@
     "name": "Java",
     "en": {
       "analysis": "Types, methods, calls and source metrics; missing references leave partial results.",
-      "tools": "JDK 17+ and project classpath"
+      "tools": "JDK 17+ and project classpath",
+      "setup": "Use java on PATH with a full JDK 17+. Supply dependency references in .archguard/java-classpath.txt (one classpath line) or semantic.java.classpath. The Java release level comes from pom.xml/build.gradle(.kts) or semantic.java.release. ArchGuard runs no Maven or Gradle build."
     },
     "de": {
       "analysis": "Typen, Methoden, Aufrufe und Quellmetriken; fehlende Referenzen lassen Lücken.",
-      "tools": "JDK 17+ und Projekt-Classpath"
+      "tools": "JDK 17+ und Projekt-Classpath",
+      "setup": "java muss auf PATH auf ein vollständiges JDK 17+ zeigen. Abhängigkeitsreferenzen stehen in .archguard/java-classpath.txt (eine Classpath-Zeile) oder semantic.java.classpath. Der Java-Release-Stand stammt aus pom.xml/build.gradle(.kts) oder semantic.java.release. ArchGuard führt keinen Maven- oder Gradle-Build aus."
     }
   },
   {
     "name": "C#",
     "en": {
       "analysis": "Types, methods, calls and source metrics from Roslyn.",
-      "tools": ".NET SDK 8+, target reference packs and restored packages"
+      "tools": ".NET SDK 8+, target reference packs and restored packages",
+      "setup": "Provide dotnet on PATH and the Microsoft.NETCore.App.Ref pack for the target framework. Restore the project first so obj/project.assets.json exists. Project references and local HintPath assemblies are read; supported SDK-style projects use Microsoft.NET.Sdk or Microsoft.NET.Sdk.Web."
     },
     "de": {
       "analysis": "Typen, Methoden, Aufrufe und Quellmetriken aus Roslyn.",
-      "tools": ".NET SDK 8+, Ziel-Referenzpakete und wiederhergestellte Abhängigkeiten"
+      "tools": ".NET SDK 8+, Ziel-Referenzpakete und wiederhergestellte Abhängigkeiten",
+      "setup": "dotnet muss auf PATH liegen; das Microsoft.NETCore.App.Ref-Paket muss zum Ziel-Framework passen. Stelle das Projekt vorher wieder her, damit obj/project.assets.json existiert. Projektreferenzen und lokale HintPath-Assemblies werden gelesen; unterstützte SDK-Projekte nutzen Microsoft.NET.Sdk oder Microsoft.NET.Sdk.Web."
     }
   },
   {
     "name": "TypeScript / JavaScript",
     "en": {
       "analysis": "Types, calls and source metrics; JavaScript needs allowJs. Repository compilers require explicit trust.",
-      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 for a project compiler"
+      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 for a project compiler",
+      "setup": "Use node on PATH. Provide TypeScript in node_modules or semantic.typescript.compiler, and tsconfig.json or semantic.typescript.project. A compiler selected by the repository runs only with ARCHGUARD_TRUST_PROJECT_COMPILER=1 set outside that repository. JavaScript needs allowJs."
     },
     "de": {
       "analysis": "Typen, Aufrufe und Quellmetriken; JavaScript benötigt allowJs. Projekt-Compiler benötigen explizite Freigabe.",
-      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 für Projekt-Compiler"
+      "tools": "Node.js, TypeScript; ARCHGUARD_TRUST_PROJECT_COMPILER=1 für Projekt-Compiler",
+      "setup": "node muss auf PATH liegen. TypeScript wird aus node_modules oder semantic.typescript.compiler gelesen; die Projektkonfiguration aus tsconfig.json oder semantic.typescript.project. Ein vom Repository benannter Compiler läuft nur mit außerhalb des Repositorys gesetztem ARCHGUARD_TRUST_PROJECT_COMPILER=1. JavaScript benötigt allowJs."
     }
   },
   {
     "name": "Go",
     "en": {
       "analysis": "Packages, types, methods, functions and metrics. Embedding is composition; DIT/NOC are not applicable.",
-      "tools": "Go SDK"
+      "tools": "Go SDK",
+      "setup": "Use go on PATH or ARCHGUARD_GO. The bundled helper builds offline with the installed toolchain; no project build or dependency download is run. Missing third-party module references can leave partial results."
     },
     "de": {
       "analysis": "Pakete, Typen, Methoden, Funktionen und Metriken. Embedding ist Komposition; DIT/NOC sind nicht anwendbar.",
-      "tools": "Go SDK"
+      "tools": "Go SDK",
+      "setup": "Nutze go auf PATH oder ARCHGUARD_GO. Der mitgelieferte Helfer wird offline mit der installierten Toolchain gebaut; Projekt-Builds und Abhängigkeitsdownloads werden nicht ausgeführt. Fehlende Drittmodulreferenzen können zu partiellen Ergebnissen führen."
     }
   },
   {
@@ -58,11 +66,13 @@
     "name": "Python",
     "en": {
       "analysis": "Classes, functions and metrics; static calls from imports, definitions, self/cls and super(). Other calls and types remain unresolved.",
-      "tools": "Python 3.9+; imports need no interpreter"
+      "tools": "Python 3.9+; imports need no interpreter",
+      "setup": "Use python3 on PATH or ARCHGUARD_PYTHON. The helper runs isolated with -I -S and never imports project code. Syntax newer than the installed interpreter is reported as a diagnostic, not measured."
     },
     "de": {
       "analysis": "Klassen, Funktionen und Metriken; statische Aufrufe aus Imports, Definitionen, self/cls und super(). Andere Aufrufe und Typen bleiben unaufgelöst.",
-      "tools": "Python 3.9+; Imports benötigen keinen Interpreter"
+      "tools": "Python 3.9+; Imports benötigen keinen Interpreter",
+      "setup": "Nutze python3 auf PATH oder ARCHGUARD_PYTHON. Der Helfer läuft isoliert mit -I -S und importiert keinen Projektcode. Syntax, die neuer als der installierte Interpreter ist, wird als Diagnose gemeldet und nicht vermessen."
     }
   },
   {

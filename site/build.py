@@ -3,6 +3,7 @@
 import argparse
 from html import escape
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -48,11 +49,37 @@ def language_table(locale):
     return f'<div class="table-wrap"><table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>'
 
 
+def language_setup(locale):
+    title = 'Project setup details' if locale == 'en' else 'Details zur Projekteinrichtung'
+    entries = ''.join(f'<li><strong>{escape(row["name"])}:</strong> '
+                      f'{escape(row[locale]["setup"])}</li>' for row in languages if row[locale].get('setup'))
+    protobuf = ('Protocol Buffers: service and message declarations in .proto files are read without protoc.'
+                if locale == 'en' else
+                'Protocol Buffers: Service- und Nachrichtendeklarationen in .proto-Dateien werden ohne protoc gelesen.')
+    return f'<h3>{title}</h3><ul>{entries}</ul><p>{protobuf}</p>'
+
+
 for page in out.rglob('*.html'):
     text = page.read_text()
     locale = 'de' if '<html lang="de"' in text else 'en'
+    relative = page.relative_to(out)
+    counterpart = out.joinpath(*relative.parts[1:]) if relative.parts[0] == 'de' else out / 'de' / relative
+    if counterpart.is_file():
+        other_locale = 'en' if locale == 'de' else 'de'
+        other_url = Path(os.path.relpath(counterpart, page.parent)).as_posix()
+        alternate = f'<link rel="alternate" hreflang="{other_locale}" href="{other_url}">'
+        if not re.search(r'<link\b[^>]*hreflang="' + other_locale + '"', text):
+            text = text.replace('</head>', alternate + '</head>')
+        navigation = re.search(r'<nav\b.*?</nav>', text, flags=re.S)
+        if navigation and f'hreflang="{other_locale}"' not in navigation.group():
+            switch = (f'<a class="language-switch" href="{other_url}" lang="{other_locale}" '
+                      f'hreflang="{other_locale}">{other_locale.upper()}</a>')
+            text = text.replace('</nav>', switch + '</nav>', 1)
     text = text.replace('@@LANGUAGE_COUNT@@', str(len(languages)))
-    text = text.replace('@@LANGUAGE_TABLE@@', language_table(locale))
+    table = language_table(locale)
+    if page.name == 'prerequisites.html':
+        table += language_setup(locale)
+    text = text.replace('@@LANGUAGE_TABLE@@', table)
     text = text.replace('@@GUIDE_COUNT@@', str(guide_count))
     text = re.sub(rf'<!--{drop}-->.*?<!--/{drop}-->', '', text, flags=re.S)
     text = re.sub(rf'<!--/?{keep}-->', '', text)

@@ -25,10 +25,14 @@
 .positioning{padding-top:24px}.positioning p{font-size:14px;color:var(--muted)}.positioning strong{color:var(--ink)}
 .audience-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.audience-grid .doc-card{padding:24px}.audience-grid h2{font-size:23px;letter-spacing:-.5px}.audience-grid p{font-size:16px;line-height:1.6;margin:0}
 .feature-story{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:center;padding:48px 0;border-top:1px solid var(--line);scroll-margin-top:24px}.feature-story>div{min-width:0}.feature-story h3{font-size:32px;line-height:1.15;letter-spacing:-1px;margin:0 0 18px}.feature-story p{font-size:16px;color:var(--muted)}.feature-story .question{font-size:21px;font-weight:600;color:var(--ink)}.feature-story .small{font-size:14px}.feature-story .code{margin:24px 0}.feature-story pre{overflow:auto;line-height:1.7;padding-right:70px}.feature-story .gallery figcaption{padding:18px}.feature-story .gallery figcaption p{font-size:14px}.feature-story .gallery figcaption a{display:inline;background:transparent;color:var(--accent)}
-.header nav .language-switch{display:block;padding:7px 10px;border:1px solid var(--line);border-radius:5px}.evidence-motto{width:100%;color:var(--ink)}.more-reading{border-top:1px solid var(--line)}
+.header nav>a.language-switch{display:block;padding:7px 10px;border:1px solid var(--line);border-radius:5px}.evidence-motto{width:100%;color:var(--ink)}.more-reading{border-top:1px solid var(--line)}
 .doc .code pre{overflow:auto;padding-right:80px}.doc .code{position:relative}.doc figure{margin:30px 0}.doc figure img{display:block;width:100%;height:auto}.doc figcaption{font-size:14px;color:var(--muted)}
 @media(max-width:1000px){.audience-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.feature-story{gap:28px}}
 @media(max-width:800px){.feature-story{grid-template-columns:1fr}.header nav{gap:14px}.hero h1{overflow-wrap:break-word}}
 @media(max-width:540px){.audience-grid{grid-template-columns:1fr}.feature-story{padding:32px 0}.feature-story h3{font-size:28px}.feature-story .question{font-size:19px}.feature-story pre{font-size:12px}.feature-story .gallery figcaption{padding:14px}.header .brand{font-size:21px}.header nav{gap:10px}}
 
 .header nav{font-size:14px}.evidence-motto{font-size:14px}.feature-story figcaption p{margin:0}
+.header nav>a[hreflang]{display:block}
+.recorded-evidence{margin:20px 0;padding:16px 18px;border:1px solid var(--line);border-radius:8px;background:white}.recorded-evidence summary{cursor:pointer;font-weight:650;font-size:16px}.recorded-evidence pre{font-size:13px;white-space:pre;overflow:auto;padding-right:0}.recorded-evidence p{font-size:14px}
+
+.feature-captures{display:grid;gap:1rem;min-width:0}.feature-captures .gallery{margin:0}
