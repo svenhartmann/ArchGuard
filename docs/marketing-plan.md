@@ -1,6 +1,6 @@
 # Marketingplan Website
 
-Stand: 2026-11-20 · Status: Umsetzung auf Marketing-Ticket-Branches; Veröffentlichung ausstehend
+Stand: 2026-11-20 · Status: lokal umgesetzt und auf integ/marketing integriert; Veröffentlichung ausstehend
 
 **Kurz vorweg:** ArchGuard ist nicht-kommerziell. Ziel des Marketings ist deshalb Nutzung (Downloads, Stars, CI-Einsätze, MCP-Nutzer), kein Umsatz. Zu Beginn dieses Plans zeigte die Website etwa die Hälfte der Features, und manche Angaben waren veraltet. Der größte Hebel war, sie auf den Stand des [README](../README.md) zu bringen, nach Zielgruppen zu ordnen und jedes Feature mit einem echten Screenshot aus einem passenden Open-Source-Projekt zu belegen (Abschnitt 8).
 
