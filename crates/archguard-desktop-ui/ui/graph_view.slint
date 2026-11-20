@@ -4,7 +4,7 @@
 // (app.slint), so two Graphs side by side keep their own state.
 import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab, StatInline, KpiItem, Badge, EmptyState } from "widgets.slint";
+import { Icon, Icons, Button, Tab, StatInline, KpiItem, Badge, EmptyState, TipArea } from "widgets.slint";
 import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
 import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
@@ -13,6 +13,9 @@ import { Fmt } from "format.slint";
 import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
 import { CyclePlans, CyclePlansView } from "cycle_plans.slint";
 import { ReviewData, ReviewList, ReviewDetails } from "review.slint";
+import { QualityCard, FindingsSection } from "quality_cards.slint";
+import { QualityData } from "quality_view.slint";
+import { GraphPanels, PanelHandle } from "graph_panels.slint";
 
 export struct Crumb {
     node: int,
@@ -49,6 +52,9 @@ export struct GraphData {
     dep-count: int,
     // Shown modules, dependencies, cycle groups and ACD (`kpi.rs`).
     kpis: [KpiItem],
+    // More metrics: CCD, NCCD, largest cycle group, modules in cycles,
+    // high review priority (`kpi.rs`).
+    more-kpis: [KpiItem],
     count-in: int,
     count-out: int,
     count-both: int,
@@ -79,16 +85,24 @@ export struct GraphData {
     plans: CyclePlans,
     // Explorer → Review and the selected row's review.
     review: ReviewData,
+    // Imported quality findings of the selected node and its subtree:
+    // the first ones as cards, and how many there are.
+    findings: [QualityCard],
+    findings-total: int,
 }
 
 component ExplorerRow inherits Rectangle {
     in property <TreeRow> data;
     in property <bool> selected;
+    // The keyboard's row while the explorer has focus.
+    in property <bool> focus-ring;
     callback select();
     callback toggle();
     callback node-tab(string, bool);
     height: 32px;
     border-radius: 6px;
+    border-width: root.focus-ring ? 2px : 0;
+    border-color: Theme.accent;
     background: selected ? Theme.accent.with-alpha(0.14) : touch.has-hover ? Theme.panel-2 : transparent;
     menu := NodeMenu {
         package: !root.data.file;
@@ -143,10 +157,19 @@ component ExplorerRow inherits Rectangle {
             border-radius: 3.5px;
             background: Theme.cycle;
         }
-        if data.priority > 0: Badge {
+        if data.priority > 0 && GraphPanels.priorities: Badge {
             text: data.priority == 1 ? "P1" : "P2";
             variant: data.priority == 1 ? "p1" : "p2";
             y: (parent.height - self.height) / 2;
+        }
+        if data.quality > 0: Badge {
+            text: "Q" + (data.quality > 999 ? "999+" : data.quality);
+            y: (parent.height - self.height) / 2;
+            TipArea {
+                tip: @tr("{} active imported quality findings in this file or subtree; the inspector lists them. Suppressed, unmapped and changed-since-import findings are not counted.", data.quality);
+                pin-on-click: false;
+                activated => { root.select(); }
+            }
         }
     }
 }
@@ -228,15 +251,18 @@ export component GraphView inherits HorizontalLayout {
     property <int> hovered: root.hover-hint;
     changed hover-hint => { self.hovered = self.hover-hint; }
     property <int> fit-local;
+    // The "More metrics" popover of the scope bar.
+    in-out property <bool> more-open;
     // A narrow pane (a split) hides the explorer and narrows the details,
     // decided from the view's own width only (no layout loop).
     // Below 600px the graph itself needs the whole pane.
     property <bool> details-on: root.show-details && root.data.selected-row >= 0 && root.width >= 600px;
-    property <length> details-w: root.width >= 900px ? 320px : 240px;
+    // Both widths are dragged at the panels' inner edges (`GraphPanels`).
+    property <length> details-w: root.width >= 900px ? GraphPanels.details-w : 240px;
     // The explorer only when the graph keeps at least 480px beside it.
     property <bool> explorer-on: root.show-explorer
-        && root.width - 250px - (root.details-on ? root.details-w : 0) >= 480px;
-    property <length> main-w: root.width - (root.explorer-on ? 250px : 0) - (root.details-on ? root.details-w : 0);
+        && root.width - GraphPanels.explorer-w - (root.details-on ? root.details-w : 0) >= 480px;
+    property <length> main-w: root.width - (root.explorer-on ? GraphPanels.explorer-w : 0) - (root.details-on ? root.details-w : 0);
 
     callback select-row(int);
     callback toggle-row(int);
@@ -258,7 +284,7 @@ export component GraphView inherits HorizontalLayout {
 
     // ------------------------------------------------- explorer
     if root.explorer-on: Rectangle {
-        width: 250px;
+        width: GraphPanels.explorer-w;
         background: Theme.panel;
         Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
         VerticalLayout {
@@ -283,14 +309,76 @@ export component GraphView inherits HorizontalLayout {
                 color: Theme.muted;
                 font-size: Theme.font-small;
             }
-            if root.data.explorer-tab == 0 && !root.searching: ListView {
+            // The web viewer's tree keys: arrows, Home/End, Left/Right
+            // collapse/expand, Enter selects (opens the details), Escape
+            // clears the selection (closes them).
+            if root.data.explorer-tab == 0 && !root.searching: keys := FocusScope {
                 vertical-stretch: 1;
-                for r in root.data.rows: ExplorerRow {
-                    data: r;
-                    selected: r.row == root.data.selected-row;
-                    select => { root.select-row(r.row); }
-                    toggle => { root.toggle-row(r.row); }
-                    node-tab(kind, side) => { root.node-tab(kind, r.node, side); }
+                property <int> cursor: root.data.selected-row;
+                property <int> selected: root.data.selected-row;
+                changed selected => { if self.pending < 0 { self.cursor = self.selected; } }
+                // The node whose row the cursor keeps while a toggle
+                // re-sorts the rows (-1: none); the next key clears it.
+                property <int> pending: -1;
+                function move(to: int) {
+                    self.pending = -1;
+                    self.cursor = to;
+                }
+                function toggle(at: int) {
+                    self.cursor = at;
+                    self.pending = root.data.rows[at].node;
+                    root.toggle-row(at);
+                }
+                for r[i] in self.pending >= 0 ? root.data.rows : []: Rectangle {
+                    width: 0;
+                    height: 0;
+                    property <bool> hit: r.node == keys.pending;
+                    init => { if self.hit { keys.cursor = i; } }
+                    changed hit => { if self.hit { keys.cursor = i; } }
+                }
+                changed cursor => { self.reveal(); }
+                function reveal() {
+                    // Explorer rows are 32px.
+                    if self.cursor < 0 || list.visible-height <= 0 { return; }
+                    if self.cursor * 32px >= -list.content-y && (self.cursor + 1) * 32px <= -list.content-y + list.visible-height { return; }
+                    list.content-y = -max(0px, min(self.cursor * 32px - list.visible-height / 3, list.content-height - list.visible-height));
+                }
+                key-pressed(event) => {
+                    let n = root.data.rows.length;
+                    if (n == 0) { return reject; }
+                    let at = max(0, min(n - 1, self.cursor));
+                    let r = root.data.rows[at];
+                    if (event.text == Key.DownArrow) { self.move(self.cursor < 0 ? 0 : min(n - 1, at + 1)); return accept; }
+                    if (event.text == Key.UpArrow) { self.move(max(0, at - 1)); return accept; }
+                    if (event.text == Key.Home) { self.move(0); return accept; }
+                    if (event.text == Key.End) { self.move(n - 1); return accept; }
+                    if (event.text == Key.RightArrow) {
+                        if (r.expandable && !r.expanded) { self.toggle(at); }
+                        else if (r.expanded) { self.move(min(n - 1, at + 1)); }
+                        return accept;
+                    }
+                    if (event.text == Key.LeftArrow) {
+                        if (r.expanded) { self.toggle(at); }
+                        else if (r.parent >= 0) { self.move(r.parent); }
+                        return accept;
+                    }
+                    if (event.text == Key.Return || event.text == " ") { root.select-row(at); return accept; }
+                    if (event.text == Key.Escape && root.data.selected-row >= 0) { root.select-row(-1); return accept; }
+                    reject
+                }
+                list := ListView {
+                    for r in root.data.rows: ExplorerRow {
+                        data: r;
+                        selected: r.row == root.data.selected-row;
+                        focus-ring: keys.has-focus && r.row == keys.cursor;
+                        select => {
+                            keys.focus();
+                            keys.move(r.row);
+                            root.select-row(r.row);
+                        }
+                        toggle => { root.toggle-row(r.row); }
+                        node-tab(kind, side) => { root.node-tab(kind, r.node, side); }
+                    }
                 }
             }
             if root.data.explorer-tab == 0 && root.searching: ListView {
@@ -343,6 +431,11 @@ export component GraphView inherits HorizontalLayout {
                 select-row(r) => { root.select-row(r); }
                 action(a, b) => { root.action(a, b); }
             }
+        }
+        PanelHandle {
+            x: parent.width - self.width;
+            moved(d) => { GraphPanels.set-explorer(GraphPanels.explorer-w + d); }
+            released => { GraphPanels.changed(); }
         }
     }
 
@@ -397,6 +490,14 @@ export component GraphView inherits HorizontalLayout {
                         spacing: 16px;
                         for k in root.data.kpis: StatInline { kpi: k; }
                     }
+                }
+                Button {
+                    compact: true;
+                    text: @tr("More metrics");
+                    pressed-state: root.more-open;
+                    y: (parent.height - self.height) / 2;
+                    height: Theme.control-h-sm;
+                    clicked => { root.more-open = !root.more-open; }
                 }
             }
         }
@@ -462,6 +563,17 @@ export component GraphView inherits HorizontalLayout {
                 Button { compact: true; text: @tr("All ({})", Fmt.int(root.data.count-all)); pressed-state: root.data.edge-mode == 3; clicked => { root.set-edge-mode(3); } }
                 Button { compact: true; text: @tr("Cycles only"); pressed-state: root.data.edge-mode == 4; clicked => { root.set-edge-mode(4); } }
                 SimToggle { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
+                // The web viewer's "Highlight priorities", for every Graph.
+                Button {
+                    compact: true;
+                    text: @tr("Highlight priorities");
+                    tip: @tr("Mark high (P1) and medium (P2) review priorities in the explorer, tree and network. Scores are a review order, not defect probabilities.");
+                    pressed-state: GraphPanels.priorities;
+                    clicked => {
+                        GraphPanels.priorities = !GraphPanels.priorities;
+                        GraphPanels.changed();
+                    }
+                }
             }
             // The reference takes the rest of the last row.
             Text {
@@ -507,6 +619,36 @@ export component GraphView inherits HorizontalLayout {
                 deps: root.data.deps;
                 reference: root.data.reference;
                 total: root.data.dep-count;
+                explain(k) => { root.action("dep-explain", k); }
+            }
+            if root.more-open: Rectangle {
+                x: parent.width - self.width - 12px;
+                y: 8px;
+                width: 300px;
+                height: more-list.preferred-height;
+                background: Theme.panel;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-blur: 18px;
+                drop-shadow-color: Theme.shadow;
+                // Clicks stay in the popover.
+                TouchArea { }
+                more-list := VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text { text: @tr("More metrics"); color: Theme.text; font-size: Theme.font-body; font-weight: Theme.weight-strong; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { icon: Icons.close; compact: true; width: 28px; clicked => { root.more-open = false; } }
+                    }
+                    for k in root.data.more-kpis: HorizontalLayout { alignment: start; StatInline { kpi: k; } }
+                    Text {
+                        text: @tr("All figures describe the shown modules; expanding a package changes them.");
+                        color: Theme.muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
         SimStrip { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
@@ -546,6 +688,11 @@ export component GraphView inherits HorizontalLayout {
                     spacing: 2px;
                     if root.data.review.has-selected: ReviewDetails { data: root.data.review; }
                     if root.data.review.has-selected: Rectangle { height: 12px; }
+                    if root.data.findings-total > 0: FindingsSection {
+                        cards: root.data.findings;
+                        total: root.data.findings-total;
+                        open-url(u) => { QualityData.open-url(u); }
+                    }
                     Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                     for n in root.data.outgoing: NeighborRow {
                         item: n;
@@ -567,6 +714,12 @@ export component GraphView inherits HorizontalLayout {
                     }
                 }
             }
+        }
+        // Only the wide panel follows the drag; a narrow pane keeps 240px.
+        if root.width >= 900px: PanelHandle {
+            x: 0;
+            moved(d) => { GraphPanels.set-details(GraphPanels.details-w - d); }
+            released => { GraphPanels.changed(); }
         }
     }
 }

@@ -34,6 +34,10 @@ pub const FILE: &str = "file";
 /// document; not in the view bar.
 pub const SETTINGS: &str = "settings";
 
+/// File → Compare architecture…'s result, open once per document; not in
+/// the view bar.
+pub const COMPARE: &str = "compare";
+
 /// The order in which a pane that needs a view takes one not open yet.
 const FREE_ORDER: [&str; 9] = [
     "dsm",
@@ -115,7 +119,7 @@ impl Default for Layout {
 
 /// A view kind this version knows.
 pub fn known(kind: &str) -> bool {
-    VIEWS.contains(&kind) || kind == FILE || kind == SETTINGS
+    VIEWS.contains(&kind) || kind == FILE || kind == SETTINGS || kind == COMPARE
 }
 
 /// Kinds of which a document can show several instances, each with its

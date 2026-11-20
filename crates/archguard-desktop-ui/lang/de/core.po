@@ -22,6 +22,12 @@ msgstr "Alle schließen"
 msgid "Cycles only"
 msgstr "Nur Zyklen"
 
+msgid "Highlight priorities"
+msgstr "Prioritäten hervorheben"
+
+msgid "Mark high (P1) and medium (P2) review priorities in the explorer, tree and network. Scores are a review order, not defect probabilities."
+msgstr "Hohe (P1) und mittlere (P2) Prüfprioritäten im Explorer, Baum und Netzwerk markieren. Die Bewertung ist eine Prüfreihenfolge, keine Fehlerwahrscheinlichkeit."
+
 msgid "Cycles"
 msgstr "Zyklen"
 

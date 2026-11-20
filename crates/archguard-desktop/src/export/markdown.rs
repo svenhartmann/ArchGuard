@@ -50,6 +50,9 @@ pub(super) fn graph_like(s: &Value) -> Lines {
     for note in s["notes"].as_array().into_iter().flatten() {
         lines.extend([String::new(), vcell(note)]);
     }
+    if kind == "calls" {
+        super::calls::append(&mut lines, s);
+    }
     if kind == "architecture" {
         super::architecture::append_model(&mut lines, &s["model"]);
     }

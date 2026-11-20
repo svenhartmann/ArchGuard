@@ -1,0 +1,55 @@
+msgid "Why both ways?"
+msgstr "Warum in beide Richtungen?"
+
+msgid "Recorded connections by source path"
+msgstr "Erfasste Verbindungen nach Quellpfad"
+
+msgid "Production"
+msgstr "Produktionscode"
+
+msgid "Tests"
+msgstr "Tests"
+
+msgid "Mixed"
+msgstr "Gemischt"
+
+msgid "Each directed file pair counts once. Production and tests follow main/test source paths and explicit test directories; other paths and incomplete samples stay unknown. Path conventions, not verified build source sets."
+msgstr "Jedes gerichtete Dateipaar zählt einmal. Produktionscode und Tests folgen main/test-Quellpfaden und ausdrücklichen Testverzeichnissen; andere Pfade und unvollständige Stichproben bleiben unbekannt. Pfadkonventionen, keine verifizierten Build-Quellmengen."
+
+msgid "Separate recorded examples"
+msgstr "Getrennte belegte Beispiele"
+
+msgid "One recorded example"
+msgstr "Ein belegtes Beispiel"
+
+msgid "The chain closes at the same file."
+msgstr "Die Kette schließt sich an derselben Datei."
+
+msgid "The return reaches a different file in the same package. This example is not a closed file cycle."
+msgstr "Die Rückrichtung erreicht eine andere Datei desselben Pakets. Dieses Beispiel ist kein geschlossener Dateizyklus."
+
+msgid "These arrows do not form a connected file path."
+msgstr "Diese Pfeile bilden keinen zusammenhängenden Dateipfad."
+
+msgid "No complete file example is available for these packages."
+msgstr "Für diese Pakete liegt kein vollständiges Dateibeispiel vor."
+
+msgid "Package cycle: the example also returns to the same file."
+msgstr "Paketzyklus: Das Beispiel führt auch zur selben Datei zurück."
+
+msgid "Package cycle: the two directions come from separate source connections."
+msgstr "Paketzyklus: Die beiden Richtungen stammen aus getrennten Quellverbindungen."
+
+msgid "Package cycle: {0} uses {1}, while {1} depends on other types in {0}."
+msgstr "Paketzyklus: {0} nutzt {1}. Gleichzeitig liegen von {1} benötigte Typen in {0}."
+
+msgid "Package cycle: {0} uses {1}, while {1} depends on other files in {0}."
+msgstr "Paketzyklus: {0} nutzt {1}. Gleichzeitig liegen von {1} benötigte Dateien in {0}."
+
+msgid "{0} file-level cycle group within these packages."
+msgid_plural "{0} file-level cycle groups within these packages."
+msgstr[0] "{0} Zyklusgruppe auf Dateiebene innerhalb dieser Pakete."
+msgstr[1] "{0} Zyklusgruppen auf Dateiebene innerhalb dieser Pakete."
+
+msgid "No file-level cycle within these packages in the recorded graph."
+msgstr "Kein Dateizyklus innerhalb dieser Pakete im erfassten Graphen."

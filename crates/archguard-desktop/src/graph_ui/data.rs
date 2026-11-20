@@ -28,6 +28,8 @@ fn mode_index(m: crate::tree::EdgeMode) -> i32 {
 const TREE: i32 = 0;
 const NETWORK: i32 = 1;
 const DEPENDENCIES: i32 = 2;
+/// `TreeLink::kind` of a link that carries marked evidence (`tree::marks`).
+const MARKED: i32 = 4;
 
 /// Everything the Graph view of tab `id` shows of `g`, in the models of
 /// `old` (what its pane showed before), changed in place. The links,
@@ -43,6 +45,7 @@ pub struct Cycles<'a> {
 pub fn graph_data(
     ui: &AppWindow,
     g: &GraphState,
+    findings: &super::quality::Findings,
     cycles: Cycles,
     id: u32,
     old: &GraphData,
@@ -55,20 +58,12 @@ pub fn graph_data(
     let node = g.selected.map(|n| &g.tree.nodes[n]);
     let (incoming, outgoing) = neighbors(g, old);
     let net = network_data(g, selected, old);
-    let links = (g.display == TREE).then(|| v.draw(selected, g.mode));
+    let (findings_cards, findings_total) =
+        findings.data(&texts, &g.tree, g.selected, &old.findings);
     GraphData {
         id: id as i32,
-        rows: tree_rows(g, &covered, &old.rows),
-        links: sync_rows(
-            &old.links,
-            links.into_iter().flatten().map(|d| TreeLink {
-                path: d.path.into(),
-                kind: d.kind as i32,
-                from: d.from as i32,
-                to: d.to as i32,
-                right: d.right,
-            }),
-        ),
+        rows: tree_rows(g, findings, &covered, &old.rows),
+        links: tree_links(g, selected, &old.links),
         selected_row: selected.map_or(-1, |s| s as i32),
         selected_node: g.selected.map_or(-1, |n| n as i32),
         crumbs: crumbs(ui, g, &old.crumbs),
@@ -82,6 +77,7 @@ pub fn graph_data(
                 kpi::SHOWN_ACD.item(&texts, kpi::Value::Real(v.acd(&g.tree))),
             ],
         ),
+        more_kpis: sync_rows(&old.more_kpis, more_kpis(&texts, g)),
         count_in: cin as i32,
         count_out: cout as i32,
         count_both: cboth as i32,
@@ -90,7 +86,7 @@ pub fn graph_data(
         selected_label: node.map(|n| n.label.clone()).unwrap_or_default().into(),
         incoming,
         outgoing,
-        deps: deps(g, selected, &old.deps),
+        deps: super::deps::cards(g, selected, &old.deps, g.display == DEPENDENCIES),
         net_cards: net.0,
         net_arrows: net.1,
         net_w: net.2,
@@ -106,31 +102,31 @@ pub fn graph_data(
         node_total: g.tree.nodes.len() as i32,
         sim: super::simulation::data(g, texts.locale(), &old.sim),
         review: super::review::data(g, &old.review),
+        findings: findings_cards,
+        findings_total,
     }
 }
 
-fn deps(g: &GraphState, selected: Option<usize>, old: &ModelRc<DepCard>) -> ModelRc<DepCard> {
-    let v = &g.view;
-    let shown = (g.display == DEPENDENCIES).then(|| v.shown(selected, g.mode));
+/// The tree display's links; empty while another display is shown.
+fn tree_links(
+    g: &GraphState,
+    selected: Option<usize>,
+    old: &ModelRc<TreeLink>,
+) -> ModelRc<TreeLink> {
+    let links = (g.display == TREE).then(|| g.view.draw(selected, g.mode));
+    let marked = g.marks.links(&g.tree, &g.view);
     sync_rows(
         old,
-        shown.into_iter().flatten().map(|(i, lane)| {
-            let l = &v.links[i];
-            let name = |row: usize| g.tree.nodes[v.rows[row].node].name.clone();
-            DepCard {
-                from: name(l.from).into(),
-                to: name(l.to).into(),
-                weight: l.weight.min(i32::MAX as u64) as i32,
-                kind: v.link_kind(i, lane, selected, g.mode) as i32,
-                refs: l
-                    .refs
-                    .iter()
-                    .map(|r| format!("{}:{}  {}", r.file, r.line, r.raw.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into(),
-                ref_count: l.refs.len() as i32,
-            }
+        links.into_iter().flatten().map(|d| TreeLink {
+            path: d.path.into(),
+            kind: if marked.contains(&(d.from, d.to)) {
+                MARKED
+            } else {
+                d.kind as i32
+            },
+            from: d.from as i32,
+            to: d.to as i32,
+            right: d.right,
         }),
     )
 }
@@ -138,10 +134,12 @@ fn deps(g: &GraphState, selected: Option<usize>, old: &ModelRc<DepCard>) -> Mode
 /// The tree rows for the window; a compressed chain reads as its path.
 fn tree_rows(
     g: &GraphState,
+    findings: &super::quality::Findings,
     covered: &BTreeSet<usize>,
     old: &ModelRc<TreeRow>,
 ) -> ModelRc<TreeRow> {
     let v = &g.view;
+    let parents = parents(&v.rows);
     sync_rows(
         old,
         v.rows.iter().enumerate().map(|(i, r)| {
@@ -157,6 +155,7 @@ fn tree_rows(
                     .join("/")
                     .into(),
                 depth: r.depth as i32,
+                parent: parents[i],
                 expandable: r.expandable,
                 expanded: r.expanded,
                 file: n.file,
@@ -165,9 +164,26 @@ fn tree_rows(
                 in_cycle: v.in_cycle[i],
                 covered: covered.contains(&i),
                 priority: priority_index(g.priorities[i]),
+                quality: findings.count(r.node),
+                marked: g.marks.row(r),
             }
         }),
     )
+}
+
+/// The parent row of every row (rows are in preorder), -1 for a root.
+fn parents(rows: &[crate::tree::Row]) -> Vec<i32> {
+    // The last row seen at each depth.
+    let mut open: Vec<usize> = Vec::new();
+    rows.iter()
+        .enumerate()
+        .map(|(i, r)| {
+            open.truncate(r.depth);
+            let parent = open.last().map_or(-1, |&p| p as i32);
+            open.push(i);
+            parent
+        })
+        .collect()
 }
 
 /// Up to this many arrows, every arrow shows its reference count.
@@ -284,4 +300,92 @@ fn neighbors(g: &GraphState, old: &GraphData) -> (ModelRc<Neighbor>, ModelRc<Nei
         )
     };
     (list(&old.incoming, inc), list(&old.outgoing, out))
+}
+
+/// Graph → More metrics: the review summary of the shown modules, `—`
+/// while there is none.
+fn more_kpis(texts: &Texts, g: &GraphState) -> [KpiItem; 5] {
+    let s = g.review.as_ref().map(|r| &r.summary);
+    let count = |f: fn(&archguard_engine::core::ReviewSummary) -> u64| {
+        kpi::Value::from(s.map(|s| f(s) as usize))
+    };
+    let nccd = s.map_or(kpi::Value::Unknown, |s| kpi::Value::Real(s.nccd));
+    [
+        kpi::SHOWN_CCD.item(texts, count(|s| s.ccd)),
+        kpi::SHOWN_NCCD.item(texts, nccd),
+        kpi::LARGEST_CYCLE_GROUP.item(texts, count(|s| s.largest_scc.into())),
+        kpi::MODULES_IN_CYCLES.item(texts, count(|s| s.cyclic_nodes.into())),
+        kpi::HIGH_PRIORITY.item(texts, count(|s| s.high_priority.into())),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use archguard_engine::core::{Edge, Graph, Node, NodeId, NodeKind};
+
+    /// The figures are the engine's Lakos metrics and cycle groups of the
+    /// shown modules: a ↔ b → c.
+    #[test]
+    fn more_metrics_measure_the_shown_modules() {
+        let node = |id: u32, name: &str| Node {
+            id: NodeId(id),
+            name: name.into(),
+            kind: NodeKind::Module,
+            parent: None,
+            lang: None,
+        };
+        let edge = |from: u32, to: u32| Edge {
+            from: NodeId(from),
+            to: NodeId(to),
+            refs: Vec::new(),
+            count: Some(1),
+        };
+        let graph = Graph {
+            schema_version: 1,
+            root: ".".into(),
+            nodes: vec![node(0, "a"), node(1, "b"), node(2, "c")],
+            edges: vec![edge(0, 1), edge(1, 0), edge(1, 2)],
+            semantic: None,
+            review_kpis: None,
+        };
+        let g = GraphState::new(crate::tree::Tree::from_graph(&graph));
+        let (ccd, _, nccd) = archguard_engine::analysis::lakos_metrics(&g.view.as_graph(&g.tree));
+        let values: Vec<String> = more_kpis(&Texts::default(), &g)
+            .iter()
+            .map(|k| k.value.to_string())
+            .collect();
+        assert_eq!(ccd, 7, "a and b reach 3 each, c itself");
+        assert_eq!(
+            values,
+            [
+                ccd.to_string(),
+                format!("{nccd:.2}"),
+                "2".into(),
+                "2".into(),
+                "0".into()
+            ]
+        );
+        let mut g = g;
+        g.review = None;
+        assert!(
+            more_kpis(&Texts::default(), &g)
+                .iter()
+                .all(|k| k.value == "—")
+        );
+    }
+
+    /// Left goes to the parent row: the last row one level up.
+    #[test]
+    fn parents_follow_the_preorder() {
+        let row = |depth| crate::tree::Row {
+            node: 0,
+            chain: vec![0],
+            depth,
+            expandable: false,
+            expanded: false,
+        };
+        let rows = [row(0), row(1), row(2), row(1), row(0), row(1)];
+        assert_eq!(parents(&rows), [-1, 0, 1, 0, -1, 4]);
+    }
 }

@@ -1,0 +1,314 @@
+// Architecture tab, "Target architecture": the declared component model
+// (`architecture.model`) against the source dependencies, as the web
+// viewer's renderArchitecture. Set from src/architecture_ui/target*.rs.
+import { Theme } from "theme.slint";
+import { Button, Disclosure, HelpTip, PageTitle, SearchField, Badge } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// One component direction. state: 0 allowed, 1 allowed · not observed,
+// 2 forbidden, 3 allowed direction with private access.
+export struct ArcTargetRelation {
+    from: string,
+    to: string,
+    state: int,
+    // Import references, "+" when the count is a lower bound.
+    refs: string,
+    selected: bool,
+}
+
+// A line of evidence or a file; `node` (a graph node name) opens in the
+// graph, empty: no button. `head`: a private access "from → to".
+export struct ArcTargetRef {
+    text: string,
+    node: string,
+    head: bool,
+}
+
+export struct ArcTargetComponent {
+    name: string,
+    files: int,
+    include: string,
+    // public: the interface files; has-public false: unrestricted.
+    has-public: bool,
+    public: string,
+    incoming: int,
+    outgoing: int,
+    // -1: no limit.
+    max-in: int,
+    max-out: int,
+    open: bool,
+    // Only while open; at most a page, `more-files` not listed.
+    nodes: [ArcTargetRef],
+    more-files: int,
+}
+
+export struct ArcTarget {
+    // 0 no model declared, 1 ready, 2 the model could not be evaluated.
+    state: int,
+    error: string,
+    name: string,
+    mapped: int,
+    total: int,
+    forbidden: int,
+    interfaces: int,
+    coupling: int,
+    complete: bool,
+    only-violations: bool,
+    query: string,
+    relations: [ArcTargetRelation],
+    // Directions matching the filter; `more`: a further page.
+    matching: int,
+    more: bool,
+    // The selected direction: title empty when none.
+    selection: string,
+    sel-state: int,
+    sel-edges: int,
+    evidence: [ArcTargetRef],
+    evidence-total: int,
+    sampled: bool,
+    private: [ArcTargetRef],
+    private-total: int,
+    components: [ArcTargetComponent],
+    unmapped: [ArcTargetRef],
+    unmapped-count: int,
+    ambiguous: [string],
+    ambiguous-count: int,
+    unclassified: int,
+    empty: string,
+    limitations: string,
+}
+
+export global ArcTargetState {
+    public pure function label(state: int) -> string {
+        return state == 0 ? @tr("Allowed") : state == 1 ? @tr("Allowed · not observed")
+            : state == 2 ? @tr("Forbidden") : @tr("Allowed direction · Private access");
+    }
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: Theme.font-section;
+    font-weight: Theme.weight-strong;
+    wrap: word-wrap;
+}
+
+component Muted inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+// A line of evidence or a file, with "Open in graph" when it is a node.
+component RefRow inherits HorizontalLayout {
+    in property <ArcTargetRef> item;
+    callback reveal(string);
+    spacing: 10px;
+    Text {
+        text: root.item.text;
+        color: root.item.head ? Theme.text : Theme.muted;
+        font-family: root.item.head ? Theme.font-family : Theme.mono-family;
+        font-size: root.item.head ? Theme.font-body : Theme.font-mono;
+        font-weight: root.item.head ? Theme.weight-strong : Theme.weight-regular;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        wrap: word-wrap;
+    }
+    if root.item.node != "": Button {
+        y: (parent.height - self.height) / 2;
+        compact: true;
+        text: @tr("Open in graph");
+        clicked => { root.reveal(root.item.node); }
+    }
+}
+
+component RelationRow inherits Rectangle {
+    in property <ArcTargetRelation> item;
+    callback clicked();
+    property <bool> bad: item.state >= 2;
+    height: row.preferred-height + 12px;
+    border-radius: 6px;
+    background: item.selected || touch.has-hover ? Theme.panel-2 : transparent;
+    if item.selected: Rectangle { x: 0; width: 3px; background: Theme.accent; }
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Text {
+            text: root.item.from + " → " + root.item.to;
+            color: Theme.text;
+            font-size: Theme.font-body;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+        Badge {
+            y: (parent.height - self.height) / 2;
+            text: ArcTargetState.label(root.item.state);
+            variant: root.bad ? "danger" : root.item.state == 1 ? "neutral" : "success";
+        }
+        Text {
+            width: 120px;
+            text: @tr("{} references", root.item.refs);
+            color: Theme.muted;
+            font-size: Theme.font-small;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component ComponentEntry inherits VerticalLayout {
+    in property <ArcTargetComponent> item;
+    callback toggle();
+    callback reveal(string);
+    spacing: 6px;
+    Disclosure {
+        text: @tr("{0} · {1} file" | "{0} · {1} files" % root.item.files, root.item.name, Fmt.int(root.item.files));
+        open: root.item.open;
+        tint: Theme.text;
+        size: Theme.font-body;
+        clicked => { root.toggle(); }
+    }
+    if root.item.open: VerticalLayout {
+        padding-left: 20px;
+        spacing: 4px;
+        Muted { text: @tr("Include: {}", root.item.include); }
+        Muted {
+            text: !root.item.has-public ? @tr("Public interface: unrestricted")
+                : root.item.public == "" ? @tr("Public interface: closed to other components")
+                : @tr("Public interface: {}", root.item.public);
+        }
+        Muted {
+            text: @tr("Incoming components: {} · limit {}", Fmt.int(root.item.incoming), root.item.max-in < 0 ? "—" : Fmt.int(root.item.max-in))
+                + (root.item.max-in >= 0 && root.item.incoming > root.item.max-in ? " · " + @tr("exceeded") : "");
+            color: root.item.max-in >= 0 && root.item.incoming > root.item.max-in ? Theme.danger : Theme.muted;
+        }
+        Muted {
+            text: @tr("Outgoing components: {} · limit {}", Fmt.int(root.item.outgoing), root.item.max-out < 0 ? "—" : Fmt.int(root.item.max-out))
+                + (root.item.max-out >= 0 && root.item.outgoing > root.item.max-out ? " · " + @tr("exceeded") : "");
+            color: root.item.max-out >= 0 && root.item.outgoing > root.item.max-out ? Theme.danger : Theme.muted;
+        }
+        for n in root.item.nodes: RefRow { item: n; reveal(name) => { root.reveal(name); } }
+        if root.item.more-files > 0: Muted { text: @tr("{} more files", Fmt.int(root.item.more-files)); }
+    }
+}
+
+// The target page in the chapter's place.
+export component TargetPanel inherits Rectangle {
+    in property <ArcTarget> target;
+    in property <bool> narrow;
+    callback only-violations(bool);
+    callback query(string);
+    callback more();
+    callback select(int);
+    callback component(int);
+    callback reveal(string);
+    background: Theme.panel;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-left: root.narrow ? Theme.page-pad : 30px;
+        padding-right: root.narrow ? Theme.page-pad : 30px;
+        padding-top: 26px;
+        padding-bottom: 24px;
+        spacing: 14px;
+        alignment: start;
+        PageTitle {
+            text: @tr("Target architecture");
+            sub: root.target.name;
+        }
+        if root.target.state == 0: Muted {
+            text: @tr("No target model declared. Add components and allowed directions under architecture.model in archguard.toml.");
+            font-size: Theme.font-body;
+        }
+        if root.target.state == 2: Text {
+            text: root.target.error;
+            color: Theme.danger;
+            font-size: Theme.font-body;
+            wrap: word-wrap;
+        }
+        if root.target.state == 1: VerticalLayout {
+            spacing: 14px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: @tr("{} / {} files assigned · {} forbidden directions · {} interface violations · {} coupling limit violations · mapping {}",
+                        Fmt.int(root.target.mapped), Fmt.int(root.target.total), Fmt.int(root.target.forbidden),
+                        Fmt.int(root.target.interfaces), Fmt.int(root.target.coupling),
+                        root.target.complete ? @tr("complete") : @tr("partial"));
+                    color: root.target.forbidden + root.target.interfaces + root.target.coupling > 0 ? Theme.danger : Theme.text;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-strong;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+                if root.target.limitations != "": HelpTip {
+                    size: 18px;
+                    y: (parent.height - self.height) / 2;
+                    tip: root.target.limitations;
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button {
+                    compact: true;
+                    pressed-state: root.target.only-violations;
+                    text: root.target.only-violations ? @tr("Show all directions") : @tr("Only violations");
+                    clicked => { root.only-violations(!root.target.only-violations); }
+                }
+                SearchField {
+                    horizontal-stretch: 1;
+                    placeholder: @tr("Filter components");
+                    text: root.target.query;
+                    edited(t) => { root.query(t); }
+                }
+            }
+            Heading { text: @tr("Component dependencies · source → target"); }
+            Muted { text: @tr("{} / {} directions shown · violations first", Fmt.int(root.target.relations.length), Fmt.int(root.target.matching)); }
+            if root.target.matching == 0: Muted { text: @tr("No direction matches this filter."); }
+            VerticalLayout {
+                spacing: 2px;
+                for r[i] in root.target.relations: RelationRow { item: r; clicked => { root.select(i); } }
+            }
+            if root.target.more: HorizontalLayout {
+                alignment: start;
+                Button { compact: true; text: @tr("Next 100 directions"); clicked => { root.more(); } }
+            }
+            if root.target.selection != "": Rectangle {
+                background: Theme.panel-2;
+                border-radius: 10px;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 6px;
+                    Heading { text: root.target.selection + " · " + ArcTargetState.label(root.target.sel-state); }
+                    Muted { text: @tr("{} source connections · {} / {} evidence records shown", Fmt.int(root.target.sel-edges), Fmt.int(root.target.evidence.length), Fmt.int(root.target.evidence-total)); }
+                    for e in root.target.evidence: RefRow { item: e; reveal(n) => { root.reveal(n); } }
+                    if root.target.sampled: Muted { text: @tr("Stored evidence is a sample; reference totals are reported separately."); }
+                    if root.target.private-total > 0: Heading { text: @tr("Private access ({})", Fmt.int(root.target.private-total)); }
+                    for e in root.target.private: RefRow { item: e; reveal(n) => { root.reveal(n); } }
+                }
+            }
+            Heading { text: @tr("Logical components and mapping"); }
+            for c[i] in root.target.components: ComponentEntry {
+                item: c;
+                toggle => { root.component(i); }
+                reveal(n) => { root.reveal(n); }
+            }
+            Heading { text: @tr("Mapping coverage"); }
+            Muted {
+                text: @tr("{} unassigned files · {} ambiguous files · {} unclassified connections", Fmt.int(root.target.unmapped-count), Fmt.int(root.target.ambiguous-count), Fmt.int(root.target.unclassified));
+                color: Theme.text;
+            }
+            for n in root.target.unmapped: RefRow { item: n; reveal(name) => { root.reveal(name); } }
+            if root.target.unmapped-count > root.target.unmapped.length: Muted { text: @tr("{} more files", Fmt.int(root.target.unmapped-count - root.target.unmapped.length)); }
+            for a in root.target.ambiguous: Text { text: a; color: Theme.muted; font-family: Theme.mono-family; font-size: Theme.font-mono; wrap: word-wrap; }
+            if root.target.empty != "": Muted { text: @tr("Components without assigned files: {}", root.target.empty); }
+        }
+    }
+}

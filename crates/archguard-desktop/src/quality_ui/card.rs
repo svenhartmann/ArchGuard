@@ -30,6 +30,8 @@ pub enum Kind {
     Metrics = 10,
     /// The cohesion card's group buttons.
     Groups = 11,
+    /// Link button: `text` opens `node`, an http(s) URL, in the browser.
+    Link = 12,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,7 +90,7 @@ impl Card {
     /// summary above its lines; buttons and bars have no text to show.
     pub fn plain_text(&self) -> String {
         let paragraph = |i: &Item| match i.kind {
-            Kind::Locate | Kind::Bar | Kind::Metrics | Kind::Groups => None,
+            Kind::Locate | Kind::Link | Kind::Bar | Kind::Metrics | Kind::Groups => None,
             Kind::Details => Some(
                 std::iter::once(i.text.as_str())
                     .chain(i.lines.iter().map(|l| l.text.as_str()))
@@ -166,6 +168,15 @@ impl<'a> Builder<'a> {
         self.push(Kind::Bar, "");
         if let Some(item) = self.card.items.last_mut() {
             item.value = value.clamp(0.0, 1.0) as f32;
+        }
+        self
+    }
+
+    /// A button that opens `url` (already checked) in the browser.
+    pub fn link(&mut self, text: &str, url: &str) -> &mut Self {
+        self.push(Kind::Link, text);
+        if let Some(item) = self.card.items.last_mut() {
+            item.node = url.into();
         }
         self
     }

@@ -47,6 +47,7 @@ fn has_data(inputs: &Inputs, section: Section) -> bool {
         Section::Tests => !inputs.tests.tests.is_empty(),
         Section::Mutations => !inputs.mutations.files.is_empty(),
         Section::Duplicates => !inputs.duplicates.groups.is_empty(),
+        Section::Findings => !inputs.findings.findings.is_empty(),
     }
 }
 
@@ -84,6 +85,10 @@ fn missing(lang: &Texts, section: Section) -> (&str, &str) {
         Section::Duplicates => (
             lang.t("No duplicate groups saved."),
             lang.t("Run the built-in token clone scan, or import CPD XML with --report:"),
+        ),
+        Section::Findings => (
+            lang.t("No quality findings imported."),
+            lang.t("Import a SARIF 2.1.0 report of a linter or analyzer; ArchGuard runs no analyzer:"),
         ),
     }
 }

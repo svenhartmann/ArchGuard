@@ -18,6 +18,9 @@ import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "setting
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
+import { CompareView, CompareData, CompareRow, CompareRelation, CompareCounts } from "compare_view.slint";
+import { CompareDialog } from "compare_dialog.slint";
+import { HelpDialog, HelpData, HelpBlock } from "help_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
@@ -40,6 +43,11 @@ export { Tips }
 export { UpdateNotice }
 // View → Review decisions… (src/review_decisions_ui.rs).
 export { ReviewDecisionsData, DecisionRow }
+// File → Compare architecture… (src/compare_ui.rs).
+export { CompareData, CompareRow, CompareRelation, CompareCounts }
+export { HelpData, HelpBlock }
+// The Graph panels' widths (src/graph_panels_ui.rs).
+export { GraphPanels } from "graph_panels.slint";
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -66,6 +74,9 @@ export component AppWindow inherits Window {
     callback close-doc(int);
     callback add-doc();
     callback open-sub-project(int);
+    // View → Analyze again on the active document (src/reanalyze_ui.rs,
+    // notices 12 to 15).
+    callback analyze-again();
 
     // App shell: menu, recent projects, settings, the save prompt
     // (src/shell_ui.rs).
@@ -85,6 +96,8 @@ export component AppWindow inherits Window {
     callback quit-app();
     // Theme.family and Theme.dark, saved as the chosen theme.
     callback choose-theme(int, bool);
+    // View → Theme → System: drop the stored choice (src/shell_ui.rs).
+    callback follow-system-theme();
     callback choose-language(string);
     // 0 Save, 1 Don't save, 2 Cancel.
     callback prompt-answered(int);
@@ -99,7 +112,7 @@ export component AppWindow inherits Window {
     // Markdown and JSON need a view with an export snapshot; SVG is drawn
     // from Graph → Tree and Services, as in the web viewer.
     property <bool> export-data: root.focused-view == "graph" || root.focused-view == "dsm" || root.focused-view == "services"
-        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture";
+        || root.focused-view == "security" || root.focused-view == "quality" || root.focused-view == "architecture" || root.focused-view == "calls";
     property <bool> export-svg: root.focused-view == "services"
         || (root.focused-view == "graph" && root.graph-panes[root.focused-pane].display == 0);
     // The panes' top edge in the window, for the PNG of a pane.
@@ -199,7 +212,12 @@ export component AppWindow inherits Window {
     callback file-select(int, int);
     callback show-in-graph(int);
 
-    init => { Theme.dark = Palette.color-scheme == ColorScheme.dark; }
+    // The system's scheme at start; "System theme" returns to it.
+    property <bool> system-dark;
+    init => {
+        root.system-dark = Palette.color-scheme == ColorScheme.dark;
+        Theme.dark = root.system-dark;
+    }
 
     // The notice bar's text for `notice-kind`; `notice` is its argument.
     pure function notice-text() -> string {
@@ -209,10 +227,14 @@ export component AppWindow inherits Window {
         if root.notice-kind == 5 { return @tr("Exported {} from the original project evidence.", root.notice); }
         if root.notice-kind == 6 { return @tr("Could not export: {}", root.notice); }
         if root.notice-kind == 7 { return @tr("SVG is available in Graph → Tree and Services."); }
-        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture."); }
+        if root.notice-kind == 8 { return @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture."); }
         if root.notice-kind == 9 { return @tr("The view is still loading; export again when it is shown."); }
         if root.notice-kind == 10 { return @tr("Saved {}", root.notice); }
         if root.notice-kind == 11 { return @tr("Nothing to save."); }
+        if root.notice-kind == 12 { return @tr("The project's sources changed since the analysis."); }
+        if root.notice-kind == 13 { return @tr("Not analyzed again: the Graph has simulated changes. Clear them first."); }
+        if root.notice-kind == 14 { return @tr("Not analyzed again: save or discard the unsaved changes first ({}).", root.notice); }
+        if root.notice-kind == 15 { return @tr("Analyzing again; the views update when it is done."); }
         return @tr("Could not save the changes: {}", root.notice);
     }
 
@@ -272,6 +294,11 @@ export component AppWindow inherits Window {
                 enabled: root.has-doc;
                 activated => { root.save-active(); }
             }
+            MenuItem {
+                title: @tr("Compare architecture…");
+                enabled: root.has-doc;
+                activated => { CompareData.show(); }
+            }
             MenuSeparator { }
             Menu {
                 title: @tr("Export");
@@ -286,7 +313,7 @@ export component AppWindow inherits Window {
                     activated => { root.export("json"); }
                 }
                 if root.ready && !root.export-data: MenuItem {
-                    title: @tr("Markdown and JSON are available in Graph, Matrix, Services, Security, Quality and Architecture.");
+                    title: @tr("Markdown and JSON are available in Graph, Matrix, Calls, Services, Security, Quality and Architecture.");
                     enabled: false;
                 }
                 MenuItem {
@@ -347,6 +374,13 @@ export component AppWindow inherits Window {
         Menu {
             title: @tr("View");
             MenuItem {
+                title: @tr("Analyze again");
+                shortcut: @keys(Control + R);
+                enabled: root.ready;
+                activated => { root.analyze-again(); }
+            }
+            MenuSeparator { }
+            MenuItem {
                 title: @tr("Split right");
                 shortcut: @keys(Control + "\\");
                 enabled: root.ready;
@@ -406,6 +440,10 @@ export component AppWindow inherits Window {
                     checked: Theme.family == 1 && Theme.dark == true;
                     activated => { root.set-look(1, true); root.choose-theme(1, true); }
                 }
+                MenuItem {
+                    title: @tr("System theme");
+                    activated => { root.set-look(0, root.system-dark); root.follow-system-theme(); }
+                }
             }
             MenuSeparator { }
             Menu {
@@ -426,6 +464,10 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: @tr("Help");
+            MenuItem {
+                title: @tr("Metrics, commands & MCP…");
+                activated => { HelpData.show(); }
+            }
             MenuItem {
                 title: @tr("Check for updates…");
                 enabled: UpdateNotice.kind != 1 && UpdateNotice.kind != 5;
@@ -642,7 +684,10 @@ export component AppWindow inherits Window {
 
         if root.notice != "": NoticeBar {
             text: root.notice-text();
-            done: (root.notice-kind >= 3 && root.notice-kind <= 5) || root.notice-kind >= 10;
+            done: (root.notice-kind >= 3 && root.notice-kind <= 5)
+                || (root.notice-kind >= 10 && root.notice-kind != 13 && root.notice-kind != 14);
+            action: root.notice-kind == 12 ? @tr("Analyze again") : "";
+            act => { root.analyze-again(); }
             dismiss => { root.notice = ""; }
         }
 
@@ -772,6 +817,9 @@ export component AppWindow inherits Window {
                     if p.view == "settings": SettingsView {
                         vertical-stretch: 1;
                     }
+                    if p.view == "compare": CompareView {
+                        vertical-stretch: 1;
+                    }
 
                     if p.view == "graph": GraphView {
                         vertical-stretch: 1;
@@ -834,6 +882,8 @@ export component AppWindow inherits Window {
     }
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
+    if CompareData.dialog: CompareDialog { }
+    if HelpData.open: HelpDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.
     TipLayer { }

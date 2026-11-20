@@ -38,7 +38,7 @@ mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
 mod staged;
-pub use staged::{compare_branches, compare_staged};
+pub use staged::{GitBranch, GitBranches, compare_branches, compare_staged, list_git_branches};
 mod arc42_context;
 mod compiler_sandbox;
 mod compiler_trust;
@@ -75,6 +75,7 @@ mod quality_goals;
 mod quality_history;
 mod reference_paths;
 mod review_decision_doc;
+mod review_markdown;
 mod review_metrics;
 mod review_register;
 mod review_session;
@@ -188,6 +189,7 @@ pub use quality_history::{
 };
 pub use reference_paths::source_reference_paths;
 pub use review_decision_doc::review_decision_document;
+pub use review_markdown::{markdown_cell, review_markdown};
 pub use review_metrics::{ReviewMetrics, review_metrics};
 pub use review_register::{
     LEGACY_DECISIONS_REL_PATH, REGISTER_REL_PATH, check_adr_gate, iso_from_unix, load_register,

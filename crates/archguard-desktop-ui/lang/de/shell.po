@@ -25,6 +25,9 @@ msgstr "Dunkles Design"
 msgid "Light theme"
 msgstr "Helles Design"
 
+msgid "System theme"
+msgstr "Systemdesign"
+
 msgid "System language"
 msgstr "Systemsprache"
 
@@ -84,3 +87,17 @@ msgstr "Solarized hell"
 
 msgid "Solarized Dark"
 msgstr "Solarized dunkel"
+msgid "Analyze again"
+msgstr "Erneut analysieren"
+
+msgid "The project's sources changed since the analysis."
+msgstr "Die Quellen des Projekts haben sich seit der Analyse geändert."
+
+msgid "Not analyzed again: the Graph has simulated changes. Clear them first."
+msgstr "Nicht erneut analysiert: Der Graph enthält simulierte Änderungen. Bitte zuerst verwerfen."
+
+msgid "Not analyzed again: save or discard the unsaved changes first ({})."
+msgstr "Nicht erneut analysiert: Bitte zuerst die ungespeicherten Änderungen speichern oder verwerfen ({})."
+
+msgid "Analyzing again; the views update when it is done."
+msgstr "Wird erneut analysiert; die Ansichten aktualisieren sich danach."

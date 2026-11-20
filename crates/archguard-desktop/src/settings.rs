@@ -10,6 +10,11 @@
 //! width = 1480              # logical pixels
 //! height = 920
 //!
+//! [graph]                   # shared by every Graph of the window
+//! explorer_width = 250      # logical pixels, dragged at the panel edge
+//! details_width = 320
+//! priorities = true         # highlight P1/P2 review priorities
+//!
 //! [session]                 # the documents open at the last quit
 //! documents = ["/work/shop", "/work/api"]
 //! active = 1
@@ -75,6 +80,45 @@ impl Theme {
     }
 }
 
+/// The Graph panels' widths in logical pixels (`ui/graph_panels.slint`
+/// clamps them to the same ranges) and the priority highlight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphPanels {
+    pub explorer_width: u32,
+    pub details_width: u32,
+    pub priorities: bool,
+}
+
+impl Default for GraphPanels {
+    fn default() -> Self {
+        GraphPanels {
+            explorer_width: 250,
+            details_width: 320,
+            priorities: true,
+        }
+    }
+}
+
+impl GraphPanels {
+    const EXPLORER: (u32, u32) = (180, 520);
+    const DETAILS: (u32, u32) = (240, 560);
+
+    fn read(item: Option<&Item>) -> Self {
+        let d = Self::default();
+        let width = |k: &str, (lo, hi): (u32, u32), or: u32| {
+            item.and_then(|t| t.get(k)?.as_integer())
+                .map_or(or, |v| v.clamp(i64::from(lo), i64::from(hi)) as u32)
+        };
+        GraphPanels {
+            explorer_width: width("explorer_width", Self::EXPLORER, d.explorer_width),
+            details_width: width("details_width", Self::DETAILS, d.details_width),
+            priorities: item
+                .and_then(|t| t.get("priorities")?.as_bool())
+                .unwrap_or(d.priorities),
+        }
+    }
+}
+
 /// The last view of one project.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ProjectView {
@@ -100,6 +144,7 @@ pub struct Settings {
     pub language: String,
     /// Logical width and height.
     pub window: Option<(u32, u32)>,
+    pub graph: GraphPanels,
     pub recent: Vec<PathBuf>,
     /// `None` until a session was recorded once.
     pub session: Option<Session>,
@@ -206,6 +251,7 @@ fn read(doc: &DocumentMut) -> Settings {
             .unwrap_or("")
             .to_string(),
         window,
+        graph: GraphPanels::read(doc.get("graph")),
         recent: paths(doc.get("recent")),
         session: doc.get("session").map(|s| Session {
             documents: paths(s.get("documents")),
@@ -286,6 +332,14 @@ pub fn render(doc: &mut DocumentMut, settings: &Settings) -> String {
         let window = table(doc, "window");
         set(window, "width", value(i64::from(w)));
         set(window, "height", value(i64::from(h)));
+    }
+    // Written once changed, so a fresh file stays short.
+    if settings.graph != GraphPanels::default() || doc.get("graph").is_some() {
+        let g = &settings.graph;
+        let t = table(doc, "graph");
+        set(t, "explorer_width", value(i64::from(g.explorer_width)));
+        set(t, "details_width", value(i64::from(g.details_width)));
+        set(t, "priorities", value(g.priorities));
     }
     if let Some(session) = &settings.session {
         let t = table(doc, "session");
@@ -575,6 +629,19 @@ mod tests {
         s.set_project(Path::new("/a"), ProjectView::default());
         let (_, back) = parse(&render(&mut doc, &s)).expect("repaired");
         assert_eq!(back.projects.len(), 2);
+    }
+
+    #[test]
+    fn graph_panel_widths_round_trip_and_are_clamped() {
+        let (mut doc, mut s) = parse("").expect("valid");
+        assert_eq!(s.graph, GraphPanels::default());
+        assert!(!render(&mut doc, &s).contains("[graph]"), "default not written");
+        s.graph.explorer_width = 300;
+        s.graph.priorities = false;
+        let out = render(&mut doc, &s);
+        assert_eq!(parse(&out).expect("valid").1.graph, s.graph);
+        let (_, s) = parse("[graph]\nexplorer_width = 5\ndetails_width = 9000\n").expect("valid");
+        assert_eq!((s.graph.explorer_width, s.graph.details_width), (180, 560));
     }
 
     #[test]

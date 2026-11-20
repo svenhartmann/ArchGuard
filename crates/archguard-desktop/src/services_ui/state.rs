@@ -47,6 +47,9 @@ pub struct ServicesState {
     pub(super) zoom: f32,
     /// Width of the tree viewport (the web's `treeAvailableWidth`).
     pub(super) viewport: f32,
+    /// Details → pattern candidates and API contracts.
+    pub(super) patterns: super::patterns::Patterns,
+    pub(super) contracts: super::contracts::Contracts,
 }
 
 pub fn build_from(topology: Topology) -> ServicesState {
@@ -75,6 +78,8 @@ pub fn build_from(topology: Topology) -> ServicesState {
         details_hidden: false,
         zoom: 1.0,
         viewport: 0.0,
+        patterns: Default::default(),
+        contracts: Default::default(),
     }
 }
 

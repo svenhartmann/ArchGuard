@@ -3,6 +3,9 @@
 //! share the document's package tree.
 
 mod data;
+mod deps;
+mod insights;
+mod quality;
 mod review;
 pub mod simulation;
 
@@ -22,6 +25,7 @@ use crate::instances::{self, Instance};
 use crate::matrix_ui::MatrixState;
 use crate::panes::Layout;
 use crate::panes_ui;
+use crate::state::marks::Marks;
 use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
 use crate::tree::simulation::cut_hints;
@@ -41,11 +45,14 @@ pub struct Graph {
     cuts: Vec<CutItem>,
     /// The repair plans for the chosen cycle.
     plans: CyclePlans,
+    /// Imported quality findings on the tree.
+    findings: quality::Findings,
 }
 
 impl Graph {
-    fn new(g: GraphState, groups: &[Vec<String>]) -> Self {
+    fn new(g: GraphState, groups: &[Vec<String>], findings: quality::Findings) -> Self {
         let mut s = Graph {
+            findings,
             g,
             cycles: Vec::new(),
             members: Vec::new(),
@@ -112,7 +119,7 @@ impl Instance for Graph {
             cuts: &self.cuts,
             plans: &self.plans,
         };
-        let row = data::graph_data(ui, &self.g, cycles, id, &old);
+        let row = data::graph_data(ui, &self.g, &self.findings, cycles, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
@@ -241,7 +248,10 @@ pub fn wire(ui: &AppWindow) {
         let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
             return;
         };
-        if let Some(f) = review_action(&action) {
+        if insights_action(&ui, id, &action, &arg) {
+            return;
+        }
+        if let Some(f) = state_action(&action, &arg) {
             let layout = panes_ui::layout();
             instances::update(&ui, &layout, id, |s: &mut Graph| f(&mut s.g));
             return;
@@ -354,20 +364,48 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         if let Some(n) = node {
             g.open(n);
         }
-        Some(Graph::new(g, &groups))
+        let report = archguard_engine::read_quality_findings(
+            data.root,
+            &run.config,
+            (&run.graph, &run.source_names),
+        );
+        let findings = quality::Findings::new(report, &tree);
+        Some(Graph::new(g, &groups, findings))
     })
 }
 
-/// Explorer → Review's own actions.
-fn review_action(action: &str) -> Option<fn(&mut GraphState)> {
+type StateAction = Box<dyn FnOnce(&mut GraphState)>;
+
+/// Actions on the Graph's own state: Explorer → Review, a dependency card's explanation.
+fn state_action(action: &str, arg: &str) -> Option<StateAction> {
     match action {
-        "review-orphans" => Some(|g| {
+        "review-orphans" => Some(Box::new(|g| {
             g.review_orphans = !g.review_orphans;
             g.review_limit = state::REVIEW_PAGE;
-        }),
-        "review-more" => Some(|g| g.review_limit += state::REVIEW_PAGE),
+        })),
+        "review-more" => Some(Box::new(|g| g.review_limit += state::REVIEW_PAGE)),
+        "dep-explain" => {
+            let arg = arg.to_string();
+            Some(Box::new(move |g| deps::toggle(g, &arg)))
+        }
         _ => None,
     }
+}
+
+/// Explorer → Review → "Change coupling & ownership": open or close it,
+/// or show a file it names in Graph `id`.
+fn insights_action(ui: &AppWindow, id: u32, action: &str, name: &str) -> bool {
+    match action {
+        "review-insights" => insights::toggle(ui),
+        "review-reveal" => {
+            let tree = documents::with_active_state(|t: &mut Rc<Tree>| t.clone());
+            if let Some(n) = tree.and_then(|t| instances::node_named(&t, name)) {
+                act(ui, id as i32, |g| g.reveal(n));
+            }
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// The cycle groups the Graphs list: the simulated graph's while there
@@ -391,6 +429,7 @@ fn resimulate(ui: &AppWindow) {
         let groups = cycle_groups(&data);
         instances::each(|s: &mut Graph| {
             s.g.retree(tree.clone());
+            s.findings.retree(&tree);
             s.set_cycles(&groups);
         });
     }
@@ -417,13 +456,28 @@ pub fn export(ui: &AppWindow, id: u32) -> Option<(GraphInput, Option<Diagram>)> 
 }
 
 /// After the active document's analysis is there or it is shown again:
-/// the header search's hits (the Graphs follow `panes_ui::sync`).
+/// the header search's hits (the Graphs follow `panes_ui::sync`) and the
+/// review insights.
 pub fn show(ui: &AppWindow) {
     push_hits(ui);
+    insights::show(ui);
 }
 
-/// The tree node named `name` in the active document (snapshot hooks).
-#[cfg(feature = "snapshot")]
+/// Mark `files` (with their packages) and the dependencies `pairs`, by
+/// node name, in every Graph of the active document, on the tree display
+/// with all dependencies; empty names clear the marks.
+pub fn mark(ui: &AppWindow, files: &[String], pairs: &[(String, String)]) {
+    instances::each(|s: &mut Graph| {
+        s.g.marks = Marks::new(&s.g.tree, files, pairs);
+        if !files.is_empty() {
+            s.g.display = 0;
+            s.g.mode = EdgeMode::All;
+        }
+    });
+    panes_ui::sync(ui);
+}
+
+/// The tree node named `name` in the active document.
 pub fn node_named(name: &str) -> Option<usize> {
     documents::with_active_state(|t: &mut Rc<Tree>| instances::node_named(t, name)).flatten()
 }

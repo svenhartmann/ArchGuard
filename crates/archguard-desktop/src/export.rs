@@ -25,10 +25,12 @@
 //! - Services tab: the document's `ServiceTopology` and [`ServiceFilters`].
 //! - Security tab: the saved `SecurityReport` and [`SecurityFilters`].
 //! - Quality tab: the reports of `quality_ui::inputs::Inputs` ([`QualityInput`]).
+//! - Calls tab: `calls_ui::export_input` ([`CallsInput`]).
 //! - Architecture tab: `archguard_engine::analyze_target_architecture`
 //!   ([`architecture_snapshot`]) and the arc42 document ([`arc42`]).
 
 mod architecture;
+mod calls;
 mod cells;
 mod file;
 mod graph;
@@ -41,6 +43,7 @@ mod snapshot;
 mod svg;
 
 pub use architecture::architecture_snapshot;
+pub use calls::{CallCycle, CallEdge, CallRank, CallsInput, calls_snapshot};
 pub use file::write;
 pub use graph::{GraphEdge, GraphFilters, GraphInput, GraphNode, graph_snapshot};
 pub use image::{Rect, png};
@@ -77,6 +80,7 @@ pub enum View {
     Security,
     Quality,
     Architecture,
+    Calls,
 }
 
 impl View {
@@ -88,6 +92,7 @@ impl View {
             View::Security => "security",
             View::Quality => "quality",
             View::Architecture => "architecture",
+            View::Calls => "calls",
         }
     }
 }
