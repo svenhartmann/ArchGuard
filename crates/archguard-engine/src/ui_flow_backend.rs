@@ -1948,7 +1948,7 @@ mod spring {
     mod chain {
         use super::super::lex::{skip_ws, skip_ws_back, split_top, words};
         use super::super::*;
-        use super::role;
+        use super::{role, spel};
 
         const MATCHERS: [&str; 4] = [
             "requestMatchers",
@@ -1983,25 +1983,45 @@ mod spring {
             out: &mut Out,
             first: usize,
         ) {
-            let files: Vec<&Source> = (sources.iter())
-                .filter(|s| !s.rel.ends_with(".cs") && s.text.contains("SecurityFilterChain"))
+            let found: Vec<(&Source, Vec<(String, usize)>)> = (sources.iter())
+                .filter(|s| !s.rel.ends_with(".cs"))
+                .map(|s| (s, adapters(s)))
+                .filter(|(s, a)| !a.is_empty() || s.text.contains("SecurityFilterChain"))
                 .collect();
-            let Some(home) = files.first() else {
+            let files: Vec<&Source> = found.iter().map(|(s, _)| *s).collect();
+            let Some((home, home_adapters)) = found.first() else {
                 return;
             };
-            let at = home.text.find("SecurityFilterChain").unwrap_or(0);
-            let chains: usize = (files.iter())
-                .map(|s| {
-                    words(&s.text, "SecurityFilterChain")
-                        .filter(|p| bean(s, *p))
-                        .count()
+            let at = (home_adapters.first().map(|a| a.1))
+                .or_else(|| home.text.find("SecurityFilterChain"))
+                .unwrap_or(0);
+            let chains: usize = (found.iter())
+                .map(|(s, a)| {
+                    let beans = words(&s.text, "SecurityFilterChain").filter(|p| bean(s, *p));
+                    beans.count() + a.len()
                 })
                 .sum();
-            if chains > 1 || files.iter().any(|s| s.text.contains("securityMatcher")) {
-                let message = "Several SecurityFilterChain beans or a securityMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
+            let scoped = |s: &&Source| {
+                ["securityMatcher", "antMatcher", "requestMatcher"]
+                    .iter()
+                    .any(|w| words(&s.text, w).next().is_some())
+            };
+            if chains > 1 || files.iter().any(scoped) {
+                let message = "Several security configurations or a securityMatcher/antMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
                 return out.note(&home.rel, home.line(at), message.into());
             }
             let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
+            for (s, classes) in &found {
+                if classes.is_empty() || !read(s, index).is_empty() {
+                    continue;
+                }
+                for (name, at) in classes {
+                    let message = format!(
+                        "Security configuration `{name}` has no readable `authorizeRequests()` rules; endpoints it protects stay undeclared."
+                    );
+                    out.at(s, *at, message);
+                }
+            }
             for r in &rules {
                 let why = match (&r.patterns, &r.grant) {
                     (None, _) => "its matcher is not a literal",
@@ -2061,6 +2081,23 @@ mod spring {
                 }
             }
             (changed, partial)
+        }
+
+        /// Classes extending the legacy Spring Security configurer adapters, as
+        /// `(name, offset)`.
+        fn adapters(src: &Source) -> Vec<(String, usize)> {
+            (decls(src, true).into_iter())
+                .filter(|d| d.class)
+                .filter(|d| {
+                    (d.bases.iter()).any(|b| {
+                        matches!(
+                            b.as_str(),
+                            "WebSecurityConfigurerAdapter" | "ResourceServerConfigurerAdapter"
+                        )
+                    })
+                })
+                .map(|d| (d.name, d.open))
+                .collect()
         }
 
         /// A `SecurityFilterChain name(` method declaration at `p`.
@@ -2235,6 +2272,13 @@ mod spring {
                 "anonymous" => protected(Condition::Not(Box::new(Condition::Authenticated))),
                 "hasRole" | "hasAuthority" | "hasAnyRole" | "hasAnyAuthority" => {
                     roles().map(AccessState::Protected)
+                }
+                "access" => {
+                    let expr = index.text(args)?;
+                    match expr.trim() {
+                        "permitAll" => Some(AccessState::Open),
+                        _ => spel(&expr).map(AccessState::Protected),
+                    }
                 }
                 _ => None,
             }
@@ -2459,6 +2503,8 @@ mod spring {
         while i < b.len() {
             let (tok, len) = match b[i] {
                 c if c.is_ascii_whitespace() => (None, 1),
+                // `#oauth2.hasScope('x')`: the OAuth2 expression root; scopes are roles.
+                b'#' if expr[i..].starts_with("#oauth2.") => (None, "#oauth2.".len()),
                 q @ (b'\'' | b'"') => {
                     let end = i + 1 + b[i + 1..].iter().position(|x| *x == q)?;
                     (Some(Tok::Str(expr[i + 1..end].into())), end + 1 - i)
@@ -2542,8 +2588,10 @@ mod spring {
             };
             match (name.as_str(), args.len()) {
                 ("isAuthenticated" | "isFullyAuthenticated", 0) => Some(Condition::Authenticated),
-                ("hasRole" | "hasAuthority", 1) => args.pop(),
-                ("hasAnyRole" | "hasAnyAuthority", 1..) => combine(args, Condition::Any),
+                ("hasRole" | "hasAuthority" | "hasScope", 1) => args.pop(),
+                ("hasAnyRole" | "hasAnyAuthority" | "hasAnyScope", 1..) => {
+                    combine(args, Condition::Any)
+                }
                 _ => None,
             }
         }
@@ -4071,6 +4119,159 @@ public class ManagementResource {
             (flow.diagnostics.iter())
                 .filter(|d| d.message.contains("ilter chain"))
                 .all(|d| d.severity == DiagnosticSeverity::Note)
+        );
+    }
+
+    const LEGACY_RESOURCES: &str = r##"
+@RestController
+@RequestMapping("/api/v1")
+public class TicketController {
+    @PostMapping("/admin/tickets")
+    public void create() {}
+    @GetMapping("/admin/tickets")
+    public void list() {}
+    @GetMapping("/open/ping")
+    public void ping() {}
+    @GetMapping("/other")
+    public void other() {}
+    @GetMapping("/hidden/x")
+    public void hidden() {}
+    @PreAuthorize("#oauth2.hasScope('server')")
+    @GetMapping("/internal")
+    public void internal() {}
+    @PreAuthorize("#oauth2.hasAnyScope('a', 'b') or hasRole('ROOT')")
+    @GetMapping("/either")
+    public void either() {}
+}
+"##;
+
+    fn legacy(rules: &str) -> UiFlow {
+        let config = format!(
+            "@Configuration\npublic class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    @Override\n    protected void configure(HttpSecurity http) throws Exception {{\n        http.csrf().disable().sessionManagement().and()\n            .authorizeRequests()\n{rules}\n            .and().addFilterBefore(new JWTFilter(), X.class);\n    }}\n}}\n"
+        );
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/SecurityConfig.java", &config),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ]);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn legacy_adapter_reads_methods_roles_and_any_request() {
+        let flow = legacy(
+            r#"            .antMatchers(HttpMethod.POST, "/api/v1/admin/**").hasAnyRole("ADMIN", "ROLE_ROOT")
+            .antMatchers("/api/v1/open/**", "/swagger/**").permitAll()
+            .anyRequest().authenticated()"#,
+        );
+        let admin = Condition::Any(vec![role("ADMIN"), role("ROOT")]);
+        assert_eq!(
+            access(&flow, "POST", "/api/v1/admin/tickets"),
+            &protected(admin)
+        );
+        // The POST rule skips GET; anyRequest decides.
+        let signed_in = protected(Condition::Authenticated);
+        assert_eq!(access(&flow, "GET", "/api/v1/admin/tickets"), &signed_in);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(access(&flow, "GET", "/api/v1/other"), &signed_in);
+        assert!(flow.complete, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn legacy_adapter_first_match_wins() {
+        let flow = legacy(
+            r#"            .antMatchers("/api/v1/**").permitAll()
+            .antMatchers("/api/v1/admin/**").hasRole("ADMIN")
+            .anyRequest().denyAll()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &AccessState::Open
+        );
+        let flow = legacy(
+            r#"            .antMatchers("/api/v1/admin/**").hasRole("ADMIN")
+            .antMatchers("/api/v1/**").permitAll()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &protected(role("ADMIN"))
+        );
+        assert_eq!(access(&flow, "GET", "/api/v1/other"), &AccessState::Open);
+    }
+
+    #[test]
+    fn legacy_regex_matchers_stay_undeclared_with_a_note() {
+        let flow = legacy(
+            r#"            .regexMatchers("/api/v1/hidden/.*").denyAll()
+            .anyRequest().authenticated()"#,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/hidden/x"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(&flow, "not a literal"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn legacy_access_expression_and_oauth2_scopes() {
+        let flow = legacy(
+            r##"            .antMatchers("/api/v1/admin/**").access("#oauth2.hasScope('server') and hasRole('ADMIN')")
+            .anyRequest().authenticated()"##,
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/admin/tickets"),
+            &protected(Condition::All(vec![role("ADMIN"), role("server")]))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/internal"),
+            &protected(Condition::All(vec![
+                Condition::Authenticated,
+                role("server")
+            ]))
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/either"),
+            &protected(Condition::All(vec![
+                Condition::Any(vec![
+                    Condition::Any(vec![role("a"), role("b")]),
+                    role("ROOT")
+                ]),
+                Condition::Authenticated
+            ]))
+        );
+    }
+
+    #[test]
+    fn an_unreadable_security_class_is_a_gap() {
+        let dir = project(&[
+            ("pom.xml", "<project/>"),
+            (
+                "src/main/java/app/ResourceServerConfig.java",
+                "@Configuration\npublic class ResourceServerConfig extends ResourceServerConfigurerAdapter {}\n",
+            ),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ]);
+        let flow = extract(dir.path());
+        assert!(!flow.complete);
+        assert_eq!(
+            (flow.diagnostics.iter())
+                .filter(|d| d.severity == DiagnosticSeverity::Gap
+                    && d.message.contains("ResourceServerConfig"))
+                .count(),
+            1,
+            "{:#?}",
+            flow.diagnostics
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
         );
     }
 
