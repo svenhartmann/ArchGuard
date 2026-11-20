@@ -5,10 +5,10 @@ import { ScrollView, ListView } from "std-widgets.slint";
 import { ComboBox } from "combo.slint";
 import { Theme } from "theme.slint";
 import { Button, Icon, Icons, SearchField, RatingChip, StatusLine, EmptyState, HelpTip, TipArea } from "widgets.slint";
-import { QualityCard, QualityCardView, QualityHeatRow } from "quality_cards.slint";
+import { QualityCard, QualityCardView, QualityHeatRow, FindingsSection } from "quality_cards.slint";
 import { CommandField } from "fields.slint";
 
-export { QualityCard, QualityHeatRow }
+export { QualityCard, QualityHeatRow, FindingsSection }
 
 export struct QualityModel {
     loading: bool,
@@ -31,6 +31,8 @@ export struct QualityModel {
     heatmap: bool,
     filter: int,
     sort: int,
+    // Imported findings: 0 all levels, then error, warning, note, none.
+    level: int,
     heat: [QualityHeatRow],
     // The heatmap's columns: the metrics measured for some class
     // ("WMC"), and their definitions for the headers.
@@ -58,6 +60,9 @@ export global QualityData {
     callback query(string);
     callback filter(int);
     callback sort(int);
+    callback level(int);
+    // A rule's documentation; Rust opens only http(s) URLs.
+    callback open-url(string);
     callback more();
     callback select-class(string);
     callback back();
@@ -142,7 +147,7 @@ export component QualityView inherits Rectangle {
                         @tr("Class heatmap"), @tr("Class metrics"), @tr("Method maintainability"),
                         @tr("Knowledge concentration"), @tr("Build, runtime and test stability"),
                         @tr("Package cohesion"), @tr("Quality history"), @tr("Tests and change impact"),
-                        @tr("Test effectiveness"), @tr("Code duplication")
+                        @tr("Test effectiveness"), @tr("Code duplication"), @tr("Imported quality findings")
                     ];
                     current-index: root.m.section;
                     selected => { QualityData.section(self.current-index); }
@@ -343,6 +348,21 @@ export component QualityView inherits Rectangle {
                     }
                 }
 
+                if root.m.section == 10 && !root.m.loading && root.m.empty-command == "": HorizontalLayout {
+                    alignment: start;
+                    VerticalLayout {
+                        spacing: 4px;
+                        Caption { text: @tr("Level"); }
+                        ComboBox {
+                            height: Theme.control-h;
+                            width: 170px;
+                            model: [@tr("All levels"), @tr("error"), @tr("warning"), @tr("note"), @tr("none")];
+                            current-index: root.m.level;
+                            selected => { QualityData.level(self.current-index); }
+                        }
+                    }
+                }
+
                 for d in root.m.detail: VerticalLayout {
                     spacing: 8px;
                     QualityCardView {
@@ -452,6 +472,7 @@ export component QualityView inherits Rectangle {
                     card: c;
                     flat: root.m.section == 5;
                     locate(n) => { QualityData.locate(n); }
+                    open-url(u) => { QualityData.open-url(u); }
                     action(key) => { QualityData.package(key); }
                     group(i) => { QualityData.group(i); }
                     more-groups => { QualityData.more-groups(); }

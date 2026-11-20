@@ -12,7 +12,7 @@ use super::inputs::Inputs;
 use super::lang::{number, percent};
 use super::notes::Section;
 use super::rows::{self, Scope};
-use super::{cards, cohesion, evidence};
+use super::{cards, cohesion, evidence, findings};
 use crate::tab_support::Texts;
 
 /// Records per page and per "Show next 20".
@@ -32,6 +32,8 @@ pub struct View {
     pub sort: Sort,
     pub selected: Option<String>,
     pub cohesion: Selection,
+    /// Imported findings: a level of [`findings::LEVELS`], `None` all.
+    pub level: Option<usize>,
 }
 
 impl Default for View {
@@ -46,6 +48,7 @@ impl Default for View {
             sort: Sort::Priority,
             selected: None,
             cohesion: Selection::default(),
+            level: None,
         }
     }
 }
@@ -111,6 +114,8 @@ pub struct Page {
     pub heatmap: bool,
     pub filter: usize,
     pub sort: usize,
+    /// The level picker: 0 all, then [`findings::LEVELS`].
+    pub level: usize,
     pub heat: Vec<HeatRow>,
     /// The heatmap's columns, as [`METRICS`] indices.
     pub columns: Vec<usize>,
@@ -181,6 +186,7 @@ impl QualityState {
             heatmap: self.view.section == Section::Heatmap,
             filter: filter_index(self.view.filter),
             sort: sort_index(self.sort(), &self.columns),
+            level: self.view.level.map_or(0, |l| l + 1),
             cards,
             heat,
             columns: self.columns.clone(),
@@ -219,6 +225,7 @@ fn source_status(inputs: &Inputs, section: Section) -> Option<&str> {
         Section::Tests => &inputs.tests.status,
         Section::Mutations => &inputs.mutations.status,
         Section::Duplicates => &inputs.duplicates.status,
+        Section::Findings => &inputs.findings.status,
     })
 }
 
@@ -238,6 +245,7 @@ fn source_diagnostics(inputs: &Inputs, section: Section) -> (&[String], &[String
         Section::Tests => (&inputs.tests.diagnostics, none),
         Section::Mutations => (&inputs.mutations.diagnostics, none),
         Section::Duplicates => (&inputs.duplicates.diagnostics, none),
+        Section::Findings => (&inputs.findings.diagnostics, none),
     }
 }
 
@@ -333,6 +341,9 @@ impl QualityState {
                     evidence::duplicate(lang, names, r)
                 })
             }
+            Section::Findings => list!(findings::rows(&inputs.findings, scope, v.level, q), |f| {
+                findings::card(lang, names, f, true)
+            }),
         }
     }
 
@@ -544,6 +555,13 @@ impl QualityState {
                 );
                 b.push(Kind::Muted, format!("CPD · {version} · {errors}"));
             }
+            Section::Findings => {
+                let f = &inputs.findings;
+                b.push(Kind::Muted, f.tools.join(" · "));
+                if let Some(path) = &f.report_path {
+                    b.push(Kind::Path, path);
+                }
+            }
             _ => {}
         }
     }
@@ -718,5 +736,86 @@ mod tests {
         let selected: Vec<_> = page.heat.iter().filter(|r| r.selected).collect();
         assert_eq!(selected.len(), 1, "the class is a listed, marked row");
         assert_eq!(selected[0].class_id, "rust:a/f27.rs::C");
+    }
+
+    #[test]
+    fn the_quality_tab_lists_imported_findings_with_level_filter_and_search() {
+        let (root, run) = crate::quality_ui::findings::tests::imported_fixture("tab");
+        let sources = archguard_engine::core::ReviewSources::default();
+        let calls = archguard_engine::analyze_calls(&root, &run.config);
+        let inputs = Inputs::compute(&root, &run.graph, &run.config, &sources, &calls);
+        let mut s = QualityState::new(Texts::default(), inputs);
+        s.view.section = Section::Findings;
+        let page = s.page();
+        // The out-of-project warning makes the import partial.
+        assert_eq!(page.status, "Import: partial");
+        assert_eq!(page.status_detail, "3 / 3 matching records");
+        let titles: Vec<_> = page.cards.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "E1 · Lint · error",
+                "N1 · Lint · note",
+                "W1 · Lint · warning"
+            ]
+        );
+        let first = &page.cards[0];
+        assert!(
+            first
+                .items
+                .iter()
+                .any(|i| i.kind == Kind::Path && i.text == "src/app/service.py:4")
+        );
+        assert!(
+            first
+                .items
+                .iter()
+                .any(|i| i.kind == Kind::Link && i.node == "https://example.test/rules/E1")
+        );
+        assert!(first.items.iter().any(|i| i.kind == Kind::Locate));
+        assert!(
+            page.cards[2]
+                .items
+                .iter()
+                .any(|i| i.text == "Source freshness unknown")
+        );
+        s.view.level = Some(1);
+        let page = s.page();
+        assert_eq!((page.level, page.cards.len()), (2, 1));
+        s.view.level = None;
+        s.view.query = "N1 found".into();
+        assert_eq!(s.page().cards.len(), 1);
+        std::fs::write(root.join("src/app/service.py"), "changed\n").unwrap();
+        let inputs = Inputs::compute(&root, &run.graph, &run.config, &sources, &calls);
+        let mut s = QualityState::new(Texts::default(), inputs);
+        s.view.section = Section::Findings;
+        let page = s.page();
+        assert!(
+            page.cards[0]
+                .items
+                .iter()
+                .any(|i| i.text.starts_with("Source changed since import"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn without_an_import_the_section_names_the_cli_command() {
+        let root = std::path::Path::new("/nonexistent-archguard-root");
+        let graph = archguard_engine::core::GraphBuilder::new().build(root.display().to_string());
+        let config = archguard_engine::core::Config::default();
+        let calls = archguard_engine::analyze_calls(root, &config);
+        let sources = archguard_engine::core::ReviewSources::default();
+        let mut s = QualityState::new(
+            Texts::german(),
+            Inputs::compute(root, &graph, &config, &sources, &calls),
+        );
+        s.view.section = Section::Findings;
+        let page = s.page();
+        assert_eq!(
+            page.empty.command,
+            "archguard quality . --report results.sarif"
+        );
+        assert_ne!(page.empty.title, "No quality findings imported.", "German");
     }
 }
