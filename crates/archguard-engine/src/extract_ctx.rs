@@ -3,7 +3,7 @@
 //! with a size limit, and the folder rules for owners and application names.
 use std::path::Path;
 
-use archguard_core::{Config, DiagnosticSeverity, ServiceTopology, UiFlow};
+use archguard_core::{Config, DiagnosticSeverity, ServiceTopology, UiFlow, UiFlowDiagnostic};
 
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, excluded, relative, test_path};
@@ -180,6 +180,21 @@ pub(crate) fn read_source(root: &Path, rel: &str) -> Result<String, String> {
              its routes, links and calls are unknown."
         )
     })
+}
+
+/// A gap at `file:line`: something is unknown, so the flow is not complete.
+pub(crate) fn gap(
+    out: &mut Vec<UiFlowDiagnostic>,
+    file: &str,
+    line: u32,
+    message: impl Into<String>,
+) {
+    out.push(UiFlowDiagnostic {
+        file: file.into(),
+        line,
+        message: message.into(),
+        severity: DiagnosticSeverity::Gap,
+    });
 }
 
 /// Sorts and deduplicates every list of an extracted flow; it is complete

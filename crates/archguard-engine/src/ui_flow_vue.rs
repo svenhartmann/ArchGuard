@@ -72,10 +72,12 @@
 //! helper functions or services, `<a href>`, Nuxt `router.options.ts`, links to
 //! catch-all routes.
 use crate::extract_ctx::{
-    ExtractContext, dir_name as app_name, finish, read_source as read, walk, with_root_config,
+    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
+    with_root_config,
 };
 use crate::lang_ts::*;
 use crate::lang_ts_decl::*;
+use crate::lang_ts_http::*;
 use crate::services::support::test_path;
 use archguard_core::{
     ANY_METHOD, AccessState, Action, Call, Condition, DiagnosticSeverity, EndpointAccess, Origin,
@@ -106,7 +108,6 @@ const ROLE_META: [&str; 1] = ["roles"];
 const LINK_TAGS: [&str; 4] = ["router-link", "RouterLink", "NuxtLink", "nuxt-link"];
 const TRIGGER_EVENTS: [&str; 2] = ["click", "submit"];
 const FETCHES: [&str; 4] = ["fetch", "$fetch", "useFetch", "useLazyFetch"];
-const HTTP_METHODS: [&str; 7] = ["get", "post", "put", "patch", "delete", "head", "options"];
 /// Screens, transitions, HTTP actions and Nuxt server endpoints of every Vue
 /// application below `root`. Read errors and everything not literal become diagnostics.
 pub fn extract(root: &Path) -> UiFlow {
@@ -131,15 +132,6 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     }
     finish(&mut flow);
     flow
-}
-
-fn diag(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl Into<String>) {
-    out.push(UiFlowDiagnostic {
-        file: file.into(),
-        line,
-        message: message.into(),
-        severity: DiagnosticSeverity::Gap,
-    });
 }
 
 fn note(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: &str) {
@@ -260,7 +252,7 @@ impl App {
         for (file, text) in &self.files {
             router::routes(self, file, text, &mut routes, out);
         }
-        let clients = http::Clients::new(self);
+        let clients = Clients::new(&self.files);
         for (file, text) in &self.files {
             if self.nuxt && nuxt::is_server(self, file) {
                 continue;
@@ -1361,144 +1353,6 @@ mod nav {
 mod http {
     use super::*;
 
-    /// An instance's `baseURL` path, or its source when not literal.
-    type Base = Result<String, String>;
-
-    /// Axios instances by (file, exported name or `default`).
-    pub(super) struct Clients {
-        instances: BTreeMap<(String, String), Base>,
-    }
-
-    fn axios_names(text: &str) -> Vec<String> {
-        imports(text)
-            .into_iter()
-            .filter(|i| i.module == "axios" && i.imported.as_deref().is_none_or(|n| n == "*"))
-            .map(|i| i.local)
-            .collect()
-    }
-
-    /// The `baseURL` path of an `axios.create(…)` argument.
-    fn base_of(text: &str, arg: &Item) -> Base {
-        match &arg.value {
-            Value::Obj(fields) => match fields.iter().find(|(k, _)| k == "baseURL") {
-                None => Ok(String::new()),
-                Some((_, v)) => v
-                    .value
-                    .literal()
-                    .map(|u| url_path(&u).trim_end_matches('/').to_string())
-                    .ok_or_else(|| v.source(text)),
-            },
-            Value::Raw(r) if r.is_empty() => Ok(String::new()),
-            _ => Err(arg.source(text)),
-        }
-    }
-
-    /// The name `axios.create` at `pos` is bound to: `const name =` or `export default`.
-    fn instance_name(text: &str, pos: usize) -> Option<String> {
-        let before = text[..pos].trim_end();
-        match before.strip_suffix('=') {
-            Some(lhs) => trailing_ident(lhs.trim_end()),
-            None => before.ends_with("export default").then(|| "default".into()),
-        }
-    }
-
-    /// `const name = axios.create({ baseURL })` and `export default axios.create(…)`.
-    fn instances(text: &str) -> BTreeMap<String, Base> {
-        let mut out = BTreeMap::new();
-        for a in axios_names(text) {
-            for pos in words(text, &a) {
-                let at = pos + a.len();
-                if !text[at..].starts_with(".create(") {
-                    continue;
-                }
-                let arg = Parser {
-                    s: text,
-                    i: at + ".create(".len(),
-                }
-                .value(0);
-                if let Some(name) = instance_name(text, pos) {
-                    out.insert(name, base_of(text, &arg));
-                }
-            }
-        }
-        let exported = words(text, "default").into_iter().find_map(|pos| {
-            let name = ident_at(text, skip_ws(text.as_bytes(), pos + "default".len()));
-            let export = text[..pos].trim_end().ends_with("export");
-            export.then(|| out.get(name).cloned()).flatten()
-        });
-        if let Some(base) = exported {
-            out.insert("default".into(), base);
-        }
-        out
-    }
-
-    impl Clients {
-        pub(super) fn new(app: &App) -> Self {
-            let mut instances = BTreeMap::new();
-            for (file, text) in &app.files {
-                for (name, base) in self::instances(text) {
-                    instances.insert((file.clone(), name), base);
-                }
-            }
-            Clients { instances }
-        }
-
-        /// HTTP receivers usable in `file`: axios itself (no base) and instances.
-        fn receivers(&self, app: &App, file: &str, text: &str) -> Vec<(String, Option<Base>)> {
-            let mut out: Vec<(String, Option<Base>)> =
-                axios_names(text).into_iter().map(|n| (n, None)).collect();
-            for ((f, name), base) in &self.instances {
-                if f == file && name != "default" {
-                    out.push((name.clone(), Some(base.clone())));
-                }
-            }
-            for i in imports(text) {
-                let Some((module, _)) = app.module(file, &i.module) else {
-                    continue;
-                };
-                let name = i.imported.unwrap_or_else(|| "default".into());
-                if let Some(base) = self.instances.get(&(module.to_string(), name)) {
-                    out.push((i.local, Some(base.clone())));
-                }
-            }
-            out
-        }
-    }
-
-    /// The method and URL argument of `recv.method(…)` at `pos`.
-    fn client_call(text: &str, pos: usize, recv: &str) -> Option<(&'static str, Item)> {
-        let b = text.as_bytes();
-        let rest = text[pos + recv.len()..].strip_prefix('.')?;
-        let method = HTTP_METHODS.into_iter().find(|m| {
-            rest.strip_prefix(m)
-                .is_some_and(|r| !r.starts_with(is_ident_char))
-        })?;
-        let mut j = skip_ws(b, pos + recv.len() + 1 + method.len());
-        if b.get(j) == Some(&b'<') {
-            j = skip_ws(b, skip_generic(b, j));
-        }
-        (b.get(j) == Some(&b'(')).then(|| (method, Parser { s: text, i: j + 1 }.value(0)))
-    }
-
-    /// The call, or why it is unknown.
-    fn http_call(
-        method: Result<String, String>,
-        url: Option<String>,
-        base: Option<&Base>,
-    ) -> Result<Call, String> {
-        let url = url.ok_or("URL is not a literal")?;
-        let method = method.map_err(|m| format!("method is not a literal ({m})"))?;
-        let prefix = match base {
-            Some(Err(b)) => return Err(format!("baseURL is not a literal ({b})")),
-            Some(Ok(p)) if !url.contains("://") => p.as_str(),
-            _ => "",
-        };
-        Ok(Call::Http {
-            method,
-            path: format!("{prefix}{}", url_path(&url)),
-        })
-    }
-
     /// The call; an unknown one becomes `Call::Unresolved` and a diagnostic.
     fn record(
         found: Result<Call, String>,
@@ -1518,7 +1372,8 @@ mod http {
         let (file, text) = (at.file, at.text);
         let out = &mut flow.diagnostics;
         let mut calls = fetches(file, text, out);
-        for (recv, base) in clients.receivers(app, file, text) {
+        let module = |spec: &str| app.module(file, spec).map(|(m, _)| m);
+        for (recv, base) in clients.receivers(file, text, module) {
             for pos in words(text, &recv) {
                 let Some((method, url)) = client_call(text, pos, &recv) else {
                     continue;
@@ -1545,36 +1400,6 @@ mod http {
                     });
                 }
             }
-        }
-    }
-
-    /// Whether the call at `pos` is the global function, not a method or declaration.
-    fn global_call(text: &str, pos: usize) -> bool {
-        let before = &text[..pos];
-        let member = before.ends_with('.')
-            && !before.ends_with("window.")
-            && !before.ends_with("globalThis.");
-        let declared = matches!(
-            trailing_ident(before.trim_end()).as_deref(),
-            Some("function" | "async")
-        );
-        !member && !declared
-    }
-
-    /// The method of a fetch options argument; `GET` without one.
-    fn fetch_method(text: &str, init: Option<&Item>) -> Result<String, String> {
-        let Some(init) = init else {
-            return Ok("GET".into());
-        };
-        let Value::Obj(fields) = &init.value else {
-            return Err(init.source(text));
-        };
-        match fields.iter().find(|(k, _)| k == "method") {
-            None => Ok("GET".into()),
-            Some((_, v)) => match &v.value {
-                Value::Str(m) => Ok(m.to_ascii_uppercase()),
-                _ => Err(v.source(text)),
-            },
         }
     }
 
