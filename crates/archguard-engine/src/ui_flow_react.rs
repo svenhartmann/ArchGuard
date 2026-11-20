@@ -109,6 +109,8 @@ const ROUTER_DEPS: [&str; 4] = [
     "next",
 ];
 const SKIPPED_DIRS: [&str; 5] = [".next", "cypress", "e2e", ".storybook", "coverage"];
+// `.mjs`, `.cjs`, `.mts` and `.cts` are not read (node scripts such as epic-stack's
+// remix.init would add calls to the UI); for imports they count as existing files.
 const EXTENSIONS: [&str; 4] = [".tsx", ".ts", ".jsx", ".js"];
 const GUARDS: [&str; 4] = ["RequireAuth", "ProtectedRoute", "PrivateRoute", "AuthGuard"];
 const API_GUARDS: [&str; 2] = ["withAuth", "withApiAuthRequired"];
@@ -156,6 +158,9 @@ struct App {
     aliases: Vec<Alias>,
     /// Sources by path relative to the analysis root.
     files: BTreeMap<String, String>,
+    /// Other files below the application (`items.json`), by path; only their
+    /// existence is known.
+    others: BTreeSet<String>,
 }
 
 /// What the `*` of a tsconfig `paths` pattern matches in `spec`; `""` for an
@@ -180,6 +185,7 @@ fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>
     let mut apps: BTreeMap<String, App> = BTreeMap::new();
     let mut sources = Vec::new();
     let mut tsconfigs = Vec::new();
+    let mut others = Vec::new();
     for rel in files {
         if rel.split('/').any(|p| SKIPPED_DIRS.contains(&p)) {
             continue;
@@ -193,7 +199,13 @@ fn applications(root: &Path, files: Vec<String>, out: &mut Vec<UiFlowDiagnostic>
             tsconfigs.push(rel);
         } else if is_source(&rel, name) {
             sources.push(rel);
+        } else {
+            others.push(rel);
         }
+    }
+    for app in apps.values_mut() {
+        let own = others.iter().filter(|o| o.starts_with(&app.prefix));
+        app.others = own.cloned().collect();
     }
     for rel in tsconfigs {
         let dir = rel.rsplit_once('/').map_or("", |(d, _)| d);
@@ -227,6 +239,7 @@ fn manifest_app(root: &Path, dir: &str, rel: &str) -> Option<App> {
         tanstack: deps.contains(&"@tanstack/react-router"),
         aliases: Vec::new(),
         files: BTreeMap::new(),
+        others: BTreeSet::new(),
     })
 }
 
@@ -345,8 +358,9 @@ impl App {
     }
 
     /// The imports of `text` that name a project file (relative, or an alias
-    /// pattern, `@/` or `~/`) no scanned file satisfies. A bare package name is
-    /// not one.
+    /// pattern, `@/` or `~/`) which exists nowhere in the application. A bare
+    /// package name is not one, and neither is what a catch-all `"*"` pattern
+    /// matches without a target file: that pattern fits every package.
     fn missing_imports(&self, file: &str, text: &str) -> Vec<Import> {
         imports(text)
             .into_iter()
@@ -354,13 +368,26 @@ impl App {
                 let internal = i.module.starts_with('.')
                     || i.module.starts_with("@/")
                     || i.module.starts_with("~/")
-                    || self
-                        .aliases
-                        .iter()
-                        .any(|a| alias_rest(a, &i.module).is_some());
-                internal && self.resolve(file, &i.module).is_none()
+                    || (self.aliases.iter())
+                        .any(|a| a.pattern != "*" && alias_rest(a, &i.module).is_some());
+                internal
+                    && self.resolve(file, &i.module).is_none()
+                    && !self.other_file(file, &i.module)
             })
             .collect()
+    }
+
+    /// Whether the import names an existing file that is no source (`.json`).
+    fn other_file(&self, from: &str, spec: &str) -> bool {
+        let paths: Vec<String> = if spec.starts_with('.') {
+            vec![join(dir(from), spec)]
+        } else {
+            (self.aliases.iter())
+                .filter_map(|a| Some((a, alias_rest(a, spec)?)))
+                .flat_map(|(a, rest)| a.targets.iter().map(move |t| t.replace('*', rest)))
+                .collect()
+        };
+        paths.iter().any(|p| self.others.contains(p))
     }
 
     /// A relative import resolved to a scanned file.
@@ -815,12 +842,15 @@ mod router {
         element: Option<String>,
         component: Option<String>,
         children: Vec<Node>,
+        /// Indices of the `.map` route arrays rendered inside this route.
+        maps: Vec<usize>,
     }
 
     struct Ctx<'a> {
         app: &'a App,
         file: &'a str,
         text: &'a str,
+        maps: &'a [Mapped<'a>],
         screens: &'a mut Vec<(Screen, Owner)>,
         out: &'a mut Vec<UiFlowDiagnostic>,
     }
@@ -838,22 +868,22 @@ mod router {
         screens: &mut Vec<(Screen, Owner)>,
         out: &mut Vec<UiFlowDiagnostic>,
     ) {
+        let mapped = mapped(text);
         let mut ctx = Ctx {
             app,
             file,
             text,
+            maps: &mapped,
             screens,
             out,
         };
-        let mapped = mapped(text);
-        let spans: Vec<(usize, usize)> = mapped.iter().map(|m| m.span).collect();
-        let mut roots = jsx(text, &spans);
+        let (mut roots, loose) = jsx(text, &mapped);
         roots.extend(objects(&mut ctx));
         for root in &roots {
             walk(&mut ctx, root, "", &[], 0);
         }
-        for m in &mapped {
-            map_routes(&mut ctx, m);
+        for i in loose {
+            map_routes(&mut ctx, &mapped[i], "", &[]);
         }
     }
 
@@ -905,7 +935,7 @@ mod router {
     /// The routes of the array literal a `.map` call renders as `<Route {...x}>`:
     /// local, or imported (default or named) from a scanned file. Any other
     /// shape is a gap.
-    fn map_routes(ctx: &mut Ctx, m: &Mapped) {
+    fn map_routes(ctx: &mut Ctx, m: &Mapped, prefix: &str, inherited: &[Condition]) {
         let (app, text, file) = (ctx.app, ctx.text, ctx.file);
         let (head, tag) = &m.route;
         let plain = tag.attrs.iter().all(|a| match (&a.name[..], &a.value) {
@@ -952,6 +982,7 @@ mod router {
             app,
             file,
             text,
+            maps: &[],
             screens: &mut *ctx.screens,
             out: &mut *ctx.out,
         };
@@ -961,7 +992,7 @@ mod router {
             .filter_map(|it| object(&mut other, it, 0))
             .collect();
         for node in &nodes {
-            walk(&mut other, node, "", &[], 0);
+            walk(&mut other, node, prefix, inherited, 0);
         }
     }
 
@@ -1004,15 +1035,19 @@ mod router {
         node
     }
 
-    fn jsx(text: &str, skip: &[(usize, usize)]) -> Vec<Node> {
-        let mut events: Vec<(usize, bool)> = text
+    /// The `<Route>` tree of `text`, and the `.map` arrays outside any route.
+    fn jsx(text: &str, mapped: &[Mapped]) -> (Vec<Node>, Vec<usize>) {
+        let skip = |i: &usize| !mapped.iter().any(|m| (m.span.0..m.span.1).contains(i));
+        // (offset, 0 closes a route, 1 opens one, 2 + n is `.map` number n)
+        let mut events: Vec<(usize, usize)> = text
             .match_indices("<Route")
             .filter(|(i, _)| {
                 !text[i + "<Route".len()..].starts_with(|c: char| is_ident_char(c) || c == '.')
             })
-            .map(|(i, _)| (i, true))
-            .chain(text.match_indices("</Route>").map(|(i, _)| (i, false)))
-            .filter(|(i, _)| !skip.iter().any(|(from, to)| (*from..*to).contains(i)))
+            .map(|(i, _)| (i, 1))
+            .chain(text.match_indices("</Route>").map(|(i, _)| (i, 0)))
+            .filter(|(i, _)| skip(i))
+            .chain(mapped.iter().enumerate().map(|(n, m)| (m.at, 2 + n)))
             .collect();
         events.sort();
         let attach =
@@ -1020,26 +1055,33 @@ mod router {
                 Some(parent) => parent.children.push(node),
                 None => roots.push(node),
             };
-        let (mut stack, mut roots) = (Vec::new(), Vec::new());
-        for (pos, open) in events {
-            if !open {
-                if let Some(node) = stack.pop() {
-                    attach(&mut stack, &mut roots, node);
+        let (mut stack, mut roots, mut loose) = (Vec::new(), Vec::new(), Vec::new());
+        for (pos, kind) in events {
+            match kind {
+                0 => {
+                    if let Some(node) = stack.pop() {
+                        attach(&mut stack, &mut roots, node);
+                    }
                 }
-                continue;
-            }
-            let tag = tag(text, pos + "<Route".len());
-            let node = jsx_node(text, pos, &tag);
-            if tag.self_closing {
-                attach(&mut stack, &mut roots, node);
-            } else {
-                stack.push(node);
+                1 => {
+                    let tag = tag(text, pos + "<Route".len());
+                    let node = jsx_node(text, pos, &tag);
+                    if tag.self_closing {
+                        attach(&mut stack, &mut roots, node);
+                    } else {
+                        stack.push(node);
+                    }
+                }
+                n => match stack.last_mut() {
+                    Some(parent) => parent.maps.push(n - 2),
+                    None => loose.push(n - 2),
+                },
             }
         }
         while let Some(node) = stack.pop() {
             attach(&mut stack, &mut roots, node);
         }
-        roots
+        (roots, loose)
     }
 
     fn objects(ctx: &mut Ctx) -> Vec<Node> {
@@ -1125,6 +1167,7 @@ mod router {
                 .map(|v| v.source(text))
                 .filter(|n| is_name(n)),
             children,
+            maps: Vec::new(),
         })
     }
 
@@ -1223,6 +1266,10 @@ mod router {
         }
         for child in &node.children {
             walk(ctx, child, &full, &guards, depth + 1);
+        }
+        let maps = ctx.maps;
+        for &i in &node.maps {
+            map_routes(ctx, &maps[i], &full, &guards);
         }
     }
 }
@@ -3224,6 +3271,7 @@ import { Link as RouterLink } from '@tanstack/react-router'
             tanstack: true,
             aliases: Vec::new(),
             files,
+            others: BTreeSet::new(),
         }
     }
 
@@ -3596,5 +3644,102 @@ export function Weather() {
         assert!(messages[0].contains("../web-api-client.ts"), "{messages:?}");
         assert!(messages[1].contains("@/gen/client"), "{messages:?}");
         assert!(has_diag(&flow, "c/src/components/Weather.jsx", 8));
+    }
+
+    fn mapped_in(app: &str, routes: &str) -> UiFlow {
+        let dir = project(&[
+            ("c/package.json", ROUTER_PKG),
+            ("c/src/App.jsx", app),
+            ("c/src/routes.jsx", routes),
+        ]);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn mapped_routes_inside_a_route_take_its_guards() {
+        let app = "import { secret } from './routes';
+export const App = () => (
+<Routes><Route element={<ProtectedRoute />}>
+  {secret.map((r) => <Route key={r.path} {...r} />)}
+  <Route path=\"/open\" element={<Open />} />
+</Route></Routes>);
+";
+        let routes = "export const secret = [{ path: '/vault', element: <Vault /> }];\n";
+        let flow = mapped_in(app, routes);
+        assert_eq!(
+            screens(&flow),
+            vec![
+                screen("c:/open", "Open", Some("ProtectedRoute")),
+                screen("c:/vault", "Vault", Some("ProtectedRoute")),
+            ]
+        );
+    }
+
+    #[test]
+    fn mapped_routes_inside_a_route_take_its_path_prefix() {
+        let app = "import { adminRoutes } from './routes';
+export const App = () => (
+<Routes><Route path=\"/admin\" element={<Admin />}>
+  {adminRoutes.map(r => <Route key={r.path} {...r} />)}
+</Route></Routes>);
+";
+        let routes = "export const adminRoutes = [{ path: 'users', element: <Users /> }];\n";
+        let flow = mapped_in(app, routes);
+        assert_eq!(
+            screens(&flow),
+            vec![
+                screen("c:/admin", "Admin", None),
+                screen("c:/admin/users", "Users", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_catch_all_paths_pattern_does_not_make_packages_project_imports() {
+        let page = "import axios from 'axios';
+import { here } from 'util/here';
+export function Page() { axios.get('/api/h'); here(); return null; }
+";
+        let dir = project(&[
+            ("c/package.json", ROUTER_PKG),
+            (
+                "c/tsconfig.json",
+                r#"{"compilerOptions":{"paths":{"*":["./src/*"]}}}"#,
+            ),
+            (
+                "c/src/App.jsx",
+                "export const App = () => <Routes><Route path=\"/p\" element={<Page />} /></Routes>;\n",
+            ),
+            ("c/src/Page.jsx", page),
+            ("c/src/util/here.js", "export function here() {}\n"),
+        ]);
+        let flow = extract(dir.path());
+        assert!(
+            flow.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("axios")),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn existing_non_source_files_and_module_scripts_are_not_missing() {
+        let page = "import items from './items.json';
+import { load } from './client.mjs';
+export function Page() { items.map((i) => i); load(); return null; }
+";
+        let dir = project(&[
+            ("c/package.json", ROUTER_PKG),
+            (
+                "c/src/App.jsx",
+                "export const App = () => <Routes><Route path=\"/p\" element={<Page />} /></Routes>;\n",
+            ),
+            ("c/src/Page.jsx", page),
+            ("c/src/items.json", "[]"),
+            ("c/src/client.mjs", "export function load() {}\n"),
+        ]);
+        let flow = extract(dir.path());
+        assert!(flow.diagnostics.is_empty(), "{:?}", flow.diagnostics);
     }
 }
