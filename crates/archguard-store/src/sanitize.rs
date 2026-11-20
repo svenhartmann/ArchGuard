@@ -143,6 +143,39 @@ fn reject(reason: impl std::fmt::Display) -> ArchguardError {
     ArchguardError::Analysis(format!("query rejected: {reason}"))
 }
 
+/// End of the comment starting at `i`, `None` when none starts there.
+/// kuzu CypherComment: only `//` … CR|LF|EOF and non-nested `/* … */`.
+/// `--` is NOT a comment there (two minus operators) and must not be one
+/// here either (F04 review, F1: hidden `;`/EXPORT payloads).
+fn comment_end(bytes: &[u8], i: usize) -> Result<Option<usize>, ArchguardError> {
+    if bytes[i] != b'/' {
+        return Ok(None);
+    }
+    match bytes.get(i + 1) {
+        Some(&b'/') => Ok(Some(
+            bytes[i..]
+                .iter()
+                .position(|&b| b == b'\n' || b == b'\r')
+                .map_or(bytes.len(), |offset| i + offset),
+        )),
+        Some(&b'*') => {
+            // kuzu: '/*' ( ~[*] | '*' ~[/] )* '*/' — a star consumes
+            // the next character, so `**/` does not close the comment.
+            let mut end = i + 2;
+            loop {
+                match bytes.get(end) {
+                    None => return Err(reject("unterminated block comment")),
+                    Some(b'*') if bytes.get(end + 1) == Some(&b'/') => return Ok(Some(end + 2)),
+                    Some(b'*') => end += 2,
+                    Some(_) => end += 1,
+                }
+            }
+        }
+        // A single slash is ordinary punctuation (division).
+        _ => Ok(None),
+    }
+}
+
 /// Lex `src` into structural tokens, dropping comments. Returns `Err`
 /// (rejection) on an unterminated string, backtick identifier or block
 /// comment, and on any byte outside words, whitespace,
@@ -153,6 +186,12 @@ fn lex(src: &str) -> Result<Vec<Tok<'_>>, ArchguardError> {
     let mut i = 0;
     while i < bytes.len() {
         let byte = bytes[i];
+        // kuzu's `//` comment is '//' (~[\n\r])* CR? (LF|EOF): a CR not
+        // followed by LF has no agreed meaning, so it rejects outside
+        // strings and block comments (only CRLF line ends pass).
+        if byte == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
+            return Err(reject("carriage return outside a line ending"));
+        }
         if byte.is_ascii_whitespace() {
             i += 1;
             continue;
@@ -174,36 +213,9 @@ fn lex(src: &str) -> Result<Vec<Tok<'_>>, ArchguardError> {
                 continue;
             }
         }
-        if byte == b'/' {
-            // kuzu CypherComment: only `//` … LF|EOF and non-nested
-            // `/* … */`. `--` is NOT a comment there (two minus
-            // operators) and must not be one here either (F04 review,
-            // F1: hidden `;`/EXPORT payloads).
-            match bytes.get(i + 1) {
-                Some(&b'/') => {
-                    while i < bytes.len() && bytes[i] != b'\n' {
-                        i += 1;
-                    }
-                    continue;
-                }
-                Some(&b'*') => {
-                    // kuzu: '/*' ( ~[*] | '*' ~[/] )* '*/' — a star consumes
-                    // the next character, so `**/` does not close the comment.
-                    let mut end = i + 2;
-                    loop {
-                        match bytes.get(end) {
-                            None => return Err(reject("unterminated block comment")),
-                            Some(b'*') if bytes.get(end + 1) == Some(&b'/') => break,
-                            Some(b'*') => end += 2,
-                            Some(_) => end += 1,
-                        }
-                    }
-                    i = end + 2;
-                    continue;
-                }
-                // A single slash is ordinary punctuation (division).
-                _ => {}
-            }
+        if let Some(end) = comment_end(bytes, i)? {
+            i = end;
+            continue;
         }
         if byte == b'\'' || byte == b'"' {
             i += 1;
@@ -805,6 +817,27 @@ mod tests {
         let guarded = sanitize_query("MATCH (a:module) RETURN a.name LIMIT\u{180e}5", 25)
             .expect("U+180E must separate, not merge");
         assert!(guarded.contains("LIMIT"), "limit kept: {guarded:?}");
+    }
+
+    /// kuzu ends a `//` comment at CR as well as LF ('//' (~[\n\r])* CR?
+    /// (LF|EOF)); text after a bare CR must never hide from the guard.
+    #[test]
+    fn line_comments_end_at_carriage_return_like_kuzu() {
+        for input in [
+            "RETURN 1 //*\r*/ 1; CALL show_tables() RETURN * /*\n, 2 AS b",
+            "MATCH (n) RETURN n // x\r; DROP TABLE t",
+            "MATCH (n) RETURN n // x\rLIMIT 999999999",
+            "MATCH (n)\rRETURN n",
+        ] {
+            assert!(sanitize_query(input, 25).is_err(), "{input:?}");
+        }
+        // CRLF line endings stay usable.
+        assert_eq!(
+            sanitize_query("MATCH (n) // c\r\nRETURN n\r\n", 25).expect("CRLF"),
+            "MATCH (n) // c\r\nRETURN n LIMIT 25"
+        );
+        // CR inside a string literal is data.
+        assert!(sanitize_query("RETURN 'a\rb'", 25).is_ok());
     }
 
     /// Table-driven: each forbidden keyword is rejected as a whole word,
