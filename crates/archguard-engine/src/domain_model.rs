@@ -2,6 +2,7 @@
 //! language without an extractor.
 use std::path::Path;
 
+use crate::extract_ctx::{ExtractContext, with_root_config};
 use archguard_core::ArchguardError;
 use archguard_core::domain_model::{
     DOMAIN_MODEL_DEFINITION, DOMAIN_MODEL_IMPORT_SOURCE, DomainModel, merge_domain_models,
@@ -40,20 +41,25 @@ pub fn read_domain_model(root: &Path) -> Result<Option<DomainModel>, ArchguardEr
     Ok(Some(model))
 }
 
-/// The domain model below `root`: the C# extractor merged with the import
-/// file. An invalid import file is an error.
+/// The domain model below `root` with the root's configuration: every
+/// extractor merged with the import file. An invalid import file is an error.
 pub fn analyze(root: &Path) -> Result<DomainModel, ArchguardError> {
-    let import = read_domain_model(root)?.unwrap_or_default();
-    Ok(merge_domain_models(
-        merge_domain_models(
-            merge_domain_models(
-                crate::domain_csharp::extract(root),
-                crate::domain_java::extract(root),
-            ),
-            crate::domain_typescript::extract(root),
-        ),
-        import,
-    ))
+    with_root_config(root, analyze_with)
+}
+
+/// [`analyze`] for one run, e.g. with the configuration given by `--config`.
+pub fn analyze_with(ctx: &ExtractContext) -> Result<DomainModel, ArchguardError> {
+    let import = read_domain_model(ctx.root)?.unwrap_or_default();
+    let extractors = [
+        crate::domain_csharp::extract_with,
+        crate::domain_java::extract_with,
+        crate::domain_typescript::extract_with,
+    ];
+    let model = (extractors.into_iter())
+        .map(|extract| extract(ctx))
+        .reduce(merge_domain_models)
+        .unwrap_or_default();
+    Ok(merge_domain_models(model, import))
 }
 
 /// Counts for the summary line of the domain view.

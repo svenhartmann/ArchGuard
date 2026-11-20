@@ -84,18 +84,17 @@
 //! `else` branches of guards, C#-only pages without XAML, `ContentControl`
 //! switching by view model (`CurrentView = new XViewModel()`), the older MAUI
 //! `MainPage = …` assignment, services reached over more than one hop.
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
+use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
+use crate::lang_markup as xml;
+use crate::services::support::test_path;
 use archguard_core::{
-    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, ServiceTopology,
-    Target, Transition, UiFlow, UiFlowDiagnostic,
+    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Target, Transition,
+    UiFlow, UiFlowDiagnostic,
 };
 use navigation::{calls, navigations, resolve, string_value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use text::{
-    balanced, blank, blank_cs, has_word, ident_start, is_call, line, literal, scopes, split_args,
-};
+use text::{balanced, blank, has_word, ident_start, is_call, line, literal, scopes, split_args};
 use xml::{attr, attributes, tags};
 
 const SOURCE: &str = "xaml";
@@ -173,8 +172,13 @@ enum Goal {
 
 /// Screens, transitions and actions of every XAML application below `root`.
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     let mut flow = UiFlow::default();
-    for app in discover(root, &mut flow) {
+    for app in discover(ctx.root, &mut flow) {
         analyze(&app, &mut flow);
     }
     flow.diagnostics.sort();
@@ -183,25 +187,26 @@ pub fn extract(root: &Path) -> UiFlow {
 }
 
 fn discover(root: &Path, flow: &mut UiFlow) -> Vec<App> {
-    let mut scratch = ServiceTopology::default();
-    let discovery = match Discovery::new(root, &mut scratch) {
-        Ok(discovery) => discovery,
+    let walk = match walk(root) {
+        Ok(walk) => walk,
         Err(error) => {
             report(flow, "", 0, format!("XAML files not scanned: {error}"));
             return vec![];
         }
     };
-    flow.diagnostics
-        .extend(scratch.diagnostics.into_iter().map(|d| UiFlowDiagnostic {
-            file: d.file,
-            line: 0,
-            message: d.message,
-            severity: DiagnosticSeverity::Note,
-        }));
+    flow.diagnostics.extend(
+        walk.notes
+            .into_iter()
+            .map(|(file, message)| UiFlowDiagnostic {
+                file,
+                line: 0,
+                message,
+                severity: DiagnosticSeverity::Note,
+            }),
+    );
     let (mut projects, mut files) = (BTreeMap::new(), Vec::new());
-    for entry in discovery.walk(root).flatten() {
-        let rel = relative(root, entry.path());
-        if !entry.file_type().is_some_and(|t| t.is_file()) || test_path(&rel) {
+    for rel in walk.files {
+        if test_path(&rel) {
             continue;
         }
         if rel.ends_with(".csproj") {
@@ -227,12 +232,7 @@ fn discover(root: &Path, flow: &mut UiFlow) -> Vec<App> {
         let Some(text) = read(root, &rel, flow) else {
             continue;
         };
-        let name = match dir.rsplit('/').next().filter(|n| !n.is_empty()) {
-            Some(name) => name.to_string(),
-            None => root
-                .file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-        };
+        let name = dir_name(root, dir);
         let app = apps.entry(dir.to_string()).or_insert_with(|| App {
             name,
             dir: dir.to_string(),
@@ -241,7 +241,7 @@ fn discover(root: &Path, flow: &mut UiFlow) -> Vec<App> {
             cs: vec![],
         });
         if rel.ends_with(".cs") {
-            app.cs.push((rel, blank_cs(&text)));
+            app.cs.push((rel, crate::lang_csharp::code(&text)));
         } else {
             app.xaml.push((rel, blank(&text, "<!--", "-->")));
         }
@@ -272,30 +272,18 @@ fn owner<'a>(
     rel: &str,
     projects: &'a BTreeMap<String, Option<bool>>,
 ) -> Option<(&'a str, Option<bool>)> {
-    let mut dir = rel;
-    loop {
-        dir = dir.rsplit_once('/').map_or("", |(parent, _)| parent);
-        if let Some((key, framework)) = projects.get_key_value(dir) {
-            return Some((key.as_str(), *framework));
-        }
-        if dir.is_empty() {
-            return None;
-        }
-    }
+    ancestors(rel).find_map(|dir| {
+        (projects.get_key_value(dir)).map(|(key, framework)| (key.as_str(), *framework))
+    })
 }
 
 fn read(root: &Path, rel: &str, flow: &mut UiFlow) -> Option<String> {
-    match read_repo_file(root, Path::new(rel), MAX_BYTES) {
-        Ok(bytes) => {
-            let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-            Some(String::from_utf8_lossy(bytes).into_owned())
-        }
-        Err(_) => {
-            let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
-            report(flow, rel, 0, message.into());
-            None
-        }
+    let text = read_text(root, rel, MAX_BYTES);
+    if text.is_err() {
+        let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
+        report(flow, rel, 0, message.into());
     }
+    text.ok()
 }
 
 /// Diagnostic that also marks the flow incomplete.
@@ -1374,118 +1362,13 @@ mod actions {
     }
 }
 
-/// XAML tag scanning without knowledge of the model.
-mod xml {
-    /// One XAML tag; `attrs` is the text after the name.
-    pub(super) struct Tag<'a> {
-        pub(super) at: usize,
-        pub(super) name: &'a str,
-        pub(super) attrs: &'a str,
-        pub(super) self_closing: bool,
-        pub(super) closing: bool,
-    }
-
-    /// Every tag in text order, closing tags included; `<?` and `<!` skipped.
-    pub(super) fn all_tags(text: &str) -> Vec<Tag<'_>> {
-        let mut found = Vec::new();
-        let mut from = 0;
-        while let Some(i) = text[from..].find('<') {
-            let at = from + i;
-            let rest = &text[at + 1..];
-            let Some(end) = tag_end(rest) else { break };
-            from = at + 1 + end;
-            if rest.starts_with(['?', '!']) {
-                continue;
-            }
-            let closing = rest.starts_with('/');
-            let body = &rest[usize::from(closing)..end];
-            let len = body
-                .find(|c: char| c.is_whitespace() || c == '/')
-                .unwrap_or(body.len());
-            if len == 0 {
-                continue;
-            }
-            found.push(Tag {
-                at,
-                name: &body[..len],
-                attrs: &body[len..],
-                self_closing: body.trim_end().ends_with('/'),
-                closing,
-            });
-        }
-        found
-    }
-
-    /// Opening and self-closing tags.
-    pub(super) fn tags(text: &str) -> impl Iterator<Item = Tag<'_>> {
-        all_tags(text).into_iter().filter(|t| !t.closing)
-    }
-
-    /// (open offset, close offset, opening tag) of every non-self-closing
-    /// element whose local name is one of `names`.
-    pub(super) fn blocks<'a>(text: &'a str, names: &[&str]) -> Vec<(usize, usize, Tag<'a>)> {
-        let mut stack: Vec<Tag> = Vec::new();
-        let mut found = Vec::new();
-        for tag in all_tags(text) {
-            if !names.contains(&tag.name.rsplit(':').next().unwrap_or(tag.name)) {
-                continue;
-            }
-            if tag.closing {
-                if let Some(open) = stack.pop() {
-                    found.push((open.at, tag.at, open));
-                }
-            } else if !tag.self_closing {
-                stack.push(tag);
-            }
-        }
-        found
-    }
-
-    /// Offset of the `>` closing a tag, skipping quoted attribute values.
-    fn tag_end(s: &str) -> Option<usize> {
-        let mut quote = None;
-        for (i, c) in s.char_indices() {
-            match (quote, c) {
-                (None, '"' | '\'') => quote = Some(c),
-                (Some(q), _) if q == c => quote = None,
-                (None, '>') => return Some(i),
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// `name="value"` pairs of a tag's attribute text.
-    pub(super) fn attributes(attrs: &str) -> Vec<(&str, &str)> {
-        let mut found = Vec::new();
-        let mut rest = attrs;
-        loop {
-            rest = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '/');
-            let Some(eq) = rest.find('=') else { break };
-            let after = rest[eq + 1..].trim_start();
-            let Some(q) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
-                break;
-            };
-            let Some(end) = after[1..].find(q) else { break };
-            found.push((rest[..eq].trim(), &after[1..1 + end]));
-            rest = &after[end + 2..];
-        }
-        found
-    }
-
-    pub(super) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
-        attributes(attrs)
-            .into_iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, v)| v)
-    }
-}
-
 /// C# token scanning without knowledge of the model.
 mod text {
-    fn ident(c: char) -> bool {
-        c.is_alphanumeric() || c == '_'
-    }
+    pub(super) use crate::lang_csharp::{
+        balanced, ident_start, is_ident as ident, literal, split_args,
+    };
+    pub(super) use crate::lang_markup::blank;
+    pub(super) use crate::lang_text::line;
 
     /// `word` at `at` in `hay` is a whole identifier.
     pub(super) fn word_at(hay: &str, at: usize, word: &str) -> bool {
@@ -1602,128 +1485,6 @@ mod text {
         } else {
             None
         }
-    }
-
-    /// Content of a plain `"..."` literal spanning the whole input.
-    pub(super) fn literal(s: &str) -> Option<String> {
-        let body = s.strip_prefix('"')?.strip_suffix('"')?;
-        (!body.contains('"')).then(|| body.into())
-    }
-
-    /// Prefix of `s` up to the unquoted, unnested `close`.
-    pub(super) fn balanced(s: &str, close: char) -> &str {
-        let mut depth = 0;
-        let mut quote = false;
-        let mut prev = ' ';
-        for (i, c) in s.char_indices() {
-            match c {
-                '"' if prev != '\\' => quote = !quote,
-                _ if quote => {}
-                '(' | '[' | '{' => depth += 1,
-                c2 if c2 == close && depth == 0 => return &s[..i],
-                ')' | ']' | '}' => depth -= 1,
-                _ => {}
-            }
-            prev = c;
-        }
-        s
-    }
-
-    /// Top-level comma separated arguments, trimmed.
-    pub(super) fn split_args(args: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut rest = args;
-        while !rest.trim().is_empty() {
-            let part = balanced(rest, ',');
-            out.push(part.trim().to_string());
-            rest = rest.get(part.len() + 1..).unwrap_or("");
-        }
-        out
-    }
-
-    /// Offset where the identifier ending `s` starts.
-    pub(super) fn ident_start(s: &str) -> usize {
-        s.char_indices()
-            .rev()
-            .take_while(|(_, c)| ident(*c))
-            .last()
-            .map_or(s.len(), |(i, _)| i)
-    }
-
-    pub(super) fn line(text: &str, at: usize) -> u32 {
-        text[..at].matches('\n').count() as u32 + 1
-    }
-
-    fn blank_char(c: char) -> char {
-        if c == '\n' { '\n' } else { ' ' }
-    }
-
-    /// Replaces `open`...`close` regions with spaces, keeping line breaks.
-    pub(super) fn blank(text: &str, open: &str, close: &str) -> String {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find(open) {
-            out.push_str(&rest[..start]);
-            let end = rest[start..]
-                .find(close)
-                .map_or(rest.len(), |e| start + e + close.len());
-            out.extend(rest[start..end].chars().map(blank_char));
-            rest = &rest[end..];
-        }
-        out.push_str(rest);
-        out
-    }
-
-    /// C# `//` and `/* */` comments replaced by spaces, keeping line breaks;
-    /// string and char literals (also verbatim `@"..."`) stay untouched.
-    pub(super) fn blank_cs(text: &str) -> String {
-        let chars: Vec<char> = text.chars().collect();
-        let mut out = String::with_capacity(text.len());
-        let mut i = 0;
-        while i < chars.len() {
-            let (end, comment) = token_end(&chars, i);
-            if comment {
-                out.extend(chars[i..end].iter().map(|&c| blank_char(c)));
-            } else {
-                out.extend(&chars[i..end]);
-            }
-            i = end;
-        }
-        out
-    }
-
-    /// End of the token at `i` and whether it is a comment: a `//` line, a
-    /// `/* */` block, a string or char literal, else one char.
-    fn token_end(chars: &[char], i: usize) -> (usize, bool) {
-        let find = |from: usize, hit: &dyn Fn(usize) -> bool| (from..chars.len()).find(|&j| hit(j));
-        match (chars[i], chars.get(i + 1)) {
-            ('/', Some('/')) => (find(i, &|j| chars[j] == '\n').unwrap_or(chars.len()), true),
-            ('/', Some('*')) => {
-                let close = find(i + 2, &|j| {
-                    chars[j] == '*' && chars.get(j + 1) == Some(&'/')
-                });
-                (close.map_or(chars.len(), |j| j + 2), true)
-            }
-            (q @ ('"' | '\''), _) => (literal_end(chars, i, q), false),
-            _ => (i + 1, false),
-        }
-    }
-
-    /// End (after the closing quote) of the string or char literal at `i`;
-    /// verbatim strings (`@"..."`, `@$"..."`) escape quotes by doubling.
-    fn literal_end(chars: &[char], i: usize, quote: char) -> usize {
-        let verbatim =
-            quote == '"' && (chars[..i].ends_with(&['@']) || chars[..i].ends_with(&['@', '$']));
-        let mut j = i + 1;
-        while j < chars.len() {
-            match chars[j] {
-                '\\' if !verbatim => j += 2,
-                c if c == quote && verbatim && chars.get(j + 1) == Some(&quote) => j += 2,
-                c if c == quote || c == '\n' => return j + 1,
-                _ => j += 1,
-            }
-        }
-        chars.len()
     }
 }
 

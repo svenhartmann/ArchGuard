@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::args::{Cli, Format};
 use crate::output::{EXIT_OK, analysis_error, emit, usage};
-use crate::ui_flow_cmd::{assignment, label, print_gaps, yes_no};
+use crate::ui_flow_cmd::{assignment, extract, label, print_gaps, yes_no};
 
 /// `simulated`: the roles of `--role`, empty for `--anonymous`, none without either.
 pub(crate) fn run(
@@ -29,12 +29,12 @@ pub(crate) fn run(
     if !matches!(cli.format, Format::Text | Format::Json) {
         return usage("domain supports --format text|json");
     }
-    let mut model = match archguard_engine::domain_model::analyze(root) {
+    let mut model = match extract(cli, root, archguard_engine::domain_model::analyze_with) {
         Ok(model) => model,
         Err(error) => return analysis_error(error),
     };
     if chain || state.is_some() {
-        return match archguard_engine::ui_flow::analyze(root) {
+        return match extract(cli, root, archguard_engine::ui_flow::analyze_with) {
             Ok(flow) => run_chain(cli, &flow, &model, entity, state, simulated),
             Err(error) => analysis_error(error),
         };

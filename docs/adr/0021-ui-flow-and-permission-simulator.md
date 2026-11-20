@@ -344,3 +344,40 @@ inspector (`evaluate_condition` there and in `domain_chain`/`ui_flow_replay`
 still gets the unresolved assignment), Spring's `RoleHierarchyImpl` builder
 API, a Squidex-style `Role` class with role constants (singular names are not
 in the list).
+
+### 2026-11-20: shared language base, run context, access fallback
+
+The extractors were written one by one and each carried its own copies of
+the text helpers; the copies had drifted (the Vue copy read `import … from
+'x'` without `;`, the React copy lost it). They now call one module per
+language family in `archguard-engine`: `lang_ts`/`lang_ts_decl`/
+`lang_ts_http` (literal parser, imports, hook bindings, `fetch`/`axios`;
+Angular, React, Vue and the TypeScript domain reader), `lang_csharp` (one C#
+lexer: comments, preprocessor lines, verbatim, interpolated and raw strings,
+char literals; Blazor, XAML, backend, domain, view conventions), `lang_java`,
+`lang_markup` (XAML/Razor tags) and `lang_blank`/`lang_text` (blanking and
+navigation in blanked text). Where copies differed, the more general rule won
+and the tests decided (raw strings and `$@"…"` everywhere, a char literal is
+`'x'` or an escape, never an apostrophe in markup text). One framework is
+still one module; it keeps its rules and calls the base.
+
+Every extractor runs with an `ExtractContext` (root and configuration).
+`ui_flow::analyze(root)` reads the root's configuration as before;
+`analyze_with` takes a context. `ui-flow`, `ui-flow open/replay/roles`,
+`domain` and `check`'s conventions now use the configuration `--config`
+names; before, `--config` was ignored and only the project's own file was
+read. The MCP tools use the configuration of their root. Extractors never
+import the configuration loader (the architecture gate refuses the cycle
+through `check`).
+
+`[views.access]` takes a fallback for use sites without arguments:
+`ApiPermission = "policy:$arg|authenticated"`. Only a `role:$arg` or
+`policy:$arg` form may have one, and the fallback is no `$arg` form; anything
+else is a configuration error. The backend and Angular extractors apply it.
+Squidex with `ApiPermission = "policy:$arg|authenticated"`,
+`ApiPermissionOrAnonymous = "policy:$arg|open"` and
+`mustBeAuthenticatedGuard = "authenticated"`: the 51 endpoints whose bare
+attribute was `unknown` become 30 signed in and 21 open; 26 stay
+`undeclared`. `ui-flow` and `domain` JSON of eShop, Squidex, both Bitwarden
+repositories, jhipster, CleanArchitecture, the OpenTelemetry front end and
+the Aspire Vue sample are byte-identical before and after the refactor.

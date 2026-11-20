@@ -37,11 +37,11 @@
 //! (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
 //! `_Imports.razor`, components of referenced Razor class libraries (targets
 //! resolve within one application).
-use crate::project_files::read_repo_file;
-use crate::services::support::{Discovery, relative, test_path};
+use crate::extract_ctx::{ExtractContext, ancestors, read_text, walk, with_root_config};
+use crate::services::support::test_path;
 use archguard_core::{
-    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, ServiceTopology,
-    Transition, UiFlow, UiFlowDiagnostic,
+    Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, Transition, UiFlow,
+    UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -93,6 +93,12 @@ struct Files {
 /// Components without `@page` (layouts, menus) have no screen of their own:
 /// their transitions and actions start where they are used ([`usage`]).
 pub fn extract(root: &Path) -> UiFlow {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
+    let root = ctx.root;
     let mut flow = UiFlow::default();
     let Some(files) = discover(root, &mut flow) else {
         return flow;
@@ -113,25 +119,26 @@ pub fn extract(root: &Path) -> UiFlow {
 }
 
 fn discover(root: &Path, flow: &mut UiFlow) -> Option<Files> {
-    let mut scratch = ServiceTopology::default();
-    let discovery = match Discovery::new(root, &mut scratch) {
-        Ok(discovery) => discovery,
+    let walk = match walk(root) {
+        Ok(walk) => walk,
         Err(error) => {
             report(flow, "", 0, format!("Blazor files not scanned: {error}"));
             return None;
         }
     };
-    flow.diagnostics
-        .extend(scratch.diagnostics.into_iter().map(|d| UiFlowDiagnostic {
-            file: d.file,
-            line: 0,
-            message: d.message,
-            severity: DiagnosticSeverity::Note,
-        }));
+    flow.diagnostics.extend(
+        walk.notes
+            .into_iter()
+            .map(|(file, message)| UiFlowDiagnostic {
+                file,
+                line: 0,
+                message,
+                severity: DiagnosticSeverity::Note,
+            }),
+    );
     let mut files = Files::default();
-    for entry in discovery.walk(root).flatten() {
-        let rel = relative(root, entry.path());
-        if !entry.file_type().is_some_and(|t| t.is_file()) || test_path(&rel) {
+    for rel in walk.files {
+        if test_path(&rel) {
             continue;
         }
         if rel.ends_with(".csproj") {
@@ -215,17 +222,12 @@ fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component], index:
 }
 
 fn read(root: &Path, rel: &str, flow: &mut UiFlow) -> Option<String> {
-    match read_repo_file(root, Path::new(rel), MAX_BYTES) {
-        Ok(bytes) => {
-            let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-            Some(String::from_utf8_lossy(bytes).into_owned())
-        }
-        Err(_) => {
-            let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
-            report(flow, rel, 0, message.into());
-            None
-        }
+    let text = read_text(root, rel, MAX_BYTES);
+    if text.is_err() {
+        let message = "File not read: larger than 1 MiB, not a regular file or not readable; its screens and navigation are unknown.";
+        report(flow, rel, 0, message.into());
     }
+    text.ok()
 }
 
 /// Diagnostic that also marks the flow incomplete.
@@ -311,14 +313,7 @@ fn owner<'a>(root: &Path, rel: &'a str, projects: &Projects) -> (Option<String>,
 
 /// Directory of the nearest ancestor `.csproj` of `rel` (`""` for the root).
 fn project_of<'a>(rel: &str, projects: &'a Projects) -> Option<&'a str> {
-    let mut dir = rel;
-    while let Some((parent, _)) = dir.rsplit_once('/') {
-        dir = parent;
-        if let Some((found, _)) = projects.get_key_value(dir) {
-            return Some(found);
-        }
-    }
-    projects.get_key_value("").map(|(found, _)| found.as_str())
+    ancestors(rel).find_map(|dir| projects.get_key_value(dir).map(|(found, _)| found.as_str()))
 }
 
 /// Literal `@page` routes and the line of the first `@page` (0 without one).
@@ -547,6 +542,10 @@ fn view_condition(text: &str, start: usize, file: &str, flow: &mut UiFlow) -> Co
 
 /// Markup and C# text scanning without knowledge of the model.
 mod text {
+    pub(super) use crate::lang_csharp::{balanced, ident_start, literal, split_args};
+    pub(super) use crate::lang_markup::{blank, strip_tags, tag_end};
+    pub(super) use crate::lang_text::{collapse as words, line};
+
     /// `<AuthorizeView>` and `<NotAuthorized>` blocks of one text.
     pub(super) type Blocks = (Vec<(usize, usize)>, Vec<(usize, usize)>);
 
@@ -633,20 +632,6 @@ mod text {
         head.contains(':') || href.starts_with("//")
     }
 
-    /// Offset of the `>` closing a tag, skipping quoted attribute values.
-    pub(super) fn tag_end(s: &str) -> Option<usize> {
-        let mut quote = None;
-        for (i, c) in s.char_indices() {
-            match (quote, c) {
-                (None, '"' | '\'') => quote = Some(c),
-                (Some(q), _) if q == c => quote = None,
-                (None, '>') => return Some(i),
-                _ => {}
-            }
-        }
-        None
-    }
-
     pub(super) fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
         for (at, _) in attrs.match_indices(name) {
             if !attrs[..at].ends_with(char::is_whitespace) {
@@ -663,24 +648,6 @@ mod text {
             });
         }
         None
-    }
-
-    pub(super) fn strip_tags(s: &str) -> String {
-        let mut out = String::new();
-        let mut depth = 0;
-        for c in s.chars() {
-            match c {
-                '<' => depth += 1,
-                '>' if depth > 0 => depth -= 1,
-                _ if depth == 0 => out.push(c),
-                _ => {}
-            }
-        }
-        out
-    }
-
-    pub(super) fn words(s: &str) -> String {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     /// Route shape of a literal path: query and fragment dropped, leading `/`,
@@ -724,12 +691,6 @@ mod text {
         out
     }
 
-    /// Content of a plain `"..."` literal spanning the whole input.
-    pub(super) fn literal(s: &str) -> Option<String> {
-        let body = s.strip_prefix('"')?.strip_suffix('"')?;
-        (!body.contains('"')).then(|| body.into())
-    }
-
     /// Every `needle(` call: (offset, first argument text).
     pub(super) fn calls(text: &str, needle: &str) -> Vec<(usize, String)> {
         text.match_indices(needle)
@@ -739,70 +700,6 @@ mod text {
             })
             .collect()
     }
-
-    /// Prefix of `s` up to the unquoted, unnested `close`.
-    pub(super) fn balanced(s: &str, close: char) -> &str {
-        let mut depth = 0;
-        let mut quote = false;
-        let mut prev = ' ';
-        for (i, c) in s.char_indices() {
-            match c {
-                '"' if prev != '\\' => quote = !quote,
-                _ if quote => {}
-                '(' | '[' | '{' => depth += 1,
-                c2 if c2 == close && depth == 0 => return &s[..i],
-                ')' | ']' | '}' => depth -= 1,
-                _ => {}
-            }
-            prev = c;
-        }
-        s
-    }
-
-    /// Top-level comma separated arguments, trimmed.
-    pub(super) fn split_args(args: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut rest = args;
-        while !rest.trim().is_empty() {
-            let part = balanced(rest, ',');
-            out.push(part.trim().to_string());
-            rest = rest.get(part.len() + 1..).unwrap_or("");
-        }
-        out
-    }
-
-    /// Offset where the identifier ending `s` starts.
-    pub(super) fn ident_start(s: &str) -> usize {
-        s.char_indices()
-            .rev()
-            .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
-            .last()
-            .map_or(s.len(), |(i, _)| i)
-    }
-
-    pub(super) fn line(text: &str, at: usize) -> u32 {
-        text[..at].matches('\n').count() as u32 + 1
-    }
-
-    /// Replaces `open`...`close` regions with spaces, keeping line breaks.
-    pub(super) fn blank(text: &str, open: &str, close: &str) -> String {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find(open) {
-            out.push_str(&rest[..start]);
-            let end = rest[start..]
-                .find(close)
-                .map_or(rest.len(), |e| start + e + close.len());
-            out.extend(
-                rest[start..end]
-                    .chars()
-                    .map(|c| if c == '\n' { '\n' } else { ' ' }),
-            );
-            rest = &rest[end..];
-        }
-        out.push_str(rest);
-        out
-    }
 }
 
 /// C# reading without a parser: comments blanked, declarations found on a
@@ -810,6 +707,7 @@ mod text {
 mod csharp {
     use super::VERBS;
     use super::text::{balanced, ident_start, literal, shape, split_args};
+    pub(super) use crate::lang_csharp::clean;
     use std::collections::BTreeMap;
 
     pub(super) struct Method {
@@ -839,97 +737,6 @@ mod csharp {
     pub(super) enum Part {
         Text(String),
         Hole(String),
-    }
-
-    #[derive(Clone, Copy, PartialEq)]
-    enum Kind {
-        Code,
-        Comment,
-        Literal,
-    }
-
-    /// (code with comments blanked, mask with literal contents blanked too);
-    /// both keep the byte offsets and line breaks of `text`.
-    pub(super) fn clean(text: &str) -> (String, String) {
-        let kinds = kinds(text.as_bytes());
-        let (mut code, mut mask) = (String::new(), String::new());
-        for (i, c) in text.char_indices() {
-            let pad = |out: &mut String| match c {
-                '\n' => out.push('\n'),
-                _ => out.extend(std::iter::repeat_n(' ', c.len_utf8())),
-            };
-            match kinds[i] {
-                Kind::Comment => pad(&mut code),
-                _ => code.push(c),
-            }
-            match kinds[i] {
-                Kind::Code => mask.push(c),
-                _ => pad(&mut mask),
-            }
-        }
-        (code, mask)
-    }
-
-    fn kinds(b: &[u8]) -> Vec<Kind> {
-        let mut kinds = vec![Kind::Code; b.len()];
-        let mut i = 0;
-        while i < b.len() {
-            // (kind, first byte, end byte, next position)
-            let (kind, from, to, next) = match (b[i], b.get(i + 1)) {
-                (b'/', Some(b'/')) => {
-                    let end = find(b, i, b"\n");
-                    (Kind::Comment, i, end, end)
-                }
-                (b'/', Some(b'*')) => {
-                    let end = (find(b, i + 2, b"*/") + 2).min(b.len());
-                    (Kind::Comment, i, end, end)
-                }
-                (b'"', _) => {
-                    let end = string_end(b, i);
-                    (Kind::Literal, i + 1, end, end + 1)
-                }
-                (b'\'', _) => match char_end(b, i) {
-                    Some(end) => (Kind::Literal, i + 1, end, end + 1),
-                    None => (Kind::Code, i, i, i + 1),
-                },
-                _ => (Kind::Code, i, i, i + 1),
-            };
-            kinds[from..to].fill(kind);
-            i = next;
-        }
-        kinds
-    }
-
-    /// Offset of `needle` at or after `from`, or the end.
-    fn find(b: &[u8], from: usize, needle: &[u8]) -> usize {
-        b.get(from..)
-            .and_then(|rest| rest.windows(needle.len()).position(|w| w == needle))
-            .map_or(b.len(), |at| from + at)
-    }
-
-    /// Offset of the quote closing the string opened at `i` (verbatim `@"`
-    /// doubles quotes; a plain string ends at a line break at the latest).
-    fn string_end(b: &[u8], i: usize) -> usize {
-        let verbatim = b[..i].ends_with(b"@") || b[..i].ends_with(b"@$");
-        let mut j = i + 1;
-        while j < b.len() {
-            match b[j] {
-                b'\\' if !verbatim => j += 1,
-                b'"' if verbatim && b.get(j + 1) == Some(&b'"') => j += 1,
-                b'"' | b'\n' if b[j] == b'"' || !verbatim => return j,
-                _ => {}
-            }
-            j += 1;
-        }
-        b.len()
-    }
-
-    /// Offset of the quote closing a char literal at `i`, if it is one.
-    fn char_end(b: &[u8], i: usize) -> Option<usize> {
-        if b.get(i + 1) == Some(&b'\\') {
-            return (i + 3..(i + 10).min(b.len())).find(|&j| b[j] == b'\'');
-        }
-        (b.get(i + 2) == Some(&b'\'')).then_some(i + 2)
     }
 
     /// Every `class` and `interface` with a body in one cleaned file.

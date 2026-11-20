@@ -220,8 +220,10 @@ impl ArchguardTools {
     ) -> Result<String, ErrorData> {
         validate(&params)?;
         let root = crate::tools::resolve_root(&self.root, params.page.path.as_deref())?;
+        let loaded = crate::tools::load_config_at(&root)?;
+        let ctx = archguard_engine::extract_ctx::ExtractContext::new(&root, &loaded.config);
         let flow =
-            archguard_engine::ui_flow::analyze(&root).map_err(crate::server::insight_error)?;
+            archguard_engine::ui_flow::analyze_with(&ctx).map_err(crate::server::insight_error)?;
         ui_flow_value(&flow, &params).map(|v| v.to_string())
     }
 }

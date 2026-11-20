@@ -96,6 +96,21 @@ pub mod domain_csharp;
 pub mod domain_java;
 pub mod domain_model;
 pub mod domain_typescript;
+pub mod extract_ctx;
+#[cfg(test)]
+mod extract_ctx_tests;
+mod lang_blank;
+mod lang_csharp;
+mod lang_java;
+mod lang_markup;
+#[cfg(test)]
+mod lang_tests;
+mod lang_text;
+mod lang_ts;
+mod lang_ts_decl;
+mod lang_ts_http;
+#[cfg(test)]
+mod lang_ts_tests;
 #[cfg(test)]
 mod manifest_render_tests;
 #[cfg(test)]

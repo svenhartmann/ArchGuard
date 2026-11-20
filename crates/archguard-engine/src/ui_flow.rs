@@ -2,6 +2,8 @@
 //! without an extractor.
 use std::path::Path;
 
+use crate::extract_ctx::{ExtractContext, with_root_config};
+
 use archguard_core::{
     ArchguardError, UI_FLOW_DEFINITION, UI_FLOW_IMPORT_SOURCE, UiFlow, merge_ui_flows,
 };
@@ -42,23 +44,29 @@ pub fn read_ui_flow(root: &Path) -> Result<Option<UiFlow>, ArchguardError> {
     Ok(Some(flow))
 }
 
-/// The flow below `root`: every extractor merged with the import file. An
-/// invalid import file is an error; extractor problems stay diagnostics.
+/// The flow below `root` with the root's configuration: every extractor
+/// merged with the import file. An invalid import file is an error;
+/// extractor problems stay diagnostics.
 pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
-    let import = read_ui_flow(root)?.unwrap_or_default();
+    with_root_config(root, analyze_with)
+}
+
+/// [`analyze`] for one run, e.g. with the configuration given by `--config`.
+pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
+    let import = read_ui_flow(ctx.root)?.unwrap_or_default();
     let extractors = [
-        crate::ui_flow_blazor::extract,
-        crate::ui_flow_angular::extract,
-        crate::ui_flow_backend::extract,
-        crate::ui_flow_react::extract,
-        crate::ui_flow_xaml::extract,
-        crate::ui_flow_vue::extract,
-        crate::ui_flow_slint::extract,
-        crate::ui_flow_roles::extract,
+        crate::ui_flow_blazor::extract_with,
+        crate::ui_flow_angular::extract_with,
+        crate::ui_flow_backend::extract_with,
+        crate::ui_flow_react::extract_with,
+        crate::ui_flow_xaml::extract_with,
+        crate::ui_flow_vue::extract_with,
+        crate::ui_flow_slint::extract_with,
+        crate::ui_flow_roles::extract_with,
     ];
     Ok(extractors
         .into_iter()
-        .fold(import, |flow, extract| merge_ui_flows(flow, extract(root))))
+        .fold(import, |flow, extract| merge_ui_flows(flow, extract(ctx))))
 }
 
 #[cfg(test)]

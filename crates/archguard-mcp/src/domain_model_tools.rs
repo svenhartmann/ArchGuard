@@ -257,10 +257,15 @@ impl ArchguardTools {
     ) -> Result<String, ErrorData> {
         validate(&params)?;
         let root = crate::tools::resolve_root(&self.root, params.page.path.as_deref())?;
-        let model =
-            archguard_engine::domain_model::analyze(&root).map_err(crate::server::insight_error)?;
+        let loaded = crate::tools::load_config_at(&root)?;
+        let ctx = archguard_engine::extract_ctx::ExtractContext::new(&root, &loaded.config);
+        let model = archguard_engine::domain_model::analyze_with(&ctx)
+            .map_err(crate::server::insight_error)?;
         let flow = if params.chain || params.state.is_some() {
-            Some(archguard_engine::ui_flow::analyze(&root).map_err(crate::server::insight_error)?)
+            Some(
+                archguard_engine::ui_flow::analyze_with(&ctx)
+                    .map_err(crate::server::insight_error)?,
+            )
         } else {
             None
         };

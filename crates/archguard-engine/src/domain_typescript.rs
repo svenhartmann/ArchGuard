@@ -56,8 +56,8 @@
 //! `@relation` on lists, request types of named `*Handler` classes, state
 //! libraries (XState) and the State pattern. The marker names are the
 //! constants below; reading them from the configuration comes later.
-use crate::project_files::read_repo_file;
-use crate::services::support::{excluded, relative, test_path};
+use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
+use crate::lang_text::*;
 use archguard_core::domain_model::{
     DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, Relation, RelationKind,
     StateMachine, StateTransition, UseCase, UseCaseKind,
@@ -66,7 +66,6 @@ use members::{Kind, Member, field};
 use states::{Rules, Step, assignments, created, raise_calls};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use text::*;
 
 const SOURCE: &str = "typescript";
 /// Base class, implemented interface or class decorator of an aggregate root.
@@ -101,8 +100,6 @@ const COLLECTIONS: [&str; 7] = [
 ];
 const ID_TYPES: [&str; 2] = ["string", "number"];
 const EXTENSIONS: [&str; 5] = [".ts", ".tsx", ".mts", ".cts", ".prisma"];
-const MAX_BYTES: u64 = 1 << 20;
-const MAX_FILES: usize = 5_000;
 /// Words before `class`.
 const CLASS_MODIFIERS: [&str; 4] = ["export", "default", "abstract", "declare"];
 /// Words before a member name.
@@ -126,6 +123,12 @@ type Pending = Vec<(usize, usize, String, bool)>;
 
 /// The domain model of the TypeScript and Prisma sources below `root`.
 pub fn extract(root: &Path) -> DomainModel {
+    with_root_config(root, extract_with)
+}
+
+/// [`extract`] for one run.
+pub fn extract_with(ctx: &ExtractContext) -> DomainModel {
+    let root = ctx.root;
     let mut x = Extractor::default();
     x.read(root);
     for f in 0..x.files.len() {
@@ -211,49 +214,23 @@ struct Extractor {
 
 impl Extractor {
     fn read(&mut self, root: &Path) {
-        let mut paths = vec![];
-        for entry in walker(root) {
-            match entry {
-                Ok(e) if e.file_type().is_some_and(|t| t.is_file()) => {
-                    let rel = relative(root, e.path());
-                    let declaration = [".d.ts", ".d.mts", ".d.cts"]
-                        .iter()
-                        .any(|x| rel.ends_with(x));
-                    if EXTENSIONS.iter().any(|x| rel.ends_with(x))
-                        && !declaration
-                        && !test_path(&rel)
-                    {
-                        paths.push(rel);
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => self.push_diag("", format!("Directory not read: {e}")),
-            }
+        let keep = |rel: &str| {
+            let declaration = [".d.ts", ".d.mts", ".d.cts"]
+                .iter()
+                .any(|x| rel.ends_with(x));
+            EXTENSIONS.iter().any(|x| rel.ends_with(x)) && !declaration
+        };
+        let (sources, gaps) = domain_sources(root, &[], keep, "TypeScript/Prisma");
+        for (file, message) in gaps {
+            self.push_diag(&file, message);
         }
-        paths.sort();
-        if paths.len() > MAX_FILES {
-            let message = format!(
-                "Domain scan stopped after {MAX_FILES} TypeScript/Prisma files; later files are unknown."
-            );
-            self.push_diag(&paths[MAX_FILES], message);
-            paths.truncate(MAX_FILES);
-        }
-        for rel in paths {
-            match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
-                Ok(bytes) => {
-                    let src = String::from_utf8_lossy(&bytes);
-                    self.files.push(Src {
-                        text: lex::strip(&src, false),
-                        shown: lex::strip(&src, true),
-                        prisma: rel.ends_with(".prisma"),
-                        rel,
-                    });
-                }
-                Err(_) => self.push_diag(
-                    &rel,
-                    "Source file not read: larger than 1 MiB, not a regular file or not readable; its domain elements are unknown.".into(),
-                ),
-            }
+        for (rel, src) in sources {
+            self.files.push(Src {
+                text: crate::lang_ts_decl::mask(&src, false),
+                shown: crate::lang_ts_decl::mask(&src, true),
+                prisma: rel.ends_with(".prisma"),
+                rel,
+            });
         }
     }
 
@@ -618,17 +595,6 @@ impl Extractor {
         m.diagnostics.dedup();
         self.model
     }
-}
-
-fn walker(root: &Path) -> ignore::Walk {
-    ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .follow_links(false)
-        .require_git(false)
-        .git_global(false)
-        .max_depth(Some(64))
-        .filter_entry(|e| e.depth() == 0 || !excluded(&e.file_name().to_string_lossy()))
-        .build()
 }
 
 fn marker_kind(decl: &Decl) -> Option<EntityKind> {
@@ -1666,270 +1632,6 @@ mod states {
         let t = simple(&rest[..end]);
         let call = rest[end..].trim_start().starts_with(['(', '<']);
         (call && !t.is_empty()).then_some(t)
-    }
-}
-
-/// Navigation in blanked source text.
-mod text {
-    pub(super) fn is_id(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
-    }
-
-    pub(super) fn ident_end(b: &[u8], from: usize) -> usize {
-        (from..b.len()).find(|&k| !is_id(b[k])).unwrap_or(b.len())
-    }
-
-    /// Identifiers in `s[from..to]` with their offsets.
-    pub(super) fn idents(s: &str, from: usize, to: usize) -> Vec<(usize, &str)> {
-        let b = s.as_bytes();
-        let mut out = vec![];
-        let mut k = from;
-        while k < to {
-            if !is_id(b[k]) {
-                k += 1;
-                continue;
-            }
-            let start = k;
-            k = ident_end(b, k).min(to);
-            if !b[start].is_ascii_digit() {
-                out.push((start, &s[start..k]));
-            }
-        }
-        out
-    }
-
-    /// Offset of the sub-slice `part` in `s`.
-    pub(super) fn offset(s: &str, part: &str) -> usize {
-        part.as_ptr() as usize - s.as_ptr() as usize
-    }
-
-    /// Only whitespace between token `a` and offset `b`.
-    pub(super) fn gap(s: &str, a: (usize, &str), b: usize) -> bool {
-        s[a.0 + a.1.len()..b].trim().is_empty()
-    }
-
-    pub(super) fn next_nonws(b: &[u8], from: usize) -> Option<usize> {
-        (from..b.len()).find(|&k| !b[k].is_ascii_whitespace())
-    }
-
-    pub(super) fn prev_nonws(b: &[u8], before: usize) -> Option<usize> {
-        (0..before).rev().find(|&k| !b[k].is_ascii_whitespace())
-    }
-
-    /// The identifier ending right before `before` (whitespace skipped).
-    pub(super) fn prev_word(s: &str, before: usize) -> &str {
-        let b = s.as_bytes();
-        let Some(end) = prev_nonws(b, before).map(|k| k + 1) else {
-            return "";
-        };
-        let start = (0..end).rev().find(|&k| !is_id(b[k])).map_or(0, |k| k + 1);
-        &s[start..end]
-    }
-
-    fn pair(c: u8) -> Option<(u8, u8)> {
-        [(b'(', b')'), (b'{', b'}'), (b'[', b']'), (b'<', b'>')]
-            .into_iter()
-            .find(|&(o, z)| c == o || c == z)
-    }
-
-    /// The bracket closing the one at `open`.
-    pub(super) fn matching(b: &[u8], open: usize) -> Option<usize> {
-        let (o, z) = pair(b[open]).filter(|p| p.0 == b[open])?;
-        let mut depth = 0;
-        for (k, &c) in b.iter().enumerate().skip(open) {
-            depth += i32::from(c == o) - i32::from(c == z);
-            if depth == 0 {
-                return Some(k);
-            }
-        }
-        None
-    }
-
-    /// The bracket opening the one at `close`.
-    pub(super) fn matching_back(b: &[u8], close: usize) -> Option<usize> {
-        let (o, z) = pair(b[close]).filter(|p| p.1 == b[close])?;
-        let mut depth = 0;
-        for k in (0..=close).rev() {
-            depth += i32::from(b[k] == z) - i32::from(b[k] == o);
-            if depth == 0 {
-                return Some(k);
-            }
-        }
-        None
-    }
-
-    /// Splits at `sep` outside (), <>, [] and {}.
-    pub(super) fn split_top<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
-        let b = s.as_bytes();
-        let mut out = vec![];
-        let (mut depth, mut start, mut k) = (0i32, 0, 0);
-        while k < b.len() {
-            match b[k] {
-                b'(' | b'<' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                b'>' if k == 0 || !matches!(b[k - 1], b'=' | b'-') => depth -= 1,
-                _ if depth == 0 && b[k..].starts_with(sep.as_bytes()) => {
-                    out.push(&s[start..k]);
-                    k += sep.len();
-                    start = k;
-                    continue;
-                }
-                _ => {}
-            }
-            k += 1;
-        }
-        out.push(&s[start..]);
-        out
-    }
-
-    /// First `pat` outside parentheses and brackets.
-    pub(super) fn find_top(s: &str, pat: &str) -> Option<usize> {
-        let b = s.as_bytes();
-        let mut depth = 0i32;
-        for k in 0..b.len() {
-            if depth == 0 && b[k..].starts_with(pat.as_bytes()) {
-                return Some(k);
-            }
-            match b[k] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// First plain `=` (not `==`, `!=`, `<=`, `>=`, `=>`) outside parentheses.
-    pub(super) fn first_assign(s: &str) -> Option<usize> {
-        let b = s.as_bytes();
-        let mut depth = 0i32;
-        for k in 0..b.len() {
-            match b[k] {
-                b'(' | b'[' => depth += 1,
-                b')' | b']' => depth -= 1,
-                b'=' if depth == 0
-                    && !matches!(b.get(k + 1), Some(b'=' | b'>'))
-                    && !(k > 0 && matches!(b[k - 1], b'=' | b'!' | b'<' | b'>')) =>
-                {
-                    return Some(k);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    pub(super) fn unparen(s: &str) -> &str {
-        let mut s = s.trim();
-        while s.starts_with('(') && matching(s.as_bytes(), 0) == Some(s.len() - 1) {
-            s = s[1..s.len() - 1].trim();
-        }
-        s
-    }
-
-    /// `a.b.Type<T>` / `() => Base` / `T[]` → `Type` / `Base` / `T`.
-    pub(super) fn simple(t: &str) -> String {
-        let t = t.trim();
-        let t = t.rsplit("=>").next().unwrap_or(t).trim();
-        let t = &t[..t.find(['<', '(']).unwrap_or(t.len())];
-        let t = t.trim_end_matches('?').trim_end_matches("[]");
-        t.rsplit('.').next().unwrap_or(t).trim().to_string()
-    }
-
-    pub(super) fn mentions(cond: &str, field: &str) -> bool {
-        idents(cond, 0, cond.len()).iter().any(|x| x.1 == field)
-    }
-
-    pub(super) fn line(s: &str, pos: usize) -> u32 {
-        let newlines = s.as_bytes()[..pos.min(s.len())]
-            .iter()
-            .filter(|&&c| c == b'\n')
-            .count();
-        u32::try_from(newlines + 1).unwrap_or(u32::MAX)
-    }
-
-    pub(super) fn collapse(s: &str) -> String {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-}
-
-/// Blanking of comments and literal contents.
-mod lex {
-    /// `src` with comments and template-literal contents replaced by spaces
-    /// (newlines kept), and string contents too unless `keep_strings`, so
-    /// offsets and lines stay those of the source.
-    // shortcut: regular-expression literals are not recognized; a quote or
-    // bracket inside one can shift the blanking. Upgrade when a project needs it.
-    pub(super) fn strip(src: &str, keep_strings: bool) -> String {
-        let mut b = src.as_bytes().to_vec();
-        // A byte order mark would glue onto the first identifier.
-        if b.starts_with("\u{FEFF}".as_bytes()) {
-            b[..3].fill(b' ');
-        }
-        let mut i = 0;
-        while i < b.len() {
-            let next = b.get(i + 1).copied();
-            let (from, to, cont) = match b[i] {
-                b'/' if next == Some(b'/') => (i, line_end(&b, i), line_end(&b, i)),
-                b'/' if next == Some(b'*') => {
-                    let end = find(&b, i + 2, b"*/").map_or(b.len(), |p| p + 2);
-                    (i, end, end)
-                }
-                b'`' => {
-                    let end = closing(&b, i, false);
-                    (i + 1, end, end + 1)
-                }
-                b'\'' | b'"' => {
-                    let end = closing(&b, i, true);
-                    if keep_strings {
-                        (end, end, end + 1)
-                    } else {
-                        (i + 1, end, end + 1)
-                    }
-                }
-                _ => {
-                    i += 1;
-                    continue;
-                }
-            };
-            blank(&mut b, from, to);
-            i = cont;
-        }
-        String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
-    }
-
-    fn find(b: &[u8], from: usize, pat: &[u8]) -> Option<usize> {
-        b.get(from..)?
-            .windows(pat.len())
-            .position(|w| w == pat)
-            .map(|p| from + p)
-    }
-
-    fn line_end(b: &[u8], i: usize) -> usize {
-        b[i..]
-            .iter()
-            .position(|&c| c == b'\n')
-            .map_or(b.len(), |p| i + p)
-    }
-
-    /// The closing quote of the literal opened at `i`, with `\` escapes;
-    /// `one_line` stops at a line break.
-    fn closing(b: &[u8], i: usize, one_line: bool) -> usize {
-        let q = b[i];
-        let mut j = i + 1;
-        while j < b.len() && b[j] != q && !(one_line && b[j] == b'\n') {
-            j += if b[j] == b'\\' { 2 } else { 1 };
-        }
-        j.min(b.len())
-    }
-
-    fn blank(b: &mut [u8], from: usize, to: usize) {
-        let to = to.min(b.len());
-        for c in &mut b[from.min(to)..to] {
-            if *c != b'\n' {
-                *c = b' ';
-            }
-        }
     }
 }
 

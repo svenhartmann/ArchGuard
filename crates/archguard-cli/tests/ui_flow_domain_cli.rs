@@ -438,3 +438,50 @@ fn domain_triggers_include_message_handlers_and_rights_per_role() {
         .unwrap();
     assert_eq!(without_chain.status.code(), Some(2));
 }
+
+const PERMISSIONS: &[(&str, &str)] = &[
+    ("Api/Api.csproj", "<Project />"),
+    (
+        "Api/OrdersController.cs",
+        "[ApiController]\n[Route(\"api/orders\")]\npublic class OrdersController : ControllerBase\n{\n    [HttpGet]\n    [ApiPermission(\"orders.read\")]\n    public IActionResult List() => Ok();\n}\n",
+    ),
+];
+
+fn endpoint_access(value: &Value) -> &Value {
+    &value["flow"]["endpoints"][0]["access"]
+}
+
+// `--config` used to be ignored by `ui-flow` and `domain`: the extractors read
+// the project's own configuration only.
+#[test]
+fn ui_flow_and_domain_take_the_configuration_given_by_config() {
+    let dir = project_with(PERMISSIONS);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let config = elsewhere.path().join("scratch.toml");
+    fs::write(&config, "[views.access]\nApiPermission = \"policy:$arg\"\n").unwrap();
+    let config = config.to_str().unwrap();
+
+    assert_eq!(
+        endpoint_access(&json(dir.path(), &["ui-flow"])),
+        "undeclared"
+    );
+    let given = json(dir.path(), &["--config", config, "ui-flow"]);
+    assert_eq!(
+        endpoint_access(&given),
+        &serde_json::json!({"protected": {"policy": "orders.read"}})
+    );
+    // `domain --chain` evaluates the endpoints of the same flow.
+    let chain = json(dir.path(), &["--config", config, "domain", "--chain"]);
+    assert_eq!(
+        chain["chains"][0]["endpoint"]["access"],
+        endpoint_access(&given).clone()
+    );
+
+    // A `--config` that cannot be read is an error, not a silent default.
+    let output = Command::new(env!("CARGO_BIN_EXE_archguard"))
+        .args(["--config", "/nonexistent/archguard.toml", "ui-flow"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+}
