@@ -37,6 +37,7 @@ mod co_change;
 mod cohesion;
 pub use class_cohesion::class_cohesion;
 mod comparison;
+mod git_cmd;
 mod staged;
 pub use staged::{compare_branches, compare_staged};
 mod arc42_context;

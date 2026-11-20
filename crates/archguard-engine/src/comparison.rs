@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub(crate) const MAX_TREE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES: usize = 256 * 1024 * 1024;
@@ -195,8 +195,7 @@ pub(crate) fn extract_tree(
     destination: &Path,
 ) -> Result<(), ArchguardError> {
     let context = context_paths(relative);
-    let mut batch = Command::new("git")
-        .current_dir(repo)
+    let mut batch = crate::git_cmd::git(repo)
         .args(["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -230,18 +229,16 @@ pub(crate) fn extract_tree(
             {
                 return Err(invalid("unsafe path in Git tree"));
             }
-            if path.components().any(|component| {
-                component
-                    .as_os_str()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(".git")
-            }) {
+            if path
+                .components()
+                .any(|component| is_dot_git(component.as_os_str()))
+            {
                 return Err(invalid("Git metadata is not allowed in a base snapshot"));
             }
             if path != relative.join(crate::config::DEFAULT_CONFIG_PATH)
                 && path
                     .components()
-                    .any(|component| component.as_os_str() == ".archguard")
+                    .any(|component| is_dot_archguard(component.as_os_str()))
             {
                 continue;
             }
@@ -298,15 +295,34 @@ pub(crate) fn extract_tree(
     result
 }
 
+/// The name a component resolves to on NTFS/HFS+, as git's `core.protectNTFS`
+/// and `core.protectHFS` see it: ignorable code points dropped, an alternate
+/// data stream (`:...`) and trailing dots/spaces cut, ASCII case folded.
+fn filesystem_name(name: &std::ffi::OsStr) -> String {
+    let name: String = name
+        .to_string_lossy()
+        .chars()
+        .filter(|c| {
+            !matches!(c, '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}')
+        })
+        .collect();
+    let name = name.split(':').next().unwrap_or_default();
+    name.trim_end_matches([' ', '.']).to_ascii_lowercase()
+}
+fn is_dot_git(name: &std::ffi::OsStr) -> bool {
+    matches!(filesystem_name(name).as_str(), ".git" | "git~1")
+}
+fn is_dot_archguard(name: &std::ffi::OsStr) -> bool {
+    matches!(filesystem_name(name).as_str(), ".archguard" | "archgu~1")
+}
+
 pub(crate) fn bounded_git(
     root: &Path,
     args: &[OsString],
     limit: usize,
 ) -> Result<Vec<u8>, ArchguardError> {
-    let mut child = Command::new("git")
-        .current_dir(root)
+    let mut child = crate::git_cmd::git(root)
         .args(args)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
@@ -374,7 +390,7 @@ fn invalid(error: impl std::fmt::Display) -> ArchguardError {
     ArchguardError::Config(format!("base comparison: {error}"))
 }
 pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ArchguardError> {
-    let output = Command::new("git").current_dir(root).args(args).output()?;
+    let output = crate::git_cmd::git(root).args(args).output()?;
     if !output.status.success() {
         return Err(invalid(String::from_utf8_lossy(&output.stderr).trim()));
     }
@@ -413,6 +429,30 @@ mod tests {
         git(root.path(), &["commit", "-qm", "base"]);
         git(root.path(), &["tag", "base"]);
         root
+    }
+    #[test]
+    fn names_that_windows_or_macos_resolve_to_dot_git_are_rejected() {
+        for name in [
+            ".git",
+            ".GIT",
+            ".git.",
+            ".git ",
+            ".git. .",
+            "git~1",
+            "GIT~1",
+            ".git::$INDEX_ALLOCATION",
+            ".git:stream",
+            ".g\u{200c}it",
+        ] {
+            assert!(is_dot_git(name.as_ref()), "{name:?}");
+        }
+        for name in [".gitignore", "git", ".github", "git~2x", "a.git"] {
+            assert!(!is_dot_git(name.as_ref()), "{name:?}");
+        }
+        for name in [".archguard", ".ArchGuard.", ".archguard::$DATA", "ARCHGU~1"] {
+            assert!(is_dot_archguard(name.as_ref()), "{name:?}");
+        }
+        assert!(!is_dot_archguard(".archguardx".as_ref()));
     }
     #[test]
     fn finds_only_new_violations_without_touching_working_tree() {
