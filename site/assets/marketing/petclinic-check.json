@@ -1,0 +1,670 @@
+{
+  "scenario": "Deliberately restrictive local teaching policy; not an upstream defect report.",
+  "normalization": "Only the local checkout prefix is replaced with '.'; measurements are unchanged.",
+  "commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+  "cli_version": "archguard 0.3.5",
+  "exit_code": 1,
+  "report": {
+    "schema_version": 1,
+    "summary": {
+      "nodes": 30,
+      "edges": 48,
+      "sccs": 0,
+      "largest_scc": 0,
+      "layer_violations": 1,
+      "status": "fail",
+      "ccd": 118,
+      "acd": 3.933333333333333,
+      "nccd": 0.9548464010693316
+    },
+    "config": {
+      "architecture": "default",
+      "dependency_rules": "default",
+      "layers": "declared",
+      "modules": "declared",
+      "ownership_rules": "default",
+      "performance": "default",
+      "project": "declared",
+      "review": "default",
+      "rules": "default",
+      "semantic": "default",
+      "store": "default"
+    },
+    "findings": [
+      {
+        "kind": "layer_violation",
+        "id": "layer-1",
+        "severity": "error",
+        "nodes": [
+          "org/springframework/samples/petclinic/owner/Owner.java",
+          "org/springframework/samples/petclinic/model/BaseEntity.java",
+          "org/springframework/samples/petclinic/owner/Owner.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "org/springframework/samples/petclinic/owner/Owner.java",
+          "org/springframework/samples/petclinic/model/Person.java",
+          "org/springframework/samples/petclinic/owner/OwnerController.java",
+          "org/springframework/samples/petclinic/model/BaseEntity.java",
+          "org/springframework/samples/petclinic/owner/OwnerController.java",
+          "org/springframework/samples/petclinic/model/Person.java",
+          "org/springframework/samples/petclinic/owner/Pet.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "org/springframework/samples/petclinic/owner/PetController.java",
+          "org/springframework/samples/petclinic/model/BaseEntity.java",
+          "org/springframework/samples/petclinic/owner/PetController.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "org/springframework/samples/petclinic/owner/PetType.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java"
+        ],
+        "edge_count": 1,
+        "cycles_sampled": 0,
+        "suggested_cuts": []
+      }
+    ],
+    "metrics": {
+      "org/springframework/samples/petclinic/PetClinicApplication.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/PetClinicRuntimeHints.java": {
+        "fan_in": 0,
+        "fan_out": 3,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/model/BaseEntity.java": {
+        "fan_in": 8,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/model/NamedEntity.java": {
+        "fan_in": 8,
+        "fan_out": 1,
+        "instability": 0.11111111,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/model/Person.java": {
+        "fan_in": 4,
+        "fan_out": 1,
+        "instability": 0.2,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/model/package-info.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/Owner.java": {
+        "fan_in": 4,
+        "fan_out": 5,
+        "instability": 0.5555556,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/OwnerController.java": {
+        "fan_in": 0,
+        "fan_out": 4,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/OwnerRepository.java": {
+        "fan_in": 3,
+        "fan_out": 1,
+        "instability": 0.25,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/Pet.java": {
+        "fan_in": 4,
+        "fan_out": 3,
+        "instability": 0.42857143,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/PetController.java": {
+        "fan_in": 0,
+        "fan_out": 8,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/PetType.java": {
+        "fan_in": 4,
+        "fan_out": 1,
+        "instability": 0.2,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/PetTypeFormatter.java": {
+        "fan_in": 0,
+        "fan_out": 3,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/PetTypeRepository.java": {
+        "fan_in": 2,
+        "fan_out": 1,
+        "instability": 0.33333334,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/PetValidator.java": {
+        "fan_in": 1,
+        "fan_out": 3,
+        "instability": 0.75,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/Visit.java": {
+        "fan_in": 3,
+        "fan_out": 1,
+        "instability": 0.25,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/VisitController.java": {
+        "fan_in": 0,
+        "fan_out": 4,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/owner/package-info.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/package-info.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/system/CacheConfiguration.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/system/CrashController.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/system/WebConfiguration.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/system/WelcomeController.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/system/package-info.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/Specialty.java": {
+        "fan_in": 1,
+        "fan_out": 1,
+        "instability": 0.5,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/Vet.java": {
+        "fan_in": 4,
+        "fan_out": 3,
+        "instability": 0.42857143,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/VetController.java": {
+        "fan_in": 0,
+        "fan_out": 3,
+        "instability": 1.0,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/VetRepository.java": {
+        "fan_in": 1,
+        "fan_out": 1,
+        "instability": 0.5,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/Vets.java": {
+        "fan_in": 1,
+        "fan_out": 1,
+        "instability": 0.5,
+        "in_cycle": false
+      },
+      "org/springframework/samples/petclinic/vet/package-info.java": {
+        "fan_in": 0,
+        "fan_out": 0,
+        "instability": 0.0,
+        "in_cycle": false
+      }
+    },
+    "semantic": {
+      "status": "partial",
+      "analyzers": [
+        {
+          "language": "java",
+          "backend": "javac",
+          "status": "partial",
+          "files": 30,
+          "version": "23.0.1+11-jvmci-b01",
+          "project": "./build.gradle",
+          "diagnostics": [
+            "Gradle dependencies are not resolved or downloaded. Configure semantic.java.classpath with existing JARs or class directories.",
+            "Maven parent/profile configuration is not evaluated: pom.xml. Explicit release and classpath settings cover only this analysis scope.",
+            "Maven dependencies are not resolved or downloaded. Configure semantic.java.classpath with existing JARs or class directories.",
+            "Multiple Java build contexts share this compiler scope; module dependencies and source-set boundaries are not evaluated. Resolved project targets do not prove visibility between independent modules.",
+            "org/springframework/samples/petclinic/PetClinicApplication.java:19: package org.springframework.boot does not exist",
+            "org/springframework/samples/petclinic/PetClinicApplication.java:20: package org.springframework.boot.autoconfigure does not exist",
+            "org/springframework/samples/petclinic/PetClinicApplication.java:21: package org.springframework.context.annotation does not exist",
+            "org/springframework/samples/petclinic/PetClinicApplication.java:28: cannot find symbol\n  symbol: class SpringBootApplication",
+            "org/springframework/samples/petclinic/PetClinicApplication.java:29: cannot find symbol\n  symbol: class ImportRuntimeHints",
+            "org/springframework/samples/petclinic/PetClinicRuntimeHints.java:19: package org.springframework.aot.hint does not exist",
+            "org/springframework/samples/petclinic/PetClinicRuntimeHints.java:20: package org.springframework.aot.hint does not exist",
+            "org/springframework/samples/petclinic/PetClinicRuntimeHints.java:25: cannot find symbol\n  symbol: class RuntimeHintsRegistrar",
+            "org/springframework/samples/petclinic/PetClinicRuntimeHints.java:28: cannot find symbol\n  symbol:   class RuntimeHints\n  location: class org.springframework.samples.petclinic.PetClinicRuntimeHints",
+            "org/springframework/samples/petclinic/model/BaseEntity.java:20: package jakarta.persistence does not exist",
+            "org/springframework/samples/petclinic/model/BaseEntity.java:21: package jakarta.persistence does not exist",
+            "org/springframework/samples/petclinic/model/BaseEntity.java:22: package jakarta.persistence does not exist",
+            "org/springframework/samples/petclinic/model/BaseEntity.java:23: package jakarta.persistence does not exist",
+            "org/springframework/samples/petclinic/model/BaseEntity.java:32: cannot find symbol\n  symbol: class MappedSuperclass",
+            "org/springframework/samples/petclinic/model/NamedEntity.java:18: package jakarta.persistence does not exist",
+            "org/springframework/samples/petclinic/model/NamedEntity.java:19: package jakarta.persistence does not exist"
+          ]
+        }
+      ],
+      "projected_calls": 70,
+      "projected_supertypes": 8,
+      "projected_type_uses": 85,
+      "skipped_type_uses": 0,
+      "skipped_project_calls": 0,
+      "diagnostics": [
+        "java: Gradle dependencies are not resolved or downloaded. Configure semantic.java.classpath with existing JARs or class directories.",
+        "java: Maven parent/profile configuration is not evaluated: pom.xml. Explicit release and classpath settings cover only this analysis scope.",
+        "java: Maven dependencies are not resolved or downloaded. Configure semantic.java.classpath with existing JARs or class directories.",
+        "java: Multiple Java build contexts share this compiler scope; module dependencies and source-set boundaries are not evaluated. Resolved project targets do not prove visibility between independent modules.",
+        "java: org/springframework/samples/petclinic/PetClinicApplication.java:19: package org.springframework.boot does not exist",
+        "java: org/springframework/samples/petclinic/PetClinicApplication.java:20: package org.springframework.boot.autoconfigure does not exist",
+        "java: org/springframework/samples/petclinic/PetClinicApplication.java:21: package org.springframework.context.annotation does not exist",
+        "java: org/springframework/samples/petclinic/PetClinicApplication.java:28: cannot find symbol\n  symbol: class SpringBootApplication",
+        "java: org/springframework/samples/petclinic/PetClinicApplication.java:29: cannot find symbol\n  symbol: class ImportRuntimeHints",
+        "java: org/springframework/samples/petclinic/PetClinicRuntimeHints.java:19: package org.springframework.aot.hint does not exist",
+        "java: org/springframework/samples/petclinic/PetClinicRuntimeHints.java:20: package org.springframework.aot.hint does not exist",
+        "java: org/springframework/samples/petclinic/PetClinicRuntimeHints.java:25: cannot find symbol\n  symbol: class RuntimeHintsRegistrar",
+        "java: org/springframework/samples/petclinic/PetClinicRuntimeHints.java:28: cannot find symbol\n  symbol:   class RuntimeHints\n  location: class org.springframework.samples.petclinic.PetClinicRuntimeHints",
+        "java: org/springframework/samples/petclinic/model/BaseEntity.java:20: package jakarta.persistence does not exist",
+        "java: org/springframework/samples/petclinic/model/BaseEntity.java:21: package jakarta.persistence does not exist",
+        "java: org/springframework/samples/petclinic/model/BaseEntity.java:22: package jakarta.persistence does not exist",
+        "java: org/springframework/samples/petclinic/model/BaseEntity.java:23: package jakarta.persistence does not exist",
+        "java: org/springframework/samples/petclinic/model/BaseEntity.java:32: cannot find symbol\n  symbol: class MappedSuperclass",
+        "java: org/springframework/samples/petclinic/model/NamedEntity.java:18: package jakarta.persistence does not exist",
+        "java: org/springframework/samples/petclinic/model/NamedEntity.java:19: package jakarta.persistence does not exist"
+      ]
+    },
+    "review_kpis": {
+      "propagation_cost": [],
+      "sdp_violations": [
+        {
+          "from": "org/springframework/samples/petclinic/owner/OwnerRepository.java",
+          "to": "org/springframework/samples/petclinic/owner/Owner.java",
+          "i_from": 0.25,
+          "i_to": 0.5555555820465088,
+          "evidence": [
+            "org/springframework/samples/petclinic/owner/OwnerRepository.java:45",
+            "org/springframework/samples/petclinic/owner/OwnerRepository.java:60"
+          ]
+        },
+        {
+          "from": "org/springframework/samples/petclinic/vet/Vet.java",
+          "to": "org/springframework/samples/petclinic/vet/Specialty.java",
+          "i_from": 0.4285714328289032,
+          "i_to": 0.5,
+          "evidence": [
+            "org/springframework/samples/petclinic/vet/Vet.java:50",
+            "org/springframework/samples/petclinic/vet/Vet.java:52",
+            "org/springframework/samples/petclinic/vet/Vet.java:60",
+            "org/springframework/samples/petclinic/vet/Vet.java:70"
+          ]
+        }
+      ],
+      "zones": null,
+      "tangledness": {
+        "tangled_nodes": 0,
+        "total": 30,
+        "quote": 0.0
+      },
+      "hub_gini": {
+        "gini": 0.7335260115606936,
+        "top_share": 0.6820809248554913
+      },
+      "layer_drift": {
+        "agreement": 0.0,
+        "declared_only": [
+          "org/springframework/samples/petclinic/model/BaseEntity.java",
+          "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "org/springframework/samples/petclinic/model/Person.java",
+          "org/springframework/samples/petclinic/model/package-info.java",
+          "org/springframework/samples/petclinic/owner/Owner.java",
+          "org/springframework/samples/petclinic/owner/OwnerController.java",
+          "org/springframework/samples/petclinic/owner/OwnerRepository.java",
+          "org/springframework/samples/petclinic/owner/Pet.java",
+          "org/springframework/samples/petclinic/owner/PetController.java",
+          "org/springframework/samples/petclinic/owner/PetType.java",
+          "org/springframework/samples/petclinic/owner/PetTypeFormatter.java",
+          "org/springframework/samples/petclinic/owner/PetTypeRepository.java",
+          "org/springframework/samples/petclinic/owner/PetValidator.java",
+          "org/springframework/samples/petclinic/owner/Visit.java",
+          "org/springframework/samples/petclinic/owner/VisitController.java",
+          "org/springframework/samples/petclinic/owner/package-info.java"
+        ],
+        "derived_only": [],
+        "violated": []
+      },
+      "debt": {
+        "markers": 0,
+        "loc": 1899,
+        "per_kloc": 0.0,
+        "by_kind": {}
+      },
+      "api_surface": [
+        {
+          "exported_symbols": 18,
+          "files": 18,
+          "per_file": 1.0,
+          "top": [
+            [
+              "org/springframework/samples/petclinic/PetClinicApplication.java",
+              1
+            ],
+            [
+              "org/springframework/samples/petclinic/PetClinicRuntimeHints.java",
+              1
+            ],
+            [
+              "org/springframework/samples/petclinic/model/BaseEntity.java",
+              1
+            ],
+            [
+              "org/springframework/samples/petclinic/model/NamedEntity.java",
+              1
+            ],
+            [
+              "org/springframework/samples/petclinic/model/Person.java",
+              1
+            ]
+          ]
+        }
+      ],
+      "leaks": [],
+      "risk_gaps": [
+        {
+          "path": "org/springframework/samples/petclinic/model/BaseEntity.java",
+          "hotspot": 35.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/model/NamedEntity.java",
+          "hotspot": 34.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/Owner.java",
+          "hotspot": 22.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/model/Person.java",
+          "hotspot": 20.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/Pet.java",
+          "hotspot": 20.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/PetType.java",
+          "hotspot": 19.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/vet/Vet.java",
+          "hotspot": 18.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/PetController.java",
+          "hotspot": 16.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/Visit.java",
+          "hotspot": 15.0,
+          "coverage": null,
+          "gap": null
+        },
+        {
+          "path": "org/springframework/samples/petclinic/owner/OwnerRepository.java",
+          "hotspot": 11.0,
+          "coverage": null,
+          "gap": null
+        }
+      ],
+      "dependencies": {
+        "total": 30,
+        "by_ecosystem": {
+          "maven": 30
+        },
+        "stale_count": null,
+        "dependencies": [
+          {
+            "ecosystem": "maven",
+            "name": "com.github.ben-manes.caffeine:caffeine",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "com.h2database:h2",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "com.mysql:mysql-connector-j",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "com.puppycrawl.tools:checkstyle",
+            "version": "${checkstyle.version}",
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "io.spring.nohttp:nohttp-checkstyle",
+            "version": "${nohttp-checkstyle.version}",
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "jakarta.xml.bind:jakarta.xml.bind-api",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "javax.cache:cache-api",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.postgresql:postgresql",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-devtools",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-docker-compose",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-actuator",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-actuator-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-cache",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-cache-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-data-jpa",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-data-jpa-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-restclient",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-restclient-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-thymeleaf",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-thymeleaf-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-validation",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-validation-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-webmvc",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-starter-webmvc-test",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.springframework.boot:spring-boot-testcontainers",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.testcontainers:testcontainers-junit-jupiter",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.testcontainers:testcontainers-mysql",
+            "version": null,
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.webjars.npm:bootstrap",
+            "version": "${webjars-bootstrap.version}",
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.webjars.npm:font-awesome",
+            "version": "${webjars-font-awesome.version}",
+            "stale": null
+          },
+          {
+            "ecosystem": "maven",
+            "name": "org.webjars:webjars-locator-lite",
+            "version": "${webjars-locator.version}",
+            "stale": null
+          }
+        ],
+        "notes": [
+          "pom.xml: maven"
+        ]
+      },
+      "health": {
+        "score": 74.160244059088,
+        "level": "yellow",
+        "trend": null,
+        "parts": {
+          "hubs": 0.26647398843930636,
+          "sdp": 0.9583333333333334,
+          "tangledness": 1.0
+        }
+      }
+    }
+  }
+}

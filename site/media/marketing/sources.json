@@ -1,0 +1,263 @@
+{
+  "capture_date": "2026-11-20",
+  "archguard_source_commit": "18fc5437afad88d3738513c966375ce4c7f97645",
+  "projects": [
+    {
+      "id": "commons-collections",
+      "name": "Apache Commons Collections",
+      "repository": "https://github.com/apache/commons-collections",
+      "commit": "2bcf69296bbde598b1e8bac1b3cd90a11ef3e563",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "b1d2870f1a00e4d7f56576e5f0870cba109e041f8af66866cf5b499478e654e7",
+      "language": "java",
+      "source_roots": [
+        "src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 4\n"
+    },
+    {
+      "id": "kafka",
+      "name": "Apache Kafka",
+      "repository": "https://github.com/apache/kafka",
+      "commit": "dc9f1f42828f2f301b77926b22b59fbbdfc0e4a9",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "java",
+      "source_roots": [
+        "clients/src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"clients/src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "eshop",
+      "name": "Microsoft eShop",
+      "repository": "https://github.com/dotnet/eShop",
+      "commit": "ab10e4c68fd26369578ebfb3fd1ccf3b867d0444",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "baebca0309090f4eca1b7a82c836cc91e48b2b92139c2280fb0ff69af922c2ae",
+      "language": "csharp",
+      "source_roots": [
+        "src"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src\"]\nlanguages = [\"cs\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "nest",
+      "name": "NestJS",
+      "repository": "https://github.com/nestjs/nest",
+      "commit": "e0600bb04c3aedc3f643cc1dd2d5e515e12cbc2a",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "56967de93525b12a30717e4446ccef3bbe32fafdbe2350f143c1cc6971b19ed3",
+      "language": "typescript",
+      "source_roots": [
+        "packages"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"packages\"]\nlanguages = [\"ts\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "prometheus",
+      "name": "Prometheus",
+      "repository": "https://github.com/prometheus/prometheus",
+      "commit": "06170caaea449ce139982c9ca9ddb5bf499ad488",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "language": "go",
+      "source_roots": [
+        "."
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\".\"]\nlanguages = [\"go\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "repository": "https://github.com/BurntSushi/ripgrep",
+      "commit": "43fc97d43a4c61d65e7d74d4110c8480fe42ea5b",
+      "license": "MIT OR Unlicense",
+      "license_path": "LICENSE-MIT",
+      "license_sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f",
+      "language": "rust",
+      "source_roots": [
+        "crates"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"crates\"]\nlanguages = [\"rs\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n",
+      "additional_license_files": [
+        {
+          "path": "UNLICENSE",
+          "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
+        }
+      ]
+    },
+    {
+      "id": "django",
+      "name": "Django",
+      "repository": "https://github.com/django/django",
+      "commit": "c67d872765e05ebd009fadf7de8d834b01bae9e4",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "b846415d1b514e9c1dff14a22deb906d794bc546ca6129f950a18cd091e2a669",
+      "language": "python",
+      "source_roots": [
+        "django"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"django\"]\nlanguages = [\"py\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "symfony",
+      "name": "Symfony",
+      "repository": "https://github.com/symfony/symfony",
+      "commit": "2894e4eeea9e328e5f38d5e5e52498438c9a12fc",
+      "license": "MIT",
+      "license_path": "LICENSE",
+      "license_sha256": "18da7e490d2aa77197a0619b25bcc771a0110132a9d76071665718d3295e73cb",
+      "language": "php",
+      "source_roots": [
+        "src/Symfony/Component"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/Symfony/Component\"]\nlanguages = [\"php\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "okhttp",
+      "name": "OkHttp",
+      "repository": "https://github.com/square/okhttp",
+      "commit": "619d9c987aa74de3a445b63d26e2dc328f03d873",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "kotlin",
+      "source_roots": [
+        "okhttp/src/commonJvmAndroid/kotlin"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"okhttp/src/commonJvmAndroid/kotlin\"]\nlanguages = [\"kt\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "leveldb",
+      "name": "LevelDB",
+      "repository": "https://github.com/google/leveldb",
+      "commit": "29465588d3dfdc80fba5e198037582b8fdb5dd60",
+      "license": "BSD-3-Clause",
+      "license_path": "LICENSE",
+      "license_sha256": "ccc19f1da0798ed666609b65a5b44dd8b3abe6fc08b9c0592eb76e82e174db19",
+      "language": "cpp",
+      "source_roots": [
+        "."
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\".\"]\nlanguages = [\"cpp\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "swift-nio",
+      "name": "SwiftNIO",
+      "repository": "https://github.com/apple/swift-nio",
+      "commit": "ae78c343cde1fad5aad88f0bf59cc7a91dfec0e5",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": "swift",
+      "source_roots": [
+        "Sources"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"Sources\"]\nlanguages = [\"swift\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "mastodon",
+      "name": "Mastodon",
+      "repository": "https://github.com/mastodon/mastodon",
+      "commit": "9bd703117f9945f9a3ac657ba045e2549898bfcc",
+      "license": "AGPL-3.0",
+      "license_path": "LICENSE",
+      "license_sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6",
+      "language": "ruby",
+      "source_roots": [
+        "app",
+        "lib"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"app\", \"lib\"]\nlanguages = [\"rb\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "pekko",
+      "name": "Apache Pekko",
+      "repository": "https://github.com/apache/pekko",
+      "commit": "1d75feef39295f585314a55e521def94ed9aa3b3",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "2dca66a35023ac4f692030f7848d41098f622b18ab2f58a15cd48a6de272f30c",
+      "language": "scala",
+      "source_roots": [
+        "actor/src/main/scala"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"actor/src/main/scala\"]\nlanguages = [\"scala\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 3\n"
+    },
+    {
+      "id": "online-boutique",
+      "name": "Online Boutique",
+      "repository": "https://github.com/GoogleCloudPlatform/microservices-demo",
+      "commit": "c7cb6d5bfd6ea3aed768634ebbcb98cb7a523712",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE",
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "language": null,
+      "source_roots": null,
+      "verified_deployment_files": {
+        "kubernetes": [
+          "kubernetes-manifests/adservice.yaml",
+          "kubernetes-manifests/cartservice.yaml",
+          "kubernetes-manifests/checkoutservice.yaml",
+          "kubernetes-manifests/currencyservice.yaml"
+        ],
+        "helm": [
+          "helm-chart/Chart.yaml"
+        ],
+        "kustomize": [
+          "kustomize/base/kustomization.yaml",
+          "kustomize/components/alloydb/kustomization.yaml",
+          "kustomize/components/container-images-registry/kustomization.yaml",
+          "kustomize/components/container-images-tag/kustomization.yaml"
+        ],
+        "terraform": [
+          "terraform/main.tf",
+          "terraform/memorystore.tf",
+          "terraform/output.tf",
+          "terraform/providers.tf"
+        ]
+      }
+    },
+    {
+      "id": "petclinic",
+      "name": "Spring PetClinic",
+      "repository": "https://github.com/spring-projects/spring-petclinic",
+      "commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE.txt",
+      "license_sha256": "56dfc19e0dc836e30177332f73e8e6fbc297941acf3d906eec6eaaa46c2c452a",
+      "language": "java",
+      "source_roots": [
+        "src/main/java"
+      ],
+      "configuration": "derive_layers = false\n\n[project]\nsource_roots = [\"src/main/java\"]\nlanguages = [\"java\"]\nexclude = [\"**/test/**\", \"**/tests/**\", \"**/Tests/**\", \"**/testdata/**\", \"**/node_modules/**\", \"**/target/**\", \"**/build/**\", \"**/*_test.*\", \"**/*Test.*\", \"**/*.spec.ts\"]\n\n[modules]\ndepth = 5\n\n# Deliberately restrictive teaching policy; not the upstream architecture policy.\n[[layers]]\nname = \"model\"\ncontains = [\"org/springframework/samples/petclinic/model/**\"]\nmay_depend_on = []\n\n[[layers]]\nname = \"owners-demo\"\ncontains = [\"org/springframework/samples/petclinic/owner/**\"]\nmay_depend_on = []\n",
+      "scope_note": "Deliberately restrictive local layer policy demonstrates a failing gate; this is not an upstream defect report."
+    }
+  ],
+  "notes": [
+    "Fresh upstream clones; no checkout from another local project was used.",
+    "Missing evidence is not a zero. Snapshot software renders the real desktop widgets, without drawing graph data into images.",
+    "Upstream source and dependencies are not distributed in the site artifact.",
+    "Configuration records requested source filters. The desktop repository overview can additionally aggregate discovered project scopes, visible in the screenshot; it is not a claim that the CLI source filter fully bounds that overview."
+  ],
+  "environment": {
+    "os": "macOS",
+    "architecture": "arm64",
+    "jdk": "GraalVM Community JDK 23.0.1",
+    "go_sdk": "unavailable",
+    "project_compiler_opt_in": false,
+    "manifest_rendering_opt_in": false,
+    "project_builds_run": false,
+    "project_dependencies_installed": false,
+    "rendering": "Slint software renderer, English UI, 1480 x 920 logical points (World/features) or 1480 x 600 (matrix), 2x scale"
+  },
+  "desktop_sha256": "f438d341a5b7ae906f2ef42d2eb8a101fc7c763a70879493889d657686d37d18",
+  "cli_sha256": "94775859b50ef4404119e12b8dc1ac351855baa28e5372dc1e7efa2f8d40f228"
+}
