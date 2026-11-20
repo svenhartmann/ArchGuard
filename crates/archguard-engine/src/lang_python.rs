@@ -227,6 +227,29 @@ pub(crate) fn statements(masked: &str) -> Vec<Stmt> {
     out
 }
 
+/// `statements(masked)` without the lines that only continue a multi-line
+/// string: its closing quotes at the start of a line are no statement.
+pub(crate) fn code_statements(src: &str, masked: &str) -> Vec<Stmt> {
+    let b = src.as_bytes();
+    let (mut closers, mut i) = (vec![], 0);
+    while i < b.len() {
+        match b[i] {
+            b'#' => i = line_end(b, i),
+            b'\'' | b'"' => {
+                let (from, to, next) = literal_at(b, i);
+                if src.get(from..to).is_some_and(|t| t.contains('\n')) {
+                    closers.push(to);
+                }
+                i = next.max(i + 1);
+            }
+            _ => i += 1,
+        }
+    }
+    let mut all = statements(masked);
+    all.retain(|s| !closers.contains(&s.at));
+    all
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DefKind {
     Class,
@@ -490,6 +513,15 @@ pub(crate) fn resolve_import(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_statements_skip_the_closing_quotes_of_a_string() {
+        let src = "a = \"\"\"t\n'\n\"\"\"\nb = 1  # '\n";
+        let m = mask(src);
+        assert_eq!(statements(&m).len(), 3);
+        let at: Vec<_> = code_statements(src, &m).iter().map(|s| s.at).collect();
+        assert_eq!(at, [0, src.find("b =").unwrap()]);
+    }
 
     #[test]
     fn mask_blanks_comments_and_every_kind_of_string() {
