@@ -463,3 +463,49 @@ modules (`lang_python`, `lang_php`, `lang_rust` are new):
 Project-specific checks (BookStack `checkPermission`, NetBox mixins, Immich's
 `AuthGuard`) are read only through `[views.access]`; nothing is inferred from
 names.
+
+### 2026-11-20: TanStack Router and hey-api; shared helpers; FastAPI on `lang_python`
+
+React reads TanStack Router file routes and the clients `@hey-api/openapi-ts`
+generates. The FastAPI template's frontend goes from 0 to 8 screens and 17
+actions; all 17 join a backend endpoint (16 of 23). The other 24 checkouts
+are byte-identical.
+
+- Screens: `createFileRoute('<id>')` with `$id` → `:id`, `_x`/`(x)` segments
+  dropped; root and `<Outlet>` modules are layouts. `beforeLoad` is read in
+  its own extent (arrow with block body, method shorthand, a local or
+  imported guard function): `if`/`else`, early `return` and
+  `throw redirect(…)`, with the path of enclosing `if`s
+  (`if (a) { if (b) redirect }` requires `not(all(a, b))`). Ancestor routes
+  apply by id prefix. Any other redirect placement or form is `Unknown` with
+  a diagnostic, never no condition.
+- Calls: only an import that resolves (relative, index files, the app's own
+  `tsconfig` `paths`, re-export chains) to the indexed `sdk.gen.ts` makes a
+  call `Http`; a member the index lacks, a non-literal url, or a method that
+  is not an HTTP verb after resolving `Method.X` through its declaration is
+  `Unresolved` with a diagnostic. The first version guessed from import
+  specifiers containing `client`/`sdk` and from enum member names; the review
+  showed invented calls and verbs, and both rules were replaced.
+
+The SvelteKit generated-client index moved to `lang_ts_http::generated_calls`,
+the `[views.access]` → condition mapping to `extract_ctx::access_condition`,
+and `lang_ts_decl` gained `name_path` (rejects `...x`, `a..b`); Immich output
+is byte-identical. FastAPI reads Python through `lang_python` instead of its
+own lexer; `string_value` now joins adjacent literals across comments and
+`\` continuations and also reads parenthesised literals, decodes f-string
+escapes as Python does and rejects t-strings. The FastAPI template and NetBox
+are byte-identical.
+
+Process: build agents ran on Sonnet, each branch was reviewed by an Opus
+agent against the base before merging; two of four reviews sent the branch
+back (FastAPI literal joining, React name guesses).
+
+Open:
+- An import alias that does not resolve (no `tsconfig`, `extends` not
+  followed) leaves calls through it out without a gap.
+- Helpers that redirect inside `beforeLoad` (`ensureAuth(ctx)`), `a && b`
+  guards (`Unknown`), `export * as ns` and namespace calls into the SDK.
+- `lang_python::statements` does not join a CRLF `\` continuation.
+- Mutation probes of the shared TS helpers left four survivors (first fetch
+  call, `export async`, fixed `policy:` meaning, non-arrow exports); these
+  gaps predate the move.

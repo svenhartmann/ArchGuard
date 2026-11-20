@@ -332,3 +332,33 @@ file and line (C# class, Java listener method body) and is unchanged; the
 TypeScript reader records no sites yet. eShop:
 `OrderStatusChangedToPaidDomainEvent` →
 `Ordering.API/Application/DomainEventHandlers/OrderStatusChangedToPaidDomainEventHandler.cs:3`.
+
+### 2026-11-20: the Domain view in the desktop
+
+The desktop's Domain tab uses the Screens layout: a service picker (the folder
+of the nearest `.csproj`/`pom.xml`/`build.gradle`; entities in root-level
+files under "(root)"), the same role control as Screens (the choice is shared
+per document), and a tree service → aggregate → entity, use cases,
+integration and domain events.
+
+- Entity focus: fields, relations, rules grouped by method ("throws when
+  <condition> → message · exception" with file:line), the state machine,
+  "Who can cause <state>" as nested chains with the service of each step and
+  what it means for the simulated user, "Who reacts", and validations of
+  requests whose use case calls the entity.
+- Event focus: publishers → event → handlers with one lane per service, so an
+  arrow leaving its lane crosses a service boundary; cards show the handler
+  class on two lines.
+- Note ids: `view-domain_rule:<file>:<Class.Method>:<condition | always>`,
+  `#2` only for exact duplicates by line order, so a changed condition makes
+  its note stale instead of moving it to another rule;
+  `view-integration_event:` and `view-domain_event:<file>:<type>`.
+- Both views share a code overlay over most of the window (Esc, ✕, click
+  outside), open details sections by default, and resizable tree and details
+  panels stored in `desktop.toml` (`[screens]`, `[domain]`).
+
+Open: a name cut in the middle on a card (over 64 characters) has no full
+form in the tooltip; the "(root)" group is tested but not seen on a real
+project; overloads with the same condition in one file are told apart by
+line order only, as the model has no parameter lists; the desktop repeats the
+engine's crate-private `project_of`.
