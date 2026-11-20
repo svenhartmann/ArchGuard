@@ -90,7 +90,7 @@ pub fn graph_data(
         selected_label: node.map(|n| n.label.clone()).unwrap_or_default().into(),
         incoming,
         outgoing,
-        deps: deps(g, selected, &old.deps),
+        deps: super::deps::cards(g, selected, &old.deps, g.display == DEPENDENCIES),
         net_cards: net.0,
         net_arrows: net.1,
         net_w: net.2,
@@ -107,32 +107,6 @@ pub fn graph_data(
         sim: super::simulation::data(g, texts.locale(), &old.sim),
         review: super::review::data(g, &old.review),
     }
-}
-
-fn deps(g: &GraphState, selected: Option<usize>, old: &ModelRc<DepCard>) -> ModelRc<DepCard> {
-    let v = &g.view;
-    let shown = (g.display == DEPENDENCIES).then(|| v.shown(selected, g.mode));
-    sync_rows(
-        old,
-        shown.into_iter().flatten().map(|(i, lane)| {
-            let l = &v.links[i];
-            let name = |row: usize| g.tree.nodes[v.rows[row].node].name.clone();
-            DepCard {
-                from: name(l.from).into(),
-                to: name(l.to).into(),
-                weight: l.weight.min(i32::MAX as u64) as i32,
-                kind: v.link_kind(i, lane, selected, g.mode) as i32,
-                refs: l
-                    .refs
-                    .iter()
-                    .map(|r| format!("{}:{}  {}", r.file, r.line, r.raw.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into(),
-                ref_count: l.refs.len() as i32,
-            }
-        }),
-    )
 }
 
 /// The tree rows for the window; a compressed chain reads as its path.

@@ -3,6 +3,7 @@
 //! share the document's package tree.
 
 mod data;
+mod deps;
 mod review;
 pub mod simulation;
 
@@ -241,7 +242,7 @@ pub fn wire(ui: &AppWindow) {
         let (Some(ui), Ok(id)) = (w.upgrade(), u32::try_from(id)) else {
             return;
         };
-        if let Some(f) = review_action(&action) {
+        if let Some(f) = state_action(&action, &arg) {
             let layout = panes_ui::layout();
             instances::update(&ui, &layout, id, |s: &mut Graph| f(&mut s.g));
             return;
@@ -358,14 +359,20 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
     })
 }
 
-/// Explorer → Review's own actions.
-fn review_action(action: &str) -> Option<fn(&mut GraphState)> {
+type StateAction = Box<dyn FnOnce(&mut GraphState)>;
+
+/// Actions on the Graph's own state: Explorer → Review, a dependency card's explanation.
+fn state_action(action: &str, arg: &str) -> Option<StateAction> {
     match action {
-        "review-orphans" => Some(|g| {
+        "review-orphans" => Some(Box::new(|g| {
             g.review_orphans = !g.review_orphans;
             g.review_limit = state::REVIEW_PAGE;
-        }),
-        "review-more" => Some(|g| g.review_limit += state::REVIEW_PAGE),
+        })),
+        "review-more" => Some(Box::new(|g| g.review_limit += state::REVIEW_PAGE)),
+        "dep-explain" => {
+            let arg = arg.to_string();
+            Some(Box::new(move |g| deps::toggle(g, &arg)))
+        }
         _ => None,
     }
 }

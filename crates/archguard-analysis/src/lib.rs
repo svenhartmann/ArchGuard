@@ -27,6 +27,9 @@ mod layer_drift;
 mod layers;
 mod leaky;
 mod metrics;
+mod package_cycle;
+#[cfg(test)]
+mod package_cycle_tests;
 mod pc;
 mod repair_plans;
 #[cfg(test)]
@@ -52,6 +55,10 @@ pub use layer_drift::layer_drift;
 pub use layers::{check_layer_pairs, check_layers, layer_assignment};
 pub use leaky::leaky_encapsulation;
 pub use metrics::{compute_metrics, summarize};
+pub use package_cycle::{
+    CycleDirection, CycleWitness, PackageCycleExplanation, ScopeCounts, SourceScope, WitnessEdge,
+    explain_package_cycle, source_scope,
+};
 pub use pc::propagation_cost;
 pub use repair_plans::{
     DEFAULT_MAX_EXAMINED, MAX_PLANS, RepairPlan, RepairPlans, RepairSearch, RepairStats,

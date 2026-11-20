@@ -507,6 +507,7 @@ export component GraphView inherits HorizontalLayout {
                 deps: root.data.deps;
                 reference: root.data.reference;
                 total: root.data.dep-count;
+                explain(k) => { root.action("dep-explain", k); }
             }
         }
         SimStrip { sim: root.data.sim; action(a, b) => { root.action(a, b); } }
