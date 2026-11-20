@@ -122,96 +122,32 @@ fn all(items: Vec<Condition>) -> Condition {
     }
 }
 
-/// Python text helpers. Candidates for a shared `lang_python` module.
+/// FastAPI's view of one Python source on top of `lang_python`: the masked
+/// bytes and bracket pairs, with offset-range helpers.
 pub(crate) mod py {
+    pub(crate) use crate::lang_pyscan::{dotted, skip_sp, skip_ws, word};
+    use crate::lang_python::{code_statements, mask, string_value};
     use std::collections::HashMap;
-
-    pub(crate) fn is_ident(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_'
-    }
-
-    /// Spaces and tabs only: outside brackets a newline ends the statement.
-    pub(crate) fn skip_sp(b: &[u8], mut i: usize) -> usize {
-        while b.get(i).is_some_and(|c| *c == b' ' || *c == b'\t') {
-            i += 1;
-        }
-        i
-    }
-
-    /// Any white space and line continuations, for inside brackets.
-    pub(crate) fn skip_ws(b: &[u8], mut i: usize) -> usize {
-        while b
-            .get(i)
-            .is_some_and(|c| c.is_ascii_whitespace() || *c == b'\\')
-        {
-            i += 1;
-        }
-        i
-    }
-
-    /// Keyword or name `w` as a whole word at `i`.
-    pub(crate) fn word(b: &[u8], i: usize, w: &str) -> bool {
-        b[i..].starts_with(w.as_bytes())
-            && !b.get(i + w.len()).copied().is_some_and(is_ident)
-            && (i == 0 || !is_ident(b[i - 1]))
-    }
-
-    /// The dotted name at `i` (`router.get`) and where it ends.
-    pub(crate) fn dotted(b: &[u8], i: usize) -> (String, usize) {
-        let mut j = i;
-        while b.get(j).is_some_and(|c| is_ident(*c) || *c == b'.') {
-            j += 1;
-        }
-        let ok = b
-            .get(i)
-            .is_some_and(|c| is_ident(*c) && !c.is_ascii_digit());
-        let name = if ok {
-            String::from_utf8_lossy(&b[i..j]).into_owned()
-        } else {
-            String::new()
-        };
-        (name, if ok { j } else { i })
-    }
-
-    /// A string token: from its prefix (`rb`, `f`) to after its closing quote.
-    struct Str {
-        start: usize,
-        end: usize,
-        /// `None` for an f-string with holes.
-        value: Option<String>,
-    }
 
     /// One Python source: comments and string bodies blanked to spaces
     /// (newlines kept, so positions and lines match the text).
     pub(crate) struct Src {
         pub(crate) b: Vec<u8>,
         text: String,
-        strs: Vec<Str>,
         pairs: HashMap<usize, usize>,
-        lines: Vec<usize>,
     }
 
     impl Src {
         pub(crate) fn new(text: &str) -> Self {
-            let (b, strs) = blank(text);
+            let b = mask(text).into_bytes();
             let pairs = pairs(&b);
-            let breaks = b.iter().enumerate().filter(|(_, c)| **c == b'\n');
-            let lines = std::iter::once(0)
-                .chain(breaks.map(|(i, _)| i + 1))
-                .collect();
             let text = text.to_string();
-            Self {
-                b,
-                text,
-                strs,
-                pairs,
-                lines,
-            }
+            Self { b, text, pairs }
         }
 
         /// 1-based line of byte `at`.
         pub(crate) fn line(&self, at: usize) -> u32 {
-            self.lines.partition_point(|&s| s <= at) as u32
+            crate::lang_text::line(&self.text, at)
         }
 
         /// The source text of `a..e`.
@@ -223,48 +159,18 @@ pub(crate) mod py {
             self.pairs.get(&open).copied()
         }
 
-        /// The value of the string literals exactly covering `a..e`; adjacent
+        /// The value of the string literals covering `a..e`; adjacent
         /// literals join. `None` for anything else or an f-string with holes.
         pub(crate) fn literal(&self, a: usize, e: usize) -> Option<String> {
-            let (mut i, mut at, mut out) =
-                (self.strs.partition_point(|s| s.start < a), a, String::new());
-            while at < e {
-                let s = self.strs.get(i).filter(|s| s.start == at && s.end <= e)?;
-                out.push_str(s.value.as_deref()?);
-                (at, i) = (
-                    if s.end == e {
-                        e
-                    } else {
-                        skip_ws(&self.b, s.end)
-                    },
-                    i + 1,
-                );
-            }
-            (a < e && at == e).then_some(out)
+            string_value(self.text((a, e)))
         }
 
-        /// Statement starts: first non-blank byte and indent of every line
-        /// outside brackets, strings and continuations.
+        /// Statement starts: first non-blank byte and indent of every logical line.
         pub(crate) fn statements(&self) -> Vec<(usize, usize)> {
-            let (mut out, mut depth, mut cont) = (Vec::new(), 0usize, false);
-            for (n, &ls) in self.lines.iter().enumerate() {
-                let le = self.lines.get(n + 1).map_or(self.b.len(), |e| e - 1);
-                let k = skip_sp(&self.b, ls);
-                let in_str = self.strs.iter().any(|s| s.start < ls && ls < s.end);
-                if depth == 0 && !cont && !in_str && k < le && self.b[k] != b'\r' {
-                    out.push((k, k - ls));
-                }
-                for c in &self.b[ls..le] {
-                    match c {
-                        b'(' | b'[' | b'{' => depth += 1,
-                        b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-                        _ => {}
-                    }
-                }
-                let line = self.b[ls..le].trim_ascii_end();
-                cont = line.ends_with(b"\\");
-            }
-            out
+            let masked = String::from_utf8_lossy(&self.b);
+            (code_statements(&self.text, &masked).iter())
+                .map(|s| (s.at, s.indent))
+                .collect()
         }
 
         /// Where the statement holding `i` ends: the first newline outside
@@ -381,110 +287,6 @@ pub(crate) mod py {
                     }
                 }
                 _ => {}
-            }
-        }
-        out
-    }
-
-    /// The text with comments and string bodies blanked, and the string tokens.
-    fn blank(text: &str) -> (Vec<u8>, Vec<Str>) {
-        let src = text.as_bytes();
-        let (mut b, mut strs, mut i) = (src.to_vec(), Vec::new(), 0);
-        while i < src.len() {
-            match src[i] {
-                b'#' => {
-                    while i < src.len() && src[i] != b'\n' {
-                        b[i] = b' ';
-                        i += 1;
-                    }
-                }
-                b'\'' | b'"' => {
-                    let s = string(text, i, &mut b);
-                    i = s.end;
-                    strs.push(s);
-                }
-                _ => i += 1,
-            }
-        }
-        (b, strs)
-    }
-
-    /// The string token whose quote is at `q`; its body is blanked in `b`.
-    fn string(text: &str, q: usize, b: &mut [u8]) -> Str {
-        let src = text.as_bytes();
-        let start = prefix_start(src, q);
-        let prefix = text[start..q].to_ascii_lowercase();
-        let delim = if src[q..].starts_with(&[src[q]; 3]) {
-            3
-        } else {
-            1
-        };
-        let body = q + delim;
-        let (body_end, end) = body_end(src, q, delim);
-        for c in &mut b[body..body_end] {
-            if *c != b'\n' {
-                *c = b' ';
-            }
-        }
-        Str {
-            start,
-            end,
-            value: value(&prefix, &text[body..body_end]),
-        }
-    }
-
-    /// Where the string prefix (`r`, `rb`, `f`) before the quote at `q` starts.
-    fn prefix_start(src: &[u8], q: usize) -> usize {
-        let mut start = q;
-        while start > 0 && q - start < 2 && b"rRbBfFuUtT".contains(&src[start - 1]) {
-            start -= 1;
-        }
-        if start > 0 && is_ident(src[start - 1]) {
-            q
-        } else {
-            start
-        }
-    }
-
-    /// End of the body and of the token whose opening `delim` quotes are at `q`;
-    /// an unterminated one-line string ends at the newline.
-    fn body_end(src: &[u8], q: usize, delim: usize) -> (usize, usize) {
-        let mut j = q + delim;
-        loop {
-            match src.get(j) {
-                None => return (src.len(), src.len()),
-                Some(b'\\') => j += 2,
-                Some(b'\n') if delim == 1 => return (j, j),
-                Some(_) if src[j..].starts_with(&src[q..q + delim]) => return (j, j + delim),
-                Some(_) => j += 1,
-            }
-        }
-    }
-
-    /// A string body's value by its prefix; `None` for an f-string with holes.
-    fn value(prefix: &str, raw: &str) -> Option<String> {
-        let held = raw.replace("{{", "").replace("}}", "");
-        if prefix.contains('f') || prefix.contains('t') {
-            (!held.contains('{')).then(|| raw.replace("{{", "{").replace("}}", "}"))
-        } else if prefix.contains('r') {
-            Some(raw.to_string())
-        } else {
-            Some(unescape(raw))
-        }
-    }
-
-    fn unescape(s: &str) -> String {
-        let (mut out, mut chars) = (String::new(), s.chars());
-        while let Some(c) = chars.next() {
-            match (c, c == '\\') {
-                (_, true) => match chars.next() {
-                    Some('n') => out.push('\n'),
-                    Some('t') => out.push('\t'),
-                    Some(e @ ('\\' | '\'' | '"')) => out.push(e),
-                    Some(e) => out.extend(['\\', e]),
-                    None => out.push('\\'),
-                },
-                (c, false) => out.push(c),
             }
         }
         out
@@ -1860,6 +1662,14 @@ mod tests {
     fn python_without_fastapi_gives_nothing() {
         let flow = run(&[("manage.py", "import django\nx = APIRouter\n")], "");
         assert!(flow.endpoints.is_empty() && flow.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn adjacent_literals_join_across_comments_and_continuations() {
+        let lit = |t: &str| py::Src::new(t).literal(0, t.len());
+        assert_eq!(lit("\"/api\"  # v\n \"/v1\""), Some("/api/v1".into()));
+        assert_eq!(lit("\"/api\" \\\n \"/v1\""), Some("/api/v1".into()));
+        assert_eq!(lit("(\"/api\" \"/v1\")"), Some("/api/v1".into()));
     }
 
     #[test]

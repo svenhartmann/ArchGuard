@@ -104,6 +104,7 @@ mod lang_csharp;
 mod lang_java;
 mod lang_markup;
 mod lang_php;
+mod lang_pyscan;
 mod lang_python;
 mod lang_rust;
 #[cfg(test)]

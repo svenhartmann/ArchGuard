@@ -46,7 +46,14 @@ pub(crate) fn string_value(expr: &str) -> Option<String> {
     let b = expr.as_bytes();
     let (mut out, mut i, mut any) = (String::new(), 0, false);
     while i < b.len() {
-        if b[i].is_ascii_whitespace() {
+        // Between adjacent literals: blanks, comments and `\` continuations.
+        if b[i] == b'#' {
+            i = line_end(b, i);
+            continue;
+        }
+        if b[i].is_ascii_whitespace()
+            || b[i] == b'\\' && matches!(b.get(i + 1), Some(b'\n' | b'\r'))
+        {
             i += 1;
             continue;
         }
@@ -225,6 +232,29 @@ pub(crate) fn statements(masked: &str) -> Vec<Stmt> {
         });
     }
     out
+}
+
+/// `statements(masked)` without the lines that only continue a multi-line
+/// string: its closing quotes at the start of a line are no statement.
+pub(crate) fn code_statements(src: &str, masked: &str) -> Vec<Stmt> {
+    let b = src.as_bytes();
+    let (mut closers, mut i) = (vec![], 0);
+    while i < b.len() {
+        match b[i] {
+            b'#' => i = line_end(b, i),
+            b'\'' | b'"' => {
+                let (from, to, next) = literal_at(b, i);
+                if src.get(from..to).is_some_and(|t| t.contains('\n')) {
+                    closers.push(to);
+                }
+                i = next.max(i + 1);
+            }
+            _ => i += 1,
+        }
+    }
+    let mut all = statements(masked);
+    all.retain(|s| !closers.contains(&s.at));
+    all
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -492,6 +522,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn code_statements_skip_the_closing_quotes_of_a_string() {
+        let src = "a = \"\"\"t\n'\n\"\"\"\nb = 1  # '\n";
+        let m = mask(src);
+        assert_eq!(statements(&m).len(), 3);
+        let at: Vec<_> = code_statements(src, &m).iter().map(|s| s.at).collect();
+        assert_eq!(at, [0, src.find("b =").unwrap()]);
+    }
+
+    #[test]
     fn mask_blanks_comments_and_every_kind_of_string() {
         let src = "x = 'a#b'  # c 'd'\ny = r\"\\\"q\" + f'{z}' + b\"\"\ns = '''one\n\"two\"\n''' # e\nt = \"it\\\"s\"\n";
         let m = mask(src);
@@ -501,6 +540,18 @@ mod tests {
         assert!(m.contains("y = r\"   \" + f'   ' + b\"\"\n"), "{m:?}");
         assert!(m.contains("s = '''   \n     \n'''    \n"), "{m:?}");
         assert!(m.ends_with("t = \"     \"\n"), "{m:?}");
+    }
+
+    #[test]
+    fn adjacent_literals_join_across_comments_and_continuations() {
+        let joined = Some("/api/v1".to_string());
+        assert_eq!(string_value("'/api' # v\n '/v1'"), joined);
+        assert_eq!(string_value("'/api' \\\n '/v1'"), joined);
+        assert_eq!(string_value("('/api' # v\n '/v1')"), joined);
+        assert_eq!(string_value("'a' # c"), Some("a".to_string()));
+        assert_eq!(string_value("'a' # c\n + b"), None);
+        assert_eq!(string_value("f't\\t'").as_deref(), Some("t\t"));
+        assert_eq!(string_value("t'/a'"), None);
     }
 
     #[test]
