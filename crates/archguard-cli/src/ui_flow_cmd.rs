@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{
-    Assignment, Condition, UiFlow, evaluate_access, screen_reaches, ui_flow_findings,
-    ui_flow_summary,
+    Assignment, Condition, UiFlow, evaluate_access, merge_ui_flows, resolve_assignment,
+    screen_reaches, ui_flow_findings, ui_flow_summary,
 };
 use serde_json::{Value, json};
 
@@ -24,7 +24,8 @@ pub(crate) fn run(cli: &Cli, root: &Path, roles: &[String], anonymous: bool) -> 
         Ok(flow) => flow,
         Err(error) => return analysis_error(error),
     };
-    let simulation = (anonymous || !roles.is_empty()).then(|| simulate(&flow, roles));
+    let roles = defined_names(&flow, roles);
+    let simulation = (anonymous || !roles.is_empty()).then(|| simulate(&flow, &roles));
     if cli.quiet {
         return EXIT_OK;
     }
@@ -54,8 +55,27 @@ pub(crate) fn assignment(roles: &[String]) -> Assignment {
     }
 }
 
+/// `--role` names as the flow defines them: `ROLE_X` reads `X` when only `X`
+/// is defined (Spring drops the prefix); an undefined name gets a warning.
+fn defined_names(flow: &UiFlow, roles: &[String]) -> Vec<String> {
+    let defined = |n: &str| flow.roles.iter().any(|d| d.name == n);
+    (roles.iter())
+        .map(|role| {
+            let stripped = role.strip_prefix("ROLE_").filter(|s| defined(s));
+            let name = stripped.filter(|_| !defined(role)).unwrap_or(role);
+            if !flow.roles.is_empty() && !defined(name) {
+                eprintln!(
+                    "warning: role {name:?} is not defined in the code; `archguard ui-flow roles` lists the defined ones"
+                );
+            }
+            name.to_string()
+        })
+        .collect()
+}
+
 fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
-    let assignment = assignment(roles);
+    let chosen = assignment(roles);
+    let assignment = resolve_assignment(flow, &chosen);
     let reaches = screen_reaches(flow, &assignment);
     let screens: Vec<Value> = (flow.screens.iter())
         .map(|s| {
@@ -76,9 +96,12 @@ fn simulate(flow: &UiFlow, roles: &[String]) -> Value {
             })
         })
         .collect();
+    let implied: Vec<&String> = assignment.roles.difference(&chosen.roles).collect();
     json!({
         "anonymous": roles.is_empty(),
-        "roles": assignment.roles,
+        "roles": chosen.roles,
+        "implied_roles": implied,
+        "policies": assignment.policies,
         "screens": screens,
         "endpoints": endpoints,
     })
@@ -215,7 +238,94 @@ fn assignment_text(simulation: &Value) -> String {
     let roles: Vec<&str> = (simulation["roles"].as_array().into_iter().flatten())
         .filter_map(Value::as_str)
         .collect();
-    format!("signed in with roles {}", roles.join(", "))
+    let implied: Vec<&str> = (simulation["implied_roles"].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .collect();
+    let policies: Vec<String> = (simulation["policies"].as_object().into_iter().flatten())
+        .map(|(name, allowed)| {
+            format!(
+                "{name} {}",
+                if allowed == true { "allowed" } else { "denied" }
+            )
+        })
+        .collect();
+    let mut text = format!("signed in with roles {}", roles.join(", "));
+    if !implied.is_empty() {
+        text += &format!(" (implies {})", implied.join(", "));
+    }
+    if !policies.is_empty() {
+        text += &format!("; policies: {}", policies.join(", "));
+    }
+    text
+}
+
+/// `archguard ui-flow roles`: the roles, permissions and policies the code
+/// defines (rules and import file), with where each was read.
+pub(crate) fn roles(cli: &Cli, root: &Path) -> i32 {
+    if !matches!(cli.format, Format::Text | Format::Json) {
+        return usage("ui-flow roles supports --format text|json");
+    }
+    let import = match archguard_engine::ui_flow::read_ui_flow(root) {
+        Ok(flow) => flow.unwrap_or_default(),
+        Err(error) => return analysis_error(error),
+    };
+    let flow = merge_ui_flows(import, archguard_engine::ui_flow_roles::extract(root));
+    if cli.quiet {
+        return EXIT_OK;
+    }
+    if cli.format == Format::Json {
+        let policies: Vec<Value> = (flow.policies.iter())
+            .map(|p| {
+                let mut row = json!(p);
+                row["requires_text"] = json!(p.requires.text());
+                row
+            })
+            .collect();
+        let value =
+            json!({"roles": flow.roles, "policies": policies, "diagnostics": flow.diagnostics});
+        emit(&serde_json::to_string_pretty(&value).expect("roles serialize"));
+        return EXIT_OK;
+    }
+    outln!("Roles: {}", flow.roles.len());
+    for d in &flow.roles {
+        let includes = if d.includes.is_empty() {
+            String::new()
+        } else {
+            format!(" · includes {}", d.includes.join(", "))
+        };
+        outln!(
+            "  {} · {}{includes} · {}:{} ({})",
+            d.name,
+            label(&d.kind),
+            d.file,
+            d.line,
+            d.source
+        );
+    }
+    outln!("Policies: {}", flow.policies.len());
+    for p in &flow.policies {
+        outln!(
+            "  {} · needs: {} · {}:{} ({})",
+            p.name,
+            p.requires.text(),
+            p.file,
+            p.line,
+            p.source
+        );
+    }
+    let notes: Vec<String> = (flow.diagnostics.iter())
+        .map(|d| {
+            format!(
+                "{} {}:{}: {}",
+                label(&d.severity),
+                d.file,
+                d.line,
+                d.message
+            )
+        })
+        .collect();
+    print_gaps(&notes, cli.verbose);
+    EXIT_OK
 }
 
 /// A simulated screen row in words; `access` is the screen's access in words.
@@ -274,6 +384,31 @@ mod tests {
         assert_eq!(
             label(&archguard_engine::core::UiFlowFindingKind::ShownButRefused),
             "shown_but_refused"
+        );
+    }
+
+    #[test]
+    fn role_names_follow_the_catalog_and_the_simulation_shows_implied_roles() {
+        use archguard_engine::core::{RoleDef, RoleKind};
+        let def = |name: &str, includes: &[&str]| RoleDef {
+            name: name.into(),
+            kind: RoleKind::Role,
+            includes: includes.iter().map(|s| s.to_string()).collect(),
+            file: "Sec.java".into(),
+            line: 1,
+            source: "spring".into(),
+        };
+        let flow = UiFlow {
+            roles: vec![def("ADMIN", &["USER"]), def("USER", &[])],
+            ..UiFlow::default()
+        };
+        let names = defined_names(&flow, &["ROLE_ADMIN".into(), "Other".into()]);
+        assert_eq!(names, ["ADMIN", "Other"]);
+        let simulation = simulate(&flow, &["ADMIN".into()]);
+        assert_eq!(simulation["implied_roles"], json!(["USER"]));
+        assert_eq!(
+            assignment_text(&simulation),
+            "signed in with roles ADMIN (implies USER)"
         );
     }
 }

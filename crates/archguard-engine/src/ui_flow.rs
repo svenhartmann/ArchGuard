@@ -37,6 +37,8 @@ pub fn read_ui_flow(root: &Path) -> Result<Option<UiFlow>, ArchguardError> {
         .for_each(|e| e.source = import());
     flow.actions.iter_mut().for_each(|e| e.source = import());
     flow.endpoints.iter_mut().for_each(|e| e.source = import());
+    flow.roles.iter_mut().for_each(|e| e.source = import());
+    flow.policies.iter_mut().for_each(|e| e.source = import());
     Ok(Some(flow))
 }
 
@@ -52,6 +54,7 @@ pub fn analyze(root: &Path) -> Result<UiFlow, ArchguardError> {
         crate::ui_flow_xaml::extract,
         crate::ui_flow_vue::extract,
         crate::ui_flow_slint::extract,
+        crate::ui_flow_roles::extract,
     ];
     Ok(extractors
         .into_iter()
@@ -130,6 +133,42 @@ public class OrdersController : ControllerBase
             findings[0].kind,
             archguard_core::UiFlowFindingKind::ShownButRefused
         );
+    }
+
+    #[test]
+    fn analyze_resolves_policies_from_the_role_catalog() {
+        use archguard_core::{Assignment, ScreenReach, screen_reaches};
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                ("Web/Web.csproj", "<Project />"),
+                (
+                    "Web/Pages/Home.razor",
+                    "@page \"/\"\n<a href=\"purge\">Purge</a>\n",
+                ),
+                (
+                    "Web/Pages/Purge.razor",
+                    "@page \"/purge\"\n@attribute [Authorize(Policy = \"CanPurge\")]\n",
+                ),
+                (
+                    "Web/Program.cs",
+                    "builder.Services.AddAuthorizationBuilder()\n    .AddPolicy(\"CanPurge\", p => p.RequireRole(\"Administrator\"));\n",
+                ),
+            ],
+        );
+        let flow = analyze(dir.path()).unwrap();
+        assert_eq!(flow.policies.len(), 1, "{:#?}", flow.policies);
+        let purge = |roles: &[&str]| {
+            let a = Assignment {
+                authenticated: true,
+                roles: roles.iter().map(|r| r.to_string()).collect(),
+                ..Assignment::default()
+            };
+            screen_reaches(&flow, &a)["Web:Pages/Purge.razor"]
+        };
+        assert_eq!(purge(&["Administrator"]), ScreenReach::Sure);
+        assert_eq!(purge(&[]), ScreenReach::Denied);
     }
 
     #[test]

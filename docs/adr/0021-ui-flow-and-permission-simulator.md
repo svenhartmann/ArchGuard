@@ -280,3 +280,67 @@ Helpers calling helpers, parameters and values from requests (`Referer`) stay
 gaps. A literal or helper path now resolves in the application of the page a
 shared component is placed on, so a component library can link into the app
 that uses it. eShop: navigations resolved 38 → 52 of 61.
+
+### 2026-11-20: role and policy catalog
+
+The simulator offered only role names that appear in conditions, and every
+`policy(...)` atom stayed unknown. `UiFlow` gains `roles` (`RoleDef`: name,
+kind `role|permission|group`, `includes`, file, line, source) and `policies`
+(`PolicyDef`: name, `requires` as a `Condition`, file, line, source); both
+serde default, left out when empty, merged as a sorted union. The import file
+may carry them.
+
+Evaluation: `resolve_assignment(flow, assignment)` in `archguard-core` is the
+one place that applies the catalog. A held role adds every name its defs
+`include`, transitively and cycle-safe, and every `permission` def it covers;
+a defined policy the assignment does not switch explicitly is set to what its
+`requires` evaluates to, when that is known (rounds until nothing changes, so
+a policy may require another; a cycle stays unknown). Several defs of one name
+that disagree leave the policy unknown (Bitwarden defines `Application`
+differently in three services). Nothing defined: the assignment is unchanged.
+`evaluate_condition` keeps its signature and takes the assignment as given;
+`reachable_screens`, `screen_reaches` and the findings resolve first, and the
+findings also simulate roles named only in policy requirements. CLI and MCP
+evaluate endpoints with the resolved assignment.
+
+Permission ids follow Squidex's own rule: a held id covers another when its
+dot segments are a prefix and each is equal or `*` (`squidex.apps.{app}.*`
+and `squidex.apps.{app}` cover `squidex.apps.{app}.contents.read`). Squidex's
+alternatives (`a|b`) and exclusions (`^`) are not read. Which role holds which
+permission is not derived.
+
+Rules (`ui_flow_roles.rs`): string constants of classes named `Roles`,
+`RoleNames`, `AuthoritiesConstants` (roles) and `Permissions`,
+`PermissionIds`, `PermissionNames` (permissions); constants and enum members
+(`nameof(E.M)`, `E.M.ToString()`) named in `RequireRole`, `[Authorize(Roles =
+…)]`, `@PreAuthorize`, `@Secured`, `@RolesAllowed`, `.hasAuthority`,
+`.hasRole` and their `Any` forms, recorded at their declaration; an enum is
+never a role catalog by itself (Bitwarden's `OrganizationUserType` is used in
+handlers, not in role checks, so it is not listed). `new IdentityRole(x)` at
+the seeding site. `AddPolicy(name, …)`: `RequireAuthenticatedUser` = signed
+in, `RequireRole` = any of the roles, `RequireClaim(t, v…)` = custom `claim t =
+v|…` (constants resolved where declared in the scan, else the source text),
+anything else unknown with a note; `DefaultPolicy`/`FallbackPolicy = new
+AuthorizationPolicyBuilder()…` likewise. Spring `fromHierarchy`/`setHierarchy`
+literals give `includes`. TypeScript `enum` or `const` objects named
+`Authority`, `Role`, `Roles`, `Permission`, `Permissions` count only for
+members used as `Name.MEMBER` in a `.ts` or `.html` file. `ROLE_` is dropped
+for Spring and TypeScript, as in the Spring access rules. A name or value that
+is not readable is a `note`; notes leave `complete` unchanged, since the
+catalog adds to the flow and missing it loses no screen or endpoint.
+
+CLI: `ui-flow roles [PATH]` lists the catalog (text or JSON with
+`requires_text`); `--role ROLE_X` reads `X` when only `X` is defined, an
+undefined role gets a warning, and the simulation shows the implied roles and
+the resolved policies. MCP `ui_flow`: `metadata.roles` (names) and
+`metadata.policies` (name to requirement in words), the full defs as `role`
+and `policy` rows, `simulation.implied_roles` and `simulation.policies`.
+
+Checked 2026-11-20: CleanArchitecture `Administrator` (constant and seeding;
+this checkout has no `Policies.CanPurge`), jhipster `ADMIN`, `USER`,
+`ANONYMOUS` and the Angular `Authority.ADMIN`, Squidex 139 permission ids,
+Bitwarden 13 policies, eShop none. Not yet done: the desktop role picker and
+inspector (`evaluate_condition` there and in `domain_chain`/`ui_flow_replay`
+still gets the unresolved assignment), Spring's `RoleHierarchyImpl` builder
+API, a Squidex-style `Role` class with role constants (singular names are not
+in the list).

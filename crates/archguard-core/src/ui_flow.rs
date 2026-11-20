@@ -29,6 +29,12 @@ pub struct UiFlow {
     /// starts (MAUI Shell, WPF `StartupUri`, ...); see [`start_screen_ids`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub start_screens: Vec<String>,
+    /// Roles, permissions and groups the project defines; see [`resolve_assignment`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<RoleDef>,
+    /// Named policies and what they require; see [`resolve_assignment`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<PolicyDef>,
 }
 impl Default for UiFlow {
     /// Empty and complete, so it is the identity of [`merge_ui_flows`].
@@ -42,6 +48,8 @@ impl Default for UiFlow {
             diagnostics: vec![],
             complete: true,
             start_screens: vec![],
+            roles: vec![],
+            policies: vec![],
         }
     }
 }
@@ -326,6 +334,7 @@ pub fn reachable_screens(
     start: &str,
     assignment: &Assignment,
 ) -> BTreeMap<String, Reach> {
+    let assignment = &resolve_assignment(flow, assignment);
     let screens: BTreeMap<&str, &Screen> =
         flow.screens.iter().map(|s| (s.id.as_str(), s)).collect();
     let level = |outcome| match outcome {
@@ -412,6 +421,7 @@ fn reach_from(flow: &UiFlow, starts: &[&str], assignment: &Assignment) -> BTreeM
 /// Every screen's reach from the start screens ([`start_screen_ids`]), with
 /// the reason when not reached.
 pub fn screen_reaches(flow: &UiFlow, assignment: &Assignment) -> BTreeMap<String, ScreenReach> {
+    let assignment = &resolve_assignment(flow, assignment);
     let app = |s: &Screen| s.application.clone().unwrap_or_default();
     let starts = start_screen_ids(flow);
     let screens: BTreeMap<&str, &Screen> =
@@ -636,6 +646,117 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         diagnostics: union(a.diagnostics, b.diagnostics),
         complete: a.complete && b.complete,
         start_screens: union(a.start_screens, b.start_screens),
+        roles: union(a.roles, b.roles),
+        policies: union(a.policies, b.policies),
+    }
+}
+
+pub use roles::{PolicyDef, RoleDef, RoleKind, permission_covers, resolve_assignment};
+
+/// The role and policy catalog and how the simulation applies it.
+mod roles {
+    use super::*;
+
+    /// A role, permission or group the project defines, where it was read.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct RoleDef {
+        pub name: String,
+        pub kind: RoleKind,
+        /// Names this one implies (`ROLE_ADMIN > ROLE_USER`: ADMIN includes USER).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub includes: Vec<String>,
+        pub file: String,
+        pub line: u32,
+        pub source: String,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum RoleKind {
+        Role,
+        /// A permission id; dotted ids cover each other by [`permission_covers`].
+        Permission,
+        Group,
+    }
+
+    /// A named policy (ASP.NET `AddPolicy`) and what it requires.
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct PolicyDef {
+        pub name: String,
+        pub requires: Condition,
+        pub file: String,
+        pub line: u32,
+        pub source: String,
+    }
+
+    /// Squidex rule for dotted permission ids: `held` covers `wanted` when its
+    /// segments are a prefix of `wanted`'s and each is equal or `*`
+    /// (`app.{app}.*` and `app.{app}` both cover `app.{app}.contents.read`).
+    pub fn permission_covers(held: &str, wanted: &str) -> bool {
+        let h: Vec<&str> = held.split('.').collect();
+        let w: Vec<&str> = wanted.split('.').collect();
+        held != wanted && h.len() <= w.len() && h.iter().zip(&w).all(|(h, w)| h == w || *h == "*")
+    }
+
+    /// The assignment the simulator evaluates: every held role adds the roles it
+    /// `includes` (transitively, cycle-safe) and the permission defs it covers, and
+    /// every defined policy the assignment does not switch explicitly is set from
+    /// what it requires, when that is known. Several defs of one name that disagree
+    /// leave the policy unknown. Nothing defined returns the assignment unchanged.
+    /// Idempotent; [`reachable_screens`], [`screen_reaches`] and the findings apply
+    /// it, [`evaluate_condition`] and [`evaluate_access`] take it as given.
+    pub fn resolve_assignment(flow: &UiFlow, assignment: &Assignment) -> Assignment {
+        let mut out = assignment.clone();
+        imply_roles(flow, &mut out.roles);
+        resolve_policies(flow, &mut out);
+        out
+    }
+
+    /// Adds the roles every held role includes and the permission defs it covers.
+    fn imply_roles(flow: &UiFlow, roles: &mut BTreeSet<String>) {
+        let mut todo: Vec<String> = roles.iter().cloned().collect();
+        while let Some(held) = todo.pop() {
+            let included = (flow.roles.iter().filter(|d| d.name == held)).flat_map(|d| &d.includes);
+            let covered = (flow.roles.iter())
+                .filter(|d| d.kind == RoleKind::Permission && permission_covers(&held, &d.name))
+                .map(|d| &d.name);
+            for name in included.chain(covered) {
+                if roles.insert(name.clone()) {
+                    todo.push(name.clone());
+                }
+            }
+        }
+    }
+
+    /// Sets each defined policy the assignment leaves open, in rounds until nothing
+    /// changes, so a policy may require another; a cycle stays unknown.
+    fn resolve_policies(flow: &UiFlow, out: &mut Assignment) {
+        let names: BTreeSet<&str> = flow.policies.iter().map(|p| p.name.as_str()).collect();
+        loop {
+            let open = names.iter().filter(|n| !out.policies.contains_key(**n));
+            let known: Vec<(&str, bool)> = open
+                .filter_map(|&name| Some((name, policy_value(flow, name, out)?)))
+                .collect();
+            if known.is_empty() {
+                return;
+            }
+            for (name, value) in known {
+                out.policies.insert(name.to_string(), value);
+            }
+        }
+    }
+
+    /// The policy's value when all its defs agree on a known outcome.
+    fn policy_value(flow: &UiFlow, name: &str, assignment: &Assignment) -> Option<bool> {
+        let outcomes: BTreeSet<Outcome> = (flow.policies.iter())
+            .filter(|p| p.name == name)
+            .map(|p| evaluate_condition(&p.requires, assignment))
+            .collect();
+        match outcomes.iter().collect::<Vec<_>>()[..] {
+            [Outcome::Allowed] => Some(true),
+            [Outcome::Denied] => Some(false),
+            _ => None,
+        }
     }
 }
 
@@ -767,7 +888,7 @@ mod findings {
         let reached: Vec<(SimulatedRole, Assignment, BTreeMap<String, Reach>)> = roles
             .into_iter()
             .map(|role| {
-                let assignment = assignment_of(&role);
+                let assignment = resolve_assignment(flow, &assignment_of(&role));
                 let reached = reach_from(flow, &starts, &assignment);
                 (role, assignment, reached)
             })
@@ -854,7 +975,8 @@ mod findings {
         (starts, notes)
     }
 
-    /// Anonymous, authenticated, then every role name in the flow, sorted.
+    /// Anonymous, authenticated, then every role name in the flow's conditions
+    /// and policy requirements, sorted.
     fn simulated_roles(flow: &UiFlow) -> Vec<SimulatedRole> {
         fn collect(condition: &Condition, names: &mut BTreeSet<String>) {
             match condition {
@@ -875,7 +997,8 @@ mod findings {
             .chain(flow.endpoints.iter().filter_map(|e| match &e.access {
                 AccessState::Protected(c) => Some(c),
                 _ => None,
-            }));
+            }))
+            .chain(flow.policies.iter().map(|p| &p.requires));
         conditions.for_each(|c| collect(c, &mut names));
         [SimulatedRole::Anonymous, SimulatedRole::Authenticated]
             .into_iter()
@@ -916,7 +1039,7 @@ mod findings {
 
     /// The screen's access and the action's condition deny an anonymous user.
     fn guarded_for_anonymous(flow: &UiFlow, action: &Action) -> bool {
-        let anonymous = Assignment::default();
+        let anonymous = resolve_assignment(flow, &Assignment::default());
         let screen_access = match &action.screen {
             Origin::Screen(id) => flow
                 .screens
