@@ -9,9 +9,11 @@ import { ArcBlock, ArcBlockView, Fit } from "architecture_blocks.slint";
 import { ArcVisual, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation } from "architecture_visual.slint";
 import { ArcFigure, ArcFrame, FigureView, FigureSwitch } from "architecture_figure.slint";
 import { RichEditor, RichToolbar, RichData, RichItem, RichRun, RichRect, RichTools, RichCell } from "architecture_rich.slint";
+import { TargetPanel, ArcTarget, ArcTargetRelation, ArcTargetRef, ArcTargetComponent } from "architecture_target.slint";
 
 export { ArcBlock, ArcMap, ArcLevelItem, ArcCard, ArcLine, ArcRelation, ArcFigure, ArcFrame }
 export { RichData, RichItem, RichRun, RichRect, RichTools, RichCell }
+export { ArcTarget, ArcTargetRelation, ArcTargetRef, ArcTargetComponent }
 
 export struct ArcChapter {
     number: int,
@@ -32,7 +34,9 @@ export struct ArchitectureModel {
     blocks: [ArcBlock],
     source: string,
     about: [ArcBlock],
-    has-model: bool,
+    // The target architecture page is open instead of a chapter.
+    target-view: bool,
+    target: ArcTarget,
     saved: string,
     map: ArcMap,
     // The project's arc42 file or folder, relative to the project; empty
@@ -83,6 +87,15 @@ export global ArchitectureData {
     // A diagram as a diagram block at the caret of the open chapter.
     callback insert-diagram(string);
     callback open-catalogue();
+    // The target architecture page and its controls (architecture_target.slint).
+    callback open-target();
+    callback target-violations(bool);
+    callback target-query(string);
+    callback target-more();
+    callback target-select(int);
+    callback target-component(int);
+    // "Open in graph" by node name.
+    callback target-reveal(string);
     // Below a chapter's title: 0 its text, 1 its diagrams not in the text.
     // Kept across chapters for the window's session.
     in-out property <int> chapter-tab;
@@ -448,7 +461,7 @@ export component ArchitectureView inherits Rectangle {
                         for c in ArchitectureData.model.chapters: ChapterButton {
                             compact: root.narrow;
                             chapter: c;
-                            current: c.number == ArchitectureData.model.chapter && !ArchitectureData.model.catalogue;
+                            current: c.number == ArchitectureData.model.chapter && !ArchitectureData.model.catalogue && !ArchitectureData.model.target-view;
                             clicked => { ArchitectureData.select-chapter(c.number); }
                         }
                         Rectangle { height: 1px; background: Theme.border; }
@@ -457,6 +470,12 @@ export component ArchitectureView inherits Rectangle {
                             chapter: { number: 0, label: "D", title: @tr("Diagrams") };
                             current: ArchitectureData.model.catalogue;
                             clicked => { ArchitectureData.open-catalogue(); }
+                        }
+                        ChapterButton {
+                            compact: root.narrow;
+                            chapter: { number: 0, label: "T", title: @tr("Target architecture") };
+                            current: ArchitectureData.model.target-view;
+                            clicked => { ArchitectureData.open-target(); }
                         }
                     }
                 }
@@ -486,7 +505,17 @@ export component ArchitectureView inherits Rectangle {
                     alignment: start;
                     padding-bottom: 28px;
                     spacing: 18px;
-                    Rectangle {
+                    if ArchitectureData.model.target-view: TargetPanel {
+                        target: ArchitectureData.model.target;
+                        narrow: root.narrow;
+                        only-violations(on) => { ArchitectureData.target-violations(on); }
+                        query(q) => { ArchitectureData.target-query(q); }
+                        more => { ArchitectureData.target-more(); }
+                        select(i) => { ArchitectureData.target-select(i); }
+                        component(i) => { ArchitectureData.target-component(i); }
+                        reveal(n) => { ArchitectureData.target-reveal(n); }
+                    }
+                    if !ArchitectureData.model.target-view: Rectangle {
                         background: Theme.panel;
                         border-radius: 12px;
                         border-width: 1px;
@@ -668,28 +697,6 @@ export component ArchitectureView inherits Rectangle {
                             }
                             }
                         }
-                    }
-                    if !ArchitectureData.model.has-model: HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        Text {
-                            text: @tr("Optional: compare with a target model");
-                            color: Theme.muted;
-                            font-size: Theme.font-small;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                        HelpTip {
-                            size: 18px;
-                            y: (parent.height - self.height) / 2;
-                            tip: @tr("Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph.");
-                        }
-                    }
-                    if ArchitectureData.model.has-model: Text {
-                        text: @tr("Target architecture: the comparison with the declared model is not native yet; `archguard architecture` prints it.");
-                        color: Theme.muted;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
                     }
                 }
             }

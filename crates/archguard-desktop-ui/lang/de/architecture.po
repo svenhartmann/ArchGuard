@@ -25,15 +25,6 @@ msgstr "Quelle und Aktualisierung"
 msgid "Generated from the original project evidence. View filters and simulations do not change this document. Add project context in the exported Markdown; archguard doc --arc42 preserves your text outside generated blocks."
 msgstr "Aus den ursprünglichen Projektbelegen erzeugt. Ansichtfilter und Simulationen ändern dieses Dokument nicht. Projektkontext im exportierten Markdown ergänzen; archguard doc --arc42 erhält eigene Texte außerhalb erzeugter Blöcke."
 
-msgid "Optional: compare with a target model"
-msgstr "Optional: mit einem Sollmodell vergleichen"
-
-msgid "Define logical components and allowed dependencies under architecture.model in archguard.toml. Components can span several packages; their mapping is checked against the complete source dependency graph."
-msgstr "Definiere logische Komponenten und erlaubte Abhängigkeiten unter architecture.model in archguard.toml. Komponenten können mehrere Pakete umfassen; ihre Zuordnung wird am vollständigen Quell-Abhängigkeitsgraphen geprüft."
-
-msgid "Target architecture: the comparison with the declared model is not native yet; `archguard architecture` prints it."
-msgstr "Sollarchitektur: der Vergleich mit dem deklarierten Modell ist noch nicht nativ; `archguard architecture` gibt ihn aus."
-
 msgid "No entries recorded."
 msgstr "Nichts erfasst."
 
@@ -340,3 +331,101 @@ msgstr "Diagramme ({})"
 
 msgid "Every generated diagram of this chapter is in its text."
 msgstr "Jedes erzeugte Diagramm dieses Kapitels steht in seinem Text."
+
+msgid "Target architecture"
+msgstr "Zielarchitektur"
+
+msgid "No target model declared. Add components and allowed directions under architecture.model in archguard.toml."
+msgstr "Kein Zielmodell deklariert. Komponenten und erlaubte Richtungen unter architecture.model in archguard.toml ergänzen."
+
+msgid "{} / {} files assigned · {} forbidden directions · {} interface violations · {} coupling limit violations · mapping {}"
+msgstr "{} / {} Dateien zugeordnet · {} verbotene Richtungen · {} Schnittstellenverstöße · {} verletzte Kopplungsgrenzen · Zuordnung {}"
+
+msgid "complete"
+msgstr "vollständig"
+
+msgid "Allowed"
+msgstr "Erlaubt"
+
+msgid "Allowed · not observed"
+msgstr "Erlaubt · nicht beobachtet"
+
+msgid "Forbidden"
+msgstr "Nicht erlaubt"
+
+msgid "Allowed direction · Private access"
+msgstr "Erlaubte Richtung · Privater Zugriff"
+
+msgid "{} references"
+msgstr "{} Referenzen"
+
+msgid "Show all directions"
+msgstr "Alle Richtungen anzeigen"
+
+msgid "Only violations"
+msgstr "Nur Verstöße"
+
+msgid "Filter components"
+msgstr "Komponenten filtern"
+
+msgid "Component dependencies · source → target"
+msgstr "Komponentenabhängigkeiten · Quelle → Ziel"
+
+msgid "{} / {} directions shown · violations first"
+msgstr "{} / {} Richtungen angezeigt · Verstöße zuerst"
+
+msgid "No direction matches this filter."
+msgstr "Keine Richtung entspricht diesem Filter."
+
+msgid "Next 100 directions"
+msgstr "Nächste 100 Richtungen"
+
+msgid "{} source connections · {} / {} evidence records shown"
+msgstr "{} Quellverbindungen · {} / {} Belege angezeigt"
+
+msgid "Stored evidence is a sample; reference totals are reported separately."
+msgstr "Die gespeicherten Belege sind eine Stichprobe; Referenzsummen werden separat ausgewiesen."
+
+msgid "Private access ({})"
+msgstr "Privater Zugriff ({})"
+
+msgid "Logical components and mapping"
+msgstr "Logische Komponenten und Zuordnung"
+
+msgid "Include: {}"
+msgstr "Einschluss: {}"
+
+msgid "Public interface: unrestricted"
+msgstr "Öffentliche Schnittstelle: nicht eingeschränkt"
+
+msgid "Public interface: closed to other components"
+msgstr "Öffentliche Schnittstelle: für andere Komponenten geschlossen"
+
+msgid "Public interface: {}"
+msgstr "Öffentliche Schnittstelle: {}"
+
+msgid "Incoming components: {} · limit {}"
+msgstr "Eingehende Komponenten: {} · Grenze {}"
+
+msgid "Outgoing components: {} · limit {}"
+msgstr "Ausgehende Komponenten: {} · Grenze {}"
+
+msgid "exceeded"
+msgstr "überschritten"
+
+msgid "{} more files"
+msgstr "{} weitere Dateien"
+
+msgid "Mapping coverage"
+msgstr "Abdeckung der Zuordnung"
+
+msgid "{} unassigned files · {} ambiguous files · {} unclassified connections"
+msgstr "{} nicht zugeordnete Dateien · {} mehrdeutige Dateien · {} nicht klassifizierte Verbindungen"
+
+msgid "Components without assigned files: {}"
+msgstr "Komponenten ohne zugeordnete Dateien: {}"
+
+msgid "{0} · {1} file"
+msgid_plural "{0} · {1} files"
+msgstr[0] "{0} · {1} Datei"
+msgstr[1] "{0} · {1} Dateien"
