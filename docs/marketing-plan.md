@@ -2,9 +2,17 @@
 
 Stand: 2026-11-20 · Status: Umsetzung auf Marketing-Ticket-Branches; Veröffentlichung ausstehend
 
-**Kurz vorweg:** ArchGuard ist nicht-kommerziell. Ziel des Marketings ist deshalb Nutzung (Downloads, Stars, CI-Einsätze, MCP-Nutzer), kein Umsatz. Die Website zeigt heute etwa die Hälfte der Features, und manche Angaben sind veraltet. Der größte Hebel ist, sie auf den Stand des [README](../README.md) zu bringen, nach Zielgruppen zu ordnen und jedes Feature mit einem echten Screenshot aus einem passenden Open-Source-Projekt zu belegen (Abschnitt 8).
+**Kurz vorweg:** ArchGuard ist nicht-kommerziell. Ziel des Marketings ist deshalb Nutzung (Downloads, Stars, CI-Einsätze, MCP-Nutzer), kein Umsatz. Zu Beginn dieses Plans zeigte die Website etwa die Hälfte der Features, und manche Angaben waren veraltet. Der größte Hebel war, sie auf den Stand des [README](../README.md) zu bringen, nach Zielgruppen zu ordnen und jedes Feature mit einem echten Screenshot aus einem passenden Open-Source-Projekt zu belegen (Abschnitt 8).
 
 Die vorbereiteten Kampagnenmaterialien, Veröffentlichungsschritte und Messgrenzen stehen in [docs/marketing](marketing/README.md). Dieser Plan bleibt die fachliche Arbeitsgrundlage; fertige Texte bedeuten noch keine veröffentlichten Posts oder erhobenen Nutzungszahlen.
+
+## Umsetzungsstand
+
+Lokal umgesetzt sind die fünf Startseiten-Sektionen, vier Zielgruppenseiten, Werkzeugvergleich, Evidenz-Essay, zwölf Sprachgruppen mit Galerie und die Dokumentation in DE/EN. Das Kampagnenpaket enthält den Zwölf-Wochen-Kalender, Launch- und Fallstudienentwürfe, Verbreitungsbrief, Lehrübung und Messanleitung. Die Website enthält 30 neue echte Desktop-Aufnahmen mit Commit-, Lizenz- und Prüfsummennachweis.
+
+Die Aufnahmen konkretisieren die ursprünglichen Vorschläge in Abschnitt 8: Online Boutique zeigt konfigurierte Redis-Beziehungen, keinen nachgewiesenen Shared-Table-Verstoß. PetClinic verwendet eine lokale Lehrregel bei unveränderten Quellen. Der MCP-Ausschnitt ist eine echte JSON-RPC-Sitzung und kein Claude-Code-Chat; die Simulation verwendet die belegte Kante `comparators → ComparatorUtils`. Helm/Kustomize wurden für diese Aufnahmen nicht gerendert. Mastodons Ruby-Abhängigkeiten sind mangels Gemfile.lock-Unterstützung kein belegtes vollständiges SBOM-Beispiel.
+
+Weitere Fallstudien und Clips sind als Entwürfe mit offenen Capture-Aufträgen gekennzeichnet. Veröffentlichung, Beiträge in externen Kanälen und die zwölfwöchige Erfolgsmessung stehen aus. Die Feature-Tabelle unten dokumentiert bewusst den ursprünglichen Handlungsbedarf.
 
 ## 1. Ziele und Messgrößen
 
@@ -32,7 +40,7 @@ Website-Tracking schlage ich bewusst nicht vor. Das passt zum Datenschutzverspre
 
 Positionierung in einem Satz: **„Evidenzbasierte Architekturanalyse, die sagt, was sie misst und was nicht.“** Das „Missing evidence is not a zero“ ist das Alleinstellungsmerkmal und sollte auf jeder Seite sichtbar sein.
 
-## 3. Feature-Inventar: was die Website zeigt
+## 3. Feature-Inventar: Ausgangsstand vor der Umsetzung
 
 ✅ = auf der Website, ⚠️ = teilweise oder veraltet, ❌ = fehlt
 
