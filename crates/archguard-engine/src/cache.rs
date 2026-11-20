@@ -16,8 +16,9 @@
 //! saving returns `Err`, which [`analyze_cached`](crate::effective::analyze_cached) downgrades to
 //! a warning — analysis stays correct without a cache, and a load of
 //! anything non-regular is a cache miss, never trusted content. On
-//! non-unix platforms there is no no-follow syscall; there the entry
-//! still goes through a unique temporary file plus one atomic rename.
+//! non-unix platforms there is no no-follow syscall; there a symlinked
+//! `.archguard` or entry is refused by checking each component, and the
+//! entry still goes through a unique temporary file plus one atomic rename.
 //!
 //! Superseded T23 layout: `graph.json` + `fingerprint`. Those names
 //! are ignored on load and never deleted on save (the CLI `scan`
@@ -387,43 +388,22 @@ pub(crate) mod safe {
 
 #[cfg(not(unix))]
 mod safe {
-    use std::fs;
-    use std::io::Write;
     use std::path::Path;
 
     use super::{CACHE_DIR, CACHE_FILE};
+    use crate::project_files::{read_repo_file, write_project_file};
 
-    /// Single unique temporary file plus one atomic rename: without a
-    /// no-follow syscall (Windows has none) this is the strongest
-    /// available pairing guarantee — and rename still replaces a
-    /// symlinked target itself rather than writing through it.
+    /// Without a no-follow syscall (Windows has none) the shared project
+    /// writer refuses a symlinked `.archguard` or `cache.json` and publishes
+    /// through a unique temporary file plus one atomic rename.
     pub fn save(dir: &Path, json: &[u8]) -> std::io::Result<()> {
-        let cache = dir.join(CACHE_DIR);
-        fs::create_dir_all(&cache)?;
-        let tmp = cache.join(format!(
-            "{CACHE_FILE}.tmp.{}.{:x}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        // create_new (O_CREAT|O_EXCL): a pre-planted symlink at the
-        // temporary name is refused instead of written through, the
-        // closest std analogue of the unix guarantee.
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        file.write_all(json)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, cache.join(CACHE_FILE))?;
-        Ok(())
+        write_project_file(dir, Path::new(CACHE_FILE), json, true).map(drop)
     }
 
     pub fn load(dir: &Path) -> Option<String> {
-        fs::read_to_string(dir.join(CACHE_DIR).join(CACHE_FILE)).ok()
+        // No size bound, like the unix load.
+        let bytes = read_repo_file(dir, &Path::new(CACHE_DIR).join(CACHE_FILE), u64::MAX - 1);
+        String::from_utf8(bytes.ok()?).ok()
     }
 }
 
@@ -782,5 +762,38 @@ mod tests {
             load_graph_if_fresh(dir.path(), "abc").is_none(),
             "parse error tolerated"
         );
+    }
+
+    fn symlink_dir(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(target, link).expect("symlink");
+    }
+
+    #[test]
+    fn a_symlinked_archguard_directory_is_neither_written_nor_read() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        symlink_dir(outside.path(), &root.path().join(CACHE_DIR));
+        assert!(safe::save(root.path(), b"{}").is_err());
+        assert_eq!(fs::read_dir(outside.path()).expect("list").count(), 0);
+        fs::write(outside.path().join(CACHE_FILE), "{}").expect("plant");
+        assert!(safe::load(root.path()).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_symlinked_cache_file_is_not_written_through() {
+        let root = tempfile::tempdir().expect("root");
+        let outside = tempfile::tempdir().expect("outside");
+        let target = outside.path().join("victim");
+        fs::write(&target, "keep").expect("victim");
+        fs::create_dir(root.path().join(CACHE_DIR)).expect("dir");
+        std::os::windows::fs::symlink_file(&target, root.path().join(CACHE_DIR).join(CACHE_FILE))
+            .expect("symlink");
+        let _ = safe::save(root.path(), b"{}");
+        assert_eq!(fs::read_to_string(&target).expect("victim"), "keep");
+        assert!(safe::load(root.path()).is_none());
     }
 }

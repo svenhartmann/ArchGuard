@@ -66,15 +66,20 @@ pub fn start(project_root: &Path, service: &str) -> Option<Probe> {
     if std::env::var_os(PROBE_ENV).is_none_or(|v| v != "1") {
         return None;
     }
-    let dir = std::env::var_os(PROBE_DIR_ENV).map_or_else(
-        || project_root.join(".archguard/runtime").join(RUN_NAME),
-        PathBuf::from,
-    );
     let max_bytes = std::env::var(PROBE_MAX_BYTES_ENV)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_MAX_BYTES);
-    let (mut probe, subscriber) = Probe::recorder(dir, max_bytes, service);
+    // The operator's directory is trusted; the default one is repository
+    // content and is never reached through a symlink.
+    let sink = match std::env::var_os(PROBE_DIR_ENV) {
+        Some(dir) => Sink::new(PathBuf::from(dir), max_bytes),
+        None if project_root.as_os_str().is_empty() => {
+            Sink::in_project(Path::new("."), RUN_NAME, max_bytes)
+        }
+        None => Sink::in_project(project_root, RUN_NAME, max_bytes),
+    };
+    let (mut probe, subscriber) = Probe::with_sink(sink, service);
     tracing::subscriber::set_global_default(subscriber).ok()?;
     probe.spawn_flusher();
     Some(probe)
@@ -96,15 +101,20 @@ struct Writer {
 impl Probe {
     /// The probe and its subscriber, not yet installed (tests install it
     /// per thread).
+    #[cfg(test)]
     pub(crate) fn recorder(
         dir: PathBuf,
         max_bytes: u64,
         service: &str,
     ) -> (Probe, impl tracing::Subscriber + Send + Sync) {
+        Probe::with_sink(Sink::new(dir, max_bytes), service)
+    }
+
+    fn with_sink(sink: Sink, service: &str) -> (Probe, impl tracing::Subscriber + Send + Sync) {
         let pending = Pending::default();
         let writer = Arc::new(Writer {
             pending: pending.clone(),
-            sink: Mutex::new(Sink::new(dir, max_bytes)),
+            sink: Mutex::new(sink),
             resource: resource(service),
         });
         let subscriber = tracing_subscriber::registry().with(OtlpLayer::new(pending));
