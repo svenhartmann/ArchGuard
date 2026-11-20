@@ -31,16 +31,17 @@
 //! - A literal target matches parameter routes (`item/42` -> `/item/{id:int}`);
 //!   an exact literal route wins, and a tie of equally good routes stays
 //!   unresolved. An HTTP call with a computed path is a `Call::Unresolved` action.
+//! - Targets built by query-only URIs, one-level helpers and fields, see [`helpers`].
 //!
-//! Not recognized: routes from constants or `[Route]`, targets built by helper
-//! methods (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
+//! Not recognized: routes from constants or `[Route]`, helpers calling helpers
+//! (they stay unresolved), commented-out C# code in `.razor` files, `@inject` in
 //! `_Imports.razor`, components of referenced Razor class libraries (targets
 //! resolve within one application).
 use crate::project_files::read_repo_file;
 use crate::services::support::{Discovery, relative, test_path};
 use archguard_core::{
     Action, Call, Condition, DiagnosticSeverity, Origin, Screen, ScreenKind, ServiceTopology,
-    Target, Transition, UiFlow, UiFlowDiagnostic, best_route,
+    Transition, UiFlow, UiFlowDiagnostic,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -101,7 +102,7 @@ pub fn extract(root: &Path) -> UiFlow {
     let notes = usage::place(&index, &mut components, &mut flow);
     let mut grpc = BTreeSet::new();
     for c in &components {
-        navigation(&mut flow, c, &components);
+        navigation(&mut flow, c, &components, &index);
         services::actions(&index, c, &mut flow, &mut grpc);
     }
     usage::note(&mut flow, &components, notes);
@@ -174,10 +175,10 @@ fn load(root: &Path, files: &Files, flow: &mut UiFlow) -> Vec<Component> {
 }
 
 /// Links in the markup, `NavigateTo` and HTTP calls in markup and code-behind.
-fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component]) {
-    for (index, (file, text)) in c.texts.iter().enumerate() {
+fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component], index: &services::Index) {
+    for (n, (file, text)) in c.texts.iter().enumerate() {
         let views = guards(text);
-        let markup = if index == 0 { links(text) } else { vec![] };
+        let markup = if n == 0 { links(text) } else { vec![] };
         let navigations = calls(text, ".NavigateTo(")
             .into_iter()
             .filter_map(|(at, arg)| match path_of(&arg) {
@@ -186,28 +187,30 @@ fn navigation(flow: &mut UiFlow, c: &Component, components: &[Component]) {
             });
         for (at, source, path, trigger) in markup.into_iter().chain(navigations) {
             let line = line(text, at);
-            let target = match resolve(path.as_deref(), c, components, &source) {
-                Ok(id) => Target::Screen(id),
-                Err(message) => {
-                    report(flow, file, line, message);
-                    Target::Unresolved(source)
-                }
+            let dests = match path {
+                Some(path) => Ok(vec![helpers::Dest::Path(path)]),
+                None => helpers::dests(&source, c, components, index),
             };
             let condition = guard(text, &views, at, file, flow);
-            let trigger = trigger.or_else(|| c.triggers.at(index, at));
+            let trigger = trigger.or_else(|| c.triggers.at(n, at));
             for (from, condition) in c.placed(condition) {
-                flow.transitions.push(Transition {
-                    from,
-                    target: target.clone(),
-                    trigger: trigger.clone(),
-                    file: file.clone(),
-                    line,
-                    condition,
-                    source: SOURCE.into(),
-                });
+                let (targets, gaps) = helpers::targets(&dests, &from, components, &source);
+                for message in gaps {
+                    report(flow, file, line, message);
+                }
+                flow.transitions
+                    .extend(targets.into_iter().map(|target| Transition {
+                        from: from.clone(),
+                        target,
+                        trigger: trigger.clone(),
+                        file: file.clone(),
+                        line,
+                        condition: condition.clone(),
+                        source: SOURCE.into(),
+                    }));
             }
         }
-        http(flow, c, (index, file), text, &views);
+        http(flow, c, (n, file), text, &views);
     }
 }
 
@@ -450,36 +453,6 @@ fn all(mut items: Vec<Condition>) -> Option<Condition> {
         0 => None,
         1 => items.pop(),
         _ => Some(Condition::All(items)),
-    }
-}
-
-/// The screen of the same application whose route matches best, or the
-/// diagnostic why there is none.
-fn resolve(
-    path: Option<&str>,
-    from: &Component,
-    components: &[Component],
-    text: &str,
-) -> Result<String, String> {
-    let unresolved = || format!("Navigation target {text} is not a route of this application.");
-    let candidates = components
-        .iter()
-        .filter(|c| c.application == from.application)
-        .filter_map(|c| match &c.origin {
-            Origin::Screen(id) => Some((id, &c.routes)),
-            Origin::AnyScreen { .. } => None,
-        })
-        .flat_map(|(id, routes)| routes.iter().map(move |r| (id, r.as_str())));
-    match best_route(path.ok_or_else(unresolved)?, candidates) {
-        Ok(id) => Ok(id.clone()),
-        Err(tied) if tied.is_empty() => Err(unresolved()),
-        Err(tied) => Err(format!(
-            "Navigation target {text} matches several routes equally: {}.",
-            tied.iter()
-                .map(|id| id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
     }
 }
 
@@ -1536,6 +1509,34 @@ mod services {
             }
         }
 
+        /// (file, code, method) of each method `method` of the one class
+        /// `class` in `scope`; empty without such a class.
+        pub(super) fn methods_of(
+            &self,
+            class: &str,
+            method: &str,
+            scope: &BTreeSet<String>,
+        ) -> Result<Vec<(&str, &str, &Method)>, String> {
+            let found: Vec<usize> = (self.candidates(class, scope))
+                .filter(|&i| !self.classes[i].interface)
+                .collect();
+            match found[..] {
+                [] => Ok(vec![]),
+                [one] => {
+                    let src = &self.sources[self.classes[one].source];
+                    Ok((self.classes[one].methods.iter())
+                        .filter(|m| m.name == method)
+                        .map(|m| (src.file.as_str(), src.code.as_str(), m))
+                        .collect())
+                }
+                _ => Err(format!(
+                    "class {class} is declared {} times ({})",
+                    found.len(),
+                    self.files(&found)
+                )),
+            }
+        }
+
         fn files(&self, classes: &[usize]) -> String {
             let files: BTreeSet<&str> = classes
                 .iter()
@@ -1901,6 +1902,381 @@ mod services {
             }
         }
         found
+    }
+}
+
+/// Navigation targets that are no literal, by fixed rules:
+///
+/// - `Nav.GetUriWithQueryParameter(s)(...)` on a `NavigationManager` (injected,
+///   a helper parameter, or the name itself) stays on the current screen: the
+///   placed page, a gap from `any_screen`.
+/// - A helper call `Name(...)` (a method of the component) or `Class.Name(...)`
+///   (a static method of the one component or `.cs` class `Class` in the
+///   project scope, as for services) is inlined one level: its expression
+///   body, or every `return` of its block, must be a literal, an interpolated
+///   string (holes become parameter segments) or the rule above; one
+///   transition per distinct value. Anything else is a gap naming the helper
+///   with file:line. Overloads count together.
+/// - A field `name` of the component whose initializer and assignments are all
+///   readable by the rules above gives one transition per distinct value. A
+///   component parameter (`[Parameter]`, `[SupplyParameterFromQuery]`, ...)
+///   is set from outside: a gap.
+/// - Literal paths resolve in the application of the screen the component is
+///   placed on.
+mod helpers {
+    use super::Component;
+    use super::csharp::{self, Method};
+    use super::services::Index;
+    use super::text::{balanced, line, path_of};
+    use archguard_core::{Origin, Target, best_route};
+    use std::collections::BTreeMap;
+
+    #[derive(PartialEq)]
+    pub(super) enum Dest {
+        /// Route shape of a literal path.
+        Path(String),
+        /// Only the query string changes.
+        Current,
+    }
+
+    impl Dest {
+        /// The screen this destination means when the link starts at `from`.
+        pub(super) fn resolve(
+            &self,
+            from: &Origin,
+            components: &[Component],
+            text: &str,
+        ) -> Result<String, String> {
+            let application = match from {
+                Origin::Screen(_) => (components.iter())
+                    .find(|c| c.origin == *from)
+                    .and_then(|c| c.application.as_deref()),
+                Origin::AnyScreen { application } => {
+                    Some(application.as_str()).filter(|a| !a.is_empty())
+                }
+            };
+            match (self, from) {
+                (Dest::Current, Origin::Screen(id)) => Ok(id.clone()),
+                (Dest::Current, Origin::AnyScreen { .. }) => Err(format!(
+                    "Navigation target {text} stays on the current screen; from every screen of the application it is no single target."
+                )),
+                (Dest::Path(path), _) => resolve(path, application, components, text),
+            }
+        }
+    }
+
+    /// The screen of the same application whose route matches best, or the
+    /// diagnostic why there is none.
+    fn resolve(
+        path: &str,
+        application: Option<&str>,
+        components: &[Component],
+        text: &str,
+    ) -> Result<String, String> {
+        let unresolved = || not_a_route(text);
+        let candidates = components
+            .iter()
+            .filter(|c| c.application.as_deref() == application)
+            .filter_map(|c| match &c.origin {
+                Origin::Screen(id) => Some((id, &c.routes)),
+                Origin::AnyScreen { .. } => None,
+            })
+            .flat_map(|(id, routes)| routes.iter().map(move |r| (id, r.as_str())));
+        match best_route(path, candidates) {
+            Ok(id) => Ok(id.clone()),
+            Err(tied) if tied.is_empty() => Err(unresolved()),
+            Err(tied) => Err(format!(
+                "Navigation target {text} matches several routes equally: {}.",
+                tied.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+
+    fn not_a_route(text: &str) -> String {
+        format!("Navigation target {text} is not a route of this application.")
+    }
+
+    /// The deduplicated targets of `dests` for a link starting at `from`, and
+    /// the gap messages of those that are not readable.
+    pub(super) fn targets(
+        dests: &Result<Vec<Dest>, String>,
+        from: &Origin,
+        components: &[Component],
+        source: &str,
+    ) -> (Vec<Target>, Vec<String>) {
+        let found = match dests {
+            Ok(dests) => (dests.iter())
+                .map(|d| d.resolve(from, components, source))
+                .collect(),
+            Err(message) => vec![Err(message.clone())],
+        };
+        let (mut targets, mut gaps) = (Vec::new(), Vec::new());
+        for found in found {
+            let target = found.map(Target::Screen).unwrap_or_else(|message| {
+                gaps.push(message);
+                Target::Unresolved(source.into())
+            });
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        (targets, gaps)
+    }
+
+    /// A method whose result a navigation uses.
+    struct Helper {
+        name: String,
+        /// `file:line` of its declaration.
+        at: String,
+        params: BTreeMap<String, String>,
+        /// The expression body, or the expression of every `return`.
+        returns: Vec<String>,
+        is_static: bool,
+    }
+
+    /// Destinations of a navigation source that is no literal: `@Expr` in an
+    /// `href`, or a `NavigateTo` argument.
+    pub(super) fn dests(
+        source: &str,
+        c: &Component,
+        components: &[Component],
+        index: &Index,
+    ) -> Result<Vec<Dest>, String> {
+        let fail = |why: String| format!("Navigation target {source}: {why}.");
+        let expr = unwrap(source);
+        if let Some(dest) = leaf(expr, c, &BTreeMap::new()) {
+            return Ok(vec![dest]);
+        }
+        let helpers = match call(expr) {
+            Some((qualifier, name)) => helpers(qualifier, name, c, components, index),
+            None if is_ident(expr) => return field(expr, source, c, components, index),
+            None => Ok(vec![]),
+        };
+        let helpers = helpers.map_err(fail)?;
+        if helpers.is_empty() {
+            return Err(not_a_route(source));
+        }
+        inline(&helpers, c).map_err(fail)
+    }
+
+    /// `@Expr` or `@(Expr)` without the Razor wrapping.
+    fn unwrap(source: &str) -> &str {
+        let expr = source.trim().trim_start_matches('@').trim();
+        match expr.strip_prefix('(') {
+            Some(inner) if balanced(inner, ')').len() + 2 == expr.len() => {
+                inner[..inner.len() - 1].trim()
+            }
+            _ => expr,
+        }
+    }
+
+    fn is_ident(s: &str) -> bool {
+        s.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// A literal or interpolated path, or a query-only URI.
+    fn leaf(expr: &str, c: &Component, params: &BTreeMap<String, String>) -> Option<Dest> {
+        if let Some(path) = path_of(expr) {
+            return Some(Dest::Path(path));
+        }
+        let (receiver, rest) = expr.split_once('.')?;
+        let rest = rest.strip_prefix("GetUriWithQueryParameter")?;
+        let rest = rest.strip_prefix('s').unwrap_or(rest).strip_prefix('(')?;
+        let navigation =
+            |ty: &String| ty.trim_end_matches('?').rsplit('.').next() == Some("NavigationManager");
+        let known = receiver == "NavigationManager"
+            || c.injected.get(receiver).is_some_and(navigation)
+            || params.get(receiver).is_some_and(navigation);
+        // An `href` value ends at the first inner quote, so the call may be cut.
+        let after = rest[balanced(rest, ')').len()..].trim();
+        (known && matches!(after, "" | ")")).then_some(Dest::Current)
+    }
+
+    /// `[Qualifier.]Name(...)` spanning all of `expr`.
+    fn call(expr: &str) -> Option<(Option<&str>, &str)> {
+        let open = expr.find('(')?;
+        let inner = &expr[open + 1..];
+        if balanced(inner, ')').len() + 1 != inner.len() {
+            return None;
+        }
+        let head = expr[..open].trim();
+        if !head.split('.').all(is_ident) {
+            return None;
+        }
+        Some(match head.rsplit_once('.') {
+            Some((qualifier, name)) => (Some(qualifier), name),
+            None => (None, head),
+        })
+    }
+
+    /// The methods a helper call means; empty when none is known.
+    fn helpers(
+        qualifier: Option<&str>,
+        name: &str,
+        c: &Component,
+        components: &[Component],
+        index: &Index,
+    ) -> Result<Vec<Helper>, String> {
+        let Some(qualifier) = qualifier else {
+            return Ok(own(c, name));
+        };
+        let first = qualifier.split('.').next().unwrap_or(qualifier);
+        if c.injected.contains_key(first) {
+            return Ok(vec![]);
+        }
+        let class = qualifier.rsplit('.').next().unwrap_or(qualifier);
+        let scope = index.scope(&c.project);
+        let pages: Vec<&Component> = (components.iter())
+            .filter(|p| p.name() == class && scope.contains(&p.project))
+            .collect();
+        let found = match pages[..] {
+            [] => (index.methods_of(class, name, &scope)?.into_iter())
+                .map(|(file, code, m)| helper(file, code, m))
+                .collect(),
+            [page] => own(page, name),
+            _ => return Err(format!("class {class} matches {} components", pages.len())),
+        };
+        Ok(found.into_iter().filter(|h| h.is_static).collect())
+    }
+
+    /// The component's own methods named `name`.
+    fn own(c: &Component, name: &str) -> Vec<Helper> {
+        (c.texts.iter())
+            .flat_map(|(file, text)| {
+                (csharp::methods(file, text).into_iter())
+                    .filter(|m| m.name == name)
+                    .map(|m| helper(file, text, &m))
+            })
+            .collect()
+    }
+
+    fn helper(file: &str, text: &str, m: &Method) -> Helper {
+        let (start, end) = m.body;
+        let (code, mask) = csharp::clean(&text[start..end]);
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        let returns = match text[..start].ends_with('{') {
+            true => (mask.match_indices("return"))
+                .filter(|(at, _)| !mask[..*at].ends_with(word) && !mask[at + 6..].starts_with(word))
+                .map(|(at, _)| balanced(&code[at + 6..], ';').trim().to_string())
+                .collect(),
+            false => vec![code.trim().to_string()],
+        };
+        let declared = text[..start].rfind(m.name.as_str()).unwrap_or(start);
+        Helper {
+            name: m.name.clone(),
+            at: format!("{file}:{}", line(text, declared)),
+            params: m.params.clone(),
+            returns,
+            is_static: statement(&text[..declared])
+                .split_whitespace()
+                .any(|w| w == "static"),
+        }
+    }
+
+    /// The tail of `head` after the last `;`, `{` or `}`.
+    fn statement(head: &str) -> &str {
+        &head[head.rfind([';', '{', '}']).map_or(0, |b| b + 1)..]
+    }
+
+    /// Every distinct value the helpers return, or why one is not readable.
+    fn inline(helpers: &[Helper], c: &Component) -> Result<Vec<Dest>, String> {
+        let mut found = Vec::new();
+        for h in helpers {
+            if h.returns.is_empty() {
+                return Err(format!("helper {} ({}) returns no value", h.name, h.at));
+            }
+            for value in &h.returns {
+                let dest = leaf(value, c, &h.params).ok_or_else(|| {
+                    format!(
+                        "helper {} ({}) returns {value}, which is no literal; the target is unknown",
+                        h.name, h.at
+                    )
+                })?;
+                add(&mut found, dest);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Destinations of a field from its initializer and assignments.
+    fn field(
+        name: &str,
+        source: &str,
+        c: &Component,
+        components: &[Component],
+        index: &Index,
+    ) -> Result<Vec<Dest>, String> {
+        let fail = |why: String| format!("Navigation target {source}: {why}.");
+        let mut found = Vec::new();
+        for (file, text) in &c.texts {
+            for (at, value) in assignments(text, name).map_err(fail)? {
+                let site = (file.as_str(), text.as_str(), at);
+                for dest in assigned(name, &value, site, c, (components, index)).map_err(fail)? {
+                    add(&mut found, dest);
+                }
+            }
+        }
+        match found.is_empty() {
+            true => Err(not_a_route(source)),
+            false => Ok(found),
+        }
+    }
+
+    /// (offset, value) of the initializer and every assignment of `name`;
+    /// `Err` for a component parameter.
+    fn assignments(text: &str, name: &str) -> Result<Vec<(usize, String)>, String> {
+        let (code, mask) = csharp::clean(text);
+        let word = |ch: char| ch.is_alphanumeric() || ch == '_' || ch == '.';
+        let mut found = Vec::new();
+        for (at, _) in mask.match_indices(name) {
+            let after = mask[at + name.len()..].trim_start();
+            let assignment =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            if mask[..at].ends_with(word) || !assignment {
+                continue;
+            }
+            if statement(&mask[..at]).contains("Parameter") {
+                return Err(format!("{name} is a component parameter, set from outside"));
+            }
+            let value = balanced(&code[mask.len() - after.len() + 1..], ';');
+            found.push((at, value.trim().to_string()));
+        }
+        Ok(found)
+    }
+
+    /// Destinations of one value assigned to the field `name` at `site`.
+    fn assigned(
+        name: &str,
+        value: &str,
+        (file, text, at): (&str, &str, usize),
+        c: &Component,
+        (components, index): (&[Component], &Index),
+    ) -> Result<Vec<Dest>, String> {
+        let unreadable = || {
+            format!(
+                "{name} is assigned {value} ({file}:{}), which is no literal; the target is unknown",
+                line(text, at)
+            )
+        };
+        if let Some(dest) = leaf(value, c, &BTreeMap::new()) {
+            return Ok(vec![dest]);
+        }
+        let (qualifier, method) = call(value).ok_or_else(unreadable)?;
+        let helpers = helpers(qualifier, method, c, components, index)?;
+        if helpers.is_empty() {
+            return Err(unreadable());
+        }
+        inline(&helpers, c)
+    }
+
+    fn add(found: &mut Vec<Dest>, dest: Dest) {
+        if !found.contains(&dest) {
+            found.push(dest);
+        }
     }
 }
 
@@ -3252,6 +3628,229 @@ mod usage_tests {
                 (&http("DELETE", "/api/cart"), Some("Clear cart")),
                 (&http("PUT", "/api/reset"), Some("reset-btn")),
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::*;
+    use archguard_core::Target;
+
+    const WEB: &str = r#"<Project><ItemGroup>
+  <ProjectReference Include="..\Parts\Parts.csproj" />
+</ItemGroup></Project>"#;
+
+    const CATALOG: &str = r#"@page "/"
+@inject NavigationManager Nav
+<CatalogSearch />
+<CatalogListItem />
+<a href="@ResetFiltersUri()">Clear all filters</a>
+<a href="@PageUri(current - 1)">Previous</a>
+<NavLink href="@Nav.GetUriWithQueryParameter("page", 2)">2</NavLink>
+<a href="@Pick(true)">Pick</a>
+<a href="@Opaque()">Opaque</a>
+@code {
+    private string PageUri(int page) => Nav.GetUriWithQueryParameter("page", page <= 1 ? (int?)null : page);
+    private string ResetFiltersUri() => Nav.GetUriWithQueryParameters(new Dictionary<string, object?>()
+    {
+        { "brand", null },
+    });
+    private string Pick(bool cart)
+    {
+        if (cart)
+        {
+            return "cart";
+        }
+        return $"item/{Id}";
+    }
+    private string Opaque() => Compute(Id);
+}
+"#;
+
+    const ITEM: &str = r#"@page "/item/{itemId:int}"
+@inject NavigationManager Nav
+<a class="item-back" href="@backHref">Back</a>
+<a href="@homeHref">Home</a>
+<button @onclick="Add">Add</button>
+@code {
+    private string backHref = "";
+    private string homeHref = "";
+    protected override void OnInitialized()
+    {
+        backHref = ComputeBackHref();
+        homeHref = "cart";
+    }
+    private string ComputeBackHref()
+    {
+        if (Referer is not null)
+        {
+            return refUri.PathAndQuery;
+        }
+        return "";
+    }
+    private void Add()
+    {
+        Nav.NavigateTo(Pages.User.LogIn.Url(Nav));
+    }
+}
+"#;
+
+    const LOGIN: &str = r#"@page "/user/login"
+@inject NavigationManager Nav
+@code {
+    public static string Url(NavigationManager nav)
+        => $"user/login?returnUrl={Uri.EscapeDataString(nav.ToBaseRelativePath(nav.Uri))}";
+}
+"#;
+
+    const SEARCH: &str = r#"@inject NavigationManager Nav
+<a href="@BrandUri(null)">All</a>
+@code {
+    private string BrandUri(int? brandId) => Nav.GetUriWithQueryParameters(new Dictionary<string, object?>()
+    {
+        { "page", null },
+        { "brand", brandId },
+    });
+}
+"#;
+
+    const LIST_ITEM: &str = r#"@using Parts.Item
+<a class="catalog-product" href="@ItemHelper.Url(Item)">@Item.Name</a>
+"#;
+
+    const HELPER: &str = r#"namespace Parts.Item;
+
+public static class ItemHelper
+{
+    public static string Url(CatalogItem item)
+        => $"item/{item.Id}";
+}
+"#;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let files: &[(&str, &str)] = &[
+            ("Web/Web.csproj", WEB),
+            ("Web/Pages/Catalog.razor", CATALOG),
+            ("Web/Pages/Item.razor", ITEM),
+            ("Web/Pages/User/LogIn.razor", LOGIN),
+            ("Web/Pages/Cart.razor", "@page \"/cart\"\n"),
+            ("Parts/Parts.csproj", "<Project />"),
+            ("Parts/Catalog/CatalogSearch.razor", SEARCH),
+            ("Parts/Catalog/CatalogListItem.razor", LIST_ITEM),
+            ("Parts/Item/ItemHelper.cs", HELPER),
+        ];
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
+    /// (from, target) of the transitions written in `file`, in order.
+    fn edges(flow: &UiFlow, file: &str) -> Vec<(String, String)> {
+        let id = |o: &Origin| match o {
+            Origin::Screen(id) => id.clone(),
+            Origin::AnyScreen { application } => format!("{application}:*"),
+        };
+        (flow.transitions.iter())
+            .filter(|t| t.file == file)
+            .map(|t| {
+                let target = match &t.target {
+                    Target::Screen(id) => id.clone(),
+                    Target::Unresolved(text) => format!("? {text}"),
+                };
+                (id(&t.from), target)
+            })
+            .collect()
+    }
+
+    fn gaps<'a>(flow: &'a UiFlow, file: &str) -> Vec<(u32, &'a str)> {
+        (flow.diagnostics.iter())
+            .filter(|d| d.file == file && d.severity == DiagnosticSeverity::Gap)
+            .map(|d| (d.line, d.message.as_str()))
+            .collect()
+    }
+
+    fn pair(from: &str, to: &str) -> (String, String) {
+        (from.into(), to.into())
+    }
+
+    const HOME: &str = "Web:Pages/Catalog.razor";
+
+    #[test]
+    fn query_parameter_uris_target_the_current_screen() {
+        let flow = extract(fixture().path());
+        let found = edges(&flow, "Web/Pages/Catalog.razor");
+        assert_eq!(found[0], pair(HOME, HOME), "{found:#?}");
+        assert_eq!(found[1], pair(HOME, HOME), "{found:#?}");
+        // An inline call; the attribute value ends at the inner quote.
+        assert_eq!(found[2], pair(HOME, HOME), "{found:#?}");
+        // A component without @page targets the page it is placed on.
+        let search = edges(&flow, "Parts/Catalog/CatalogSearch.razor");
+        assert_eq!(search, [pair(HOME, HOME)]);
+    }
+
+    #[test]
+    fn helpers_inline_one_level_with_one_transition_per_return() {
+        let flow = extract(fixture().path());
+        let found = edges(&flow, "Web/Pages/Catalog.razor");
+        assert_eq!(
+            found[3..],
+            [
+                pair(HOME, "Web:Pages/Cart.razor"),
+                pair(HOME, "Web:Pages/Item.razor"),
+                pair(HOME, "? @Opaque()"),
+            ]
+        );
+        let gaps = gaps(&flow, "Web/Pages/Catalog.razor");
+        assert_eq!(gaps.len(), 1, "{gaps:#?}");
+        assert_eq!(gaps[0].0, 9);
+        assert!(
+            gaps[0].1.contains("Opaque") && gaps[0].1.contains("Web/Pages/Catalog.razor:24"),
+            "{}",
+            gaps[0].1
+        );
+    }
+
+    #[test]
+    fn static_helper_classes_resolve_in_the_page_that_places_the_component() {
+        let flow = extract(fixture().path());
+        let found = edges(&flow, "Parts/Catalog/CatalogListItem.razor");
+        assert_eq!(found, [pair(HOME, "Web:Pages/Item.razor")]);
+    }
+
+    #[test]
+    fn static_members_of_page_classes_resolve_to_their_route() {
+        let flow = extract(fixture().path());
+        let found = edges(&flow, "Web/Pages/Item.razor");
+        assert_eq!(
+            found.last(),
+            Some(&pair("Web:Pages/Item.razor", "Web:Pages/User/LogIn.razor"))
+        );
+    }
+
+    #[test]
+    fn fields_assigned_only_readable_values_give_one_transition_per_value() {
+        let flow = extract(fixture().path());
+        let item = "Web:Pages/Item.razor";
+        let found = edges(&flow, "Web/Pages/Item.razor");
+        assert_eq!(
+            found[..3],
+            [
+                pair(item, "? @backHref"),
+                pair(item, HOME),
+                pair(item, "Web:Pages/Cart.razor"),
+            ]
+        );
+        let gaps = gaps(&flow, "Web/Pages/Item.razor");
+        assert_eq!(gaps.len(), 1, "{gaps:#?}");
+        assert!(
+            gaps[0].1.contains("ComputeBackHref") && gaps[0].1.contains("Web/Pages/Item.razor:14"),
+            "{}",
+            gaps[0].1
         );
     }
 }
