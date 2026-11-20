@@ -428,13 +428,9 @@ fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
         Command::Services { fail_on_found, .. } => service_cmd::run(cli, root, *fail_on_found),
         Command::Runtime { .. } => runtime_cmd::run(cli, root),
         Command::UiFlow {
-            action: Some(ui_flow_run_cmd::UiFlowAction::Roles { .. }),
-            ..
-        } => ui_flow_cmd::roles(cli, root),
-        Command::UiFlow {
             action: Some(action),
             ..
-        } => ui_flow_run_cmd::run(cli.config.as_deref(), root, action),
+        } => ui_flow_cmd::action(cli, root, action),
         Command::UiFlow {
             role, anonymous, ..
         } => ui_flow_cmd::run(cli, root, role, *anonymous),

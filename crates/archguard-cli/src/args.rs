@@ -62,6 +62,8 @@ pub(crate) enum Format {
     Graphml,
     Gexf,
     Table,
+    /// Only for `ui-flow matrix`.
+    Csv,
     /// Markdown PR comment against `review --base`.
     PrComment,
     /// CycloneDX 1.6 JSON, only for `sbom`.
@@ -872,6 +874,7 @@ pub(crate) fn format_label(format: Format) -> &'static str {
         Format::Graphml => "graphml",
         Format::Gexf => "gexf",
         Format::Table => "table",
+        Format::Csv => "csv",
         Format::PrComment => "pr-comment",
         Format::Cyclonedx => "cyclonedx",
         Format::Structurizr => "structurizr",

@@ -23,6 +23,18 @@ pub(crate) fn standalone(cli: &Cli, root: &Path) -> Option<i32> {
             },
             _,
         ) => return Some(usage("--service applies to --format structurizr only")),
+        (
+            Command::UiFlow {
+                action: Some(crate::ui_flow_run_cmd::UiFlowAction::Matrix { .. }),
+                ..
+            },
+            Format::Csv,
+        ) => return None,
+        (_, Format::Csv) => {
+            return Some(usage(
+                "invalid value 'csv' for '--format': csv is a `ui-flow matrix` format",
+            ));
+        }
         (command, Format::Structurizr) => matches!(command, Command::Graph { .. }),
         (command, Format::Asciidoc | Format::Docx) => matches!(command, Command::Doc { .. }),
         _ => return None,

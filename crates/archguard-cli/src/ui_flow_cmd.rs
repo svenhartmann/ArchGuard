@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use archguard_engine::core::{
-    ArchguardError, Assignment, Condition, UiFlow, evaluate_access, merge_ui_flows,
-    resolve_assignment, screen_reaches, ui_flow_findings, ui_flow_summary,
+    ArchguardError, Assignment, Condition, MatrixKind, PermissionMatrix, UiFlow, evaluate_access,
+    merge_ui_flows, permission_matrix, resolve_assignment, screen_reaches, ui_flow_findings,
+    ui_flow_summary,
 };
 use archguard_engine::extract_ctx::{ExtractContext, with_root_config};
 use serde_json::{Value, json};
@@ -278,6 +279,120 @@ fn assignment_text(simulation: &Value) -> String {
     text
 }
 
+/// `ui-flow <action>`: the catalog actions here, `open` and `replay` in `ui_flow_run_cmd`.
+pub(crate) fn action(cli: &Cli, root: &Path, action: &crate::ui_flow_run_cmd::UiFlowAction) -> i32 {
+    use crate::ui_flow_run_cmd::UiFlowAction as A;
+    match action {
+        A::Roles { .. } => roles(cli, root),
+        A::Matrix { kind, .. } => matrix(cli, root, *kind),
+        _ => crate::ui_flow_run_cmd::run(cli.config.as_deref(), root, action),
+    }
+}
+
+/// `archguard ui-flow matrix`: the permission matrix as table, JSON or CSV.
+pub(crate) fn matrix(cli: &Cli, root: &Path, kind: crate::ui_flow_run_cmd::MatrixKindArg) -> i32 {
+    use crate::ui_flow_run_cmd::MatrixKindArg as K;
+    if !matches!(
+        cli.format,
+        Format::Text | Format::Table | Format::Json | Format::Csv
+    ) {
+        return usage("ui-flow matrix supports --format table|json|csv");
+    }
+    let flow = match extract(cli, root, archguard_engine::ui_flow::analyze_with) {
+        Ok(flow) => flow,
+        Err(error) => return analysis_error(error),
+    };
+    let kind = match kind {
+        K::Screens => MatrixKind::Screens,
+        K::Endpoints => MatrixKind::Endpoints,
+        K::Both => MatrixKind::Both,
+    };
+    let matrix = permission_matrix(&flow, kind);
+    if cli.quiet {
+        return EXIT_OK;
+    }
+    match cli.format {
+        Format::Json => emit(&serde_json::to_string_pretty(&matrix).expect("matrix serializes")),
+        Format::Csv => emit(&matrix_csv(&matrix)),
+        _ => emit(&matrix_table(&matrix)),
+    }
+    EXIT_OK
+}
+
+/// Aligned columns: kind, row, file:line, then one per role.
+fn matrix_table(m: &PermissionMatrix) -> String {
+    let mut table = vec![
+        ["kind", "row", "where"]
+            .into_iter()
+            .map(String::from)
+            .chain(m.roles.iter().cloned())
+            .collect::<Vec<_>>(),
+    ];
+    for r in &m.rows {
+        let cells = r.cells.iter().map(label);
+        table.push(
+            [
+                label(&r.kind),
+                r.label.clone(),
+                format!("{}:{}", r.file, r.line),
+            ]
+            .into_iter()
+            .chain(cells)
+            .collect(),
+        );
+    }
+    let widths: Vec<usize> = (0..table[0].len())
+        .map(|c| {
+            table
+                .iter()
+                .map(|row| row[c].chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let lines: Vec<String> = (table.iter())
+        .map(|row| {
+            let padded: Vec<String> = (row.iter().zip(&widths))
+                .map(|(cell, w)| format!("{cell:<w$}"))
+                .collect();
+            padded.join("  ").trim_end().to_string()
+        })
+        .collect();
+    lines.join("\n")
+}
+
+fn matrix_csv(m: &PermissionMatrix) -> String {
+    let quote = |s: &str| {
+        if s.contains([',', '"', '\n']) {
+            format!("\"{}\"", s.replace('"', "\"\""))
+        } else {
+            s.to_string()
+        }
+    };
+    let head = ["kind", "row", "file", "line", "requires"]
+        .into_iter()
+        .map(String::from)
+        .chain(m.roles.iter().map(|r| quote(r)));
+    let mut lines = vec![head.collect::<Vec<_>>().join(",")];
+    for r in &m.rows {
+        let fixed = [
+            label(&r.kind),
+            quote(&r.label),
+            quote(&r.file),
+            r.line.to_string(),
+            quote(&r.requires),
+        ];
+        lines.push(
+            fixed
+                .into_iter()
+                .chain(r.cells.iter().map(label))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    lines.join("\n")
+}
+
 /// `archguard ui-flow roles`: the roles, permissions and policies the code
 /// defines (rules and import file), with where each was read.
 pub(crate) fn roles(cli: &Cli, root: &Path) -> i32 {
@@ -390,6 +505,49 @@ pub(crate) fn yes_no(value: bool) -> &'static str {
 mod tests {
     use super::*;
     use archguard_engine::core::Outcome;
+
+    #[test]
+    fn matrix_renders_as_table_and_csv() {
+        use archguard_engine::core::{AccessState, EndpointAccess, MatrixKind, ScreenKind};
+        let flow = UiFlow {
+            screens: vec![archguard_engine::core::Screen {
+                id: "a".into(),
+                name: "a".into(),
+                kind: ScreenKind::Page,
+                route: Some("/a, b".into()),
+                application: None,
+                file: "A.razor".into(),
+                line: 3,
+                access: Some(Condition::Authenticated),
+                source: "t".into(),
+            }],
+            endpoints: vec![EndpointAccess {
+                method: "GET".into(),
+                path: "/x".into(),
+                access: AccessState::Undeclared,
+                application: None,
+                file: "X.cs".into(),
+                line: 9,
+                source: "t".into(),
+                handler: None,
+                sends: vec![],
+            }],
+            ..UiFlow::default()
+        };
+        let m = permission_matrix(&flow, MatrixKind::Both);
+        assert_eq!(
+            matrix_table(&m),
+            "kind      row     where      anonymous  signed in\n\
+             screen    /a, b   A.razor:3  denied     allowed\n\
+             endpoint  GET /x  X.cs:9     unknown    unknown"
+        );
+        assert_eq!(
+            matrix_csv(&m),
+            "kind,row,file,line,requires,anonymous,signed in\n\
+             screen,\"/a, b\",A.razor,3,signed in,denied,allowed\n\
+             endpoint,GET /x,X.cs,9,undeclared,unknown,unknown"
+        );
+    }
 
     #[test]
     fn conditions_read_as_words() {

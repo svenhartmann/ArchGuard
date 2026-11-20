@@ -54,14 +54,33 @@ pub(crate) enum UiFlowAction {
         #[arg(value_name = "PFAD")]
         path: Option<PathBuf>,
     },
+    /// Permission matrix: screens/endpoints by role, each cell allowed, denied or unknown.
+    ///
+    /// `--format table` (default), `json` or `csv`. Columns are anonymous,
+    /// signed in and the roles the code defines.
+    Matrix {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+        /// Which rows to list.
+        #[arg(long, value_enum, default_value = "both")]
+        kind: MatrixKindArg,
+    },
+}
+
+#[derive(Copy, Clone, clap::ValueEnum)]
+pub(crate) enum MatrixKindArg {
+    Screens,
+    Endpoints,
+    Both,
 }
 
 impl UiFlowAction {
     pub(crate) fn path(&self) -> Option<&Path> {
         match self {
-            Self::Open { path, .. } | Self::Replay { path, .. } | Self::Roles { path } => {
-                path.as_deref()
-            }
+            Self::Open { path, .. }
+            | Self::Replay { path, .. }
+            | Self::Roles { path }
+            | Self::Matrix { path, .. } => path.as_deref(),
         }
     }
 }
@@ -78,7 +97,7 @@ pub(crate) fn run(config_file: Option<&Path>, root: &Path, action: &UiFlowAction
         Err(error) => return analysis_error(error),
     };
     let (UiFlowAction::Open { screen, .. } | UiFlowAction::Replay { screen, .. }) = action else {
-        unreachable!("main dispatches `ui-flow roles` to ui_flow_cmd::roles");
+        unreachable!("ui_flow_cmd::action dispatches `ui-flow roles|matrix`");
     };
     let screen = match pick(&flow, screen) {
         Ok(screen) => screen,
@@ -90,7 +109,7 @@ pub(crate) fn run(config_file: Option<&Path>, root: &Path, action: &UiFlowAction
             let file = out.clone().unwrap_or_else(|| default_file(screen));
             replay(&flow, screen, &config, role.as_deref(), &file, *run)
         }
-        UiFlowAction::Roles { .. } => unreachable!("handled above"),
+        UiFlowAction::Roles { .. } | UiFlowAction::Matrix { .. } => unreachable!("handled above"),
     }
 }
 
