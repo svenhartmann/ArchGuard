@@ -265,3 +265,18 @@ from the list, fails on the others, and turns each baselined id without a
 finding into an `info` note "remove it from the baseline", which does not
 fail. The `view-conventions:…` finding for an unreadable import is never
 recorded. `baseline diff` still compares cycles only; no ratchet beyond that.
+
+### 2026-11-20: Blazor reads query-only links, one-level helpers and literal fields
+
+Measured on eShop, the most frequent unreadable Blazor targets were helper
+calls. Three rules close most of them without guessing:
+`NavigationManager.GetUriWithQueryParameter(s)(…)` targets the current screen
+(only the query changes); a helper method of the component, or a static
+method of exactly one class of that name in the project scope, is inlined one
+level when every return is a literal, an interpolated string (holes become
+parameter segments) or such a query-only call; a field whose initializer and
+assignments are all readable that way yields one transition per value.
+Helpers calling helpers, parameters and values from requests (`Referer`) stay
+gaps. A literal or helper path now resolves in the application of the page a
+shared component is placed on, so a component library can link into the app
+that uses it. eShop: navigations resolved 38 → 52 of 61.
