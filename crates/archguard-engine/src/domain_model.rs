@@ -65,6 +65,12 @@ pub struct DomainModelSummary {
     pub use_cases: usize,
     pub events: usize,
     pub complete: bool,
+    #[serde(default)]
+    pub rules: usize,
+    #[serde(default)]
+    pub validations: usize,
+    #[serde(default)]
+    pub integration_events: usize,
 }
 
 pub fn summary(model: &DomainModel) -> DomainModelSummary {
@@ -77,6 +83,9 @@ pub fn summary(model: &DomainModel) -> DomainModelSummary {
         use_cases: model.use_cases.len(),
         events: model.events.len(),
         complete: model.complete,
+        rules: model.rules.len(),
+        validations: model.validations.len(),
+        integration_events: model.integration_events.len(),
     }
 }
 
@@ -136,6 +145,7 @@ mod tests {
                 use_cases: 1,
                 events: 1,
                 complete: false,
+                ..DomainModelSummary::default()
             }
         );
     }

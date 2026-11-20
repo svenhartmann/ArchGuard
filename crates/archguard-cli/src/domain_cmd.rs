@@ -1,13 +1,14 @@
-//! `archguard domain`: entities, state machines, use cases and domain events
-//! (ADR 0022), optionally limited to one entity.
+//! `archguard domain`: entities, state machines, use cases, domain events,
+//! rules, validations and integration events (ADR 0022), optionally limited
+//! to one entity.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use archguard_engine::core::domain_model::{DomainModel, Entity, StateMachine};
+use archguard_engine::core::domain_model::{DomainModel, Entity, Publisher, StateMachine};
 use archguard_engine::core::{Assignment, Origin, UiFlow};
 use archguard_engine::domain_chain::{
-    Chain, ChainRight, ChainStart, chains, rights, triggers_of_state,
+    Chain, ChainRight, ChainStart, chains, rights, touches, triggers_of_state,
 };
 use archguard_engine::domain_model::summary;
 use serde_json::{Value, json};
@@ -77,7 +78,7 @@ fn run_chain(
     let found = match (id, state) {
         (Some(id), Some(state)) => triggers_of_state(flow, model, id, state),
         (Some(id), None) => (chains(flow, model).into_iter())
-            .filter(|c| c.transitions.iter().any(|t| t.entity == id))
+            .filter(|c| touches(c, id))
             .collect(),
         (None, _) => chains(flow, model),
     };
@@ -134,7 +135,7 @@ fn print_chains(found: &[Chain], target: Option<(&str, &str)>, simulation: Simul
         }
     }
     for (i, c) in found.iter().enumerate() {
-        print_chain(c);
+        print_chain(c, "");
         if let Some((_, rights)) = simulation {
             let r = &rights[i];
             outln!("  right: {} · {}", label(&r.verdict), r.reasons.join("; "));
@@ -144,27 +145,52 @@ fn print_chains(found: &[Chain], target: Option<(&str, &str)>, simulation: Simul
 
 /// `POST /api/orders → Handler · file:line` or `message Event → Handler ·
 /// file:line`, then handler, screen, and each transition with its events and
-/// their handlers.
-fn print_chain(c: &Chain) {
+/// their handlers; then each nested chain (`⇒ Event published by … → …`),
+/// indented below `pad`.
+fn print_chain(c: &Chain, pad: &str) {
     let use_cases: Vec<String> = c.use_cases.iter().map(|u| u.name.clone()).collect();
     let target = if use_cases.is_empty() {
         "no use case found".to_string()
     } else {
         use_cases.join(", ")
     };
-    let (handler, sends) = match c.start {
-        ChainStart::Endpoint { endpoint: e, .. } => {
-            outln!("{} {} → {target} · {}:{}", e.method, e.path, e.file, e.line);
+    let (handler, sends) = match (&c.start, c.via) {
+        (&ChainStart::Endpoint { endpoint: e, .. }, _) => {
+            outln!(
+                "{pad}{} {} → {target} · {}:{}",
+                e.method,
+                e.path,
+                e.file,
+                e.line
+            );
             (e.handler.as_deref(), &e.sends)
         }
-        ChainStart::Message { message_handler: m } => {
-            outln!("message {} → {target} · {}:{}", m.message, m.file, m.line);
+        (&ChainStart::Message { message_handler: m }, Some(p)) => {
+            outln!(
+                "{pad}⇒ {} published by {} [{}] → {} [{}] → {target} · {}:{}",
+                m.message,
+                p.by,
+                p.service,
+                m.id,
+                m.service,
+                m.file,
+                m.line
+            );
+            (None, &m.sends)
+        }
+        (&ChainStart::Message { message_handler: m }, None) => {
+            outln!(
+                "{pad}message {} → {target} · {}:{}",
+                m.message,
+                m.file,
+                m.line
+            );
             (Some(m.id.as_str()), &m.sends)
         }
     };
     if handler.is_some() || !sends.is_empty() {
         outln!(
-            "  handler {} · sends {}",
+            "{pad}  handler {} · sends {}",
             handler.unwrap_or("-"),
             list(sends)
         );
@@ -174,7 +200,7 @@ fn print_chain(c: &Chain) {
             Origin::Screen(id) => format!("screen {id}"),
             Origin::AnyScreen { application } => format!("any screen of {application:?}"),
         };
-        outln!("  from {screen} · {}:{}", a.file, a.line);
+        outln!("{pad}  from {screen} · {}:{}", a.file, a.line);
     }
     for t in &c.transitions {
         let tr = t.transition;
@@ -183,14 +209,18 @@ fn print_chain(c: &Chain) {
         } else {
             tr.from.join(", ")
         };
-        outln!("  {}: {from} → {} · {}", t.entity, tr.to, tr.method);
+        outln!("{pad}  {}: {from} → {} · {}", t.entity, tr.to, tr.method);
         for ev in c
             .events
             .iter()
             .filter(|ev| tr.events.iter().any(|n| n == ev.event))
         {
-            outln!("    → {} → {}", ev.event, list(&ev.handlers));
+            outln!("{pad}    → {} → {}", ev.event, list(&ev.handlers));
         }
+    }
+    let deeper = format!("{pad}  ");
+    for next in &c.continues {
+        print_chain(next, &deeper);
     }
 }
 
@@ -206,6 +236,20 @@ fn only_entity(mut model: DomainModel, name: &str) -> Option<DomainModel> {
     model.state_machines.retain(|m| m.entity == id);
     model.use_cases.retain(|u| u.calls.iter().any(method));
     model.events.retain(|e| e.raised_by.iter().any(method));
+    model.rules.retain(|r| r.entity == id);
+    (model.validations).retain(|v| v.target_type == id || v.target_type == entity.name);
+    // Integration events its use cases or the handlers of its events publish.
+    let classes: BTreeSet<&str> = (model.use_cases.iter().map(|u| u.name.as_str()))
+        .chain(
+            model
+                .events
+                .iter()
+                .flat_map(|e| e.handled_by.iter().map(String::as_str)),
+        )
+        .collect();
+    let published =
+        |p: &Publisher| classes.contains(p.by.split_once('.').map_or(p.by.as_str(), |(c, _)| c));
+    (model.integration_events).retain(|e| e.published_by.iter().any(published));
     let files: BTreeSet<&str> = std::iter::once(entity.file.as_str())
         .chain(model.use_cases.iter().map(|u| u.file.as_str()))
         .chain(
@@ -230,6 +274,12 @@ fn print_text(model: &DomainModel, verbose: bool) {
         s.use_cases,
         s.events,
         yes_no(s.complete)
+    );
+    outln!(
+        "Rules {} · validations {} · integration events {}",
+        s.rules,
+        s.validations,
+        s.integration_events
     );
     let mut entities: Vec<&Entity> = model.entities.iter().collect();
     entities.sort_by_key(|e| (e.kind, &e.id));
@@ -258,10 +308,79 @@ fn print_text(model: &DomainModel, verbose: bool) {
             list(&e.handled_by)
         );
     }
+    print_rules(model);
+    outln!("Validations: {}", model.validations.len());
+    for v in &model.validations {
+        outln!(
+            "  {}.{}: {} · {}:{}",
+            v.target_type,
+            v.property,
+            list(&v.rules),
+            v.file,
+            v.line
+        );
+    }
+    print_integration_events(model);
     let gaps: Vec<String> = (model.diagnostics.iter())
         .map(|d| format!("{}:{}: {}", d.file, d.line, d.message))
         .collect();
     print_gaps(&gaps, verbose);
+}
+
+/// Per entity in id order: `method · condition → message · exception · file:line`.
+fn print_rules(model: &DomainModel) {
+    outln!("Rules (throws when): {}", model.rules.len());
+    let mut rules: Vec<_> = model.rules.iter().collect();
+    rules.sort_by_key(|r| (&r.entity, &r.file, r.line));
+    let mut last = None;
+    for r in rules {
+        if last != Some(&r.entity) {
+            outln!("  {}", r.entity);
+            last = Some(&r.entity);
+        }
+        let method = r
+            .method
+            .rsplit_once('.')
+            .map_or(r.method.as_str(), |(_, m)| m);
+        outln!(
+            "    {method} · {} → {} · {} · {}:{}",
+            r.condition.as_deref().unwrap_or("always"),
+            r.message.as_deref().unwrap_or("-"),
+            r.exception,
+            r.file,
+            r.line
+        );
+    }
+}
+
+/// `Type: published by Class.method [service] → handled by Handler [service]`.
+fn print_integration_events(model: &DomainModel) {
+    outln!("Integration events: {}", model.integration_events.len());
+    for e in &model.integration_events {
+        let by: Vec<String> = (e.published_by.iter())
+            .map(|p| format!("{} [{}]", p.by, p.service))
+            .collect();
+        let mut handlers: Vec<String> = (model.message_handlers.iter())
+            .filter(|h| h.message == e.type_name)
+            .map(|h| match h.service.as_str() {
+                "" => h.id.clone(),
+                service => format!("{} [{service}]", h.id),
+            })
+            .collect();
+        let known = |id: &String| {
+            model
+                .message_handlers
+                .iter()
+                .any(|h| &h.id == id && h.message == e.type_name)
+        };
+        handlers.extend(e.handled_by.iter().filter(|id| !known(id)).cloned());
+        outln!(
+            "  {}: published by {} → handled by {}",
+            e.type_name,
+            list(&by),
+            list(&handlers)
+        );
+    }
 }
 
 fn print_entity(model: &DomainModel, entity: &Entity) {

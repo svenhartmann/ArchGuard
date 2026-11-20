@@ -49,6 +49,7 @@
 //!   NServiceBus `IHandleMessages<T>`, one entry per `T`; `sends` by the
 //!   backend extractor's send rule over the class body (`mediator.Send(…)`
 //!   and the like; `context.Send`/`Publish` are not read).
+//! - Rules, validations, integration events and plain models: see `rich`.
 //!
 //! Not recognized: partial classes across files, nested-type qualification,
 //! state changes outside the entity's own methods, `switch`/`is`/pattern
@@ -110,7 +111,7 @@ const MODIFIERS: [&str; 16] = [
 ];
 
 /// Byte range in a file's text.
-type Span = (usize, usize);
+pub(crate) type Span = (usize, usize);
 /// Diagnostics found on the way: file index, offset, message, drops an element.
 type Pending = Vec<(usize, usize, String, bool)>;
 
@@ -126,6 +127,9 @@ pub fn extract(root: &Path) -> DomainModel {
     x.machines_and_events();
     x.use_cases();
     x.message_handlers();
+    x.model.rules = rich::rules(&x);
+    x.model.validations = rich::validations(&x);
+    x.model.integration_events = rich::integration_events(&x);
     x.finish()
 }
 
@@ -133,6 +137,10 @@ struct Src {
     rel: String,
     /// Source with comments and string contents blanked; offsets unchanged.
     text: String,
+    /// The source as read, for messages and rule text.
+    raw: String,
+    /// The folder of the nearest `*.csproj`, the service of a publish site.
+    project: String,
 }
 
 struct Decl {
@@ -265,11 +273,19 @@ impl Extractor {
             self.push_diag(&paths[MAX_FILES], message);
             paths.truncate(MAX_FILES);
         }
+        let mut projects = BTreeMap::new();
         for rel in paths {
             match read_repo_file(root, Path::new(&rel), MAX_BYTES) {
                 Ok(bytes) => {
-                    let text = lex::strip(&String::from_utf8_lossy(&bytes));
-                    self.files.push(Src { rel, text });
+                    let raw = String::from_utf8_lossy(&bytes).into_owned();
+                    let text = lex::strip(&raw);
+                    let project = crate::domain_csharp::code::project_of(root, &rel, &[".csproj"], &mut projects);
+                    self.files.push(Src {
+                        rel,
+                        text,
+                        raw,
+                        project,
+                    });
                 }
                 Err(_) => self.push_diag(
                     &rel,
@@ -351,6 +367,8 @@ impl Extractor {
             .map(|(d, _)| (d, EntityKind::ValueObject))
             .collect();
         kinds.extend(records);
+        let plain = rich::plain_models(self, &kinds);
+        kinds.extend(plain);
         kinds
     }
 
@@ -688,6 +706,7 @@ impl Extractor {
                     file: src.rel.clone(),
                     line: line(&src.text, d.pos),
                     source: SOURCE.into(),
+                    service: src.project.clone(),
                 });
             }
         }
@@ -705,7 +724,10 @@ impl Extractor {
             });
             self.model.complete &= !drops;
         }
+        archguard_core::domain_model::link_integration_events(&mut self.model);
         let m = &mut self.model;
+        m.rules.sort();
+        m.validations.sort();
         m.entities.sort();
         m.relations.sort();
         m.relations.dedup();
@@ -1022,8 +1044,10 @@ mod members {
         let arrow = find_top(header, "=>");
         let decl_end = arrow.unwrap_or(header.len());
         let decl = &header[..first_assign(&header[..decl_end]).unwrap_or(decl_end)];
+        // `@event` is a verbatim identifier, not the keyword.
         let words: Vec<&str> = idents(decl, 0, decl.len())
             .into_iter()
+            .filter(|x| x.0 == 0 || decl.as_bytes()[x.0 - 1] != b'@')
             .map(|x| x.1)
             .collect();
         if words.is_empty() || words.iter().any(|w| NOT_MEMBERS.contains(w)) {
@@ -1517,7 +1541,7 @@ mod states {
 }
 
 /// Navigation in blanked source text.
-mod text {
+pub(crate) mod text {
     pub(super) fn is_id(c: u8) -> bool {
         c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
     }
@@ -1811,6 +1835,1287 @@ mod lex {
             if *c != b'\n' {
                 *c = b' ';
             }
+        }
+    }
+}
+
+pub(crate) mod code {
+    //! Source-text patterns shared by the C# and Java rule readers (ADR 0022,
+    //! Verlauf 2026-11-20): the condition guarding a throw, a message argument,
+    //! `new X(…)` and chained calls. Works on text with comments and literal
+    //! contents blanked (`text`) and the source as read (`raw`), same offsets;
+    //! and the service (project folder) of a file.
+    use super::Span;
+    use super::text::*;
+    use std::path::Path;
+
+    /// The folder name of the nearest build file above `rel` (a file name in that
+    /// folder ending in one of `build`, e.g. `.csproj` or `pom.xml`): the service
+    /// of a publish site. Without one, the first path segment of `rel`.
+    pub(crate) fn project_of(
+        root: &Path,
+        rel: &str,
+        build: &[&str],
+        cache: &mut std::collections::BTreeMap<String, String>,
+    ) -> String {
+        let start = rel.rsplit_once('/').map_or("", |(d, _)| d);
+        if let Some(known) = cache.get(start) {
+            return known.clone();
+        }
+        let has_build = |dir: &str| {
+            std::fs::read_dir(root.join(dir)).is_ok_and(|entries| {
+                entries.flatten().any(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    build.iter().any(|b| name.ends_with(b))
+                })
+            })
+        };
+        let mut dir = start;
+        let found = loop {
+            if !dir.is_empty() && has_build(dir) {
+                break dir.rsplit('/').next().unwrap_or(dir).to_string();
+            }
+            match dir.rsplit_once('/') {
+                Some((up, _)) => dir = up,
+                None => {
+                    break rel
+                        .split_once('/')
+                        .map_or("", |(first, _)| first)
+                        .to_string();
+                }
+            }
+        };
+        cache.insert(start.to_string(), found.clone());
+        found
+    }
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct Code<'a> {
+        pub(crate) text: &'a str,
+        pub(crate) raw: &'a str,
+    }
+
+    /// `new X(…)` starting at or after `from`: (simple `X`, argument span).
+    pub(crate) fn created_at(s: &str, from: usize) -> Option<(String, Span)> {
+        let b = s.as_bytes();
+        let k = next_nonws(b, from)?;
+        if !s[k..].starts_with("new") || b.get(k + 3).is_some_and(|&c| is_id(c)) {
+            return None;
+        }
+        let t = next_nonws(b, k + 3)?;
+        let end = (t..b.len())
+            .find(|&j| !(is_id(b[j]) || b[j] == b'.'))
+            .unwrap_or(b.len());
+        let open = next_nonws(b, end).filter(|&o| b[o] == b'(' && end > t)?;
+        Some((simple(&s[t..end]), (open + 1, matching(b, open)?)))
+    }
+
+    pub(crate) fn raw(c: Code, (a, z): Span) -> String {
+        collapse(c.raw.get(a..z).unwrap_or(&c.text[a..z]))
+    }
+
+    /// The call from `start` through the parenthesis opening at `open`, as written.
+    pub(crate) fn call_text(c: Code, start: usize, open: usize) -> Option<String> {
+        let close = matching(c.text.as_bytes(), open)?;
+        Some(raw(c, (start, close + 1)))
+    }
+
+    /// Arguments split at `,` outside (), [] and {}; unlike `split_top`, a `<`
+    /// or `>` is a comparison here, not a generic bracket.
+    pub(crate) fn split_args(s: &str) -> Vec<&str> {
+        let mut out = vec![];
+        let (mut depth, mut start) = (0i32, 0);
+        for (k, c) in s.bytes().enumerate() {
+            match c {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b',' if depth == 0 => {
+                    out.push(&s[start..k]);
+                    start = k + 1;
+                }
+                _ => {}
+            }
+        }
+        out.push(&s[start..]);
+        out
+    }
+
+    /// The first argument: a string literal's content (interpolations kept), else
+    /// its source text.
+    pub(crate) fn message(c: Code, (a, z): Span) -> Option<String> {
+        let first = split_args(&c.text[a..z]).into_iter().next()?;
+        let at = a + (first.as_ptr() as usize - c.text[a..].as_ptr() as usize);
+        let text = raw(c, (at, at + first.len()));
+        // One literal: in the blanked text only its own two quotes are left.
+        let blanked = first.trim().trim_start_matches(['$', '@']);
+        let literal = blanked.len() >= 2
+            && blanked.starts_with('"')
+            && blanked.ends_with('"')
+            && !blanked[1..blanked.len() - 1].contains('"');
+        match (text.is_empty(), literal) {
+            (true, _) => None,
+            (_, true) => Some(
+                text.trim_start_matches(['$', '@'])
+                    .trim_matches('"')
+                    .to_string(),
+            ),
+            _ => Some(text),
+        }
+    }
+
+    /// The condition under which the throw (or `new`) at `pos` runs.
+    pub(crate) fn condition(c: Code, body: Span, pos: usize) -> Option<String> {
+        let (s, b) = (c.text, c.text.as_bytes());
+        let k = prev_nonws(b, pos)?;
+        if b[k] == b':' {
+            let q = scan_back(b, body.0, k, |j| {
+                b[j] == b'?' && b[j - 1] != b'?' && !matches!(b[j + 1], b'?' | b'.' | b'[')
+            })?;
+            let start = expression_start(s, body.0, q);
+            return Some(format!("!({})", raw(c, (start, q))));
+        }
+        if b[k] == b'?' && k > 0 && b[k - 1] == b'?' {
+            let start = expression_start(s, body.0, k - 1);
+            return Some(format!("{} == null", raw(c, (start, k - 1))));
+        }
+        let stmt = statement_start(b, body.0, pos);
+        if s[stmt..].starts_with("if") && !b.get(stmt + 2).is_some_and(|&c| is_id(c)) {
+            let open = next_nonws(b, stmt + 2).filter(|&o| b[o] == b'(')?;
+            return Some(raw(c, (open + 1, matching(b, open)?)));
+        }
+        let brace = prev_nonws(b, stmt).filter(|&o| b[o] == b'{')?;
+        if_condition(c, brace)
+    }
+
+    /// The condition of the `if` (or, negated, of the `if` before the `else`)
+    /// heading the block that opens at `brace`.
+    fn if_condition(c: Code, brace: usize) -> Option<String> {
+        let (s, b) = (c.text, c.text.as_bytes());
+        let k = prev_nonws(b, brace)?;
+        if b[k] == b')' {
+            let open = matching_back(b, k)?;
+            return (prev_word(s, open) == "if").then(|| raw(c, (open + 1, k)));
+        }
+        if prev_word(s, brace) == "else" {
+            let close = prev_nonws(b, k.saturating_sub(3)).filter(|&c| b[c] == b'}')?;
+            let inner = if_condition(c, matching_back(b, close)?)?;
+            return (!inner.starts_with("!(")).then(|| format!("!({inner})"));
+        }
+        None
+    }
+
+    /// The nearest `j < to` (not before `from`) at bracket depth 0 where `hit` holds.
+    fn scan_back(b: &[u8], from: usize, to: usize, hit: impl Fn(usize) -> bool) -> Option<usize> {
+        let mut depth = 0i32;
+        for j in (from + 1..to).rev() {
+            match b[j] {
+                b')' | b']' | b'}' => depth += 1,
+                b'(' | b'[' | b'{' if depth == 0 => return None,
+                b'(' | b'[' | b'{' => depth -= 1,
+                b';' if depth == 0 => return None,
+                _ if depth == 0 && hit(j) => return Some(j),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Start of the expression ending at `end`: after a plain `=`, `return`, an
+    /// opening bracket, `,` or a statement boundary at depth 0.
+    fn expression_start(s: &str, from: usize, end: usize) -> usize {
+        let b = s.as_bytes();
+        let assign = |j: usize| {
+            b[j] == b'='
+                && !matches!(b[j + 1], b'=' | b'>')
+                && !matches!(b[j - 1], b'=' | b'!' | b'<' | b'>')
+        };
+        let stop = scan_back(b, from, end, |j| assign(j) || b[j] == b',');
+        let mut start = stop.map_or_else(
+            || {
+                let mut depth = 0i32;
+                (from..end)
+                    .rev()
+                    .find(|&j| match b[j] {
+                        b')' | b']' | b'}' => {
+                            depth += 1;
+                            false
+                        }
+                        b'(' | b'[' | b'{' if depth == 0 => true,
+                        b'(' | b'[' | b'{' => {
+                            depth -= 1;
+                            false
+                        }
+                        b';' => depth == 0,
+                        _ => false,
+                    })
+                    .map_or(from, |j| j + 1)
+            },
+            |j| j + 1,
+        );
+        start = next_nonws(b, start).unwrap_or(start);
+        if s[start..].starts_with("return") && !b.get(start + 6).is_some_and(|&c| is_id(c)) {
+            start = next_nonws(b, start + 6).unwrap_or(start);
+        }
+        start
+    }
+
+    /// Start of the statement containing `pos`: after the nearest `;`, `{` or `}`
+    /// at depth 0, crossing the brackets `pos` is inside.
+    fn statement_start(b: &[u8], from: usize, pos: usize) -> usize {
+        let mut depth = 0i32;
+        for j in (from..pos).rev() {
+            match b[j] {
+                b')' | b']' => depth += 1,
+                b'(' | b'[' if depth > 0 => depth -= 1,
+                b';' | b'{' | b'}' if depth == 0 => return next_nonws(b, j + 1).unwrap_or(pos),
+                _ => {}
+            }
+        }
+        next_nonws(b, from).unwrap_or(pos)
+    }
+
+    /// The types of the `new X(…)` at bracket depth 0 of `span`.
+    pub(crate) fn top_news(s: &str, span: Span) -> Vec<String> {
+        let b = s.as_bytes();
+        let depth = |p: usize| {
+            (b[span.0..p].iter()).fold(0i32, |d, c| match c {
+                b'(' | b'[' | b'{' => d + 1,
+                b')' | b']' | b'}' => d - 1,
+                _ => d,
+            })
+        };
+        (idents(s, span.0, span.1).into_iter())
+            .filter(|&(p, w)| w == "new" && depth(p) == 0)
+            .filter_map(|(p, _)| created_at(s, p).map(|c| c.0))
+            .collect()
+    }
+
+    /// The `new` types of every assignment `var = …;` in `before`.
+    pub(crate) fn assigned_news(s: &str, before: Span, var: &str) -> Vec<String> {
+        let b = s.as_bytes();
+        let mut out = vec![];
+        for (p, w) in idents(s, before.0, before.1)
+            .into_iter()
+            .filter(|x| x.1 == var)
+        {
+            let Some(eq) = next_nonws(b, p + w.len())
+                .filter(|&e| b[e] == b'=' && !matches!(b.get(e + 1), Some(b'=' | b'>')))
+            else {
+                continue;
+            };
+            let end = (eq + 1..before.1)
+                .scan(0i32, |d, j| {
+                    *d += match b[j] {
+                        b'(' | b'[' | b'{' => 1,
+                        b')' | b']' | b'}' => -1,
+                        _ => 0,
+                    };
+                    Some((j, *d))
+                })
+                .find(|&(j, d)| (d == 0 && b[j] == b';') || d < 0)
+                .map_or(before.1, |(j, _)| j);
+            out.extend(top_news(s, (eq + 1, end)));
+        }
+        out
+    }
+}
+
+mod rich {
+    //! Rules, validators, integration events and plain models of the C#
+    //! extractor (ADR 0022, Verlauf 2026-11-20); text-level like the parent.
+    //!
+    //! - Plain models: a `class` (→ `entity`) or `record`/`struct` (→
+    //!   `value_object`) without a marker in a folder with a path segment ending
+    //!   in one of [`MODEL_FOLDERS`], when it has a field or property, is neither
+    //!   `abstract` nor `static` and its name does not end in one of
+    //!   [`NOT_MODELS`].
+    //! - Rules: in methods of found entities, `throw new X(…)` where `X` ends in
+    //!   `DomainException`, is an `ArgumentException` family type or an
+    //!   `*Exception` class declared in a model folder; `new ValidationResult(…)`
+    //!   (`IValidatableObject`); a call of a method of the entity whose body only
+    //!   throws (the rule sits at the call, the helper itself is skipped);
+    //!   `XException.ThrowIf…(…)` and `Guard.Against.…(…)`. The condition is the
+    //!   enclosing `if` (single statement or block; an `else` block gives the
+    //!   literal `!(…)`), `!(c)` for `c ? v : throw`, `v == null` for `v ??
+    //!   throw`, the helper call for `ThrowIf…`/`Guard`; else none. Throws outside
+    //!   entity classes (pipeline behaviours, repositories) are no domain rules.
+    //! - Validations: per `RuleFor(x => x.P)` / `RuleForEach` in a class deriving
+    //!   from `AbstractValidator<T>`, every chained call as source text.
+    //! - Integration events: classes and records deriving from `IntegrationEvent`,
+    //!   and publish sites `r.PublishAsync(…)`, `r.Publish(…)`/`Publish<X>(…)`,
+    //!   `r.AddAndSaveEventAsync(…)` and `r.SaveEventAnd…Async(…)` with `new X(…)`
+    //!   or a local variable assigned `new X(…)` (every top-level `new` of each
+    //!   assignment, so a ternary or if/else yields both types). A receiver whose
+    //!   name contains `mediator` publishes in-process notifications and is
+    //!   skipped; a parameter or member argument (the generic forwarding
+    //!   wrappers) adds nothing. `Send` is not read.
+    use super::code::{
+        Code, assigned_news, call_text, condition, created_at, message, raw, top_news,
+    };
+    use super::*;
+    use archguard_core::domain_model::{DomainRule, IntegrationEvent, Publisher, Validation};
+
+    pub(super) const MODEL_FOLDERS: [&str; 4] = ["Domain", "Model", "Models", "Entities"];
+    pub(super) const NOT_MODELS: [&str; 9] = [
+        "Dto",
+        "DTO",
+        "Request",
+        "Response",
+        "Command",
+        "Query",
+        "ViewModel",
+        "Event",
+        "Exception",
+    ];
+    const ARGUMENT_EXCEPTIONS: [&str; 3] = [
+        "ArgumentException",
+        "ArgumentNullException",
+        "ArgumentOutOfRangeException",
+    ];
+    const VALIDATION_RESULT: &str = "ValidationResult";
+    const GUARD: &str = "Guard";
+    const VALIDATOR_BASE: &str = "AbstractValidator";
+    const INTEGRATION_EVENT_BASE: &str = "IntegrationEvent";
+    const PUBLISH_FUNCTIONS: [&str; 3] = ["PublishAsync", "Publish", "AddAndSaveEventAsync"];
+
+    fn code(src: &Src) -> Code<'_> {
+        Code {
+            text: &src.text,
+            raw: &src.raw,
+        }
+    }
+
+    fn in_model_folder(dir: &str) -> bool {
+        (dir.split('/')).any(|seg| MODEL_FOLDERS.iter().any(|f| seg.ends_with(f)))
+    }
+
+    /// Plain models among the declarations not in `kinds`. A name an entity in
+    /// `kinds` has, or a `DbSet<T>` resolving to another class, keeps the plain
+    /// class out (client copies of a model must not qualify the domain's ids).
+    pub(super) fn plain_models(
+        x: &Extractor,
+        kinds: &[(usize, EntityKind)],
+    ) -> Vec<(usize, EntityKind)> {
+        let marker = |n: &str| {
+            AGGREGATE_MARKERS.contains(&n) || [ENTITY_BASE, VALUE_OBJECT_BASE].contains(&n)
+        };
+        let taken: BTreeSet<&str> = kinds.iter().map(|k| x.decls[k.0].name.as_str()).collect();
+        let set_owner = |d: usize, name: &str| {
+            let sets: Vec<_> = x.sets.iter().filter(|s| s.2 == name).collect();
+            sets.is_empty()
+                || sets
+                    .iter()
+                    .any(|s| x.resolve_set(s.0, name) == Some(Some(d)))
+        };
+        (x.decls.iter().enumerate())
+            .filter(|(d, decl)| {
+                matches!(decl.kw.as_str(), "class" | "record" | "struct")
+                    && !kinds.iter().any(|k| k.0 == *d)
+                    && !taken.contains(decl.name.as_str())
+                    && set_owner(*d, &decl.name)
+                    && in_model_folder(&decl.dir)
+                    && !NOT_MODELS.iter().any(|n| decl.name.ends_with(n))
+                    && !marker(&decl.name)
+                    && !modified(&x.files[decl.file].text, decl.pos, &["abstract", "static"])
+                    && has_fields(&x.files[decl.file].text, decl)
+            })
+            .map(|(d, decl)| match decl.kw.as_str() {
+                "class" => (d, EntityKind::Entity),
+                _ => (d, EntityKind::ValueObject),
+            })
+            .collect()
+    }
+
+    /// One of `words` among the modifiers before the type keyword at `pos`.
+    fn modified(s: &str, pos: usize, words: &[&str]) -> bool {
+        let start = s[..pos].rfind(['\n', ';', '{', '}']).map_or(0, |k| k + 1);
+        idents(s, start, pos).iter().any(|w| words.contains(&w.1))
+    }
+
+    fn has_fields(s: &str, decl: &Decl) -> bool {
+        let params = (decl.params.filter(|_| decl.kw == "record"))
+            .is_some_and(|(a, z)| !s[a..z].trim().is_empty());
+        let data = decl.body.is_some_and(|body| {
+            (members(s, body, &decl.name).iter()).any(|m| matches!(m.kind, Kind::Data { .. }))
+        });
+        params || data
+    }
+
+    /// One rule site: offset, exception, condition, message.
+    type Site = (usize, String, Option<String>, Option<String>);
+
+    pub(super) fn rules(x: &Extractor) -> Vec<DomainRule> {
+        let declared: BTreeSet<&str> = (x.decls.iter())
+            .filter(|d| d.kw == "class" && d.name.ends_with("Exception") && in_model_folder(&d.dir))
+            .map(|d| d.name.as_str())
+            .collect();
+        let family = |t: &str| {
+            t.ends_with("DomainException")
+                || ARGUMENT_EXCEPTIONS.contains(&t)
+                || declared.contains(t)
+                || [VALIDATION_RESULT, GUARD].contains(&t)
+        };
+        let mut out = vec![];
+        for ent in &x.ents {
+            let src = &x.files[ent.file];
+            let helpers = helper_throws(src, ent);
+            for (name, body, ..) in ent.methods() {
+                if helpers.contains_key(name) {
+                    continue;
+                }
+                for (pos, exception, condition, message) in sites(src, body, &helpers) {
+                    if family(&exception) {
+                        out.push(DomainRule {
+                            entity: ent.id.clone(),
+                            method: format!("{}.{name}", ent.id),
+                            condition,
+                            message,
+                            exception,
+                            file: src.rel.clone(),
+                            line: line(&src.text, pos),
+                            source: SOURCE.into(),
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Exception and message of each entity method whose body only throws.
+    fn helper_throws<'a>(src: &Src, ent: &'a Ent) -> BTreeMap<&'a str, (String, Option<String>)> {
+        let names = ent.throwing(&src.text);
+        (ent.methods())
+            .filter(|m| names.contains(m.0))
+            .filter_map(|(name, body, ..)| {
+                let at = body.0 + src.text[body.0..body.1].find("throw")?;
+                let (ex, args) = created_at(&src.text, at + "throw".len())?;
+                Some((name, (ex, message(code(src), args))))
+            })
+            .collect()
+    }
+
+    fn sites(
+        src: &Src,
+        body: Span,
+        helpers: &BTreeMap<&str, (String, Option<String>)>,
+    ) -> Vec<Site> {
+        let (s, b) = (&src.text, src.text.as_bytes());
+        let mut out = vec![];
+        for (pos, w) in idents(s, body.0, body.1) {
+            let dotted = prev_nonws(b, pos).is_some_and(|k| b[k] == b'.');
+            let called = next_nonws(b, pos + w.len()).filter(|&k| b[k] == b'(');
+            match w {
+                "throw" => {
+                    if let Some((ex, args)) = created_at(s, pos + w.len()) {
+                        out.push((
+                            pos,
+                            ex,
+                            condition(code(src), body, pos),
+                            message(code(src), args),
+                        ));
+                    }
+                }
+                "new" => {
+                    if let Some((ex, args)) =
+                        created_at(s, pos).filter(|c| c.0 == VALIDATION_RESULT)
+                    {
+                        out.push((
+                            pos,
+                            ex,
+                            condition(code(src), body, pos),
+                            message(code(src), args),
+                        ));
+                    }
+                }
+                _ if !dotted && called.is_some() && helpers.contains_key(w) => {
+                    let (ex, msg) = helpers[w].clone();
+                    out.push((pos, ex, condition(code(src), body, pos), msg));
+                }
+                _ if dotted => out.extend(guard_helper(src, pos, w)),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// `XException.ThrowIf…(…)` or `Guard.Against.…(…)` at the dotted `w`.
+    fn guard_helper(src: &Src, pos: usize, w: &str) -> Option<Site> {
+        let (s, b) = (&src.text, src.text.as_bytes());
+        let dot = prev_nonws(b, pos)?;
+        let receiver = prev_word(s, dot);
+        let start = dot - receiver.len();
+        let open = if w.starts_with("ThrowIf") && receiver.ends_with("Exception") {
+            next_nonws(b, pos + w.len())
+        } else if w == "Against" && receiver == GUARD {
+            let k = next_nonws(b, pos + w.len()).filter(|&k| b[k] == b'.')?;
+            let name_end = (k + 1..b.len()).find(|&j| !is_id(b[j]))?;
+            next_nonws(b, name_end)
+        } else {
+            None
+        };
+        let open = open.filter(|&o| b[o] == b'(')?;
+        Some((
+            pos,
+            receiver.into(),
+            call_text(code(src), start, open),
+            None,
+        ))
+    }
+
+    pub(super) fn validations(x: &Extractor) -> Vec<Validation> {
+        let mut out = vec![];
+        for d in x.decls.iter().filter(|d| d.kw == "class") {
+            let Some(target) = (d.bases.iter()).find_map(|b| generic_args(b, VALIDATOR_BASE))
+            else {
+                continue;
+            };
+            let (src, Some(body)) = (&x.files[d.file], d.body) else {
+                continue;
+            };
+            let (s, b) = (&src.text, src.text.as_bytes());
+            for (pos, w) in idents(s, body.0, body.1) {
+                let open = next_nonws(b, pos + w.len()).filter(|&k| b[k] == b'(');
+                let (true, Some(open)) = (matches!(w, "RuleFor" | "RuleForEach"), open) else {
+                    continue;
+                };
+                let Some(close) = matching(b, open) else {
+                    continue;
+                };
+                let lambda = &s[open + 1..close];
+                let Some((_, path)) = lambda.split_once("=>") else {
+                    continue;
+                };
+                let path = path.trim();
+                let property = path.split_once('.').map_or(path, |(_, p)| p).trim();
+                out.push(Validation {
+                    target_type: simple(&target[0]),
+                    property: property.to_string(),
+                    rules: chained(src, close + 1),
+                    file: src.rel.clone(),
+                    line: line(s, pos),
+                    source: SOURCE.into(),
+                });
+            }
+        }
+        out
+    }
+
+    /// The calls chained with `.` after `from`, each as written.
+    fn chained(src: &Src, mut from: usize) -> Vec<String> {
+        let b = src.text.as_bytes();
+        let mut out = vec![];
+        while let Some(dot) = next_nonws(b, from).filter(|&k| b[k] == b'.') {
+            let Some(start) = next_nonws(b, dot + 1) else {
+                break;
+            };
+            let end = (start..b.len()).find(|&j| !is_id(b[j])).unwrap_or(b.len());
+            let mut open = next_nonws(b, end);
+            if let Some(lt) = open.filter(|&k| b[k] == b'<') {
+                open = matching(b, lt).and_then(|g| next_nonws(b, g + 1));
+            }
+            let Some(close) = open.filter(|&o| b[o] == b'(').and_then(|o| matching(b, o)) else {
+                break;
+            };
+            out.push(raw(code(src), (start, close + 1)));
+            from = close + 1;
+        }
+        out
+    }
+
+    pub(super) fn integration_events(x: &Extractor) -> Vec<IntegrationEvent> {
+        let mut found: BTreeMap<String, BTreeSet<Publisher>> = BTreeMap::new();
+        for d in &x.decls {
+            if matches!(d.kw.as_str(), "class" | "record")
+                && d.bases.iter().any(|b| simple(b) == INTEGRATION_EVENT_BASE)
+            {
+                found.entry(d.name.clone()).or_default();
+            }
+            let (src, Some(body)) = (&x.files[d.file], d.body.filter(|_| d.kw == "class")) else {
+                continue;
+            };
+            for m in members(&src.text, body, &d.name) {
+                let Kind::Method { name, body, .. } = m.kind else {
+                    continue;
+                };
+                for (t, pos) in publishes(&src.text, body) {
+                    found.entry(t).or_default().insert(Publisher {
+                        by: format!("{}.{name}", d.name),
+                        service: src.project.clone(),
+                        file: src.rel.clone(),
+                        line: line(&src.text, pos),
+                    });
+                }
+            }
+        }
+        (found.into_iter())
+            .map(|(type_name, by)| IntegrationEvent {
+                type_name,
+                published_by: by.into_iter().collect(),
+                handled_by: vec![],
+                source: SOURCE.into(),
+            })
+            .collect()
+    }
+
+    /// Published types in `body`: (type, offset of the call).
+    fn publishes(s: &str, body: Span) -> Vec<(String, usize)> {
+        let b = s.as_bytes();
+        let mut out = vec![];
+        for (pos, w) in idents(s, body.0, body.1) {
+            let named = PUBLISH_FUNCTIONS.contains(&w)
+                || (w.starts_with("SaveEventAnd") && w.ends_with("Async"));
+            let Some(dot) = prev_nonws(b, pos).filter(|&k| named && b[k] == b'.') else {
+                continue;
+            };
+            if prev_word(s, dot).to_lowercase().contains("mediator") {
+                continue;
+            }
+            out.extend(
+                payload(s, body, pos + w.len())
+                    .into_iter()
+                    .map(|t| (t, pos)),
+            );
+        }
+        out
+    }
+
+    /// The published types of the call whose name ends at `after`: a generic
+    /// argument, or the first argument's `new` types (directly or through a
+    /// local variable assigned before the call).
+    fn payload(s: &str, body: Span, after: usize) -> Vec<String> {
+        let b = s.as_bytes();
+        let Some(k) = next_nonws(b, after) else {
+            return vec![];
+        };
+        if b[k] == b'<' {
+            return matching(b, k).map_or(vec![], |close| vec![simple(&s[k + 1..close])]);
+        }
+        let Some(close) = (b[k] == b'(').then(|| matching(b, k)).flatten() else {
+            return vec![];
+        };
+        let arg = split_top(&s[k + 1..close], ",")[0];
+        let at = k + 1 + (arg.len() - arg.trim_start().len());
+        let arg = arg.trim();
+        if !arg.is_empty() && arg.bytes().all(is_id) {
+            assigned_news(s, (body.0, after), arg)
+        } else {
+            top_news(s, (at, at + arg.len()))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        //! Fixtures shaped like eShop (Ordering, Catalog, Basket, PaymentProcessor)
+        //! and CleanArchitecture.
+        use super::super::extract;
+        use archguard_core::domain_model::{DomainModel, EntityKind};
+
+        const SEED: &str = "namespace Shop.Domain.SeedWork;
+public abstract class Entity { public void AddDomainEvent(object e) { } }
+public interface IAggregateRoot { }
+";
+
+        const ORDER_ITEM: &str = r#"namespace Shop.Domain.AggregatesModel.OrderAggregate;
+public class OrderItem : Entity
+{
+    public decimal Discount { get; private set; }
+    public int Units { get; private set; }
+    public OrderItem(decimal unitPrice, decimal discount, int units = 1)
+    {
+        if (units <= 0)
+        {
+            throw new OrderingDomainException("Invalid number of units");
+        }
+        if ((unitPrice * units) < discount)
+            throw new OrderingDomainException("The total, of order item is lower than applied discount");
+        Units = units;
+    }
+    public void SetNewDiscount(decimal discount)
+    {
+        if (discount < 0) { throw new OrderingDomainException("Discount is not valid"); }
+        Discount = discount;
+    }
+    public void Log() { throw new InvalidOperationException("not a domain rule"); }
+}
+"#;
+
+        const PAYMENT: &str = r#"namespace Shop.Domain.AggregatesModel.BuyerAggregate;
+public class PaymentMethod : Entity
+{
+    private string _cardNumber;
+    private string _alias;
+    public PaymentMethod(string cardNumber, string alias, DateTime expiration)
+    {
+        _cardNumber = !string.IsNullOrWhiteSpace(cardNumber) ? cardNumber : throw new OrderingDomainException(nameof(cardNumber));
+        _alias = alias ?? throw new ArgumentNullException(nameof(alias));
+        ArgumentOutOfRangeException.ThrowIfNegative(expiration.Year);
+        Guard.Against.NullOrEmpty(alias, message: "Alias, please");
+        if (expiration < DateTime.UtcNow)
+        {
+            throw new OrderingDomainException(nameof(expiration));
+        }
+        else
+        {
+            throw new ArgumentException($"never {alias}");
+        }
+    }
+}
+"#;
+
+        const ORDER: &str = r#"namespace Shop.Domain.AggregatesModel.OrderAggregate;
+public class Order : Entity, IAggregateRoot
+{
+    public OrderStatus OrderStatus { get; private set; }
+    public void SetShippedStatus()
+    {
+        if (OrderStatus != OrderStatus.Paid)
+        {
+            StatusChangeException(OrderStatus.Shipped);
+        }
+        OrderStatus = OrderStatus.Shipped;
+    }
+    private void StatusChangeException(OrderStatus orderStatusToChange)
+    {
+        throw new OrderingDomainException($"Is not possible to change the order status from {OrderStatus} to {orderStatusToChange}.");
+    }
+}
+public enum OrderStatus { Submitted, Paid, Shipped }
+"#;
+
+        const CATALOG_ITEM: &str = r#"namespace Shop.Catalog.API.Model;
+public class CatalogItem
+{
+    public string Name { get; set; }
+    public int AvailableStock { get; set; }
+    public CatalogItem(string name) { Name = name; }
+    public int RemoveStock(int quantityDesired)
+    {
+        if (AvailableStock == 0)
+        {
+            throw new CatalogDomainException($"Empty stock, product item {Name} is sold out");
+        }
+        this.AvailableStock -= quantityDesired;
+        return quantityDesired;
+    }
+}
+public record CatalogItemDto(string Name);
+public abstract class ModelBase { public int Id { get; set; } }
+public static class ModelExtensions { public static int Count = 0; }
+public class Empty { }
+"#;
+
+        const BASKET: &str = r#"namespace Shop.Basket.API.Model;
+public class CustomerBasket
+{
+    public string BuyerId { get; set; }
+    public List<BasketItem> Items { get; set; } = [];
+}
+public class BasketItem : IValidatableObject
+{
+    public int Quantity { get; set; }
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        var results = new List<ValidationResult>();
+        if (Quantity < 1)
+        {
+            results.Add(new ValidationResult("Invalid number of units", new[] { "Quantity" }));
+        }
+        return results;
+    }
+}
+"#;
+
+        const BEHAVIOR: &str = r#"namespace Shop.Ordering.API.Behaviors;
+public class ValidatorBehavior
+{
+    public async Task Handle()
+    {
+        if (failures.Any())
+        {
+            throw new OrderingDomainException("Command Validation Errors");
+        }
+    }
+}
+"#;
+
+        const VALIDATOR: &str = r#"namespace Shop.Ordering.API.Validations;
+public class CreateOrderCommandValidator : AbstractValidator<CreateOrderCommand>
+{
+    public CreateOrderCommandValidator()
+    {
+        RuleFor(command => command.City).NotEmpty();
+        RuleFor(command => command.CardNumber).NotEmpty().Length(12, 19);
+        RuleFor(command => command.CardExpiration).NotEmpty().Must(BeValidExpirationDate).WithMessage("Please specify a valid, card expiration date");
+        RuleForEach(v => v.Items)
+            .MaximumLength(200)
+            .MustAsync(BeUnique)
+                .WithMessage("'{PropertyName}' must be unique.");
+    }
+}
+"#;
+
+        const EVENTS: &str = r#"namespace Shop.Ordering.API.IntegrationEvents;
+public record OrderStatusChangedToPaidIntegrationEvent(int OrderId) : IntegrationEvent;
+public record OrderStartedIntegrationEvent(string UserId) : IntegrationEvent;
+public record UnusedIntegrationEvent : IntegrationEvent;
+public class OrderStatusChangedToPaidDomainEventHandler
+{
+    public async Task Handle(OrderStatusChangedToPaidDomainEvent domainEvent, CancellationToken cancellationToken)
+    {
+        var integrationEvent = new OrderStatusChangedToPaidIntegrationEvent(
+            domainEvent.OrderId);
+        await _orderingIntegrationEventService.AddAndSaveEventAsync(integrationEvent);
+        await _mediator.Publish(new LocalNotification());
+    }
+}
+public class CreateOrderCommandHandler
+{
+    public async Task<bool> Handle(CreateOrderCommand message, CancellationToken cancellationToken)
+    {
+        await _orderingIntegrationEventService.AddAndSaveEventAsync(new OrderStartedIntegrationEvent(message.UserId));
+        return true;
+    }
+}
+public class OrderingIntegrationEventService
+{
+    public async Task PublishEventsThroughEventBusAsync(Guid transactionId)
+    {
+        foreach (var logEvt in pending) { await _eventBus.PublishAsync(logEvt.IntegrationEvent); }
+    }
+    public async Task AddAndSaveEventAsync(IntegrationEvent evt) { await _eventBus.PublishAsync(evt); }
+}
+"#;
+
+        const PAYMENT_HANDLER: &str = r#"namespace Shop.PaymentProcessor;
+public class OrderStatusChangedToStockConfirmedIntegrationEventHandler : IIntegrationEventHandler<OrderStatusChangedToStockConfirmedIntegrationEvent>
+{
+    public async Task Handle(OrderStatusChangedToStockConfirmedIntegrationEvent @event)
+    {
+        IntegrationEvent orderPaymentIntegrationEvent;
+        if (options.CurrentValue.PaymentSucceeded)
+        {
+            orderPaymentIntegrationEvent = new OrderPaymentSucceededIntegrationEvent(@event.OrderId);
+        }
+        else
+        {
+            orderPaymentIntegrationEvent = new OrderPaymentFailedIntegrationEvent(@event.OrderId);
+        }
+        await eventBus.PublishAsync(orderPaymentIntegrationEvent);
+    }
+}
+public class CatalogPaidHandler : IIntegrationEventHandler<OrderStatusChangedToPaidIntegrationEvent>
+{
+    public async Task Handle(OrderStatusChangedToPaidIntegrationEvent @event)
+    {
+        var confirmed = rejected
+            ? (IntegrationEvent)new OrderStockRejectedIntegrationEvent(@event.OrderId, items)
+            : new OrderStockConfirmedIntegrationEvent(@event.OrderId);
+        await catalogIntegrationEventService.SaveEventAndCatalogContextChangesAsync(confirmed);
+        await bus.Publish<StockChecked>(new { Id = 1 });
+    }
+}
+"#;
+
+        const COLOUR: &str = r#"namespace Clean.Domain.ValueObjects;
+public class Colour(string code) : ValueObject
+{
+    public static Colour From(string code)
+    {
+        var colour = new Colour(code);
+        if (!SupportedColours.Contains(colour))
+        {
+            throw new UnsupportedColourException(code);
+        }
+        return colour;
+    }
+}
+"#;
+
+        fn run() -> DomainModel {
+            let files: &[(&str, &str)] = &[
+                ("Ordering.Domain/Ordering.Domain.csproj", "<Project />"),
+                ("Ordering.Domain/SeedWork/Entity.cs", SEED),
+                (
+                    "Ordering.Domain/AggregatesModel/OrderAggregate/OrderItem.cs",
+                    ORDER_ITEM,
+                ),
+                (
+                    "Ordering.Domain/AggregatesModel/OrderAggregate/Order.cs",
+                    ORDER,
+                ),
+                (
+                    "Ordering.Domain/AggregatesModel/BuyerAggregate/PaymentMethod.cs",
+                    PAYMENT,
+                ),
+                (
+                    "Ordering.Domain/Exceptions/OrderingDomainException.cs",
+                    "namespace Shop.Domain.Exceptions;\npublic class OrderingDomainException : Exception { public OrderingDomainException(string m) : base(m) { } }\n",
+                ),
+                (
+                    "Ordering.Domain/Events/OrderStartedDomainEvent.cs",
+                    "namespace Shop.Domain.Events;\npublic record OrderStartedDomainEvent(string UserId);\n",
+                ),
+                ("Catalog.API/Catalog.API.csproj", "<Project />"),
+                ("Catalog.API/Model/CatalogItem.cs", CATALOG_ITEM),
+                ("Basket.API/Model/Basket.cs", BASKET),
+                ("Ordering.API/Ordering.API.csproj", "<Project />"),
+                ("Ordering.API/Behaviors/ValidatorBehavior.cs", BEHAVIOR),
+                (
+                    "Ordering.API/Validations/CreateOrderCommandValidator.cs",
+                    VALIDATOR,
+                ),
+                ("Ordering.API/IntegrationEvents/Events.cs", EVENTS),
+                ("PaymentProcessor/PaymentProcessor.csproj", "<Project />"),
+                ("PaymentProcessor/Handlers.cs", PAYMENT_HANDLER),
+                ("Clean/Domain/ValueObjects/Colour.cs", COLOUR),
+                (
+                    "Clean/Domain/Exceptions/UnsupportedColourException.cs",
+                    "namespace Clean.Domain.Exceptions;\npublic class UnsupportedColourException(string code) : Exception($\"Colour {code} is unsupported.\") { }\n",
+                ),
+                (
+                    "Clean/Domain/Common/ValueObject.cs",
+                    "namespace Clean.Domain.Common;\npublic abstract class ValueObject { }\n",
+                ),
+                // Client copies of domain models: they must not qualify the domain's ids.
+                (
+                    "ClientApp/Models/Order.cs",
+                    "namespace Shop.ClientApp.Models;\npublic class Order { public int Id { get; set; } }\n",
+                ),
+                (
+                    "ClientApp/Models/CatalogItem.cs",
+                    "namespace Shop.ClientApp.Models;\npublic class CatalogItem { public int Id { get; set; } }\n",
+                ),
+                (
+                    "Catalog.API/CatalogContext.cs",
+                    "namespace Shop.Catalog.API;\npublic class CatalogContext : DbContext { public DbSet<CatalogItem> CatalogItems { get; set; } }\n",
+                ),
+            ];
+            let dir = tempfile::tempdir().unwrap();
+            for (path, text) in files {
+                let path = dir.path().join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            extract(dir.path())
+        }
+
+        type Row<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a str, u32);
+
+        /// The rules of `entity` in source order.
+        fn rules_of<'a>(model: &'a DomainModel, entity: &str) -> Vec<Row<'a>> {
+            let mut rows: Vec<Row> = (model.rules.iter())
+                .filter(|r| r.entity == entity)
+                .map(|r| {
+                    let method = r.method.split_once('.').unwrap().1;
+                    (
+                        method,
+                        r.condition.as_deref(),
+                        r.message.as_deref(),
+                        r.exception.as_str(),
+                        r.line,
+                    )
+                })
+                .collect();
+            rows.sort_by_key(|r| r.4);
+            rows
+        }
+
+        #[test]
+        fn guarding_throws_in_entity_methods_are_rules_with_condition_and_message() {
+            let model = run();
+            assert_eq!(
+                rules_of(&model, "OrderItem"),
+                [
+                    (
+                        "OrderItem",
+                        Some("units <= 0"),
+                        Some("Invalid number of units"),
+                        "OrderingDomainException",
+                        10
+                    ),
+                    (
+                        "OrderItem",
+                        Some("(unitPrice * units) < discount"),
+                        Some("The total, of order item is lower than applied discount"),
+                        "OrderingDomainException",
+                        13
+                    ),
+                    (
+                        "SetNewDiscount",
+                        Some("discount < 0"),
+                        Some("Discount is not valid"),
+                        "OrderingDomainException",
+                        18
+                    ),
+                ]
+            );
+            let item = model.rules.iter().find(|r| r.line == 18).unwrap();
+            assert_eq!(item.method, "OrderItem.SetNewDiscount");
+            assert_eq!(
+                item.file,
+                "Ordering.Domain/AggregatesModel/OrderAggregate/OrderItem.cs"
+            );
+        }
+
+        #[test]
+        fn ternary_coalesce_guard_helpers_and_else_give_the_throwing_condition() {
+            let model = run();
+            assert_eq!(
+                rules_of(&model, "PaymentMethod"),
+                [
+                    (
+                        "PaymentMethod",
+                        Some("!(!string.IsNullOrWhiteSpace(cardNumber))"),
+                        Some("nameof(cardNumber)"),
+                        "OrderingDomainException",
+                        8
+                    ),
+                    (
+                        "PaymentMethod",
+                        Some("alias == null"),
+                        Some("nameof(alias)"),
+                        "ArgumentNullException",
+                        9
+                    ),
+                    (
+                        "PaymentMethod",
+                        Some("ArgumentOutOfRangeException.ThrowIfNegative(expiration.Year)"),
+                        None,
+                        "ArgumentOutOfRangeException",
+                        10
+                    ),
+                    (
+                        "PaymentMethod",
+                        Some(r#"Guard.Against.NullOrEmpty(alias, message: "Alias, please")"#),
+                        None,
+                        "Guard",
+                        11
+                    ),
+                    (
+                        "PaymentMethod",
+                        Some("expiration < DateTime.UtcNow"),
+                        Some("nameof(expiration)"),
+                        "OrderingDomainException",
+                        14
+                    ),
+                    (
+                        "PaymentMethod",
+                        Some("!(expiration < DateTime.UtcNow)"),
+                        Some("never {alias}"),
+                        "ArgumentException",
+                        18
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_throwing_helper_puts_the_rule_at_its_guarded_call() {
+            let model = run();
+            assert_eq!(
+                rules_of(&model, "Order"),
+                [(
+                    "SetShippedStatus",
+                    Some("OrderStatus != OrderStatus.Paid"),
+                    Some(
+                        "Is not possible to change the order status from {OrderStatus} to {orderStatusToChange}."
+                    ),
+                    "OrderingDomainException",
+                    9
+                )]
+            );
+        }
+
+        #[test]
+        fn throws_outside_entities_and_other_exceptions_are_no_rules() {
+            let model = run();
+            assert!(model.rules.iter().all(|r| !r.file.contains("Behaviors")));
+            assert!(
+                (model.rules.iter()).all(|r| r.exception != "InvalidOperationException"),
+                "{:#?}",
+                model.rules
+            );
+            // An exception class declared in a domain folder counts.
+            assert_eq!(
+                rules_of(&model, "Colour"),
+                [(
+                    "From",
+                    Some("!SupportedColours.Contains(colour)"),
+                    Some("code"),
+                    "UnsupportedColourException",
+                    9
+                )]
+            );
+        }
+
+        #[test]
+        fn plain_models_in_model_folders_become_entities_with_their_rules() {
+            let model = run();
+            let kind =
+                |name: &str| (model.entities.iter().find(|e| e.name == name)).map(|e| e.kind);
+            assert_eq!(kind("CatalogItem"), Some(EntityKind::Entity));
+            let files = |name: &str| -> Vec<(&str, &str)> {
+                (model.entities.iter().filter(|e| e.name == name))
+                    .map(|e| (e.id.as_str(), e.file.as_str()))
+                    .collect()
+            };
+            assert_eq!(
+                files("Order"),
+                [(
+                    "Order",
+                    "Ordering.Domain/AggregatesModel/OrderAggregate/Order.cs"
+                )]
+            );
+            assert_eq!(
+                files("CatalogItem"),
+                [("CatalogItem", "Catalog.API/Model/CatalogItem.cs")]
+            );
+            assert_eq!(kind("CustomerBasket"), Some(EntityKind::Entity));
+            assert_eq!(kind("BasketItem"), Some(EntityKind::Entity));
+            for skipped in [
+                "CatalogItemDto",
+                "ModelBase",
+                "ModelExtensions",
+                "Empty",
+                "OrderingDomainException",
+                "OrderStartedDomainEvent",
+                "ValidatorBehavior",
+            ] {
+                assert_eq!(kind(skipped), None, "{skipped}");
+            }
+            assert_eq!(
+                rules_of(&model, "CatalogItem"),
+                [(
+                    "RemoveStock",
+                    Some("AvailableStock == 0"),
+                    Some("Empty stock, product item {Name} is sold out"),
+                    "CatalogDomainException",
+                    11
+                )]
+            );
+            assert_eq!(
+                rules_of(&model, "BasketItem"),
+                [(
+                    "Validate",
+                    Some("Quantity < 1"),
+                    Some("Invalid number of units"),
+                    "ValidationResult",
+                    15
+                )]
+            );
+            assert!(
+                (model.relations.iter())
+                    .any(|r| r.from == "CustomerBasket" && r.to == "BasketItem"),
+                "{:#?}",
+                model.relations
+            );
+        }
+
+        #[test]
+        fn fluent_validation_rules_per_property() {
+            let model = run();
+            let rows: Vec<(&str, &str, Vec<&str>, u32)> = (model.validations.iter())
+                .map(|v| {
+                    let rules = v.rules.iter().map(String::as_str).collect();
+                    (v.target_type.as_str(), v.property.as_str(), rules, v.line)
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                [
+                    (
+                        "CreateOrderCommand",
+                        "CardExpiration",
+                        vec![
+                            "NotEmpty()",
+                            "Must(BeValidExpirationDate)",
+                            r#"WithMessage("Please specify a valid, card expiration date")"#
+                        ],
+                        8
+                    ),
+                    (
+                        "CreateOrderCommand",
+                        "CardNumber",
+                        vec!["NotEmpty()", "Length(12, 19)"],
+                        7
+                    ),
+                    ("CreateOrderCommand", "City", vec!["NotEmpty()"], 6),
+                    (
+                        "CreateOrderCommand",
+                        "Items",
+                        vec![
+                            "MaximumLength(200)",
+                            "MustAsync(BeUnique)",
+                            r#"WithMessage("'{PropertyName}' must be unique.")"#
+                        ],
+                        9
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn integration_events_with_publish_sites_services_and_handlers() {
+            let model = run();
+            let rows: Vec<(&str, Vec<String>, Vec<&str>)> = (model.integration_events.iter())
+                .map(|e| {
+                    let by = (e.published_by.iter())
+                        .map(|p| format!("{} [{}] :{}", p.by, p.service, p.line))
+                        .collect();
+                    let handled = e.handled_by.iter().map(String::as_str).collect();
+                    (e.type_name.as_str(), by, handled)
+                })
+                .collect();
+            let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+            assert_eq!(
+                rows,
+                [
+                    (
+                        "OrderPaymentFailedIntegrationEvent",
+                        s(&[
+                            "OrderStatusChangedToStockConfirmedIntegrationEventHandler.Handle [PaymentProcessor] :15"
+                        ]),
+                        vec![]
+                    ),
+                    (
+                        "OrderPaymentSucceededIntegrationEvent",
+                        s(&[
+                            "OrderStatusChangedToStockConfirmedIntegrationEventHandler.Handle [PaymentProcessor] :15"
+                        ]),
+                        vec![]
+                    ),
+                    (
+                        "OrderStartedIntegrationEvent",
+                        s(&["CreateOrderCommandHandler.Handle [Ordering.API] :19"]),
+                        vec![]
+                    ),
+                    (
+                        "OrderStatusChangedToPaidIntegrationEvent",
+                        s(&[
+                            "OrderStatusChangedToPaidDomainEventHandler.Handle [Ordering.API] :11"
+                        ]),
+                        vec!["CatalogPaidHandler"]
+                    ),
+                    (
+                        "OrderStockConfirmedIntegrationEvent",
+                        s(&["CatalogPaidHandler.Handle [PaymentProcessor] :25"]),
+                        vec![]
+                    ),
+                    (
+                        "OrderStockRejectedIntegrationEvent",
+                        s(&["CatalogPaidHandler.Handle [PaymentProcessor] :25"]),
+                        vec![]
+                    ),
+                    (
+                        "StockChecked",
+                        s(&["CatalogPaidHandler.Handle [PaymentProcessor] :26"]),
+                        vec![]
+                    ),
+                    ("UnusedIntegrationEvent", vec![], vec![]),
+                ]
+            );
         }
     }
 }
