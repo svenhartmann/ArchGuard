@@ -1,0 +1,97 @@
+{
+  "kind": "recorded MCP JSON-RPC session, not a Claude Code conversation",
+  "project": "Apache Commons Collections",
+  "commit": "2bcf69296bbde598b1e8bac1b3cd90a11ef3e563",
+  "cli_version": "archguard 0.3.5",
+  "exchanges": [
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "archguard-marketing-reproduction",
+            "version": "1"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {
+            "tools": {}
+          },
+          "serverInfo": {
+            "name": "rmcp",
+            "version": "3.10.0"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "edge_evidence",
+          "arguments": {
+            "from": "org/apache/commons/collections4/comparators",
+            "to": "org/apache/commons/collections4/ComparatorUtils.java"
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"from\":\"org/apache/commons/collections4/comparators\",\"refs\":[{\"file\":\"org/apache/commons/collections4/comparators/NullComparator.java\",\"line\":23,\"raw\":\"import org.apache.commons.collections4.ComparatorUtils;\"},{\"file\":\"org/apache/commons/collections4/comparators/ReverseComparator.java\",\"line\":22,\"raw\":\"import org.apache.commons.collections4.ComparatorUtils;\"},{\"file\":\"org/apache/commons/collections4/comparators/TransformingComparator.java\",\"line\":23,\"raw\":\"import org.apache.commons.collections4.ComparatorUtils;\"}],\"to\":\"org/apache/commons/collections4/ComparatorUtils.java\"}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+          "name": "simulate",
+          "arguments": {
+            "ops": [
+              {
+                "cut_edge": {
+                  "from": "org/apache/commons/collections4/comparators",
+                  "to": "org/apache/commons/collections4/ComparatorUtils.java"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"acd_after\":24.671232876712327,\"acd_before\":24.684931506849313,\"introduced_findings\":[],\"resolved_findings\":[\"scc-2\"],\"scc_count_after\":2,\"scc_count_before\":3}"
+            }
+          ],
+          "isError": false
+        }
+      }
+    }
+  ]
+}
