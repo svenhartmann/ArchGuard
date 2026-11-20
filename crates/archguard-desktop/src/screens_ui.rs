@@ -7,9 +7,12 @@
 
 mod card;
 mod center;
+mod code;
+mod drill;
 mod focus;
 mod inspector;
 mod layout;
+mod notes;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -21,8 +24,8 @@ use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::tab_support::{self, Actions, TabState, Texts, index};
-use crate::ui::{AppWindow, ScreensData, ScreensModel};
-pub use state::{ScreensState, atoms_of, role_assignment};
+use crate::ui::{AppWindow, ScreensData, ScreensModel, ScreensNote};
+pub use state::{ScreensState, role_assignment, role_names, with_prefix};
 pub use view::role_rows;
 
 /// Register the tab's callbacks once at start-up.
@@ -67,7 +70,83 @@ pub fn wire(ui: &AppWindow) {
     d.on_open_browser(a.on(|s, _, url: slint::SharedString| {
         s.browser_note = crate::web::open_in_browser(&url).err().unwrap_or_default();
     }));
-    d.on_open_file(open_file(ui));
+    wire_details(ui);
+}
+
+/// The details' jumps, drill-down, notes and the editor setting.
+fn wire_details(ui: &AppWindow) {
+    let d = ui.global::<ScreensData>();
+    let a = Actions::<ScreensState>::new(ui);
+    d.on_show_line(
+        a.on2(|s, _, file: slint::SharedString, line: i32| s.show_code(&file, line.max(0) as u32)),
+    );
+    d.on_open_editor(a.on2(|s, _, file: slint::SharedString, line: i32| {
+        let r = crate::editor::open(&s.root, &file, line.max(0) as u32);
+        s.problem = r.err().unwrap_or_default();
+    }));
+    d.on_drill(a.on(|s, _, i: i32| {
+        if let Some(i) = index(i) {
+            s.open_drill(i)
+        }
+    }));
+    d.on_open_note(a.on2(
+        |s, ui, id: slint::SharedString, what: slint::SharedString| {
+            s.open_note(&id, &what);
+            let f = notes::form(s.notes.get(id.as_str()));
+            let n = ui.global::<ScreensNote>();
+            n.set_kind(f.kind as i32);
+            n.set_text(f.text.into());
+            n.set_change(f.change.into());
+            n.set_adr(f.adr.into());
+        },
+    ));
+    d.on_save_note(a.on0(|s, ui| {
+        let n = ui.global::<ScreensNote>();
+        let form = notes::Form {
+            kind: index(n.get_kind()).unwrap_or(0),
+            text: n.get_text().into(),
+            change: n.get_change().into(),
+            adr: n.get_adr().into(),
+        };
+        s.problem = save_note(s, &form)
+            .err()
+            .map(|e| Texts::of(ui).t(&e).to_string())
+            .unwrap_or_default();
+    }));
+    d.on_show_calls(tab_support::with_ui(ui, |ui, name: slint::SharedString| {
+        crate::calls_ui::show_name(ui, &name);
+    }));
+    d.on_set_editor(a.on2(|_, _, preset: i32, custom: slint::SharedString| {
+        let t = index(preset)
+            .and_then(|i| crate::editor::PRESETS.get(i))
+            .map_or(custom.as_str(), |(_, t)| t);
+        crate::editor::set_template(t);
+    }));
+}
+
+/// Record the open note form's item with `form` and read the notes again.
+fn save_note(s: &mut ScreensState, form: &notes::Form) -> Result<(), String> {
+    let Some((id, _)) = s.note_for.clone() else {
+        return Ok(());
+    };
+    let author = crate::review_decisions::git_author(&s.root);
+    let author = if author.is_empty() {
+        "desktop".into()
+    } else {
+        author
+    };
+    let gate = (s.config.as_ref()).is_some_and(|c| c.review.adr_required_on_accept_risk);
+    notes::save(&s.root, &id, form, &author, gate, now())?;
+    s.notes = notes::load(&s.root);
+    s.note_for = None;
+    s.list = s.list.or(Some(state::List::Gaps));
+    Ok(())
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// A callback that opens a project-relative file in a File view.
@@ -108,6 +187,8 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
             s.config = archguard_engine::load_config(None, &root)
                 .ok()
                 .map(|l| l.config);
+            s.domain = archguard_engine::domain_model::analyze(&root).ok();
+            s.notes = notes::load(&root);
             s.root = root;
             snapshot_overrides(&mut s);
             s
@@ -167,6 +248,60 @@ fn snapshot_overrides(s: &mut ScreensState) {
     }
     if let Some(q) = var("SEARCH") {
         s.search = q;
+    }
+    snapshot_details(s);
+}
+
+#[cfg(feature = "snapshot")]
+fn snapshot_details(s: &mut ScreensState) {
+    let var = |k: &str| std::env::var(format!("ARCHGUARD_DESKTOP_FLOW_{k}")).ok();
+    let num = |k: &str| var(k).and_then(|v| v.parse::<usize>().ok());
+    // `…_FLOW_LIST=<0 gaps, 1, 2, 3 undeclared>` opens a list,
+    // `…_FLOW_NOTE=<row>[|<0 fix, 1 intentional, 2 later>|<text>]` opens
+    // the note form of that row of it, with kind and text records the note
+    // (as Save does), `…_FLOW_DRILL=<trigger>[|<call
+    // text>]` the drill-down of the first action with that trigger whose
+    // call contains the text,
+    // `…_FLOW_CODE=<file>:<line>` the code panel.
+    if let Some(i) = num("LIST") {
+        s.open_list(i);
+    }
+    if let Some(spec) = var("NOTE") {
+        snapshot_note(s, &spec);
+    }
+    if let Some(spec) = var("DRILL") {
+        let (t, call) = spec.split_once('|').unwrap_or((&spec, ""));
+        let at = (s.sim.actions.iter())
+            .position(|a| a.trigger.as_deref() == Some(t) && words::call(a).contains(call));
+        if let Some(a) = at {
+            s.open_drill(a);
+        }
+    }
+    if let Some((file, line)) = var("CODE").as_deref().and_then(|c| c.rsplit_once(':')) {
+        s.show_code(file, line.parse().unwrap_or(1));
+    }
+}
+
+#[cfg(feature = "snapshot")]
+fn snapshot_note(s: &mut ScreensState, spec: &str) {
+    let mut parts = spec.splitn(3, '|');
+    let rows = view::build(s, &Texts::default()).inspector.rows;
+    use slint::Model;
+    let row = parts.next().and_then(|i| i.parse().ok());
+    let Some(r) = row.and_then(|i| rows.row_data(i)) else {
+        return;
+    };
+    s.open_note(&r.id, &r.text);
+    let (Some(kind), Some(text)) = (parts.next(), parts.next()) else {
+        return;
+    };
+    let form = notes::Form {
+        kind: kind.parse().unwrap_or(0),
+        text: text.into(),
+        ..Default::default()
+    };
+    if let Err(e) = save_note(s, &form) {
+        eprintln!("snapshot note: {e}");
     }
 }
 

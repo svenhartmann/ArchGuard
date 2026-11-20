@@ -14,7 +14,7 @@ import { ServicesView, ServicesData } from "services_view.slint";
 import { RuntimeView, RuntimeData } from "runtime_view.slint";
 import { QualityView, QualityData } from "quality_view.slint";
 import { SecurityView, SecurityData } from "security_view.slint";
-import { ScreensView, ScreensData } from "screens_view.slint";
+import { ScreensView, ScreensData, ScreensNote } from "screens_view.slint";
 import { DomainView, DomainData } from "domain_view.slint";
 import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "settings_view.slint";
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
@@ -30,7 +30,7 @@ export { TreeRow, TreeLink, NetCard, NetArrow, DepCard, MatrixColumn, MatrixRowI
 export { GraphData, Crumb, Hit, CycleItem, Neighbor, MatrixData, FileData, NodeDep }
 // Per-tab data globals, set from src/<tab>_ui.rs.
 export { RichData }
-export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, DomainData }
+export { StartData, ArchitectureData, CallsData, ServicesData, RuntimeData, QualityData, SecurityData, ScreensData, ScreensNote, DomainData }
 export { SettingsData, SettingsEdit, SettingsModel }
 // Templates for text the Rust side composes (`tab_support::Texts`).
 export { Templates, Template, Fmt, KpiItem }

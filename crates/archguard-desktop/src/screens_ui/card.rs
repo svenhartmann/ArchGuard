@@ -69,6 +69,8 @@ fn screen_card(
     c.title = screen.name.as_str().into();
     c.route = screen.route.clone().unwrap_or_default().into();
     c.file = at(&screen.file, screen.line).into();
+    c.path = screen.file.as_str().into();
+    c.line = screen.line as i32;
     let (state, note) = match reaches.get(&screen.id) {
         Some(ScreenReach::Sure) => (0, String::new()),
         Some(ScreenReach::Possible) => (1, texts.t("only if an open condition holds").into()),

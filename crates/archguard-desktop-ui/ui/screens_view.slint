@@ -10,10 +10,11 @@ import { EmptyState, SectionHeading, Legend, Button, SearchField, Disclosure, Ti
 import { Fmt } from "format.slint";
 import { Para, LinkLine } from "flow_parts.slint";
 import { ComboBox } from "combo.slint";
-import { ScreensInspector, FlowInspector, FlowAction, FlowRow } from "screens_inspector.slint";
+import { ScreensInspector, FlowInspector, FlowAction, FlowRow, DrillStep, ScreensNote, JumpLine } from "screens_inspector.slint";
+import { LineEdit } from "fields.slint";
 import { FlowCanvas, FlowCard, FlowArrow, FlowBand } from "screens_canvas.slint";
 
-export { FlowInspector, FlowAction, FlowRow, FlowCard, FlowArrow, FlowBand }
+export { FlowInspector, FlowAction, FlowRow, DrillStep, ScreensNote, FlowCard, FlowArrow, FlowBand }
 
 export struct FlowRole {
     label: string,
@@ -99,6 +100,14 @@ export struct ScreensModel {
     width: float,
     height: float,
     inspector: FlowInspector,
+    // The catalog's policies with what they require.
+    policies: [FlowRow],
+    // What the chosen user implies: included roles, policy values.
+    implied: string,
+    // "Open in editor": the preset (0 VS Code, 1 Cursor, 2 JetBrains,
+    // 3 custom) and the command template.
+    editor-preset: int,
+    editor: string,
 }
 
 export global ScreensData {
@@ -115,8 +124,20 @@ export global ScreensData {
     // Index into the bands; collapsed state lasts for the session.
     callback toggle-band(int);
     callback close-details();
-    // A project-relative file, opened in a File view.
-    callback open-file(string);
+    // A project-relative file and line: in the configured editor, or in
+    // a File view at that line.
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    // The drill-down of an action (index into the flow's actions).
+    callback drill(int);
+    // The note form of an item: its id and what it is about; Save reads
+    // ScreensNote.
+    callback open-note(string, string);
+    callback save-note();
+    // The Calls view on a class or `Class.method`.
+    callback show-calls(string);
+    // A preset index, or the custom template (index 3).
+    callback set-editor(int, string);
     callback select-app(int);
     callback set-unknown(int);
     callback set-mode(int);
@@ -225,7 +246,7 @@ component RolePicker inherits Rectangle {
     property <int> role: ScreensData.model.role;
     // A new model must not leave an old role shown.
     changed role => { box.current-index = root.role >= 2 ? root.role - 1 : 0; }
-    width: 170px;
+    width: 240px;
     height: box.min-height;
     box := ComboBox {
         model: ScreensData.model.role-names;
@@ -295,6 +316,31 @@ component TopBar inherits Rectangle {
             overflow: elide;
             min-width: 60px;
             TipArea { tip: @tr("Read from source files by fixed rules, not observed at run time. A screen marked reached can still fail on data the rules do not know."); }
+        }
+    }
+}
+
+// The simulated user in words and what it implies by the catalog.
+component RoleLine inherits Rectangle {
+    property <ScreensModel> m: ScreensData.model;
+    property <string> who: m.role < m.roles.length ? m.roles[m.role].label : "";
+    height: row.preferred-height;
+    background: Theme.accent.with-alpha(0.08);
+    row := HorizontalLayout {
+        padding-left: Theme.page-pad;
+        padding-right: Theme.page-pad;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 8px;
+        Text { text: @tr("Simulated user: {}", root.who); color: Theme.accent; font-size: Theme.font-small; font-weight: Theme.weight-strong; vertical-alignment: center; }
+        Text {
+            text: m.implied != "" ? "· " + m.implied : @tr("· statuses, details, drill-down and mismatches follow this user");
+            color: Theme.text;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            TipArea { tip: m.implied; }
         }
     }
 }
@@ -446,6 +492,32 @@ component TreePanel inherits Rectangle {
                     item: s;
                     chosen(v) => { ScreensData.set-switch(i, v); }
                 }
+                if m.policies.length > 0: Rectangle { height: 4px; }
+                if m.policies.length > 0: SectionHeading { label: @tr("Policies"); }
+                for p in m.policies: VerticalLayout {
+                    spacing: 1px;
+                    Para { text: p.text; }
+                    JumpLine {
+                        location: p.location;
+                        file: p.file;
+                        line: p.line;
+                        open-editor(f, l) => { ScreensData.open-editor(f, l); }
+                        show-line(f, l) => { ScreensData.show-line(f, l); }
+                    }
+                }
+                Rectangle { height: 4px; }
+                SectionHeading { label: @tr("Open in editor"); }
+                ComboBox {
+                    model: ["VS Code", "Cursor", "JetBrains", @tr("Custom command")];
+                    current-index: m.editor-preset;
+                    selected => { ScreensData.set-editor(self.current-index, editor.text); }
+                }
+                editor := LineEdit {
+                    text: m.editor;
+                    enabled: m.editor-preset == 3;
+                    accepted(t) => { ScreensData.set-editor(3, t); }
+                }
+                Para { text: @tr("{{file}} and {{line}} are filled in; the words run as one program with arguments, never through a shell. Enter stores a custom command."); muted: true; }
                 Rectangle { height: 4px; }
                 SectionHeading { label: @tr("Lists"); }
                 LinkLine {
@@ -555,6 +627,7 @@ export component ScreensView inherits Rectangle {
     }
     if m.state == 1 && m.screens > 0: VerticalLayout {
         TopBar { }
+        RoleLine { }
         Rectangle { height: 1px; background: Theme.border; }
         HorizontalLayout {
             vertical-stretch: 1;
@@ -604,6 +677,8 @@ export component ScreensView inherits Rectangle {
                     select(i) => { ScreensData.select-screen(i); }
                     open-group(i) => { ScreensData.open-group(i); }
                     toggle-band(i) => { ScreensData.toggle-band(i); }
+                    open-editor(f, l) => { ScreensData.open-editor(f, l); }
+                    show-line(f, l) => { ScreensData.show-line(f, l); }
                 }
                 if m.mode < 2 && m.selected >= 0: Rectangle { height: 1px; background: Theme.border; }
                 if m.mode < 2 && m.selected >= 0: PathBar { }
@@ -613,7 +688,12 @@ export component ScreensView inherits Rectangle {
                 width: 360px;
                 data: m.inspector;
                 close => { ScreensData.close-details(); }
-                open-file(f) => { ScreensData.open-file(f); }
+                open-editor(f, l) => { ScreensData.open-editor(f, l); }
+                show-line(f, l) => { ScreensData.show-line(f, l); }
+                drill(i) => { ScreensData.drill(i); }
+                open-note(id, what) => { ScreensData.open-note(id, what); }
+                save-note => { ScreensData.save-note(); }
+                show-calls(c) => { ScreensData.show-calls(c); }
             }
         }
     }

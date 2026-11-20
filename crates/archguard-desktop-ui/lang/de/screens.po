@@ -455,3 +455,120 @@ msgstr "{{count}} Schutz, den die Regeln nicht lesen können: siehe Detailbereic
 
 msgid "{{count}} guards the rules cannot read: see the details panel"
 msgstr "{{count}} Schutzbedingungen, die die Regeln nicht lesen können: siehe Detailbereich"
+
+msgid "Action"
+msgstr "Aktion"
+
+msgid "Handler"
+msgstr "Handler-Methode"
+
+msgid "Domain event"
+msgstr "Domänenereignis"
+
+msgid "Integration event"
+msgstr "Integrationsereignis"
+
+msgid "No backend endpoint found for {{call}}"
+msgstr "Kein Backend-Endpunkt gefunden für {{call}}"
+
+msgid "No use case read for this endpoint."
+msgstr "Für diesen Endpunkt wurde kein Use Case gelesen."
+
+msgid "From the action through the backend to the services. Endpoint results are for the simulated user."
+msgstr "Von der Aktion über das Backend bis in die Services. Die Ergebnisse der Endpunkte gelten für den simulierten Benutzer."
+
+msgid "published by {{by}} in {{service}}"
+msgstr "veröffentlicht von {{by}} in {{service}}"
+
+msgid "Note for the coding agent"
+msgstr "Notiz für den Coding-Agenten"
+
+msgid "also holds {{names}}"
+msgstr "hat damit auch {{names}}"
+
+msgid "includes {{names}}"
+msgstr "schließt {{names}} ein"
+
+msgid "{{name}} requires {{needs}}"
+msgstr "{{name}} verlangt {{needs}}"
+
+msgid "role"
+msgstr "Rolle"
+
+msgid "permission"
+msgstr "Berechtigung"
+
+msgid "group"
+msgstr "Gruppe"
+
+msgid "policy {{name}} holds"
+msgstr "Policy {{name}} erfüllt"
+
+msgid "policy {{name}} does not hold"
+msgstr "Policy {{name}} nicht erfüllt"
+
+msgid "policy {{name}} unknown"
+msgstr "Policy {{name}} unbekannt"
+
+msgid "noted: fix"
+msgstr "notiert: beheben"
+
+msgid "intentional"
+msgstr "beabsichtigt"
+
+msgid "noted: later"
+msgstr "notiert: später"
+
+msgid "This project requires an ADR link for an intentional decision ([review] adr_required_on_accept_risk)."
+msgstr "Dieses Projekt verlangt für eine beabsichtigte Entscheidung einen ADR-Link ([review] adr_required_on_accept_risk)."
+
+msgid "Open in editor"
+msgstr "Im Editor öffnen"
+
+msgid "Show here"
+msgstr "Hier zeigen"
+
+msgid "Edit note for agent…"
+msgstr "Notiz für den Agenten bearbeiten …"
+
+msgid "Note for agent…"
+msgstr "Notiz für den Agenten …"
+
+msgid "Show calls ›"
+msgstr "Aufrufe zeigen ›"
+
+msgid "Follow into the backend and services ›"
+msgstr "Ins Backend und in die Services folgen ›"
+
+msgid "Stored in .archguard/reviews.json under this id; the coding agent reads it with the MCP tool review_decisions or archguard review-decision list."
+msgstr "Gespeichert in .archguard/reviews.json unter dieser ID; der Coding-Agent liest sie mit dem MCP-Werkzeug review_decisions oder mit archguard review-decision list."
+
+msgid "Intentional"
+msgstr "Beabsichtigt"
+
+msgid "Suggested change (optional)"
+msgstr "Vorgeschlagene Änderung (optional)"
+
+msgid "ADR link (optional)"
+msgstr "ADR-Link (optional)"
+
+msgid "Save note"
+msgstr "Notiz speichern"
+
+msgid "The file could not be read."
+msgstr "Die Datei konnte nicht gelesen werden."
+
+msgid "Policies"
+msgstr "Policies"
+
+msgid "Custom command"
+msgstr "Eigener Befehl"
+
+msgid "{{file}} and {{line}} are filled in; the words run as one program with arguments, never through a shell. Enter stores a custom command."
+msgstr "{{file}} und {{line}} werden eingesetzt; die Wörter laufen als ein Programm mit Argumenten, nie über eine Shell. Enter speichert einen eigenen Befehl."
+
+msgid "Simulated user: {}"
+msgstr "Simulierter Benutzer: {}"
+
+msgid "· statuses, details, drill-down and mismatches follow this user"
+msgstr "· Status, Details, Drill-down und Widersprüche folgen diesem Benutzer"
