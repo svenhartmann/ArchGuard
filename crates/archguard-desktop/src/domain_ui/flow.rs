@@ -41,12 +41,7 @@ fn card(n: &Node, x: f32, y: f32, state: i32) -> FlowCard {
     FlowCard {
         kind: 0,
         state,
-        // The event's kind is the card's column; the name fits without it.
-        title: n
-            .title
-            .replace("IntegrationEvent", "")
-            .replace("DomainEvent", "")
-            .into(),
+        title: n.title.as_str().into(),
         file: if n.file.is_empty() {
             Default::default()
         } else {
