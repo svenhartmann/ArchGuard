@@ -17,6 +17,7 @@ import concurrent.futures as cf
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -59,19 +60,26 @@ COUNTERS = {"ui-flow": ui_counts, "domain": domain_counts}
 
 def run_one(binary, label, app, view, corpus, timeout):
     out = OUT / label
-    base = out / f"{app}.{view}"
+    base = f"{app}.{view}"
     start = time.monotonic()
     meta = {"exit": None, "seconds": None, "timeout": False}
     try:
-        p = subprocess.run([binary, view, str(corpus / app), "--format", "json"],
-                           capture_output=True, timeout=timeout)
-        meta["exit"], stdout, stderr = p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired as e:
-        meta["timeout"], stdout, stderr = True, e.stdout or b"", e.stderr or b""
+        # own session so a timeout can kill helpers (javac, dotnet) too
+        p = subprocess.Popen([binary, view, str(corpus / app), "--format", "json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            stdout, stderr = p.communicate(timeout=timeout)
+            meta["exit"] = p.returncode
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            meta["timeout"] = True
+            stdout, stderr = p.communicate()
+    except OSError as e:  # binary missing or not executable
+        stdout, stderr = b"", str(e).encode()
     meta["seconds"] = round(time.monotonic() - start, 2)
-    base.with_suffix(".json").write_bytes(stdout)
-    base.with_suffix(".err").write_bytes(stderr)
-    base.with_suffix(".meta.json").write_text(json.dumps(meta))
+    (out / f"{base}.json").write_bytes(stdout)
+    (out / f"{base}.err").write_bytes(stderr)
+    (out / f"{base}.meta.json").write_text(json.dumps(meta))
     rec = dict(meta, sha256=hashlib.sha256(stdout).hexdigest())
     try:
         rec["counts"] = COUNTERS[view](json.loads(stdout))
@@ -81,7 +89,14 @@ def run_one(binary, label, app, view, corpus, timeout):
     return app, view, rec
 
 
+def safe(parser, what, name):
+    if not name or "/" in name or ".." in name:
+        parser.error(f"{what} must not be empty or contain '/' or '..': {name!r}")
+
+
 def cmd_run(a):
+    for name in [a.label] + (a.apps.split(",") if a.apps else []):
+        safe(a.parser, "--label/--apps value", name)
     corpus = Path(a.corpus)
     apps = a.apps.split(",") if a.apps else sorted(p.name for p in corpus.iterdir() if p.is_dir() and not p.name.startswith("."))
     (OUT / a.label).mkdir(parents=True, exist_ok=True)
@@ -105,24 +120,25 @@ def cmd_compare(a):
     A, B = load(a.a), load(a.b)
     expected = set(a.expect_changed.split(",")) if a.expect_changed else set()
     bad = 0
+    ok = lambda r: r and r["exit"] == 0 and not r["timeout"]
     for app in sorted(set(A) | set(B)):
         if app not in A or app not in B:
-            print(f"{app}: only in {a.a if app in A else a.b}")
+            print(f"{app}: only in {a.a if app in A else a.b}" + ("" if app in expected else "  (UNEXPECTED)"))
+            bad += app not in expected
             continue
         for view in VIEWS:
             x, y = A[app].get(view), B[app].get(view)
-            if x and y and x["sha256"] == y["sha256"] and x["exit"] == y["exit"]:
+            if ok(x) and ok(y) and x["sha256"] == y["sha256"]:
                 print(f"{app} {view}: IDENTICAL")
                 continue
-            deltas = []
-            cx, cy = (x or {}).get("counts") or {}, (y or {}).get("counts") or {}
-            for k in sorted(set(cx) | set(cy)):
-                if cx.get(k) != cy.get(k):
-                    deltas.append(f"{k} {cx.get(k)}->{cy.get(k)}")
-            if x and y and x["exit"] != y["exit"]:
-                deltas.append(f"exit {x['exit']}->{y['exit']}")
             note = "" if app in expected else "  (UNEXPECTED)"
             bad += app not in expected
+            if not (ok(x) and ok(y)):
+                where = "both" if not ok(x) and not ok(y) else (a.a if not ok(x) else a.b)
+                print(f"{app} {view}: FAILED in {where}{note}")
+                continue
+            cx, cy = x.get("counts") or {}, y.get("counts") or {}
+            deltas = [f"{k} {cx.get(k)}->{cy.get(k)}" for k in sorted(set(cx) | set(cy)) if cx.get(k) != cy.get(k)]
             print(f"{app} {view}: CHANGED {', '.join(deltas) or 'bytes only'}{note}")
     sys.exit(1 if bad else 0)
 
@@ -145,7 +161,7 @@ def cmd_table(a):
             print(f"| {app} | {exit_} | {r['seconds']} | " + " | ".join(str(c.get(k, "")) for k in cols) + " |")
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
@@ -155,7 +171,7 @@ def main():
     r.add_argument("--corpus", default=str(CORPUS))
     r.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     r.add_argument("--timeout", type=int, default=600)
-    r.set_defaults(f=cmd_run)
+    r.set_defaults(f=cmd_run, parser=r)
     c = sub.add_parser("compare")
     c.add_argument("a")
     c.add_argument("b")
@@ -164,7 +180,7 @@ def main():
     t = sub.add_parser("table")
     t.add_argument("label")
     t.set_defaults(f=cmd_table)
-    a = p.parse_args()
+    a = p.parse_args(argv)
     a.f(a)
 
 
