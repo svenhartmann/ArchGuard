@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Installiere ArchGuard, öffne ein Projekt und verstehe deine erste Analyse.">
+ <title>Erste Schritte — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/getting-started.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/getting-started.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html" aria-current="page">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Erste Schritte</h1><p class="docs-lead">Installiere ArchGuard, öffne ein Projekt und verstehe deine erste Analyse.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><!--repo--><a href="#quick-install">Den neuesten Release installieren</a><!--/repo--><a href="#install">Aus einem Checkout installieren</a><a href="#packages">Native Pakete</a><a href="#first-project">Dein erstes Projekt öffnen</a><a href="#first-check">Eine Prüfung ausführen und das Ergebnis lesen</a><a href="#config">Den Umfang ausdrücklich festlegen</a><a href="#examples">Ein Beispiel auswählen</a><a href="#database">Optionale Datenbankunterstützung</a></nav>
+
+<!--repo--><h2 id="quick-install">Den neuesten Release installieren</h2>
+<p>Ein Befehl lädt den neuesten veröffentlichten Release für dein Betriebssystem und deinen Prozessor herunter, prüft ihn gegen die <code>SHA256SUMS</code> des Releases und installiert die ausführbare Datei. Eine Rust-Toolchain ist dafür nicht nötig.</p>
+<p><strong>macOS, Linux, Git Bash</strong> (Installation nach <code>~/.local/bin</code>):</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>curl -fsSL https://raw.githubusercontent.com/@@REPOSITORY@@/main/scripts/install/install.sh | sh</code></pre></div>
+<p><strong>Windows PowerShell</strong> (Installation nach <code>%LOCALAPPDATA%\Programs\archguard</code>; das Verzeichnis wird deinem Benutzer-<code>PATH</code> hinzugefügt):</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>irm https://raw.githubusercontent.com/@@REPOSITORY@@/main/scripts/install/install.ps1 | iex</code></pre></div>
+<p>Setze <code>ARCHGUARD_VERSION</code>, um eine Version festzulegen, beispielsweise <code>0.1.3</code>, oder <code>ARCHGUARD_INSTALL_DIR</code> für ein anderes Zielverzeichnis. Du kannst das kurze Skript vor dem Weiterreichen an eine Shell lesen. Später ersetzt <code>archguard update</code> die installierte Binärdatei nach denselben Prüfungen durch den neuesten Release. Die Skripte installieren auch die Desktop-App aus demselben Release, geprüft gegen <code>SHA256SUMS-desktop</code>: <code>ArchGuard.app</code> in <code>~/Applications</code> unter macOS, <code>archguard-desktop</code> (AppImage, x86_64 und aarch64) unter Linux und <code>archguard-desktop.exe</code> unter Windows. <code>ARCHGUARD_DESKTOP=0</code> überspringt die Desktop-Installation. Führe danach <code>archguard --version</code> und <code>archguard doctor</code> aus.</p><!--/repo-->
+<h2 id="install">Aus einem Checkout installieren</h2>
+<p>Installiere die CLI mit einer aktuellen Rust-Toolchain aus einem ArchGuard-Checkout. Die Desktop-App wird aus demselben Checkout gebaut (siehe unten).</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>cargo install --path crates/archguard-cli --locked
+archguard --version
+archguard doctor</code></pre></div>
+<p>Stelle sicher, dass dein Cargo-Binärverzeichnis im <code>PATH</code> steht. Wenn der Befehl nach der Installation nicht gefunden wird, öffne ein neues Terminal oder rufe die installierte Datei direkt auf. Unter Windows heißt sie <code>archguard.exe</code>.</p>
+<h2 id="packages">Native Pakete</h2>
+<p>Wenn im gewählten Repository ein Release verfügbar ist, wähle das Archiv für dein Betriebssystem und deinen Prozessor. Der Release-Workflow baut Windows x64, macOS Apple Silicon und Intel sowie Linux x64 und ARM64.<!--norepo--> Solange das öffentliche Repository nicht konfiguriert ist, setzt diese Website keine Download-URL voraus.<!--/norepo--></p>
+<p>Prüfe das Archiv gegen das beiliegende SHA-256-Manifest, entpacke es und führe <code>archguard --version</code> aus. Release-Pakete enthalten Prüfberichte und Scan-Logs. Prüfsummen bestätigen die Übereinstimmung mit dem Manifest; sie sind keine Signaturen des Herausgebers. Der aktuelle Paketierungsablauf signiert und notarisiert die Binärdateien nicht.</p>
+<h2 id="first-project">Dein erstes Projekt öffnen</h2>
+<p>Starte die ArchGuard-Desktop-App und wähle <strong>Datei → Projekt öffnen…</strong> (<strong>File → Open project…</strong> bei englischer Oberfläche). Unter Linux und Windows akzeptiert die installierte App den Ordner auch auf der Kommandozeile. Aus einem Repository-Checkout baust und startest du sie mit Cargo:</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard-desktop /path/to/project
+cargo run --release -p archguard-desktop -- /path/to/project</code></pre></div>
+<p>Nutze für eine Übersicht mehrerer Projekte das Repository-Stammverzeichnis, für eine gezielte Quellsicht das Service-Verzeichnis. Die erste Analyse kann länger dauern, wenn compilerbasierte Belege erhoben werden. Jedes geöffnete Projekt erhält einen eigenen Tab; <strong>Datei → Projekt öffnen…</strong> fügt weitere hinzu. Die CLI gibt dieselbe Analyse als Text oder JSON aus.</p>
+<p>Ohne Konfigurationsdatei leitet ArchGuard Quellverzeichnisse und sinnvolle Standardwerte ab. Auch damit kann es Zyklen melden und eine Prüfung fehlschlagen lassen. Ein Start ohne Konfiguration bedeutet nicht, dass alle Findings deaktiviert sind.</p>
+<h2 id="first-check">Eine Prüfung ausführen und das Ergebnis lesen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard check /path/to/project
+archguard cycles /path/to/project --format json
+archguard diagram /path/to/project</code></pre></div>
+<p>Exit-Code <strong>1</strong> bedeutet bei einer Prüfung, dass Architektur-Findings das konfigurierte Gate überschritten haben. Das unterscheidet sich von einem Werkzeug- oder Konfigurationsfehler. Lies die Findings und ihren Analyseumfang, bevor du Regeln änderst.</p>
+<h2 id="config">Den Umfang ausdrücklich festlegen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard init /path/to/project
+archguard config /path/to/project --format json</code></pre></div>
+<p><code>init</code> schreibt eine erste Konfiguration für ein Projekt ohne vorhandene Konfiguration; es überschreibt keine bestehende Datei. Prüfe den erzeugten Umfang und die vorgeschlagenen Gates, bevor du sie als Teamregeln verwendest. Siehe <a href="configuration.html">Konfiguration und Regeln</a>.</p>
+<h2 id="examples">Ein Beispiel auswählen</h2>
+<ul><li><a href="../../examples/service-shop.html">Service Shop (EN)</a>: enthaltenes Beispiel mit bewusst zyklischen HTTP-Beziehungen; die Analyse benötigt keine Container.</li><li><a href="../../examples/commons-collections.html">Commons Collections (EN)</a>: eine versionierte Java-Bibliothek für Paketgraphen und Matrix.</li><li><a href="../../examples/eshop.html">Microsoft eShop (EN)</a>: ein echtes .NET-Microservice-Beispiel mit einer abgeleiteten Ereigniszyklusgruppe.</li><li><a href="../../examples/kafka.html">Apache Kafka (EN)</a>: 3.369 produktive Java-Dateien mit Zyklusgruppen auf Dateiebene und einer offline erzeugten Landkarte.</li><li><a href="../../examples/opentelemetry-demo.html">OpenTelemetry Demo (EN)</a>: ein mehrsprachiges Compose-System mit quellbelegten gRPC-Aufrufen und einem Konfigurationszyklus.</li></ul>
+<h2 id="database">Optionale Datenbankunterstützung</h2>
+<p>Die Graphdatenbank ist optional. CLI und Desktop-App funktionieren ohne sie. Um Datenbankbefehle und Cypher-Abfragen beim Bauen aus den Quellen zu aktivieren, installiere CMake und eine C++-Toolchain und baue anschließend mit Datenbankunterstützung:</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>cargo install --path crates/archguard-cli --features db --locked</code></pre></div>
+<p>Die standardmäßigen nativen Release-Archive enthalten diese optionale Funktion nicht.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

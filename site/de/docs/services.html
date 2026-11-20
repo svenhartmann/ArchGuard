@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Unterscheide Deployment-Konfiguration, aus Quellen abgeleitete Beziehungen und Laufzeitbeobachtungen.">
+ <title>Services und Ereigniszyklen — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/services.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/services.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html" aria-current="page">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Services und Ereigniszyklen</h1><p class="docs-lead">Unterscheide Deployment-Konfiguration, aus Quellen abgeleitete Beziehungen und Laufzeitbeobachtungen.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#inventory">Projektinventar und Service-Inventar unterscheiden</a><a href="#deployment">Compose, Kubernetes, Helm und Terraform</a><a href="#datastores">Gemeinsame Datenbank oder nur gemeinsamer Server?</a><a href="#evidence">Verbindungsarten</a><a href="#cycles">Einen Zyklus präzise einordnen</a><a href="#eshop">Ein echtes Beispiel: Microsoft eShop</a><a href="#opentelemetry-demo">Aufrufe und Konfiguration: OpenTelemetry Demo</a><a href="#drilldown">Vom Service zum Code wechseln</a><a href="#missing">Wenn eine Verbindung fehlt</a></nav>
+
+<h2 id="inventory">Projektinventar und Service-Inventar unterscheiden</h2>
+<p>Ein Repository kann Anwendungen, Bibliotheken, Werkzeuge und Workspace-Aggregatoren enthalten. Ein Manifest begründet eine Projektgrenze, aber nicht automatisch einen bereitgestellten Service. Beispielsweise kann eine Rust-Binärdatei ein Anwendungsprojekt sein, ohne als Service eingestuft zu werden.</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard services . --format json
+archguard workspace . --format json
+archguard workspace . --sources --format json</code></pre></div>
+<p><code>services</code> erkennt unterstützte Deployment- und Kommunikationsbelege. <code>workspace</code> beginnt mit deklarierten Abhängigkeiten zwischen Projekten; Quellanalyse wird mit <code>--sources</code> ausdrücklich aktiviert. Keiner der beiden Befehle sollte als vollständige Laufzeitkarte verstanden werden.</p>
+<h2 id="deployment">Compose, Kubernetes, Helm und Terraform</h2>
+<p>Die Deployment-Topologie liest unterstützte Kubernetes-Workload-Manifeste, Selektoren, literale Endpunkte und ConfigMaps desselben Geltungsbereichs. Helm und Kustomize werden nur mit <code>ARCHGUARD_RENDER_MANIFESTS=1</code> und installierten Werkzeugen gerendert. Terraform wird für unterstützte AWS-, GCP-, Azure- und Kubernetes-Ressourcen statisch gelesen. terraform wird nie ausgeführt; State, tfvars und Secrets werden nicht gelesen. Entfernte Module, Variablenwerte und dynamische Konstrukte bleiben ausdrücklich benannte Lücken.</p>
+<h2 id="datastores">Gemeinsame Datenbank oder nur gemeinsamer Server?</h2>
+<p>Datastore-Knoten und Verbindungsbelege unterscheiden einen gemeinsamen Server von einer gemeinsamen Datenbank und einer gemeinsamen Tabelle. Tabellendeklarationen stammen aus unterstützten Mustern in EF Core, JPA, TypeORM, SQLAlchemy und SQL-Migrationen. Nicht aufgelöste Tabellennamen bleiben unbekannt; konfigurierter Zugriff beweist keine Laufzeitnutzung. <a href="workflows.html#services">Befehle und Grenzen</a>.</p>
+<h2 id="evidence">Verbindungsarten</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Beziehung</th><th scope="col">Was sie belegt</th><th scope="col">Was sie nicht belegt</th></tr></thead><tbody>
+<tr><td>Konfiguriertes HTTP</td><td>Ein unterstütztes literales HTTP-Ziel oder eine Route in der Konfiguration.</td><td>Dass tatsächlich ein Request stattfand.</td></tr>
+<tr><td>Startabhängigkeit</td><td>Eine deklarierte Startabhängigkeit wie Compose-<code>depends_on</code>.</td><td>Einen API-Aufruf der Anwendung.</td></tr>
+<tr><td>HTTP-/gRPC-Client</td><td>Einen unterstützten statischen Aufrufkandidaten und seine Quellbelege.</td><td>Alle dynamisch erzeugten Endpunkte oder tatsächlichen Verkehr.</td></tr>
+<tr><td>Ereignisfluss (abgeleitet)</td><td>Zusammenpassende unterstützte Publish-/Subscribe-Belege, Ereignisidentität und gemeinsamer Broker-Kontext.</td><td>Zustellung, Reihenfolge oder einen produktiven Nachrichten-Trace.</td></tr>
+<tr><td>Konfigurationsreferenz</td><td>Eine deklarierte Beziehung zwischen konfigurierten Ressourcen.</td><td>Kommunikation allein dadurch, dass Ressourcen gemeinsam erwähnt werden.</td></tr>
+<tr><td>Beobachtete Traces</td><td>Verbindungen, die durch importierte nutzbare Trace-Belege gestützt sind.</td><td>Vollständige Verkehrsabdeckung außerhalb des Aufzeichnungsfensters.</td></tr>
+</tbody></table></div>
+<h2 id="cycles">Einen Zyklus präzise einordnen</h2>
+<p>Eine Zyklusgruppe wird für die gewählte Beziehungsart berechnet. Ein Startabhängigkeitszyklus und ein Ereignisflusszyklus sind unterschiedliche Findings. Nur Zyklen (Cycles only) grenzt sichtbare Beziehungen ein; die Auswahl wandelt Konfigurationsbelege nicht in Laufzeitnachweise um.</p>
+<p>Ein ereignisgesteuerter Geschäftsablauf kann berechtigt einen strukturellen Zyklus bilden. Prüfe Verträge, Verantwortungsgrenzen und tatsächliche Nachrichtenverarbeitung, bevor du eine Änderung vorschlägst. Der Graph allein weist weder eine Flut von Wiederholungsversuchen noch eine endlose Nachrichtenschleife nach.</p>
+<h2 id="eshop">Ein echtes Beispiel: Microsoft eShop</h2>
+<p>In der dokumentierten Revision bilden Catalog API, Ordering API und Payment Processor eine Ereigniszyklusgruppe aus drei Services. Ordering fordert die Bestandsprüfung an, Catalog liefert ihr Ergebnis zurück, Ordering löst die Zahlungsabwicklung aus, und Payment Processor meldet deren Ergebnis. Die Quelldetails identifizieren Publish- und Subscription-Stellen.</p>
+<p>Verwende den Haupt-Deployment-Umfang von Aspire, um Test-Host-Varianten getrennt zu halten. Folge der <a href="../../examples/eshop.html">eShop-Anleitung (EN)</a> und den <a href="../index.html#explore">Service-Screenshots</a>.</p>
+<h2 id="opentelemetry-demo">Aufrufe und Konfiguration: OpenTelemetry Demo</h2>
+<p>In der versionierten OpenTelemetry Demo erreicht <code>checkout</code> die Services <code>product-catalog</code>, <code>currency</code> und <code>payment</code> über gRPC-Client-Aufrufe mit Quellzeilen in <code>src/checkout/main.go</code>. Die einzige Zyklusgruppe entsteht zwischen Konfigurationsreferenzen: Services senden Telemetrie an <code>otel-collector</code>, und der Collector verweist für Health-Checks und nginx-Status zurück auf <code>frontend-proxy</code> und <code>image-provider</code>. Wähle die Beziehungsart, bevor du einen Zyklus bewertest. Siehe die <a href="../../examples/opentelemetry-demo.html">Anleitung zur OpenTelemetry Demo (EN)</a>.</p>
+<h2 id="drilldown">Vom Service zum Code wechseln</h2>
+<p>Wähle einen Service in World View und In Service zoomen (Zoom into service), oder nutze die Bereichsauswahl. Die Quellsicht öffnet den eigenen Analyseumfang dieses Projekts. Infrastruktur ohne lokale Quellen bietet keinen Einstieg in Klassen. Kehre über die Repository-Pfadnavigation zurück, um wieder Service-übergreifende Beziehungen zu prüfen.</p>
+<h2 id="missing">Wenn eine Verbindung fehlt</h2>
+<ol><li>Prüfe die gewünschte Deployment-Variante, Beziehungsart, Belegquelle und den Richtungsfilter.</li><li>Prüfe Ausschlüsse für die Erkennung, ignorierte Dateien und den gewählten Repository-Stamm.</li><li>Lies Diagnosen zu nicht unterstützter Konfiguration, fehlenden Quellreferenzen oder dynamischen Endpunkten.</li><li>Unterscheide eine Bibliotheksreferenz von einem tatsächlichen Service-Aufruf.</li><li>Wenn Laufzeitbelege nötig sind, importiere passende Traces, statt statische Kandidaten als beobachtete Aufrufe zu behandeln.</li></ol>
+<p>Verschachtelte Beispiele, Fixtures, Agent-Worktrees und generierte Ausgaben sind von der normalen Repository-Erkennung ausgeschlossen. Öffne ein Beispielverzeichnis ausdrücklich, wenn du es analysieren möchtest.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

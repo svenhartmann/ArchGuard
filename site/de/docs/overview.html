@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Verstehe, was ArchGuard analysiert, wie du seine Belege nutzt und wo seine Möglichkeiten enden.">
+ <title>Was ist ArchGuard? — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/overview.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/overview.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html" aria-current="page">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Was ist ArchGuard?</h1><p class="docs-lead">Verstehe, was ArchGuard analysiert, wie du seine Belege nutzt und wo seine Möglichkeiten enden.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#what">Was ist ArchGuard?</a><a href="#boundaries">Leistungsumfang und Grenzen</a><a href="#example">Eine Frage, mehrere Belegebenen</a><a href="#adoption">Ein praktischer Einstieg</a></nav>
+
+<h2 id="what">Was ist ArchGuard?</h2>
+<p>ArchGuard wird als nicht-kommerzielles Open-Source-Projekt entwickelt. Es ist unter MIT OR Apache-2.0 verfügbar; beide Lizenzen erlauben auch die kommerzielle Nutzung der Software.</p>
+<p>ArchGuard ist ein lokales Werkzeug zur Softwarearchitekturanalyse: eine Desktop-App, eine Kommandozeilenanwendung und ein MCP-Server für Coding-Agents. Es erzeugt aus unterstütztem Quellcode und Projektkonfigurationen Abhängigkeitsgraphen, findet stark zusammenhängende Gruppen, prüft deklarierte Grenzen und verknüpft Findings mit Quellbelegen.</p>
+<p>Der zentrale Ablauf lautet <strong>erkunden → Belege prüfen → Absicht festhalten → Änderungen prüfen</strong>. Beginne mit einer Repository-Übersicht, steige in Services und Pakete ein, verfolge eingehende und ausgehende Abhängigkeiten und mache ausgewählte Architekturvorgaben anschließend in CI wiederholbar. Ein Agent kann dieselben Projektbelege über MCP abfragen.</p>
+<h2 id="boundaries">Leistungsumfang und Grenzen</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Was ArchGuard bietet</th><th scope="col">Die Grenze</th></tr></thead><tbody>
+<tr><th scope="row">Quell- und Konfigurationsanalyse</th><td>Unterstützte Parser und der Compiler-Kontext bestimmen die Abdeckung. Reflection, generierter Code und dynamische Auflösung können Lücken lassen. Importanalyse und aufgelöste Aufrufanalyse haben unterschiedliche Genauigkeit.</td></tr>
+<tr><th scope="row">Architekturprüfungen</th><td>Zyklen, Abhängigkeitsregeln und konfigurierte Gates beschreiben strukturelle Eigenschaften. Ein Zyklus allein weist weder einen Fehler noch eine Endlosschleife nach.</td></tr>
+<tr><th scope="row">Belege für Service-Beziehungen</th><td>Konfigurierte Routen, aus Quellen abgeleitete Kandidaten und importierte Laufzeitbeobachtungen bleiben getrennt. Statische Analyse beweist keinen Produktivverkehr.</td></tr>
+<tr><th scope="row">Metriken und importierte Messungen</th><td>Coverage, Testergebnisse, Mutationen und Laufzeitmessungen benötigen eigene Erzeuger. Unbekannte Werte bleiben unbekannt. Ein Health-Wert ist eine Zusammenfassung, kein Qualitätszertifikat.</td></tr>
+<tr><th scope="row">Architekturdokumentation</th><td>Generierte arc42-Belege und Paketdiagramme unterstützen die Dokumentation. Sie können nicht alle Geschäftsziele, Qualitätsanforderungen oder Architekturentscheidungen ableiten.</td></tr>
+<tr><th scope="row">Agent-Zugriff und Refactoring-Simulation</th><td>MCP stellt Analyseabläufe bereit; eine Simulation verändert einen hypothetischen Graphen. Beides garantiert keine sichere Codeänderung. Prüfe Änderungen mit einer neuen Analyse und den Projekttests.</td></tr>
+</tbody></table></div>
+<p>ArchGuard ist weder ein APM-Agent noch ein Backend für Produktionsmonitoring, ein Testrunner, ein vollständiger Security-Scanner oder ein universelles C4-Entwurfswerkzeug. Es kann Belege anderer Werkzeuge einlesen, ersetzt aber weder deren Messungen noch deren Betriebsabläufe. Die Prüfung von Abhängigkeiten auf bekannte Schwachstellen übernimmt Trivy; compilerbasierte Quellanalyse benötigt kompatible Sprachwerkzeuge.</p>
+<h2 id="example">Eine Frage, mehrere Belegebenen</h2>
+<p><strong>„Können wir Ordering sicher ändern?“</strong> In Microsoft eShop kann ArchGuard die Paketabhängigkeiten von Ordering zeigen, Ereignisrouten aus Publishern, Subscriptions und gemeinsamer RabbitMQ-Konfiguration ableiten und eine strukturelle Zyklusgruppe hervorheben. Du kannst die genauen Referenzen prüfen und in den Service hineinzoomen. Ohne importierte Traces kann die Analyse nicht sagen, welche Routen Produktivverkehr führten, wie hoch ihre Latenz war oder wie oft ein Handler fehlschlug. Ohne Testbelege kann sie nicht behaupten, dass die Änderung ausreichend getestet ist.</p>
+<p><a href="../../examples/eshop.html">Das versionierte eShop-Beispiel durchgehen (EN)</a></p>
+<h2 id="adoption">Ein praktischer Einstieg</h2>
+<ol><li>Öffne ein repräsentatives Repository und prüfe Abdeckung und fehlende Belege.</li><li>Prüfe einen Abhängigkeitszyklus und eine Service-Beziehung anhand ihrer Quellstellen.</li><li>Deklariere wenige gemeinsam vereinbarte Grenzen und führe bei Bedarf eine geprüfte Baseline ein.</li><li>Behalte bestehende Tests, Sicherheitsanalysen, Monitoring und Architekturentscheidungen bei. Importiere unterstützte Belege, wenn sie zusätzlichen Kontext liefern.</li><li>Bewerte Genauigkeit, Analysezeit und Bedienbarkeit an deiner eigenen Codebasis, bevor du weitere CI-Gates aktivierst.</li></ol>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

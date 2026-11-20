@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Verbinde die Analyse mit einem Agenten und stelle Fragen in natürlicher Sprache.">
+ <title>MCP und Coding-Agents — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/mcp.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/mcp.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html" aria-current="page">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>MCP und Coding-Agents</h1><p class="docs-lead">Verbinde die Analyse mit einem Agenten und stelle Fragen in natürlicher Sprache.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#connect">Einen stdio-Server verbinden</a><a href="#ask">Den Agenten fragen</a><a href="#evidence">Eine nützliche Antwort enthält Belege</a><a href="#changes">Abfragen, Simulationen und speichernde Aktionen</a><a href="#connection-problems">Verbindungsprobleme eingrenzen</a></nav>
+
+<h2 id="connect">Einen stdio-Server verbinden</h2>
+<p>Installiere ArchGuard so, dass dein Agent-Client es ausführen kann. Registriere einen stdio-MCP-Server mit einem absoluten Projektpfad. Die folgende Konfigurationsstruktur ist üblich; der genaue Speicherort der Einstellungen hängt von deinem Client ab:</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;archguard&quot;: {
+      &quot;command&quot;: &quot;archguard&quot;,
+      &quot;args&quot;: [&quot;mcp&quot;, &quot;--root&quot;, &quot;/absolute/path/to/project&quot;]
+    }
+  }
+}</code></pre></div>
+<p>Wenn der Client den PATH deiner Shell nicht übernimmt, ersetze <code>archguard</code> durch den absoluten Pfad zur ausführbaren Datei. Der Server ist ein lokaler Prozess, kein separat gehosteter HTTP-Endpunkt. Starte oder verbinde ihn nach Änderungen an der ausführbaren Datei oder Client-Konfiguration neu.</p>
+<h2 id="ask">Den Agenten fragen</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Ziel</th><th scope="col">Anfrage in natürlicher Sprache</th></tr></thead><tbody>
+<tr><td>Ein Repository verstehen</td><td>„Zeige die Anwendungen, Bibliotheken und Services in diesem Repository. Halte deklarierte Abhängigkeiten von beobachteten Laufzeitbelegen getrennt.“</td></tr>
+<tr><td>Einen Zyklus erklären</td><td>„Finde einen kleinen Abhängigkeitszyklus, zeige für jede Kante die Quellstellen und erkläre, warum ein Zyklus entsteht.“</td></tr>
+<tr><td>eShop untersuchen</td><td>„Zeige die Ereigniszyklusgruppe mit Ordering API. Identifiziere Publisher, Subscriber und Belege für den gemeinsamen Broker. Benenne, was abgeleitet ist.“</td></tr>
+<tr><td>Komplexität untersuchen</td><td>„Finde die komplexesten gemessenen Methoden im Checkout-Service. Nenne die Dateipositionen und erläutere fehlende Compiler-Belege.“</td></tr>
+<tr><td>Eine Änderung prüfen</td><td>„Vergleiche diese Änderung mit main. Erkläre neue Architektur-Findings und den Vergleichsumfang, bevor du Korrekturen vorschlägst.“</td></tr>
+<tr><td>Ein Refactoring erproben</td><td>„Simuliere das Entfernen dieser Abhängigkeit und vergleiche die Zyklusgruppen. Ändere keine Quelldateien.“</td></tr>
+<tr><td>Dokumentation verbessern</td><td>„Fasse die verfügbaren Bausteinbelege für arc42 zusammen und liste Entscheidungen auf, die noch eine menschliche Erklärung benötigen.“</td></tr>
+</tbody></table></div>
+<h2 id="evidence">Eine nützliche Antwort enthält Belege</h2>
+<p>Frage nach Projektumfang, Quellrevision, Beziehungsart, Dateipositionen und Abdeckungslücken. Bei seitenweisen Ergebnissen sollte der Agent den zurückgegebenen Cursorwerten nach Bedarf folgen oder angeben, dass er nur eine Teilmenge zeigt. Eine gekürzte erste Antwort ist nicht der vollständige Abhängigkeitsgraph.</p>
+<p>Fordere bei Service-Fragen ausdrücklich die Unterscheidung zwischen Konfiguration, aus Quellen abgeleiteten Routen und beobachteten Traces. Verlange bei Metriken, dass unbekannte oder veraltete Werte als unbekannt oder veraltet erhalten bleiben.</p>
+<h2 id="changes">Abfragen, Simulationen und speichernde Aktionen</h2>
+<p>Eine Graphsimulation verändert eine hypothetische Sicht, nicht die Projektquellen. Das Aufzeichnen von Review-Entscheidungen, Importieren von Berichten oder Schreiben von Dokumentation kann projektlokale Artefakte speichern. Sage, ob du eine Erklärung, eine Vorschau oder eine tatsächliche Aktualisierung möchtest, damit der Agent die passende Operation wählt.</p>
+<h2 id="connection-problems">Verbindungsprobleme eingrenzen</h2>
+<ul><li>Prüfe die ausführbare Datei mit <code>archguard --version</code> in derselben Umgebung, die der Client verwendet.</li><li>Prüfe den absoluten Stammpfad und den Dateisystemzugriff.</li><li>Stelle sicher, dass der Client <code>archguard mcp --root …</code> als stdio-Server startet.</li><li>Unterscheide anhand der Client-Logs einen Startfehler von einem durch ein Werkzeug gemeldeten Analysefehler.</li><li>Starte den MCP-Prozess nach einem lokalen CLI-Neubau neu; ein bereits laufender Prozess verwendet weiterhin die Datei, mit der er gestartet wurde.</li></ul>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

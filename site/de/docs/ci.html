@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Nutze wiederholbare Prüfungen, bewusst gewählte Baselines und nachvollziehbare Berichte.">
+ <title>CI und Qualitäts-Gates — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/ci.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/ci.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html" aria-current="page">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>CI und Qualitäts-Gates</h1><p class="docs-lead">Nutze wiederholbare Prüfungen, bewusst gewählte Baselines und nachvollziehbare Berichte.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#gate">Mit einer direkten Prüfung beginnen</a><a href="#baseline">Eine Baseline für bestehenden Code anlegen</a><a href="#reports">Den Bericht bei einem fehlgeschlagenen Gate erhalten</a><a href="#changes">Änderungen und Dokumentabweichungen vergleichen</a><a href="#security">Sicherheitsbelege für Abhängigkeiten</a><a href="#repeatable">Eine praktische Einführung</a></nav>
+
+<h2 id="gate">Mit einer direkten Prüfung beginnen</h2>
+<p>Installiere einen festgelegten ArchGuard-Build in deiner CI-Umgebung, checke das Projekt aus und führe Folgendes aus:</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard check .</code></pre></div>
+<p>Halte Quellrevision, Konfiguration und benötigte Sprachwerkzeuge zwischen lokalen und CI-Läufen konsistent. Ein Bericht kann unvollständige Compiler-Belege enthalten, obwohl die Importanalyse erfolgreich war.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Exit-Code</th><th scope="col">Bedeutung</th><th scope="col">Nächster Schritt</th></tr></thead><tbody>
+<tr><td>0</td><td>Befehl oder Gate erfolgreich.</td><td>Lies die Abdeckungshinweise; Erfolg beweist keine vollständige Laufzeitanalyse.</td></tr>
+<tr><td>1</td><td>Findings überschreiten ein Gate, oder ein Vergleich beziehungsweise eine Prüfung meldet einen Unterschied.</td><td>Prüfe gemeldete Zyklen, Regeln, Grenzwerte oder Dokumentabweichungen.</td></tr>
+<tr><td>2</td><td>Aufruffehler.</td><td>Prüfe Argumente und befehlsspezifische Formate.</td></tr>
+<tr><td>3</td><td>Analyse-, Konfigurations- oder Ein-/Ausgabefehler.</td><td>Behebe das gemeldete Umgebungs- oder Eingabeproblem.</td></tr>
+</tbody></table></div>
+<h2 id="baseline">Eine Baseline für bestehenden Code anlegen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard baseline write .
+archguard check . --baseline</code></pre></div>
+<p>Erzeuge und prüfe die Baseline einmalig bei der Einführung und committe sie zusammen mit der beabsichtigten Konfiguration. CI sollte sie lesen. Würde sie vor jeder Prüfung neu erzeugt, würden neue Zyklen akzeptiert statt erkannt.</p>
+<h2 id="reports">Den Bericht bei einem fehlgeschlagenen Gate erhalten</h2>
+<p>Bewahre in einer POSIX-Shell den Exit-Status des Befehls, während du die strukturierte Ausgabe speicherst:</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>set +e
+archguard check . --format json &gt; archguard-check.json
+status=$?
+set -e
+# Publish archguard-check.json with your CI artifact step, even on failure.
+exit &quot;$status&quot;</code></pre></div>
+<p>Dieses Beispiel lädt selbst nichts hoch. Konfiguriere den Artefaktschritt deiner CI so, dass er auch nach einem fehlgeschlagenen Gate läuft. Verwende <code>--format sarif</code> mit <code>check</code>, wenn dein Review-System SARIF akzeptiert; das Speichern einer SARIF-Datei ist ein anderer Schritt als ihr Upload.</p>
+<h2 id="changes">Änderungen und Dokumentabweichungen vergleichen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard review . --base main
+archguard doc . --arc42 --check</code></pre></div>
+<p>Lade die von <code>--base</code> verwendete Git-Revision; flache Checkouts können sie auslassen. Die Dokumentationsprüfung liest nur und liefert 1, wenn das gewählte Dokument fehlt oder veraltet ist. Erzeuge und prüfe das Dokument lokal, bevor du dieses Gate aktivierst.</p>
+<h2 id="security">Sicherheitsbelege für Abhängigkeiten</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard security . --fail-on-found
+archguard security . --cached --format json</code></pre></div>
+<p>Der erste Befehl führt die unterstützte Trivy-Integration aus und kann Netzwerkzugriff sowie eine verfügbare Schwachstellendatenbank benötigen. Der zweite liest gespeicherte Ergebnisse, ohne den Scanner aufzurufen. Gespeicherte Ergebnisse sind nicht zwingend aktuell; prüfe ihren Status und ihre Revision.</p>
+<p>Die eigenen Release-Workflows des ArchGuard-Repositories bauen außerdem native Binärdateien, führen Smoke-Tests aus und scannen Release-Archive. Diese Prüfungen der Release-Pipeline gelten nicht automatisch für jedes Projekt, das du analysierst.</p>
+<h2 id="repeatable">Eine praktische Einführung</h2>
+<ol><li>Vereinbart Quellumfang und Sprachwerkzeug-Setup.</li><li>Führt Prüfungen zunächst berichtend aus und bewertet repräsentative Findings.</li><li>Deklariert die Architekturgrenzen, für die das Team tatsächlich verantwortlich ist.</li><li>Übernehmt bei Bedarf eine geprüfte Baseline.</li><li>Aktiviert Gates und bewahrt ausreichend Belege auf, um Fehler erklären zu können.</li><li>Prüft Änderungen an Umfang oder Werkzeugen, bevor ihr Metriktrends interpretiert.</li></ol>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

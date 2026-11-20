@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Definiere den Quellumfang und die beabsichtigte Architektur, ohne Belege auszublenden.">
+ <title>Konfiguration und Regeln — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/configuration.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/configuration.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html" aria-current="page">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Konfiguration und Regeln</h1><p class="docs-lead">Definiere den Quellumfang und die beabsichtigte Architektur, ohne Belege auszublenden.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#precedence">Rangfolge der Konfiguration</a><a href="#scope">Ein kleines Beispiel für den Quellumfang</a><a href="#boundaries">Eine Abhängigkeitsgrenze deklarieren</a><a href="#layers">Deklarierte und abgeleitete Schichten</a><a href="#verify">Die tatsächlich angewendete Konfiguration prüfen</a><a href="#baseline">Eine Baseline bewusst übernehmen</a><a href="#project-files">Bewusst gepflegte Projektdaten erhalten</a></nav>
+
+<h2 id="precedence">Rangfolge der Konfiguration</h2>
+<ol><li>Eine ausdrücklich über <code>--config</code> angegebene Datei.</li><li><code>.archguard/archguard.toml</code> unter dem analysierten Projektstamm.</li><li>Die ältere <code>archguard.toml</code> im Projektstamm.</li><li>Abgeleitete Werte und Standardwerte, wenn keine Datei oder kein Abschnitt angegeben ist.</li></ol>
+<p>Relative Quellverzeichnisse werden gegen den Projektstamm aufgelöst. Ungültige Konfiguration lässt die Quellanalyse fehlschlagen, statt sie stillschweigend zurückzusetzen. Das Service-Inventar liest Ausschlüsse für die Erkennung unabhängig und meldet Probleme beim Lesen der Konfiguration in seinen Diagnosen.</p>
+<h2 id="scope">Ein kleines Beispiel für den Quellumfang</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>[project]
+source_roots = [&quot;src&quot;]
+languages = [&quot;ts&quot;, &quot;js&quot;]
+exclude = [&quot;**/node_modules/**&quot;, &quot;**/dist/**&quot;, &quot;**/generated/**&quot;, &quot;**/*.spec.*&quot;]
+
+[modules]
+depth = 2
+
+[rules]
+deny_cycles = &quot;module&quot;
+max_scc_size = 1</code></pre></div>
+<p>Passe Sprachen und Quellverzeichnisse an das tatsächliche Projekt an. <code>languages = ["auto"]</code> aktiviert die automatische Sprachauswahl. Eine ausdrückliche Ausschlussliste ersetzt die Standardwerte dieses Feldes; behalte die weiterhin benötigten Muster. Die Modultiefe verändert die Aggregationsgrenze der Paketanalyse.</p>
+<h2 id="boundaries">Eine Abhängigkeitsgrenze deklarieren</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>[[dependency_rules]]
+name = &quot;ui-no-persistence&quot;
+from = [&quot;ui/**&quot;]
+to = [&quot;persistence/**&quot;]
+severity = &quot;error&quot;
+message = &quot;UI must call the application API.&quot;</code></pre></div>
+<p>Verwende die Modulpfade, die ArchGuard tatsächlich meldet. Ein Verzeichnis <code>src/ui</code> kann als <code>ui</code> erscheinen, wenn <code>src</code> das Quellverzeichnis ist. Prüfe Graph oder wirksame Konfiguration, bevor du Muster formulierst.</p>
+<h2 id="layers">Deklarierte und abgeleitete Schichten</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>[[layers]]
+name = &quot;domain&quot;
+contains = [&quot;domain/**&quot;]
+may_depend_on = []
+
+[[layers]]
+name = &quot;application&quot;
+contains = [&quot;application/**&quot;]
+may_depend_on = [&quot;domain&quot;]</code></pre></div>
+<p>Das sind Beispielgrenzen, keine Empfehlung für jede Codebasis. Deklarierte Regeln drücken eine Absicht aus und können die Prüfung fehlschlagen lassen. Abgeleitete Schichtrangfolgen sind Beobachtungen und ersetzen keine Architekturregeln. Ein Modul außerhalb der deklarierten Muster kann ohne Rangzuordnung bleiben.</p>
+<h2 id="verify">Die tatsächlich angewendete Konfiguration prüfen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard --config /path/to/archguard.toml config /path/to/project --format json
+archguard --config /path/to/archguard.toml check /path/to/project</code></pre></div>
+<p>Die wirksame Konfiguration meldet die Herkunft pro Abschnitt. Nutze sie, um unerwartete Ausschlüsse, Quellverzeichnisse oder abgeleitete Einstellungen zu klären, statt wiederholt die angezeigte Ansicht zu ändern.</p>
+<h2 id="baseline">Eine Baseline bewusst übernehmen</h2>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard baseline write .
+archguard check . --baseline
+archguard baseline diff .</code></pre></div>
+<p>Das Schreiben einer Baseline hält die aktuellen Zyklusidentitäten in <code>.archguard/baseline.json</code> fest. Damit entscheidest du ausdrücklich, diesen Ausgangspunkt zu akzeptieren. Mit einer Baseline können bestehende Zyklusidentitäten toleriert werden, während neue fehlschlagen; andere aktivierte Gates gelten weiterhin. Prüfe die Datei in der Versionsverwaltung, statt sie bei jedem CI-Lauf neu zu erzeugen.</p>
+<h2 id="project-files">Bewusst gepflegte Projektdaten erhalten</h2>
+<p><code>.archguard/</code> enthält sowohl ersetzbare Ausgaben als auch bewusst gepflegte Eingaben. Konfiguration, Baselines, Szenarien und importierte Messungen können in die Versionsverwaltung gehören. Caches und erneut erzeugbare Berichte normalerweise nicht. Ignoriere oder lösche nicht das gesamte Verzeichnis, ohne zu entscheiden, welche Belege dein Team erhalten muss.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="description" content="Kläre fehlende Daten, unerwartete Findings und Fragen zur Navigation.">
+ <title>Fehlerdiagnose — ArchGuard-Dokumentation</title>
+ <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+ <link rel="stylesheet" href="../../styles.css">
+ <link rel="alternate" hreflang="en" href="../../docs/troubleshooting.html">
+ <script src="../../site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header class="header wrap">
+ <a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a>
+ <nav aria-label="Hauptnavigation"><a href="../index.html#examples">Beispiele</a><a class="nav-docs" href="index.html">Doku</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>GitHub</a><a class="language-switch" href="../../docs/troubleshooting.html" lang="en" hreflang="en">EN</a><a class="nav-cta" href="getting-started.html">Loslegen</a></nav>
+</header>
+<div class="docs-layout wrap">
+ <aside class="docs-sidebar"><a class="docs-home" href="index.html">Dokumentation</a><nav aria-label="Dokumentation"><a href="overview.html">Was ist ArchGuard?</a><a href="getting-started.html">Erste Schritte</a><a href="viewer.html">Desktop-Anleitung</a><a href="cli.html">CLI-Referenz</a><a href="configuration.html">Konfiguration und Regeln</a><a href="prerequisites.html">Werkzeuge und Voraussetzungen</a><a href="languages.html">Sprachen und Messgrenzen</a><a href="services.html">Services und Ereigniszyklen</a><a href="mcp.html">MCP und Coding-Agents</a><a href="ci.html">CI und Qualitäts-Gates</a><a href="workflows.html">Workflows und Evidenz</a><a href="troubleshooting.html" aria-current="page">Fehlerdiagnose</a></nav><a class="docs-demo" href="../index.html#explore">Desktop-Screenshots ansehen</a></aside>
+ <main id="main" class="docs-article">
+  <div class="eyebrow">ARCHGUARD-DOKUMENTATION</div>
+  <h1>Fehlerdiagnose</h1><p class="docs-lead">Kläre fehlende Daten, unerwartete Findings und Fragen zur Navigation.</p>
+  <nav class="docs-toc" aria-label="Auf dieser Seite"><strong>Auf dieser Seite</strong><a href="#empty">Graph oder Service-Ansicht sind leer</a><a href="#metrics">Metriken sind unbekannt oder nicht verfügbar</a><a href="#imports">Nicht aufgelöste Imports</a><a href="#cycles">Nach einem Update erscheint ein neuer Zyklus</a><a href="#viewer">Desktop-Bedienelemente verhalten sich unerwartet</a><a href="#data">Importierte Belege sind veraltet oder nicht zugeordnet</a><a href="#report">Ein reproduzierbares Problem melden</a></nav>
+
+<h2 id="empty">Graph oder Service-Ansicht sind leer</h2>
+<p>Prüfe zuerst das analysierte Stammverzeichnis. Quellgraph, Repository-Inventar und Service-Topologie haben unterschiedliche Umfänge. Prüfe Quellverzeichnisse, Sprachauswahl, Ausschlüsse und die Filter der aktuellen Ansicht. Wähle unter Services eine Beziehungsart, für die Belege vorliegen. Ein Projekt kann gültig sein, ohne dass Service-Kommunikation erkannt wird.</p>
+<div class="code"><button class="copy" type="button" aria-label="Codebeispiel kopieren">Kopieren</button><pre><code>archguard config . --format json
+archguard scan . --format json
+archguard services . --format json</code></pre></div>
+<h2 id="metrics">Metriken sind unbekannt oder nicht verfügbar</h2>
+<p>Prüfe mit <code>archguard doctor</code> die verfügbaren Werkzeuge und danach mit <code>archguard calls . --format json</code> die tatsächlichen Diagnosen der Sprachanalyse. Berücksichtige das Zielframework des Projekts, das JDK und Abhängigkeitsreferenzen. Syntax-Scanner liefern nur teilweise Abdeckung. Rust kann nach ausdrücklicher Aktivierung Aufrufziele aus rust-analyzer ergänzen. Python, PHP und Kotlin lösen unterstützte statische Aufrufmuster auf; Kotlin liefert außerdem Quellmetriken. Dynamische Aufrufe und nicht unterstützte Typbeziehungen bleiben unbekannt. Die aktuelle Tabelle unter <a href="languages.html">Sprachen und Messgrenzen</a> beschreibt den Umfang pro Sprache.</p>
+<p>Coverage, Mutationen und Laufzeitmessungen benötigen importierte Berichte. Die Installation eines Compilers erzeugt diese Messungen nicht. Ersetze fehlende Daten nicht durch null.</p>
+<h2 id="imports">Nicht aufgelöste Imports</h2>
+<p>Ein nicht aufgelöster Import kann auf eine externe Abhängigkeit, generierten Code, eine ausgeschlossene lokale Datei oder Syntax außerhalb des unterstützten Auflösungsumfangs verweisen. Prüfe seine Quellstelle und vergleiche sie mit den konfigurierten Quellverzeichnissen. Sprachspezifische Compiler können umfangreichere Belege liefern, sofern ein Adapter existiert; dynamische Auflösung bleibt dennoch begrenzt.</p>
+<p>Entferne Warnungen nicht allein deshalb, weil der Graph plausibel aussieht. Halte externe Referenzen und interne Beziehungen getrennt und korrigiere Fehler im Analyseumfang, bevor du Architekturregeln änderst.</p>
+<h2 id="cycles">Nach einem Update erscheint ein neuer Zyklus</h2>
+<p>Vergleiche Quellrevision, Parserversion, ausgewählte Belegarten, Analyseumfang und Aggregationsebene. Eine verbesserte Auflösung kann bisher fehlende Beziehungen sichtbar machen. Ein Zyklus auf Dateiebene kann von einer Gruppe auf Paketebene abweichen. Prüfe die genauen Kanten und Quellbelege, bevor du Code umschreibst oder eine neue Baseline akzeptierst.</p>
+<h2 id="viewer">Desktop-Bedienelemente verhalten sich unerwartet</h2>
+<ul><li>Wähle ein Paket, bevor du Eingehend (Incoming) oder Ausgehend (Outgoing) nutzt.</li><li>Öffne ein Overlay mit Details oder Enter; eine Auswahl allein muss es nicht öffnen.</li><li>Nutze Zurück oder die Pfadnavigation nach einem Einstieg in World View.</li><li>Große Graphen profitieren von engem Umfang, Suche und begrenztem Aufklappen.</li><li>Starte nach dem Ersetzen der CLI einen bestehenden MCP-Prozess neu; er verwendet weiterhin die alte ausführbare Datei.</li></ul>
+<h2 id="data">Importierte Belege sind veraltet oder nicht zugeordnet</h2>
+<p>Prüfe Quellrevision und Pfadwurzeln des Berichts. In Containern erzeugte Berichte können andere Pfade als dein lokaler Checkout enthalten. Gib beim Import das passende Quellverzeichnis an und untersuche nicht zugeordnete Einträge, statt sie als nicht abgedeckte oder fehlerfreie Dateien zu behandeln.</p>
+<h2 id="report">Ein reproduzierbares Problem melden</h2>
+<p>Nenne ArchGuard-Version, Betriebssystem, genauen Befehl, wirksame Konfiguration, Quellrevision, erwartetes Verhalten und möglichst eine kleine reproduzierbare Eingabe. Ergänze bei Metrikproblemen Compiler-/Werkzeugversionen und Diagnosen. Entferne Zugangsdaten und nicht benötigte private Quellen, bevor du Logs oder Berichte teilst.</p>
+
+  <div class="docs-next"><a href="getting-started.html">Mit den ersten Schritten beginnen</a><a href="index.html">Alle Leitfäden</a><a href="../index.html#examples">Beispiele erkunden</a></div>
+ </main>
+</div>
+<footer class="wrap footer"><a class="brand" href="../index.html"><span class="mark" aria-hidden="true">A<span>G</span></span> ArchGuard</a><p>Nicht-kommerzielles Open-Source-Projekt.<br>MIT OR Apache-2.0 · Drittprojekte behalten ihre eigenen Lizenzen.</p><a href="../about.html">Über diese Beispiele</a><a class="repo-link" href="@@REPOSITORY_URL@@" hidden>Quellcode auf GitHub</a><a href="#main">Zum Seitenanfang</a><p class="evidence-motto">Fehlende Evidenz ist keine Null.</p></footer>
+<div id="copy-status" role="status" aria-live="polite"></div>
+</body>
+</html>
