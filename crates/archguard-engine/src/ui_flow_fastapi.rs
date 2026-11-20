@@ -1665,6 +1665,14 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_literals_join_across_comments_and_continuations() {
+        let lit = |t: &str| py::Src::new(t).literal(0, t.len());
+        assert_eq!(lit("\"/api\"  # v\n \"/v1\""), Some("/api/v1".into()));
+        assert_eq!(lit("\"/api\" \\\n \"/v1\""), Some("/api/v1".into()));
+        assert_eq!(lit("(\"/api\" \"/v1\")"), Some("/api/v1".into()));
+    }
+
+    #[test]
     fn lexer_blanks_comments_and_reads_literals() {
         let text =
             "a = 'x#y' # c'\nb = (r'\\d' \"z\"\n  f'{q}')\nc = \"\"\"t\n'\"\"\"\nd = f'{{k}}'\n";

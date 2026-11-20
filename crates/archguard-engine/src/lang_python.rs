@@ -46,7 +46,14 @@ pub(crate) fn string_value(expr: &str) -> Option<String> {
     let b = expr.as_bytes();
     let (mut out, mut i, mut any) = (String::new(), 0, false);
     while i < b.len() {
-        if b[i].is_ascii_whitespace() {
+        // Between adjacent literals: blanks, comments and `\` continuations.
+        if b[i] == b'#' {
+            i = line_end(b, i);
+            continue;
+        }
+        if b[i].is_ascii_whitespace()
+            || b[i] == b'\\' && matches!(b.get(i + 1), Some(b'\n' | b'\r'))
+        {
             i += 1;
             continue;
         }
@@ -533,6 +540,18 @@ mod tests {
         assert!(m.contains("y = r\"   \" + f'   ' + b\"\"\n"), "{m:?}");
         assert!(m.contains("s = '''   \n     \n'''    \n"), "{m:?}");
         assert!(m.ends_with("t = \"     \"\n"), "{m:?}");
+    }
+
+    #[test]
+    fn adjacent_literals_join_across_comments_and_continuations() {
+        let joined = Some("/api/v1".to_string());
+        assert_eq!(string_value("'/api' # v\n '/v1'"), joined);
+        assert_eq!(string_value("'/api' \\\n '/v1'"), joined);
+        assert_eq!(string_value("('/api' # v\n '/v1')"), joined);
+        assert_eq!(string_value("'a' # c"), Some("a".to_string()));
+        assert_eq!(string_value("'a' # c\n + b"), None);
+        assert_eq!(string_value("f't\\t'").as_deref(), Some("t\t"));
+        assert_eq!(string_value("t'/a'"), None);
     }
 
     #[test]
