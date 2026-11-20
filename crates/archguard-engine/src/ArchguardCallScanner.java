@@ -121,7 +121,11 @@ class ArchguardCallScanner {
         try (StandardJavaFileManager files = compiler.getStandardFileManager(problems, Locale.ROOT, StandardCharsets.UTF_8)) {
             // Use an existing empty directory, not an empty string (which can
             // mean the working directory), for both class and source lookup.
+            // The empty processor path keeps javac from loading Plugin and
+            // Processor services from the repository classpath (-proc:none
+            // does not stop autoStart plugins in BasicJavacTask.initPlugins).
             List<String> options = List.of("--release", String.valueOf(release), "-proc:none", "-implicit:none", "-classpath", classpath,
+                "-processorpath", emptyPath.toString(),
                 "-sourcepath", emptyPath.toString(), "-Xlint:none", "-encoding", "UTF-8", "-Xmaxerrs", String.valueOf(MAX_ERRORS));
             task = (JavacTask) compiler.getTask(new StringWriter(), files, problems, options, null,
                 files.getJavaFileObjectsFromPaths(paths));

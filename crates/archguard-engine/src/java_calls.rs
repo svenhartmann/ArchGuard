@@ -896,6 +896,73 @@ mod tests {
         );
     }
 
+    /// A repository-supplied classpath jar must stay data: javac would otherwise
+    /// load its `com.sun.source.util.Plugin` service and run it (autoStart),
+    /// because without a processor path it searches the classpath.
+    #[test]
+    fn repository_classpath_never_loads_compiler_plugins() {
+        let jdk = |tool: &str| {
+            Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !(jdk("java") && jdk("javac") && jdk("jar")) {
+            eprintln!("skipped: no JDK (java, javac, jar) on PATH");
+            return;
+        }
+        let build = tempfile::tempdir().unwrap();
+        let marker = build.path().join("plugin-ran");
+        let plugin = build.path().join("src/evil/Evil.java");
+        fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin,
+            format!(
+                "package evil;\npublic class Evil implements com.sun.source.util.Plugin {{\n\
+                 static {{ try {{ java.nio.file.Files.writeString(java.nio.file.Path.of({:?}), \"x\"); }} catch (Exception e) {{}} }}\n\
+                 public String getName() {{ return \"Evil\"; }}\n\
+                 public boolean autoStart() {{ return true; }}\n\
+                 public void init(com.sun.source.util.JavacTask task, String... args) {{}}\n}}\n",
+                marker.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        let classes = build.path().join("classes");
+        let services = classes.join("META-INF/services");
+        fs::create_dir_all(&services).unwrap();
+        fs::write(services.join("com.sun.source.util.Plugin"), "evil.Evil\n").unwrap();
+        let run = |command: &mut Command| assert!(command.status().unwrap().success());
+        run(Command::new("javac").arg("-d").arg(&classes).arg(&plugin));
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("A.java"),
+            "class A { String a() { return new evil.Evil().getName(); } }",
+        )
+        .unwrap();
+        run(Command::new("jar")
+            .arg("cf")
+            .arg(root.path().join("plugin.jar"))
+            .arg("-C")
+            .arg(&classes)
+            .arg("."));
+        let mut config = Config::default();
+        config.semantic.java.classpath = vec!["plugin.jar".into()];
+        let result = analyze_java_calls(root.path(), &config);
+        assert!(
+            !marker.exists(),
+            "javac ran a plugin from the repository classpath"
+        );
+        assert_eq!(result.status, "ready", "{:?}", result.diagnostics);
+        assert!(
+            result
+                .calls
+                .iter()
+                .any(|c| c.to_class.as_deref() == Some("evil.Evil")),
+            "classpath symbols still resolve: {:?}",
+            result.calls
+        );
+    }
+
     #[test]
     fn missing_java_is_reported_and_temporary_directory_is_removed() {
         let input = Input {
