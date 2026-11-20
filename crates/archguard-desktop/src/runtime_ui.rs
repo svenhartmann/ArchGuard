@@ -5,6 +5,7 @@
 //! when they changed.
 
 mod model;
+mod statics;
 mod summary;
 mod time;
 
@@ -22,6 +23,8 @@ use crate::ui::{AppWindow, RtDetail, RuntimeData, RuntimeModel};
 
 /// The page the tab opens on: "Time", where the slow spots are.
 const TIME_PAGE: usize = 2;
+/// The last page: static indicators from the analysis.
+const STATIC_PAGE: usize = 3;
 
 /// Input files' count, total size and newest change: cheap to read each second.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -92,7 +95,7 @@ fn build_from(root: PathBuf) -> RuntimeState {
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<RuntimeData>();
     let a = Actions::<RuntimeState>::new(ui);
-    d.on_select_page(a.on(|s, _, i: i32| s.page = index(i).unwrap_or(0).min(2)));
+    d.on_select_page(a.on(|s, _, i: i32| s.page = index(i).unwrap_or(0).min(STATIC_PAGE)));
     d.on_toggle_live(a.on0(|s, _| s.live = !s.live));
     d.on_select_request(a.on(|s, _, i: i32| {
         let chosen = index(i).and_then(|i| s.profile.as_ref()?.requests.get(i));
@@ -101,6 +104,8 @@ pub fn wire(ui: &AppWindow) {
             .filter(|_| i > 0)
             .map(|r| (r.trace_id.clone(), r.span_id.clone()));
     }));
+    let st = Actions::<statics::StaticState>::new(ui);
+    d.on_select_node(st.on(|s, _, n: slint::SharedString| statics::select(s, n.into())));
     start_live(ui);
 }
 
@@ -225,6 +230,10 @@ pub fn show(ui: &AppWindow, data: &Loaded) {
         let root = data.root.to_path_buf();
         move || build_from(root)
     });
+    tab_support::show_async(ui, || {
+        let inputs = statics::Inputs::of(data);
+        move || inputs.build()
+    });
 }
 
 /// The index of the selected request, the newest if none or gone.
@@ -248,6 +257,7 @@ fn build(s: &RuntimeState) -> RuntimeModel {
     let Some(p) = s.profile.as_deref() else {
         return RuntimeModel {
             state: 2,
+            page: i32::try_from(s.page).unwrap_or(0),
             live: s.live,
             summary,
             ..Default::default()
@@ -280,13 +290,14 @@ fn build(s: &RuntimeState) -> RuntimeModel {
     }
 }
 
-/// `ARCHGUARD_DESKTOP_RUNTIME_PAGE=requests|summary|time` and
+/// `ARCHGUARD_DESKTOP_RUNTIME_PAGE=requests|summary|time|static` and
 /// `ARCHGUARD_DESKTOP_RUNTIME_REQUEST=<index>` set the view for snapshot runs.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut RuntimeState) {
     s.page = match std::env::var("ARCHGUARD_DESKTOP_RUNTIME_PAGE").as_deref() {
         Ok("requests") => 0,
         Ok("summary") => 1,
+        Ok("static") => STATIC_PAGE,
         _ => TIME_PAGE,
     };
     let request = std::env::var("ARCHGUARD_DESKTOP_RUNTIME_REQUEST")
