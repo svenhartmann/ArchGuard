@@ -8,6 +8,8 @@ Die vorbereiteten Kampagnenmaterialien, Veröffentlichungsschritte und Messgrenz
 
 ## Umsetzungsstand
 
+Nach Nutzerkorrektur am 2026-11-20: Entwicklungsfunktionen werden bereits vor einem Release sichtbar gemacht. Beide Startseiten verlinken eine Übersicht mit 18 Feature-Bereichen, Framework-Matrix, Grenzen und festgehaltenen Branch-Commits. Dazu gehören UI-Flows, Rollen/Policies, Berechtigungsmatrix, Replay, Domain View, Ereignisketten, Konventionen, Agent-Notizen und Lastszenarien. Die Übersicht dokumentiert getrennte Entwicklungszweige, keinen bereits gemeinsam ausgelieferten Produktstand.
+
 Lokal umgesetzt sind die fünf Startseiten-Sektionen, vier Zielgruppenseiten, Werkzeugvergleich, Evidenz-Essay, zwölf Sprachgruppen mit Galerie und die Dokumentation in DE/EN. Das Kampagnenpaket enthält den Zwölf-Wochen-Kalender, Launch- und Fallstudienentwürfe, Verbreitungsbrief, Lehrübung und Messanleitung. Die Website enthält 30 neue echte Desktop-Aufnahmen mit Commit-, Lizenz- und Prüfsummennachweis.
 
 Die Aufnahmen konkretisieren die ursprünglichen Vorschläge in Abschnitt 8: Online Boutique zeigt konfigurierte Redis-Beziehungen, keinen nachgewiesenen Shared-Table-Verstoß. PetClinic verwendet eine lokale Lehrregel bei unveränderten Quellen. Der MCP-Ausschnitt ist eine echte JSON-RPC-Sitzung und kein Claude-Code-Chat; die Simulation verwendet die belegte Kante `comparators → ComparatorUtils`. Helm/Kustomize wurden für diese Aufnahmen nicht gerendert. Mastodons Ruby-Abhängigkeiten sind mangels Gemfile.lock-Unterstützung kein belegtes vollständiges SBOM-Beispiel.
@@ -64,7 +66,7 @@ Positionierung in einem Satz: **„Evidenzbasierte Architekturanalyse, die sagt,
 | Qualitätsziele | ISO-25010-Ziele, Abgleich mit Expertenbewertung (Recall/Precision) | ❌ |
 | MCP | Über 40 Tools für Coding-Agents | ⚠️ nur Doku-Guide |
 | Desktop | Nativ (Slint), DE/EN, System-Theme, Export | ✅ |
-| In Planung | Domain View ([ADR 0022](adr/0022-domain-view.md)), UI-Flow- und Berechtigungs-Simulator ([ADR 0021](adr/0021-ui-flow-and-permission-simulator.md)) | ❌ (bewusst erst nach Release) |
+| In Planung | Domain View ([ADR 0022](adr/0022-domain-view.md)), UI-Flow- und Berechtigungs-Simulator ([ADR 0021](adr/0021-ui-flow-and-permission-simulator.md)) | ✅ als Entwicklungsstand sichtbar, ohne Release-Zusage |
 
 ## 4. Website-Maßnahmen
 
