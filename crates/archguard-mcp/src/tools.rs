@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::paths;
-use archguard_engine::LoadedConfig;
 use archguard_engine::analysis::{Baseline, SimOp, cycle_hash, find_sccs, simulate};
 use archguard_engine::core::{
     Cut, Finding, FindingKind, Graph, LayerConfig, LayerOrigin, NodeId, Report, aggregate,
@@ -28,6 +27,7 @@ use archguard_engine::core::{
 use archguard_engine::load_config;
 use archguard_engine::report::to_dsm_json;
 use archguard_engine::{Level, NamedGraph, SourceNames, analyze_run as engine_run};
+use archguard_engine::{LoadedConfig, ViewNotes};
 use rmcp::{ErrorData, schemars};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -337,8 +337,11 @@ pub(crate) fn semantic_coverage_value(report: &Report) -> Value {
 /// Kap. 10.2 `check`: compact gate answer — status, summary counts,
 /// findings count per kind and the first few findings. With a baseline,
 /// cycle findings whose [`cycle_hash`] is accepted do not fail the gate
-/// (same rule as `archguard check --baseline`).
-pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
+/// (same rule as `archguard check --baseline`). A finding with a note for
+/// agents (ADR 0021) carries `note` and `accepted_by_note`; an intentional
+/// note accepts it like a baseline entry. Notes on gaps without a finding
+/// are `noted_gaps`.
+pub fn check_value(report: &Report, baseline: Option<&Baseline>, notes: &ViewNotes) -> Value {
     let accepted = |finding: &Finding| archguard_engine::accepted_by_baseline(baseline, finding);
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     for finding in &report.findings {
@@ -346,7 +349,7 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
             .entry(archguard_engine::core::finding_kind_name(finding.kind))
             .or_default() += 1;
     }
-    let fails = archguard_engine::gate_fails(&report.findings, baseline);
+    let fails = archguard_engine::gate_fails(&report.findings, baseline, notes);
     let findings: Vec<Value> = report
         .findings
         .iter()
@@ -365,6 +368,11 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
             if !finding.evidence.is_empty() {
                 value["evidence"] = json!(finding.evidence);
             }
+            if let Some(d) = notes.get(&finding.id) {
+                value["note"] = archguard_engine::note_value(d);
+                value["accepted_by_note"] =
+                    json!(archguard_engine::accepted_by_note(notes, finding));
+            }
             value
         })
         .collect();
@@ -374,13 +382,17 @@ pub fn check_value(report: &Report, baseline: Option<&Baseline>) -> Value {
     } else {
         archguard_engine::core::Status::Pass
     };
-    json!({
+    let mut answer = json!({
         "status": if fails { "fail" } else { "pass" },
         "summary": summary,
         "semantic": semantic_coverage_value(report),
         "counts": counts,
         "findings": findings,
-    })
+    });
+    if !notes.is_empty() {
+        answer["noted_gaps"] = archguard_engine::noted_gaps_value(notes);
+    }
+    answer
 }
 
 // ------------------------------------------------------------------ metrics
@@ -1133,7 +1145,7 @@ mod tests {
             diagnostics: vec!["x".repeat(10_000); 100],
             ..Default::default()
         });
-        let answer = check_value(&report, None);
+        let answer = check_value(&report, None, &ViewNotes::new());
         assert_eq!(answer["semantic"]["status"], "partial");
         assert_eq!(answer["semantic"]["scope"], "calls_and_inheritance");
         assert_eq!(answer["semantic"]["projected_calls"], 7);
@@ -1196,7 +1208,7 @@ mod tests {
                 suggested_cuts: Vec::new(),
             },
         ]);
-        let plain = check_value(&report, None);
+        let plain = check_value(&report, None, &ViewNotes::new());
         assert_eq!(plain["status"], json!("fail"));
         assert_eq!(plain["counts"]["cycle"], json!(1));
         assert_eq!(plain["counts"]["layer_violation"], json!(1));
@@ -1208,7 +1220,7 @@ mod tests {
             hashes: BTreeSet::from([cycle_hash(&["app".to_string(), "domain".to_string()])]),
             ..Baseline::default()
         };
-        let with_baseline = check_value(&report, Some(&accepted));
+        let with_baseline = check_value(&report, Some(&accepted), &ViewNotes::new());
         assert_eq!(with_baseline["status"], json!("fail"));
         assert_eq!(
             with_baseline["findings"][0]["accepted_by_baseline"],
@@ -1218,8 +1230,52 @@ mod tests {
         // …accepting it and dropping the other finding passes.
         let only_cycle = report_with(vec![cycle_finding("scc-1", &["app", "domain"])]);
         assert_eq!(
-            check_value(&only_cycle, Some(&accepted))["status"],
+            check_value(&only_cycle, Some(&accepted), &ViewNotes::new())["status"],
             json!("pass")
+        );
+    }
+
+    #[test]
+    fn check_shows_notes_and_intentional_ones_accept_conventions() {
+        let convention = |id: &str| Finding {
+            kind: FindingKind::Convention,
+            id: id.into(),
+            ..cycle_finding("x", &[])
+        };
+        let report = report_with(vec![convention("view-a:A.razor:x")]);
+        let note = |finding: &str, decision| {
+            let d = archguard_engine::core::ReviewDecision {
+                finding_ref: finding.into(),
+                decision,
+                note: "on purpose".into(),
+                author: "sven".into(),
+                ..Default::default()
+            };
+            (finding.to_string(), d)
+        };
+        use archguard_engine::core::DecisionKind::{AcceptRisk, Defer, Fix};
+        let fix = ViewNotes::from([note("view-a:A.razor:x", Fix)]);
+        let answer = check_value(&report, None, &fix);
+        assert_eq!(answer["status"], json!("fail"));
+        assert_eq!(answer["findings"][0]["note"]["decision"], json!("fix"));
+        assert_eq!(answer["findings"][0]["accepted_by_note"], json!(false));
+
+        let intentional = ViewNotes::from([
+            note("view-a:A.razor:x", AcceptRisk),
+            note("view-gap:A.razor:role?", Defer),
+        ]);
+        let answer = check_value(&report, None, &intentional);
+        assert_eq!(answer["status"], json!("pass"));
+        assert_eq!(answer["findings"][0]["accepted_by_note"], json!(true));
+        assert_eq!(answer["findings"][0]["note"]["text"], json!("on purpose"));
+        assert_eq!(
+            answer["noted_gaps"][0]["id"],
+            json!("view-gap:A.razor:role?")
+        );
+        assert!(
+            check_value(&report, None, &ViewNotes::new())
+                .get("noted_gaps")
+                .is_none()
         );
     }
 

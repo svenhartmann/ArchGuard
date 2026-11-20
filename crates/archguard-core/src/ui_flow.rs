@@ -35,6 +35,9 @@ pub struct UiFlow {
     /// Named policies and what they require; see [`resolve_assignment`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub policies: Vec<PolicyDef>,
+    /// Where endpoint handlers are declared; see [`UiFlow::handler_site`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handler_sites: Vec<HandlerSite>,
 }
 impl Default for UiFlow {
     /// Empty and complete, so it is the identity of [`merge_ui_flows`].
@@ -50,7 +53,19 @@ impl Default for UiFlow {
             start_screens: vec![],
             roles: vec![],
             policies: vec![],
+            handler_sites: vec![],
         }
+    }
+}
+
+impl UiFlow {
+    /// Where the handler method of `e` is declared, when the extractor read it.
+    pub fn handler_site(&self, e: &EndpointAccess) -> Option<&HandlerSite> {
+        (self.handler_sites.iter()).find(|s| {
+            s.endpoint_file == e.file
+                && s.endpoint_line == e.line
+                && e.handler.as_deref() == Some(s.handler.as_str())
+        })
     }
 }
 
@@ -165,6 +180,20 @@ pub struct EndpointAccess {
     /// (`CreateOrderCommand`), and use-case classes it calls directly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sends: Vec<String>,
+}
+
+/// The declaration of an endpoint's handler method, e.g. a minimal-API
+/// method group in another file. It sits on [`UiFlow`], not on
+/// [`EndpointAccess`], so code that builds endpoints literally keeps
+/// compiling; the endpoint is named by its `file`, `line` and `handler`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct HandlerSite {
+    pub endpoint_file: String,
+    pub endpoint_line: u32,
+    /// [`EndpointAccess::handler`].
+    pub handler: String,
+    pub file: String,
+    pub line: u32,
 }
 
 /// Never two states: `undeclared` must not look `open` (ADR 0021, decision 2).
@@ -648,6 +677,7 @@ pub fn merge_ui_flows(a: UiFlow, b: UiFlow) -> UiFlow {
         start_screens: union(a.start_screens, b.start_screens),
         roles: union(a.roles, b.roles),
         policies: union(a.policies, b.policies),
+        handler_sites: union(a.handler_sites, b.handler_sites),
     }
 }
 
@@ -1903,6 +1933,47 @@ mod tests {
         assert_eq!(ab.diagnostics.len(), 1);
         assert!(!ab.complete);
         assert!(merge_ui_flows(UiFlow::default(), UiFlow::default()).complete);
+    }
+
+    #[test]
+    fn handler_sites_are_found_per_endpoint_merged_and_optional_in_json() {
+        let e = EndpointAccess {
+            handler: Some("OrdersApi.CreateOrderAsync".into()),
+            ..endpoint("POST", "/api/orders", AccessState::Undeclared)
+        };
+        let site = |endpoint_line: u32, line: u32| HandlerSite {
+            endpoint_file: e.file.clone(),
+            endpoint_line,
+            handler: "OrdersApi.CreateOrderAsync".into(),
+            file: "Apis/OrdersApi.cs".into(),
+            line,
+        };
+        let a = UiFlow {
+            endpoints: vec![e.clone()],
+            handler_sites: vec![site(e.line + 1, 7)],
+            ..UiFlow::default()
+        };
+        let b = UiFlow {
+            handler_sites: vec![site(e.line, 40)],
+            ..UiFlow::default()
+        };
+        assert_eq!(a.handler_site(&e), None, "another endpoint's site");
+        let merged = merge_ui_flows(a, b);
+        assert_eq!(merged.handler_site(&e).map(|s| s.line), Some(40));
+        let lambda = EndpointAccess {
+            handler: None,
+            ..e.clone()
+        };
+        assert_eq!(merged.handler_site(&lambda), None);
+        // Older files have no sites; an empty list is left out.
+        let old: UiFlow = serde_json::from_str(r#"{"definition":"ui-flow/v1","complete":true}"#)
+            .expect("reads without handler_sites");
+        assert!(old.handler_sites.is_empty());
+        assert!(
+            !serde_json::to_string(&old)
+                .unwrap()
+                .contains("handler_sites")
+        );
     }
 
     #[test]

@@ -51,8 +51,8 @@
 use crate::extract_ctx::{ExtractContext, ancestors, dir_name, read_text, walk, with_root_config};
 use crate::services::support::test_path;
 use archguard_core::{
-    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess, UiFlow,
-    UiFlowDiagnostic,
+    ANY_METHOD, AccessMeaning, AccessState, Condition, DiagnosticSeverity, EndpointAccess,
+    HandlerSite, UiFlow, UiFlowDiagnostic,
 };
 use lex::{ident_before, literal_end, split_top};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -104,6 +104,8 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     flow.endpoints.dedup();
     flow.diagnostics.sort();
     flow.diagnostics.dedup();
+    flow.handler_sites.sort();
+    flow.handler_sites.dedup();
     out.0
 }
 
@@ -228,11 +230,22 @@ impl Out {
             sends: vec![],
         });
     }
-    /// Sets the handler and what it sends on the endpoints from index `from` on.
-    fn link(&mut self, from: usize, (handler, sends): handlers::Link) {
-        for e in &mut self.0.endpoints[from..] {
+    /// Sets the handler and what it sends on the endpoints from index `from`
+    /// on, and where the handler is declared.
+    fn link(&mut self, from: usize, (handler, at, sends): handlers::Link) {
+        let flow = &mut self.0;
+        for e in &mut flow.endpoints[from..] {
             e.handler = handler.clone();
             e.sends = sends.clone();
+            if let (Some(handler), Some((file, line))) = (&handler, &at) {
+                flow.handler_sites.push(HandlerSite {
+                    endpoint_file: e.file.clone(),
+                    endpoint_line: e.line,
+                    handler: handler.clone(),
+                    file: file.clone(),
+                    line: *line,
+                });
+            }
         }
     }
 }
@@ -2576,8 +2589,8 @@ mod handlers {
     use super::lex::{ident_before, is_ident, skip_ws, skip_ws_back, split_top, words};
     use super::minimal::statement_end;
 
-    /// Handler method id and the types it sends.
-    pub(super) type Link = (Option<String>, Vec<String>);
+    /// Handler method id, where it is declared and the types it sends.
+    pub(super) type Link = (Option<String>, Option<(String, u32)>, Vec<String>);
 
     const SEND: [&str; 4] = ["Send", "SendAsync", "send", "sendAndWait"];
     const RECEIVERS: [&str; 4] = ["mediator", "sender", "gateway", "bus"];
@@ -2591,7 +2604,8 @@ mod handlers {
     /// The method of `class` whose parameter list opens at `open`.
     pub(super) fn of_method(src: &Source, class: &str, name: &str, open: usize) -> Link {
         let sends = method_span(src, open).map_or_else(Vec::new, |span| sends(src, span));
-        (Some(format!("{class}.{name}")), sends)
+        let at = (src.rel.clone(), src.line(open));
+        (Some(format!("{class}.{name}")), Some(at), sends)
     }
 
     /// A minimal-API delegate argument: a method group (searched in `src`, then
@@ -2599,11 +2613,11 @@ mod handlers {
     pub(super) fn of_delegate(src: &Source, sources: &[Source], arg: &str) -> Link {
         let at = arg.as_ptr() as usize - src.text.as_ptr() as usize;
         if arg.contains("=>") {
-            return (None, sends(src, (at, at + arg.len())));
+            return (None, None, sends(src, (at, at + arg.len())));
         }
         let name = arg.rsplit('.').next().unwrap_or(arg).trim();
         if name.is_empty() || !name.bytes().all(is_ident) {
-            return (None, vec![]);
+            return (None, None, vec![]);
         }
         let found = std::iter::once(src)
             .chain(sources)
@@ -2613,7 +2627,7 @@ mod handlers {
                 let class = enclosing_class(s, open).unwrap_or_default();
                 of_method(s, &class, name, open)
             }
-            None => (None, vec![]),
+            None => (None, None, vec![]),
         }
     }
 
@@ -2876,6 +2890,17 @@ mod handlers {
             items.iter().map(|i| i.to_string()).collect()
         }
 
+        /// Where the handler of the endpoint is declared.
+        fn site(flow: &UiFlow, method: &str, path: &str) -> Option<(String, u32)> {
+            let s = flow.handler_site(endpoint(flow, method, path))?;
+            Some((s.file.clone(), s.line))
+        }
+
+        /// The 1-based line of the first `needle` in `text`.
+        fn line_of(text: &str, needle: &str) -> u32 {
+            text.lines().position(|l| l.contains(needle)).expect(needle) as u32 + 1
+        }
+
         const ORDERS_API: &str = r#"
     public static class OrdersApi
     {
@@ -2998,6 +3023,24 @@ mod handlers {
                 link(&flow, "GET", "/api/orders/elsewhere"),
                 (Some("Handlers.Elsewhere".into()), s(&["CountOrdersQuery"]))
             );
+            let api = "Ordering.API/Apis/OrdersApi.cs".to_string();
+            assert_eq!(
+                site(&flow, "POST", "/api/orders"),
+                Some((api.clone(), line_of(ORDERS_API, "CreateOrderAsync(")))
+            );
+            assert_eq!(
+                site(&flow, "PUT", "/api/orders/ship"),
+                Some((api, line_of(ORDERS_API, "ShipAsync(")))
+            );
+            // A method group of another file is found there.
+            assert_eq!(
+                site(&flow, "GET", "/api/orders/elsewhere"),
+                Some((
+                    "Ordering.API/Apis/Handlers.cs".into(),
+                    line_of(HANDLERS, "Elsewhere(")
+                ))
+            );
+            assert_eq!(site(&flow, "POST", "/api/orders/quick"), None, "lambda");
         }
 
         const CONTROLLER: &str = r#"
@@ -3052,6 +3095,15 @@ mod handlers {
                 link(&flow, "GET", "/api/Payments"),
                 (Some("PaymentsController.List".into()), vec![])
             );
+            let file = "Api/PaymentsController.cs".to_string();
+            assert_eq!(
+                site(&flow, "POST", "/api/Payments/ship"),
+                Some((file.clone(), line_of(CONTROLLER, "Ship(int id)")))
+            );
+            assert_eq!(
+                site(&flow, "GET", "/api/Payments"),
+                Some((file, line_of(CONTROLLER, "List()")))
+            );
         }
 
         const SPRING: &str = r#"
@@ -3090,6 +3142,13 @@ mod handlers {
             assert_eq!(
                 link(&flow, "PUT", "/orders/{id}/pay"),
                 (Some("OrderController.pay".into()), s(&["PayOrderUseCase"]))
+            );
+            assert_eq!(
+                site(&flow, "PUT", "/orders/{id}/pay"),
+                Some((
+                    "orders/src/main/java/shop/OrderController.java".into(),
+                    line_of(SPRING, "void pay(")
+                ))
             );
         }
     }
