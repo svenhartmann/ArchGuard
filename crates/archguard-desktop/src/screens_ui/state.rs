@@ -2,14 +2,18 @@
 //! application, the simulated user, how unknown conditions count, the
 //! route tree's search and filter, the selection with its history.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use archguard_engine::core::{
     AccessState, Assignment, Condition, Config, UiFlow, UiFlowFinding, UiFlowSummary,
-    start_screen_ids, ui_flow_findings, ui_flow_summary,
+    resolve_assignment, start_screen_ids, ui_flow_findings, ui_flow_summary,
 };
 
+use archguard_engine::core::ReviewDecision;
+use archguard_engine::core::domain_model::DomainModel;
+
+use super::notes::Ids;
 use super::tree::Filter;
 
 /// Who is simulated: index 0 anonymous, 1 signed in without a role, then
@@ -102,19 +106,46 @@ pub struct ScreensState {
     pub list: Option<List>,
     /// Applications whose band shows only its title.
     pub collapsed: BTreeSet<String>,
+    /// The domain model for the drill-down; none when it could not be read.
+    pub domain: Option<DomainModel>,
+    /// The action (index into the flow's actions) the drill-down shows.
+    pub drill: Option<usize>,
+    /// The stable ids of gaps, mismatches and undeclared endpoints.
+    pub ids: Ids,
+    /// Notes for the coding agent by item id (the review register).
+    pub notes: BTreeMap<String, ReviewDecision>,
+    /// The item whose note form is open: its id and what it is about.
+    pub note_for: Option<(String, String)>,
+    /// Why the last note or editor jump failed.
+    pub problem: String,
+    /// "Show here": the file and line the code panel shows.
+    pub code: Option<(String, u32)>,
 }
 
 pub fn build_from(flow: Result<UiFlow, String>) -> ScreensState {
     let sim = flow.as_ref().map(simulable).unwrap_or_default();
     let (summary, findings, roles, atoms) = match &flow {
         Ok(f) => {
-            let (roles, atoms) = atoms_of(&sim);
-            (ui_flow_summary(f), ui_flow_findings(f), roles, atoms)
+            let atoms = atoms_of(&sim).1;
+            (
+                ui_flow_summary(f),
+                ui_flow_findings(f),
+                role_names(f),
+                atoms,
+            )
         }
         Err(_) => Default::default(),
     };
     let app = default_app(&sim);
+    let ids = Ids::of(&sim, &findings);
     let mut s = ScreensState {
+        domain: None,
+        drill: None,
+        ids,
+        notes: BTreeMap::new(),
+        note_for: None,
+        problem: String::new(),
+        code: None,
         sim,
         config: None,
         app,
@@ -218,6 +249,38 @@ pub fn atoms_of(flow: &UiFlow) -> (Vec<String>, Vec<Atom>) {
     (roles.into_iter().collect(), atoms.into_iter().collect())
 }
 
+/// The roles to simulate: the catalog's (`flow.roles`) and every role a
+/// condition names, sorted; a condition's `ROLE_X` is the catalog's `X`
+/// when only `X` is defined (see [`with_prefix`]).
+pub fn role_names(flow: &UiFlow) -> Vec<String> {
+    let named = atoms_of(flow).0.into_iter();
+    let defined = flow.roles.iter().map(|r| r.name.clone());
+    let all: BTreeSet<String> = named.chain(defined).collect();
+    (all.iter())
+        .filter(|n| prefixed_of(flow, n).is_none())
+        .cloned()
+        .collect()
+}
+
+/// For a `ROLE_X` the catalog does not define while it defines `X`: `X`.
+fn prefixed_of<'a>(flow: &UiFlow, name: &'a str) -> Option<&'a str> {
+    let bare = name.strip_prefix("ROLE_")?;
+    let defined = |n: &str| flow.roles.iter().any(|r| r.name == n);
+    (defined(bare) && !defined(name)).then_some(bare)
+}
+
+/// Spring's `ROLE_` prefix, as `ui-flow --role` reads it: a held role `X`
+/// also holds `ROLE_X` when a condition names that and the catalog
+/// defines only `X` (jhipster's Angular routes ask for `ROLE_ADMIN`).
+pub fn with_prefix(flow: &UiFlow, a: &mut Assignment) {
+    let named = atoms_of(flow).0;
+    let extra: Vec<String> = (named.iter())
+        .filter(|n| prefixed_of(flow, n).is_some_and(|bare| a.roles.contains(bare)))
+        .cloned()
+        .collect();
+    a.roles.extend(extra);
+}
+
 /// Anonymous (0), signed in without a role (1), else signed in with
 /// `roles[role - 2]`.
 pub fn role_assignment(role: RoleIndex, roles: &[String]) -> Assignment {
@@ -231,30 +294,40 @@ pub fn role_assignment(role: RoleIndex, roles: &[String]) -> Assignment {
     a
 }
 
+fn atom_map<'a>(a: &'a mut Assignment, atom: &Atom) -> &'a mut BTreeMap<String, bool> {
+    if atom.policy {
+        &mut a.policies
+    } else {
+        &mut a.custom
+    }
+}
+
 impl ScreensState {
     pub fn flow(&self) -> Option<&UiFlow> {
         (*self.flow).as_ref().ok()
     }
 
-    /// The simulator input for the chosen user and switches; a condition
-    /// without its own switch counts as [`Unknown`] says.
+    /// The simulator input for the chosen user and switches, resolved by
+    /// the role and policy catalog (`resolve_assignment`): included roles
+    /// count, a defined policy is what it requires. A condition still
+    /// without a value counts as [`Unknown`] says.
     pub fn assignment(&self) -> Assignment {
         let mut a = role_assignment(self.role, &self.roles);
+        with_prefix(&self.sim, &mut a);
+        let atoms = self.atoms.iter().zip(&self.switches);
+        for (atom, v) in atoms.clone().filter_map(|(a, v)| Some((a, (*v)?))) {
+            atom_map(&mut a, atom).insert(atom.name.clone(), v);
+        }
+        let mut a = resolve_assignment(&self.sim, &a);
         let fallback = match self.unknown {
-            Unknown::Open => None,
-            Unknown::AllHold => Some(true),
-            Unknown::NoneHold => Some(false),
+            Unknown::Open => return a,
+            Unknown::AllHold => true,
+            Unknown::NoneHold => false,
         };
-        for (atom, value) in self.atoms.iter().zip(&self.switches) {
-            let Some(v) = value.or(fallback) else {
-                continue;
-            };
-            let map = if atom.policy {
-                &mut a.policies
-            } else {
-                &mut a.custom
-            };
-            map.insert(atom.name.clone(), v);
+        for (atom, _) in atoms {
+            atom_map(&mut a, atom)
+                .entry(atom.name.clone())
+                .or_insert(fallback);
         }
         a
     }
@@ -288,8 +361,37 @@ impl ScreensState {
         }
         self.selected = Some(i);
         self.list = None;
+        self.drill = None;
+        self.note_for = None;
+        self.code = None;
         self.hide_details = false;
         self.browser_note.clear();
+    }
+
+    /// Show `file` at `line` in the code panel; Back returns.
+    pub fn show_code(&mut self, file: &str, line: u32) {
+        if !file.is_empty() {
+            self.code = Some((file.to_string(), line));
+            self.hide_details = false;
+        }
+    }
+
+    /// Show the drill-down of action `a` (index into the flow's actions).
+    pub fn open_drill(&mut self, a: usize) {
+        if a < self.sim.actions.len() {
+            self.drill = Some(a);
+            self.note_for = None;
+            self.hide_details = false;
+        }
+    }
+
+    /// Open the note form of item `id` (`subject` says what it is about).
+    pub fn open_note(&mut self, id: &str, subject: &str) {
+        if !id.is_empty() {
+            self.note_for = Some((id.to_string(), subject.to_string()));
+            self.problem.clear();
+            self.hide_details = false;
+        }
     }
 
     pub fn go_back(&mut self) {
@@ -347,6 +449,7 @@ impl ScreensState {
 
     pub fn open_list(&mut self, i: usize) {
         self.list = LISTS.get(i).copied();
+        self.drill = None;
         self.hide_details = false;
     }
 
@@ -364,6 +467,7 @@ impl ScreensState {
 
     pub fn open_mismatches(&mut self) {
         self.list = Some(List::Mismatches);
+        self.drill = None;
         self.hide_details = false;
     }
 
@@ -382,7 +486,12 @@ impl ScreensState {
 
     /// Close a list back to the screen; else close the screen's details.
     pub fn close_details(&mut self) {
-        if self.list.take().is_none() {
+        self.problem.clear();
+        if self.code.take().is_none()
+            && self.note_for.take().is_none()
+            && self.drill.take().is_none()
+            && self.list.take().is_none()
+        {
             self.hide_details = true;
         }
     }
@@ -451,5 +560,64 @@ mod tests {
         assert_eq!(a.custom.get("beta"), Some(&true));
         s.set_switch(1, 0);
         assert!(s.assignment().policies.is_empty(), "open again");
+    }
+
+    /// jhipster: ADMIN includes USER; the catalog also names a role no
+    /// condition uses, and a policy requires ADMIN.
+    #[test]
+    fn the_catalog_fills_the_roles_and_resolves_hierarchy_and_policies() {
+        use archguard_engine::core::{PolicyDef, RoleDef, RoleKind};
+        let def = |name: &str, includes: &[&str]| RoleDef {
+            name: name.into(),
+            kind: RoleKind::Role,
+            includes: includes.iter().map(|s| s.to_string()).collect(),
+            file: "Roles.java".into(),
+            line: 3,
+            source: "t".into(),
+        };
+        let mut f = flow();
+        f.roles = vec![def("Admin", &["Clerk"]), def("Auditor", &[])];
+        f.policies = vec![PolicyDef {
+            name: "Locked".into(),
+            requires: Condition::Role("Auditor".into()),
+            file: "P.cs".into(),
+            line: 1,
+            source: "t".into(),
+        }];
+        let mut s = build_from(Ok(f));
+        assert_eq!(s.roles, ["Admin", "Auditor", "Clerk"]);
+        s.select_role(2);
+        let a = s.assignment();
+        assert!(a.roles.contains("Clerk"), "Admin includes Clerk");
+        assert_eq!(a.policies.get("Locked"), Some(&false), "requires Auditor");
+        s.set_unknown(1);
+        assert_eq!(
+            s.assignment().policies.get("Locked"),
+            Some(&false),
+            "\"all hold\" does not override a policy the catalog decides"
+        );
+        assert_eq!(s.assignment().custom.get("beta"), Some(&true));
+    }
+
+    /// jhipster: the catalog defines ADMIN, the Angular route asks for
+    /// ROLE_ADMIN; the picker lists ADMIN once and it opens the route.
+    #[test]
+    fn a_spring_role_prefix_joins_the_catalog_role() {
+        use archguard_engine::core::{RoleDef, RoleKind};
+        let mut f = flow();
+        f.screens[2].access = Some(Condition::Role("ROLE_ADMIN".into()));
+        f.roles = vec![RoleDef {
+            name: "ADMIN".into(),
+            kind: RoleKind::Role,
+            includes: vec![],
+            file: "AuthoritiesConstants.java".into(),
+            line: 8,
+            source: "t".into(),
+        }];
+        let mut s = build_from(Ok(f));
+        assert_eq!(s.roles, ["ADMIN", "Admin"]);
+        s.select_role(2);
+        let roles: Vec<String> = s.assignment().roles.into_iter().collect();
+        assert_eq!(roles, ["ADMIN", "ROLE_ADMIN"]);
     }
 }

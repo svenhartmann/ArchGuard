@@ -5,15 +5,15 @@
 use std::collections::BTreeMap;
 
 use archguard_engine::core::{
-    DiagnosticSeverity, ScreenReach, UiFlow, UiFlowFindingKind, screen_reaches,
+    DiagnosticSeverity, RoleKind, ScreenReach, UiFlow, UiFlowFindingKind, screen_reaches,
 };
 
 use super::card::card;
 use super::layout::{self, Node};
 use super::state::{Mode, ScreensState, applications};
-use super::{center, inspector};
+use super::{center, inspector, words};
 use crate::tab_support::{Texts, model};
-use crate::ui::{FlowArrow, FlowBand, FlowRole, FlowSwitch, ScreensModel};
+use crate::ui::{FlowArrow, FlowBand, FlowRole, FlowRow, FlowSwitch, ScreensModel};
 
 pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
     let flow = match &*s.flow {
@@ -28,6 +28,7 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
     };
     let sum = &s.summary;
     let kind = |k| s.findings.iter().filter(|f| f.kind == k).count() as i32;
+    let editor = crate::editor::template();
     let mut m = ScreensModel {
         state: 1,
         screens: sum.screens as i32,
@@ -48,8 +49,12 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
         role: s.role as i32,
         role_names: model(
             std::iter::once(texts.t("Role …").into())
-                .chain(s.roles.iter().map(|r| r.as_str().into())),
+                .chain(s.roles.iter().map(|r| role_label(texts, flow, r).into())),
         ),
+        policies: model(policy_rows(texts, flow)),
+        implied: implied(s, texts).into(),
+        editor_preset: crate::editor::preset_of(&editor) as i32,
+        editor: editor.into(),
         apps: model(apps(s, flow, texts)),
         app_index: (applications(&s.sim).iter().position(|a| *a == s.app)).map_or(0, |i| i as i32),
         // Fieldless enums in the order of the window's choices.
@@ -96,6 +101,70 @@ fn apps(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<slint::SharedStri
                 name
             };
             format!("{name} · {count}").into()
+        })
+        .collect()
+}
+
+/// A role of the picker with what the catalog says of it: "ADMIN · role ·
+/// includes USER"; a role only conditions name stays bare.
+pub fn role_label(texts: &Texts, flow: &UiFlow, name: &str) -> String {
+    let defs: Vec<_> = flow.roles.iter().filter(|r| r.name == name).collect();
+    let Some(first) = defs.first() else {
+        return name.to_string();
+    };
+    let kind = texts.t(match first.kind {
+        RoleKind::Role => "role",
+        RoleKind::Permission => "permission",
+        RoleKind::Group => "group",
+    });
+    let mut includes: Vec<&str> = (defs.iter().flat_map(|d| &d.includes))
+        .map(String::as_str)
+        .collect();
+    includes.sort_unstable();
+    includes.dedup();
+    if includes.is_empty() {
+        return format!("{name} · {kind}");
+    }
+    let what = texts.f("includes {names}", &[("names", includes.join(", "))]);
+    format!("{name} · {kind} · {what}")
+}
+
+/// What the chosen user implies by the catalog, in one line: the roles
+/// it includes and each defined policy's value. Empty when nothing.
+pub fn implied(s: &ScreensState, texts: &Texts) -> String {
+    let base = super::state::role_assignment(s.role, &s.roles);
+    let a = s.assignment();
+    let mut parts = vec![];
+    let extra: Vec<&str> = (a.roles.difference(&base.roles))
+        .map(String::as_str)
+        .collect();
+    if !extra.is_empty() {
+        parts.push(texts.f("also holds {names}", &[("names", extra.join(", "))]));
+    }
+    let mut names: Vec<&str> = s.sim.policies.iter().map(|p| p.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        let key = match a.policies.get(name) {
+            Some(true) => "policy {name} holds",
+            Some(false) => "policy {name} does not hold",
+            None => "policy {name} unknown",
+        };
+        parts.push(texts.f(key, &[("name", name.to_string())]));
+    }
+    parts.join(" · ")
+}
+
+/// The catalog's policies with what they require in words.
+fn policy_rows(texts: &Texts, flow: &UiFlow) -> Vec<FlowRow> {
+    (flow.policies.iter())
+        .map(|p| {
+            let needs = words::condition(texts, &p.requires);
+            let text = texts.f(
+                "{name} requires {needs}",
+                &[("name", p.name.clone()), ("needs", needs)],
+            );
+            inspector::row(text, &p.file, p.line)
         })
         .collect()
 }
@@ -265,5 +334,49 @@ mod tests {
         let s = super::super::state::build_from(Err("bad import".into()));
         let m = build(&s, &Texts::default());
         assert_eq!((m.state, m.error.as_str()), (2, "bad import"));
+    }
+
+    /// The picker names each role with its kind and what it includes; the
+    /// line under it says what the chosen user implies.
+    #[test]
+    fn the_role_picker_reads_the_catalog_and_says_what_a_role_implies() {
+        use archguard_engine::core::{PolicyDef, RoleDef};
+        use slint::Model;
+        let def = |name: &str, includes: &[&str]| RoleDef {
+            name: name.into(),
+            kind: RoleKind::Role,
+            includes: includes.iter().map(|s| s.to_string()).collect(),
+            file: "SecurityConfiguration.java".into(),
+            line: 40,
+            source: "t".into(),
+        };
+        let mut f = shop();
+        f.roles = vec![def("ADMIN", &["USER"]), def("USER", &[])];
+        f.policies = vec![PolicyDef {
+            name: "CanPurge".into(),
+            requires: Condition::Role("ADMIN".into()),
+            file: "P.cs".into(),
+            line: 2,
+            source: "t".into(),
+        }];
+        let mut s = super::super::state::build_from(Ok(f));
+        let m = build(&s, &Texts::default());
+        let names: Vec<String> = m.role_names.iter().map(|n| n.to_string()).collect();
+        assert_eq!(
+            names,
+            ["Role …", "ADMIN · role · includes USER", "USER · role"]
+        );
+        assert_eq!(
+            m.policies.row_data(0).unwrap().text,
+            "CanPurge requires role ADMIN"
+        );
+        assert_eq!(m.implied, "policy CanPurge does not hold");
+        s.select_role(2);
+        let m = build(&s, &Texts::default());
+        assert_eq!(m.implied, "also holds USER · policy CanPurge holds");
+        assert_eq!(
+            build(&s, &Texts::german()).implied,
+            "hat damit auch USER · Policy CanPurge erfüllt"
+        );
     }
 }

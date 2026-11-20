@@ -9,7 +9,7 @@ use archguard_engine::core::{
 };
 
 use super::state::{List, ScreensState};
-use super::words;
+use super::{code, drill, notes, words};
 use crate::tab_support::{Texts, model};
 use crate::ui::{FlowAction, FlowInspector, FlowRow};
 
@@ -17,12 +17,76 @@ fn at(file: &str, line: u32) -> String {
     format!("{file}:{line}")
 }
 
-pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
-    if let Some(list) = s.list {
-        return list_panel(s, flow, list, texts);
+/// A list row without a note.
+pub fn row(text: String, file: &str, line: u32) -> FlowRow {
+    FlowRow {
+        text: text.into(),
+        location: at(file, line).into(),
+        file: file.into(),
+        line: line as i32,
+        ..Default::default()
     }
+}
+
+/// `row` that takes a note under `id`, with the stored one shown.
+fn noted(s: &ScreensState, mut r: FlowRow, id: &str, texts: &Texts) -> FlowRow {
+    r.id = id.into();
+    if let Some(d) = s.notes.get(id) {
+        r.badge = texts.t(notes::badge(d)).into();
+        r.note = d.note.as_str().into();
+    }
+    r
+}
+
+pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
+    let mut i = panel(s, flow, texts);
+    i.problem = s.problem.as_str().into();
+    i
+}
+
+fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     if s.hide_details {
         return FlowInspector::default();
+    }
+    if let Some((file, line)) = &s.code {
+        let (lines, hit) = code::read(&s.root, file, *line).unwrap_or_default();
+        return FlowInspector {
+            mode: 5,
+            title: file.rsplit('/').next().unwrap_or(file).into(),
+            location: at(file, *line).into(),
+            file: file.as_str().into(),
+            line: *line as i32,
+            code: model(lines),
+            code_hit: hit as i32,
+            ..Default::default()
+        };
+    }
+    if let Some((id, subject)) = &s.note_for {
+        return FlowInspector {
+            mode: 4,
+            title: texts.t("Note for the coding agent").into(),
+            note_id: id.as_str().into(),
+            note_subject: subject.as_str().into(),
+            ..Default::default()
+        };
+    }
+    if let Some(a) = s.drill {
+        let who = s.assignment();
+        let steps = drill::steps(&s.sim, s.domain.as_ref(), &s.root, a, &who, texts);
+        let title = (s.sim.actions.get(a)).map_or(String::new(), |x| match &x.trigger {
+            Some(t) => format!("{t} · {}", words::call(x)),
+            None => words::call(x),
+        });
+        return FlowInspector {
+            mode: 3,
+            title: title.into(),
+            list_note: texts.t("From the action through the backend to the services. Endpoint results are for the simulated user.").into(),
+            steps: model(steps),
+            ..Default::default()
+        };
+    }
+    if let Some(list) = s.list {
+        return list_panel(s, flow, list, texts);
     }
     let Some(screen) = s.selected.and_then(|i| flow.screens.get(i)) else {
         return FlowInspector::default();
@@ -42,6 +106,7 @@ pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
         route: screen.route.clone().unwrap_or_default().into(),
         location: at(&screen.file, screen.line).into(),
         file: screen.file.as_str().into(),
+        line: screen.line as i32,
         access: words::access(texts, screen.access.as_ref()).into(),
         result: words::outcome(texts, outcome).into(),
         result_tone: match outcome {
@@ -67,8 +132,9 @@ fn on(origin: &Origin, screen: &Screen) -> bool {
 
 fn actions(s: &ScreensState, flow: &UiFlow, screen: &Screen, texts: &Texts) -> Vec<FlowAction> {
     let joined = join_actions_to_endpoints(flow);
-    (flow.actions.iter().filter(|a| on(&a.screen, screen)))
-        .map(|a| {
+    (flow.actions.iter().enumerate())
+        .filter(|(_, a)| on(&a.screen, screen))
+        .map(|(index, a)| {
             let hits: &[&EndpointAccess] = (joined.iter())
                 .find(|(j, _)| std::ptr::eq(*j, a))
                 .map_or(&[], |(_, h)| h.as_slice());
@@ -81,6 +147,8 @@ fn actions(s: &ScreensState, flow: &UiFlow, screen: &Screen, texts: &Texts) -> V
                 agree,
                 location: at(&a.file, a.line).into(),
                 file: a.file.as_str().into(),
+                line: a.line as i32,
+                index: index as i32,
             }
         })
         .collect()
@@ -138,19 +206,19 @@ fn agreement(
 }
 
 fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> FlowInspector {
-    let row = |text: String, file: &str, line: u32| FlowRow {
-        text: text.into(),
-        location: at(file, line).into(),
-        file: file.into(),
-    };
     let findings = |kind| {
-        (s.findings.iter().filter(|f| f.kind == kind))
-            .map(|f| {
+        (s.findings.iter().enumerate())
+            .filter(|(_, f)| f.kind == kind)
+            .map(|(i, f)| {
                 let (file, line) = f
                     .action
                     .as_ref()
                     .map_or(("", 0), |a| (a.file.as_str(), a.line));
-                row(f.message.clone(), file, line)
+                let r = row(f.message.clone(), file, line);
+                match s.ids.finding(i) {
+                    Some(id) => noted(s, r, id, texts),
+                    None => r,
+                }
             })
             .collect::<Vec<_>>()
     };
@@ -160,7 +228,14 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
             "Navigation targets, routes, roles and calls the rules could not read literally. Each one may hide a path.",
             (flow.diagnostics.iter())
                 .filter(|d| d.severity == DiagnosticSeverity::Gap)
-                .map(|d| row(d.message.clone(), &d.file, d.line))
+                .map(|d| {
+                    noted(
+                        s,
+                        row(d.message.clone(), &d.file, d.line),
+                        &s.ids.gap(&s.sim, d),
+                        texts,
+                    )
+                })
                 .collect(),
         ),
         List::ShownButRefused => (
@@ -197,10 +272,7 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
         List::Undeclared => (
             "Endpoints without a declared guard",
             "No guard is declared; the code may still check by hand. Undeclared is never shown as allowed.",
-            (flow.endpoints.iter())
-                .filter(|e| e.access == AccessState::Undeclared)
-                .map(|e| row(format!("{} {}", e.method, e.path), &e.file, e.line))
-                .collect(),
+            undeclared(s, flow, texts),
         ),
     };
     FlowInspector {
@@ -210,6 +282,20 @@ fn list_panel(s: &ScreensState, flow: &UiFlow, list: List, texts: &Texts) -> Flo
         rows: model(rows),
         ..Default::default()
     }
+}
+
+/// The endpoints without a declared guard, each taking a note.
+fn undeclared(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> Vec<FlowRow> {
+    (flow.endpoints.iter().enumerate())
+        .filter(|(_, e)| e.access == AccessState::Undeclared)
+        .map(|(i, e)| {
+            let r = row(format!("{} {}", e.method, e.path), &e.file, e.line);
+            match s.ids.endpoint(i) {
+                Some(id) => noted(s, r, id, texts),
+                None => r,
+            }
+        })
+        .collect()
 }
 
 /// The screen's guard in words and where that meaning comes from: code,
@@ -281,11 +367,7 @@ pub fn meaning(s: &ScreensState, screen: &Screen, texts: &Texts) -> (String, Str
 fn target_rows<'a>(ts: impl Iterator<Item = &'a Transition>) -> Vec<FlowRow> {
     ts.map(|t| {
         let (Target::Unresolved(text) | Target::Screen(text)) = &t.target;
-        FlowRow {
-            text: text.as_str().into(),
-            location: at(&t.file, t.line).into(),
-            file: t.file.as_str().into(),
-        }
+        row(text.clone(), &t.file, t.line)
     })
     .collect()
 }
@@ -438,5 +520,55 @@ mod tests {
         assert_eq!(i.rows.row_count(), 0, "the endpoint is protected");
         s.open_list(0);
         assert_eq!(build(&s, &f, &Texts::german()).title, "Lücken");
+    }
+
+    /// The undeclared list shows a stored note with its badge; an action
+    /// opens its drill-down, a file:line the code panel, Back returns.
+    #[test]
+    fn notes_drill_down_and_code_panel_stack_in_the_details() {
+        use archguard_engine::core::{DecisionKind, ReviewDecision};
+        let mut f = flow();
+        f.endpoints[0].access = AccessState::Undeclared;
+        let mut s = super::super::state::build_from(Ok(f));
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("Orders.razor"), "a\nb\nc\n").expect("file");
+        s.root = dir.path().to_path_buf();
+        let id = "view-endpoint_access_declared:Api.cs:GET /api/orders";
+        s.notes.insert(
+            id.into(),
+            ReviewDecision {
+                decision: DecisionKind::AcceptRisk,
+                note: "checked in code".into(),
+                ..Default::default()
+            },
+        );
+        s.select_screen(0);
+        s.open_list(3);
+        let flow = s.flow().unwrap().clone();
+        let r = build(&s, &flow, &Texts::default())
+            .rows
+            .row_data(0)
+            .unwrap();
+        assert_eq!((r.id.as_str(), r.badge.as_str()), (id, "intentional"));
+        assert_eq!(r.note, "checked in code");
+        s.open_drill(0);
+        let i = build(&s, &flow, &Texts::default());
+        assert_eq!((i.mode, i.title.as_str()), (3, "Load · GET /api/orders"));
+        assert_eq!(i.steps.row_data(1).unwrap().kind, "Endpoint");
+        s.show_code("Orders.razor", 2);
+        let i = build(&s, &flow, &Texts::default());
+        assert_eq!((i.mode, i.code_hit, i.code.row_count()), (5, 1, 3));
+        s.close_details();
+        assert_eq!(
+            build(&s, &flow, &Texts::default()).mode,
+            3,
+            "back to the drill-down"
+        );
+        s.close_details();
+        assert_eq!(
+            build(&s, &flow, &Texts::default()).mode,
+            2,
+            "back to the list"
+        );
     }
 }

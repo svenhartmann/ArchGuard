@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use archguard_engine::core::domain_model::DomainModel;
-use archguard_engine::core::{Assignment, UiFlow};
+use archguard_engine::core::{Assignment, UiFlow, resolve_assignment};
 
-use crate::screens_ui::{atoms_of, role_assignment};
+use crate::screens_ui::{role_assignment, role_names};
 
 pub struct DomainState {
     pub model: Arc<Result<DomainModel, String>>,
@@ -21,7 +21,7 @@ pub struct DomainState {
 }
 
 pub fn build_from(model: Result<DomainModel, String>, flow: Result<UiFlow, String>) -> DomainState {
-    let roles = flow.as_ref().map_or_else(|_| Vec::new(), |f| atoms_of(f).0);
+    let roles = flow.as_ref().map_or_else(|_| Vec::new(), role_names);
     DomainState {
         model: Arc::new(model),
         flow: Arc::new(flow),
@@ -50,7 +50,15 @@ impl DomainState {
         }
     }
 
+    /// The chosen user, resolved by the flow's role and policy catalog.
     pub fn assignment(&self) -> Assignment {
-        role_assignment(self.role, &self.roles)
+        let mut a = role_assignment(self.role, &self.roles);
+        match &*self.flow {
+            Ok(f) => {
+                crate::screens_ui::with_prefix(f, &mut a);
+                resolve_assignment(f, &a)
+            }
+            Err(_) => a,
+        }
     }
 }

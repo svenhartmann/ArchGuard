@@ -2,7 +2,8 @@
 // and actions, or one of the lists of the left panel.
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Button, TipArea, SectionHeading } from "widgets.slint";
+import { Button, TipArea, SectionHeading, Badge } from "widgets.slint";
+import { LineEdit, TextEdit } from "fields.slint";
 import { Para, LinkLine, PanelTitle, Fact } from "flow_parts.slint";
 import { Fmt } from "format.slint";
 
@@ -15,22 +16,61 @@ export struct FlowAction {
     agree: bool,
     location: string,
     file: string,
+    line: int,
+    // Index into the flow's actions, for the drill-down.
+    index: int,
 }
 
-// A row of a list: what, and where (opens the file).
+// A row of a list: what, and where. `id`: the item's stable id when it
+// takes a note for the coding agent; `badge` and `note` show a stored one.
 export struct FlowRow {
     text: string,
     location: string,
     file: string,
+    line: int,
+    id: string,
+    badge: string,
+    note: string,
+}
+
+// A step of the drill-down from an action into the services. tone -1
+// neutral, 0 allowed, 1 denied, 2 unknown; `calls`: a class or method for
+// "Show calls".
+export struct DrillStep {
+    kind: string,
+    text: string,
+    location: string,
+    file: string,
+    line: int,
+    tone: int,
+    depth: int,
+    calls: string,
+}
+
+// A source line of the code panel; `hit` is the line asked for.
+export struct CodeLine {
+    number: int,
+    text: string,
+    hit: bool,
+}
+
+// The note form's fields; set when the form opens, read on Save.
+export global ScreensNote {
+    // 0 fix, 1 intentional, 2 later.
+    in-out property <int> kind;
+    in-out property <string> text;
+    in-out property <string> change;
+    in-out property <string> adr;
 }
 
 export struct FlowInspector {
-    // 0 hidden, 1 screen, 2 list.
+    // 0 hidden, 1 screen, 2 list, 3 drill-down, 4 note form, 5 code.
     mode: int,
     title: string,
     route: string,
     location: string,
     file: string,
+    line: int,
     access: string,
     result: string,
     // 0 allowed, 1 denied, 2 unknown.
@@ -43,11 +83,139 @@ export struct FlowInspector {
     // The guard in words and where that meaning comes from.
     meaning: string,
     meaning-from: string,
+    steps: [DrillStep],
+    // The code panel: the source around `line` of `file`.
+    code: [CodeLine],
+    code-hit: int,
+    // The note form's item.
+    note-id: string,
+    note-subject: string,
+    // Why a note or an editor jump failed.
+    problem: string,
+}
+
+component SmallLink inherits Text {
+    callback clicked();
+    color: touch.has-hover ? Theme.accent.darker(0.2) : Theme.accent;
+    font-size: Theme.font-caption;
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A file:line with its two jumps: the configured editor, the File view.
+export component JumpLine inherits VerticalLayout {
+    in property <string> location;
+    in property <string> file;
+    in property <int> line;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    spacing: 1px;
+    Text { text: root.location; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        SmallLink { text: @tr("Open in editor"); clicked => { root.open-editor(root.file, root.line); } }
+        SmallLink { text: @tr("Show here"); clicked => { root.show-line(root.file, root.line); } }
+    }
+}
+
+// The source around a line, read-only, numbered, the line marked and
+// scrolled into the middle.
+component CodePanel inherits Rectangle {
+    in property <[CodeLine]> lines;
+    property <length> row-h: 17px;
+    // Index of the marked line in `lines`.
+    in property <int> hit;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg;
+    sv := ScrollView {
+        init => {
+            self.content-y = -max(0px, root.hit * root.row-h + 4px - self.visible-height / 2 + root.row-h / 2);
+        }
+        VerticalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            for l[i] in root.lines: Rectangle {
+                height: root.row-h;
+                background: l.hit ? Theme.accent.with-alpha(0.2) : transparent;
+                if l.hit: Rectangle { x: 0; width: 3px; background: Theme.accent; }
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 8px;
+                    Text { text: l.number; width: 36px; horizontal-alignment: right; vertical-alignment: center; color: l.hit ? Theme.accent : Theme.muted; font-family: Theme.mono-family; font-size: Theme.font-caption; }
+                    Text { text: l.text; vertical-alignment: center; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-caption; font-weight: l.hit ? Theme.weight-strong : Theme.weight-regular; overflow: elide; horizontal-stretch: 1; }
+                }
+            }
+        }
+    }
+}
+
+// A list row: text, note badge, where, and "Note for agent…".
+component ListRow inherits VerticalLayout {
+    in property <FlowRow> r;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback open-note(string, string);
+    padding-top: 4px;
+    padding-bottom: 4px;
+    spacing: 2px;
+    if r.badge != "": HorizontalLayout {
+        alignment: start;
+        Badge { text: r.badge; variant: "accent"; }
+    }
+    Para { text: r.text; }
+    if r.note != "": Para { text: r.note; muted: true; }
+    if r.file != "": JumpLine {
+        location: r.location;
+        file: r.file;
+        line: r.line;
+        open-editor(f, l) => { root.open-editor(f, l); }
+        show-line(f, l) => { root.show-line(f, l); }
+    }
+    if r.id != "": HorizontalLayout {
+        alignment: start;
+        SmallLink { text: r.badge != "" ? @tr("Edit note for agent…") : @tr("Note for agent…"); clicked => { root.open-note(r.id, r.text); } }
+    }
+}
+
+component DrillLine inherits HorizontalLayout {
+    in property <DrillStep> step;
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback show-calls(string);
+    padding-left: step.depth * 12px;
+    spacing: 6px;
+    Rectangle { width: 2px; background: step.depth == 0 ? Theme.accent : Theme.border; }
+    VerticalLayout {
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 1px;
+        Text { text: step.kind; color: Theme.muted; font-size: Theme.font-caption; }
+        Para {
+            text: step.text;
+            color: step.tone == 0 ? Theme.success : step.tone == 1 ? Theme.priority : step.tone == 2 ? Theme.outgoing : Theme.text;
+        }
+        if step.location != "": JumpLine {
+            location: step.location;
+            file: step.file;
+            line: step.line;
+            open-editor(f, l) => { root.open-editor(f, l); }
+            show-line(f, l) => { root.show-line(f, l); }
+        }
+        if step.calls != "": HorizontalLayout {
+            alignment: start;
+            SmallLink { text: @tr("Show calls ›"); clicked => { root.show-calls(step.calls); } }
+        }
+    }
 }
 
 component ActionBox inherits VerticalLayout {
     in property <FlowAction> item;
-    callback open-file(string);
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback drill(int);
     spacing: 3px;
     padding-top: 8px;
     padding-bottom: 8px;
@@ -56,13 +224,25 @@ component ActionBox inherits VerticalLayout {
     Para { text: item.call; mono: true; }
     Fact { label: @tr("Backend access"); value: item.backend; }
     Para { text: item.agreement; color: item.agree ? Theme.success : Theme.priority; }
-    LinkLine { text: item.location; mono: true; clicked => { root.open-file(item.file); } }
+    JumpLine {
+        location: item.location;
+        file: item.file;
+        line: item.line;
+        open-editor(f, l) => { root.open-editor(f, l); }
+        show-line(f, l) => { root.show-line(f, l); }
+    }
+    LinkLine { text: @tr("Follow into the backend and services ›"); clicked => { root.drill(item.index); } }
 }
 
 export component ScreensInspector inherits Rectangle {
     in property <FlowInspector> data;
     callback close();
-    callback open-file(string);
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback drill(int);
+    callback open-note(string, string);
+    callback save-note();
+    callback show-calls(string);
     property <bool> show-untriggered;
     background: Theme.panel;
     sv := ScrollView {
@@ -72,15 +252,68 @@ export component ScreensInspector inherits Rectangle {
             spacing: 8px;
             alignment: start;
             PanelTitle { text: data.title; close => { root.close(); } }
+            if data.problem != "": Para { text: data.problem; color: Theme.danger; }
+            if data.mode == 5: VerticalLayout {
+                spacing: 6px;
+                vertical-stretch: 1;
+                Text { text: data.location; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    SmallLink { text: @tr("‹ Back"); clicked => { root.close(); } }
+                    SmallLink { text: @tr("Open in editor"); clicked => { root.open-editor(data.file, data.line); } }
+                }
+                if data.code.length == 0: Para { text: @tr("The file could not be read."); color: Theme.danger; }
+                if data.code.length > 0: CodePanel { lines: data.code; hit: data.code-hit; height: min(data.code.length * 17px + 10px, 640px); }
+            }
+            if data.mode == 3: VerticalLayout {
+                spacing: 2px;
+                Para { text: data.list-note; muted: true; }
+                for st in data.steps: DrillLine {
+                    step: st;
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    show-calls(c) => { root.show-calls(c); }
+                }
+            }
+            if data.mode == 4: VerticalLayout {
+                spacing: 8px;
+                Para { text: data.note-subject; }
+                Text { text: data.note-id; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
+                Para { text: @tr("Stored in .archguard/reviews.json under this id; the coding agent reads it with the MCP tool review_decisions or archguard review-decision list."); muted: true; }
+                Text { text: @tr("Decision"); color: Theme.muted; font-size: Theme.font-caption; }
+                HorizontalLayout {
+                    spacing: 0px;
+                    alignment: start;
+                    for k[i] in [@tr("Fix"), @tr("Intentional"), @tr("Later")]: Button {
+                        text: k;
+                        compact: true;
+                        pressed-state: ScreensNote.kind == i;
+                        clicked => { ScreensNote.kind = i; }
+                    }
+                }
+                Text { text: @tr("Note"); color: Theme.muted; font-size: Theme.font-caption; }
+                TextEdit { text <=> ScreensNote.text; height: 80px; }
+                Text { text: @tr("Suggested change (optional)"); color: Theme.muted; font-size: Theme.font-caption; }
+                TextEdit { text <=> ScreensNote.change; height: 60px; }
+                Text { text: @tr("ADR link (optional)"); color: Theme.muted; font-size: Theme.font-caption; }
+                LineEdit { text <=> ScreensNote.adr; placeholder-text: "docs/adr/0007-….md"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button { text: @tr("Cancel"); compact: true; clicked => { root.close(); } }
+                    Button { text: @tr("Save note"); compact: true; clicked => { root.save-note(); } }
+                }
+            }
             if data.mode == 2 && data.list-note != "": Para { text: data.list-note; muted: true; }
             if data.mode == 2 && data.rows.length == 0: Para { text: @tr("Nothing to list."); muted: true; }
             if data.mode == 2: VerticalLayout {
                 spacing: 2px;
-                for r in data.rows: VerticalLayout {
-                    padding-top: 4px;
-                    padding-bottom: 4px;
-                    Para { text: r.text; }
-                    LinkLine { text: r.location; mono: true; clicked => { root.open-file(r.file); } }
+                for r in data.rows: ListRow {
+                    r: r;
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    open-note(id, what) => { root.open-note(id, what); }
                 }
             }
             if data.mode == 1: VerticalLayout {
@@ -89,7 +322,13 @@ export component ScreensInspector inherits Rectangle {
                 VerticalLayout {
                     spacing: 1px;
                     Text { text: @tr("File"); color: Theme.muted; font-size: Theme.font-caption; }
-                    LinkLine { text: data.location; mono: true; clicked => { root.open-file(data.file); } }
+                    JumpLine {
+                        location: data.location;
+                        file: data.file;
+                        line: data.line;
+                        open-editor(f, l) => { root.open-editor(f, l); }
+                        show-line(f, l) => { root.show-line(f, l); }
+                    }
                 }
                 VerticalLayout {
                     spacing: 1px;
@@ -107,7 +346,9 @@ export component ScreensInspector inherits Rectangle {
                 if data.actions.length == 0: Para { text: @tr("No backend calls read on this screen."); muted: true; }
                 for a in data.actions: ActionBox {
                     item: a;
-                    open-file(f) => { root.open-file(f); }
+                    open-editor(f, l) => { root.open-editor(f, l); }
+                    show-line(f, l) => { root.show-line(f, l); }
+                    drill(i) => { root.drill(i); }
                 }
                 if data.untriggered.length > 0: LinkLine {
                     text: (root.show-untriggered ? "▾ " : "▸ ") + @tr("Calls without a readable trigger ({})", Fmt.int(data.untriggered.length));
@@ -116,7 +357,9 @@ export component ScreensInspector inherits Rectangle {
                 if root.show-untriggered: VerticalLayout {
                     for a in data.untriggered: ActionBox {
                         item: a;
-                        open-file(f) => { root.open-file(f); }
+                        open-editor(f, l) => { root.open-editor(f, l); }
+                        show-line(f, l) => { root.show-line(f, l); }
+                        drill(i) => { root.drill(i); }
                     }
                 }
             }

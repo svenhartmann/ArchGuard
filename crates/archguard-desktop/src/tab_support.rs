@@ -473,6 +473,44 @@ pub fn topology(slot: &Shared<Topology>, root: &Path) -> Topology {
     .clone()
 }
 
+/// Whether an action for document `doc` waiting for its `T` runs now
+/// (`Some(true)`), waits (`Some(false)`) or is dropped (`None`).
+fn ready<T: 'static>(doc: DocId) -> Option<bool> {
+    if documents::active_id() != Some(doc) {
+        return None;
+    }
+    Some(documents::with_state(doc, |_: &mut T| ()).is_some())
+}
+
+/// Run `f` once the active document has a `T` (a view's state is built
+/// when the view is first shown); dropped when the user switches to
+/// another document or closes it, and after a minute.
+pub fn when_ready<T: 'static>(ui: &AppWindow, f: impl FnOnce(&AppWindow) + 'static) {
+    if let Some(doc) = documents::active_id() {
+        poll::<T>(ui.as_weak(), doc, 0, f);
+    }
+}
+
+/// One check of [`when_ready`]; a single-shot timer per retry, so no
+/// timer outlives its wait.
+fn poll<T: 'static>(
+    w: slint::Weak<AppWindow>,
+    doc: DocId,
+    tries: u32,
+    f: impl FnOnce(&AppWindow) + 'static,
+) {
+    let Some(ui) = w.upgrade() else { return };
+    match ready::<T>(doc) {
+        Some(true) => f(&ui),
+        Some(false) if tries < 600 => {
+            slint::Timer::single_shot(std::time::Duration::from_millis(100), move || {
+                poll::<T>(w, doc, tries + 1, f)
+            });
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 #[path = "texts_check.rs"]
 mod texts_check;
@@ -481,6 +519,25 @@ mod texts_check;
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// An action waits only for the document it was started in: switching
+    /// to or closing that document drops it.
+    #[test]
+    fn a_waiting_action_belongs_to_its_document() {
+        documents::with_store(|s| *s = Default::default());
+        let a = documents::with_store(|s| s.open(Path::new("/a")).0);
+        let b = documents::with_store(|s| s.open(Path::new("/b")).0);
+        assert_eq!(ready::<u16>(b), Some(false), "b is active, no state yet");
+        documents::set_state(a, 1_u16);
+        assert_eq!(ready::<u16>(a), None, "a is not active");
+        documents::set_state(b, 2_u16);
+        assert_eq!(ready::<u16>(b), Some(true));
+        documents::with_store(|s| s.activate(0));
+        assert_eq!(ready::<u16>(b), None, "switched to a");
+        assert_eq!(ready::<u16>(a), Some(true));
+        documents::with_store(|s| s.close(0));
+        assert_eq!(ready::<u16>(a), None, "a is closed");
+    }
 
     fn two_documents() -> (DocId, DocId) {
         documents::with_store(|s| {

@@ -27,6 +27,9 @@ export struct FlowCard {
     group: int,
     selected: bool,
     border: string,
+    // A screen's file and line, for the jumps of the focused card.
+    path: string,
+    line: int,
 }
 
 export struct FlowArrow {
@@ -45,6 +48,8 @@ component ScreenCard inherits Rectangle {
     in property <FlowCard> card;
     in property <float> zoom;
     callback clicked();
+    callback open-editor(string, int);
+    callback show-line(string, int);
     property <color> tone: card.state == 0 ? Theme.accent : card.state == 1 ? Theme.outgoing
         : card.state == 2 ? Theme.priority : Theme.muted;
     property <bool> dashed: card.border != "";
@@ -133,6 +138,25 @@ component ScreenCard inherits Rectangle {
         mouse-cursor: card.screen >= 0 || card.group >= 0 ? pointer : default;
         activated => { root.clicked(); }
     }
+    // The focused screen's jumps, above the card's click area.
+    if big && card.path != "": HorizontalLayout {
+        x: parent.width - self.preferred-width - 12px * zoom;
+        y: parent.height - self.preferred-height - 8px * zoom;
+        width: self.preferred-width;
+        height: self.preferred-height;
+        spacing: 12px * zoom;
+        for j[k] in [@tr("Open in editor"), @tr("Show here")]: Text {
+            text: j;
+            color: t.has-hover ? Theme.accent.darker(0.2) : Theme.accent;
+            font-size: max(6px, 11px * zoom);
+            t := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    if (k == 0) { root.open-editor(card.path, card.line); } else { root.show-line(card.path, card.line); }
+                }
+            }
+        }
+    }
 }
 
 export component FlowCanvas inherits Rectangle {
@@ -145,6 +169,8 @@ export component FlowCanvas inherits Rectangle {
     callback select(int);
     callback open-group(int);
     callback toggle-band(int);
+    callback open-editor(string, int);
+    callback show-line(string, int);
     // The focus view: every column in view when the content changes, never
     // below 60 % (smaller text is unreadable); the rest scrolls.
     in property <bool> fit-width;
@@ -213,6 +239,8 @@ export component FlowCanvas inherits Rectangle {
             for c in root.cards: ScreenCard {
                 card: c;
                 zoom: root.zoom;
+                open-editor(f, l) => { root.open-editor(f, l); }
+                show-line(f, l) => { root.show-line(f, l); }
                 clicked => {
                     if (c.screen >= 0) {
                         root.select(c.screen);
