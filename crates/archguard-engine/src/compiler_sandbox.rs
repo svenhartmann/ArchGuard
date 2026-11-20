@@ -100,6 +100,7 @@ fn confined(program: &Path, project: &Path, scratch: &Path, read: &[PathBuf]) ->
         toolchain(program, project),
         [
             cargo_configs(project),
+            cargo_home_configs(program),
             read.iter().map(|p| real(p)).collect(),
         ]
         .concat(),
@@ -123,8 +124,12 @@ fn confined(program: &Path, project: &Path, scratch: &Path, read: &[PathBuf]) ->
         for name in ENVIRONMENT {
             command.arg("--env").arg(name);
         }
-        for dir in read {
-            command.arg("--read").arg(real(dir));
+        for dir in read
+            .iter()
+            .map(|p| real(p))
+            .chain(cargo_home_configs(program))
+        {
+            command.arg("--read").arg(dir);
         }
         command
             .arg("--read")
@@ -171,37 +176,65 @@ fn real(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Directories the toolchain of `program` lives in: rustup, cargo and the
-/// installation `program` comes from (`…/bin/node` → `…`). Never a directory
-/// that holds the project or lies in it: programs from the repository must not start.
+/// Directories the toolchain of `program` lives in: for rust-analyzer
+/// rustup's and cargo's programs and sources, and the installation
+/// `program` comes from (`…/bin/node` → `…`). Never a directory that holds
+/// the project or lies in it: programs from the repository must not start.
 fn toolchain(program: &Path, project: &Path) -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from);
     let project = real(project);
-    toolchain_for(program, home.as_deref())
+    toolchain_for(program, home().as_deref())
         .into_iter()
         .filter(|d| !project.starts_with(d) && !d.starts_with(&project))
         .collect()
 }
 
-fn toolchain_for(program: &Path, home: Option<&Path>) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = home
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Only rust-analyzer (also a release download such as
+/// `rust-analyzer-aarch64-apple-darwin`) needs the Rust toolchain.
+fn rust_tool(program: &Path) -> bool {
+    program
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with("rust-analyzer"))
+}
+
+/// `~/.cargo` and `CARGO_HOME`. Never granted whole: `credentials.toml`
+/// with the registry tokens lies there.
+fn cargo_homes(home: Option<&Path>) -> Vec<PathBuf> {
+    home.map(|h| h.join(".cargo"))
         .into_iter()
-        .flat_map(|h| [h.join(".rustup"), h.join(".cargo")])
-        .chain(std::env::var_os("RUSTUP_HOME").map(PathBuf::from))
         .chain(std::env::var_os("CARGO_HOME").map(PathBuf::from))
-        .collect();
+        .collect()
+}
+
+fn toolchain_for(program: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    let cargo = cargo_homes(home);
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if rust_tool(program) {
+        dirs.extend(home.map(|h| h.join(".rustup")));
+        dirs.extend(std::env::var_os("RUSTUP_HOME").map(PathBuf::from));
+        dirs.extend(
+            cargo
+                .iter()
+                .flat_map(|c| ["bin", "registry", "git"].map(|d| c.join(d))),
+        );
+    }
     // `/bin/cat` would give `/`: an installation sits at least two levels
     // deep (`/usr` is a system location anyway). `~/bin/node` would give
-    // the home directory with its keys: then only the program's directory.
+    // the home directory with its keys, `~/.cargo/bin/rust-analyzer` the
+    // cargo home with its tokens: then only the program's directory.
     let home = home.map(real);
     let covers_home = |dir: &Path| home.as_ref().is_some_and(|h| h.starts_with(real(dir)));
+    let cargo: Vec<PathBuf> = cargo.iter().map(|c| real(c)).collect();
     if let Some(parent) = program.parent()
         && let Some(install) = parent.parent()
         && install.components().count() > 2
     {
-        let dir = if covers_home(install) {
+        let dir = if covers_home(install) || cargo.contains(&real(install)) {
             parent
         } else {
             install
@@ -254,6 +287,20 @@ fn cargo_configs(project: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// For rust-analyzer the configuration in cargo's homes, which cargo also
+/// fails on when it exists but may not be read; nothing else there.
+fn cargo_home_configs(program: &Path) -> Vec<PathBuf> {
+    if !rust_tool(program) {
+        return Vec::new();
+    }
+    cargo_homes(home().as_deref())
+        .iter()
+        .flat_map(|c| [c.join("config"), c.join("config.toml")])
+        .filter(|file| file.is_file())
+        .map(|file| real(&file))
+        .collect()
+}
+
 #[cfg(not(any(target_os = "linux", windows)))]
 /// Deny everything, then allow: reading the system, the toolchain and the
 /// project; writing the scratch directory; starting system and toolchain
@@ -262,7 +309,8 @@ fn profile(program: &Path, project: &Path, scratch: &Path, read: &[PathBuf]) -> 
     let system: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
     let tools = [system.clone(), toolchain(program, project)].concat();
     let (project, scratch) = (real(project), real(scratch));
-    let configs: String = cargo_configs(&project)
+    let configs: String = [cargo_configs(&project), cargo_home_configs(program)]
+        .concat()
         .iter()
         .map(|file| format!(" (literal \"{}\")", quote(file)))
         .collect();
@@ -402,6 +450,60 @@ mod tests {
             );
         }
         assert!(toolchain_for(&bin.join("tool"), Some(home.path())).contains(&real(&bin)));
+    }
+
+    /// rust-analyzer gets cargo's programs and sources, never a cargo home
+    /// itself (credentials.toml); other programs get no Rust directory.
+    #[test]
+    fn only_rust_analyzer_gets_the_rust_toolchain_and_never_cargo_credentials() {
+        let home = tempfile::tempdir().unwrap();
+        let cargo = home.path().join(".cargo");
+        for dir in ["bin", "registry"] {
+            std::fs::create_dir_all(cargo.join(dir)).unwrap();
+        }
+        let credentials = real(&cargo).join("credentials.toml");
+        let ra = toolchain_for(&cargo.join("bin/rust-analyzer"), Some(home.path()));
+        assert!(ra.contains(&real(&cargo.join("bin"))), "{ra:?}");
+        assert!(ra.contains(&real(&cargo.join("registry"))), "{ra:?}");
+        assert!(!ra.iter().any(|d| credentials.starts_with(d)), "{ra:?}");
+        let node = toolchain_for(Path::new("/opt/node/bin/node"), Some(home.path()));
+        let home = real(home.path());
+        assert!(!node.iter().any(|d| d.starts_with(&home)), "{node:?}");
+    }
+
+    /// The same, confined: a stand-in rust-analyzer lists cargo's registry
+    /// but reads no file in the cargo home itself.
+    #[test]
+    fn confined_rust_analyzer_cannot_read_the_cargo_home() {
+        let cargo = PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cargo");
+        let private = std::fs::read_dir(&cargo).ok().and_then(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.is_file() && !p.ends_with("config.toml") && !p.ends_with("config"))
+        });
+        let (Some(private), true) = (private, cargo.join("registry").is_dir()) else {
+            eprintln!("no ~/.cargo with registry and a file: nothing to check");
+            return;
+        };
+        let d = dirs();
+        let bin = d.secret.path().join("ra/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let ra = bin.join("rust-analyzer");
+        std::fs::write(&ra, "#!/bin/sh\nexec \"$@\"\n").unwrap();
+        std::fs::set_permissions(&ra, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let run = |args: &[&Path]| {
+            command(ra.as_os_str(), d.project.path(), d.scratch.path())
+                .args(args)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        assert!(run(&[Path::new("/bin/ls"), &cargo.join("registry")]));
+        assert!(
+            !run(&[Path::new("/bin/cat"), &private]),
+            "{}",
+            private.display()
+        );
     }
 
     #[test]
