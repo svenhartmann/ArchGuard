@@ -252,17 +252,33 @@ pub fn evaluate_project(
     assessment: Option<&Path>,
 ) -> Result<Evaluation, ArchguardError> {
     let path = assessment_file(root, assessment);
-    let len = std::fs::metadata(&path)
-        .map_err(|e| ArchguardError::Config(format!("assessment {}: {e}", path.display())))?
-        .len();
-    if len > MAX_BYTES {
-        return Err(ArchguardError::Config(format!(
-            "assessment {} exceeds {MAX_BYTES} bytes",
-            path.display()
-        )));
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| ArchguardError::Config(format!("assessment {}: {e}", path.display())))?;
+    let text = match assessment {
+        // The default lives in the repository: read it without following a
+        // symlink, so a parse error never quotes a file outside the root.
+        None => crate::project_files::read_repo_file(
+            root,
+            Path::new(DEFAULT_ASSESSMENT_PATH),
+            MAX_BYTES,
+        )
+        .and_then(|bytes| {
+            String::from_utf8(bytes).map_err(|_| std::io::ErrorKind::InvalidData.into())
+        })
+        .map_err(|e| ArchguardError::Config(format!("assessment {}: {e}", path.display())))?,
+        Some(_) => {
+            let len = std::fs::metadata(&path)
+                .map_err(|e| ArchguardError::Config(format!("assessment {}: {e}", path.display())))?
+                .len();
+            if len > MAX_BYTES {
+                return Err(ArchguardError::Config(format!(
+                    "assessment {} exceeds {MAX_BYTES} bytes",
+                    path.display()
+                )));
+            }
+            std::fs::read_to_string(&path).map_err(|e| {
+                ArchguardError::Config(format!("assessment {}: {e}", path.display()))
+            })?
+        }
+    };
     let parsed = parse_assessment(&text)
         .map_err(|e| ArchguardError::Config(format!("{}: {e}", path.display())))?;
     let findings = analyzed_findings(root, config_path)?;
@@ -507,5 +523,19 @@ mod tests {
         let e = evaluate(&parsed, "t", &findings(), Some("abcdef")).unwrap();
         assert_eq!(e.unjudged.len(), 3);
         assert_eq!(e.precision.value, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_default_assessment_is_not_read_or_quoted() {
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret");
+        std::fs::write(&secret, "TOPSECRET_TOKEN = = abc\n").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".archguard")).unwrap();
+        std::os::unix::fs::symlink(&secret, root.path().join(DEFAULT_ASSESSMENT_PATH)).unwrap();
+        let err = evaluate_project(root.path(), None, None).unwrap_err();
+        assert!(matches!(err, ArchguardError::Config(_)), "{err}");
+        assert!(!err.to_string().contains("TOPSECRET"), "{err}");
     }
 }
