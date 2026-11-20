@@ -311,7 +311,10 @@ impl ArchguardTools {
             archguard_engine::check_gate_findings(&run.root, &run.loaded.config, &run.report);
         run.report.findings.extend(gates);
         archguard_engine::apply_convention_baseline(&mut run.report.findings, baseline.as_ref());
-        Ok(tools::guarded(&tools::check_value(&run.report, baseline.as_ref())).to_string())
+        let notes = archguard_engine::view_notes(&run.root, &run.loaded.config)
+            .map_err(tools::invalid_params)?;
+        let answer = tools::check_value(&run.report, baseline.as_ref(), &notes);
+        Ok(tools::guarded(&answer).to_string())
     }
 
     /// Module metrics rows (Kap. 10.2 `metrics`).

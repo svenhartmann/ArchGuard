@@ -6,7 +6,10 @@ use archguard_engine::core::{Finding, FindingKind, Report, Severity};
 /// The baseline reader `baseline diff` shares with the gate.
 pub(crate) use archguard_engine::read_baseline;
 use archguard_engine::report::{to_json, to_text};
-use archguard_engine::{LoadedConfig, check_gate_findings, compare_to_ref, gate_fails, read_trend};
+use archguard_engine::{
+    LoadedConfig, ViewNotes, accepted_by_note, check_gate_findings, compare_to_ref, gate_fails,
+    note_value, note_word, noted_gaps, noted_gaps_value, read_trend,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -73,22 +76,36 @@ pub(crate) fn run(
     checked
         .findings
         .extend(check_gate_findings(root, &loaded.config, report));
-    let paths = if cli.format == crate::args::Format::Sarif {
-        match archguard_engine::source_reference_paths(root, &loaded.config) {
-            Ok(paths) => paths,
-            Err(error) => return analysis_error(error),
-        }
-    } else {
-        Default::default()
+    let (paths, notes) = match output_inputs(cli, root, loaded) {
+        Ok(inputs) => inputs,
+        Err(error) => return analysis_error(error),
     };
     let baseline = baseline.map(|file| baseline_path(root, loaded, file));
+    let comparison = comparison.as_ref();
     check(
         cli,
         baseline.as_deref(),
         &checked,
-        comparison.as_ref(),
+        comparison,
         &paths,
+        &notes,
     )
+}
+
+/// What the output needs besides the report: the source paths SARIF links
+/// to, and the notes for agents on view findings.
+fn output_inputs(
+    cli: &Cli,
+    root: &Path,
+    loaded: &LoadedConfig,
+) -> Result<(BTreeMap<String, String>, ViewNotes), String> {
+    let paths = if cli.format == Format::Sarif {
+        archguard_engine::source_reference_paths(root, &loaded.config)
+            .map_err(|error| error.to_string())?
+    } else {
+        Default::default()
+    };
+    Ok((paths, archguard_engine::view_notes(root, &loaded.config)?))
 }
 
 /// The baseline file: `file` as given (relative to the working directory),
@@ -124,7 +141,9 @@ fn precondition_error(
 /// the baseline are accepted and no longer fail the gate, and so are
 /// convention findings by id ([`archguard_engine::apply_convention_baseline`]); every other
 /// Error finding (declared layer violations, metric thresholds) fails
-/// regardless. The full report is still printed either way; a missing
+/// regardless. A convention finding with an intentional note
+/// ([`accepted_by_note`]) is accepted too; every note shows under its
+/// finding. The full report is still printed either way; a missing
 /// or unparsable baseline file is an IO error (exit 3).
 pub(crate) fn check(
     cli: &Cli,
@@ -132,6 +151,7 @@ pub(crate) fn check(
     report: &Report,
     comparison: Option<&archguard_engine::Comparison>,
     source_paths: &BTreeMap<String, String>,
+    notes: &ViewNotes,
 ) -> i32 {
     if !matches!(cli.format, Format::Text | Format::Json | Format::Sarif) {
         return usage(format!(
@@ -148,7 +168,7 @@ pub(crate) fn check(
     };
     let mut report = report.clone();
     archguard_engine::apply_convention_baseline(&mut report.findings, baseline.as_ref());
-    let fails = gate_fails(&report.findings, baseline.as_ref());
+    let fails = gate_fails(&report.findings, baseline.as_ref(), notes);
     report.summary.status = if fails {
         archguard_engine::core::Status::Fail
     } else {
@@ -156,21 +176,71 @@ pub(crate) fn check(
     };
     if !cli.quiet {
         match cli.format {
-            Format::Json => {
-                let json = to_json(&report, true);
-                if let Some(comparison) = comparison {
-                    // Preserve the canonical report's f32 number representation.
-                    let mut value: Value = serde_json::from_str(&json).expect("valid report JSON");
-                    value["comparison"] =
-                        serde_json::to_value(comparison).expect("comparison serializes");
-                    emit(&serde_json::to_string_pretty(&value).unwrap());
-                } else {
-                    emit(&json);
-                }
-            }
-            Format::Sarif => emit(&to_sarif(&report, source_paths, baseline.as_ref())),
-            _ => emit(&to_text(&report)),
+            Format::Json => emit(&json(&report, comparison, notes)),
+            Format::Sarif => emit(&to_sarif(&report, source_paths, baseline.as_ref(), notes)),
+            _ => emit(&text(to_text(&report), &report, notes)),
         }
     }
     if fails { EXIT_FOUND } else { EXIT_OK }
+}
+
+/// The report JSON, plus the comparison and, per noted finding, `note` and
+/// `accepted_by_note`, and the `noted_gaps` when there are notes.
+fn json(
+    report: &Report,
+    comparison: Option<&archguard_engine::Comparison>,
+    notes: &ViewNotes,
+) -> String {
+    let json = to_json(report, true);
+    if comparison.is_none() && notes.is_empty() {
+        return json;
+    }
+    // Preserve the canonical report's f32 number representation.
+    let mut value: Value = serde_json::from_str(&json).expect("valid report JSON");
+    if let Some(comparison) = comparison {
+        value["comparison"] = serde_json::to_value(comparison).expect("comparison serializes");
+    }
+    if !notes.is_empty() {
+        let rows = value["findings"].as_array_mut().expect("findings array");
+        for (finding, row) in report.findings.iter().zip(rows) {
+            if let Some(d) = notes.get(&finding.id) {
+                row["note"] = note_value(d);
+                row["accepted_by_note"] = Value::Bool(accepted_by_note(notes, finding));
+            }
+        }
+        value["noted_gaps"] = noted_gaps_value(notes);
+    }
+    serde_json::to_string_pretty(&value).unwrap()
+}
+
+/// `text` with each note under its finding's block (a block starts with
+/// `[id] ` and ends at the next blank line) and a "Noted gaps" block.
+fn text(mut text: String, report: &Report, notes: &ViewNotes) -> String {
+    let line = |d: &archguard_engine::core::ReviewDecision| {
+        let note = d.note.replace('\n', "\n    ");
+        format!("note ({}, by {}): {note}", note_word(d), d.author)
+    };
+    for finding in &report.findings {
+        let Some(d) = notes.get(&finding.id) else {
+            continue;
+        };
+        let Some(start) = text.find(&format!("\n[{}] ", finding.id)) else {
+            continue;
+        };
+        let end = text[start + 1..]
+            .find("\n\n")
+            .map_or(text.len(), |e| start + e + 2);
+        let mut lines = format!("  {}\n", line(d));
+        if accepted_by_note(notes, finding) {
+            lines.push_str("  accepted: intentional note; does not fail check\n");
+        }
+        text.insert_str(end, &lines);
+    }
+    let gaps: Vec<String> = noted_gaps(notes)
+        .map(|d| format!("  [{}] {}\n", d.finding_ref, line(d)))
+        .collect();
+    if !gaps.is_empty() {
+        text.push_str(&format!("\nNoted gaps:\n{}", gaps.concat()));
+    }
+    text
 }

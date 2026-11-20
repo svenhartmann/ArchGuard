@@ -60,8 +60,8 @@
 use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, MessageHandler,
-    Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
+    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
+    MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -524,7 +524,8 @@ impl Extractor {
             }
         }
         self.model.state_machines = machines;
-        self.model.events = domain_events(&self.decls, raised);
+        (self.model.events, self.model.event_handler_sites) =
+            domain_events(&self.decls, &self.files, raised);
         self.pending.extend(pending);
     }
 
@@ -762,22 +763,34 @@ fn qualify(ents: &mut [Ent]) -> Pending {
     out
 }
 
-fn domain_events(decls: &[Decl], raised: BTreeMap<String, BTreeSet<String>>) -> Vec<DomainEvent> {
+/// The events, and where each handler class is declared (sorted).
+fn domain_events(
+    decls: &[Decl],
+    files: &[Src],
+    raised: BTreeMap<String, BTreeSet<String>>,
+) -> (Vec<DomainEvent>, Vec<EventHandlerSite>) {
     let mut handled: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut sites = vec![];
     for d in decls {
         for arg in d
             .bases
             .iter()
             .filter_map(|b| generic_args(b, EVENT_HANDLER))
         {
-            handled
-                .entry(simple(&arg[0]))
-                .or_default()
-                .insert(d.name.clone());
+            let event = simple(&arg[0]);
+            let src = &files[d.file];
+            sites.push(EventHandlerSite {
+                event: event.clone(),
+                handler: d.name.clone(),
+                file: src.rel.clone(),
+                line: line(&src.text, d.pos),
+            });
+            handled.entry(event).or_default().insert(d.name.clone());
         }
     }
+    sites.sort();
     let types: BTreeSet<&String> = raised.keys().chain(handled.keys()).collect();
-    types
+    let events = types
         .into_iter()
         .map(|t| DomainEvent {
             type_name: t.clone(),
@@ -789,7 +802,8 @@ fn domain_events(decls: &[Decl], raised: BTreeMap<String, BTreeSet<String>>) -> 
                 .map_or(vec![], |x| x.iter().cloned().collect()),
             source: SOURCE.into(),
         })
-        .collect()
+        .collect();
+    (events, sites)
 }
 
 fn use_case_kind(name: &str) -> UseCaseKind {
@@ -3141,6 +3155,13 @@ public class Order
                     s(&["OrderSubmittedHandler"])
                 ),
             ]
+        );
+        let sites: Vec<_> = (model.event_handler_sites("OrderSubmitted"))
+            .map(|x| (x.handler.as_str(), x.file.as_str(), x.line))
+            .collect();
+        assert_eq!(
+            sites,
+            [("OrderSubmittedHandler", "App/OrderSubmittedHandler.cs", 2)]
         );
     }
 
