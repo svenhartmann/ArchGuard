@@ -74,6 +74,8 @@ pub fn build(s: &ScreensState, texts: &Texts) -> ScreensModel {
             },
         })),
         inspector: inspector::build(s, flow, texts),
+        details_open: s.details_open,
+        code: super::code::view(&s.root, &s.code),
         ..Default::default()
     };
     let reaches = screen_reaches(&s.sim, &s.assignment());

@@ -47,13 +47,6 @@ export struct DrillStep {
     calls: string,
 }
 
-// A source line of the code panel; `hit` is the line asked for.
-export struct CodeLine {
-    number: int,
-    text: string,
-    hit: bool,
-}
-
 // The note form's fields; set when the form opens, read on Save.
 export global ScreensNote {
     // 0 fix, 1 intentional, 2 later.
@@ -64,7 +57,7 @@ export global ScreensNote {
 }
 
 export struct FlowInspector {
-    // 0 hidden, 1 screen, 2 list, 3 drill-down, 4 note form, 5 code.
+    // 0 hidden, 1 screen, 2 list, 3 drill-down, 4 note form.
     mode: int,
     title: string,
     route: string,
@@ -84,9 +77,6 @@ export struct FlowInspector {
     meaning: string,
     meaning-from: string,
     steps: [DrillStep],
-    // The code panel: the source around `line` of `file`.
-    code: [CodeLine],
-    code-hit: int,
     // The note form's item.
     note-id: string,
     note-subject: string,
@@ -94,7 +84,7 @@ export struct FlowInspector {
     problem: string,
 }
 
-component SmallLink inherits Text {
+export component SmallLink inherits Text {
     callback clicked();
     color: touch.has-hover ? Theme.accent.darker(0.2) : Theme.accent;
     font-size: Theme.font-caption;
@@ -118,42 +108,8 @@ export component JumpLine inherits VerticalLayout {
     }
 }
 
-// The source around a line, read-only, numbered, the line marked and
-// scrolled into the middle.
-component CodePanel inherits Rectangle {
-    in property <[CodeLine]> lines;
-    property <length> row-h: 17px;
-    // Index of the marked line in `lines`.
-    in property <int> hit;
-    border-radius: Theme.radius-sm;
-    border-width: 1px;
-    border-color: Theme.border;
-    background: Theme.bg;
-    sv := ScrollView {
-        init => {
-            self.content-y = -max(0px, root.hit * root.row-h + 4px - self.visible-height / 2 + root.row-h / 2);
-        }
-        VerticalLayout {
-            padding-top: 4px;
-            padding-bottom: 4px;
-            for l[i] in root.lines: Rectangle {
-                height: root.row-h;
-                background: l.hit ? Theme.accent.with-alpha(0.2) : transparent;
-                if l.hit: Rectangle { x: 0; width: 3px; background: Theme.accent; }
-                HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 8px;
-                    Text { text: l.number; width: 36px; horizontal-alignment: right; vertical-alignment: center; color: l.hit ? Theme.accent : Theme.muted; font-family: Theme.mono-family; font-size: Theme.font-caption; }
-                    Text { text: l.text; vertical-alignment: center; color: Theme.text; font-family: Theme.mono-family; font-size: Theme.font-caption; font-weight: l.hit ? Theme.weight-strong : Theme.weight-regular; overflow: elide; horizontal-stretch: 1; }
-                }
-            }
-        }
-    }
-}
-
 // A list row: text, note badge, where, and "Note for agent…".
-component ListRow inherits VerticalLayout {
+export component ListRow inherits VerticalLayout {
     in property <FlowRow> r;
     callback open-editor(string, int);
     callback show-line(string, int);
@@ -180,7 +136,7 @@ component ListRow inherits VerticalLayout {
     }
 }
 
-component DrillLine inherits HorizontalLayout {
+export component DrillLine inherits HorizontalLayout {
     in property <DrillStep> step;
     callback open-editor(string, int);
     callback show-line(string, int);
@@ -253,19 +209,6 @@ export component ScreensInspector inherits Rectangle {
             alignment: start;
             PanelTitle { text: data.title; close => { root.close(); } }
             if data.problem != "": Para { text: data.problem; color: Theme.danger; }
-            if data.mode == 5: VerticalLayout {
-                spacing: 6px;
-                vertical-stretch: 1;
-                Text { text: data.location; color: Theme.muted; font-size: Theme.font-caption; font-family: Theme.mono-family; wrap: word-wrap; }
-                HorizontalLayout {
-                    spacing: 12px;
-                    alignment: start;
-                    SmallLink { text: @tr("‹ Back"); clicked => { root.close(); } }
-                    SmallLink { text: @tr("Open in editor"); clicked => { root.open-editor(data.file, data.line); } }
-                }
-                if data.code.length == 0: Para { text: @tr("The file could not be read."); color: Theme.danger; }
-                if data.code.length > 0: CodePanel { lines: data.code; hit: data.code-hit; height: min(data.code.length * 17px + 10px, 640px); }
-            }
             if data.mode == 3: VerticalLayout {
                 spacing: 2px;
                 Para { text: data.list-note; muted: true; }

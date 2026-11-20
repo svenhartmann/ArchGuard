@@ -1,0 +1,151 @@
+// The Domain tab's data and callbacks (ADR 0022), set from
+// src/domain_ui.rs.
+import { DomCard, DomArrow, DomBand, DomState, DomStateArrow } from "domain_canvas.slint";
+import { FlowInspector, FlowRow, DrillStep } from "screens_inspector.slint";
+import { FlowCard, FlowArrow, FlowBand } from "screens_canvas.slint";
+import { CodeView } from "code_overlay.slint";
+
+export struct DomField {
+    name: string,
+    type: string,
+}
+
+export struct DomTransition {
+    number: string,
+    to: string,
+    from-to: string,
+    method: string,
+    guard: string,
+    events: string,
+    location: string,
+    file: string,
+    line: int,
+}
+
+// A tree row: a group (`key`, open or closed) or an item that focuses
+// `kind` (0 entity, 1 integration event, 2 domain event, 3 use case)
+// `index`. Marks: state machine, number of rules, noted for the agent.
+export struct DomTreeRow {
+    depth: int,
+    label: string,
+    note: string,
+    key: string,
+    group: bool,
+    open: bool,
+    count: int,
+    kind: int,
+    index: int,
+    machine: bool,
+    rules: int,
+    noted: bool,
+    selected: bool,
+}
+
+// A line that moves the focus to `kind` `index` (as DomTreeRow).
+export struct DomLink {
+    text: string,
+    note: string,
+    kind: int,
+    index: int,
+}
+
+export struct DomRuleGroup {
+    method: string,
+    rules: [FlowRow],
+}
+
+// A chain with its steps (nested chains indented) and what it means for
+// the simulated user: tone 0 allowed, 1 denied, 2 unknown, -1 no user path.
+export struct DomChain {
+    verdict: string,
+    tone: int,
+    steps: [DrillStep],
+}
+
+export struct DomainViewModel {
+    // 0 loading, 1 ready, 2 the model could not be read.
+    state: int,
+    error: string,
+    entities: int,
+    machines: int,
+    rule-count: int,
+    validation-count: int,
+    event-count: int,
+    complete: bool,
+    // "All services", then each service.
+    services: [string],
+    service-index: int,
+    // 0 anonymous, 1 signed in, 2 + index of the roles ("Role …" first).
+    role: int,
+    role-names: [string],
+    tree: [DomTreeRow],
+    details-open: bool,
+    // The centre shows the whole model instead of the focus.
+    whole: bool,
+    cards: [DomCard],
+    arrows: [DomArrow],
+    bands: [DomBand],
+    width: float,
+    height: float,
+    // -1 nothing, 0 entity, 1 integration event, 2 domain event, 3 use case.
+    focus: int,
+    // The focused entity (index into the model's entities), or -1.
+    selected: int,
+    title: string,
+    kind: int,
+    service: string,
+    location: string,
+    file: string,
+    line: int,
+    fields: [DomField],
+    relations: [DomLink],
+    reactions: [DomLink],
+    entity-rules: int,
+    rule-groups: [DomRuleGroup],
+    validations: [FlowRow],
+    machine-title: string,
+    states: [DomState],
+    state-arrows: [DomStateArrow],
+    state-w: float,
+    state-h: float,
+    rows: [DomTransition],
+    // The state picked in the diagram or table, its chains, the entity's chains.
+    chosen-state: string,
+    triggers: [DomChain],
+    chains: [DomChain],
+    // Why there are no chains: the UI flow could not be read.
+    flow-note: string,
+    // An event: its note row and its lanes.
+    note: FlowRow,
+    flow-cards: [FlowCard],
+    flow-arrows: [FlowArrow],
+    flow-bands: [FlowBand],
+    flow-w: float,
+    flow-h: float,
+    // A use case: what it handles and calls.
+    items: [FlowRow],
+    // The note form (mode 4) or hidden.
+    inspector: FlowInspector,
+    problem: string,
+    code: CodeView,
+}
+
+export global DomainData {
+    in-out property <DomainViewModel> model;
+    // Focus kind and index, as DomTreeRow.
+    callback select(int, int);
+    callback toggle-group(string);
+    callback select-service(int);
+    callback select-role(int);
+    // A state of the shown state machine, by name.
+    callback select-state(string);
+    callback set-whole(bool);
+    callback set-details-open(bool);
+    callback close-details();
+    callback open-editor(string, int);
+    callback show-line(string, int);
+    callback close-code();
+    callback code-back();
+    callback open-note(string, string);
+    callback save-note();
+}

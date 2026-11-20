@@ -9,7 +9,7 @@ use archguard_engine::core::{
 };
 
 use super::state::{List, ScreensState};
-use super::{code, drill, notes, words};
+use super::{drill, notes, words};
 use crate::tab_support::{Texts, model};
 use crate::ui::{FlowAction, FlowInspector, FlowRow};
 
@@ -38,6 +38,17 @@ fn noted(s: &ScreensState, mut r: FlowRow, id: &str, texts: &Texts) -> FlowRow {
     r
 }
 
+/// The note form for item `id` (Screens and Domain views).
+pub fn note_form(id: &str, subject: &str, texts: &Texts) -> FlowInspector {
+    FlowInspector {
+        mode: 4,
+        title: texts.t("Note for the coding agent").into(),
+        note_id: id.into(),
+        note_subject: subject.into(),
+        ..Default::default()
+    }
+}
+
 pub fn build(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     let mut i = panel(s, flow, texts);
     i.problem = s.problem.as_str().into();
@@ -48,31 +59,12 @@ fn panel(s: &ScreensState, flow: &UiFlow, texts: &Texts) -> FlowInspector {
     if s.hide_details {
         return FlowInspector::default();
     }
-    if let Some((file, line)) = &s.code {
-        let (lines, hit) = code::read(&s.root, file, *line).unwrap_or_default();
-        return FlowInspector {
-            mode: 5,
-            title: file.rsplit('/').next().unwrap_or(file).into(),
-            location: at(file, *line).into(),
-            file: file.as_str().into(),
-            line: *line as i32,
-            code: model(lines),
-            code_hit: hit as i32,
-            ..Default::default()
-        };
-    }
     if let Some((id, subject)) = &s.note_for {
-        return FlowInspector {
-            mode: 4,
-            title: texts.t("Note for the coding agent").into(),
-            note_id: id.as_str().into(),
-            note_subject: subject.as_str().into(),
-            ..Default::default()
-        };
+        return note_form(id, subject, texts);
     }
     if let Some(a) = s.drill {
         let who = s.assignment();
-        let steps = drill::steps(&s.sim, s.domain.as_ref(), &s.root, a, &who, texts);
+        let steps = drill::steps(&s.sim, s.domain.as_ref(), a, &who, texts);
         let title = (s.sim.actions.get(a)).map_or(String::new(), |x| match &x.trigger {
             Some(t) => format!("{t} · {}", words::call(x)),
             None => words::call(x),
@@ -549,20 +541,21 @@ mod tests {
             .rows
             .row_data(0)
             .unwrap();
-        assert_eq!((r.id.as_str(), r.badge.as_str()), (id, "intentional"));
+        assert_eq!(
+            (r.id.as_str(), r.badge.as_str()),
+            (id, "accepted (intentional)")
+        );
         assert_eq!(r.note, "checked in code");
         s.open_drill(0);
         let i = build(&s, &flow, &Texts::default());
         assert_eq!((i.mode, i.title.as_str()), (3, "Load · GET /api/orders"));
         assert_eq!(i.steps.row_data(1).unwrap().kind, "Endpoint");
         s.show_code("Orders.razor", 2);
-        let i = build(&s, &flow, &Texts::default());
-        assert_eq!((i.mode, i.code_hit, i.code.row_count()), (5, 1, 3));
-        s.close_details();
+        assert!(s.code.current().is_some());
         assert_eq!(
             build(&s, &flow, &Texts::default()).mode,
             3,
-            "back to the drill-down"
+            "the code shows over the view; the drill-down stays"
         );
         s.close_details();
         assert_eq!(

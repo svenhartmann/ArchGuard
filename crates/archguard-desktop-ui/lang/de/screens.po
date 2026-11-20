@@ -513,8 +513,11 @@ msgstr "Policy {{name}} unbekannt"
 msgid "noted: fix"
 msgstr "notiert: beheben"
 
-msgid "intentional"
-msgstr "beabsichtigt"
+msgid "accepted (intentional)"
+msgstr "akzeptiert (beabsichtigt)"
+
+msgid "Event handler"
+msgstr "Ereignis-Handler"
 
 msgid "noted: later"
 msgstr "notiert: später"

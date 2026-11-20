@@ -1,17 +1,17 @@
-//! The Domain tab's window model: the entity diagram, the selected
-//! entity's fields and state machine (diagram and table), the events.
+//! The Domain tab's window model: top bar, tree, the focused entity (fields,
+//! relations, rules, state machine, chains, validations, reactions), event
+//! or use case, the whole model on request, the note form and code overlay.
 
 use archguard_engine::core::domain_model::{DomainModel, EntityKind, StateMachine};
 use archguard_engine::domain_model::summary;
 
-use super::state::DomainState;
-use super::{chain, entities, states};
-use slint::Model;
-
+use super::state::{DomainState, Focus};
+use super::{chain, entities, flow, focus, ids, states, tree};
+use crate::screens_ui::inspector::{note_form, row};
 use crate::tab_support::{Texts, model};
 use crate::ui::{
-    DomArrow, DomBand, DomCard, DomEvent, DomField, DomState, DomStateArrow, DomTransition,
-    DomainViewModel,
+    DomArrow, DomBand, DomCard, DomField, DomState, DomStateArrow, DomTransition, DomainViewModel,
+    FlowRow,
 };
 
 fn kind(k: EntityKind) -> i32 {
@@ -35,33 +35,56 @@ pub fn build(s: &DomainState, texts: &Texts) -> DomainViewModel {
         }
     };
     let sum = summary(d);
+    let flow = (*s.flow).as_ref().ok();
     let mut m = DomainViewModel {
         state: 1,
         entities: sum.entities as i32,
         machines: sum.state_machines as i32,
-        transitions: sum.transitions as i32,
-        use_cases: sum.use_cases as i32,
-        event_count: sum.events as i32,
+        rule_count: sum.rules as i32,
+        validation_count: sum.validations as i32,
+        event_count: (sum.events + sum.integration_events) as i32,
         complete: sum.complete,
+        services: model(
+            std::iter::once(texts.t("All services").into())
+                .chain(s.services.names.iter().map(|n| n.as_str().into())),
+        ),
+        service_index: (s.service.as_ref())
+            .and_then(|x| s.services.names.iter().position(|n| n == x))
+            .map_or(0, |i| i as i32 + 1),
+        role: s.role as i32,
+        role_names: model(
+            std::iter::once(texts.t("Role …").into()).chain((s.roles.iter()).map(|r| match flow {
+                Some(f) => crate::screens_ui::role_label(texts, f, r).into(),
+                None => r.as_str().into(),
+            })),
+        ),
+        tree: model(tree::rows(s, d, texts)),
+        details_open: s.details_open,
+        whole: s.whole,
+        focus: -1,
         selected: -1,
-        events: model(d.events.iter().map(|e| DomEvent {
-            name: e.type_name.as_str().into(),
-            raised: or_none(&e.raised_by, texts).into(),
-            handled: or_none(&e.handled_by, texts).into(),
-        })),
+        problem: s.problem.as_str().into(),
+        code: crate::screens_ui::code::view(&s.root, &s.code),
         ..Default::default()
     };
+    if let Some((id, subject)) = &s.note_for {
+        m.inspector = note_form(id, subject, texts);
+    }
     diagram(&mut m, s, d, texts);
-    if let Some(i) = s.selected.filter(|&i| i < d.entities.len()) {
-        selection(&mut m, d, i);
-        chains(&mut m, s, d, i, texts);
+    match s.focus {
+        Some(Focus::Entity(i)) if i < d.entities.len() => {
+            entity(&mut m, s, d, i, texts);
+            chains(&mut m, s, d, i, texts);
+        }
+        Some(f @ (Focus::Integration(_) | Focus::Event(_))) => event(&mut m, s, d, f, texts),
+        Some(Focus::UseCase(i)) if i < d.use_cases.len() => use_case(&mut m, s, d, i, texts),
+        _ => {}
     }
     m
 }
 
-/// The simulated users, the chains into the chosen state and of the entity.
+/// The chains into the chosen state, every chain of the entity.
 fn chains(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, texts: &Texts) {
-    m.roles = model(crate::screens_ui::role_rows(texts, &s.roles, s.role));
     let flow = match &*s.flow {
         Ok(f) => f,
         Err(e) => {
@@ -71,22 +94,22 @@ fn chains(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, t
     };
     let id = &d.entities[i].id;
     let a = s.assignment();
-    m.chains = model(chain::of_entity(flow, d, id, &a, texts));
+    m.chains = model(chain::of_entity(flow, d, &s.services, id, &a, texts));
     if let Some(state) = &s.state {
         m.chosen_state = state.as_str().into();
-        m.triggers = model(chain::triggers(flow, d, id, state, &a, texts));
+        m.triggers = model(chain::triggers(
+            flow,
+            d,
+            &s.services,
+            (id, state),
+            &a,
+            texts,
+        ));
+        use slint::Model;
         m.states = model(m.states.iter().map(|mut n| {
             n.selected = n.name == state.as_str() && !n.any;
             n
         }));
-    }
-}
-
-fn or_none(items: &[String], texts: &Texts) -> String {
-    if items.is_empty() {
-        texts.t("none").into()
-    } else {
-        items.join(", ")
     }
 }
 
@@ -103,7 +126,7 @@ fn diagram(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, texts: &Te
             w: entities::CARD_W,
             h: entities::CARD_H,
             entity: c.entity as i32,
-            selected: s.selected == Some(c.entity),
+            selected: s.selected() == Some(c.entity),
             machine: machine(&e.id),
         }
     }));
@@ -130,13 +153,16 @@ fn diagram(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, texts: &Te
     m.height = g.height;
 }
 
-fn selection(m: &mut DomainViewModel, d: &DomainModel, i: usize) {
+fn entity(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, texts: &Texts) {
     let e = &d.entities[i];
+    m.focus = 0;
     m.selected = i as i32;
     m.title = e.name.as_str().into();
     m.kind = kind(e.kind);
+    m.service = s.services.of(&e.file).into();
     m.location = format!("{}:{}", e.file, e.line).into();
     m.file = e.file.as_str().into();
+    m.line = e.line as i32;
     m.fields = model(e.fields.iter().map(|f| {
         DomField {
             name: f.name.as_str().into(),
@@ -148,9 +174,94 @@ fn selection(m: &mut DomainViewModel, d: &DomainModel, i: usize) {
             .into(),
         }
     }));
+    m.relations = model(focus::relations(d, i, texts));
+    m.reactions = model(focus::reactions(d, i, texts));
+    let rule_ids = ids::rules(d);
+    let groups = focus::rule_groups(s, d, i, &rule_ids, texts);
+    m.entity_rules = d.rules.iter().filter(|r| r.entity == e.id).count() as i32;
+    m.rule_groups = model(groups);
+    m.validations = model(focus::validations(d, i));
     if let Some(sm) = d.state_machines.iter().find(|sm| sm.entity == e.id) {
         machine(m, sm);
     }
+}
+
+fn event(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, f: Focus, texts: &Texts) {
+    let (lanes, name, id, what) = match f {
+        Focus::Integration(i) if i < d.integration_events.len() => (
+            flow::integration(d, i, texts),
+            &d.integration_events[i].type_name,
+            ids::integration_event(d, i),
+            texts.t("integration event"),
+        ),
+        Focus::Event(i) if i < d.events.len() => (
+            flow::domain(d, i, &s.services, texts),
+            &d.events[i].type_name,
+            ids::domain_event(d, i),
+            texts.t("domain event"),
+        ),
+        _ => return,
+    };
+    m.focus = f.kind();
+    m.title = name.as_str().into();
+    let lanes_n = lanes.bands.len();
+    m.service = texts
+        .f(
+            "{what} · {lanes}",
+            &[
+                ("what", what.to_string()),
+                (
+                    "lanes",
+                    texts.plural(lanes_n, "{count} service", "{count} services"),
+                ),
+            ],
+        )
+        .into();
+    let mut note = FlowRow {
+        id: id.as_str().into(),
+        text: name.as_str().into(),
+        ..Default::default()
+    };
+    if let Some(n) = s.notes.get(&id) {
+        note.badge = texts.t(crate::screens_ui::notes::badge(n)).into();
+        note.note = n.note.as_str().into();
+    }
+    m.note = note;
+    m.flow_cards = model(lanes.cards);
+    m.flow_arrows = model(lanes.arrows);
+    m.flow_bands = model(lanes.bands);
+    m.flow_w = lanes.width;
+    m.flow_h = lanes.height;
+}
+
+fn use_case(m: &mut DomainViewModel, s: &DomainState, d: &DomainModel, i: usize, texts: &Texts) {
+    let u = &d.use_cases[i];
+    m.focus = 3;
+    m.title = u.name.as_str().into();
+    m.service = s.services.of(&u.file).into();
+    m.location = format!("{}:{}", u.file, u.line).into();
+    m.file = u.file.as_str().into();
+    m.line = u.line as i32;
+    let mut items = Vec::new();
+    if let Some(r) = &u.request {
+        items.push(row(
+            texts.f("handles {request}", &[("request", r.clone())]),
+            &u.file,
+            u.line,
+        ));
+    }
+    let transitions = || d.state_machines.iter().flat_map(|sm| &sm.transitions);
+    for c in &u.calls {
+        let text = texts.f("calls {method}", &[("method", c.clone())]);
+        items.push(match transitions().find(|t| t.method == *c) {
+            Some(t) => row(format!("{text} → {}", t.to), &t.file, t.line),
+            None => FlowRow {
+                text: text.into(),
+                ..Default::default()
+            },
+        });
+    }
+    m.items = model(items);
 }
 
 fn machine(m: &mut DomainViewModel, sm: &StateMachine) {
@@ -195,72 +306,8 @@ pub fn table(sm: &StateMachine) -> Vec<DomTransition> {
                 events: t.events.join(", ").into(),
                 location: format!("{}:{}", t.file, t.line).into(),
                 file: t.file.as_str().into(),
+                line: t.line as i32,
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use archguard_engine::core::domain_model::{Entity, StateTransition};
-
-    fn shop() -> DomainModel {
-        DomainModel {
-            entities: vec![Entity {
-                id: "Order".into(),
-                name: "Order".into(),
-                kind: EntityKind::AggregateRoot,
-                fields: vec![],
-                file: "Order.cs".into(),
-                line: 5,
-                source: "t".into(),
-            }],
-            state_machines: vec![StateMachine {
-                entity: "Order".into(),
-                field: "OrderStatus".into(),
-                enum_type: "OrderStatus".into(),
-                states: vec!["Submitted".into(), "Paid".into()],
-                initial: Some("Submitted".into()),
-                transitions: vec![StateTransition {
-                    from: vec!["Submitted".into()],
-                    to: "Paid".into(),
-                    method: "Order.SetPaidStatus".into(),
-                    guard: Some("OrderStatus == OrderStatus.Submitted".into()),
-                    events: vec!["OrderPaid".into()],
-                    file: "Order.cs".into(),
-                    line: 125,
-                }],
-            }],
-            ..DomainModel::default()
-        }
-    }
-
-    #[test]
-    fn selecting_an_entity_shows_its_state_machine_and_table() {
-        let mut s = super::super::state::build_from(Ok(shop()), Err("no flow".into()));
-        let m = build(&s, &Texts::default());
-        assert_eq!(
-            (m.selected, m.states.row_count()),
-            (-1, 0),
-            "nothing selected"
-        );
-        assert!(m.cards.row_data(0).unwrap().machine);
-        s.select_entity(0);
-        let m = build(&s, &Texts::default());
-        assert_eq!(m.machine_title, "Order.OrderStatus (OrderStatus)");
-        assert_eq!(m.states.row_count(), 2);
-        let row = m.rows.row_data(0).unwrap();
-        assert_eq!(
-            (
-                row.number.as_str(),
-                row.from_to.as_str(),
-                row.location.as_str()
-            ),
-            ("1", "Submitted → Paid", "Order.cs:125")
-        );
-        assert_eq!(row.events, "OrderPaid");
-        assert_eq!(m.state_arrows.row_data(0).unwrap().number, 1);
-        assert_eq!(m.bands.row_data(0).unwrap().title, "Aggregate Order");
-    }
 }

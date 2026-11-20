@@ -4,8 +4,6 @@
 //! `domain_chain::chains` its use cases, state transitions, domain events
 //! and the integration events that continue in other services.
 
-use std::path::Path;
-
 use archguard_engine::core::domain_model::DomainModel;
 use archguard_engine::core::{
     Assignment, EndpointAccess, Outcome, UiFlow, evaluate_access, join_actions_to_endpoints,
@@ -38,7 +36,6 @@ fn step(kind: &str, text: String, file: &str, line: u32, depth: i32) -> DrillSte
 pub fn steps(
     flow: &UiFlow,
     model: Option<&DomainModel>,
-    root: &Path,
     a: usize,
     who: &Assignment,
     texts: &Texts,
@@ -67,16 +64,16 @@ pub fn steps(
         return out;
     }
     let all = model.map(|m| chains(flow, m)).unwrap_or_default();
+    let empty = DomainModel::default();
+    let d = model.unwrap_or(&empty);
     for e in hits {
         out.push(endpoint(e, who, texts));
         if let Some(h) = &e.handler {
-            let mut s = step(
-                texts.t("Handler"),
-                h.clone(),
-                &e.file,
-                handler_line(root, e, h),
-                2,
-            );
+            // The declaration the extractor read, else the endpoint's place.
+            let (file, line) = flow
+                .handler_site(e)
+                .map_or((e.file.as_str(), e.line), |x| (x.file.as_str(), x.line));
+            let mut s = step(texts.t("Handler"), h.clone(), file, line, 2);
             s.calls = h.as_str().into();
             out.push(s);
         }
@@ -85,7 +82,7 @@ pub fn steps(
                 && c.action().is_some_and(|x| std::ptr::eq(x, action))
         });
         match chain {
-            Some(c) if !c.use_cases.is_empty() => domain(&mut out, c, 2, texts),
+            Some(c) if !c.use_cases.is_empty() => domain(&mut out, d, c, 2, texts),
             _ => out.push(step(
                 texts.t("Use case"),
                 texts.t("No use case read for this endpoint.").into(),
@@ -116,20 +113,9 @@ fn endpoint(e: &EndpointAccess, who: &Assignment, texts: &Texts) -> DrillStep {
     s
 }
 
-/// Where the handler method is declared in the endpoint's file, else the
-/// endpoint's own place.
-// shortcut: the first line of the endpoint's file with `Name(`; upgrade when
-// the backend extractor records the handler's file and line.
-fn handler_line(root: &Path, e: &EndpointAccess, handler: &str) -> u32 {
-    let name = handler.rsplit('.').next().unwrap_or(handler);
-    let text = std::fs::read_to_string(root.join(&e.file)).unwrap_or_default();
-    let hit = (text.lines()).position(|l| l.contains(&format!("{name}(")));
-    hit.map_or(e.line, |i| i as u32 + 1)
-}
-
 /// A chain's use cases, transitions, events and its continuations in
 /// other services, at `depth`.
-fn domain(out: &mut Vec<DrillStep>, c: &Chain, depth: i32, texts: &Texts) {
+fn domain(out: &mut Vec<DrillStep>, d: &DomainModel, c: &Chain, depth: i32, texts: &Texts) {
     for u in &c.use_cases {
         let mut s = step(texts.t("Use case"), u.name.clone(), &u.file, u.line, depth);
         s.calls = u.name.as_str().into();
@@ -159,6 +145,17 @@ fn domain(out: &mut Vec<DrillStep>, c: &Chain, depth: i32, texts: &Texts) {
         };
         let text = format!("{} → {handlers}", ev.event);
         out.push(step(texts.t("Domain event"), text, "", 0, depth + 1));
+        for h in d.event_handler_sites(ev.event) {
+            let mut s = step(
+                texts.t("Event handler"),
+                h.handler.clone(),
+                &h.file,
+                h.line,
+                depth + 2,
+            );
+            s.calls = h.handler.as_str().into();
+            out.push(s);
+        }
     }
     for n in &c.continues {
         let ChainStart::Message { message_handler: m } = &n.start else {
@@ -188,7 +185,7 @@ fn domain(out: &mut Vec<DrillStep>, c: &Chain, depth: i32, texts: &Texts) {
         let mut s = step(texts.t("Message handler"), text, &m.file, m.line, depth + 2);
         s.calls = m.id.as_str().into();
         out.push(s);
-        domain(out, n, depth + 3, texts);
+        domain(out, d, n, depth + 3, texts);
     }
 }
 
@@ -241,6 +238,13 @@ mod tests {
                 handler: Some("OrdersApi.CreateOrderAsync".into()),
                 sends: vec!["CreateOrderCommand".into()],
             }],
+            handler_sites: vec![archguard_engine::core::HandlerSite {
+                endpoint_file: "OrdersApi.cs".into(),
+                endpoint_line: 20,
+                handler: "OrdersApi.CreateOrderAsync".into(),
+                file: "OrdersApi.cs".into(),
+                line: 3,
+            }],
             ..UiFlow::default()
         };
         let model = DomainModel {
@@ -289,12 +293,8 @@ mod tests {
     #[test]
     fn an_action_leads_to_its_endpoint_handler_use_case_and_other_services() {
         let (flow, model) = shop();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let api =
-            "app.MapPost(\"/\", CreateOrderAsync);\n\npublic static async Task CreateOrderAsync(\n";
-        std::fs::write(dir.path().join("OrdersApi.cs"), api).expect("file");
         let who = Assignment::default();
-        let s = steps(&flow, Some(&model), dir.path(), 0, &who, &Texts::default());
+        let s = steps(&flow, Some(&model), 0, &who, &Texts::default());
         let r = |d: i32, k: &str, t: &str, l: &str| (d, k.into(), t.into(), l.into());
         assert_eq!(
             rows(&s),
@@ -332,14 +332,7 @@ mod tests {
         assert_eq!(s[2].calls, "OrdersApi.CreateOrderAsync", "Show calls");
         let mut signed_in = who.clone();
         signed_in.authenticated = true;
-        let s = steps(
-            &flow,
-            Some(&model),
-            dir.path(),
-            0,
-            &signed_in,
-            &Texts::default(),
-        );
+        let s = steps(&flow, Some(&model), 0, &signed_in, &Texts::default());
         assert_eq!(
             (s[1].tone, s[1].text.as_str()),
             (0, "POST /api/orders · signed in · allowed")
@@ -352,21 +345,13 @@ mod tests {
         let s = steps(
             &flow,
             Some(&model),
-            Path::new("/none"),
             1,
             &Assignment::default(),
             &Texts::default(),
         );
         assert_eq!(s.len(), 2);
         assert_eq!(s[1].text, "No backend endpoint found for POST /api/x");
-        let de = steps(
-            &flow,
-            None,
-            Path::new("/none"),
-            1,
-            &Assignment::default(),
-            &Texts::german(),
-        );
+        let de = steps(&flow, None, 1, &Assignment::default(), &Texts::german());
         assert_eq!(de[1].text, "Kein Backend-Endpunkt gefunden für POST /api/x");
     }
 }

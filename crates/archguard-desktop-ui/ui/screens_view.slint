@@ -8,13 +8,15 @@ import { ScrollView, ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { EmptyState, SectionHeading, Legend, Button, SearchField, Disclosure, TipArea } from "widgets.slint";
 import { Fmt } from "format.slint";
-import { Para, LinkLine } from "flow_parts.slint";
+import { Para, LinkLine, Segments, BarLabel, RoleChoice } from "flow_parts.slint";
 import { ComboBox } from "combo.slint";
 import { ScreensInspector, FlowInspector, FlowAction, FlowRow, DrillStep, ScreensNote, JumpLine } from "screens_inspector.slint";
 import { LineEdit } from "fields.slint";
 import { FlowCanvas, FlowCard, FlowArrow, FlowBand } from "screens_canvas.slint";
+import { CodeOverlay, CodeView, CodeLine } from "code_overlay.slint";
+import { GraphPanels, SideHandles } from "graph_panels.slint";
 
-export { FlowInspector, FlowAction, FlowRow, DrillStep, ScreensNote, FlowCard, FlowArrow, FlowBand }
+export { FlowInspector, FlowAction, FlowRow, DrillStep, ScreensNote, FlowCard, FlowArrow, FlowBand, CodeView, CodeLine }
 
 export struct FlowRole {
     label: string,
@@ -108,6 +110,10 @@ export struct ScreensModel {
     // 3 custom) and the command template.
     editor-preset: int,
     editor: string,
+    // The tree's "Details" section is open (the default; kept per session).
+    details-open: bool,
+    // "Show here": the file over the view.
+    code: CodeView,
 }
 
 export global ScreensData {
@@ -124,6 +130,10 @@ export global ScreensData {
     // Index into the bands; collapsed state lasts for the session.
     callback toggle-band(int);
     callback close-details();
+    callback set-details-open(bool);
+    // The code overlay: close it, or show the jump before.
+    callback close-code();
+    callback code-back();
     // A project-relative file and line: in the configured editor, or in
     // a File view at that line.
     callback open-editor(string, int);
@@ -147,38 +157,6 @@ export global ScreensData {
     callback toggle-group(string);
     callback go-back();
     callback open-browser(string);
-}
-
-export component RoleRow inherits Rectangle {
-    in property <FlowRole> role;
-    callback clicked();
-    height: 26px;
-    border-radius: 4px;
-    background: touch.has-hover ? Theme.panel-2 : transparent;
-    HorizontalLayout {
-        padding-left: 4px;
-        spacing: 8px;
-        Rectangle {
-            width: 14px;
-            height: 14px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 7px;
-            border-width: 1.5px;
-            border-color: role.chosen ? Theme.accent : Theme.muted;
-            Rectangle {
-                width: 6px;
-                height: 6px;
-                border-radius: 3px;
-                background: Theme.accent;
-                visible: role.chosen;
-            }
-        }
-        Text { text: role.label; color: Theme.text; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
 }
 
 // One open condition with its three states.
@@ -210,22 +188,6 @@ component SwitchRow inherits VerticalLayout {
     }
 }
 
-// A segmented choice: one pressed button per option.
-component Segments inherits HorizontalLayout {
-    in property <[string]> items;
-    in property <int> chosen;
-    in property <[string]> tips;
-    callback picked(int);
-    spacing: 0px;
-    for t[i] in items: Button {
-        text: t;
-        compact: true;
-        pressed-state: i == root.chosen;
-        tip: i < root.tips.length ? root.tips[i] : "";
-        clicked => { root.picked(i); }
-    }
-}
-
 // A muted label and a clickable count in the top bar.
 component BarLink inherits Text {
     callback clicked();
@@ -233,28 +195,6 @@ component BarLink inherits Text {
     font-size: Theme.font-small;
     vertical-alignment: center;
     touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-}
-
-component Label inherits Text {
-    color: Theme.muted;
-    font-size: Theme.font-small;
-    vertical-alignment: center;
-}
-
-// "Role …" and the roles found; index k > 0 is simulated role 1 + k.
-component RolePicker inherits Rectangle {
-    property <int> role: ScreensData.model.role;
-    // A new model must not leave an old role shown.
-    changed role => { box.current-index = root.role >= 2 ? root.role - 1 : 0; }
-    width: 240px;
-    height: box.min-height;
-    box := ComboBox {
-        model: ScreensData.model.role-names;
-        current-index: root.role >= 2 ? root.role - 1 : 0;
-        selected => {
-            if (self.current-index > 0) { ScreensData.select-role(self.current-index + 1); }
-        }
-    }
 }
 
 component TopBar inherits Rectangle {
@@ -269,7 +209,7 @@ component TopBar inherits Rectangle {
         padding-top: 8px;
         padding-bottom: 8px;
         spacing: 10px;
-        Label { text: @tr("Application"); }
+        BarLabel { text: @tr("Application"); }
         apps := ComboBox {
             width: 210px;
             model: m.apps;
@@ -277,16 +217,13 @@ component TopBar inherits Rectangle {
             selected => { ScreensData.select-app(self.current-index); }
         }
         Rectangle { width: 6px; }
-        Label { text: @tr("Simulate as"); }
-        Segments {
-            items: [@tr("Anonymous"), @tr("Signed in")];
-            chosen: m.role;
-            tips: [@tr("Not signed in"), @tr("Signed in without a role")];
+        RoleChoice {
+            role: m.role;
+            names: m.role-names;
             picked(i) => { ScreensData.select-role(i); }
         }
-        if m.role-names.length > 1: RolePicker { }
         Rectangle { width: 6px; }
-        Label { text: @tr("Unknown conditions"); }
+        BarLabel { text: @tr("Unknown conditions"); }
         Segments {
             items: [@tr("Leave open ({})", Fmt.int(m.switches.length)), @tr("All hold"), @tr("None hold")];
             chosen: m.unknown;
@@ -298,13 +235,13 @@ component TopBar inherits Rectangle {
             picked(i) => { ScreensData.set-unknown(i); }
         }
         Rectangle { horizontal-stretch: 1; }
-        Label {
+        BarLabel {
             text: @tr("{} of {} navigations readable", Fmt.int(m.resolved), Fmt.int(m.navigations));
             TipArea { tip: @tr("Navigations whose target the rules could read literally. The others may hide a path."); }
         }
-        Label { text: "·"; }
+        BarLabel { text: "·"; }
         BarLink { text: @tr("{0} gap" | "{0} gaps" % m.gaps, Fmt.int(m.gaps)); clicked => { ScreensData.open-list(0); } }
-        Label { text: "·"; }
+        BarLabel { text: "·"; }
         BarLink { text: @tr("{0} mismatch" | "{0} mismatches" % (m.refused + m.unprotected), Fmt.int(m.refused + m.unprotected)); clicked => { ScreensData.open-mismatches(); } }
         Text {
             text: @tr("Static evidence from code");
@@ -446,7 +383,10 @@ component TreeLine inherits Rectangle {
 
 component TreePanel inherits Rectangle {
     property <ScreensModel> m: ScreensData.model;
-    property <bool> details;
+    // Starts as stored (open by default), reports each toggle.
+    property <bool> details: true;
+    init => { root.details = m.details-open; }
+    changed details => { ScreensData.set-details-open(root.details); }
     background: Theme.panel;
     VerticalLayout {
         padding: 12px;
@@ -631,7 +571,7 @@ export component ScreensView inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border; }
         HorizontalLayout {
             vertical-stretch: 1;
-            TreePanel { width: 330px; }
+            TreePanel { width: GraphPanels.screens-tree-w; }
             Rectangle { width: 1px; background: Theme.border; }
             VerticalLayout {
                 horizontal-stretch: 1;
@@ -656,7 +596,7 @@ export component ScreensView inherits Rectangle {
                         ];
                         picked(i) => { ScreensData.set-mode(i); }
                     }
-                    Label {
+                    BarLabel {
                         text: m.mode == 2 ? @tr("Click a screen for its details.") : @tr("Click a card to move the focus there.");
                         horizontal-stretch: 1;
                         overflow: elide;
@@ -685,7 +625,7 @@ export component ScreensView inherits Rectangle {
             }
             if m.inspector.mode > 0: Rectangle { width: 1px; background: Theme.border; }
             if m.inspector.mode > 0: ScreensInspector {
-                width: 360px;
+                width: GraphPanels.screens-details-w;
                 data: m.inspector;
                 close => { ScreensData.close-details(); }
                 open-editor(f, l) => { ScreensData.open-editor(f, l); }
@@ -697,4 +637,22 @@ export component ScreensView inherits Rectangle {
             }
         }
     }
+    if m.state == 1 && m.screens > 0: SideHandles {
+        width: root.width;
+        height: root.height;
+        view: 0;
+        top: 60px;
+        tree-w: GraphPanels.screens-tree-w;
+        details-w: GraphPanels.screens-details-w;
+        details-on: m.inspector.mode > 0;
+    }
+    if m.code.open: CodeOverlay {
+        width: root.width;
+        height: root.height;
+        code: m.code;
+        close => { ScreensData.close-code(); }
+        back => { ScreensData.code-back(); }
+        open-editor(f, l) => { ScreensData.open-editor(f, l); }
+    }
+
 }

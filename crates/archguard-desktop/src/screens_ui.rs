@@ -7,12 +7,12 @@
 
 mod card;
 mod center;
-mod code;
+pub mod code;
 mod drill;
 mod focus;
-mod inspector;
+pub mod inspector;
 mod layout;
-mod notes;
+pub mod notes;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -25,14 +25,18 @@ use slint::ComponentHandle;
 use crate::context::Loaded;
 use crate::tab_support::{self, Actions, TabState, Texts, index};
 use crate::ui::{AppWindow, ScreensData, ScreensModel, ScreensNote};
-pub use state::{ScreensState, role_assignment, role_names, with_prefix};
-pub use view::role_rows;
+pub use state::{ScreensState, role_assignment, role_names, share_role, shared_role, with_prefix};
+pub use view::role_label;
 
 /// Register the tab's callbacks once at start-up.
 pub fn wire(ui: &AppWindow) {
     let d = ui.global::<ScreensData>();
     let a = Actions::<ScreensState>::new(ui);
-    d.on_select_role(a.on(|s, _, i: i32| s.select_role(index(i).unwrap_or(0))));
+    d.on_select_role(a.on(|s, _, i: i32| {
+        let i = index(i).unwrap_or(0);
+        s.select_role(i);
+        state::share_role(i);
+    }));
     d.on_set_switch(a.on2(|s, _, i: i32, v: i32| {
         if let Some(i) = index(i) {
             s.set_switch(i, v)
@@ -59,6 +63,9 @@ pub fn wire(ui: &AppWindow) {
         }
     }));
     d.on_close_details(a.on0(|s, _| s.close_details()));
+    d.on_set_details_open(a.on(|s, _, open: bool| s.details_open = open));
+    d.on_close_code(a.on0(|s, _| s.code.close()));
+    d.on_code_back(a.on0(|s, _| s.code.back()));
     d.on_select_app(a.on(|s, _, i: i32| s.select_app(index(i).unwrap_or(0))));
     d.on_set_unknown(a.on(|s, _, i: i32| s.set_unknown(index(i).unwrap_or(0))));
     d.on_set_mode(a.on(|s, _, i: i32| s.set_mode(index(i).unwrap_or(0))));
@@ -92,23 +99,11 @@ fn wire_details(ui: &AppWindow) {
     d.on_open_note(a.on2(
         |s, ui, id: slint::SharedString, what: slint::SharedString| {
             s.open_note(&id, &what);
-            let f = notes::form(s.notes.get(id.as_str()));
-            let n = ui.global::<ScreensNote>();
-            n.set_kind(f.kind as i32);
-            n.set_text(f.text.into());
-            n.set_change(f.change.into());
-            n.set_adr(f.adr.into());
+            fill_form(ui, s.notes.get(id.as_str()));
         },
     ));
     d.on_save_note(a.on0(|s, ui| {
-        let n = ui.global::<ScreensNote>();
-        let form = notes::Form {
-            kind: index(n.get_kind()).unwrap_or(0),
-            text: n.get_text().into(),
-            change: n.get_change().into(),
-            adr: n.get_adr().into(),
-        };
-        s.problem = save_note(s, &form)
+        s.problem = save_note(s, &form_of(ui))
             .err()
             .map(|e| Texts::of(ui).t(&e).to_string())
             .unwrap_or_default();
@@ -129,37 +124,39 @@ fn save_note(s: &mut ScreensState, form: &notes::Form) -> Result<(), String> {
     let Some((id, _)) = s.note_for.clone() else {
         return Ok(());
     };
-    let author = crate::review_decisions::git_author(&s.root);
-    let author = if author.is_empty() {
-        "desktop".into()
-    } else {
-        author
-    };
-    let gate = (s.config.as_ref()).is_some_and(|c| c.review.adr_required_on_accept_risk);
-    notes::save(&s.root, &id, form, &author, gate, now())?;
-    s.notes = notes::load(&s.root);
+    s.notes = notes::save_here(&s.root, s.config.as_ref(), &id, form)?;
     s.note_for = None;
     s.list = s.list.or(Some(state::List::Gaps));
     Ok(())
 }
 
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+/// The note form's fields as the window holds them.
+pub fn form_of(ui: &AppWindow) -> notes::Form {
+    let n = ui.global::<ScreensNote>();
+    notes::Form {
+        kind: index(n.get_kind()).unwrap_or(0),
+        text: n.get_text().into(),
+        change: n.get_change().into(),
+        adr: n.get_adr().into(),
+    }
 }
 
-/// A callback that opens a project-relative file in a File view.
-pub fn open_file(ui: &AppWindow) -> impl Fn(slint::SharedString) + 'static {
-    tab_support::with_ui(ui, |ui, file: slint::SharedString| {
-        if !file.is_empty() {
-            crate::panes_ui::open_node(ui, crate::panes::FILE, &file, false);
-        }
-    })
+/// Fill the note form with the stored note of `stored`, or empty it.
+pub fn fill_form(ui: &AppWindow, stored: Option<&archguard_engine::core::ReviewDecision>) {
+    let f = notes::form(stored);
+    let n = ui.global::<ScreensNote>();
+    n.set_kind(f.kind as i32);
+    n.set_text(f.text.into());
+    n.set_change(f.change.into());
+    n.set_adr(f.adr.into());
 }
 
 impl TabState for ScreensState {
     fn push(&mut self, ui: &AppWindow) {
+        // The Domain tab may have changed the simulated user.
+        if let Some(r) = state::shared_role() {
+            self.select_role(r);
+        }
         push(ui, self);
     }
 

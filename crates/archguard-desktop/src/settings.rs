@@ -14,6 +14,10 @@
 //! explorer_width = 250      # logical pixels, dragged at the panel edge
 //! details_width = 320
 //!
+//! [screens]                 # the Screens view's route tree and details panel
+//! tree_width = 330          # likewise [domain] for the Domain view
+//! details_width = 360
+//!
 //! [session]                 # the documents open at the last quit
 //! documents = ["/work/shop", "/work/api"]
 //! active = 1
@@ -113,6 +117,72 @@ impl GraphPanels {
     }
 }
 
+/// The tree's and the details panel's width of the Screens or the Domain
+/// view, in logical pixels: dragged at the panel edges, a double click
+/// resets one (`ui/graph_panels.slint`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidePanels {
+    pub tree_width: u32,
+    pub details_width: u32,
+}
+
+impl Default for SidePanels {
+    fn default() -> Self {
+        SidePanels {
+            tree_width: 330,
+            details_width: 360,
+        }
+    }
+}
+
+impl SidePanels {
+    pub const TREE: (u32, u32) = (220, 640);
+    pub const DETAILS: (u32, u32) = (280, 720);
+
+    /// `w` dragged on the tree (`details` false) or details edge, kept in
+    /// its range.
+    pub fn set(&mut self, details: bool, w: f32) {
+        let (lo, hi) = if details { Self::DETAILS } else { Self::TREE };
+        let w = (w.round().max(0.0) as u32).clamp(lo, hi);
+        if details {
+            self.details_width = w;
+        } else {
+            self.tree_width = w;
+        }
+    }
+
+    /// The default width of one side again.
+    pub fn reset(&mut self, details: bool) {
+        let d = Self::default();
+        if details {
+            self.details_width = d.details_width;
+        } else {
+            self.tree_width = d.tree_width;
+        }
+    }
+
+    fn read(item: Option<&Item>) -> Self {
+        let mut p = Self::default();
+        let get = |k: &str| item.and_then(|t| t.get(k)?.as_integer());
+        if let Some(w) = get("tree_width") {
+            p.set(false, w as f32);
+        }
+        if let Some(w) = get("details_width") {
+            p.set(true, w as f32);
+        }
+        p
+    }
+
+    fn render(&self, doc: &mut DocumentMut, key: &str) {
+        // Written once changed, so a fresh file stays short.
+        if *self != Self::default() || doc.get(key).is_some() {
+            let t = table(doc, key);
+            set(t, "tree_width", value(i64::from(self.tree_width)));
+            set(t, "details_width", value(i64::from(self.details_width)));
+        }
+    }
+}
+
 /// The last view of one project.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ProjectView {
@@ -139,6 +209,8 @@ pub struct Settings {
     /// Logical width and height.
     pub window: Option<(u32, u32)>,
     pub graph: GraphPanels,
+    pub screens: SidePanels,
+    pub domain: SidePanels,
     pub recent: Vec<PathBuf>,
     /// `None` until a session was recorded once.
     pub session: Option<Session>,
@@ -246,6 +318,8 @@ fn read(doc: &DocumentMut) -> Settings {
             .to_string(),
         window,
         graph: GraphPanels::read(doc.get("graph")),
+        screens: SidePanels::read(doc.get("screens")),
+        domain: SidePanels::read(doc.get("domain")),
         recent: paths(doc.get("recent")),
         session: doc.get("session").map(|s| Session {
             documents: paths(s.get("documents")),
@@ -334,6 +408,8 @@ pub fn render(doc: &mut DocumentMut, settings: &Settings) -> String {
         set(t, "explorer_width", value(i64::from(g.explorer_width)));
         set(t, "details_width", value(i64::from(g.details_width)));
     }
+    settings.screens.render(doc, "screens");
+    settings.domain.render(doc, "domain");
     if let Some(session) = &settings.session {
         let t = table(doc, "session");
         set(t, "documents", value(path_array(&session.documents)));
@@ -628,12 +704,42 @@ mod tests {
     fn graph_panel_widths_round_trip_and_are_clamped() {
         let (mut doc, mut s) = parse("").expect("valid");
         assert_eq!(s.graph, GraphPanels::default());
-        assert!(!render(&mut doc, &s).contains("[graph]"), "default not written");
+        assert!(
+            !render(&mut doc, &s).contains("[graph]"),
+            "default not written"
+        );
         s.graph.explorer_width = 300;
         let out = render(&mut doc, &s);
         assert_eq!(parse(&out).expect("valid").1.graph, s.graph);
         let (_, s) = parse("[graph]\nexplorer_width = 5\ndetails_width = 9000\n").expect("valid");
         assert_eq!((s.graph.explorer_width, s.graph.details_width), (180, 560));
+    }
+
+    #[test]
+    fn side_panel_widths_are_clamped_reset_and_round_trip() {
+        let (mut doc, mut s) = parse("").expect("valid");
+        assert_eq!(s.domain, SidePanels::default());
+        assert!(
+            !render(&mut doc, &s).contains("[domain]"),
+            "default not written"
+        );
+        s.domain.set(false, 10.0);
+        assert_eq!(s.domain.tree_width, SidePanels::TREE.0, "too narrow");
+        s.domain.set(true, 5000.0);
+        assert_eq!(s.domain.details_width, SidePanels::DETAILS.1, "too wide");
+        s.domain.set(false, 455.4);
+        assert_eq!(s.domain.tree_width, 455);
+        let out = render(&mut doc, &s);
+        let back = parse(&out).expect("valid").1;
+        assert_eq!(
+            (back.domain, back.screens),
+            (s.domain, SidePanels::default())
+        );
+        s.domain.reset(true);
+        assert_eq!(s.domain.details_width, 360, "double click");
+        assert_eq!(s.domain.tree_width, 455, "the other side stays");
+        let (_, s) = parse("[screens]\ntree_width = 1\ndetails_width = 99999\n").expect("valid");
+        assert_eq!((s.screens.tree_width, s.screens.details_width), (220, 720));
     }
 
     #[test]
