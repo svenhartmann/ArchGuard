@@ -1,6 +1,6 @@
 # GitHub Pages site
 
-A static English introduction to ArchGuard with actual desktop app screenshots, five
+A static English and German introduction to ArchGuard with actual desktop app screenshots, five
 reproducible examples, language prerequisites and CLI/MCP entry points. No npm
 packages, external fonts, analytics or third-party runtime scripts are needed.
 
@@ -75,7 +75,7 @@ commands, including the selected-text fallback when clipboard access is unavaila
 ## Documentation guides
 
 `docs/index.html` is the documentation hub, with a client-side topic filter.
-Eleven English guides cover installation, tools and prerequisites per language, the desktop app, CLI commands, configuration,
+The English guides cover installation, tools and prerequisites per language, the desktop app, CLI commands, configuration,
 product purpose and scope, language prerequisites and metrics, service evidence, MCP prompts, CI and
 troubleshooting. The sidebar and all guides work without JavaScript.
 
@@ -88,3 +88,13 @@ paths or invented release URLs.
 The existing Pages workflow validates documentation links and fragments too.
 Before publishing, check the documentation at desktop and narrow mobile widths,
 filter topics (including no results and reset), and copy a command.
+
+## Marketing content and localisation
+
+`data/languages.json` is the sole language inventory for the home page and language/prerequisite tables. The build derives the language-group count and the English guide count. TypeScript/JavaScript and C/C++ each count as one group. Update both locale fields when changing an adapter description; verify against the current README and CLI, not an older installed binary.
+
+New marketing journeys live in `for/`, `compare/`, `stories/` and `languages/`, with their German counterparts in `de/`. The German documentation entry explicitly labels existing English reference guides. All new navigation uses relative paths for GitHub project Pages. The build adds the evidence motto to pages whose footer does not already state it.
+
+`python3 site/test_build.py` verifies build-time inventory/counts, locale output, repository-link handling and directory-index fragment validation. Run it alongside `site/check.py` on a fresh build, both with and without `--repository`. Browser QA covers desktop/mobile, language switching, galleries, copy buttons and reduced-motion behaviour.
+
+Campaign drafts and the measurement workflow are in `docs/marketing/` at repository root; the static build deliberately excludes them. They are preparation for the twelve-week rollout, not a record of posts sent or metrics observed.

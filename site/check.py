@@ -42,6 +42,9 @@ for path, document in documents.items():
         target = (path.parent / unquote(parsed.path)).resolve() if parsed.path else path
         assert target.is_relative_to(root), f'{path}: link escapes published site: {link}'
         assert target.exists(), f'{path}: missing target {link}'
+        if target.is_dir():
+            target = target / 'index.html'
+            assert target.is_file(), f'{path}: directory has no index: {link}'
         if parsed.fragment and target in documents:
             assert unquote(parsed.fragment) in documents[target].ids, f'{path}: missing fragment {link}'
         checked += 1
