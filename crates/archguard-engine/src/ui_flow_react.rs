@@ -924,21 +924,14 @@ mod shape {
         })
     }
 
-    /// Whether the text before `pos` ends in `&&`, `||`, `??`, `?` or `:` (past
-    /// spaces and `(`): the element is one branch of a conditional.
-    pub(super) fn conditional_before(masked: &str, pos: usize) -> bool {
-        let before = masked[..pos].trim_end_matches(|c: char| c.is_whitespace() || c == '(');
-        ["&&", "||", "??", "?", ":"]
-            .iter()
-            .any(|op| before.ends_with(op))
-    }
-
-    /// The name of the innermost JSX element open at `at`; `""` inside a start tag.
-    pub(super) fn enclosing(text: &str, at: usize) -> Option<&str> {
+    /// The JSX elements open at `at`, outermost first, with where their children
+    /// begin; fragments have the name `""`. `None` inside a start tag.
+    pub(super) fn open_elements(text: &str, at: usize) -> Option<Vec<(&str, usize)>> {
         let before = &text[..at];
         let mut events: Vec<(usize, Option<&str>)> = start_tags(before)
             .into_iter()
             .map(|(i, name)| (i, Some(name)))
+            .chain(before.match_indices("<>").map(|(i, _)| (i, Some(""))))
             .chain(before.match_indices("</").map(|(i, _)| (i, None)))
             .collect();
         events.sort();
@@ -948,15 +941,216 @@ mod shape {
                 open.pop();
                 continue;
             };
-            let t = tag(text, pos + 1 + name.len());
-            if t.end > at {
-                return Some("");
+            let (end, closing) = match name {
+                "" => (pos + 2, false),
+                _ => {
+                    let t = tag(text, pos + 1 + name.len());
+                    (t.end, t.self_closing)
+                }
+            };
+            if end > at {
+                return None;
             }
-            if !t.self_closing {
-                open.push(name);
+            if !closing {
+                open.push((if name.ends_with("Fragment") { "" } else { name }, end));
             }
         }
-        open.last().copied()
+        Some(open)
+    }
+
+    /// `{` minus `}` in `bare[from..to]` (strings and comments blanked).
+    pub(super) fn brace_depth(bare: &str, from: usize, to: usize) -> i32 {
+        bare[from..to].bytes().fold(0, |d, c| match c {
+            b'{' => d + 1,
+            b'}' => d - 1,
+            _ => d,
+        })
+    }
+
+    /// Whether the `<Route` at `pos` sits in a `{…}` container below its
+    /// `<Routes>` or `<Route>` (or else its innermost element): a condition, an
+    /// array, a fragment behind an operator.
+    pub(super) fn route_in_container(text: &str, bare: &str, pos: usize) -> bool {
+        let Some(open) = open_elements(text, pos) else {
+            return false;
+        };
+        let routing = open
+            .iter()
+            .rposition(|(n, _)| matches!(*n, "Route" | "Routes"));
+        let at = routing.or(open.len().checked_sub(1));
+        at.is_some_and(|a| brace_depth(bare, open[a].1, pos) > 0)
+    }
+
+    /// `"Routes"` or `"Route"` when the `.map` at `pos` is the whole container
+    /// directly in that element (fragments aside), else `None`.
+    pub(super) fn map_place<'t>(text: &'t str, bare: &str, pos: usize) -> Option<&'t str> {
+        let open = open_elements(text, pos)?;
+        let at = open
+            .iter()
+            .rposition(|(n, _)| matches!(*n, "Route" | "Routes"))?;
+        let direct = open[at + 1..].iter().all(|(n, _)| n.is_empty());
+        (direct && brace_depth(bare, open[at].1, pos) == 1).then_some(open[at].0)
+    }
+
+    /// Whether `src` is one JSX element tree and nothing else: no condition,
+    /// call or identifier around it.
+    pub(super) fn single_element(src: &str) -> bool {
+        let mut t = src.trim();
+        while let Some(inner) = t.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+            t = inner.trim();
+        }
+        let Some((0, name)) = start_tags(t).into_iter().next() else {
+            return false;
+        };
+        let open = tag(t, 1 + name.len());
+        if open.self_closing {
+            return open.end == t.len();
+        }
+        let mut events: Vec<(usize, Option<bool>)> = start_tags(t)
+            .into_iter()
+            .map(|(i, n)| (i, Some(n.len())))
+            .map(|(i, n)| (i, n.map(|n| tag(t, i + 1 + n).self_closing)))
+            .chain(t.match_indices("<>").map(|(i, _)| (i, Some(false))))
+            .chain(t.match_indices("</").map(|(i, _)| (i, None)))
+            .filter(|(i, _)| *i >= open.end)
+            .collect();
+        events.sort();
+        let mut depth = 1;
+        for (pos, kind) in events {
+            match kind {
+                Some(false) => depth += 1,
+                Some(true) => {}
+                None => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = t[pos..].find('>').map(|e| pos + e + 1);
+                        return end == Some(t.len());
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub(super) const NOT_DECLARED: &str = "not declared in this file";
+
+    const MUTATORS: [&str; 9] = [
+        "push",
+        "pop",
+        "shift",
+        "unshift",
+        "splice",
+        "sort",
+        "reverse",
+        "fill",
+        "copyWithin",
+    ];
+
+    fn is_assign(rest: &str) -> bool {
+        let plain = rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
+        plain
+            || [
+                "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=",
+                "^=",
+            ]
+            .iter()
+            .any(|op| rest.starts_with(op))
+    }
+
+    /// Whether the name at `p` is a parameter of an arrow or `function`.
+    fn is_param(bare: &str, p: usize) -> bool {
+        let before = bare[..p].trim_end();
+        let open = match before.chars().last() {
+            Some('(') => Some(before.len() - 1),
+            Some(',') => {
+                let mut depth = 0;
+                before.char_indices().rev().take(400).find_map(|(i, c)| {
+                    match c {
+                        ')' => depth += 1,
+                        '(' if depth == 0 => return Some(i),
+                        '(' => depth -= 1,
+                        _ => {}
+                    }
+                    None
+                })
+            }
+            _ => None,
+        };
+        let Some(open) = open else {
+            return false;
+        };
+        let after = bare[close(bare, open).min(bare.len())..].trim_start();
+        let head = bare[..open].trim_end();
+        let function = head
+            .trim_end_matches(is_ident_char)
+            .trim_end()
+            .ends_with("function")
+            || head.ends_with("function");
+        after.starts_with("=>") || function
+    }
+
+    /// How the declaration of `name` at `dp` is changed or hidden elsewhere.
+    fn changed(bare: &str, name: &str, dp: usize) -> Option<&'static str> {
+        for p in words(bare, name).into_iter().filter(|&p| p != dp) {
+            let after = p + name.len();
+            if bare[..p].trim_end().ends_with('.') {
+                continue;
+            }
+            let rest = bare[after..].trim_start();
+            let member = rest
+                .strip_prefix('.')
+                .map(|m| (m.trim_start(), ident_at(m.trim_start(), 0)));
+            let mutating = member.is_some_and(|(m, id)| {
+                let tail = m[id.len()..].trim_start();
+                (MUTATORS.contains(&id) && tail.starts_with('('))
+                    || (id == "length" && is_assign(tail))
+            });
+            let indexed = rest.starts_with('[') && {
+                let open = bare.len() - rest.len();
+                is_assign(bare[close(bare, open).min(bare.len())..].trim_start())
+            };
+            if is_assign(rest) {
+                return Some("reassigned");
+            }
+            if mutating || indexed {
+                return Some("mutated");
+            }
+            if rest.starts_with("=>") || is_param(bare, p) {
+                return Some("shadowed by a parameter");
+            }
+        }
+        None
+    }
+
+    /// The offset of the `[` of `const NAME = [`, or why `NAME` cannot be read
+    /// as that array: declared twice, not `const`, changed anywhere in the file,
+    /// or not initialised with an array literal.
+    pub(super) fn const_array(text: &str, name: &str) -> Result<usize, String> {
+        let bare = mask(text, false);
+        let b = bare.as_bytes();
+        let decls: Vec<(&str, usize)> = ["const", "let", "var", "function", "class"]
+            .into_iter()
+            .flat_map(|kw| words(&bare, kw).into_iter().map(move |p| (kw, p)))
+            .filter(|&(kw, p)| ident_at(&bare, skip_ws(b, p + kw.len())) == name)
+            .collect();
+        let (kw, pos) = match decls[..] {
+            [] => return Err(NOT_DECLARED.into()),
+            [one] => one,
+            _ => return Err("declared more than once (shadowed)".into()),
+        };
+        if kw != "const" {
+            return Err(format!("declared with {kw}, not const"));
+        }
+        let dp = skip_ws(b, pos + kw.len());
+        if let Some(how) = changed(&bare, name, dp) {
+            return Err(format!("{how} in this file"));
+        }
+        let k = dp + name.len();
+        let eq = bare[k..].find(['=', ';']).map(|e| k + e);
+        let after = eq.filter(|&e| b[e] == b'=').map(|e| skip_ws(b, e + 1));
+        after
+            .filter(|&a| b.get(a) == Some(&b'['))
+            .ok_or_else(|| "not initialised with an array literal".into())
     }
 }
 
@@ -1027,7 +1221,7 @@ mod router {
             map_routes(&mut ctx, &mapped[i], "", &[]);
         }
         for i in stray {
-            let message = "Routes rendered by .map are neither a direct child of <Routes> nor in the children of a <Route>; they are unknown.";
+            let message = "A .map among the routes is not read (only `{array.map(plain callback)}` directly in <Routes> or a <Route> is); its routes are unknown.";
             ctx.diag(mapped[i].at, message.into());
         }
     }
@@ -1038,7 +1232,7 @@ mod router {
         at: usize,
         name: Option<String>,
         span: (usize, usize),
-        route: (&'t str, Tag),
+        route: Option<(&'t str, Tag)>,
         /// The call is the whole `{…}` container: nothing before or after.
         exact: bool,
         /// `.flatMap`, which is never read.
@@ -1065,9 +1259,6 @@ mod router {
                 let head = &text[i..tag.end];
                 (flat || head.contains("{...")).then_some((head, tag))
             });
-            let Some(route) = route else {
-                continue;
-            };
             let name =
                 trailing_ident(before).filter(|n| !before[..before.len() - n.len()].ends_with('.'));
             let exact = name.as_ref().is_some_and(|n| {
@@ -1077,6 +1268,10 @@ mod router {
                 );
                 head.trim_end().ends_with('{') && tail.trim_start().starts_with('}')
             });
+            // A `.map` without a route in it only matters as a whole container.
+            if route.is_none() && (flat || !exact) {
+                continue;
+            }
             out.push(Mapped {
                 at: pos,
                 name,
@@ -1094,8 +1289,7 @@ mod router {
     /// only destructures `p` into `{ element, ...rest }` and returns
     /// `<Route {...rest} element={element} />`. Conditions, wrappers and extra
     /// statements are not read.
-    fn callback_is_read(text: &str, m: &Mapped) -> bool {
-        let (head, route) = &m.route;
+    fn callback_is_read(text: &str, m: &Mapped, (head, route): &(&str, Tag)) -> bool {
         let (open, end) = m.span;
         let inner = text[open + 1..end.saturating_sub(1).max(open + 1)].trim();
         let offset = |s: &str| s.as_ptr() as usize - text.as_ptr() as usize;
@@ -1134,42 +1328,25 @@ mod router {
     /// shape is a gap.
     fn map_routes(ctx: &mut Ctx, m: &Mapped, prefix: &str, inherited: &[Condition]) {
         let (app, text, file) = (ctx.app, ctx.text, ctx.file);
-        let head = m.route.0;
-        let Some(name) = m
-            .name
-            .as_deref()
-            .filter(|_| m.exact && !m.flat && callback_is_read(text, m))
-        else {
+        let head = m.route.as_ref().map_or("", |r| r.0);
+        let Some(name) = m.name.as_deref().filter(|_| {
+            m.exact
+                && !m.flat
+                && m.route
+                    .as_ref()
+                    .is_some_and(|r| callback_is_read(text, m, r))
+        }) else {
             let message = format!(
                 "Routes rendered by .map are not read (only `{{array.map(plain callback)}}` as a whole container); they are unknown: {head}"
             );
             return ctx.diag(m.at, message);
         };
-        let gap = |ctx: &mut Ctx, why: String| {
-            let message = format!("Route array {name} is {why}; its routes are unknown.");
-            ctx.diag(m.at, message);
-        };
-        let found = match local_array(text, name) {
-            Some(at) => Some((file, text, at)),
-            None => {
-                let Some(import) = imports(text).into_iter().find(|i| i.local == name) else {
-                    return gap(ctx, "not declared in this file or imported".into());
-                };
-                let Some(target) = app.resolve(file, &import.module) else {
-                    let why = format!("imported from {}, which resolves to no file", import.module);
-                    return gap(ctx, why);
-                };
-                let (target, other) = app.files.get_key_value(target).expect("scanned file");
-                let at = match import.imported.as_deref() {
-                    None => default_array(other),
-                    Some("*") => None,
-                    Some(n) => local_array(other, n),
-                };
-                at.map(|at| (target.as_str(), other.as_str(), at))
+        let (file, text, at) = match locate_array(app, file, text, name) {
+            Ok(found) => found,
+            Err(why) => {
+                let message = format!("Route array {name} is {why}; its routes are unknown.");
+                return ctx.diag(m.at, message);
             }
-        };
-        let Some((file, text, at)) = found else {
-            return gap(ctx, "not declared as an array literal".into());
         };
         let mut other = Ctx {
             app,
@@ -1189,14 +1366,44 @@ mod router {
         }
     }
 
-    /// The offset of the array `export default` names or holds.
-    fn default_array(text: &str) -> Option<usize> {
-        let b = text.as_bytes();
-        let at = skip_ws(b, text.find("export default ")? + "export default ".len());
-        if b.get(at) == Some(&b'[') {
-            return Some(at);
+    /// The file, text and offset of the array `name` stands for: declared in
+    /// this file, or imported (default or named) from a scanned file.
+    fn locate_array<'a>(
+        app: &'a App,
+        file: &'a str,
+        text: &'a str,
+        name: &str,
+    ) -> Result<(&'a str, &'a str, usize), String> {
+        match const_array(text, name) {
+            Ok(at) => return Ok((file, text, at)),
+            Err(why) if why != NOT_DECLARED => return Err(why),
+            Err(_) => {}
         }
-        local_array(text, ident_at(text, at))
+        let import = (imports(text).into_iter().find(|i| i.local == name))
+            .ok_or("not declared in this file or imported")?;
+        let target = app
+            .resolve(file, &import.module)
+            .ok_or_else(|| format!("imported from {}, which resolves to no file", import.module))?;
+        let (target, other) = app.files.get_key_value(target).expect("scanned file");
+        let at = match import.imported.as_deref() {
+            None => default_array(other)?,
+            Some("*") => return Err("a namespace import".into()),
+            Some(n) => const_array(other, n)?,
+        };
+        Ok((target.as_str(), other.as_str(), at))
+    }
+
+    /// The offset of the array `export default` names or holds.
+    fn default_array(text: &str) -> Result<usize, String> {
+        let b = text.as_bytes();
+        let Some(found) = text.find("export default ") else {
+            return Err("not exported by default".into());
+        };
+        let at = skip_ws(b, found + "export default ".len());
+        match b.get(at) {
+            Some(b'[') => Ok(at),
+            _ => const_array(text, ident_at(text, at)),
+        }
     }
 
     /// The route a `<Route …>` start tag at `pos` declares, without children.
@@ -1228,11 +1435,14 @@ mod router {
         node
     }
 
-    /// The `<Route>` tree of `text`, and the `.map` arrays outside any route.
-    fn jsx(text: &str, mapped: &[Mapped]) -> (Vec<Node>, Vec<usize>, Vec<usize>) {
-        let skip = |i: &usize| !mapped.iter().any(|m| (m.span.0..m.span.1).contains(i));
-        let masked = mask(text, true);
-        // (offset, 0 closes a route, 1 opens one, 2 + n is `.map` number n)
+    /// `(offset, kind)` of the route events of `text`, in order: 0 closes a
+    /// route, 1 opens one, `2 + n` is `.map` number `n`. Routes inside a mapped
+    /// callback are left to the array.
+    fn route_events(text: &str, mapped: &[Mapped]) -> Vec<(usize, usize)> {
+        let skip = |i: &usize| {
+            let inside = |m: &&Mapped| m.route.is_some() && (m.span.0..m.span.1).contains(i);
+            !mapped.iter().any(|m| inside(&m))
+        };
         let mut events: Vec<(usize, usize)> = text
             .match_indices("<Route")
             .filter(|(i, _)| {
@@ -1244,6 +1454,31 @@ mod router {
             .chain(mapped.iter().enumerate().map(|(n, m)| (m.at, 2 + n)))
             .collect();
         events.sort();
+        events
+    }
+
+    /// Where a `.map` goes: into the open route, among the loose ones outside
+    /// any route, or nowhere it is read.
+    enum Place {
+        Child,
+        Loose,
+        Stray,
+        Ignore,
+    }
+
+    fn place(text: &str, bare: &str, pos: usize, reads: bool, parent: bool) -> Place {
+        match (map_place(text, bare, pos), parent) {
+            (Some("Route"), true) if reads => Place::Child,
+            (Some("Routes"), false) if reads => Place::Loose,
+            (Some(_), _) => Place::Stray,
+            (None, _) if reads => Place::Stray,
+            _ => Place::Ignore,
+        }
+    }
+
+    /// The `<Route>` tree of `text`, and the `.map` arrays outside any route.
+    fn jsx(text: &str, mapped: &[Mapped]) -> (Vec<Node>, Vec<usize>, Vec<usize>) {
+        let bare = mask(text, false);
         let attach =
             |stack: &mut Vec<Node>, roots: &mut Vec<Node>, node: Node| match stack.last_mut() {
                 Some(parent) => parent.children.push(node),
@@ -1251,7 +1486,7 @@ mod router {
             };
         let (mut stack, mut roots) = (Vec::new(), Vec::new());
         let (mut loose, mut stray) = (Vec::new(), Vec::new());
-        for (pos, kind) in events {
+        for (pos, kind) in route_events(text, mapped) {
             match kind {
                 0 => {
                     if let Some(node) = stack.pop() {
@@ -1261,18 +1496,22 @@ mod router {
                 1 => {
                     let tag = tag(text, pos + "<Route".len());
                     let mut node = jsx_node(text, pos, &tag);
-                    node.stray = conditional_before(&masked, pos);
+                    node.stray = route_in_container(text, &bare, pos);
                     if tag.self_closing {
                         attach(&mut stack, &mut roots, node);
                     } else {
                         stack.push(node);
                     }
                 }
-                n => match (enclosing(text, pos), stack.last_mut()) {
-                    (Some("Route"), Some(parent)) => parent.maps.push(n - 2),
-                    (Some("Routes"), None) => loose.push(n - 2),
-                    _ => stray.push(n - 2),
-                },
+                n => {
+                    let reads = mapped[n - 2].route.is_some();
+                    match place(text, &bare, pos, reads, !stack.is_empty()) {
+                        Place::Child => stack.last_mut().expect("parent").maps.push(n - 2),
+                        Place::Loose => loose.push(n - 2),
+                        Place::Stray => stray.push(n - 2),
+                        Place::Ignore => {}
+                    }
+                }
             }
         }
         while let Some(node) = stack.pop() {
@@ -1298,12 +1537,11 @@ mod router {
                     if name.is_empty() || b.get(skip_ws(b, j + name.len())) == Some(&b'(') {
                         continue;
                     }
-                    match local_array(text, name) {
-                        Some(at) => at,
-                        None => {
-                            let message = format!(
-                                "Route array {name} is not declared as an array literal in this file; its routes are unknown."
-                            );
+                    match const_array(text, name) {
+                        Ok(at) => at,
+                        Err(why) => {
+                            let message =
+                                format!("Route array {name} is {why}; its routes are unknown.");
                             ctx.diag(pos, message);
                             continue;
                         }
@@ -1433,6 +1671,11 @@ mod router {
     fn misplaced(node: &Node, path: Option<&str>, prefix: &str) -> Option<String> {
         if node.stray {
             return Some("Route inside a conditional expression is not read; the route and its children are unknown.".into());
+        }
+        if let Some(e) = node.element.as_deref().filter(|e| !single_element(e)) {
+            return Some(format!(
+                "Route element is not one JSX element (a condition, call or name); the route and its children are unknown: {e}"
+            ));
         }
         let p = path.filter(|p| p.starts_with('/') && !prefix.is_empty())?;
         let t = p.trim_matches('/');
@@ -4157,5 +4400,227 @@ export function Page() { items.map((i) => i); load(); return null; }
         ] {
             is_gap_without_screens(&routes_map(callback));
         }
+    }
+
+    #[test]
+    fn a_conditional_element_makes_the_route_unknown_for_every_route_source() {
+        let array = "const xs = [{ path: '/x', element: window.user ? <Admin /> : <Login /> }];";
+        for array in [
+            array,
+            "const xs = [{ path: '/x', element: user && <Admin /> }];",
+            "const xs = [{ path: '/x', element: render() }];",
+        ] {
+            let flow = array_app(array, "(r) => <Route key={r.path} {...r} />");
+            assert!(flow.screens.is_empty(), "{array}: {:?}", screens(&flow));
+            assert!(has_diag(&flow, "c/src/App.jsx", 1), "{array}");
+        }
+        for body in [
+            "<Routes><Route path=\"/x\" element={user ? <A /> : <B />} /></Routes>",
+            "<Routes><Route path=\"/x\" element={user || <B />} /></Routes>",
+        ] {
+            let flow = map_app(body);
+            assert!(flow.screens.is_empty(), "{body}: {:?}", screens(&flow));
+            assert!(has_diag(&flow, "c/src/App.jsx", 3), "{body}");
+        }
+        let app = "export const router = createBrowserRouter([\n{ path: '/x', element: cond ? <A /> : <B /> },\n]);\n";
+        let dir = project(&[("c/package.json", ROUTER_PKG), ("c/src/App.jsx", app)]);
+        let flow = extract(dir.path());
+        assert!(flow.screens.is_empty(), "{:?}", screens(&flow));
+        assert!(
+            has_diag(&flow, "c/src/App.jsx", 2),
+            "{:?}",
+            flow.diagnostics
+        );
+        // A guard around the screen stays one element tree.
+        let flow = map_app(
+            "<Routes><Route path=\"/g\" element={<RequireAuth><G a={x ? 1 : 2} /></RequireAuth>} /></Routes>",
+        );
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/g", "G", Some("RequireAuth"))],
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn routes_in_any_container_other_than_a_whole_map_are_gaps() {
+        let route = "<Route path=\"/admin\" element={<Admin />} />";
+        for body in [
+            format!("<Routes>{{user && <>{route}</>}}</Routes>"),
+            format!("<Routes>{{user && <React.Fragment>{route}</React.Fragment>}}</Routes>"),
+            format!(
+                "<Routes>{{user && <>{route}<Route path=\"/b\" element={{<B />}} /></>}}</Routes>"
+            ),
+            "<Routes>{user && [<Route key=\"a\" path=\"/admin\" element={<Admin />} />]}</Routes>"
+                .to_string(),
+            format!(
+                "<Routes>{{user ? <>{route}</> : <Route path=\"/login\" element={{<Login />}} />}}</Routes>"
+            ),
+            format!(
+                "<Routes><Route path=\"/p\" element={{<P />}}>{{user && <>{route}</>}}</Route></Routes>"
+            ),
+        ] {
+            let flow = map_app(&body);
+            assert!(
+                flow.screens
+                    .iter()
+                    .all(|s| s.id != "c:/admin" && s.id != "c:/login"),
+                "{body}: {:?}",
+                screens(&flow)
+            );
+            assert!(has_diag(&flow, "c/src/App.jsx", 3), "{body}");
+            assert!(!flow.complete, "{body}");
+        }
+        let flow = map_app(&format!("<Routes><>{route}</></Routes>"));
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/admin", "Admin", None)],
+            "{:?}",
+            flow.diagnostics
+        );
+        assert!(flow.diagnostics.is_empty());
+        let flow = map_app("<Routes><>{xs.map((r) => <Route key={r.path} {...r} />)}</></Routes>");
+        assert_eq!(
+            screens(&flow),
+            vec![screen("c:/priv", "Priv", None)],
+            "{:?}",
+            flow.diagnostics
+        );
+        let flow = map_app(
+            "<Routes>{user && <>{xs.map((r) => <Route key={r.path} {...r} />)}</>}</Routes>",
+        );
+        is_gap_without_screens(&flow);
+    }
+
+    #[test]
+    fn a_fragment_close_does_not_hide_a_wrapper_element() {
+        let flow = map_app(
+            "<Routes><RequireAuth><></>{xs.map((r) => <Route key={r.path} {...r} />)}</RequireAuth></Routes>",
+        );
+        is_gap_without_screens(&flow);
+    }
+
+    #[test]
+    fn a_named_map_callback_is_a_gap() {
+        let flow = map_app("<Routes>{xs.map(renderRoute)}</Routes>");
+        is_gap_without_screens(&flow);
+        let flow =
+            map_app("<Routes>{xs.map(function renderRoute(r) { return r.route; })}</Routes>");
+        is_gap_without_screens(&flow);
+    }
+
+    /// `decl` on line 1, `extra` on line 2, the `.map` on line 4.
+    fn array_file(decl: &str, extra: &str) -> UiFlow {
+        let app = format!(
+            "{decl}\n{extra}\nexport const App = () => (\n<Routes>{{xs.map((r) => <Route key={{r.path}} {{...r}} />)}}</Routes>);\n"
+        );
+        let dir = project(&[("c/package.json", ROUTER_PKG), ("c/src/App.jsx", &app)]);
+        extract(dir.path())
+    }
+
+    #[test]
+    fn route_arrays_are_const_declared_once_and_never_changed() {
+        let decl = "const xs = [{ path: '/priv', element: <Priv /> }];";
+        for (decl, extra) in [
+            (
+                "let xs = [{ path: '/priv', element: <Priv /> }];",
+                "if (!user) xs = [];",
+            ),
+            (decl, "if (!user) xs.splice(0);"),
+            (decl, "xs.length = 0;"),
+            (decl, "xs[0] = other;"),
+            (decl, "xs.push(more);"),
+            (decl, "xs ||= [];"),
+            (decl, "function f() { const xs = []; return xs; }"),
+            (decl, "const g = (xs) => xs.length;"),
+            (decl, "const g = (a, xs) => a;"),
+            (decl, "function h(xs) { return xs; }"),
+            ("var xs = [{ path: '/priv', element: <Priv /> }];", ""),
+        ] {
+            let flow = array_file(decl, extra);
+            assert!(
+                flow.screens.is_empty(),
+                "{decl} {extra}: {:?}",
+                screens(&flow)
+            );
+            assert!(
+                has_diag(&flow, "c/src/App.jsx", 4),
+                "{decl} {extra}: {:?}",
+                flow.diagnostics
+            );
+            assert!(!flow.complete);
+        }
+        for extra in [
+            "const n = xs.length;",
+            "const f = xs.filter((x) => x);",
+            "log(xs);",
+            "xs.forEach(log);",
+        ] {
+            let flow = array_file(decl, extra);
+            assert_eq!(
+                screens(&flow),
+                vec![screen("c:/priv", "Priv", None)],
+                "{extra}: {:?}",
+                flow.diagnostics
+            );
+        }
+        let flow = array_file("const xs = cond ? a : b;", "");
+        let message = &flow.diagnostics[0].message;
+        assert!(
+            message.contains("array literal") && !message.contains("not declared"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn route_arrays_for_a_router_call_follow_the_same_rule() {
+        let call = "export const router = createBrowserRouter(routes);\n";
+        for (decl, ok) in [
+            ("const routes = [{ path: '/x', element: <X /> }];", true),
+            ("let routes = [{ path: '/x', element: <X /> }];", false),
+            (
+                "const routes = [{ path: '/x', element: <X /> }];\nroutes.pop();",
+                false,
+            ),
+        ] {
+            let dir = project(&[
+                ("c/package.json", ROUTER_PKG),
+                ("c/src/App.jsx", &format!("{decl}\n{call}")),
+            ]);
+            let flow = extract(dir.path());
+            assert_eq!(
+                !flow.screens.is_empty(),
+                ok,
+                "{decl}: {:?}",
+                flow.diagnostics
+            );
+            assert_eq!(
+                flow.diagnostics.is_empty(),
+                ok,
+                "{decl}: {:?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn an_imported_route_array_that_is_changed_where_it_is_exported_is_a_gap() {
+        let app = "import { xs } from './routes';\nexport const App = () => (\n<Routes>{xs.map((r) => <Route key={r.path} {...r} />)}</Routes>);\n";
+        let dir = project(&[
+            ("c/package.json", ROUTER_PKG),
+            ("c/src/App.jsx", app),
+            (
+                "c/src/routes.jsx",
+                "export const xs = [{ path: '/x', element: <X /> }];\nxs.shift();\n",
+            ),
+        ]);
+        let flow = extract(dir.path());
+        assert!(flow.screens.is_empty(), "{:?}", screens(&flow));
+        assert!(
+            has_diag(&flow, "c/src/App.jsx", 3),
+            "{:?}",
+            flow.diagnostics
+        );
     }
 }
