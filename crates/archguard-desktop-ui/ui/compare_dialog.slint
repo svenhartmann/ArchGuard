@@ -1,0 +1,98 @@
+// File → Compare architecture…: pick a base branch and a branch or the Git
+// index; the comparison runs on a worker (src/compare_ui.rs), closing the
+// dialog cancels it.
+import { Theme } from "theme.slint";
+import { Button } from "widgets.slint";
+import { ComboBox } from "combo.slint";
+import { CompareData } from "compare_view.slint";
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    spacing: 4px;
+    alignment: start;
+    Text { text: root.label; color: Theme.text; font-size: Theme.field-label; }
+    @children
+}
+
+// Modal over the window, as the save prompt.
+export component CompareDialog inherits Rectangle {
+    property <bool> busy: CompareData.state == 1;
+    background: Theme.shadow;
+    TouchArea { }
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                CompareData.close();
+                return accept;
+            }
+            reject
+        }
+    }
+    Rectangle {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        width: min(560px, root.width - 32px);
+        height: box.preferred-height;
+        background: Theme.panel;
+        border-radius: 14px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.shadow;
+        box := VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text { text: @tr("Compare architecture"); color: Theme.text; font-size: Theme.font-section; font-weight: Theme.weight-title; }
+            Text {
+                text: @tr("Both sides are analyzed from Git objects with the same rules; the checkout and working files stay untouched.");
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Field {
+                    label: @tr("Base");
+                    ComboBox {
+                        height: Theme.control-h;
+                        enabled: !root.busy;
+                        model: CompareData.branches;
+                        current-index <=> CompareData.from-index;
+                    }
+                }
+                Field {
+                    label: @tr("Compare with");
+                    ComboBox {
+                        height: Theme.control-h;
+                        enabled: !root.busy;
+                        model: CompareData.targets;
+                        current-index <=> CompareData.to-index;
+                    }
+                }
+            }
+            if CompareData.state != 0: Text {
+                text: root.busy ? @tr("Comparing {} with {} … both sides are analyzed, this can take a while.",
+                        CompareData.branches[CompareData.from-index], CompareData.targets[CompareData.to-index])
+                    : CompareData.error;
+                color: root.busy ? Theme.muted : Theme.danger;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Button {
+                    text: root.busy ? @tr("Cancel") : @tr("Close");
+                    clicked => { CompareData.close(); }
+                }
+                Button {
+                    primary: true;
+                    text: @tr("Compare");
+                    enabled: !root.busy && CompareData.branches.length > 0;
+                    clicked => { CompareData.run(); }
+                }
+            }
+        }
+    }
+}

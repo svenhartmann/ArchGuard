@@ -18,6 +18,8 @@ import { SettingsView, SettingsData, SettingsEdit, SettingsModel } from "setting
 import { DocumentStrip, DocItem, SubProjectItem, RecentItem, ProjectsMenu, EmptyStart } from "documents_strip.slint";
 import { SaveDialog, NoticeBar } from "shell_dialog.slint";
 import { ReviewDecisionsDialog, ReviewDecisionsData, DecisionRow } from "review_decisions.slint";
+import { CompareView, CompareData, CompareRow, CompareRelation, CompareCounts } from "compare_view.slint";
+import { CompareDialog } from "compare_dialog.slint";
 import { UpdateNotice, UpdateBar } from "update_notice.slint";
 import { PaneItem, TabItem, PaneStrip, ViewBarTab, Views } from "panes.slint";
 import { Templates, Template } from "texts.slint";
@@ -40,6 +42,8 @@ export { Tips }
 export { UpdateNotice }
 // View → Review decisions… (src/review_decisions_ui.rs).
 export { ReviewDecisionsData, DecisionRow }
+// File → Compare architecture… (src/compare_ui.rs).
+export { CompareData, CompareRow, CompareRelation, CompareCounts }
 
 export component AppWindow inherits Window {
     // The open project, as a document window names its document; the app
@@ -271,6 +275,11 @@ export component AppWindow inherits Window {
                 shortcut: @keys(Control + S);
                 enabled: root.has-doc;
                 activated => { root.save-active(); }
+            }
+            MenuItem {
+                title: @tr("Compare architecture…");
+                enabled: root.has-doc;
+                activated => { CompareData.show(); }
             }
             MenuSeparator { }
             Menu {
@@ -772,6 +781,9 @@ export component AppWindow inherits Window {
                     if p.view == "settings": SettingsView {
                         vertical-stretch: 1;
                     }
+                    if p.view == "compare": CompareView {
+                        vertical-stretch: 1;
+                    }
 
                     if p.view == "graph": GraphView {
                         vertical-stretch: 1;
@@ -834,6 +846,7 @@ export component AppWindow inherits Window {
     }
 
     if ReviewDecisionsData.open: ReviewDecisionsDialog { }
+    if CompareData.dialog: CompareDialog { }
 
     // Tooltips above everything else, menus and the save prompt included.
     TipLayer { }

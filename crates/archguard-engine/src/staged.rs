@@ -119,6 +119,64 @@ fn resolve_commit(repo: &Path, reference: &str) -> Result<String, ArchguardError
     }
     Ok(commit)
 }
+#[derive(Debug, serde::Serialize)]
+pub struct GitBranch {
+    pub name: String,
+    pub reference: String,
+    pub commit: String,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct GitBranches {
+    pub current: Option<String>,
+    pub branches: Vec<GitBranch>,
+    pub truncated: bool,
+}
+/// Local branch and remote-tracking refs only; never fetches or changes Git state.
+pub fn list_git_branches(root: &Path) -> Result<GitBranches, ArchguardError> {
+    let (_, repo) = repository(root)?;
+    let bytes = bounded_git(
+        &repo,
+        &[
+            "for-each-ref".into(),
+            "--sort=refname".into(),
+            "--count=2001".into(),
+            "--format=%(refname)%00%(objectname)%00%(symref)".into(),
+            "refs/heads/".into(),
+            "refs/remotes/".into(),
+        ],
+        MAX_TREE_BYTES,
+    )?;
+    let text = String::from_utf8(bytes).map_err(invalid)?;
+    let mut branches = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<_> = line.split('\0').collect();
+        if fields.len() != 3 || !fields[2].is_empty() {
+            continue;
+        }
+        let reference = fields[0];
+        let name = reference
+            .strip_prefix("refs/heads/")
+            .or_else(|| reference.strip_prefix("refs/remotes/"));
+        if let Some(name) = name {
+            branches.push(GitBranch {
+                name: name.into(),
+                reference: reference.into(),
+                commit: fields[1].into(),
+            });
+        }
+    }
+    let truncated = text.lines().count() > 2000;
+    branches.truncate(2000);
+    let current = git(&repo, &["symbolic-ref", "--quiet", "HEAD"])
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .map(|s| s.trim_end_matches('\n').to_owned());
+    Ok(GitBranches {
+        current,
+        branches,
+        truncated,
+    })
+}
 fn source_patch(repo: &Path, relative: &Path, commits: &[&str]) -> Result<String, ArchguardError> {
     let mut args: Vec<OsString> = [
         "--literal-pathspecs",
