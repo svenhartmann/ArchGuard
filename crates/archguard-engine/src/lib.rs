@@ -103,6 +103,7 @@ mod lang_blank;
 mod lang_csharp;
 mod lang_java;
 mod lang_markup;
+mod lang_python;
 #[cfg(test)]
 mod lang_tests;
 mod lang_text;
