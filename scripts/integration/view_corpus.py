@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Golden-corpus harness for the ui-flow and domain views (stdlib only).
+
+Runs `archguard ui-flow` and `archguard domain` (--format json) on every top-level
+directory of a read-only corpus, stores raw outputs under target/view-corpus/<label>/
+and compares two labelled runs, so "byte-identical on the corpus" is one command.
+
+  view_corpus.py run --bin target/release/archguard --label before [--apps a,b] [--corpus DIR] [--jobs N] [--timeout 600]
+  view_corpus.py compare before after [--expect-changed a,b]   # exit 0 iff all other apps are identical
+  view_corpus.py table after                                    # markdown table of summary.json
+
+Files per app and view: <app>.<view>.json (stdout), .err (stderr), .meta.json (exit code, seconds,
+timeout). The corpus is only read, never written.
+"""
+import argparse
+import concurrent.futures as cf
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+OUT = ROOT / "target" / "view-corpus"
+CORPUS = Path("/Users/svenhartmann/Projects/000_HSE/soft-arch/examples/checkouts")
+VIEWS = ("ui-flow", "domain")
+
+
+def ui_counts(d):
+    f, s = d["flow"], d["summary"]
+    diag = f.get("diagnostics", [])
+    return {
+        "screens": s["screens"], "actions": s["actions"], "unresolved_actions": s["actions_unresolved"],
+        "endpoints_protected": s["endpoints_by_access"].get("protected", 0),
+        "endpoints_open": s["endpoints_by_access"].get("open", 0),
+        "endpoints_undeclared": s["endpoints_by_access"].get("undeclared", 0),
+        "diagnostics": len(diag), "gaps": sum(1 for x in diag if x.get("severity") == "gap"),
+        "findings": len(d.get("findings", [])), "complete": f["complete"],
+    }
+
+
+def domain_counts(d):
+    m = d["model"]
+    sms = m.get("state_machines", [])
+    n = lambda k: len(m.get(k, []))  # empty models omit their lists
+    return {
+        "entities": n("entities"), "rules": n("rules"), "events": n("events"),
+        "state_machines": len(sms), "state_machines_with_transitions": sum(1 for x in sms if x.get("transitions")),
+        "integration_events": n("integration_events"), "use_cases": n("use_cases"),
+        "validations": n("validations"), "diagnostics": len(m.get("diagnostics", [])),
+        "complete": m.get("complete"),
+    }
+
+
+COUNTERS = {"ui-flow": ui_counts, "domain": domain_counts}
+
+
+def run_one(binary, label, app, view, corpus, timeout):
+    out = OUT / label
+    base = out / f"{app}.{view}"
+    start = time.monotonic()
+    meta = {"exit": None, "seconds": None, "timeout": False}
+    try:
+        p = subprocess.run([binary, view, str(corpus / app), "--format", "json"],
+                           capture_output=True, timeout=timeout)
+        meta["exit"], stdout, stderr = p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired as e:
+        meta["timeout"], stdout, stderr = True, e.stdout or b"", e.stderr or b""
+    meta["seconds"] = round(time.monotonic() - start, 2)
+    base.with_suffix(".json").write_bytes(stdout)
+    base.with_suffix(".err").write_bytes(stderr)
+    base.with_suffix(".meta.json").write_text(json.dumps(meta))
+    rec = dict(meta, sha256=hashlib.sha256(stdout).hexdigest())
+    try:
+        rec["counts"] = COUNTERS[view](json.loads(stdout))
+    except Exception as e:  # timeout, crash or changed schema: keep the record, no counts
+        rec["counts"] = None
+        rec["count_error"] = f"{type(e).__name__}: {e}"
+    return app, view, rec
+
+
+def cmd_run(a):
+    corpus = Path(a.corpus)
+    apps = a.apps.split(",") if a.apps else sorted(p.name for p in corpus.iterdir() if p.is_dir() and not p.name.startswith("."))
+    (OUT / a.label).mkdir(parents=True, exist_ok=True)
+    summary = {app: {} for app in apps}
+    with cf.ThreadPoolExecutor(a.jobs) as ex:
+        futs = [ex.submit(run_one, str(Path(a.bin).resolve()), a.label, app, v, corpus, a.timeout)
+                for app in apps for v in VIEWS]
+        for f in cf.as_completed(futs):
+            app, view, rec = f.result()
+            summary[app][view] = rec
+            print(f"{app} {view}: exit={rec['exit']} {rec['seconds']}s" + (" TIMEOUT" if rec["timeout"] else ""),
+                  flush=True)
+    (OUT / a.label / "summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True))
+
+
+def load(label):
+    return json.loads((OUT / label / "summary.json").read_text())
+
+
+def cmd_compare(a):
+    A, B = load(a.a), load(a.b)
+    expected = set(a.expect_changed.split(",")) if a.expect_changed else set()
+    bad = 0
+    for app in sorted(set(A) | set(B)):
+        if app not in A or app not in B:
+            print(f"{app}: only in {a.a if app in A else a.b}")
+            continue
+        for view in VIEWS:
+            x, y = A[app].get(view), B[app].get(view)
+            if x and y and x["sha256"] == y["sha256"] and x["exit"] == y["exit"]:
+                print(f"{app} {view}: IDENTICAL")
+                continue
+            deltas = []
+            cx, cy = (x or {}).get("counts") or {}, (y or {}).get("counts") or {}
+            for k in sorted(set(cx) | set(cy)):
+                if cx.get(k) != cy.get(k):
+                    deltas.append(f"{k} {cx.get(k)}->{cy.get(k)}")
+            if x and y and x["exit"] != y["exit"]:
+                deltas.append(f"exit {x['exit']}->{y['exit']}")
+            note = "" if app in expected else "  (UNEXPECTED)"
+            bad += app not in expected
+            print(f"{app} {view}: CHANGED {', '.join(deltas) or 'bytes only'}{note}")
+    sys.exit(1 if bad else 0)
+
+
+def cmd_table(a):
+    S = load(a.label)
+    ui = ["screens", "actions", "unresolved_actions", "endpoints_protected", "endpoints_open",
+          "endpoints_undeclared", "diagnostics", "gaps", "complete"]
+    dm = ["entities", "rules", "events", "state_machines", "state_machines_with_transitions",
+          "integration_events", "use_cases", "validations", "diagnostics", "complete"]
+    for view, cols in (("ui-flow", ui), ("domain", dm)):
+        print(f"\n### {view}\n\n| app | exit | s | " + " | ".join(cols) + " |")
+        print("|" + "---|" * (len(cols) + 3))
+        for app in sorted(S):
+            r = S[app].get(view)
+            if not r:
+                continue
+            c = r["counts"] or {}
+            exit_ = "timeout" if r["timeout"] else r["exit"]
+            print(f"| {app} | {exit_} | {r['seconds']} | " + " | ".join(str(c.get(k, "")) for k in cols) + " |")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("--bin", required=True)
+    r.add_argument("--label", required=True)
+    r.add_argument("--apps")
+    r.add_argument("--corpus", default=str(CORPUS))
+    r.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    r.add_argument("--timeout", type=int, default=600)
+    r.set_defaults(f=cmd_run)
+    c = sub.add_parser("compare")
+    c.add_argument("a")
+    c.add_argument("b")
+    c.add_argument("--expect-changed")
+    c.set_defaults(f=cmd_compare)
+    t = sub.add_parser("table")
+    t.add_argument("label")
+    t.set_defaults(f=cmd_table)
+    a = p.parse_args()
+    a.f(a)
+
+
+if __name__ == "__main__":
+    main()
