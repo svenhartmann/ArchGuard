@@ -1930,30 +1930,116 @@ mod spring {
         use super::super::lex::{skip_ws, skip_ws_back};
         use super::super::*;
 
-        /// Whether the identifier at `s` is a call: not a declaration (`fun name(`,
-        /// `Type name(`, `List<T> name(`) and not a constructor (`new name(`); the
-        /// keywords that precede an expression still count as calls.
-        pub(super) fn call_position(src: &Source, s: usize) -> bool {
+        /// The identifier word ending at `q` (exclusive), possibly empty.
+        fn word_before(src: &Source, q: usize) -> &str {
             let b = src.bytes();
-            let q = skip_ws_back(b, s);
-            if q == 0 {
-                return true;
-            }
-            if b[q - 1] == b'>' {
-                // `->` (when branch, lambda) precedes an expression; `>` closes a type.
-                return q >= 2 && b[q - 2] == b'-';
-            }
             let start = q - b[..q]
                 .iter()
                 .rev()
                 .take_while(|c| lex::is_ident(**c))
                 .count();
-            let word = &src.text[start..q];
-            word.is_empty()
-                || matches!(
-                    word,
-                    "return" | "else" | "throw" | "yield" | "in" | "is" | "as" | "do"
-                )
+            &src.text[start..q]
+        }
+
+        /// Whether the name at `s..e` is a call or method reference. Only a
+        /// declaration or a constructor is not: Kotlin `fun [Recv.]name(`, Java
+        /// `name(…)` followed by a body (`{` or `throws`), and `new name(`. When
+        /// unsure it is a call (conservative).
+        pub(super) fn is_call(src: &Source, s: usize, e: usize) -> bool {
+            let b = src.bytes();
+            let q = skip_ws_back(b, s);
+            if q >= 2 && &b[q - 2..q] == b"::" {
+                return true;
+            }
+            let open = skip_ws(b, e);
+            if b.get(open) != Some(&b'(') || word_before(src, q) == "new" {
+                return false;
+            }
+            if src.rel.ends_with(".kt") {
+                let mut r = q;
+                if q > 0 && b[q - 1] == b'.' {
+                    // the receiver type of `fun Foo.name(`
+                    while r > 0 && !b[r - 1].is_ascii_whitespace() {
+                        r -= 1;
+                    }
+                }
+                return word_before(src, skip_ws_back(b, r)) != "fun";
+            }
+            let body = src.pair(open).map(|c| skip_ws(b, c + 1));
+            !body.is_some_and(|k| b.get(k) == Some(&b'{') || src.text[k..].starts_with("throws"))
+        }
+
+        /// The innermost `(` around `at` that is still open, if any.
+        fn enclosing_open(src: &Source, at: usize) -> Option<usize> {
+            let b = src.bytes();
+            let mut depth = 0;
+            for k in (0..at).rev() {
+                match b[k] {
+                    b')' => depth += 1,
+                    b'(' if depth == 0 => return Some(k),
+                    b'(' => depth -= 1,
+                    b';' | b'{' | b'}' => return None,
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        /// Names of the `HttpSecurity` parameters (`HttpSecurity http`, `http: HttpSecurity`).
+        fn http_vars(src: &Source) -> Vec<String> {
+            let mut vars = Vec::new();
+            for p in lex::words(&src.text, "HttpSecurity") {
+                let Some(open) = enclosing_open(src, p) else {
+                    continue;
+                };
+                let Some(close) = src.pair(open) else {
+                    continue;
+                };
+                for part in lex::split_top(&src.text[open + 1..close]) {
+                    if lex::words(part, "HttpSecurity").next().is_none() {
+                        continue;
+                    }
+                    let name = match part.split_once(':') {
+                        Some((n, _)) => n.split_whitespace().last(),
+                        None => part.split_whitespace().last(),
+                    };
+                    vars.extend(name.map(str::to_owned));
+                }
+            }
+            vars.sort();
+            vars.dedup();
+            vars
+        }
+
+        /// The call receiving the `HttpSecurity` parameter as an argument outside
+        /// `inside`: it may scope the chain where this file cannot see it. `with(http)`
+        /// is the Kotlin DSL, not a helper.
+        pub(super) fn passed_on(src: &Source, inside: &[(usize, usize)]) -> Option<String> {
+            let b = src.bytes();
+            for var in http_vars(src) {
+                for p in lex::words(&src.text, &var) {
+                    let q = skip_ws_back(b, p);
+                    let next = b.get(skip_ws(b, p + var.len())).copied();
+                    if q == 0
+                        || !matches!(b[q - 1], b'(' | b',')
+                        || !matches!(next, Some(b')' | b','))
+                    {
+                        continue;
+                    }
+                    let Some(open) = enclosing_open(src, p) else {
+                        continue;
+                    };
+                    let (s, e) = lex::ident_before(b, open);
+                    let name = &src.text[s..e];
+                    if !name.is_empty()
+                        && name != "with"
+                        && !inside.iter().any(|&(f, t)| f <= p && p < t)
+                    {
+                        return Some(name.to_owned());
+                    }
+                }
+            }
+            None
         }
 
         /// Bodies of `configure(… WebSecurity …)` methods: their matchers
@@ -2118,9 +2204,14 @@ mod spring {
                     beans.count() + a.len()
                 })
                 .sum();
-            if chains > 1 || files.iter().any(|s| scoped(s)) {
-                let message = "Several security configurations or a scoping matcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
-                return out.note(&home.rel, home.line(at), message.into());
+            let why = (chains > 1)
+                .then(|| "Several security configurations".to_string())
+                .or_else(|| files.iter().find_map(|s| scoping_matcher(s)));
+            if let Some(why) = why {
+                let message = format!(
+                    "{why}: central rules are not evaluated; endpoints marked undeclared may be protected there."
+                );
+                return out.note(&home.rel, home.line(at), message);
             }
             let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
             unreadable_classes(&found, index, out);
@@ -2147,11 +2238,6 @@ mod spring {
                 rules.len()
             );
             out.note(&home.rel, home.line(at), message);
-        }
-
-        /// A scoping matcher call outside the authorization block.
-        fn scoped(s: &Source) -> bool {
-            scoping_matcher(s)
         }
 
         /// A gap per adapter class in a file without any readable rule.
@@ -2282,24 +2368,31 @@ mod spring {
             })
         }
 
-        /// Whether a call of one of the [`SCOPING`] names sits outside every
-        /// authorization block and `configure(WebSecurity)` body: it scopes the
-        /// chain to some requests.
-        fn scoping_matcher(src: &Source) -> bool {
+        /// Why the chain cannot be read as global, if so: a call or method
+        /// reference of one of the [`SCOPING`] names outside every authorization
+        /// block and `configure(WebSecurity)` body scopes it to some requests
+        /// (declarations and `new` are no calls); or the `HttpSecurity` parameter
+        /// is passed to another call (a helper, possibly in another file, may
+        /// scope it) outside those blocks.
+        fn scoping_matcher(src: &Source) -> Option<String> {
             let b = src.bytes();
             let mut inside: Vec<(usize, usize)> = (authorize_sites(src).into_iter())
                 .filter_map(|open| block(src, open))
                 .map(|(from, to, _)| (from, to))
                 .collect();
             inside.extend(super::chain_span::web_security_bodies(src));
-            (0..b.len()).any(|s| {
+            let scoping = (0..b.len()).any(|s| {
                 let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
                 (s == 0 || !lex::is_ident(b[s - 1]))
                     && SCOPING.contains(&&src.text[s..e])
-                    && b.get(skip_ws(b, e)) == Some(&b'(')
-                    && super::chain_span::call_position(src, s)
+                    && super::chain_span::is_call(src, s, e)
                     && !inside.iter().any(|&(from, to)| from <= s && s < to)
-            })
+            });
+            if scoping {
+                return Some("a scoping matcher".into());
+            }
+            let helper = super::chain_span::passed_on(src, &inside)?;
+            Some(format!("`{helper}(…)` receives the HttpSecurity"))
         }
 
         /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
@@ -4557,6 +4650,96 @@ public class TicketController {
             let flow = kotlin(&format!("        http.apply {{ {chain}; {scope} }}"));
             assert_not_evaluated(&flow);
         }
+    }
+
+    #[test]
+    fn scoping_calls_are_found_whatever_precedes_the_name() {
+        let chain = "authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().anyRequest().authenticated()";
+        for scope in [
+            "val api = true\n            antMatcher(\"/api/**\")",
+            "val h = http\n            antMatcher(\"/api/**\")",
+            "val m = \"a\" to antMatcher(\"/api/**\")",
+            "val f = http::antMatcher",
+        ] {
+            let body = format!(
+                "        http.apply {{\n            {scope}\n            {chain}\n        }}"
+            );
+            let flow = kotlin(&body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{scope}"
+            );
+        }
+        let flow = kotlin(&format!(
+            "        http.apply {{\n            {chain}\n            return@apply antMatcher(\"/api/**\")\n        }}"
+        ));
+        assert_not_evaluated(&flow);
+        for scope in [
+            "http.<HttpSecurity>antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+            "Function<String, HttpSecurity> f = http::antMatcher; http.authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn a_helper_receiving_the_http_security_hides_its_scoping() {
+        for body in [
+            "ApiScope.scope(http); http.authorizeRequests().anyRequest().authenticated();",
+            "customize(http); http.authorizeRequests().anyRequest().authenticated();",
+            "run(a, http); http.authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(body);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                notes(&flow, "receives the HttpSecurity"),
+                1,
+                "{:#?}",
+                flow.diagnostics
+            );
+        }
+        let flow = kotlin(
+            "        scope(http)\n        http.authorizeRequests().anyRequest().authenticated()",
+        );
+        assert_not_evaluated(&flow);
+        // The DSL itself is no helper: with(http), http.apply(..), http.x(y), assignments.
+        let flow =
+            kotlin("        with(http) { authorizeRequests().anyRequest().authenticated() }");
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+        let config = adapter(
+            "http.apply(new Cfg()).authorizeRequests().anyRequest().authenticated(); HttpSecurity h = http;",
+        );
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+    }
+
+    #[test]
+    fn declarations_of_scoping_names_are_not_calls() {
+        let kt = "class SecurityConfig : WebSecurityConfigurerAdapter() {\n    fun requestMatcher(): RequestMatcher = TODO()\n    fun Foo.antMatcher(x: String) = 1\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll()\n    }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.kt", kt)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
+        let java = "public class SecurityConfig extends WebSecurityConfigurerAdapter {\n    private RequestMatcher requestMatcher() { return null; }\n    RequestMatcher[] requestMatchers() throws Exception {\n        return null;\n    }\n    protected void configure(HttpSecurity http) throws Exception {\n        http.authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll();\n    }\n}\n";
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", java)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
     }
 
     #[test]
