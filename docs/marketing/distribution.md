@@ -81,3 +81,5 @@ Format: 25 Minuten plus 10 Minuten Diskussion. Zielgruppe: Entwicklung, Architek
 | 22–25 | Show CI/documentation handoff and the next decision | Übergang zu CI/Dokumentation und nächste Entscheidung |
 
 Fallback: use the real recorded clip and saved outputs from the same revision if a live tool fails. State that the recording is a fallback; do not act out a successful live response.
+
+Bei einer Live-Störung den echten aufgezeichneten Clip und gespeicherte Ergebnisse desselben Commits verwenden. Den Wechsel zur Aufnahme offen benennen; keine erfolgreiche Live-Antwort nachspielen.

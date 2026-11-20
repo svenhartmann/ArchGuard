@@ -37,3 +37,5 @@ Start: the first full week after the revised website is published. No dates or s
 | 12 | Review results and adjust channels | Maintainer | Weekly [measurements](measurement.md) | One evidence-based decision per channel |
 
 Weekly social posts: extract one observation from that week's verified artifact, use a real screenshot or the existing silent `flow.mp4`, add a meaningful caption/alt text and link to the complete explanation. Reuse substance, not the same promotional paragraph everywhere. Conference/meetup proposals and the teaching exercise are separate opportunities; do not claim dates or accepted slots.
+
+Wöchentliche Social-Beiträge greifen eine belegte Beobachtung aus dem jeweiligen Artefakt auf: echter Screenshot oder vorhandenes stummes `flow.mp4`, aussagekräftige Beschreibung und Link zur vollständigen Erklärung. Den Inhalt wiederverwenden, nicht überall denselben Werbetext. Vortragsvorschläge und Lehrübungen sind eigenständige Gelegenheiten; keine Termine oder Zusagen behaupten.
