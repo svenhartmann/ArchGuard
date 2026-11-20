@@ -143,6 +143,7 @@ fn tree_rows(
     old: &ModelRc<TreeRow>,
 ) -> ModelRc<TreeRow> {
     let v = &g.view;
+    let parents = parents(&v.rows);
     sync_rows(
         old,
         v.rows.iter().enumerate().map(|(i, r)| {
@@ -158,6 +159,7 @@ fn tree_rows(
                     .join("/")
                     .into(),
                 depth: r.depth as i32,
+                parent: parents[i],
                 expandable: r.expandable,
                 expanded: r.expanded,
                 file: n.file,
@@ -169,6 +171,21 @@ fn tree_rows(
             }
         }),
     )
+}
+
+/// The parent row of every row (rows are in preorder), -1 for a root.
+fn parents(rows: &[crate::tree::Row]) -> Vec<i32> {
+    // The last row seen at each depth.
+    let mut open: Vec<usize> = Vec::new();
+    rows.iter()
+        .enumerate()
+        .map(|(i, r)| {
+            open.truncate(r.depth);
+            let parent = open.last().map_or(-1, |&p| p as i32);
+            open.push(i);
+            parent
+        })
+        .collect()
 }
 
 /// Up to this many arrows, every arrow shows its reference count.
@@ -358,5 +375,19 @@ mod tests {
                 .iter()
                 .all(|k| k.value == "—")
         );
+    }
+
+    /// Left goes to the parent row: the last row one level up.
+    #[test]
+    fn parents_follow_the_preorder() {
+        let row = |depth| crate::tree::Row {
+            node: 0,
+            chain: vec![0],
+            depth,
+            expandable: false,
+            expanded: false,
+        };
+        let rows = [row(0), row(1), row(2), row(1), row(0), row(1)];
+        assert_eq!(parents(&rows), [-1, 0, 1, 0, -1, 4]);
     }
 }

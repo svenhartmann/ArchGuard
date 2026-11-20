@@ -8,6 +8,8 @@ export struct TreeRow {
     node: int,
     label: string,
     depth: int,
+    // The parent's row, -1 for a root (the explorer's Left key).
+    parent: int,
     expandable: bool,
     expanded: bool,
     file: bool,
