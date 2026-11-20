@@ -1,11 +1,15 @@
 //! The `check` gate shared by `archguard check` and the MCP `check` tool:
-//! the empty-analysis refusal, the `[review]` KPI gates (R30/R31) and the
-//! fail rule with its baseline acceptance (Kap. 5/7).
-use std::collections::BTreeSet;
+//! the empty-analysis refusal, the `[review]` KPI gates (R30/R31), the
+//! fail rule with its baseline acceptance (Kap. 5/7) and the notes for
+//! agents on view findings (ADR 0021).
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use archguard_analysis::{Baseline, cycle_hash};
-use archguard_core::{Config, Finding, FindingKind, Graph, Ref, Report, Severity};
+use archguard_core::{
+    Config, DecisionKind, Finding, FindingKind, Graph, Ref, Report, ReviewDecision, Severity,
+};
+use serde_json::{Value, json};
 
 /// Nothing analysed is no evidence of a clean architecture: a wrong path
 /// (e.g. the GitHub Action's `path:`) must not turn the gate green.
@@ -70,12 +74,70 @@ pub fn apply_convention_baseline(findings: &mut Vec<Finding>, baseline: Option<&
     }));
 }
 
-/// Gate semantics: fail as soon as one `Error` finding is not accepted
-/// by the baseline — every non-cycle Error fails regardless.
-pub fn gate_fails(findings: &[Finding], baseline: Option<&Baseline>) -> bool {
-    findings
-        .iter()
-        .any(|f| f.severity == Severity::Error && !accepted_by_baseline(baseline, f))
+/// Gate semantics: fail as soon as one `Error` finding is accepted neither
+/// by the baseline nor by an intentional note ([`accepted_by_note`]).
+pub fn gate_fails(findings: &[Finding], baseline: Option<&Baseline>, notes: &ViewNotes) -> bool {
+    findings.iter().any(|f| {
+        f.severity == Severity::Error
+            && !accepted_by_baseline(baseline, f)
+            && !accepted_by_note(notes, f)
+    })
+}
+
+/// Notes for agents on view items (ADR 0021): the review register's
+/// decisions whose finding is a `view-…` id, by that id.
+pub type ViewNotes = BTreeMap<String, ReviewDecision>;
+
+/// The notes `check` shows; empty, and the register unread, while
+/// `[views] conventions` is empty. A corrupt register is an error.
+pub fn view_notes(root: &Path, config: &Config) -> Result<ViewNotes, String> {
+    if config.views.conventions.is_empty() {
+        return Ok(ViewNotes::new());
+    }
+    let register = crate::review_register::load_register(root).map_err(|e| e.to_string())?;
+    let views = (register.decisions.into_iter()).filter(|d| d.finding_ref.starts_with("view-"));
+    Ok(views.map(|d| (d.finding_ref.clone(), d)).collect())
+}
+
+/// Whether an intentional (accept-risk) note accepts the convention
+/// `finding`: like a baseline entry it no longer fails `check`, but it
+/// stays in the output with its note. An `expires_on` in the past ends it.
+pub fn accepted_by_note(notes: &ViewNotes, finding: &Finding) -> bool {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    let today =
+        || crate::review_register::iso_from_unix(now.map_or(0, |d| d.as_secs()))[..10].to_string();
+    finding.kind == FindingKind::Convention
+        && notes.get(&finding.id).is_some_and(|d| {
+            d.decision == DecisionKind::AcceptRisk
+                && d.expires_on.as_ref().is_none_or(|last| *last >= today())
+        })
+}
+
+/// The desktop's word for a note's decision: fix, intentional, later.
+pub fn note_word(d: &ReviewDecision) -> &'static str {
+    match d.decision {
+        DecisionKind::Fix => "fix",
+        DecisionKind::AcceptRisk => "intentional",
+        DecisionKind::Defer => "later",
+    }
+}
+
+/// A note as JSON: `{decision, text, author, ts}`.
+pub fn note_value(d: &ReviewDecision) -> Value {
+    json!({"decision": note_word(d), "text": d.note, "author": d.author, "ts": d.ts})
+}
+
+/// Notes on gaps no convention reports (`view-gap:…` ids), in id order.
+pub fn noted_gaps(notes: &ViewNotes) -> impl Iterator<Item = &ReviewDecision> {
+    (notes.iter())
+        .filter(|(id, _)| id.starts_with("view-gap:"))
+        .map(|(_, d)| d)
+}
+
+/// [`noted_gaps`] as JSON: `[{id, note}]`.
+pub fn noted_gaps_value(notes: &ViewNotes) -> Value {
+    let gaps = noted_gaps(notes).map(|d| json!({"id": d.finding_ref, "note": note_value(d)}));
+    Value::Array(gaps.collect())
 }
 
 /// The gate findings `check` adds to the analysis findings: the `[review]`
@@ -345,7 +407,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let findings = check_gate_findings(dir.path(), &config, &report(Some(kpis())));
         assert_eq!(findings[0].id, "metric-max-tangledness");
-        assert!(gate_fails(&findings, None));
+        assert!(gate_fails(&findings, None, &ViewNotes::new()));
     }
 
     #[test]
@@ -361,7 +423,7 @@ mod tests {
         let findings = check_gate_findings(dir.path(), &config, &report(None));
         let kinds: Vec<FindingKind> = findings.iter().map(|f| f.kind).collect();
         assert_eq!(kinds, [FindingKind::License], "{findings:?}");
-        assert!(gate_fails(&findings, None));
+        assert!(gate_fails(&findings, None, &ViewNotes::new()));
     }
 
     #[test]
@@ -378,7 +440,7 @@ mod tests {
         let findings = check_gate_findings(dir.path(), &config, &report(None));
         let ids: Vec<&str> = findings.iter().map(|f| f.id.as_str()).collect();
         assert_eq!(ids, ["view-navigation_literal:A.razor:url"]);
-        assert!(gate_fails(&findings, None));
+        assert!(gate_fails(&findings, None, &ViewNotes::new()));
     }
 
     #[test]
@@ -393,10 +455,18 @@ mod tests {
             hashes: [cycle_hash(&nodes)].into(),
             ..Baseline::default()
         };
-        assert!(gate_fails(std::slice::from_ref(&cycle), None));
-        assert!(!gate_fails(std::slice::from_ref(&cycle), Some(&baseline)));
+        assert!(gate_fails(
+            std::slice::from_ref(&cycle),
+            None,
+            &ViewNotes::new()
+        ));
+        assert!(!gate_fails(
+            std::slice::from_ref(&cycle),
+            Some(&baseline),
+            &ViewNotes::new()
+        ));
         let metric = gate_finding("m".into(), nodes, vec![], String::new());
-        assert!(gate_fails(&[metric], Some(&baseline)));
+        assert!(gate_fails(&[metric], Some(&baseline), &ViewNotes::new()));
     }
 
     fn convention(id: &str) -> Finding {
@@ -446,16 +516,81 @@ mod tests {
                 .unwrap()
                 .contains("remove it from the baseline")
         );
-        assert!(gate_fails(&findings, Some(&baseline)));
+        assert!(gate_fails(&findings, Some(&baseline), &ViewNotes::new()));
 
         let mut only_old = vec![old];
         apply_convention_baseline(&mut only_old, Some(&baseline));
         assert_eq!(only_old.len(), 1, "only the fixed note: {only_old:?}");
-        assert!(!gate_fails(&only_old, Some(&baseline)));
+        assert!(!gate_fails(&only_old, Some(&baseline), &ViewNotes::new()));
 
         let mut without = vec![new];
         apply_convention_baseline(&mut without, None);
-        assert!(gate_fails(&without, None));
+        assert!(gate_fails(&without, None, &ViewNotes::new()));
+    }
+
+    fn note(finding: &str, decision: DecisionKind, expires_on: Option<&str>) -> ReviewDecision {
+        ReviewDecision {
+            id: finding.into(),
+            finding_ref: finding.into(),
+            decision,
+            note: format!("why {finding}"),
+            author: "sven".into(),
+            ts: "2026-11-20T10:00:00Z".into(),
+            expires_on: expires_on.map(Into::into),
+            ..ReviewDecision::default()
+        }
+    }
+
+    #[test]
+    fn intentional_notes_accept_convention_findings_and_others_only_show() {
+        let dir = tempfile::tempdir().unwrap();
+        let register = archguard_core::ReviewRegister {
+            version: 1,
+            decisions: vec![
+                note("view-a:A.razor:x", DecisionKind::AcceptRisk, None),
+                note("view-a:A.razor:y", DecisionKind::Fix, None),
+                note(
+                    "view-a:A.razor:old",
+                    DecisionKind::AcceptRisk,
+                    Some("2000-01-01"),
+                ),
+                note("view-gap:A.razor:role?", DecisionKind::Defer, None),
+                note("scc-1", DecisionKind::AcceptRisk, None),
+            ],
+        };
+        crate::review_register::save_register(dir.path(), &register).unwrap();
+        let off = view_notes(dir.path(), &Config::default()).unwrap();
+        assert!(off.is_empty(), "conventions off: the register is not read");
+        let config: Config =
+            toml::from_str("[views]\nconventions = [\"navigation_literal\"]").unwrap();
+        let notes = view_notes(dir.path(), &config).unwrap();
+        assert!(!notes.contains_key("scc-1"), "only view items");
+
+        let intentional = convention("view-a:A.razor:x");
+        let fix = convention("view-a:A.razor:y");
+        let expired = convention("view-a:A.razor:old");
+        assert!(accepted_by_note(&notes, &intentional));
+        assert!(!accepted_by_note(&notes, &fix));
+        assert!(!accepted_by_note(&notes, &expired), "expired");
+        assert!(!gate_fails(
+            std::slice::from_ref(&intentional),
+            None,
+            &notes
+        ));
+        assert!(gate_fails(&[intentional, fix], None, &notes));
+        // A note never accepts another kind of finding.
+        let metric = gate_finding("view-a:A.razor:x".into(), vec![], vec![], String::new());
+        assert!(!accepted_by_note(&notes, &metric));
+
+        assert_eq!(
+            note_value(&notes["view-a:A.razor:y"]),
+            serde_json::json!({"decision": "fix", "text": "why view-a:A.razor:y", "author": "sven", "ts": "2026-11-20T10:00:00Z"})
+        );
+        let gaps: Vec<(&str, &str)> = noted_gaps(&notes)
+            .map(|d| (d.finding_ref.as_str(), note_word(d)))
+            .collect();
+        assert_eq!(gaps, [("view-gap:A.razor:role?", "later")]);
+        assert_eq!(noted_gaps_value(&notes)[0]["note"]["decision"], "later");
     }
 
     #[test]

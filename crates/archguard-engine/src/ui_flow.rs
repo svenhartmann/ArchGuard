@@ -67,6 +67,7 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
         crate::ui_flow_django::extract_with,
         crate::ui_flow_fastapi::extract_with,
         crate::ui_flow_laravel::extract_with,
+        crate::ui_flow_rust::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
     Ok(extractors

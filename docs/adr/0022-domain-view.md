@@ -317,3 +317,18 @@ integration events with publish sites in four services and handlers in six. Not 
 desktop view of rules, validations, integration events and nested chains;
 jobs (`BackgroundService`) as chain starts; configuration of the exception
 families and model folders.
+
+### 2026-11-20: where event handlers are declared
+
+`DomainModel` gains `event_handler_sites: [EventHandlerSite { event,
+handler, file, line }]` (serde default, left out when empty, merged as a
+sorted union), one per `DomainEvent.handled_by` entry and handled type: C#
+the line of the `INotificationHandler<X>` class, Java/Kotlin the line of the
+`@EventListener`/`@TransactionalEventListener` method.
+`DomainModel::event_handler_sites(event)` lists them. As in ADR 0021, the
+list sits on the model instead of on `DomainEvent`, so literal `DomainEvent`
+values keep compiling and old JSON reads. `MessageHandler` already carried
+file and line (C# class, Java listener method body) and is unchanged; the
+TypeScript reader records no sites yet. eShop:
+`OrderStatusChangedToPaidDomainEvent` →
+`Ordering.API/Application/DomainEventHandlers/OrderStatusChangedToPaidDomainEventHandler.cs:3`.

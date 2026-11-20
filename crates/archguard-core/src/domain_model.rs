@@ -38,6 +38,10 @@ pub struct DomainModel {
     /// Integration events with their publish sites and handlers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integration_events: Vec<IntegrationEvent>,
+    /// Where each `DomainEvent.handled_by` handler is declared; see
+    /// [`DomainModel::event_handler_sites`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_handler_sites: Vec<EventHandlerSite>,
 }
 impl Default for DomainModel {
     /// Empty and complete, so it is the identity of [`merge_domain_models`].
@@ -55,7 +59,18 @@ impl Default for DomainModel {
             rules: vec![],
             validations: vec![],
             integration_events: vec![],
+            event_handler_sites: vec![],
         }
+    }
+}
+
+impl DomainModel {
+    /// The declarations of the handlers of event type `event`, sorted.
+    pub fn event_handler_sites<'a>(
+        &'a self,
+        event: &'a str,
+    ) -> impl Iterator<Item = &'a EventHandlerSite> + 'a {
+        (self.event_handler_sites.iter()).filter(move |s| s.event == event)
     }
 }
 
@@ -179,6 +194,18 @@ pub struct DomainEvent {
     #[serde(default)]
     pub handled_by: Vec<String>,
     pub source: String,
+}
+
+/// Where a handler of a domain event is declared: the class (C#
+/// `INotificationHandler<X>`) or the listener method (Java `@EventListener`).
+/// It sits on [`DomainModel`], not on [`DomainEvent`], so code that builds
+/// events literally keeps compiling; `handler` is the `handled_by` entry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EventHandlerSite {
+    pub event: String,
+    pub handler: String,
+    pub file: String,
+    pub line: u32,
 }
 
 /// A class or method that handles a message from outside a request (an
@@ -384,6 +411,7 @@ pub fn merge_domain_models(a: DomainModel, b: DomainModel) -> DomainModel {
         rules: union(a.rules, b.rules),
         validations: union(a.validations, b.validations),
         integration_events: union(a.integration_events, b.integration_events),
+        event_handler_sites: union(a.event_handler_sites, b.event_handler_sites),
     };
     link_integration_events(&mut merged);
     merged.integration_events.dedup();
@@ -608,6 +636,39 @@ mod tests {
         assert_eq!(
             merge_domain_models(DomainModel::default(), DomainModel::default()),
             DomainModel::default()
+        );
+    }
+
+    #[test]
+    fn event_handler_sites_merge_and_filter_by_event() {
+        let site = |event: &str, handler: &str, line: u32| EventHandlerSite {
+            event: event.into(),
+            handler: handler.into(),
+            file: format!("{handler}.cs"),
+            line,
+        };
+        let a = DomainModel {
+            event_handler_sites: vec![site(PAID_EVENT, "Mailer", 9), site("Other", "X", 1)],
+            ..DomainModel::default()
+        };
+        let b = DomainModel {
+            event_handler_sites: vec![site(PAID_EVENT, "Audit", 3), site(PAID_EVENT, "Mailer", 9)],
+            ..DomainModel::default()
+        };
+        let merged = merge_domain_models(a, b);
+        let paid: Vec<_> = (merged.event_handler_sites(PAID_EVENT))
+            .map(|s| (s.handler.as_str(), s.file.as_str(), s.line))
+            .collect();
+        assert_eq!(paid, [("Audit", "Audit.cs", 3), ("Mailer", "Mailer.cs", 9)]);
+        // Older files have no sites; an empty list is left out.
+        let old: DomainModel =
+            serde_json::from_str(r#"{"definition":"domain-model/v1","complete":true}"#)
+                .expect("reads without event_handler_sites");
+        assert!(old.event_handler_sites.is_empty());
+        assert!(
+            !serde_json::to_string(&old)
+                .unwrap()
+                .contains("event_handler_sites")
         );
     }
 

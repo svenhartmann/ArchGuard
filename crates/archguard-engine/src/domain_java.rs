@@ -68,8 +68,8 @@ use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::lang_text::*;
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, Field, MessageHandler,
-    Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
+    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
+    MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
 };
 use members::{Kind, Member, field, param_types};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -462,7 +462,8 @@ impl Extractor {
             }
         }
         self.model.state_machines = machines;
-        self.model.events = domain_events(&self.decls, &self.files, raised);
+        (self.model.events, self.model.event_handler_sites) =
+            domain_events(&self.decls, &self.files, raised);
         self.pending.extend(pending);
     }
 
@@ -735,12 +736,14 @@ fn qualify(ents: &mut [Ent], decls: &[Decl]) -> Pending {
     out
 }
 
+/// The events, and where each listener method is declared (sorted).
 fn domain_events(
     decls: &[Decl],
     files: &[Src],
     raised: BTreeMap<String, BTreeSet<String>>,
-) -> Vec<DomainEvent> {
+) -> (Vec<DomainEvent>, Vec<EventHandlerSite>) {
     let mut handled: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut sites = vec![];
     for d in decls {
         let src = &files[d.file];
         for (m, _, params, ..) in d.methods() {
@@ -751,12 +754,19 @@ fn domain_events(
                 .into_iter()
                 .next()
             {
+                sites.push(EventHandlerSite {
+                    event: t.clone(),
+                    handler: d.name.clone(),
+                    file: src.rel.clone(),
+                    line: line(&src.text, params.0),
+                });
                 handled.entry(t).or_default().insert(d.name.clone());
             }
         }
     }
+    sites.sort();
     let types: BTreeSet<&String> = raised.keys().chain(handled.keys()).collect();
-    types
+    let events = types
         .into_iter()
         .map(|t| DomainEvent {
             type_name: t.clone(),
@@ -764,7 +774,8 @@ fn domain_events(
             handled_by: (handled.get(t)).map_or(vec![], |x| x.iter().cloned().collect()),
             source: SOURCE.into(),
         })
-        .collect()
+        .collect();
+    (events, sites)
 }
 
 fn use_case_kind(name: &str) -> UseCaseKind {
@@ -2872,6 +2883,21 @@ enum class DriverState { IDLE, BUSY }
         );
         // `f.apply(id)` is not Axon's apply and is no diagnostic.
         assert!(!has_diag(&model, "Invoice.map"));
+        // The listener method, not the class, is where the handler sits.
+        let site = |event: &str| {
+            (model.event_handler_sites(event))
+                .map(|x| (x.handler.clone(), x.file.clone(), x.line))
+                .collect::<Vec<_>>()
+        };
+        let events = "src/main/java/shop/app/OrderEvents.java".to_string();
+        assert_eq!(
+            site("OrderShipped"),
+            [("OrderEvents".to_string(), events.clone(), 7)]
+        );
+        assert_eq!(
+            site("OrderSubmitted"),
+            [("OrderEvents".to_string(), events, 5)]
+        );
     }
 
     #[test]

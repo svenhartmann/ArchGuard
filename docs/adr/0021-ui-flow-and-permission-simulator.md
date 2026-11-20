@@ -399,3 +399,38 @@ handler, use cases, transitions, events and integration events across
 services, and to the Calls view for the handler's callees. The role picker
 lists the roles of the catalog, and every evaluation in the desktop goes
 through `resolve_assignment`.
+
+### 2026-11-20: notes in `check`, handler locations
+
+`check` attaches the notes for agents. While `[views] conventions` is not
+empty, `check_gate::view_notes` reads the register's `view-…` decisions (a
+corrupt register is an error, as everywhere else); otherwise the register is
+not read. A convention finding with a note shows it in text as `note
+(fix|intentional|later, by <author>): <text>` under the finding, in JSON and
+in the MCP `check` tool as `note {decision, text, author, ts}` plus
+`accepted_by_note`, in SARIF as `properties.note`. Notes on `view-gap:…` ids
+are listed after the findings under "Noted gaps" (`noted_gaps` in JSON, MCP
+and the SARIF run properties); whether that gap still occurs is not checked.
+
+Decided: an intentional note (accept-risk) accepts the finding like a
+baseline entry. `gate_fails` takes the notes, `accepted_by_note` is the one
+rule, an `expires_on` in the past ends the acceptance. Unlike a baselined
+finding it stays in the output, marked `accepted: intentional note; does not
+fail check`, and in SARIF it is level `note` with `suppressions: [{kind:
+"external", justification: <note>}]`. Reason: the note is a reviewer's
+recorded decision with author and reason, which is what a baseline entry
+stands for, and an agent must still see it. Fix and later notes change
+nothing about failing. The summary line still counts the accepted findings
+as convention violations.
+
+`UiFlow` gains `handler_sites: [HandlerSite { endpoint_file, endpoint_line,
+handler, file, line }]` (serde default, left out when empty, merged as a
+sorted union): where the handler method of an endpoint is declared. The
+backend extractor records it for minimal-API method groups (also in another
+file of the project), controller actions and Spring methods; a lambda has
+none. `UiFlow::handler_site(endpoint)` finds it. The list sits on `UiFlow`
+instead of `handler_file`/`handler_line` on `EndpointAccess`, so code that
+builds endpoints literally (the desktop tests, the other extractors) keeps
+compiling, as with `start_screens`. eShop: `POST /api/orders` →
+`Ordering.API/Apis/OrdersApi.cs:118` (`CreateOrderAsync`); all 48 endpoints
+with a handler have a site.
