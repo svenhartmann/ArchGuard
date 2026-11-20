@@ -4,7 +4,7 @@
 // (app.slint), so two Graphs side by side keep their own state.
 import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, Icons, Button, Tab, StatInline, KpiItem, Badge, EmptyState } from "widgets.slint";
+import { Icon, Icons, Button, Tab, StatInline, KpiItem, Badge, EmptyState, TipArea } from "widgets.slint";
 import { TreeView, TreeRow, TreeLink } from "tree_view.slint";
 import { NetworkView, NetCard, NetArrow } from "network_view.slint";
 import { DepsView, DepCard } from "deps_view.slint";
@@ -13,6 +13,8 @@ import { Fmt } from "format.slint";
 import { SimData, SimToggle, SimDetails, SimStrip, CutItem, CycleCuts } from "simulation.slint";
 import { CyclePlans, CyclePlansView } from "cycle_plans.slint";
 import { ReviewData, ReviewList, ReviewDetails } from "review.slint";
+import { QualityCard, FindingsSection } from "quality_cards.slint";
+import { QualityData } from "quality_view.slint";
 
 export struct Crumb {
     node: int,
@@ -79,6 +81,10 @@ export struct GraphData {
     plans: CyclePlans,
     // Explorer → Review and the selected row's review.
     review: ReviewData,
+    // Imported quality findings of the selected node and its subtree:
+    // the first ones as cards, and how many there are.
+    findings: [QualityCard],
+    findings-total: int,
 }
 
 component ExplorerRow inherits Rectangle {
@@ -147,6 +153,15 @@ component ExplorerRow inherits Rectangle {
             text: data.priority == 1 ? "P1" : "P2";
             variant: data.priority == 1 ? "p1" : "p2";
             y: (parent.height - self.height) / 2;
+        }
+        if data.quality > 0: Badge {
+            text: "Q" + (data.quality > 999 ? "999+" : data.quality);
+            y: (parent.height - self.height) / 2;
+            TipArea {
+                tip: @tr("{} active imported quality findings in this file or subtree; the inspector lists them. Suppressed, unmapped and changed-since-import findings are not counted.", data.quality);
+                pin-on-click: false;
+                activated => { root.select(); }
+            }
         }
     }
 }
@@ -547,6 +562,11 @@ export component GraphView inherits HorizontalLayout {
                     spacing: 2px;
                     if root.data.review.has-selected: ReviewDetails { data: root.data.review; }
                     if root.data.review.has-selected: Rectangle { height: 12px; }
+                    if root.data.findings-total > 0: FindingsSection {
+                        cards: root.data.findings;
+                        total: root.data.findings-total;
+                        open-url(u) => { QualityData.open-url(u); }
+                    }
                     Text { text: @tr("Depends on ({})", Fmt.int(root.data.outgoing.length)); color: Theme.outgoing; font-size: Theme.font-small; font-weight: Theme.weight-strong; }
                     for n in root.data.outgoing: NeighborRow {
                         item: n;

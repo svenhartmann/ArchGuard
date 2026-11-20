@@ -4,11 +4,12 @@
 //! All state lives in one [`QualityState`]; [`show`] builds it from an
 //! analysis, [`push`] writes its page into `QualityData.model`.
 
-mod card;
+pub(crate) mod card;
 mod cards;
 mod cohesion;
 mod empty;
 mod evidence;
+pub(crate) mod findings;
 mod follow;
 mod heatmap;
 mod heatmap_text;
@@ -88,6 +89,16 @@ pub fn wire(ui: &AppWindow) {
         s.view.sort = state::sort_of(first_or(i), &s.columns);
         s.view.limit = PAGE;
     }));
+    q.on_level(on_view(&a, |v, i: i32| {
+        v.level = index(i).and_then(|i| i.checked_sub(1));
+        v.limit = PAGE;
+    }));
+    q.on_open_url(|url| {
+        if let Some(url) = crate::security_ui::snapshot::safe_url(Some(url.as_str())) {
+            let url = url.to_string();
+            std::thread::spawn(move || crate::web::open_in_browser(&url));
+        }
+    });
     q.on_more(a.on0(|s, _| s.view.limit += PAGE));
     q.on_select_class(follow::navigation(
         ui,
@@ -271,6 +282,7 @@ fn page_model(lang: &Texts, p: Page, old: &QualityModel) -> QualityModel {
         heatmap: p.heatmap,
         filter: p.filter as i32,
         sort: p.sort as i32,
+        level: p.level as i32,
         heat: sync_rows_with(&old.heat, p.heat.into_iter().map(heat_row), |o, n| {
             n.cells = sync_rows(&o.cells, n.cells.iter());
         }),
@@ -308,7 +320,7 @@ fn line_model(l: card::Line) -> QualityLine {
     }
 }
 
-fn card_model(c: card::Card) -> QualityCard {
+pub(crate) fn card_model(c: card::Card) -> QualityCard {
     QualityCard {
         key: c.key.into(),
         title: c.title.into(),
@@ -334,7 +346,7 @@ fn card_model(c: card::Card) -> QualityCard {
 }
 
 /// `new` takes over the inner models of `old`, synced to its contents.
-fn adopt_card(old: &QualityCard, new: &mut QualityCard) {
+pub(crate) fn adopt_card(old: &QualityCard, new: &mut QualityCard) {
     new.items = sync_rows_with(&old.items, new.items.iter(), |o, n| {
         n.lines = sync_rows(&o.lines, n.lines.iter());
     });

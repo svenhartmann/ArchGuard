@@ -18,10 +18,12 @@ pub enum Section {
     Tests,
     Mutations,
     Duplicates,
+    /// Imported SARIF findings of linters and analyzers.
+    Findings,
 }
 
 impl Section {
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::Heatmap,
         Section::Classes,
         Section::Methods,
@@ -32,6 +34,7 @@ impl Section {
         Section::Tests,
         Section::Mutations,
         Section::Duplicates,
+        Section::Findings,
     ];
 
     /// The web's section key (`#tab=quality&section=<key>`); snapshot mode
@@ -48,6 +51,7 @@ impl Section {
             Section::Tests => "tests",
             Section::Mutations => "mutations",
             Section::Duplicates => "duplicates",
+            Section::Findings => "findings",
         }
     }
 
@@ -74,6 +78,7 @@ impl Section {
             }
             Section::Mutations => "archguard mutations . --report mutation-report.json",
             Section::Duplicates => "archguard duplicates . --scan",
+            Section::Findings => "archguard quality . --report results.sarif",
             Section::Measurements => "archguard metrics . --extended --report runs.json",
             // Computed from the compiler-backed calls and Git: their prerequisites.
             _ => "archguard doctor",
@@ -92,6 +97,7 @@ impl Section {
             Section::Tests => lang.t("Matching source associations first, then measured duration. Selecting a file includes tests mapped to its transitive dependents. Unknown or incomplete mappings mean test omission is not safe."),
             Section::Mutations => lang.t("Survived and uncovered mutations first, then incoming-file count. Killed ratio = killed / (killed + survived + no coverage); incomplete evidence has no score. This is not ordinary line coverage."),
             Section::Duplicates => lang.t("CPD token matches, largest first. Inspect all locations before extracting shared code. Source hashes detect changes after import; producer revision, scan scope and token normalization remain unverified. No project-wide duplication percentage is inferred."),
+            Section::Findings => lang.t("Original SARIF snapshot of linters and analyzers, active findings first. The report's source revision is unverified; source hashes detect later file changes. Missing, partial or stale reports do not establish absence of defects."),
         }
     }
 

@@ -43,6 +43,7 @@ pub struct Cycles<'a> {
 pub fn graph_data(
     ui: &AppWindow,
     g: &GraphState,
+    findings: &super::quality::Findings,
     cycles: Cycles,
     id: u32,
     old: &GraphData,
@@ -56,9 +57,11 @@ pub fn graph_data(
     let (incoming, outgoing) = neighbors(g, old);
     let net = network_data(g, selected, old);
     let links = (g.display == TREE).then(|| v.draw(selected, g.mode));
+    let (findings_cards, findings_total) =
+        findings.data(&texts, &g.tree, g.selected, &old.findings);
     GraphData {
         id: id as i32,
-        rows: tree_rows(g, &covered, &old.rows),
+        rows: tree_rows(g, findings, &covered, &old.rows),
         links: sync_rows(
             &old.links,
             links.into_iter().flatten().map(|d| TreeLink {
@@ -106,12 +109,15 @@ pub fn graph_data(
         node_total: g.tree.nodes.len() as i32,
         sim: super::simulation::data(g, texts.locale(), &old.sim),
         review: super::review::data(g, &old.review),
+        findings: findings_cards,
+        findings_total,
     }
 }
 
 /// The tree rows for the window; a compressed chain reads as its path.
 fn tree_rows(
     g: &GraphState,
+    findings: &super::quality::Findings,
     covered: &BTreeSet<usize>,
     old: &ModelRc<TreeRow>,
 ) -> ModelRc<TreeRow> {
@@ -139,6 +145,7 @@ fn tree_rows(
                 in_cycle: v.in_cycle[i],
                 covered: covered.contains(&i),
                 priority: priority_index(g.priorities[i]),
+                quality: findings.count(r.node),
             }
         }),
     )

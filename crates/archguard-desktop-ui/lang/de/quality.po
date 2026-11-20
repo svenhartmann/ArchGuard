@@ -530,3 +530,60 @@ msgstr "Für diese Klassen nicht anwendbar: {}"
 
 msgid "Not measured in this analysis: NOC needs a complete call and inheritance analysis, and this one is partial. “—” means not measured, not zero."
 msgstr "In dieser Analyse nicht gemessen: NOC braucht eine vollständige Aufruf- und Vererbungsanalyse, diese ist nur teilweise. „—“ heißt nicht gemessen, nicht null."
+
+msgid "No quality findings imported."
+msgstr "Keine Qualitätsbefunde importiert."
+
+msgid "Import a SARIF 2.1.0 report of a linter or analyzer; ArchGuard runs no analyzer:"
+msgstr "SARIF-2.1.0-Bericht eines Linters oder Analysewerkzeugs importieren; ArchGuard führt keine Analysewerkzeuge aus:"
+
+msgid "Original SARIF snapshot of linters and analyzers, active findings first. The report's source revision is unverified; source hashes detect later file changes. Missing, partial or stale reports do not establish absence of defects."
+msgstr "Ursprünglicher SARIF-Snapshot von Lintern und Analysewerkzeugen, aktive Befunde zuerst. Die Quellrevision des Berichts ist nicht verifiziert; Datei-Hashes erkennen spätere Änderungen. Fehlende, unvollständige oder veraltete Berichte belegen keine Fehlerfreiheit."
+
+msgid "warning"
+msgstr "Warnung"
+
+msgid "note"
+msgstr "Hinweis"
+
+msgid "none"
+msgstr "keine"
+
+msgid "Source unchanged since import"
+msgstr "Quelle seit Import unverändert"
+
+msgid "Source changed since import · historical finding"
+msgstr "Quelle seit Import geändert · historischer Befund"
+
+msgid "Source freshness unknown"
+msgstr "Aktualität der Quelle unbekannt"
+
+msgid "Absent in the producer's baseline comparison"
+msgstr "Im Basisvergleich des Werkzeugs nicht mehr vorhanden"
+
+msgid "suppressed"
+msgstr "unterdrückt"
+
+msgid "No local source location"
+msgstr "Keine lokale Quellposition"
+
+msgid "Rule documentation"
+msgstr "Regeldokumentation"
+
+msgid "Imported quality findings"
+msgstr "Importierte Qualitätsbefunde"
+
+msgid "Level"
+msgstr "Stufe"
+
+msgid "All levels"
+msgstr "Alle Stufen"
+
+msgid "Imported quality findings ({})"
+msgstr "Importierte Qualitätsbefunde ({})"
+
+msgid "{} more in Quality → Imported quality findings"
+msgstr "{} weitere unter Qualität → Importierte Qualitätsbefunde"
+
+msgid "{} active imported quality findings in this file or subtree; the inspector lists them. Suppressed, unmapped and changed-since-import findings are not counted."
+msgstr "{} aktive importierte Qualitätsbefunde in dieser Datei oder im Unterbaum; der Inspektor listet sie. Unterdrückte, nicht zugeordnete und seit dem Import geänderte Befunde zählen nicht."

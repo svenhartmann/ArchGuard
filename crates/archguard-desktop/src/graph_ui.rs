@@ -5,6 +5,7 @@
 mod data;
 mod deps;
 mod insights;
+mod quality;
 mod review;
 pub mod simulation;
 
@@ -43,11 +44,14 @@ pub struct Graph {
     cuts: Vec<CutItem>,
     /// The repair plans for the chosen cycle.
     plans: CyclePlans,
+    /// Imported quality findings on the tree.
+    findings: quality::Findings,
 }
 
 impl Graph {
-    fn new(g: GraphState, groups: &[Vec<String>]) -> Self {
+    fn new(g: GraphState, groups: &[Vec<String>], findings: quality::Findings) -> Self {
         let mut s = Graph {
+            findings,
             g,
             cycles: Vec::new(),
             members: Vec::new(),
@@ -114,7 +118,7 @@ impl Instance for Graph {
             cuts: &self.cuts,
             plans: &self.plans,
         };
-        let row = data::graph_data(ui, &self.g, cycles, id, &old);
+        let row = data::graph_data(ui, &self.g, &self.findings, cycles, id, &old);
         PANES.with(|m| instances::set_row(m, pane, row));
     }
 }
@@ -359,7 +363,13 @@ fn sync(ui: &AppWindow, layout: &Layout) -> Vec<u32> {
         if let Some(n) = node {
             g.open(n);
         }
-        Some(Graph::new(g, &groups))
+        let report = archguard_engine::read_quality_findings(
+            data.root,
+            &run.config,
+            (&run.graph, &run.source_names),
+        );
+        let findings = quality::Findings::new(report, &tree);
+        Some(Graph::new(g, &groups, findings))
     })
 }
 
@@ -418,6 +428,7 @@ fn resimulate(ui: &AppWindow) {
         let groups = cycle_groups(&data);
         instances::each(|s: &mut Graph| {
             s.g.retree(tree.clone());
+            s.findings.retree(&tree);
             s.set_cycles(&groups);
         });
     }

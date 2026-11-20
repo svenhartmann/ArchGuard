@@ -7,7 +7,7 @@ use std::path::Path;
 use archguard_engine::core::{CallAnalysis, Config, Graph, NodeKind, ReviewSources};
 use archguard_engine::{
     CodeMetricsReport, CohesionReport, DuplicationReport, KnowledgeReport, MeasurementReport,
-    MutationReport, QualityHistoryReport, TestEvidenceReport,
+    MutationReport, QualityHistoryReport, QualityReport, TestEvidenceReport,
 };
 
 use super::rows::{NodeInfo, Source};
@@ -23,6 +23,8 @@ pub struct Inputs {
     pub tests: TestEvidenceReport,
     pub mutations: MutationReport,
     pub duplicates: DuplicationReport,
+    /// Imported SARIF findings (`archguard quality --report`).
+    pub findings: QualityReport,
 }
 
 /// Nodes, file edges and scanned paths of the original graph.
@@ -82,6 +84,7 @@ impl Inputs {
             tests: archguard_engine::read_test_evidence(root, config, graph),
             mutations: archguard_engine::read_mutations(root, config, graph),
             duplicates: archguard_engine::read_duplicates(root, config, graph),
+            findings: archguard_engine::read_quality_findings(root, config, graph),
         }
     }
 }
