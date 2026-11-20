@@ -260,6 +260,7 @@ fn only_entity(mut model: DomainModel, name: &str) -> Option<DomainModel> {
     model
         .diagnostics
         .retain(|d| files.contains(d.file.as_str()));
+    model.api_models.clear();
     model.entities = vec![entity];
     Some(model)
 }
@@ -306,6 +307,12 @@ fn print_text(model: &DomainModel, verbose: bool) {
             e.type_name,
             list(&e.raised_by),
             list(&e.handled_by)
+        );
+    }
+    if !model.api_models.is_empty() {
+        outln!(
+            "{} API models not shown as entities (see api_models in --format json)",
+            model.api_models.len()
         );
     }
     print_rules(model);

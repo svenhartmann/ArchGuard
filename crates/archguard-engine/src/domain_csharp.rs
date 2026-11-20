@@ -60,8 +60,9 @@
 use crate::extract_ctx::{ExtractContext, domain_sources, with_root_config};
 use crate::ui_flow_backend::sends_in;
 use archguard_core::domain_model::{
-    DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite, Field,
-    MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase, UseCaseKind,
+    ApiModel, DomainDiagnostic, DomainEvent, DomainModel, Entity, EntityKind, EventHandlerSite,
+    Field, MessageHandler, Relation, RelationKind, StateMachine, StateTransition, UseCase,
+    UseCaseKind,
 };
 use members::{field, generic_args, members};
 use states::{Rules, Step, assignments, created, raise_calls};
@@ -111,6 +112,8 @@ const MODIFIERS: [&str; 16] = [
 pub(crate) type Span = (usize, usize);
 /// Diagnostics found on the way: file index, offset, message, drops an element.
 type Pending = Vec<(usize, usize, String, bool)>;
+/// Declaration index and entity kind, and API models with their reason.
+type Classified = (Vec<(usize, EntityKind)>, Vec<(usize, String)>);
 
 /// The domain model of the C# sources below `root`.
 pub fn extract(root: &Path) -> DomainModel {
@@ -173,6 +176,13 @@ enum Kind {
 struct Member {
     kind: Kind,
     public: bool,
+    /// Declaration text after the attributes, up to the body.
+    head: Span,
+    /// `const` or `static readonly`: a constant or singleton, never state.
+    fixed: bool,
+    /// An instance field declared `readonly`: state, unless it is an injected
+    /// dependency (see [`rich::carries_state`]).
+    readonly_field: bool,
 }
 
 struct Ent {
@@ -298,7 +308,20 @@ impl Extractor {
     }
 
     fn entities(&mut self) {
-        let kinds = self.classify();
+        let (kinds, api) = self.classify();
+        self.model.api_models = api
+            .into_iter()
+            .map(|(d, reason)| {
+                let (decl, src) = (&self.decls[d], &self.files[self.decls[d].file]);
+                ApiModel {
+                    name: decl.name.clone(),
+                    file: src.rel.clone(),
+                    line: line(&src.text, decl.pos),
+                    reason,
+                }
+            })
+            .collect();
+        self.model.api_models.sort();
         let unknown = self.dbset_targets(&kinds);
         let mut ents: Vec<Ent> = kinds.into_iter().map(|(d, k)| self.ent(d, k)).collect();
         ents.extend(unknown.into_iter().map(|(d, f, pos, t)| match d {
@@ -322,7 +345,7 @@ impl Extractor {
     }
 
     /// Declarations with a marker, then records in an aggregate root's folder.
-    fn classify(&self) -> Vec<(usize, EntityKind)> {
+    fn classify(&self) -> Classified {
         let mut kinds: Vec<(usize, EntityKind)> = self
             .decls
             .iter()
@@ -346,9 +369,9 @@ impl Extractor {
             .map(|(d, _)| (d, EntityKind::ValueObject))
             .collect();
         kinds.extend(records);
-        let plain = rich::plain_models(self, &kinds);
+        let (plain, api) = rich::plain_models(self, &kinds);
         kinds.extend(plain);
-        kinds
+        (kinds, api)
     }
 
     /// `DbSet<T>` targets not classified otherwise: (class, file, offset, `T`).
@@ -560,7 +583,7 @@ impl Extractor {
     }
 
     /// The state machine of field `(type, name)` of entity `e`, when the type is
-    /// an enum and a method of the entity assigns the field.
+    /// an enum and some method of the entity assigns it a literal member.
     fn machine_of(
         &self,
         e: usize,
@@ -585,17 +608,28 @@ impl Extractor {
             initial: None,
             transitions: vec![],
         };
-        let mut assigned = false;
+        let mut literal = false;
+        let mut gaps = Pending::new();
         for (method, body, ctor, _) in ent.methods() {
             for (stmt, rhs) in assignments(s, body, field_name) {
-                assigned = true;
                 let at = format!("{}.{method}", ent.id);
                 match rules.step(body, stmt, rhs, ctor) {
-                    Step::NonLiteral(v) => pending.push((ent.file, stmt, format!("{at} assigns {field_name} the non-literal `{v}`; the transition is not read."), true)),
+                    Step::NonLiteral(v) => {
+                        // Only a constructor mapping is no transition.
+                        literal |= !ctor;
+                        gaps.push((ent.file, stmt, format!("{at} assigns {field_name} the non-literal `{v}`; the transition is not read."), true))
+                    }
                     Step::Initial(to) => {
+                        literal = true;
                         machine.initial.get_or_insert(to);
                     }
-                    Step::Transition { from, to, guard, unread } => {
+                    Step::Transition {
+                        from,
+                        to,
+                        guard,
+                        unread,
+                    } => {
+                        literal = true;
                         if let Some(why) = unread {
                             pending.push((ent.file, stmt, format!("{at}: guard of {field_name} not read ({why}); from states unknown."), true));
                         }
@@ -613,7 +647,9 @@ impl Extractor {
             }
         }
         machine.transitions.sort();
-        assigned.then_some(machine)
+        // A machine needs a literal state or a non-constructor assignment; constructor mappings alone are no machine, no gap.
+        pending.extend(gaps.into_iter().filter(|_| literal));
+        literal.then_some(machine)
     }
 
     fn use_cases(&mut self) {
@@ -1043,9 +1079,17 @@ mod members {
             }
             None => data(decl).map(|(ty, name)| Kind::Data { ty, name })?,
         };
+        let data = matches!(kind, Kind::Data { .. });
+        let public = words.contains(&"public");
+        let readonly_field =
+            data && block.is_none() && arrow.is_none() && words.contains(&"readonly");
         Some(Member {
             kind,
-            public: words.contains(&"public"),
+            public,
+            head: (p, z),
+            fixed: words.contains(&"const")
+                || (words.contains(&"static") && words.contains(&"readonly")),
+            readonly_field,
         })
     }
 
@@ -1824,6 +1868,288 @@ pub(crate) mod code {
     }
 }
 
+/// Which plain models are domain models (ADR 0022, Verlauf 2026-11-20).
+///
+/// 1. State: the class carries state ([`rich::carries_state`]; `const` and `static readonly` never). A stateless
+///    class stays when a kept model names it as property type or base class.
+/// 2. API model: a controller is a class carrying `[ApiController]` or `[Route]`,
+///    or whose base is ASP.NET `Controller`/`ControllerBase` (`Microsoft.AspNetCore.Mvc`
+///    in the file or the base name), or a scanned class that is one; not a name
+///    suffix. A plain model that is the return type or a body-bound parameter
+///    (`[FromBody]`, or any parameter of an `[ApiController]` without
+///    `[FromQuery]`/`[FromRoute]`/`[FromServices]`/`[FromHeader]`) of a public
+///    action is the wire contract, not a domain model, and is listed in
+///    `api_models` with the reason instead of among the entities; so is a plain model only
+///    reachable through the properties of such a DTO. Never DTOs: a type in a
+///    folder segment ending in `Domain`/`Entities`, a type with
+///    behaviour (a public method besides `ToString`/`Equals`/`GetHashCode`/
+///    `Validate`), a type persistence names (`DbSet<T>`,
+///    `IEntityTypeConfiguration<T>`, `.Entity<T>()`, Dapper `Query*<T>`, Mongo
+///    `IMongoCollection<T>`/`GetCollection<T>`, a `[Table]`, `[BsonId]` or
+///    `[BsonElement]` member), a marker entity, and every type a kept model has as
+///    property type, base class or public method signature type.
+mod api {
+    use super::rich::{carries_state, unique};
+    use super::*;
+
+    /// The models among `cands`, and the API models set aside with their reason.
+    pub(super) fn select(
+        x: &Extractor,
+        cands: Vec<usize>,
+        kinds: &[(usize, EntityKind)],
+    ) -> (Vec<usize>, Vec<(usize, String)>) {
+        let (stateful, stateless): (Vec<usize>, Vec<usize>) =
+            (cands.into_iter()).partition(|&d| carries_state(x, d, &mut vec![]));
+        let mapped = mapped_types(x);
+        let free: Vec<usize> = (stateful.iter().copied())
+            .filter(|&d| {
+                !mapped.contains(&x.decls[d].name)
+                    && !behaves(x, d)
+                    && !domain_folder(&x.decls[d].dir)
+            })
+            .collect();
+        let seeds = action_types(x);
+        let dto = reach(
+            (free.iter().copied())
+                .filter(|&d| seeds.contains_key(&x.decls[d].name))
+                .collect(),
+            &|d| next(x, &free, d, false),
+        );
+        let mut kept: Vec<usize> = kinds.iter().map(|k| k.0).collect();
+        kept.extend(stateful.iter().copied().filter(|d| !dto.contains_key(d)));
+        // A class persistence names counts as kept in every namespace (a twin
+        // of the mapped EF class is still the domain class).
+        kept.extend(
+            (0..x.decls.len())
+                .filter(|&d| mapped.contains(&x.decls[d].name) && x.decls[d].kw == "class"),
+        );
+        let rescued = reach(kept.clone(), &|d| next(x, &free, d, true));
+        let mut out: Vec<usize> = (stateful.iter().copied())
+            .filter(|d| !dto.contains_key(d) || rescued.contains_key(d))
+            .collect();
+        // Only a name that means one class: partial parts and namesakes are not guessed.
+        let single: Vec<usize> = (stateless.iter().copied())
+            .filter(|&d| unique(x, &x.decls[d].name).is_some())
+            .collect();
+        let named = reach(out.iter().copied().chain(kept).collect(), &|d| {
+            next(x, &single, d, true)
+        });
+        out.extend(single.iter().copied().filter(|d| named.contains_key(d)));
+        out.sort();
+        out.dedup();
+        let api = (dto.iter().filter(|(d, _)| !rescued.contains_key(d)))
+            .map(|(&d, parent)| {
+                let reason = match parent {
+                    Some(p) => format!("only reachable through api model {}", x.decls[*p].name),
+                    None => seeds[&x.decls[d].name].clone(),
+                };
+                (d, reason)
+            })
+            .collect();
+        (out, api)
+    }
+
+    /// The classes of `universe` that `d` names as property type or base class,
+    /// and with `sigs` in the signature of a public method.
+    fn next(x: &Extractor, universe: &[usize], d: usize, sigs: bool) -> Vec<usize> {
+        let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+        let bases = decl.bases.iter().map(|b| b.split('<').next().unwrap_or(b));
+        let fields = x.ent(d, EntityKind::Entity).fields;
+        let mut names: Vec<String> = (fields.iter().map(|f| f.type_name.as_str()))
+            .chain(bases)
+            .map(simple)
+            .collect();
+        if sigs {
+            for m in (decl.body.into_iter())
+                .flat_map(|body| members(s, body, &decl.name))
+                .filter(|m| m.public)
+            {
+                if let Kind::Method { name, .. } = &m.kind {
+                    let head = idents(s, m.head.0, m.head.1);
+                    names.extend(
+                        head.into_iter()
+                            .map(|w| w.1)
+                            .filter(|w| w != name)
+                            .map(String::from),
+                    );
+                }
+            }
+        }
+        (universe.iter().copied())
+            .filter(|&n| names.contains(&x.decls[n].name))
+            .collect()
+    }
+
+    /// `from` and every declaration reachable from it through `next`, each with
+    /// the declaration it was first reached from.
+    fn reach(
+        from: Vec<usize>,
+        next: &dyn Fn(usize) -> Vec<usize>,
+    ) -> BTreeMap<usize, Option<usize>> {
+        let mut seen: BTreeMap<usize, Option<usize>> = from.iter().map(|&d| (d, None)).collect();
+        let mut todo = from;
+        while let Some(d) = todo.pop() {
+            for n in next(d) {
+                if let std::collections::btree_map::Entry::Vacant(v) = seen.entry(n) {
+                    v.insert(Some(d));
+                    todo.push(n);
+                }
+            }
+        }
+        seen
+    }
+
+    /// A path segment ending in `Domain` or `Entities` declares its classes
+    /// domain types, whatever an action returns.
+    fn domain_folder(dir: &str) -> bool {
+        dir.split('/')
+            .any(|seg| seg.ends_with("Domain") || seg.ends_with("Entities"))
+    }
+
+    /// A public method besides the object and validation plumbing.
+    fn behaves(x: &Extractor, d: usize) -> bool {
+        const PLUMBING: [&str; 4] = ["ToString", "Equals", "GetHashCode", "Validate"];
+        let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+        (decl.body.into_iter())
+            .flat_map(|body| members(s, body, &decl.name))
+            .any(|m| {
+                m.public
+                    && matches!(&m.kind, Kind::Method { name, ctor: false, .. } if !PLUMBING.contains(&name.as_str()))
+            })
+    }
+
+    /// The attribute text in front of the declaration at `pos`.
+    fn attrs(s: &str, pos: usize) -> &str {
+        let before = &s[..pos];
+        &before[before.rfind(['{', '}', ';']).map_or(0, |k| k + 1)..]
+    }
+
+    fn is_controller(x: &Extractor, d: usize, depth: usize) -> bool {
+        let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+        let a = attrs(s, decl.pos);
+        if decl.kw != "class" || depth > 8 {
+            return false;
+        }
+        if a.contains("ApiController") || a.contains("Route(") || a.contains("[Route]") {
+            return true;
+        }
+        let mvc = s.contains("Microsoft.AspNetCore.Mvc");
+        decl.bases.iter().any(|b| {
+            let n = simple(b);
+            if ["Controller", "ControllerBase"].contains(&n.as_str()) {
+                return mvc || b.contains("Microsoft.AspNetCore.Mvc");
+            }
+            unique(x, &n).is_some_and(|c| is_controller(x, c, depth + 1))
+        })
+    }
+
+    /// Simple names in the return type of public actions of controllers and in
+    /// their body-bound parameters (`[FromBody]`, or any parameter of an
+    /// `[ApiController]` without another binding source), each with the reason
+    /// of its first action; an MVC form model bound without either is not read.
+    fn action_types(x: &Extractor) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for d in (0..x.decls.len()).filter(|&d| is_controller(x, d, 0)) {
+            let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+            let Some(body) = decl.body else { continue };
+            let api_controller = attrs(s, decl.pos).contains("ApiController");
+            for m in members(s, body, &decl.name).iter().filter(|m| m.public) {
+                let Kind::Method {
+                    name, ctor: false, ..
+                } = &m.kind
+                else {
+                    continue;
+                };
+                for (ty, bound) in head_types(&s[m.head.0..m.head.1], name, api_controller) {
+                    let how = if bound {
+                        "action body of"
+                    } else {
+                        "returned by"
+                    };
+                    out.entry(ty)
+                        .or_insert_with(|| format!("{how} {}.{name}", decl.name));
+                }
+            }
+        }
+        out
+    }
+
+    /// Identifiers of an action head `Ret Name(params)`: the return type and the
+    /// body-bound parameters (flagged), without the action's own name.
+    fn head_types(head: &str, name: &str, api_controller: bool) -> Vec<(String, bool)> {
+        const OTHER: [&str; 4] = ["FromQuery", "FromRoute", "FromServices", "FromHeader"];
+        let Some(open) = head.find('(') else {
+            return vec![];
+        };
+        let close = head.rfind(')').unwrap_or(head.len()).max(open + 1);
+        let params = split_top(&head[open + 1..close], ",");
+        let bound = (params.iter().copied()).filter(|p| {
+            p.contains("FromBody") || (api_controller && !OTHER.iter().any(|o| p.contains(o)))
+        });
+        (std::iter::once((&head[..open], false)).chain(bound.map(|p| (p, true))))
+            .flat_map(|(text, b)| {
+                idents(text, 0, text.len())
+                    .into_iter()
+                    .map(move |w| (w.1, b))
+            })
+            .filter(|(w, _)| *w != name)
+            .map(|(w, b)| (w.to_string(), b))
+            .collect()
+    }
+
+    /// Types the persistence mapping names.
+    fn mapped_types(x: &Extractor) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = x.sets.iter().map(|s| s.2.clone()).collect();
+        for decl in &x.decls {
+            for b in &decl.bases {
+                out.extend(
+                    generic_args(b, "IEntityTypeConfiguration")
+                        .into_iter()
+                        .flatten(),
+                );
+            }
+            let text = &x.files[decl.file].text;
+            let in_body = decl.body.map_or("", |(a, z)| &text[a..z]);
+            if attrs(text, decl.pos).contains("[Table")
+                || in_body.contains("[BsonId")
+                || in_body.contains("[BsonElement")
+            {
+                out.insert(decl.name.clone());
+            }
+        }
+        for f in &x.files {
+            generics_after(&f.text, ".Entity", false, &mut out);
+            generics_after(&f.text, "Query", true, &mut out);
+            generics_after(&f.text, "IMongoCollection", false, &mut out);
+            generics_after(&f.text, "GetCollection", false, &mut out);
+        }
+        out
+    }
+
+    /// The type arguments of `<…>` right after `word` plus an identifier tail
+    /// (`.Entity<T>`, `QueryAsync<T>`, `QueryFirstOrDefault<T>`).
+    fn generics_after(text: &str, word: &str, tail_ok: bool, out: &mut BTreeSet<String>) {
+        for (at, _) in text.match_indices(word) {
+            let word_start = word.starts_with('.')
+                || !text[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+            let rest = &text[at + word.len()..];
+            let tail = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .filter(|&t| tail_ok || t == 0);
+            let Some(rest) = tail.map(|t| &rest[t..]).filter(|r| r.starts_with('<')) else {
+                continue;
+            };
+            if word_start && let Some(end) = rest.find('>') {
+                out.extend(
+                    split_top(&rest[1..end], ",")
+                        .into_iter()
+                        .map(|t| simple(t.trim())),
+                );
+            }
+        }
+    }
+}
+
 mod rich {
     //! Rules, validators, integration events and plain models of the C#
     //! extractor (ADR 0022, Verlauf 2026-11-20); text-level like the parent.
@@ -1831,8 +2157,10 @@ mod rich {
     //! - Plain models: a `class` (→ `entity`) or `record`/`struct` (→
     //!   `value_object`) without a marker in a folder with a path segment ending
     //!   in one of [`MODEL_FOLDERS`], when it has a field or property, is neither
-    //!   `abstract` nor `static` and its name does not end in one of
-    //!   [`NOT_MODELS`].
+    //!   `abstract` nor `static`, its name does not end in one of
+    //!   [`NOT_MODELS`], it carries state ([`carries_state`]: repositories,
+    //!   services and visitors hold only injected dependencies) and it is no API
+    //!   DTO (see [`api`]).
     //! - Rules: in methods of found entities, `throw new X(…)` where `X` ends in
     //!   `DomainException`, is an `ArgumentException` family type or an
     //!   `*Exception` class declared in a model folder; `new ValidationResult(…)`
@@ -1896,10 +2224,7 @@ mod rich {
     /// Plain models among the declarations not in `kinds`. A name an entity in
     /// `kinds` has, or a `DbSet<T>` resolving to another class, keeps the plain
     /// class out (client copies of a model must not qualify the domain's ids).
-    pub(super) fn plain_models(
-        x: &Extractor,
-        kinds: &[(usize, EntityKind)],
-    ) -> Vec<(usize, EntityKind)> {
+    pub(super) fn plain_models(x: &Extractor, kinds: &[(usize, EntityKind)]) -> Classified {
         let marker = |n: &str| {
             AGGREGATE_MARKERS.contains(&n) || [ENTITY_BASE, VALUE_OBJECT_BASE].contains(&n)
         };
@@ -1911,7 +2236,7 @@ mod rich {
                     .iter()
                     .any(|s| x.resolve_set(s.0, name) == Some(Some(d)))
         };
-        (x.decls.iter().enumerate())
+        let cands: Vec<usize> = (x.decls.iter().enumerate())
             .filter(|(d, decl)| {
                 matches!(decl.kw.as_str(), "class" | "record" | "struct")
                     && !kinds.iter().any(|k| k.0 == *d)
@@ -1921,13 +2246,17 @@ mod rich {
                     && !NOT_MODELS.iter().any(|n| decl.name.ends_with(n))
                     && !marker(&decl.name)
                     && !modified(&x.files[decl.file].text, decl.pos, &["abstract", "static"])
-                    && has_fields(&x.files[decl.file].text, decl)
             })
-            .map(|(d, decl)| match decl.kw.as_str() {
+            .map(|(d, _)| d)
+            .collect();
+        let (models, api) = api::select(x, cands, kinds);
+        let kinds = (models.into_iter())
+            .map(|d| match x.decls[d].kw.as_str() {
                 "class" => (d, EntityKind::Entity),
                 _ => (d, EntityKind::ValueObject),
             })
-            .collect()
+            .collect();
+        (kinds, api)
     }
 
     /// One of `words` among the modifiers before the type keyword at `pos`.
@@ -1936,13 +2265,70 @@ mod rich {
         idents(s, start, pos).iter().any(|w| words.contains(&w.1))
     }
 
-    fn has_fields(s: &str, decl: &Decl) -> bool {
-        let params = (decl.params.filter(|_| decl.kw == "record"))
+    /// Whether instances of `d` carry state: a record parameter, an instance
+    /// field or property (any visibility), or state inherited from a base class.
+    /// Not `static`/`const` members, nor a `readonly` field holding an injected
+    /// dependency (a scanned interface, or a scanned class without state).
+    /// Conservative for fields: an unresolvable field type counts as state, and
+    /// so does a readonly field whose class has a base outside the scan
+    /// (unknown). A base class outside the scan adds no state to its own
+    /// subclass (collections, framework bases): the kept model naming the type
+    /// rescues those.
+    pub(super) fn carries_state(x: &Extractor, d: usize, path: &mut Vec<usize>) -> bool {
+        if path.contains(&d) {
+            return false;
+        }
+        path.push(d);
+        let (decl, s) = (&x.decls[d], &x.files[x.decls[d].file].text);
+        let record_params = (decl.params.filter(|_| decl.kw == "record"))
             .is_some_and(|(a, z)| !s[a..z].trim().is_empty());
-        let data = decl.body.is_some_and(|body| {
-            (members(s, body, &decl.name).iter()).any(|m| matches!(m.kind, Kind::Data { .. }))
+        let found = record_params
+            || (decl.body.into_iter())
+                .flat_map(|body| members(s, body, &decl.name))
+                .any(|m| match &m.kind {
+                    Kind::Data { ty, .. } if !m.fixed => {
+                        !m.readonly_field || !injected(x, &field(ty, "").type_name, path)
+                    }
+                    _ => false,
+                })
+            || decl.bases.iter().any(|b| base_state(x, b, path));
+        path.pop();
+        found
+    }
+
+    /// The only scanned declaration named `name`.
+    pub(super) fn unique(x: &Extractor, name: &str) -> Option<usize> {
+        let mut it = (0..x.decls.len()).filter(|&d| x.decls[d].name == name);
+        it.next().filter(|_| it.next().is_none())
+    }
+
+    fn injected(x: &Extractor, ty: &str, path: &mut Vec<usize>) -> bool {
+        unique(x, &simple(ty)).is_some_and(|d| {
+            x.decls[d].kw == "interface"
+                || (matches!(x.decls[d].kw.as_str(), "class" | "record" | "struct")
+                    && (x.decls[d].bases.iter()).all(|b| scanned(x, b))
+                    && !carries_state(x, d, path))
+        })
+    }
+
+    /// A declaration of that type name is in the scan.
+    fn scanned(x: &Extractor, base: &str) -> bool {
+        let name = simple(base.split('<').next().unwrap_or(base));
+        x.decls.iter().any(|d| d.name == name)
+    }
+
+    /// A base class counts when it is the one scanned non-static class of that
+    /// name and carries state; an interface or a base outside the scan does not.
+    fn base_state(x: &Extractor, base: &str, path: &mut Vec<usize>) -> bool {
+        let name = simple(base.split('<').next().unwrap_or(base));
+        let mut it = (0..x.decls.len()).filter(|&d| {
+            let decl = &x.decls[d];
+            decl.name == name
+                && decl.kw != "interface"
+                && !modified(&x.files[decl.file].text, decl.pos, &["static"])
         });
-        params || data
+        let one = it.next().filter(|_| it.next().is_none());
+        one.is_some_and(|d| carries_state(x, d, path))
     }
 
     /// One rule site: offset, exception, condition, message.
@@ -3276,6 +3662,442 @@ public class NotAHandler : INotificationHandler<OrderShipped> { }
                 ),
             ]
         );
+    }
+
+    const STATUS: &str = "namespace S;\npublic enum Status { New, Paid }\n";
+
+    fn order(body: &str) -> Vec<(&'static str, String)> {
+        let src = format!(
+            "namespace S;\npublic class Order : Entity\n{{\n    public Status Status {{ get; private set; }}\n{body}}}\n"
+        );
+        vec![
+            ("Domain/Status.cs", STATUS.into()),
+            ("Domain/Order.cs", src),
+        ]
+    }
+
+    fn run_owned(files: &[(&str, String)]) -> DomainModel {
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        run(&files)
+    }
+
+    #[test]
+    fn a_mapping_assignment_creates_no_machine_and_no_gap() {
+        let model = run_owned(&order("    public Order(Dto m) { Status = m.Status; }\n"));
+        assert!(
+            model.state_machines.is_empty(),
+            "{:#?}",
+            model.state_machines
+        );
+        assert!(!has_diag(&model, "non-literal"), "{:#?}", model.diagnostics);
+    }
+
+    #[test]
+    fn one_literal_assignment_creates_the_machine_and_keeps_the_gap() {
+        let model = run_owned(&order(
+            "    public Order(Dto m) { Status = m.Status; }\n    public void Pay() { Status = Status.Paid; }\n",
+        ));
+        let [m] = model.state_machines.as_slice() else {
+            panic!("{:#?}", model.state_machines)
+        };
+        assert_eq!(m.transitions.len(), 1);
+        assert_eq!(m.transitions[0].to, "Paid");
+        assert!(has_diag(&model, "non-literal"));
+    }
+
+    fn api(extra: &[(&'static str, &'static str)]) -> DomainModel {
+        let mut files = vec![
+            (
+                "Api/ThingsController.cs",
+                "using Microsoft.AspNetCore.Mvc;\nnamespace S;\npublic class ThingsController : Controller\n{\n    public ThingView Get([FromBody] CreateThing c) { return null; }\n    private Hidden Own() { return null; }\n}\n",
+            ),
+            (
+                "Models/CreateThing.cs",
+                "namespace S;\npublic class CreateThing { public string Name { get; set; } }\n",
+            ),
+            (
+                "Models/ThingView.cs",
+                "namespace S;\npublic class ThingView { public List<Line> Lines { get; set; } }\n",
+            ),
+            (
+                "Models/Line.cs",
+                "namespace S;\npublic class Line { public int Units { get; set; } }\n",
+            ),
+            (
+                "Models/Hidden.cs",
+                "namespace S;\npublic class Hidden { public int Units { get; set; } }\n",
+            ),
+            (
+                "Models/Cart.cs",
+                "namespace S;\npublic class Cart { public Line Top { get; set; } }\n",
+            ),
+        ];
+        files.extend_from_slice(extra);
+        run(&files)
+    }
+
+    fn names(model: &DomainModel) -> Vec<&str> {
+        let mut n: Vec<&str> = model.entities.iter().map(|e| e.name.as_str()).collect();
+        n.sort();
+        n
+    }
+
+    #[test]
+    fn a_class_only_used_by_controller_actions_is_an_api_dto_not_a_model() {
+        // CreateThing/ThingView are action parameter/return; Line is reached
+        // through ThingView but also a property of the kept Cart, so it stays.
+        // Hidden is only in a private method: no action.
+        assert_eq!(names(&api(&[])), ["Cart", "Hidden", "Line"]);
+    }
+
+    #[test]
+    fn a_dbset_class_stays_a_model_though_an_action_returns_it() {
+        let model = api(&[(
+            "Data/Ctx.cs",
+            "namespace S;\npublic class Ctx : DbContext { public DbSet<ThingView> Views { get; set; } }\n",
+        )]);
+        assert_eq!(names(&model), ["Cart", "Hidden", "Line", "ThingView"]);
+    }
+
+    #[test]
+    fn a_class_with_only_injected_fields_is_no_model() {
+        let model = run(&[(
+            "Domain/Repo.cs",
+            "namespace S;\npublic interface IDb { }\npublic class Repo { private readonly IDb _db; private static readonly Repo Instance = new(); }\n",
+        )]);
+        assert!(model.entities.is_empty(), "{:#?}", model.entities);
+    }
+
+    fn one(path: &str, text: &str) -> DomainModel {
+        run(&[(path, text)])
+    }
+
+    #[test]
+    fn private_mutable_fields_are_state() {
+        let m = one(
+            "Domain/Account.cs",
+            "public class Account { private decimal _balance; public void Deposit(decimal x) { _balance += x; } public decimal Balance() { return _balance; } }",
+        );
+        assert_eq!(names(&m), ["Account"]);
+        let weight = one(
+            "Domain/Weight.cs",
+            "public class Weight { private readonly decimal _kg; public decimal Kg() { return _kg; } }",
+        );
+        assert_eq!(names(&weight), ["Weight"]);
+    }
+
+    #[test]
+    fn a_private_enum_field_keeps_entity_and_machine() {
+        let m = run(&[
+            (
+                "Domain/DoorState.cs",
+                "public enum DoorState { Open, Shut }",
+            ),
+            (
+                "Domain/Door.cs",
+                "public class Door { private DoorState _state; public void Shut() { _state = DoorState.Shut; } }",
+            ),
+        ]);
+        assert_eq!(names(&m), ["Door"]);
+        assert_eq!(m.state_machines.len(), 1);
+    }
+
+    #[test]
+    fn readonly_fields_of_scanned_interfaces_and_stateless_classes_are_injected() {
+        let m = run(&[
+            ("Domain/IStore.cs", "public interface IStore { }"),
+            (
+                "Domain/Helper.cs",
+                "public class Helper { public void Run() { } }",
+            ),
+            (
+                "Domain/Repo.cs",
+                "public class Repo { private readonly IStore _a; private readonly Helper _b; }",
+            ),
+            (
+                "Domain/Odd.cs",
+                "public class Odd { private readonly Unknown _u; }",
+            ),
+        ]);
+        // An unresolvable type counts as state.
+        assert_eq!(names(&m), ["Odd"]);
+    }
+
+    #[test]
+    fn state_in_a_base_class_counts_and_a_property_type_of_a_kept_model_rescues() {
+        let m = run(&[
+            (
+                "Domain/Contributors.cs",
+                "public sealed class Contributors : ReadonlyDictionary<string, string> { public static readonly Contributors Empty = new(); }",
+            ),
+            (
+                "Domain/Plain.cs",
+                "public sealed class Plain { public static readonly Plain Empty = new(); }",
+            ),
+            (
+                "Domain/App.cs",
+                "public class App : Entity { public Contributors Contributors { get; set; } public Plain Plain { get; set; } }",
+            ),
+            ("Domain/Seed.cs", "public class Entity { }"),
+        ]);
+        let n = names(&m);
+        assert!(n.contains(&"Contributors") && n.contains(&"Plain"), "{n:?}");
+    }
+
+    #[test]
+    fn scanned_base_state_and_mutable_statics_count_but_not_singletons() {
+        let m = run(&[
+            (
+                "Domain/Base.cs",
+                "public abstract class Base { public int X { get; set; } }",
+            ),
+            ("Domain/Child.cs", "public class Child : Base { }"),
+            (
+                "Domain/Options.cs",
+                "public class Options { public static bool On = true; }",
+            ),
+            (
+                "Domain/Visitor.cs",
+                "public class Visitor : Framework { private static readonly Visitor Instance = new(); }",
+            ),
+        ]);
+        assert_eq!(names(&m), ["Child", "Options"]);
+    }
+
+    fn api_names(m: &DomainModel) -> Vec<(&str, &str)> {
+        let mut v: Vec<_> = (m.api_models.iter())
+            .map(|a| (a.name.as_str(), a.reason.as_str()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn api_models_list_what_the_dto_rule_sets_aside_with_the_reason() {
+        let m = api(&[]);
+        assert_eq!(
+            api_names(&m),
+            [
+                ("CreateThing", "action body of ThingsController.Get"),
+                ("ThingView", "returned by ThingsController.Get"),
+            ]
+        );
+        assert!(m.api_models[0].file.ends_with(".cs"));
+    }
+
+    #[test]
+    fn a_reachable_only_model_names_the_api_model_it_hangs_on() {
+        let m = run_owned(&[
+            (
+                "Models/Inner.cs",
+                "public class Inner { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Models/Outer.cs",
+                "public class Outer { public Inner Inner { get; set; } }".into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller(
+                    "[ApiController]\n",
+                    "ControllerBase",
+                    "public Outer Get() { return null; }",
+                ),
+            ),
+        ]);
+        assert_eq!(
+            api_names(&m),
+            [
+                ("Inner", "only reachable through api model Outer"),
+                ("Outer", "returned by OrdersController.Get"),
+            ]
+        );
+        assert!(m.entities.is_empty());
+    }
+
+    #[test]
+    fn mongo_collections_and_bson_attributes_keep_a_type() {
+        let ctl = controller(
+            "[ApiController]\n",
+            "ControllerBase",
+            "public Task<List<Book>> Get() { return null; }\npublic Task<List<Shelf>> Shelves() { return null; }\npublic Task<List<Note>> Notes() { return null; }",
+        );
+        let m = run_owned(&[
+            ("Models/Book.cs", "public class Book { [BsonId] public string Id { get; set; } }".into()),
+            ("Models/Shelf.cs", "public class Shelf { public string Id { get; set; } }".into()),
+            ("Models/Note.cs", "public class Note { public string Id { get; set; } }".into()),
+            (
+                "Services/S.cs",
+                "public class S { public S(IMongoDatabase d) { _a = d.GetCollection<Shelf>(\"s\"); IMongoCollection<Note> n; } }".into(),
+            ),
+            ("Api/BooksController.cs", ctl),
+        ]);
+        assert_eq!(names(&m), ["Book", "Note", "Shelf"]);
+    }
+
+    #[test]
+    fn an_injected_readonly_needs_a_scanned_interface_or_a_scanned_stateless_class() {
+        let m = run(&[
+            (
+                "Domain/Street.cs",
+                "public class Street : ValueOf<string, Street> { }",
+            ),
+            (
+                "Domain/City.cs",
+                "public class City : ValueOf<string, City> { }",
+            ),
+            (
+                "Domain/Address.cs",
+                "public class Address { private readonly Street _street; private readonly City _city; }",
+            ),
+            (
+                "Domain/Priority.cs",
+                "public class Priority : SmartEnum<Priority> { }",
+            ),
+            (
+                "Domain/Ticket.cs",
+                "public class Ticket { private readonly Priority _priority; }",
+            ),
+        ]);
+        assert_eq!(
+            names(&m),
+            ["Address", "City", "Priority", "Street", "Ticket"]
+        );
+    }
+
+    #[test]
+    fn a_type_in_a_method_signature_of_a_kept_model_is_rescued() {
+        let m = run_owned(&[
+            (
+                "Models/ReportFile.cs",
+                "public class ReportFile { public string Name { get; set; } }".into(),
+            ),
+            (
+                "Models/ReportOut.cs",
+                "public class ReportOut { public ReportFile File { get; set; } }".into(),
+            ),
+            (
+                "Domain/Report.cs",
+                "public class Report : Entity { public int Id { get; set; } public void SetFile(ReportFile f) { } public ReportFile GetFile() { return null; } }".into(),
+            ),
+            ("Domain/Seed.cs", "public class Entity { }".into()),
+            (
+                "Api/ReportsController.cs",
+                controller("[ApiController]\n", "ControllerBase", "public ReportOut Get() { return null; }"),
+            ),
+        ]);
+        assert!(names(&m).contains(&"ReportFile"), "{:?}", names(&m));
+        assert_eq!(
+            api_names(&m),
+            [("ReportOut", "returned by OrdersController.Get")]
+        );
+    }
+
+    #[test]
+    fn a_non_literal_assignment_in_a_method_keeps_machine_and_gap() {
+        let m = run(&[
+            ("Domain/JobState.cs", "public enum JobState { New, Done }"),
+            (
+                "Domain/Job.cs",
+                "public class Job : Entity { public JobState State { get; private set; } public void Move(JobState next) { State = next; } }",
+            ),
+        ]);
+        assert_eq!(m.state_machines.len(), 1, "{:#?}", m.state_machines);
+        assert!(has_diag(&m, "non-literal"));
+    }
+
+    const MVC: &str = "using Microsoft.AspNetCore.Mvc;\n";
+
+    fn controller(attrs: &str, base: &str, body: &str) -> String {
+        format!("{MVC}{attrs}public class OrdersController : {base}\n{{\n{body}\n}}\n")
+    }
+
+    #[test]
+    fn a_controller_returned_entity_without_ef_stays_a_model() {
+        let m = run_owned(&[
+            (
+                "Entities/Order.cs",
+                "public class Order { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller(
+                    "[ApiController]\n",
+                    "ControllerBase",
+                    "public Task<IEnumerable<Order>> Get() { return null; }",
+                ),
+            ),
+        ]);
+        assert_eq!(names(&m), ["Order"]);
+    }
+
+    #[test]
+    fn a_type_with_behaviour_is_never_an_api_dto() {
+        let m = run_owned(&[
+            (
+                "Models/License.cs",
+                "public class License { public int Id { get; set; } public bool CanUse() { return true; } }".into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller("", "ControllerBase", "public License Get() { return null; }"),
+            ),
+        ]);
+        assert_eq!(names(&m), ["License"]);
+    }
+
+    #[test]
+    fn dapper_generics_and_table_attributes_keep_a_type() {
+        let m = run_owned(&[
+            (
+                "Models/A.cs",
+                "public class A { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Models/B.cs",
+                "[Table(\"b\")]\npublic class B { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Models/C.cs",
+                "public class C { public int Id { get; set; } }".into(),
+            ),
+            (
+                "Data/Repo.cs",
+                "public class Repo { public async Task Go() { await c.QueryAsync<A>(\"x\"); } }"
+                    .into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller(
+                    "[ApiController]\n",
+                    "ControllerBase",
+                    "public A GetA() { return null; }\npublic B GetB() { return null; }\npublic C GetC() { return null; }",
+                ),
+            ),
+        ]);
+        assert_eq!(names(&m), ["A", "B"]);
+    }
+
+    #[test]
+    fn only_aspnet_controllers_count_and_non_body_parameters_do_not_bind() {
+        let m = run_owned(&[
+            ("Models/Thing.cs", "public class Thing { public int Id { get; set; } }".into()),
+            ("Models/Filter.cs", "public class Filter { public int Id { get; set; } }".into()),
+            ("Models/Body.cs", "public class Body { public int Id { get; set; } }".into()),
+            (
+                "Ui/GuiController.cs",
+                "public class GuiController : UIViewController { public Thing Get() { return null; } }".into(),
+            ),
+            (
+                "Api/OrdersController.cs",
+                controller(
+                    "[ApiController]\n",
+                    "ControllerBase",
+                    "public void Put([FromQuery] Filter f, Body b) { }",
+                ),
+            ),
+        ]);
+        assert_eq!(names(&m), ["Filter", "Thing"]);
     }
 
     #[test]
