@@ -55,6 +55,9 @@ pub(crate) fn dispatch(action: &DbAction, cli: &crate::args::Cli, root: &Path) -
 /// `run`), then an idempotent [`LadybugStore::sync`] into `--db`.
 #[cfg(feature = "db")]
 fn sync(cli: &crate::args::Cli, root: &Path, db_path: &Path) -> i32 {
+    if let Err(err) = refuse_redirected_default_db(Path::new(""), db_path) {
+        return analysis_error(err);
+    }
     let loaded = match load_config(cli.config.as_deref(), root) {
         Ok(loaded) => loaded,
         Err(err) => return analysis_error(err),
@@ -185,11 +188,81 @@ fn print_table(result: &QueryResult) {
     }
 }
 
+/// The default `--db` (`.archguard/graph.db` below `cwd`) is repository
+/// content: refuse it when `.archguard` or `graph.db` is a symlink, which
+/// would make the store create or rewrite files outside the analysed root.
+/// An explicit other `--db` is the operator's choice and stays unchecked.
+/// shortcut: path-based lstat, not descriptor-relative (lbug opens by path);
+/// it stops a committed symlink, not a concurrent swap.
+#[cfg(any(feature = "db", all(test, unix)))]
+fn refuse_redirected_default_db(cwd: &Path, db_path: &Path) -> std::io::Result<()> {
+    if db_path != Path::new(crate::args::DEFAULT_DB_PATH) {
+        return Ok(());
+    }
+    let mut path = cwd.to_path_buf();
+    for component in db_path.components() {
+        path.push(component);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(std::io::Error::other(format!(
+                    "{} is a symlink; pass --db to choose the database explicitly",
+                    path.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
 /// One cell as text: strings unquoted, other JSON values in JSON notation.
 #[cfg(feature = "db")]
 fn render_cell(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::args::DEFAULT_DB_PATH;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_symlinked_archguard_directory_refuses_the_default_db() {
+        let cwd = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), cwd.path().join(".archguard")).unwrap();
+        let db = Path::new(DEFAULT_DB_PATH);
+        assert!(refuse_redirected_default_db(cwd.path(), db).is_err());
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_dangling_graph_db_link_refuses_the_default_db() {
+        let cwd = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(cwd.path().join(".archguard")).unwrap();
+        let link = cwd.path().join(DEFAULT_DB_PATH);
+        symlink(outside.path().join("graph.db"), link).unwrap();
+        let db = Path::new(DEFAULT_DB_PATH);
+        assert!(refuse_redirected_default_db(cwd.path(), db).is_err());
+    }
+
+    #[test]
+    fn a_fresh_root_or_an_explicit_db_is_accepted() {
+        let cwd = tempfile::tempdir().unwrap();
+        let db = Path::new(DEFAULT_DB_PATH);
+        assert!(refuse_redirected_default_db(cwd.path(), db).is_ok());
+        std::fs::create_dir(cwd.path().join(".archguard")).unwrap();
+        assert!(refuse_redirected_default_db(cwd.path(), db).is_ok());
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), cwd.path().join("linked")).unwrap();
+        let explicit = cwd.path().join("linked/graph.db");
+        assert!(refuse_redirected_default_db(cwd.path(), &explicit).is_ok());
     }
 }
