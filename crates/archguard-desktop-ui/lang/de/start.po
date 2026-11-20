@@ -392,6 +392,9 @@ msgstr "Lecks"
 msgid "Risk coverage gaps"
 msgstr "Risiko-Abdeckungslücken"
 
+msgid "Lines of code"
+msgstr "Zeilen Code"
+
 msgid "None recorded"
 msgstr "Nicht erfasst"
 
@@ -449,6 +452,9 @@ msgstr "Hotspot {} mit {} ungedeckten Zeilen — bei unbekannter Abdeckung bleib
 msgid "not measured"
 msgstr "nicht gemessen"
 
+msgid "Every physical line (blanks and comments included) of the source files this analysis scanned — the same base as the debt density."
+msgstr "Jede physische Zeile (leere und Kommentarzeilen eingeschlossen) der von dieser Analyse gescannten Quelldateien — dieselbe Basis wie die Schuld-Dichte."
+
 msgid "Good"
 msgstr "Gut"
 
@@ -481,6 +487,9 @@ msgstr "Zugriffe auf Interna, die ein Modul nicht exportiert"
 
 msgid "Hotspots without test coverage"
 msgstr "Hotspots ohne Testabdeckung"
+
+msgid "Physical lines of the scanned sources"
+msgstr "Physische Zeilen der gescannten Quellen"
 
 msgid "Score history"
 msgstr "Score-Verlauf"

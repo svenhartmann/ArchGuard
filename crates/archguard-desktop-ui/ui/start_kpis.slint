@@ -10,7 +10,8 @@ export global StartKpiTexts {
     public pure function label(k: int) -> string {
         return k == 0 ? @tr("Architecture score · /100") : k == 1 ? @tr("Propagation cost (top cycle)")
             : k == 2 ? @tr("SDP violations") : k == 3 ? @tr("Tangledness") : k == 4 ? @tr("Hub Gini")
-            : k == 5 ? @tr("Debt markers") : k == 6 ? @tr("Leaks") : @tr("Risk coverage gaps");
+            : k == 5 ? @tr("Debt markers") : k == 6 ? @tr("Leaks") : k == 7 ? @tr("Risk coverage gaps")
+            : @tr("Lines of code");
     }
 
     // What the KPI measures, one short line on the card.
@@ -19,7 +20,7 @@ export global StartKpiTexts {
             : k == 2 ? @tr("Stable modules depending on less stable ones") : k == 3 ? @tr("Share of nodes inside cycles")
             : k == 4 ? @tr("Concentration of incoming dependencies: 0 even, 1 one hub")
             : k == 5 ? @tr("TODO/FIXME/HACK/XXX in the sources") : k == 6 ? @tr("Access to internals a module does not export")
-            : @tr("Hotspots without test coverage");
+            : k == 7 ? @tr("Hotspots without test coverage") : @tr("Physical lines of the scanned sources");
     }
 
     public pure function value(c: StartKpiCard) -> string {
@@ -34,7 +35,7 @@ export global StartKpiTexts {
             : c.kind == 4 ? @tr("top share {}", c.a)
             : c.kind == 5 ? (c.c == "" ? @tr("per kloc not measured") : @tr("{} per kloc", c.c))
             : c.kind == 6 ? (c.a == "" ? "" : c.a + " → " + c.b)
-            : c.c;
+            : c.kind == 7 ? c.c : "";
     }
 
     public pure function tip(c: StartKpiCard) -> string {
@@ -48,8 +49,9 @@ export global StartKpiTexts {
             : c.kind == 5 ? @tr("{} TODO/FIXME/HACK/XXX markers in {} source lines.", c.a, c.b)
             : c.kind == 6 ? (c.a == "" ? @tr("No leaky-encapsulation findings recorded.")
                 : @tr("{} reaches {}, which {} does not export.", c.a, c.b, c.c))
-            : c.a == "" ? @tr("No risk-weighted coverage gaps recorded.")
-            : @tr("Hotspot {} with {} uncovered — the gap stays null when coverage is unknown.", c.a, c.b == "" ? @tr("not measured") : c.b);
+            : c.kind == 7 ? (c.a == "" ? @tr("No risk-weighted coverage gaps recorded.")
+                : @tr("Hotspot {} with {} uncovered — the gap stays null when coverage is unknown.", c.a, c.b == "" ? @tr("not measured") : c.b))
+            : @tr("Every physical line (blanks and comments included) of the source files this analysis scanned — the same base as the debt density.");
     }
 
     // The health Ampel (StartKpiCard.level) as a rating; its colour

@@ -27,6 +27,7 @@ pub mod card {
     pub const DEBT: i32 = 5;
     pub const LEAKS: i32 = 6;
     pub const GAPS: i32 = 7;
+    pub const LOC: i32 = 8;
 }
 
 /// What the section shows, copied from the analysis once.
@@ -109,6 +110,7 @@ pub fn cards(g: &Glance, l: Locale) -> (Vec<StartKpiCard>, Vec<i32>) {
         (card::DEBT, debt(k, l)),
         (card::LEAKS, Some(leaks(k, l))),
         (card::GAPS, gaps(k, l)),
+        (card::LOC, lines(k, l)),
     ];
     let missing = all
         .iter()
@@ -200,6 +202,12 @@ fn debt(k: &ReviewKpis, l: Locale) -> Option<StartKpiCard> {
     let per_kloc = d.per_kloc.map_or(String::new(), |v| l.dec(v, 1));
     let args = [l.count(d.markers), l.count(d.loc), per_kloc];
     Some(new(card::DEBT, l.count(d.markers), &args))
+}
+
+/// The size the debt scan covered: every physical line of every scanned
+/// source, blanks and comments included (measured as `debt.loc`).
+fn lines(k: &ReviewKpis, l: Locale) -> Option<StartKpiCard> {
+    Some(new(card::LOC, l.count(k.debt.as_ref()?.loc), &[]))
 }
 
 /// The count; `a` reaches `b`, which `c` does not export.
@@ -310,7 +318,7 @@ mod tests {
     fn measured_kpis_become_cards_in_display_order() {
         let (cards, missing) = cards(&glance(Some(kpis())), Locale::En);
         let kinds: Vec<i32> = cards.iter().map(|c| c.kind).collect();
-        assert_eq!(kinds, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(kinds, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(missing.is_empty());
         let value = |k: i32| cards[k as usize].value.to_string();
         assert_eq!(value(card::HEALTH), "72.5");
@@ -333,6 +341,7 @@ mod tests {
             (cards[7].b.as_str(), cards[7].c.as_str()),
             ("25.0%", "src/a.rs")
         );
+        assert_eq!(value(card::LOC), "20,000");
     }
 
     /// An unmeasured KPI hides its card and is listed as missing; an empty
@@ -351,7 +360,8 @@ mod tests {
                 card::TANGLED,
                 card::GINI,
                 card::DEBT,
-                card::GAPS
+                card::GAPS,
+                card::LOC
             ]
         );
         let kinds: Vec<i32> = cards.iter().map(|c| c.kind).collect();
