@@ -244,3 +244,102 @@ msgid "{0} sample"
 msgid_plural "{0} samples"
 msgstr[0] "{0} Sample"
 msgstr[1] "{0} Samples"
+
+msgid "Static indicators"
+msgstr "Statische Indikatoren"
+
+msgid "Static indicators from source and dependency structure, not measured at runtime or build time."
+msgstr "Statische Indikatoren aus Quellcode- und Abhängigkeitsstruktur, nicht zur Laufzeit oder beim Build gemessen."
+
+msgid "Computing static indicators …"
+msgstr "Statische Indikatoren werden berechnet …"
+
+msgid "Entry points by reachable files"
+msgstr "Einstiegspunkte nach erreichbaren Dateien"
+
+msgid "{} · {} reachable files"
+msgstr "{} · {} erreichbare Dateien"
+
+msgid "{} components on longest path · {} cyclic components"
+msgstr "{} Komponenten auf dem längsten Pfad · {} zyklische Komponenten"
+
+msgid "{} source lines"
+msgstr "{} Quellcodezeilen"
+
+msgid "unknown source lines"
+msgstr "Quellcodezeilen unbekannt"
+
+msgid "No entry point matched."
+msgstr "Kein Einstiegspunkt gefunden."
+
+msgid "Showing {} of {} entry points."
+msgstr "Anzeige von {} aus {} Einstiegspunkten."
+
+msgid "Cyclic build structure"
+msgstr "Zyklische Build-Struktur"
+
+msgid "{} scope nodes · {} source files"
+msgstr "{} Knoten im Analysebereich · {} Quelldateien"
+
+msgid "{} lines"
+msgstr "{} Zeilen"
+
+msgid "unknown lines"
+msgstr "Zeilen unbekannt"
+
+msgid "No cyclic groups in the report scope."
+msgstr "Keine zyklischen Gruppen im Berichtsumfang."
+
+msgid "Normalized main sequence distance"
+msgstr "Normalisierter Abstand zur Main Sequence"
+
+msgid "Cyclic group "
+msgstr "Zyklische Gruppe "
+
+msgid "Unavailable: no complete compiler-backed type coverage for this scope."
+msgstr "Nicht verfügbar: keine vollständige compilerbasierte Typabdeckung für diesen Umfang."
+
+msgid "Source cost findings"
+msgstr "Quellcode-Kostenbefunde"
+
+msgid "{} eager-import hints · {} barrel candidates · {} concrete-call review candidates"
+msgstr "{} Hinweise auf sofortige Imports · {} Barrel-Kandidaten · {} Prüfkandidaten für Aufrufe konkreter Typen"
+
+msgid "(limited)"
+msgstr "(begrenzt)"
+
+msgid "heavy import"
+msgstr "aufwendiger Import"
+
+msgid "barrel"
+msgstr "Barrel"
+
+msgid "Choose an entry point, a distance or a finding to see its evidence."
+msgstr "Wähle einen Einstiegspunkt, einen Abstand oder einen Befund, um seine Belege zu sehen."
+
+msgid "A {} · {} / {} abstract types"
+msgstr "A {} · {} / {} abstrakte Typen"
+
+msgid "I {} · normalized D′ {}"
+msgstr "I {} · normalisiertes D′ {}"
+
+msgid "A / D′ unavailable: {}"
+msgstr "A / D′ nicht verfügbar: {}"
+
+msgid "incomplete compiler coverage"
+msgstr "unvollständige Compiler-Abdeckung"
+
+msgid "Source cost evidence · {}"
+msgstr "Quellcode-Kostenbelege · {}"
+
+msgid "Barrel candidate · {} / {} re-export lines"
+msgstr "Barrel-Kandidat · {} / {} Re-Export-Zeilen"
+
+msgid "Eager import · {}"
+msgstr "Sofortiger Import · {}"
+
+msgid "Existing interface candidates: {}"
+msgstr "Vorhandene Interface-Kandidaten: {}"
+
+msgid "No source cost findings for this node."
+msgstr "Keine Quellcode-Kostenbefunde für diesen Knoten."

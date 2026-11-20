@@ -61,6 +61,9 @@ pub struct GraphState {
     pub display: i32,
     /// The explorer's tab: 0 modules, 1 cycles, 2 review.
     pub explorer_tab: i32,
+    /// The dependency card (from, to names) whose package-cycle
+    /// explanation is open in the Dependencies display.
+    pub dep: Option<(String, String)>,
     review_sources: ReviewSources,
     entry_points: Vec<String>,
 }
@@ -91,6 +94,12 @@ impl GraphState {
             scope: None,
             display: 0,
             explorer_tab: 0,
+            // Snapshot runs: `ARCHGUARD_DESKTOP_DEP=<from>><to>` opens that
+            // card's package-cycle explanation.
+            dep: cfg!(feature = "snapshot")
+                .then(|| std::env::var("ARCHGUARD_DESKTOP_DEP").ok())
+                .flatten()
+                .and_then(|v| v.split_once('>').map(|(a, b)| (a.into(), b.into()))),
             review_sources,
             entry_points,
         };
