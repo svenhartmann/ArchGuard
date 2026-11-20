@@ -110,6 +110,9 @@ pub(crate) fn domain_walk(root: &Path, skip: &'static [&'static str]) -> ignore:
         .build()
 }
 
+/// A file (`""` for none) and why it was not read.
+pub(crate) type Gap = (String, String);
+
 /// The sources of one domain scan (ADR 0022): the files of [`domain_walk`]
 /// that `keep` accepts, test files left out, sorted, at most 5,000, each read
 /// up to 1 MiB. Returns (path, text) pairs and the gaps as (file, message);
@@ -119,7 +122,7 @@ pub(crate) fn domain_sources(
     skip: &'static [&'static str],
     keep: impl Fn(&str) -> bool,
     language: &str,
-) -> (Vec<(String, String)>, Vec<(String, String)>) {
+) -> (Vec<(String, String)>, Vec<Gap>) {
     const MAX_FILES: usize = 5_000;
     let (mut paths, mut gaps) = (Vec::new(), Vec::new());
     for entry in domain_walk(root, skip) {

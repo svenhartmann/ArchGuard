@@ -216,6 +216,18 @@ login = "admin@example.org"
 password_env = "ARCHGUARD_PW_ADMIN"     # or password_keychain = "archguard-webapp-admin" (macOS)
 ```
 
+Project-specific guards and access attributes get their meaning from `[views.access]`, by name; a name not listed stays a custom condition (frontend guards) or is not read (backend attributes), never guessed. `ui-flow`, `domain` and the MCP tools use the configuration `--config` names, else the project's own:
+
+```toml
+[views.access]
+mustBeAuthenticatedGuard = "authenticated"          # open, authenticated, never, role:<name>, policy:<name>
+hasRole = "role:$arg"                               # the literal arguments at the use site, any of them
+ApiPermission = "policy:$arg|authenticated"         # `|…`: the meaning at a use site without arguments
+ApiPermissionOrAnonymous = "policy:$arg|open"
+```
+
+A fallback (`|…`) follows only `role:$arg` or `policy:$arg` and is itself no `$arg` form; anything else is a configuration error. Without a fallback, a `$arg` guard or attribute without arguments is unknown.
+
 Conventions keep both views complete when an agent writes the code and `archguard check` runs after each of its steps. They are opt-in; without `[views]` nothing is checked:
 
 ```toml

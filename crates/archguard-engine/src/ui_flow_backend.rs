@@ -780,8 +780,14 @@ mod index {
             }
         }
 
-        pub(super) fn is_open(&self, name: &str) -> bool {
-            self.access.get(name) == Some(&AccessMeaning::Open)
+        /// The `[views.access]` meaning of attribute `a` at its use site.
+        fn meaning(&self, a: &Attr) -> Option<&AccessMeaning> {
+            let has_arguments = !split_top(&a.args).is_empty();
+            Some(self.access.get(&a.name)?.at_use_site(has_arguments))
+        }
+
+        pub(super) fn is_open(&self, a: &Attr) -> bool {
+            self.meaning(a) == Some(&AccessMeaning::Open)
         }
 
         /// A listed attribute's condition: `None` when not listed, `Some(None)` for open.
@@ -792,7 +798,7 @@ mod index {
             a: &Attr,
         ) -> Option<Option<Condition>> {
             use AccessMeaning as M;
-            Some(match self.access.get(&a.name)? {
+            Some(match self.meaning(a)? {
                 M::Open => None,
                 M::Authenticated => Some(Condition::Authenticated),
                 M::Never => Some(Condition::Never),
@@ -800,6 +806,8 @@ mod index {
                 M::Policy(n) => Some(Condition::Policy(n.clone())),
                 M::RoleFromArguments => Some(self.arguments(out, src, a, Condition::Role)),
                 M::PolicyFromArguments => Some(self.arguments(out, src, a, Condition::Policy)),
+                // `at_use_site` resolved it; a fallback is never a `$arg` form.
+                M::FromArgumentsOr(..) => Some(out.unknown(src, a.at, &a.name)),
             })
         }
 
@@ -1241,7 +1249,7 @@ mod controllers {
     /// `[AllowAnonymous]` or an `open` listed attribute anywhere wins; otherwise
     /// every `[Authorize]` and listed attribute must hold.
     fn access(index: &Index, out: &mut Out, levels: &Attrs) -> AccessState {
-        let open = |a: &Attr| a.name == "AllowAnonymous" || index.is_open(&a.name);
+        let open = |a: &Attr| a.name == "AllowAnonymous" || index.is_open(a);
         if levels.iter().any(|(_, a)| open(a)) {
             return AccessState::Open;
         }
@@ -3591,6 +3599,59 @@ public sealed class OtherController : ControllerBase
             .find(|d| d.message.contains("Configuration not read"))
             .unwrap();
         assert_eq!(note.severity, DiagnosticSeverity::Note);
+    }
+
+    // Squidex: `[ApiPermission]` without arguments only needs a signed-in user,
+    // `[ApiPermissionOrAnonymous]` without arguments lets everyone in.
+    const FALLBACK: &str = r#"
+public sealed class AppsController : ControllerBase
+{
+    [HttpGet("api/apps")]
+    [ApiPermission]
+    public IActionResult Apps() => Ok();
+
+    [HttpGet("api/apps/{app}")]
+    [ApiPermission(PermissionIds.AppContentsRead)]
+    public IActionResult App() => Ok();
+
+    [HttpGet("api/ping")]
+    [ApiPermissionOrAnonymous]
+    public IActionResult Ping() => Ok();
+
+    [HttpGet("api/assets")]
+    [ApiPermissionOrAnonymous("squidex.assets")]
+    public IActionResult Assets() => Ok();
+}
+"#;
+
+    #[test]
+    fn a_fallback_meaning_applies_to_attributes_without_arguments() {
+        let dir = project(&[
+            ("Web/Web.csproj", "<Project />"),
+            ("Web/PermissionIds.cs", PERMISSION_IDS),
+            ("Web/AppsController.cs", FALLBACK),
+        ]);
+        // Given by the caller (`--config`), not read from the project.
+        let config: archguard_core::Config = toml::from_str(
+            "[views.access]\nApiPermission = \"policy:$arg|authenticated\"\n\
+             ApiPermissionOrAnonymous = \"policy:$arg|open\"\n",
+        )
+        .unwrap();
+        let flow = extract_with(&ExtractContext::new(dir.path(), &config));
+        assert_eq!(
+            access(&flow, "GET", "/api/apps"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/apps/{app}"),
+            &protected(policy("squidex.apps.{app}.contents.{schema}.read"))
+        );
+        assert_eq!(access(&flow, "GET", "/api/ping"), &AccessState::Open);
+        assert_eq!(
+            access(&flow, "GET", "/api/assets"),
+            &protected(policy("squidex.assets"))
+        );
+        assert!(flow.diagnostics.is_empty(), "{:#?}", flow.diagnostics);
     }
 
     const BASE: &str = r#"

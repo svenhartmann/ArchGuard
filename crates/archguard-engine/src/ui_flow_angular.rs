@@ -85,7 +85,8 @@
 //! (`buildUrl('api/x')`), and a missing configuration (no `[views.access]` entries;
 //! an unreadable one is a note).
 use crate::extract_ctx::{
-    ExtractContext, dir_name as app_name, finish, read_source as read, walk, with_root_config,
+    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
+    with_root_config,
 };
 use crate::services::support::test_path;
 use archguard_core::{
@@ -152,15 +153,6 @@ pub fn extract_with(ctx: &ExtractContext) -> UiFlow {
     // Every unresolved target, unknown condition or unread file leaves a gap.
     finish(&mut flow);
     flow
-}
-
-fn diag(out: &mut Vec<UiFlowDiagnostic>, file: &str, line: u32, message: impl Into<String>) {
-    out.push(UiFlowDiagnostic {
-        file: file.into(),
-        line,
-        message: message.into(),
-        severity: DiagnosticSeverity::Gap,
-    });
 }
 
 fn read_json(root: &Path, rel: &str) -> Option<serde_json::Value> {
@@ -246,7 +238,8 @@ fn guard_condition(
     name: &str,
     args: Option<&[Item]>,
 ) -> Option<Option<Condition>> {
-    let make: fn(String) -> Condition = match meaning {
+    let has_arguments = args.is_some_and(|a| !a.is_empty());
+    let make: fn(String) -> Condition = match meaning.map(|m| m.at_use_site(has_arguments)) {
         None => return Some(Some(Condition::Custom(name.into()))),
         Some(AccessMeaning::Open) => return Some(None),
         Some(AccessMeaning::Authenticated) => return Some(Some(Condition::Authenticated)),
@@ -255,6 +248,8 @@ fn guard_condition(
         Some(AccessMeaning::Policy(n)) => return Some(Some(Condition::Policy(n.clone()))),
         Some(AccessMeaning::RoleFromArguments) => Condition::Role,
         Some(AccessMeaning::PolicyFromArguments) => Condition::Policy,
+        // `at_use_site` resolved it; a fallback is never a `$arg` form.
+        Some(AccessMeaning::FromArgumentsOr(..)) => return None,
     };
     let mut names: Vec<Condition> = (args.into_iter().flatten())
         .map(|a| match &a.value {
@@ -2860,6 +2855,35 @@ closedGuard = \"never\"
             "{:?}",
             flow.diagnostics
         );
+    }
+
+    #[test]
+    fn a_fallback_meaning_applies_to_guards_without_arguments() {
+        let routes = "export const APP_ROUTES: Routes = [
+  { path: 'a', component: AComponent, canActivate: [permissionGuard] },
+  { path: 'b', component: BComponent, canActivate: [permissionGuard()] },
+  { path: 'c', component: CComponent, canActivate: [permissionGuard('orders.read')] },
+  { path: 'd', component: DComponent, canActivate: [publicGuard] },
+];";
+        let config = "[views.access]
+permissionGuard = \"policy:$arg|authenticated\"
+publicGuard = \"role:$arg|open\"
+";
+        let dir = project(&[
+            ("frontend/angular.json", "{}"),
+            ("frontend/src/app/app.routes.ts", routes),
+            (".archguard/archguard.toml", config),
+        ]);
+        let flow = extract(dir.path());
+        let signed_in = Some(&Condition::Authenticated);
+        assert_eq!(access_of(&flow, "frontend:/a"), signed_in);
+        assert_eq!(access_of(&flow, "frontend:/b"), signed_in);
+        assert_eq!(
+            access_of(&flow, "frontend:/c"),
+            Some(&Condition::Policy("orders.read".into()))
+        );
+        assert_eq!(access_of(&flow, "frontend:/d"), None);
+        assert!(flow.diagnostics.is_empty(), "{:?}", flow.diagnostics);
     }
 
     // Shaped like jhipster-sample-app (`@Service`, a base class holding

@@ -94,7 +94,8 @@ pub struct ViewsConfig {
 /// The meaning of one `[views.access]` entry. Written as `open`,
 /// `authenticated`, `never`, `role:<name>`, `policy:<name>`, or
 /// `role:$arg` / `policy:$arg` for the literal arguments at the use site
-/// (several arguments mean any of them).
+/// (several arguments mean any of them). A `$arg` form may name a fallback
+/// for use sites without arguments: `policy:$arg|authenticated`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum AccessMeaning {
@@ -105,18 +106,53 @@ pub enum AccessMeaning {
     Policy(String),
     RoleFromArguments,
     PolicyFromArguments,
+    /// `<$arg form>|<fallback>`: the first with arguments, the second (never
+    /// a `$arg` form) at a use site without arguments.
+    FromArgumentsOr(Box<AccessMeaning>, Box<AccessMeaning>),
 }
 
 impl TryFrom<String> for AccessMeaning {
     type Error = String;
     fn try_from(text: String) -> Result<Self, String> {
+        if let Some((with, without)) = text.split_once('|') {
+            let with = Self::single(with)?;
+            let without = Self::single(without)?;
+            return match (&with, &without) {
+                (Self::RoleFromArguments | Self::PolicyFromArguments, w)
+                    if !matches!(w, Self::RoleFromArguments | Self::PolicyFromArguments) =>
+                {
+                    Ok(Self::FromArgumentsOr(Box::new(with), Box::new(without)))
+                }
+                _ => Err(format!(
+                    "`{text}`: a fallback (`|…`) follows only role:$arg or policy:$arg \
+                     and is itself no $arg form"
+                )),
+            };
+        }
+        Self::single(&text)
+    }
+}
+
+impl AccessMeaning {
+    /// The meaning at one use site: a fallback form resolved by whether the
+    /// site passes arguments; every other meaning as it is.
+    pub fn at_use_site(&self, has_arguments: bool) -> &AccessMeaning {
+        match self {
+            Self::FromArgumentsOr(with, _) if has_arguments => with,
+            Self::FromArgumentsOr(_, without) => without,
+            other => other,
+        }
+    }
+
+    /// One meaning without a fallback.
+    fn single(text: &str) -> Result<Self, String> {
         let named =
             |rest: &str, from_args: AccessMeaning, fixed: fn(String) -> AccessMeaning| match rest {
                 "$arg" => Ok(from_args),
                 "" => Err(format!("`{text}` names no role or policy")),
                 name => Ok(fixed(name.to_string())),
             };
-        match text.as_str() {
+        match text {
             "open" => Ok(Self::Open),
             "authenticated" => Ok(Self::Authenticated),
             "never" => Ok(Self::Never),
@@ -142,6 +178,9 @@ impl From<AccessMeaning> for String {
             AccessMeaning::Policy(n) => format!("policy:{n}"),
             AccessMeaning::RoleFromArguments => "role:$arg".into(),
             AccessMeaning::PolicyFromArguments => "policy:$arg".into(),
+            AccessMeaning::FromArgumentsOr(with, without) => {
+                format!("{}|{}", String::from(*with), String::from(*without))
+            }
         }
     }
 }
@@ -253,6 +292,60 @@ mod access_tests {
         let text = toml::to_string(&config.views).unwrap();
         assert!(text.contains("ApiPermission = \"policy:$arg\""), "{text}");
         for bad in ["\"admin\"", "\"role:\"", "\"group:x\""] {
+            let err =
+                toml::from_str::<Config>(&format!("[views.access]\nx = {bad}\n")).unwrap_err();
+            assert!(err.to_string().contains("x"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn views_access_reads_a_fallback_for_use_sites_without_arguments() {
+        let config: Config = toml::from_str(
+            "[views.access]\nApiPermission = \"policy:$arg|authenticated\"\n\
+             ApiPermissionOrAnonymous = \"policy:$arg|open\"\nHasRole = \"role:$arg|role:User\"\n",
+        )
+        .unwrap();
+        let access = &config.views.access;
+        let permission = &access["ApiPermission"];
+        assert_eq!(
+            permission,
+            &AccessMeaning::FromArgumentsOr(
+                Box::new(AccessMeaning::PolicyFromArguments),
+                Box::new(AccessMeaning::Authenticated)
+            )
+        );
+        assert_eq!(
+            permission.at_use_site(true),
+            &AccessMeaning::PolicyFromArguments
+        );
+        assert_eq!(permission.at_use_site(false), &AccessMeaning::Authenticated);
+        assert_eq!(
+            access["ApiPermissionOrAnonymous"].at_use_site(false),
+            &AccessMeaning::Open
+        );
+        assert_eq!(
+            access["HasRole"].at_use_site(false),
+            &AccessMeaning::Role("User".into())
+        );
+        assert_eq!(AccessMeaning::Open.at_use_site(false), &AccessMeaning::Open);
+        // Serde round trip.
+        let text = toml::to_string(&config.views).unwrap();
+        assert!(
+            text.contains("ApiPermission = \"policy:$arg|authenticated\""),
+            "{text}"
+        );
+        assert_eq!(
+            toml::from_str::<super::ViewsConfig>(&text).unwrap(),
+            config.views
+        );
+        // A fallback follows a `$arg` form only, and is none itself.
+        for bad in [
+            "\"authenticated|open\"",
+            "\"policy:X|open\"",
+            "\"policy:$arg|role:$arg\"",
+            "\"policy:$arg|maybe\"",
+            "\"policy:$arg|open|never\"",
+        ] {
             let err =
                 toml::from_str::<Config>(&format!("[views.access]\nx = {bad}\n")).unwrap_err();
             assert!(err.to_string().contains("x"), "{bad}: {err}");
