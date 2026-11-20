@@ -2001,17 +2001,59 @@ mod spring {
                     beans.count() + a.len()
                 })
                 .sum();
-            let scoped = |s: &&Source| {
-                ["securityMatcher", "antMatcher", "requestMatcher"]
-                    .iter()
-                    .any(|w| words(&s.text, w).next().is_some())
-            };
-            if chains > 1 || files.iter().any(scoped) {
+            if chains > 1 || files.iter().any(|s| scoped(s)) {
                 let message = "Several security configurations or a securityMatcher/antMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
                 return out.note(&home.rel, home.line(at), message.into());
             }
             let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
-            for (s, classes) in &found {
+            unreadable_classes(&found, index, out);
+            rule_notes(&rules, out);
+            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
+            for (i, n) in partial {
+                let r = &rules[i];
+                let message = format!(
+                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
+                    r.text
+                );
+                out.note(&r.file, r.line, message);
+            }
+            if rules.is_empty() {
+                return;
+            }
+            let source = if found.iter().all(|(_, a)| a.is_empty()) {
+                "Central SecurityFilterChain"
+            } else {
+                "Security configuration"
+            };
+            let message = format!(
+                "{source} rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
+                rules.len()
+            );
+            out.note(&home.rel, home.line(at), message);
+        }
+
+        /// Scoping forms: `securityMatcher(s)`, `antMatcher`, `requestMatcher` and a
+        /// `requestMatchers()` without arguments (ResourceServer scoping).
+        fn scoped(s: &Source) -> bool {
+            let empty_request_matchers = words(&s.text, "requestMatchers").any(|p| {
+                let b = s.bytes();
+                let open = skip_ws(b, p + "requestMatchers".len());
+                b.get(open) == Some(&b'(') && b.get(skip_ws(b, open + 1)) == Some(&b')')
+            });
+            s.text.contains("securityMatcher")
+                || empty_request_matchers
+                || ["antMatcher", "requestMatcher"]
+                    .iter()
+                    .any(|w| words(&s.text, w).next().is_some())
+        }
+
+        /// A gap per adapter class in a file without any readable rule.
+        fn unreadable_classes(
+            found: &[(&Source, Vec<(String, usize)>)],
+            index: &Index,
+            out: &mut Out,
+        ) {
+            for (s, classes) in found {
                 if classes.is_empty() || !read(s, index).is_empty() {
                     continue;
                 }
@@ -2022,7 +2064,11 @@ mod spring {
                     out.at(s, *at, message);
                 }
             }
-            for r in &rules {
+        }
+
+        /// A note per rule that is not read completely.
+        fn rule_notes(rules: &[Rule], out: &mut Out) {
+            for r in rules {
                 let why = match (&r.patterns, &r.grant) {
                     (None, _) => "its matcher is not a literal",
                     (_, None) => "its grant is not read",
@@ -2035,20 +2081,6 @@ mod spring {
                 );
                 out.note(&r.file, r.line, message);
             }
-            let (changed, partial) = apply(&rules, &mut out.0.endpoints[first..]);
-            for (i, n) in partial {
-                let r = &rules[i];
-                let message = format!(
-                    "Filter chain rule `{}` matches only some requests of {n} endpoint(s) (a path parameter or ANY method); they keep their declared access.",
-                    r.text
-                );
-                out.note(&r.file, r.line, message);
-            }
-            let message = format!(
-                "Central SecurityFilterChain rules evaluated: {} rule(s), access of {changed} endpoint(s) changed.",
-                rules.len()
-            );
-            out.note(&home.rel, home.line(at), message);
         }
 
         /// Applies the first matching rule to each endpoint; returns how many
@@ -2276,7 +2308,7 @@ mod spring {
                 "access" => {
                     let expr = index.text(args)?;
                     match expr.trim() {
-                        "permitAll" => Some(AccessState::Open),
+                        "permitAll" | "permitAll()" => Some(AccessState::Open),
                         _ => spel(&expr).map(AccessState::Protected),
                     }
                 }
@@ -4246,6 +4278,111 @@ public class TicketController {
                 Condition::Authenticated
             ]))
         );
+    }
+
+    fn configured(files: &[(&str, &str)]) -> UiFlow {
+        let mut all = vec![
+            ("pom.xml", "<project/>"),
+            ("src/main/java/app/TicketController.java", LEGACY_RESOURCES),
+        ];
+        all.extend_from_slice(files);
+        let dir = project(&all);
+        extract(dir.path())
+    }
+
+    fn adapter(body: &str) -> String {
+        format!(
+            "public class SecurityConfig extends WebSecurityConfigurerAdapter {{\n    protected void configure(HttpSecurity http) throws Exception {{\n        {body}\n    }}\n}}\n"
+        )
+    }
+
+    /// Scoped or several configurations: nothing evaluated, one note.
+    fn assert_not_evaluated(flow: &UiFlow) {
+        assert_eq!(
+            access(flow, "GET", "/api/v1/other"),
+            &AccessState::Undeclared
+        );
+        assert_eq!(notes(flow, "not evaluated"), 1, "{:#?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn security_matchers_scope_a_filter_chain() {
+        let chain = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) { http.securityMatchers(m -> m.requestMatchers(\"/api/**\")).authorizeHttpRequests(a -> a.anyRequest().authenticated()); return http.build(); } }";
+        let flow = configured(&[("src/main/java/app/C.java", chain)]);
+        assert_not_evaluated(&flow);
+    }
+
+    #[test]
+    fn legacy_scoping_forms_are_not_evaluated() {
+        for scope in [
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+            "http.antMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+        }
+    }
+
+    #[test]
+    fn several_adapters_are_not_evaluated() {
+        let one = adapter("http.authorizeRequests().anyRequest().authenticated();");
+        let two = one.replace("class SecurityConfig", "class OtherConfig");
+        let flow = configured(&[
+            ("src/main/java/app/SecurityConfig.java", &one),
+            ("src/main/java/app/OtherConfig.java", &two),
+        ]);
+        assert_not_evaluated(&flow);
+    }
+
+    #[test]
+    fn access_permit_all_with_and_without_parentheses() {
+        for call in ["permitAll", "permitAll()"] {
+            let config = adapter(&format!(
+                "http.authorizeRequests().antMatchers(\"/api/v1/open/**\").access(\"{call}\").anyRequest().authenticated();"
+            ));
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Open,
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn kotlin_and_qualified_adapters_are_recognised() {
+        let body = "http.authorizeRequests().anyRequest().authenticated()";
+        let kotlin = format!(
+            "class SecurityConfig : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        {body}\n    }}\n}}\n"
+        );
+        let qualified = adapter(body).replace(
+            "extends WebSecurityConfigurerAdapter",
+            "extends org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter",
+        );
+        for (file, text) in [
+            ("SecurityConfig.kt", &kotlin),
+            ("SecurityConfig.java", &qualified),
+        ] {
+            let path = format!("src/main/java/app/{file}");
+            let flow = configured(&[(path.as_str(), text)]);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/other"),
+                &protected(Condition::Authenticated),
+                "{file}: {:#?}",
+                flow.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn notes_name_the_source_and_skip_zero_rule_counts() {
+        let config = adapter("http.authorizeRequests().anyRequest().authenticated();");
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(notes(&flow, "Security configuration rules evaluated: 1"), 1);
+        let empty = "public class ResourceServerConfig extends ResourceServerConfigurerAdapter {}";
+        let flow = configured(&[("src/main/java/app/ResourceServerConfig.java", empty)]);
+        assert_eq!(notes(&flow, "0 rule"), 0, "{:#?}", flow.diagnostics);
     }
 
     #[test]
