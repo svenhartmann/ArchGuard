@@ -1,0 +1,156 @@
+// Parts of View → Review decisions… (review_decisions.slint) that show the
+// review itself, as the web viewer's assessment: summary cards, the
+// selected finding with its nodes and evidence, and the report's impact,
+// evidence gaps, architecture questions and limits. Filled from
+// src/review_decisions_ui.rs (model: src/review_findings.rs).
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, StatCard } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+// An affected node of the selected finding; `found`: in the Graph's tree.
+export struct NodeLink {
+    name: string,
+    found: bool,
+}
+
+export struct GapItem {
+    title: string,
+    reason: string,
+}
+
+export struct ReviewOverview {
+    open: int,
+    risks: int,
+    gaps-count: int,
+    components: string,
+    files: [string],
+    tests: [string],
+    test-status: string,
+    gaps: [GapItem],
+    origin: [string],
+    questions: [string],
+    decisions: [string],
+    unmatched: int,
+    limits: [string],
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: Theme.font-body;
+    font-weight: Theme.weight-strong;
+    wrap: word-wrap;
+}
+
+component Line inherits Text {
+    color: Theme.muted;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+// A heading that opens and closes what follows it.
+component Toggle inherits HorizontalLayout {
+    in property <string> text;
+    in-out property <bool> open;
+    alignment: start;
+    Button {
+        text: (root.open ? "▾ " : "▸ ") + root.text;
+        compact: true;
+        clicked => { root.open = !root.open; }
+    }
+}
+
+export component SummaryCards inherits HorizontalLayout {
+    in property <ReviewOverview> overview;
+    spacing: 10px;
+    StatCard { kpi: { label: @tr("Open"), value: Fmt.int(root.overview.open), note: "" }; }
+    StatCard { kpi: { label: @tr("Accepted risks"), value: Fmt.int(root.overview.risks), note: "" }; }
+    StatCard { kpi: { label: @tr("Evidence gaps"), value: Fmt.int(root.overview.gaps-count), note: "" }; }
+}
+
+// The selected finding above its decision form (`@children`).
+export component FindingDetail inherits ScrollView {
+    in property <string> title;
+    in property <string> meta;
+    in property <string> source;
+    in property <string> evidence;
+    in property <string> decision;
+    in property <[NodeLink]> nodes;
+    in-out property <bool> evidence-open;
+    callback reveal(string);
+    content-width: self.visible-width;
+    VerticalLayout {
+        width: root.visible-width;
+        alignment: start;
+        padding-right: 14px;
+        spacing: 6px;
+        Heading { text: root.title; }
+        Line { text: root.meta; }
+        Line { text: @tr("Source status: {}", root.source); }
+        for n in root.nodes: HorizontalLayout {
+            spacing: 8px;
+            Text { text: n.name; color: Theme.text; font-size: Theme.font-small; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+            if n.found: Button {
+                text: @tr("Open in graph");
+                compact: true;
+                clicked => { root.reveal(n.name); }
+            }
+        }
+        Toggle { text: @tr("Source evidence"); open <=> root.evidence-open; }
+        if root.evidence-open: Text {
+            text: root.evidence;
+            color: Theme.text;
+            font-size: Theme.font-mono;
+            font-family: Theme.mono-family;
+            wrap: word-wrap;
+        }
+        if root.decision != "": Line { text: @tr("Recorded decision: {}", root.decision); }
+        Rectangle { height: 6px; }
+        @children
+    }
+}
+
+// Impact, evidence gaps, architecture questions and decisions, scope.
+export component ReportPage inherits ScrollView {
+    in property <ReviewOverview> overview;
+    property <bool> origin-open;
+    property <bool> limits-open: true;
+    content-width: self.visible-width;
+    VerticalLayout {
+        width: root.visible-width;
+        alignment: start;
+        padding-right: 14px;
+        spacing: 6px;
+        Heading { text: @tr("Affected components, files and tests"); }
+        Line { text: root.overview.components != "" ? root.overview.components : @tr("No mapped logical component in this selection."); }
+        for f in root.overview.files: Text { text: f; color: Theme.text; font-size: Theme.font-mono; font-family: Theme.mono-family; wrap: word-wrap; }
+        for t in root.overview.tests: Line { text: t; }
+        Line { text: @tr("Test evidence: {}", root.overview.test-status); }
+        Rectangle { height: 8px; }
+        Heading { text: @tr("Evidence gaps"); }
+        for g in root.overview.gaps: VerticalLayout {
+            spacing: 2px;
+            Text { text: g.title; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
+            Line { text: g.reason; }
+        }
+        Toggle { text: @tr("Evidence status and origin"); open <=> root.origin-open; }
+        if root.origin-open: VerticalLayout {
+            spacing: 2px;
+            for o in root.overview.origin: Line { text: o; }
+        }
+        Rectangle { height: 8px; }
+        Heading { text: @tr("Architecture questions and decisions"); }
+        for q in root.overview.questions: Line { text: q; }
+        for d in root.overview.decisions: Text { text: d; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
+        if root.overview.unmatched > 0: Line {
+            text: @tr("{} earlier decisions have no matching current finding; they stay in the exported record.", Fmt.int(root.overview.unmatched));
+        }
+        Rectangle { height: 8px; }
+        Toggle { text: @tr("Review scope and limits"); open <=> root.limits-open; }
+        if root.limits-open: VerticalLayout {
+            spacing: 4px;
+            Line { text: @tr("Recorded observations. Graph simulations and draft decisions change neither measurements nor CI gates."); }
+            for l in root.overview.limits: Line { text: l; }
+        }
+    }
+}

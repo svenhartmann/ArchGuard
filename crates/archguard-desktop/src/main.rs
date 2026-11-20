@@ -45,6 +45,7 @@ mod quality_ui;
 mod rating;
 mod review_decisions;
 mod review_decisions_ui;
+mod review_findings;
 mod runtime_ui;
 #[cfg(test)]
 mod security_check;

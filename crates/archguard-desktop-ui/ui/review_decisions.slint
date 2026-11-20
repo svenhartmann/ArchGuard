@@ -6,10 +6,14 @@ import { Theme } from "theme.slint";
 import { Button, Badge } from "widgets.slint";
 import { ComboBox } from "combo.slint";
 import { LineEdit, CommandField } from "fields.slint";
+import { SearchField } from "widgets.slint";
+import { NodeLink, ReviewOverview, SummaryCards, FindingDetail, ReportPage } from "review_findings.slint";
 
-// A finding; kind -1 without a decision, else 0 fix, 1 defer, 2 accept
-// risk; `draft`: decided here, not yet recorded or exported.
+// A finding (`index` in the review); kind -1 without a decision, else 0
+// fix, 1 defer, 2 accept risk; `draft`: decided here, not yet recorded or
+// exported.
 export struct DecisionRow {
+    index: int,
     title: string,
     meta: string,
     disposition: string,
@@ -22,7 +26,7 @@ export struct DecisionRow {
 export global ReviewDecisionsData {
     in-out property <bool> open;
     // 1 generating, 2 recording, 3 recorded `count`, 4 exported to
-    // `detail`, 5 error `detail`, 0 none.
+    // `detail`, 5 error `detail`, 6 Markdown written to `detail`, 0 none.
     in-out property <int> state;
     in-out property <int> count;
     in-out property <string> detail;
@@ -35,7 +39,29 @@ export global ReviewDecisionsData {
     in-out property <string> expires;
     in-out property <string> author;
     in-out property <int> drafts;
+    // The review: summary, revision, base and the sections below the
+    // findings; `rows` are the findings `query` and `filter` (0 all, 1
+    // needs action, 2 new, 3 accepted risk) keep, of `total`.
+    in-out property <ReviewOverview> overview;
+    in-out property <string> revision;
+    in-out property <string> base;
+    in-out property <string> query;
+    in-out property <int> filter;
+    in-out property <int> total;
+    // 0 findings, 1 impact and evidence.
+    in-out property <int> page;
+    // The selected finding.
+    in-out property <string> sel-title;
+    in-out property <string> sel-meta;
+    in-out property <string> sel-source;
+    in-out property <string> sel-evidence;
+    in-out property <string> sel-decision;
+    in-out property <[NodeLink]> sel-nodes;
+    in-out property <bool> evidence-open;
     callback show();
+    callback search();
+    callback reveal(string);
+    callback export-markdown();
     callback select(int);
     callback add();
     callback record();
@@ -103,10 +129,73 @@ component Field inherits VerticalLayout {
     @children
 }
 
+// The selected finding's decision form.
+component DecisionForm inherits VerticalLayout {
+    spacing: 8px;
+    alignment: start;
+    Field {
+        label: @tr("Decision");
+        ComboBox {
+            height: Theme.control-h;
+            width: 150px;
+            model: [@tr("Fix"), @tr("Defer"), @tr("Accept risk")];
+            current-index <=> ReviewDecisionsData.kind;
+        }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        Field {
+            label: @tr("Author");
+            LineEdit { text <=> ReviewDecisionsData.author; }
+        }
+        Field {
+            label: @tr("Expires on (YYYY-MM-DD)");
+            LineEdit { text <=> ReviewDecisionsData.expires; placeholder-text: @tr("required to accept a risk"); }
+        }
+    }
+    Field {
+        label: @tr("Note");
+        LineEdit { text <=> ReviewDecisionsData.note; placeholder-text: @tr("Why, and what happens next"); }
+    }
+    Field {
+        label: @tr("ADR link");
+        LineEdit { text <=> ReviewDecisionsData.adr; placeholder-text: "docs/adr/0007-….md"; }
+    }
+}
+
+// Search, status filter and the page switch.
+component Controls inherits HorizontalLayout {
+    spacing: 8px;
+    SearchField {
+        horizontal-stretch: 1;
+        placeholder: @tr("Search finding, owner or source");
+        text <=> ReviewDecisionsData.query;
+        edited => { ReviewDecisionsData.search(); }
+    }
+    ComboBox {
+        height: Theme.control-h;
+        width: 190px;
+        model: [@tr("All findings"), @tr("Needs action"), @tr("New architecture findings"), @tr("Accepted risks")];
+        current-index <=> ReviewDecisionsData.filter;
+        selected => { ReviewDecisionsData.search(); }
+    }
+    Button {
+        text: @tr("Findings");
+        pressed-state: ReviewDecisionsData.page == 0;
+        clicked => { ReviewDecisionsData.page = 0; }
+    }
+    Button {
+        text: @tr("Impact & evidence");
+        pressed-state: ReviewDecisionsData.page == 1;
+        clicked => { ReviewDecisionsData.page = 1; }
+    }
+}
+
 // Modal over the window, as the save prompt.
 export component ReviewDecisionsDialog inherits Rectangle {
     property <int> state: ReviewDecisionsData.state;
     property <bool> busy: self.state == 1 || self.state == 2;
+    property <bool> ready: !self.busy && ReviewDecisionsData.revision != "";
     background: Theme.shadow;
     TouchArea { }
     FocusScope {
@@ -122,7 +211,7 @@ export component ReviewDecisionsDialog inherits Rectangle {
     Rectangle {
         x: (root.width - self.width) / 2;
         y: 30px;
-        width: min(820px, root.width - 32px);
+        width: min(1000px, root.width - 32px);
         height: root.height - 60px;
         background: Theme.panel;
         border-radius: 14px;
@@ -145,57 +234,56 @@ export component ReviewDecisionsDialog inherits Rectangle {
                     : root.state == 2 ? @tr("Recording…")
                     : root.state == 3 ? @tr("{} decisions recorded.", ReviewDecisionsData.count)
                     : root.state == 4 ? @tr("Exported to {}. Import with:", ReviewDecisionsData.detail)
+                    : root.state == 6 ? @tr("Review written to {}.", ReviewDecisionsData.detail)
                     : ReviewDecisionsData.detail;
-                color: root.state == 5 ? Theme.danger : root.state == 3 || root.state == 4 ? Theme.success : Theme.muted;
+                color: root.state == 5 ? Theme.danger : root.state >= 3 ? Theme.success : Theme.muted;
                 font-size: Theme.font-small;
                 wrap: word-wrap;
             }
             if root.state == 4: CommandField { command: "archguard review --decisions " + ReviewDecisionsData.detail + " --save"; }
-            if !root.busy && ReviewDecisionsData.rows.length == 0 && root.state != 5: Text {
+            if root.ready: SummaryCards { overview: ReviewDecisionsData.overview; }
+            if root.ready: Text {
+                text: (ReviewDecisionsData.base != "" ? @tr("Compared with: {}", ReviewDecisionsData.base) + " · " : "")
+                    + @tr("Review: {}", ReviewDecisionsData.revision)
+                    + " · " + @tr("{} of {} findings shown; filters change neither totals nor exports.", ReviewDecisionsData.rows.length, ReviewDecisionsData.total);
+                color: Theme.muted;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            if root.ready: Controls { }
+            if root.ready && ReviewDecisionsData.total == 0: Text {
                 text: @tr("The review has no findings.");
                 color: Theme.muted;
                 font-size: Theme.font-body;
             }
-            ListView {
+            if ReviewDecisionsData.page == 0: HorizontalLayout {
                 vertical-stretch: 1;
-                for r[i] in ReviewDecisionsData.rows: DecisionRowView {
-                    item: r;
-                    selected: i == ReviewDecisionsData.selected;
-                    clicked => { ReviewDecisionsData.select(i); }
+                spacing: 12px;
+                ListView {
+                    width: 42%;
+                    for r in ReviewDecisionsData.rows: DecisionRowView {
+                        item: r;
+                        selected: r.index == ReviewDecisionsData.selected;
+                        clicked => { ReviewDecisionsData.select(r.index); }
+                    }
+                }
+                if ReviewDecisionsData.selected < 0: Rectangle { horizontal-stretch: 1; }
+                if ReviewDecisionsData.selected >= 0: FindingDetail {
+                    horizontal-stretch: 1;
+                    title: ReviewDecisionsData.sel-title;
+                    meta: ReviewDecisionsData.sel-meta;
+                    source: ReviewDecisionsData.sel-source;
+                    evidence: ReviewDecisionsData.sel-evidence;
+                    decision: ReviewDecisionsData.sel-decision;
+                    nodes: ReviewDecisionsData.sel-nodes;
+                    evidence-open <=> ReviewDecisionsData.evidence-open;
+                    reveal(name) => { ReviewDecisionsData.reveal(name); }
+                    DecisionForm { }
                 }
             }
-            if ReviewDecisionsData.selected >= 0: VerticalLayout {
-                spacing: 8px;
-                vertical-stretch: 0;
-                HorizontalLayout {
-                    spacing: 10px;
-                    Field {
-                        label: @tr("Decision");
-                        ComboBox {
-                            height: Theme.control-h;
-                            width: 150px;
-                            model: [@tr("Fix"), @tr("Defer"), @tr("Accept risk")];
-                            current-index <=> ReviewDecisionsData.kind;
-                        }
-                    }
-                    Field {
-                        label: @tr("Author");
-                        LineEdit { text <=> ReviewDecisionsData.author; }
-                    }
-                    Field {
-                        label: @tr("Expires on (YYYY-MM-DD)");
-                        width: 170px;
-                        LineEdit { text <=> ReviewDecisionsData.expires; placeholder-text: @tr("required to accept a risk"); }
-                    }
-                }
-                Field {
-                    label: @tr("Note");
-                    LineEdit { text <=> ReviewDecisionsData.note; placeholder-text: @tr("Why, and what happens next"); }
-                }
-                Field {
-                    label: @tr("ADR link");
-                    LineEdit { text <=> ReviewDecisionsData.adr; placeholder-text: "docs/adr/0007-….md"; }
-                }
+            if ReviewDecisionsData.page == 1: ReportPage {
+                vertical-stretch: 1;
+                overview: ReviewDecisionsData.overview;
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -206,8 +294,13 @@ export component ReviewDecisionsDialog inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Button {
+                    text: @tr("Export Markdown…");
+                    enabled: root.ready;
+                    clicked => { ReviewDecisionsData.export-markdown(); }
+                }
+                Button {
                     text: @tr("Export decisions…");
-                    enabled: !root.busy && ReviewDecisionsData.rows.length > 0;
+                    enabled: !root.busy && ReviewDecisionsData.total > 0;
                     clicked => { ReviewDecisionsData.export(); }
                 }
                 Button {

@@ -4,6 +4,7 @@ import { ListView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Button, Badge } from "widgets.slint";
 import { Fmt } from "format.slint";
+import { InsightsData, InsightsPanel } from "review_insights.slint";
 
 // A reason of the review score: kind 1 cyclic group (a nodes, +b), 2
 // coupling (a in, b out, +c), 3 dependents (a, +b), 4 Git touches ×
@@ -48,6 +49,8 @@ export struct ReviewData {
     selected-orphan: int,
     selected-entry: bool,
     selected-reasons: [ReasonItem],
+    // "Change coupling & ownership" of the document.
+    insights: InsightsData,
 }
 
 export global ReviewText {
@@ -141,17 +144,32 @@ export component ReviewList inherits VerticalLayout {
         Button {
             text: @tr("Orphan candidates only");
             compact: true;
+            enabled: !root.data.insights.open;
             pressed-state: root.data.orphans-only;
             clicked => { root.action("review-orphans", ""); }
         }
     }
-    if root.data.available && root.data.items.length == 0: Text {
+    if root.data.available: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: @tr("Change coupling & ownership");
+            compact: true;
+            pressed-state: root.data.insights.open;
+            clicked => { root.action("review-insights", ""); }
+        }
+    }
+    if root.data.insights.open: InsightsPanel {
+        vertical-stretch: 1;
+        data: root.data.insights;
+        reveal(name) => { root.action("review-reveal", name); }
+    }
+    if !root.data.insights.open && root.data.available && root.data.items.length == 0: Text {
         text: root.data.orphans-only ? @tr("No orphan candidates in this view.") : @tr("No review candidates in this view.");
         color: Theme.muted;
         font-size: Theme.font-small;
         wrap: word-wrap;
     }
-    ListView {
+    if !root.data.insights.open: ListView {
         vertical-stretch: 1;
         for r in root.data.items: ReviewRow {
             item: r;
@@ -159,7 +177,7 @@ export component ReviewList inherits VerticalLayout {
             clicked => { root.select-row(r.row); }
         }
     }
-    if root.data.more > 0: HorizontalLayout {
+    if !root.data.insights.open && root.data.more > 0: HorizontalLayout {
         alignment: start;
         Button {
             text: @tr("Show next 20 ({} remaining)", Fmt.int(root.data.more));
