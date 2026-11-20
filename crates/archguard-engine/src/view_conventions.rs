@@ -52,9 +52,20 @@ const EVENTS: &str = "events_through_raise_function";
 /// The findings of every convention in `[views] conventions`; none when the
 /// list is empty, and then nothing is read.
 pub fn convention_findings(root: &Path, config: &Config) -> Vec<Finding> {
+    convention_findings_in(root, config, None)
+}
+
+/// [`convention_findings`]; with `allowed_root` (the MCP server root) a
+/// `[views] backends` path outside it is not read.
+pub fn convention_findings_in(
+    root: &Path,
+    config: &Config,
+    allowed_root: Option<&Path>,
+) -> Vec<Finding> {
     let on: BTreeSet<&str> = config.views.conventions.iter().map(|c| c.name()).collect();
     let mut out = Vec::new();
-    let ctx = ExtractContext::new(root, config);
+    let mut ctx = ExtractContext::new(root, config);
+    ctx.allowed_root = allowed_root;
     if UI_RULES.iter().any(|r| on.contains(r)) {
         match crate::ui_flow::analyze_with(&ctx) {
             Ok(flow) => out.extend(ui_findings(&flow, &on)),

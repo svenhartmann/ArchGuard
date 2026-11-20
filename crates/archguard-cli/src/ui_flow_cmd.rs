@@ -29,7 +29,8 @@ pub(crate) fn extract<T>(
         None => with_root_config(root, run),
         Some(file) => {
             let loaded = archguard_engine::load_config(Some(file), root)?;
-            run(&ExtractContext::new(root, &loaded.config))
+            run(&ExtractContext::new(root, &loaded.config)
+                .with_config_file(file.display().to_string()))
         }
     }
 }

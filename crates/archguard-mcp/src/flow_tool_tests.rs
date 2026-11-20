@@ -357,3 +357,75 @@ async fn domain_model_triggers_with_message_handlers_and_rights() {
     let both = json!({"chain": true, "roles": [], "anonymous": true});
     assert!(domain(&tools, both).await.is_err());
 }
+
+/// F02: a `[views] backends` path from the configuration must not make the
+/// server read a directory outside its root, in `ui_flow` and in `check`.
+#[tokio::test]
+async fn configured_backends_outside_the_server_root_are_not_read() {
+    let base = tempfile::tempdir().unwrap();
+    let (root, outside) = (base.path().join("root"), base.path().join("outside"));
+    let files = [
+        (root.join("Web/Web.csproj"), "<Project />"),
+        (root.join("Web/Pages/Home.razor"), "@page \"/\"\n"),
+        (root.join("src/a.ts"), "export const a = 1;\n"),
+        (
+            root.join("archguard.toml"),
+            "[views]\nbackends = [\"../outside\"]\nconventions = [\"endpoint_access_declared\"]\n",
+        ),
+        (outside.join("Api/Api.csproj"), "<Project />"),
+        (
+            outside.join("Api/SecretController.cs"),
+            "[ApiController]\n[Route(\"api/secret\")]\npublic class SecretController : ControllerBase\n{\n    [HttpGet]\n    public IActionResult Get() => Ok();\n}\n",
+        ),
+    ];
+    for (path, text) in files {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let tools = ArchguardTools::new(root);
+    let flow = ui_flow(&tools, json!({})).await.unwrap().to_string();
+    assert!(!flow.contains("SecretController"), "{flow}");
+    assert!(flow.contains("outside the server root"), "{flow}");
+    let checked = tools
+        .check(Parameters(serde_json::from_value(json!({})).unwrap()))
+        .await
+        .unwrap();
+    assert!(!checked.contains("SecretController"), "{checked}");
+}
+
+/// A symlinked configuration inside a backend leaks nothing of its target
+/// outside the server root, neither through `ui_flow` nor `service_topology`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlinked_backend_configuration_leaks_no_content_through_the_tools() {
+    let base = tempfile::tempdir().unwrap();
+    let (root, outside) = (base.path().join("root"), base.path().join("outside"));
+    let files = [
+        (root.join("Web/Web.csproj"), "<Project />"),
+        (root.join("src/a.ts"), "export const a = 1;\n"),
+        (
+            root.join("archguard.toml"),
+            "[views]\nbackends = [\"inside_with_cfglink\"]\n",
+        ),
+        (
+            root.join("inside_with_cfglink/Api/Api.csproj"),
+            "<Project />",
+        ),
+        (outside.join("leak.toml"), "LEAKMARK = = broken\n"),
+    ];
+    for (path, text) in files {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    std::os::unix::fs::symlink(
+        outside.join("leak.toml"),
+        root.join("inside_with_cfglink/archguard.toml"),
+    )
+    .unwrap();
+    let tools = ArchguardTools::new(root);
+    let flow = ui_flow(&tools, json!({})).await.unwrap().to_string();
+    assert!(!flow.contains("LEAKMARK"), "{flow}");
+    let params = serde_json::from_value(json!({"path": "inside_with_cfglink"})).unwrap();
+    let topology = tools.service_topology(Parameters(params)).await.unwrap();
+    assert!(!topology.contains("LEAKMARK"), "{topology}");
+}

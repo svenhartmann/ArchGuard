@@ -78,6 +78,13 @@ impl Default for Config {
 #[serde(default, deny_unknown_fields)]
 pub struct ViewsConfig {
     pub conventions: Vec<ViewConvention>,
+    /// `backends = ["../server"]`: other repositories whose HTTP endpoints
+    /// join the actions of this one (ADR 0021). Paths are relative to the
+    /// project root (or absolute) and may leave it: only because the user
+    /// wrote them. The MCP server reads a backend only inside its server
+    /// root and not through a symlink; the CLI reads what is written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub backends: Vec<String>,
     /// `[views.run.<application>]`: where the locally running application
     /// answers and who signs in per role (ADR 0021, decision 7).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -296,6 +303,23 @@ mod access_tests {
                 toml::from_str::<Config>(&format!("[views.access]\nx = {bad}\n")).unwrap_err();
             assert!(err.to_string().contains("x"), "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn views_backends_round_trip() {
+        let config: Config =
+            toml::from_str("[views]\nbackends = [\"../server\", \"/abs/api\"]\n").unwrap();
+        assert_eq!(config.views.backends, ["../server", "/abs/api"]);
+        let text = toml::to_string(&config.views).unwrap();
+        assert_eq!(
+            toml::from_str::<super::ViewsConfig>(&text).unwrap(),
+            config.views
+        );
+        assert!(
+            !toml::to_string(&super::ViewsConfig::default())
+                .unwrap()
+                .contains("backends")
+        );
     }
 
     #[test]

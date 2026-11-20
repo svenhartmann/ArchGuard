@@ -20,6 +20,13 @@ pub struct ExtractContext<'a> {
     /// Why the root's own configuration was not read, when it was looked up
     /// by [`with_root_config`]; extractors that use the configuration note it.
     pub config_error: Option<String>,
+    /// When set, `[views] backends` outside this canonical root are not read
+    /// (the MCP server root: no path from a config may leave it). The CLI
+    /// leaves it unset: there the user wrote the path.
+    pub allowed_root: Option<&'a Path>,
+    /// The configuration file in use, as named in diagnostics; when unset
+    /// the one `root` holds is named.
+    pub config_file: Option<String>,
 }
 
 impl<'a> ExtractContext<'a> {
@@ -29,7 +36,21 @@ impl<'a> ExtractContext<'a> {
             root,
             config,
             config_error: None,
+            allowed_root: None,
+            config_file: None,
         }
+    }
+
+    /// [`Self::allowed_root`]: backends outside `root` are not read.
+    pub fn confined_to(mut self, root: &'a Path) -> Self {
+        self.allowed_root = Some(root);
+        self
+    }
+
+    /// [`Self::config_file`], e.g. the path given by `--config`.
+    pub fn with_config_file(mut self, file: impl Into<String>) -> Self {
+        self.config_file = Some(file.into());
+        self
     }
 }
 
@@ -44,6 +65,8 @@ pub fn with_root_config<T>(root: &Path, run: impl FnOnce(&ExtractContext) -> T) 
         root,
         config: &config,
         config_error,
+        allowed_root: None,
+        config_file: None,
     })
 }
 
@@ -52,17 +75,40 @@ pub fn with_root_config<T>(root: &Path, run: impl FnOnce(&ExtractContext) -> T) 
 /// `crate::config`: that module reaches `check`, `check` reaches the
 /// extractors, and the architecture gate refuses the cycle.
 pub fn root_config(root: &Path) -> Result<Config, String> {
-    for rel in [".archguard/archguard.toml", "archguard.toml"] {
+    match found_root_config(root) {
+        Ok(found) => Ok(found.unwrap_or_default()),
+        Err((rel, message)) => Err(format!("{rel}: {message}")),
+    }
+}
+
+/// The configuration files [`root_config`] looks for, in order.
+const CONFIG_FILES: [&str; 2] = [".archguard/archguard.toml", "archguard.toml"];
+
+/// [`root_config`], `None` when `root` has no configuration file; an error
+/// names the file (relative to `root`) and why it was not read.
+pub fn found_root_config(root: &Path) -> Result<Option<Config>, (String, String)> {
+    for rel in CONFIG_FILES {
+        let fail = |e: &dyn std::fmt::Display| (rel.to_string(), e.to_string());
         match read_repo_file(root, Path::new(rel), 1 << 20) {
             Ok(bytes) => {
-                let text = String::from_utf8(bytes).map_err(|e| format!("{rel}: {e}"))?;
-                return toml::from_str::<Config>(&text).map_err(|e| format!("{rel}: {e}"));
+                let text = String::from_utf8(bytes).map_err(|e| fail(&e))?;
+                return toml::from_str::<Config>(&text)
+                    .map(Some)
+                    .map_err(|e| fail(&e));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{rel}: {e}")),
+            Err(e) => return Err(fail(&e)),
         }
     }
-    Ok(Config::default())
+    Ok(None)
+}
+
+/// The configuration file `root` holds, relative to it (for diagnostics):
+/// the one [`root_config`] reads, else the legacy name.
+pub fn config_file_in(root: &Path) -> &'static str {
+    (CONFIG_FILES.into_iter())
+        .find(|rel| std::fs::symlink_metadata(root.join(rel)).is_ok())
+        .unwrap_or(CONFIG_FILES[1])
 }
 
 /// The regular files below `root` in walk order, as paths relative to it,

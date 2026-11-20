@@ -214,6 +214,15 @@ login = "admin@example.org"
 password_env = "ARCHGUARD_PW_ADMIN"     # oder password_keychain = "archguard-webapp-admin" (macOS)
 ```
 
+Liegt das Backend eines Frontends in einem anderen Repository, bindet `[views] backends` es ein (optional; ohne die Angabe wird nichts außerhalb des Projekts gelesen):
+
+```toml
+[views]
+backends = ["../bitwarden-server"]   # relativ zum Projektwurzelverzeichnis oder absolut
+```
+
+Für jedes genannte Verzeichnis laufen alle Extraktoren, und nur seine Endpunkte (mit Zugriff) werden mit den Aktionen dieses Projekts verbunden; Anwendung und Datei tragen den konfigurierten Pfad als Präfix (`../bitwarden-server/Api`), gleichnamige Anwendungen kollidieren also nicht. Das `[views.access]` des Backends stammt aus dessen eigener `archguard.toml`, falls vorhanden, sonst aus diesem Projekt. Ein Pfad, der kein Verzeichnis ist oder keinen Endpunkt liefert, und jede Lücke des Backends ist eine Diagnose; der Flow ist dann nicht vollständig. Das Backend darf nicht das Projekt selbst sein. Fremde Endpunkte gehören zum Flow dieses Projekts und können `endpoint_access_declared` von `archguard check` fehlschlagen lassen. Ids, Notizen und Baselines enthalten den konfigurierten Text: relative Pfade bleiben zwischen Rechnern übertragbar, absolute sind rechnerspezifisch. Der MCP-Server liest ein Backend nur innerhalb seines Server-Roots (jeder andere Pfad und jeder Pfad über einen Symlink ist eine Diagnose und wird nicht gelesen); die CLI liest, was die Konfiguration sagt.
+
 Konventionen halten beide Sichten vollständig, wenn ein Agent den Code schreibt und `archguard check` nach jedem seiner Schritte läuft. Sie sind optional; ohne `[views]` wird nichts geprüft:
 
 ```toml

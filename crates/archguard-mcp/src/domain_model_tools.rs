@@ -258,7 +258,9 @@ impl ArchguardTools {
         validate(&params)?;
         let root = crate::tools::resolve_root(&self.root, params.page.path.as_deref())?;
         let loaded = crate::tools::load_config_at(&root)?;
-        let ctx = archguard_engine::extract_ctx::ExtractContext::new(&root, &loaded.config);
+        let server_root = crate::tools::resolve_root(&self.root, None)?;
+        let ctx = archguard_engine::extract_ctx::ExtractContext::new(&root, &loaded.config)
+            .confined_to(&server_root);
         let model = archguard_engine::domain_model::analyze_with(&ctx)
             .map_err(crate::server::insight_error)?;
         let flow = if params.chain || params.state.is_some() {

@@ -406,6 +406,11 @@ pub(crate) enum Command {
         fail_on_found: bool,
     },
     /// UI screens, navigations and permissions against backend endpoints (ADR 0021).
+    ///
+    /// A backend in another repository joins with `[views] backends =
+    /// ["../server"]` in archguard.toml (paths relative to the project root;
+    /// only its endpoints are taken, with the access rules of its own
+    /// archguard.toml, else this project's).
     #[command(args_conflicts_with_subcommands = true)]
     UiFlow {
         #[command(subcommand)]

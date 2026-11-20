@@ -113,12 +113,15 @@ impl Discovery {
         // tests/**), source roots and semantic settings do not constrain inventory.
         let mut patterns = Vec::new();
         for name in [crate::config::DEFAULT_CONFIG_PATH, "archguard.toml"] {
-            let path = root.join(name);
-            if !path.exists() {
-                continue;
-            }
-            match std::fs::read_to_string(&path)
-                .map_err(|error| error.to_string())
+            // Never through a symlink: its target may lie outside the root,
+            // and a parse error would quote it.
+            let bytes = match crate::project_files::read_repo_file(root, Path::new(name), 1 << 20) {
+                Ok(bytes) => Ok(bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => Err(e.to_string()),
+            };
+            match bytes
+                .and_then(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                 .and_then(|text| {
                     text.parse::<toml::Table>()
                         .map_err(|error| error.to_string())
@@ -179,5 +182,27 @@ impl Discovery {
                         .is_match(&path, entry.file_type().is_some_and(|kind| kind.is_dir()))
             })
             .build()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A configuration that is a symlink is not read, and nothing of the
+    /// file it points to reaches a diagnostic (it may lie outside the root).
+    #[test]
+    fn a_symlinked_configuration_is_not_read_and_its_content_not_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, outside) = (dir.path().join("root"), dir.path().join("outside"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("leak.toml"), "LEAKMARK = = broken\n").unwrap();
+        std::os::unix::fs::symlink(outside.join("leak.toml"), root.join("archguard.toml")).unwrap();
+        let mut report = ServiceTopology::default();
+        Discovery::new(&root, &mut report).unwrap();
+        let text = format!("{:?}", report.diagnostics);
+        assert!(!text.contains("LEAKMARK"), "{text}");
+        assert!(!text.contains("broken"), "{text}");
     }
 }
