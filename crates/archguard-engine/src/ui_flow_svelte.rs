@@ -75,11 +75,11 @@
 //! functions not listed in `[views.access]`, redirects of `hooks.server`, `+page.ts`
 //! files without a `+page.svelte`, `resolve()` of `$app/paths`.
 use crate::extract_ctx::{
-    ExtractContext, dir_name as app_name, finish, gap as diag, read_source as read, walk,
-    with_root_config,
+    ExtractContext, access_condition, dir_name as app_name, finish, gap as diag,
+    read_source as read, walk, with_root_config,
 };
 use crate::lang_markup::blank;
-use crate::lang_text::{find_top, matching, matching_back, split_top, unparen};
+use crate::lang_text::{find_top, matching_back, split_top, unparen};
 use crate::lang_ts::*;
 use crate::lang_ts_decl::{has_dep, imports};
 use crate::lang_ts_http::*;
@@ -97,7 +97,6 @@ const MAX_FILES: usize = 5_000;
 const SKIPPED_DIRS: [&str; 4] = [".svelte-kit", "e2e", "coverage", ".storybook"];
 const EXTENSIONS: [&str; 3] = [".svelte", ".ts", ".js"];
 const LOADS: [&str; 4] = [".ts", ".js", ".server.ts", ".server.js"];
-const FETCHERS: [&str; 4] = ["fetch", "fetchJson", "fetchText", "fetchBlob"];
 const TRIGGERS: [&str; 4] = ["onclick", "on:click", "onsubmit", "on:submit"];
 /// Optional segments expanded per route; more stay out of the variants.
 const MAX_OPTIONAL: usize = 6;
@@ -182,7 +181,7 @@ fn negate(c: Option<Condition>) -> Option<Condition> {
 struct Scan {
     apps: Vec<App>,
     /// Exported HTTP functions of scanned packages, by package name.
-    sdks: BTreeMap<String, Sdk>,
+    sdks: BTreeMap<String, BTreeMap<String, Result<Call, String>>>,
 }
 
 struct App {
@@ -291,7 +290,7 @@ impl Scan {
         files: &[String],
         apps: &BTreeMap<String, App>,
         packages: &BTreeMap<String, String>,
-    ) -> BTreeMap<String, Sdk> {
+    ) -> BTreeMap<String, BTreeMap<String, Result<Call, String>>> {
         let imported: std::collections::BTreeSet<String> = (apps.values())
             .flat_map(|app| app.files.values())
             .flat_map(|text| imports(text))
@@ -312,7 +311,7 @@ impl Scan {
                 .take(MAX_FILES)
                 .filter_map(|f| read(root, f).ok().map(|t| (f.clone(), t)))
                 .collect();
-            sdks.insert(pkg, Sdk::index(&sources));
+            sdks.insert(pkg, generated_calls(&sources));
         }
         sdks
     }
@@ -628,34 +627,6 @@ struct Checks<'a> {
 }
 
 impl Checks<'_> {
-    /// The condition of a named check or listed call; `Ok(None)` is always true,
-    /// `Err` a `$arg` form without string literal arguments.
-    fn meaning(&self, name: &str, args: &[Item]) -> Result<Option<Condition>, String> {
-        let make: fn(String) -> Condition =
-            match (self.access.get(name)).map(|m| m.at_use_site(!args.is_empty())) {
-                None => return Ok(Some(Condition::Custom(name.into()))),
-                Some(AccessMeaning::Open) => return Ok(None),
-                Some(AccessMeaning::Authenticated) => return Ok(Some(Condition::Authenticated)),
-                Some(AccessMeaning::Never) => return Ok(Some(Condition::Never)),
-                Some(AccessMeaning::Role(n)) => return Ok(Some(Condition::Role(n.clone()))),
-                Some(AccessMeaning::Policy(n)) => return Ok(Some(Condition::Policy(n.clone()))),
-                Some(AccessMeaning::RoleFromArguments) => Condition::Role,
-                Some(AccessMeaning::PolicyFromArguments) => Condition::Policy,
-                Some(AccessMeaning::FromArgumentsOr(..)) => return Err(name.into()),
-            };
-        let names: Option<Vec<Condition>> = (args.iter())
-            .map(|a| match &a.value {
-                Value::Str(s) => Some(make(s.clone())),
-                _ => None,
-            })
-            .collect();
-        match names {
-            Some(mut names) if names.len() == 1 => Ok(names.pop()),
-            Some(names) if !names.is_empty() => Ok(Some(Condition::Any(names))),
-            _ => Err(name.into()),
-        }
-    }
-
     /// The condition that check `text` is true; `Err` when it is not readable.
     fn check(&self, text: &str) -> Result<Option<Condition>, String> {
         let t = unparen(text);
@@ -666,11 +637,11 @@ impl Checks<'_> {
         }
         let name = t.replace("?.", ".");
         if is_name(&name) {
-            return self.meaning(&name, &[]).map_err(|_| t.to_string());
+            return access_condition(self.access, &name, &[]).map_err(|_| t.to_string());
         }
         match call_parts(t) {
             Some((f, args)) if self.access.contains_key(f) => {
-                self.meaning(f, &args).map_err(|_| t.to_string())
+                access_condition(self.access, f, &args).map_err(|_| t.to_string())
             }
             _ => Err(t.to_string()),
         }
@@ -841,37 +812,7 @@ mod helper {
         path(mtext, returned(&source)?)
     }
 
-    /// The value `const|let|var name = …` binds, or the body of `function name`.
-    pub(super) fn declared(text: &str, name: &str) -> Option<Item> {
-        let b = text.as_bytes();
-        for kw in ["const", "let", "var", "function"] {
-            for pos in words(text, kw) {
-                let j = skip_ws(b, pos + kw.len());
-                if ident_at(text, j) != name {
-                    continue;
-                }
-                let k = j + name.len();
-                if kw == "function" {
-                    let open = k + text[k..].find('(')?;
-                    let body = close(text, open) + text[close(text, open)..].find('{')?;
-                    let end = close(text, body);
-                    let value = Value::Raw(text[body..end].into());
-                    return Some(Item {
-                        at: body,
-                        end,
-                        value,
-                    });
-                }
-                let eq = (text[k..].match_indices('=').map(|(i, _)| k + i))
-                    .find(|&e| !matches!(b.get(e + 1), Some(b'=' | b'>')))?;
-                if text[k..eq].contains(';') {
-                    continue;
-                }
-                return Some(Parser { s: text, i: eq + 1 }.value(0));
-            }
-        }
-        None
-    }
+    pub(super) use crate::lang_ts_decl::declared_value as declared;
 
     /// The returned expression of a function source: an arrow's expression, or the
     /// final `return` of its (or a function's) block.
@@ -1101,7 +1042,7 @@ mod guard {
                 let Some(open) = call_open(text, pos, name) else {
                     continue;
                 };
-                match checks.meaning(name, &args(text, open)) {
+                match access_condition(checks.access, name, &args(text, open)) {
                     Ok(c) => found.extend(c.map(|c| (pos, c))),
                     Err(n) => {
                         let message = format!(
@@ -1686,116 +1627,6 @@ mod nav {
     }
 }
 
-/// Exported HTTP functions of a scanned package (a generated API client).
-struct Sdk {
-    /// Function name to its call, or why it is not literal.
-    functions: BTreeMap<String, Result<Call, String>>,
-}
-
-impl Sdk {
-    fn index(files: &[(String, String)]) -> Sdk {
-        let base = files.iter().find_map(|(_, t)| Self::base_url(t));
-        let base = base.as_deref().unwrap_or("");
-        let functions = (files.iter())
-            .flat_map(|(_, text)| Self::exported(text))
-            .filter_map(|(name, body)| Some((name, Self::call(&body, base)?)))
-            .collect();
-        Sdk { functions }
-    }
-
-    /// The literal `baseUrl` of `export const defaults = { … }` (oazapfts).
-    fn base_url(t: &str) -> Option<String> {
-        let pos = (words(t, "defaults").into_iter())
-            .find(|&p| t[..p].trim_end().ends_with("export const"))?;
-        let open = pos + t[pos..].find('{')?;
-        let fields = Parser { s: t, i: open }.object(0);
-        fields.into_iter().find_map(|(k, v)| match v.value {
-            Value::Str(s) if k == "baseUrl" => Some(s.trim_end_matches('/').to_string()),
-            _ => None,
-        })
-    }
-
-    /// Name and source of every exported function and arrow constant.
-    fn exported(text: &str) -> Vec<(String, String)> {
-        let mut found = Vec::new();
-        for kw in ["function", "const"] {
-            for pos in words(text, kw) {
-                let before = text[..pos].trim_end();
-                if !(before.ends_with("export") || before.ends_with("export async")) {
-                    continue;
-                }
-                let name = ident_at(text, skip_ws(text.as_bytes(), pos + kw.len()));
-                let Some(body) = helper::declared(text, name).map(|b| b.source(text)) else {
-                    continue;
-                };
-                if kw == "function" || find_top(&body, "=>").is_some() {
-                    found.push((name.to_string(), body));
-                }
-            }
-        }
-        found
-    }
-
-    /// The `(` of the first `fetch`, `fetchJson`, … call, type arguments skipped.
-    fn fetch_open(body: &str) -> Option<usize> {
-        let b = body.as_bytes();
-        (FETCHERS.iter())
-            .flat_map(|f| words(body, f).into_iter().map(move |p| p + f.len()))
-            .filter_map(|after| {
-                let mut j = skip_ws(b, after);
-                if b.get(j) == Some(&b'<') {
-                    j = skip_ws(b, matching(b, j)? + 1);
-                }
-                (b.get(j) == Some(&b'(')).then_some(j)
-            })
-            .min()
-    }
-
-    /// The first fetch call of a function body; none without one.
-    fn call(body: &str, base: &str) -> Option<Result<Call, String>> {
-        let open = Self::fetch_open(body)?;
-        let url = Parser {
-            s: body,
-            i: open + 1,
-        }
-        .value(0);
-        let args = &body[open..close(body, open)];
-        let method = match args.find("method:") {
-            None => Ok("GET".to_string()),
-            Some(m) => match (Parser {
-                s: args,
-                i: m + "method:".len(),
-            })
-            .value(0)
-            .value
-            {
-                Value::Str(s) => Ok(s.to_ascii_uppercase()),
-                _ => Err(format!("method is not a literal in {}", args.trim())),
-            },
-        };
-        let path = match &url.value {
-            Value::Str(s) => Some(s.clone()),
-            // A final hole not after `/` is the query (`${QS.query(…)}`).
-            Value::Tpl(t) => fill(
-                match t.rfind("${") {
-                    Some(k) if k > 0 && !t[..k].ends_with('/') && t.ends_with('}') => &t[..k],
-                    _ => t.as_str(),
-                },
-                |_| None,
-            ),
-            _ => None,
-        };
-        Some(match (method, path) {
-            (Ok(method), Some(path)) => Ok(Call::Http {
-                method,
-                path: format!("{base}{}", url_path(&path)),
-            }),
-            (Err(why), _) => Err(why),
-            (_, None) => Err(format!("URL is not a literal: {}", url.source(body))),
-        })
-    }
-}
-
 /// `fetch`, axios, API client functions and forms.
 mod http {
     use super::*;
@@ -1879,7 +1710,7 @@ mod http {
                 continue;
             };
             for (pos, name) in called(text, &import.local, import.imported.as_deref()) {
-                match sdk.functions.get(name) {
+                match sdk.get(name) {
                     Some(Ok(call)) => calls.push((pos, call.clone(), None)),
                     Some(Err(why)) => {
                         let message = format!(

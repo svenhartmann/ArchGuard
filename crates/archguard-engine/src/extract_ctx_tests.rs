@@ -70,3 +70,51 @@ fn the_root_configuration_is_read_or_its_error_reported() {
         assert!(ctx.config.views.access.is_empty());
     });
 }
+
+fn arg(text: &str) -> crate::lang_ts::Item {
+    crate::lang_ts::Parser { s: text, i: 0 }.value(0)
+}
+
+#[test]
+fn access_condition_reads_meanings_arguments_and_fallbacks() {
+    use archguard_core::{AccessMeaning as M, Condition as C};
+    let access: std::collections::BTreeMap<String, M> = [
+        ("open", M::Open),
+        ("auth", M::Authenticated),
+        ("never", M::Never),
+        ("admin", M::Role("admin".into())),
+        ("roles", M::RoleFromArguments),
+        ("pols", M::PolicyFromArguments),
+        (
+            "maybe",
+            M::FromArgumentsOr(Box::new(M::RoleFromArguments), Box::new(M::Authenticated)),
+        ),
+    ]
+    .map(|(k, v)| (k.to_string(), v))
+    .into();
+    let one = [arg("'a'")];
+    let two = [arg("'a'"), arg("\"b\"")];
+    let dynamic = [arg("x")];
+    let cond = |name: &str, args: &[crate::lang_ts::Item]| access_condition(&access, name, args);
+    assert_eq!(
+        cond("unlisted", &[]),
+        Ok(Some(C::Custom("unlisted".into())))
+    );
+    assert_eq!(cond("open", &[]), Ok(None));
+    assert_eq!(cond("auth", &[]), Ok(Some(C::Authenticated)));
+    assert_eq!(cond("never", &[]), Ok(Some(C::Never)));
+    assert_eq!(cond("admin", &one), Ok(Some(C::Role("admin".into()))));
+    assert_eq!(cond("roles", &one), Ok(Some(C::Role("a".into()))));
+    assert_eq!(
+        cond("pols", &two),
+        Ok(Some(C::Any(vec![
+            C::Policy("a".into()),
+            C::Policy("b".into())
+        ])))
+    );
+    // A `$arg` form needs string literal arguments; the fallback applies without any.
+    assert_eq!(cond("roles", &[]), Err("roles".into()));
+    assert_eq!(cond("roles", &dynamic), Err("roles".into()));
+    assert_eq!(cond("maybe", &[]), Ok(Some(C::Authenticated)));
+    assert_eq!(cond("maybe", &one), Ok(Some(C::Role("a".into()))));
+}

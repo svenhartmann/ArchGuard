@@ -1,6 +1,8 @@
 //! What a TypeScript or JavaScript file declares and imports, for the Angular,
 //! React, Vue and domain extractors (ADR 0021, 0022), and its blanked view.
-use crate::lang_ts::{Parser, ident_at, is_name, skip_ws, trailing_ident, words};
+use crate::lang_ts::{
+    Item, Parser, Value, close, ident_at, is_name, skip_ws, trailing_ident, words,
+};
 
 /// `src` with comments and template-literal contents blanked, and string
 /// contents too unless `keep_strings`; offsets and lines unchanged (the
@@ -186,4 +188,45 @@ pub(crate) fn bindings(text: &str, hook: &str) -> Vec<Binding> {
         }
     }
     out
+}
+
+/// The value `const|let|var name = …` binds, or the body of `function name`.
+pub(crate) fn declared_value(text: &str, name: &str) -> Option<Item> {
+    let b = text.as_bytes();
+    for kw in ["const", "let", "var", "function"] {
+        for pos in words(text, kw) {
+            let j = skip_ws(b, pos + kw.len());
+            if ident_at(text, j) != name {
+                continue;
+            }
+            let k = j + name.len();
+            if kw == "function" {
+                let open = k + text[k..].find('(')?;
+                let body = close(text, open) + text[close(text, open)..].find('{')?;
+                let end = close(text, body);
+                let value = Value::Raw(text[body..end].into());
+                return Some(Item {
+                    at: body,
+                    end,
+                    value,
+                });
+            }
+            let eq = (text[k..].match_indices('=').map(|(i, _)| k + i))
+                .find(|&e| !matches!(b.get(e + 1), Some(b'=' | b'>')))?;
+            if text[k..eq].contains(';') {
+                continue;
+            }
+            return Some(Parser { s: text, i: eq + 1 }.value(0));
+        }
+    }
+    None
+}
+
+/// A dotted name whose every segment is non-empty: `a.b`, not `...x` or `a..b`
+/// (`is_name` alone accepts both). The NestJS copy has this fix; the Angular
+/// extractors still test `is_name` only.
+// shortcut: unused outside tests until the other extractors switch to it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn name_path(s: &str) -> bool {
+    is_name(s) && s.split('.').all(|p| !p.is_empty())
 }

@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 
 use archguard_core::Call;
 
+use crate::lang_text::{find_top, matching};
 use crate::lang_ts::{
-    Item, Parser, Value, ident_at, is_ident_char, skip_generic, skip_ws, trailing_ident, url_path,
-    words,
+    Item, Parser, Value, close, fill, ident_at, is_ident_char, skip_generic, skip_ws,
+    trailing_ident, url_path, words,
 };
-use crate::lang_ts_decl::imports;
+use crate::lang_ts_decl::{declared_value, imports};
 
 /// Request methods as `axios` and the Next.js and Nuxt route files name them.
 pub(crate) const HTTP_METHODS: [&str; 7] =
@@ -187,4 +188,117 @@ pub(crate) fn fetch_method(text: &str, init: Option<&Item>) -> Result<String, St
             _ => Err(v.source(text)),
         },
     }
+}
+
+/// Calls that fetch with a function's own arguments; the first one in a body
+/// is its request.
+const FETCHERS: [&str; 4] = ["fetch", "fetchJson", "fetchText", "fetchBlob"];
+
+/// The exported functions of a generated API client (oazapfts `fetch-client.ts`,
+/// `sdk.gen.ts`) in `files` (path, text), by name, with their request: the first
+/// `fetch`/`fetchJson`/`fetchText`/`fetchBlob` call gives the path (a final
+/// `${…}` not after `/` is the query and dropped) and `method: "…"` (else `GET`),
+/// prefixed with the literal `baseUrl` of an exported `defaults` object. A
+/// function without such a call is left out; a non-literal one is `Err`.
+pub(crate) fn generated_calls(
+    files: &[(String, String)],
+) -> BTreeMap<String, Result<Call, String>> {
+    let base = files.iter().find_map(|(_, t)| generated_base(t));
+    let base = base.as_deref().unwrap_or("");
+    (files.iter())
+        .flat_map(|(_, text)| exported_functions(text))
+        .filter_map(|(name, body)| Some((name, generated_call(&body, base)?)))
+        .collect()
+}
+
+/// The literal `baseUrl` of `export const defaults = { … }` (oazapfts).
+fn generated_base(t: &str) -> Option<String> {
+    let pos = (words(t, "defaults").into_iter())
+        .find(|&p| t[..p].trim_end().ends_with("export const"))?;
+    let open = pos + t[pos..].find('{')?;
+    let fields = Parser { s: t, i: open }.object(0);
+    fields.into_iter().find_map(|(k, v)| match v.value {
+        Value::Str(s) if k == "baseUrl" => Some(s.trim_end_matches('/').to_string()),
+        _ => None,
+    })
+}
+
+/// Name and source of every exported function and arrow constant.
+fn exported_functions(text: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for kw in ["function", "const"] {
+        for pos in words(text, kw) {
+            let before = text[..pos].trim_end();
+            if !(before.ends_with("export") || before.ends_with("export async")) {
+                continue;
+            }
+            let name = ident_at(text, skip_ws(text.as_bytes(), pos + kw.len()));
+            let Some(body) = declared_value(text, name).map(|b| b.source(text)) else {
+                continue;
+            };
+            if kw == "function" || find_top(&body, "=>").is_some() {
+                found.push((name.to_string(), body));
+            }
+        }
+    }
+    found
+}
+
+/// The `(` of the first `fetch`, `fetchJson`, … call, type arguments skipped.
+fn fetch_open(body: &str) -> Option<usize> {
+    let b = body.as_bytes();
+    (FETCHERS.iter())
+        .flat_map(|f| words(body, f).into_iter().map(move |p| p + f.len()))
+        .filter_map(|after| {
+            let mut j = skip_ws(b, after);
+            if b.get(j) == Some(&b'<') {
+                j = skip_ws(b, matching(b, j)? + 1);
+            }
+            (b.get(j) == Some(&b'(')).then_some(j)
+        })
+        .min()
+}
+
+/// The first fetch call of a function body; none without one.
+fn generated_call(body: &str, base: &str) -> Option<Result<Call, String>> {
+    let open = fetch_open(body)?;
+    let url = Parser {
+        s: body,
+        i: open + 1,
+    }
+    .value(0);
+    let args = &body[open..close(body, open)];
+    let method = match args.find("method:") {
+        None => Ok("GET".to_string()),
+        Some(m) => match (Parser {
+            s: args,
+            i: m + "method:".len(),
+        })
+        .value(0)
+        .value
+        {
+            Value::Str(s) => Ok(s.to_ascii_uppercase()),
+            _ => Err(format!("method is not a literal in {}", args.trim())),
+        },
+    };
+    let path = match &url.value {
+        Value::Str(s) => Some(s.clone()),
+        // A final hole not after `/` is the query (`${QS.query(…)}`).
+        Value::Tpl(t) => fill(
+            match t.rfind("${") {
+                Some(k) if k > 0 && !t[..k].ends_with('/') && t.ends_with('}') => &t[..k],
+                _ => t.as_str(),
+            },
+            |_| None,
+        ),
+        _ => None,
+    };
+    Some(match (method, path) {
+        (Ok(method), Some(path)) => Ok(Call::Http {
+            method,
+            path: format!("{base}{}", url_path(&path)),
+        }),
+        (Err(why), _) => Err(why),
+        (_, None) => Err(format!("URL is not a literal: {}", url.source(body))),
+    })
 }

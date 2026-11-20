@@ -118,3 +118,71 @@ fn bindings_of_hooks() {
     assert!(matches!(&found[1], Binding::Destructure(p)
         if p == &[("push".to_string(), "push".to_string()), ("replace".into(), "go".into())]));
 }
+
+#[test]
+fn name_path_rejects_spreads_and_empty_segments() {
+    for ok in ["a", "a.b", "Guards.admin", "_x.y1"] {
+        assert!(name_path(ok), "{ok}");
+    }
+    // `is_name` accepts these; a name path does not.
+    for bad in ["...x", "a..b", ".a", "a.", ".", "", "1a", "a b"] {
+        assert!(!name_path(bad), "{bad}");
+    }
+    assert!(is_name("...x") && is_name("a..b"));
+}
+
+#[test]
+fn declared_value_reads_constants_and_function_bodies() {
+    let text = "const a = 1;\nconst b = { k: 'v' };\nfunction f(x) { return x; }";
+    assert!(matches!(
+        declared_value(text, "b").unwrap().value,
+        Value::Obj(_)
+    ));
+    assert_eq!(declared_value(text, "a").unwrap().source(text), "1");
+    assert_eq!(
+        declared_value(text, "f").unwrap().source(text),
+        "{ return x; }"
+    );
+    assert!(declared_value(text, "missing").is_none());
+}
+
+#[test]
+fn generated_calls_read_the_first_fetch_with_method_base_and_query() {
+    use crate::lang_ts_http::generated_calls;
+    use archguard_core::Call;
+    let sdk = r#"export const defaults: Oazapfts.Defaults = { headers: {}, baseUrl: "/api/" };
+export function getAll({ shared }: { shared?: boolean }, opts?: Opts) {
+    return oazapfts.ok(oazapfts.fetchJson<{ status: 200 }>(`/albums${QS.query(QS.explode({ shared }))}`, { ...opts }));
+}
+export function remove({ id }: { id: string }, opts?: Opts) {
+    return oazapfts.ok(oazapfts.fetchText(`/albums/${encodeURIComponent(id)}`, { ...opts, method: "delete" }));
+}
+export const dyn = ({ path }) => oazapfts.fetchJson(path, {});
+export const verb = (m) => fetch('/x', { method: m });
+export const baseUrl = () => defaults.baseUrl;
+function notExported() { return fetch('/hidden'); }
+"#;
+    let calls = generated_calls(&[("fetch-client.ts".into(), sdk.into())]);
+    let http = |m: &str, p: &str| {
+        Ok(Call::Http {
+            method: m.into(),
+            path: p.into(),
+        })
+    };
+    assert_eq!(calls["getAll"], http("GET", "/api/albums"));
+    assert_eq!(calls["remove"], http("DELETE", "/api/albums/:param"));
+    assert!(
+        calls["dyn"]
+            .as_ref()
+            .unwrap_err()
+            .starts_with("URL is not a literal")
+    );
+    assert!(
+        calls["verb"]
+            .as_ref()
+            .unwrap_err()
+            .starts_with("method is not a literal")
+    );
+    // No fetch call, or not exported: no entry.
+    assert!(!calls.contains_key("baseUrl") && !calls.contains_key("notExported"));
+}
