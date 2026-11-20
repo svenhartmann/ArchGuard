@@ -2002,7 +2002,7 @@ mod spring {
                 })
                 .sum();
             if chains > 1 || files.iter().any(|s| scoped(s)) {
-                let message = "Several security configurations or a securityMatcher/antMatcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
+                let message = "Several security configurations or a scoping matcher: central rules are not evaluated; endpoints marked undeclared may be protected there.";
                 return out.note(&home.rel, home.line(at), message.into());
             }
             let rules: Vec<Rule> = (files.iter()).flat_map(|s| read(s, index)).collect();
@@ -2032,19 +2032,10 @@ mod spring {
             out.note(&home.rel, home.line(at), message);
         }
 
-        /// Scoping forms: `securityMatcher(s)`, `antMatcher`, `requestMatcher` and a
-        /// `requestMatchers()` without arguments (ResourceServer scoping).
+        /// A scoping matcher call on the chain outside the authorization block;
+        /// `securityMatcher` anywhere also covers the Kotlin DSL.
         fn scoped(s: &Source) -> bool {
-            let empty_request_matchers = words(&s.text, "requestMatchers").any(|p| {
-                let b = s.bytes();
-                let open = skip_ws(b, p + "requestMatchers".len());
-                b.get(open) == Some(&b'(') && b.get(skip_ws(b, open + 1)) == Some(&b')')
-            });
-            s.text.contains("securityMatcher")
-                || empty_request_matchers
-                || ["antMatcher", "requestMatcher"]
-                    .iter()
-                    .any(|w| words(&s.text, w).next().is_some())
+            s.text.contains("securityMatcher") || scoping_matcher(s)
         }
 
         /// A gap per adapter class in a file without any readable rule.
@@ -2140,9 +2131,8 @@ mod spring {
             e > s && b.get(skip_ws(b, e)) == Some(&b'(')
         }
 
-        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
-        fn read(src: &Source, index: &Index) -> Vec<Rule> {
-            let mut rules = Vec::new();
+        /// The `(` of every `authorizeHttpRequests`/`authorizeRequests` call, in order.
+        fn authorize_sites(src: &Source) -> Vec<usize> {
             let b = src.bytes();
             let mut sites: Vec<usize> = ["authorizeHttpRequests", "authorizeRequests"]
                 .iter()
@@ -2153,7 +2143,51 @@ mod spring {
                 })
                 .collect();
             sites.sort();
-            for open in sites {
+            sites
+        }
+
+        /// The text range holding the rules of the `authorize…(` call opening at
+        /// `open`, and whether it is the lambda argument; otherwise the chain
+        /// `authorizeRequests().antMatchers(…)…` up to `.and()` or the statement end.
+        fn block(src: &Source, open: usize) -> Option<(usize, usize, bool)> {
+            let b = src.bytes();
+            let close = src.pair(open)?;
+            let Some(arrow) = src.text[open + 1..close].find("->") else {
+                let (from, to) = (close + 1, minimal::statement_end(src, close + 1));
+                let end = (calls(src, from, to).into_iter())
+                    .find(|c| c.1 == "and")
+                    .map_or(to, |c| c.0);
+                return Some((from, end, false));
+            };
+            let body = skip_ws(b, open + 1 + arrow + 2);
+            Some(match (b.get(body), src.pair(body)) {
+                (Some(b'{'), Some(end)) => (body + 1, end, true),
+                _ => (body, close, true),
+            })
+        }
+
+        /// Whether a `.xMatcher(…)`/`.xMatchers(…)` call sits outside every
+        /// authorization block: it scopes the chain to some requests.
+        fn scoping_matcher(src: &Source) -> bool {
+            let b = src.bytes();
+            let inside: Vec<(usize, usize)> = (authorize_sites(src).into_iter())
+                .filter_map(|open| block(src, open))
+                .map(|(from, to, _)| (from, to))
+                .collect();
+            (0..b.len()).filter(|&i| b[i] == b'.').any(|i| {
+                let s = skip_ws(b, i + 1);
+                let e = s + b[s..].iter().take_while(|c| lex::is_ident(**c)).count();
+                let name = &src.text[s..e];
+                (name.ends_with("Matcher") || name.ends_with("Matchers"))
+                    && b.get(skip_ws(b, e)) == Some(&b'(')
+                    && !inside.iter().any(|&(from, to)| from <= s && s < to)
+            })
+        }
+
+        /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
+        fn read(src: &Source, index: &Index) -> Vec<Rule> {
+            let mut rules = Vec::new();
+            for open in authorize_sites(src) {
                 site(src, index, open, &mut rules);
             }
             rules
@@ -2161,26 +2195,13 @@ mod spring {
 
         /// The rules of the `authorize…(` call whose parenthesis opens at `open`.
         fn site(src: &Source, index: &Index, open: usize, rules: &mut Vec<Rule>) {
-            let b = src.bytes();
-            let Some(close) = src.pair(open) else {
+            let Some((from, to, lambda)) = block(src, open) else {
                 return;
-            };
-            let lambda = src.text[open + 1..close].find("->");
-            let (from, to) = match lambda {
-                Some(arrow) => {
-                    let body = skip_ws(b, open + 1 + arrow + 2);
-                    match (b.get(body), src.pair(body)) {
-                        (Some(b'{'), Some(end)) => (body + 1, end),
-                        _ => (body, close),
-                    }
-                }
-                // `authorizeRequests().antMatchers(…)…` up to `.and()` or the statement end.
-                None => (close + 1, minimal::statement_end(src, close + 1)),
             };
             let conditional = conditional(src, open);
             let mut pending: Option<(usize, Vec<String>, Option<Vec<String>>)> = None;
             for (at, name, args) in calls(src, from, to) {
-                if name == "and" && lambda.is_none() {
+                if name == "and" && !lambda {
                     break;
                 }
                 if MATCHERS.contains(&name) || pending.is_none() {
@@ -4322,6 +4343,35 @@ public class TicketController {
             let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
             assert_not_evaluated(&flow);
         }
+    }
+
+    #[test]
+    fn any_matcher_call_outside_the_authorization_block_scopes_the_chain() {
+        for scope in [
+            "http.requestMatchers(m -> m.antMatchers(\"/api/**\")).authorizeRequests(a -> a.anyRequest().authenticated());",
+            "http.mvcMatcher(\"/api/**\").authorizeRequests().anyRequest().authenticated();",
+            "http.regexMatcher(\"/api/.*\").authorizeRequests().anyRequest().authenticated();",
+            "http.requestMatchers().antMatchers(\"/api/**\").and().authorizeRequests().anyRequest().authenticated();",
+        ] {
+            let config = adapter(scope);
+            let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared,
+                "{scope}"
+            );
+        }
+        // Matchers inside the authorization block stay rules; a variable is no call.
+        let config = adapter(
+            "RequestMatcher requestMatcher = null; http.csrf().disable().authorizeRequests().antMatchers(\"/api/v1/open/**\").permitAll().regexMatchers(\"/x\").denyAll().anyRequest().authenticated().and().httpBasic();",
+        );
+        let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
     }
 
     #[test]
