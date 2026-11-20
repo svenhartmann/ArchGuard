@@ -83,7 +83,8 @@ export component AppWindow inherits Window {
     callback save-active();
     callback close-all();
     callback quit-app();
-    callback choose-theme(bool);
+    // Theme.family and Theme.dark, saved as the chosen theme.
+    callback choose-theme(int, bool);
     callback choose-language(string);
     // 0 Save, 1 Don't save, 2 Cancel.
     callback prompt-answered(int);
@@ -236,6 +237,11 @@ export component AppWindow inherits Window {
         Theme.dark = dark;
         Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
     }
+    // 0 standard, 1 Solarized (theme.slint).
+    public function set-look(family: int, dark: bool) {
+        Theme.family = family;
+        root.set-dark(dark);
+    }
 
     // Native on macOS and Windows, drawn by Slint elsewhere. Control is
     // the command key on macOS.
@@ -378,13 +384,28 @@ export component AppWindow inherits Window {
                 activated => { root.toggle-fullscreen(); }
             }
             MenuSeparator { }
-            MenuItem {
-                title: @tr("Dark theme");
-                activated => { root.set-dark(true); root.choose-theme(true); }
-            }
-            MenuItem {
-                title: @tr("Light theme");
-                activated => { root.set-dark(false); root.choose-theme(false); }
+            Menu {
+                title: @tr("Theme");
+                MenuItem {
+                    title: @tr("Dark theme");
+                    checked: Theme.family == 0 && Theme.dark == true;
+                    activated => { root.set-look(0, true); root.choose-theme(0, true); }
+                }
+                MenuItem {
+                    title: @tr("Light theme");
+                    checked: Theme.family == 0 && Theme.dark == false;
+                    activated => { root.set-look(0, false); root.choose-theme(0, false); }
+                }
+                MenuItem {
+                    title: @tr("Solarized Light");
+                    checked: Theme.family == 1 && Theme.dark == false;
+                    activated => { root.set-look(1, false); root.choose-theme(1, false); }
+                }
+                MenuItem {
+                    title: @tr("Solarized Dark");
+                    checked: Theme.family == 1 && Theme.dark == true;
+                    activated => { root.set-look(1, true); root.choose-theme(1, true); }
+                }
             }
             MenuSeparator { }
             Menu {
@@ -573,7 +594,7 @@ export component AppWindow inherits Window {
                     tip: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                     clicked => {
                         root.set-dark(!Theme.dark);
-                        root.choose-theme(Theme.dark);
+                        root.choose-theme(Theme.family, Theme.dark);
                     }
                 }
                 if header.level < 2: Button {
@@ -595,7 +616,7 @@ export component AppWindow inherits Window {
                             title: Theme.dark ? @tr("Light theme") : @tr("Dark theme");
                             activated => {
                                 root.set-dark(!Theme.dark);
-                                root.choose-theme(Theme.dark);
+                                root.choose-theme(Theme.family, Theme.dark);
                             }
                         }
                         MenuItem {

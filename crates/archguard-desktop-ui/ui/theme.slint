@@ -1,52 +1,57 @@
-// Color tokens of the web viewer (crates/archguard-report/src/viewer.html,
-// :root and the dark override). Keep both in sync.
+// Color tokens. Family 0 is the standard look, family 1 Solarized
+// (ethanschoonover.com/solarized), with text and status colors darkened or
+// lightened where the original missed 4:1 contrast on `panel`.
+// export/svg.rs repeats the diagram colors; keep both in sync.
 export global Theme {
     in-out property <bool> dark: true;
+    // 0 standard, 1 Solarized.
+    in-out property <int> family: 0;
+    property <bool> solarized: family == 1;
     // The platform's UI font, set at start (src/platform.rs); empty: Slint's default.
     in-out property <string> font-family;
 
-    out property <color> bg: dark ? #101722 : #F5F7FB;
-    out property <color> panel: dark ? #182231 : #FFFFFF;
-    out property <color> panel-2: dark ? #131C29 : #EEF2F8;
-    out property <color> text: dark ? #E6EDF7 : #172033;
-    out property <color> muted: dark ? #93A1B5 : #5B6472;
-    out property <color> accent: dark ? #5B9CF6 : #2563EB;
-    out property <color> accent-contrast: dark ? #0B1220 : #FFFFFF;
-    out property <color> border: dark ? #2B3A4E : #DDE3ED;
-    out property <color> node: dark ? #7FB0F7 : #2563EB;
+    out property <color> bg: solarized ? (dark ? #002B36 : #EEE8D5) : (dark ? #101722 : #F5F7FB);
+    out property <color> panel: solarized ? (dark ? #073642 : #FDF6E3) : (dark ? #182231 : #FFFFFF);
+    out property <color> panel-2: solarized ? (dark ? #04303C : #F5EFDC) : (dark ? #131C29 : #EEF2F8);
+    out property <color> text: solarized ? (dark ? #EEE8D5 : #073642) : (dark ? #E6EDF7 : #172033);
+    out property <color> muted: solarized ? (dark ? #93A1A1 : #586E75) : (dark ? #93A1B5 : #5B6472);
+    out property <color> accent: solarized ? (dark ? #4FA3E0 : #1F6FA8) : (dark ? #5B9CF6 : #2563EB);
+    out property <color> accent-contrast: solarized ? (dark ? #002B36 : #FDF6E3) : (dark ? #0B1220 : #FFFFFF);
+    out property <color> border: solarized ? (dark ? #1A4955 : #DDD6C1) : (dark ? #2B3A4E : #DDE3ED);
+    out property <color> node: solarized ? (dark ? #4FA3E0 : #268BD2) : (dark ? #7FB0F7 : #2563EB);
     // Cycles only: edges, nodes and groups that form a cycle.
-    out property <color> cycle: dark ? #FF6B61 : #D92D20;
-    out property <color> dim: dark ? #33415A : #D7DEE9;
-    out property <color> edge: dark ? #8FA0B5 : #64748B;
-    out property <color> incoming: dark ? #38BDF8 : #0369A1;
-    out property <color> outgoing: dark ? #C4B5FD : #7C3AED;
-    out property <color> package: dark ? #302B20 : #FFFAED;
-    out property <color> package-tab: dark ? #55452A : #F1D998;
-    out property <color> package-border: dark ? #BFA16A : #A77D32;
-    out property <color> package-selected: dark ? #20374F : #EDF4FF;
-    out property <color> priority: dark ? #FFC267 : #9A4D00;
-    out property <color> priority-fill: dark ? #805017 : #FFE0A3;
+    out property <color> cycle: solarized ? (dark ? #F0605D : #DC322F) : (dark ? #FF6B61 : #D92D20);
+    out property <color> dim: solarized ? (dark ? #12424E : #E6DFCA) : (dark ? #33415A : #D7DEE9);
+    out property <color> edge: solarized ? (dark ? #839496 : #657B83) : (dark ? #8FA0B5 : #64748B);
+    out property <color> incoming: solarized ? (dark ? #3DBDB3 : #1A7A73) : (dark ? #38BDF8 : #0369A1);
+    out property <color> outgoing: solarized ? (dark ? #9A9EE0 : #6C71C4) : (dark ? #C4B5FD : #7C3AED);
+    out property <color> package: solarized ? (dark ? #1B392E : #FBEFCB) : (dark ? #302B20 : #FFFAED);
+    out property <color> package-tab: solarized ? (dark ? #364726 : #EAD9A2) : (dark ? #55452A : #F1D998);
+    out property <color> package-border: solarized ? (dark ? #B58900 : #B58900) : (dark ? #BFA16A : #A77D32);
+    out property <color> package-selected: solarized ? (dark ? #0D475F : #E3E9E1) : (dark ? #20374F : #EDF4FF);
+    out property <color> priority: solarized ? (dark ? #D4A20B : #A63D12) : (dark ? #FFC267 : #9A4D00);
+    out property <color> priority-fill: solarized ? (dark ? #5C4500 : #F3DDB0) : (dark ? #805017 : #FFE0A3);
     // Text on priority-fill (the web's --c-priority-text).
-    out property <color> priority-text: dark ? #FFF2D5 : #502500;
+    out property <color> priority-text: solarized ? (dark ? #FDF6E3 : #4A2C00) : (dark ? #FFF2D5 : #502500);
     // Status and messages: warnings (stale, loading, partial) and errors.
-    out property <color> warning: dark ? #FFC267 : #9A4D00;
-    out property <color> danger: dark ? #FF6B61 : #D92D20;
-    out property <color> success: dark ? #3FC48D : #16845B;
+    out property <color> warning: solarized ? (dark ? #D4A20B : #8A6800) : (dark ? #FFC267 : #9A4D00);
+    out property <color> danger: solarized ? (dark ? #F0605D : #C02B28) : (dark ? #FF6B61 : #D92D20);
+    out property <color> success: solarized ? (dark ? #9DB300 : #5F6E00) : (dark ? #3FC48D : #16845B);
     // Rating scale of measured values against their cohort (`rating.rs`).
-    out property <color> rate-low: dark ? #3FC48D : #16845B;
-    out property <color> rate-medium: dark ? #E3A53B : #B7791F;
-    out property <color> rate-high: dark ? #F07272 : #D04545;
+    out property <color> rate-low: solarized ? (dark ? #9DB300 : #5F6E00) : (dark ? #3FC48D : #16845B);
+    out property <color> rate-medium: solarized ? (dark ? #B58900 : #B58900) : (dark ? #E3A53B : #B7791F);
+    out property <color> rate-high: solarized ? (dark ? #F0605D : #DC322F) : (dark ? #F07272 : #D04545);
     out property <color> rate-info: accent;
     out property <color> rate-unknown: muted;
     // Continuous complexity scale, low to high (Start's complexity lens).
     out property <brush> rate-scale: @linear-gradient(90deg, #55c3ba 0%, #55c38e 14%, #55c362 29%, #74c355 43%, #a0c355 57%, #c3ba55 71%, #c38e55 86%, #c37155 100%);
     // Severity scale of security findings.
-    out property <color> sev-critical: dark ? #FF8A80 : #B42318;
-    out property <color> sev-high: dark ? #FF6B61 : #D92D20;
-    out property <color> sev-medium: dark ? #FFC267 : #9A4D00;
+    out property <color> sev-critical: solarized ? (dark ? #F78B88 : #9E2421) : (dark ? #FF8A80 : #B42318);
+    out property <color> sev-high: solarized ? (dark ? #F0605D : #C02B28) : (dark ? #FF6B61 : #D92D20);
+    out property <color> sev-medium: solarized ? (dark ? #D4A20B : #8A6800) : (dark ? #FFC267 : #9A4D00);
     out property <color> sev-low: text;
     out property <color> sev-unknown: muted;
-    out property <color> shadow: dark ? #00000073 : #17203314;
+    out property <color> shadow: solarized ? (dark ? #00000073 : #586E7524) : (dark ? #00000073 : #17203314);
 
     // ---- Platform look, set at start (src/platform.rs): 0 macOS, 1 Windows,
     // 2 Linux. The type scale follows each platform's guidelines, scaled
