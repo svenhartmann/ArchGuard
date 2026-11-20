@@ -1,0 +1,209 @@
+// Services → architecture pattern candidates: the web viewer's
+// renderPatternAssessments (viewer_patterns.js). Set from
+// src/services_ui/patterns.rs.
+import { Theme } from "theme.slint";
+import { Icons, Icon, Button } from "widgets.slint";
+import { Fmt } from "format.slint";
+
+export component Note inherits Text {
+    in property <bool> muted: true;
+    color: muted ? Theme.muted : Theme.text;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+component Mono inherits Text {
+    color: Theme.muted;
+    font-family: Theme.mono-family;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: Theme.font-small;
+    font-weight: Theme.weight-strong;
+    wrap: word-wrap;
+}
+
+// A list entry that opens its details below it; the model says which is open.
+component Head inherits Rectangle {
+    in property <string> text;
+    in property <bool> open;
+    callback clicked();
+    min-height: 26px;
+    border-radius: 6px;
+    background: touch.has-hover ? Theme.panel-2 : transparent;
+    HorizontalLayout {
+        padding: 4px;
+        spacing: 6px;
+        Icon {
+            icon: root.open ? Icons.chevron-down : Icons.chevron-right;
+            tint: Theme.muted;
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component More inherits HorizontalLayout {
+    in property <string> text;
+    callback clicked();
+    alignment: start;
+    Button { compact: true; text: root.text; clicked => { root.clicked(); } }
+}
+
+// One evidence record: `from → to`, `file:line#pointer` and the message.
+export struct SvcRecord { title: string, place: string, message: string }
+
+export struct SvcPattern {
+    // patternLabel: 0 layered, 1 dependency levels, 2 dependency inversion,
+    // 3 pipeline, 4 modular monolith, 5 ports and adapters, 6 microservices,
+    // 7 event-driven; -1 shows `name`.
+    kind: int,
+    name: string,
+    // patternStatus: 0 candidate, 1 with counter-evidence, 2 insufficient
+    // evidence, 3 rule not matched; -1 shows `status-name`.
+    status: int,
+    status-name: string,
+    scope: string,
+    open: bool,
+}
+
+// The open assessment.
+export struct SvcPatternDetail {
+    basis: string,
+    metrics: string,
+    limits: [string],
+    nodes: int,
+    nodes-total: int,
+    services: string,
+    evidence: [SvcRecord],
+    evidence-retained: int,
+    evidence-total: int,
+    counter: [SvcRecord],
+    counter-retained: int,
+    counter-total: int,
+    more-evidence: bool,
+}
+
+export struct SvcPatterns {
+    // 0 not computed, 1 ready.
+    state: int,
+    candidates: int,
+    structures: int,
+    // 0 compiler evidence available, 1 partial, 2 no source analysis, 3 unavailable.
+    semantic: int,
+    coverage: string,
+    notes: [string],
+    total: int,
+    rows: [SvcPattern],
+    more: bool,
+    detail: SvcPatternDetail,
+    // Evidence of an assessment is marked in the Graph.
+    highlighted: bool,
+    // The Graph shows simulated changes: no original evidence to mark.
+    simulated: bool,
+}
+
+export component PatternsSection inherits VerticalLayout {
+    in property <SvcPatterns> data;
+    callback choose(int);
+    callback more();
+    callback more-evidence();
+    callback highlight();
+    callback clear-highlight();
+    spacing: 4px;
+
+    pure function label(p: SvcPattern) -> string {
+        return p.kind == 0 ? @tr("Layered architecture")
+            : p.kind == 1 ? @tr("Dependency levels")
+            : p.kind == 2 ? @tr("Dependency inversion")
+            : p.kind == 3 ? @tr("Pipeline structure")
+            : p.kind == 4 ? @tr("Modular monolith candidate")
+            : p.kind == 5 ? @tr("Ports and adapters")
+            : p.kind == 6 ? @tr("Microservices candidate")
+            : p.kind == 7 ? @tr("Event-driven / messaging candidate")
+            : p.name;
+    }
+    pure function status(p: SvcPattern) -> string {
+        return p.status == 0 ? @tr("pattern" => "Candidate")
+            : p.status == 1 ? @tr("Candidate with counter-evidence")
+            : p.status == 2 ? @tr("Insufficient evidence")
+            : p.status == 3 ? @tr("Rule not matched")
+            : p.status-name;
+    }
+    pure function semantic() -> string {
+        return data.semantic == 0 ? @tr("Compiler evidence available")
+            : data.semantic == 1 ? @tr("Partial compiler evidence")
+            : data.semantic == 2 ? @tr("No source analysis")
+            : @tr("Compiler evidence unavailable");
+    }
+
+    if data.state == 0: Note { text: @tr("Reading the pattern candidates …"); }
+    if data.state == 1: Note {
+        muted: false;
+        text: @tr("{} pattern candidates · {} structural observations · {}", Fmt.int(data.candidates), Fmt.int(data.structures), root.semantic());
+    }
+    if data.state == 1: Note { text: @tr("Patterns are hypotheses from source evidence. Several may coexist; they are not quality gates or probabilities."); }
+    if data.highlighted: More { text: @tr("Clear pattern highlight"); clicked => { root.clear-highlight(); } }
+    if data.state == 1 && data.simulated: Note { text: @tr("Clear the simulation to highlight original pattern evidence."); }
+    for p[i] in data.rows: VerticalLayout {
+        Head {
+            text: root.label(p) + " · " + root.status(p) + (p.scope == "." ? "" : " · " + p.scope);
+            open: p.open;
+            clicked => { root.choose(i); }
+        }
+        if p.open: VerticalLayout {
+            padding-left: 22px;
+            padding-bottom: 6px;
+            spacing: 3px;
+            for l in data.detail.limits: Note { text: l; }
+            Heading { text: @tr("Detection rule and measurements"); }
+            Note { text: @tr("Evidence basis: {}", data.detail.basis); }
+            Mono { text: data.detail.metrics; }
+            Note { text: @tr("{} / {} source nodes retained", Fmt.int(data.detail.nodes), Fmt.int(data.detail.nodes-total)); }
+            if data.detail.nodes > 0: HorizontalLayout {
+                alignment: start;
+                Button {
+                    compact: true;
+                    text: @tr("Highlight evidence in graph");
+                    enabled: !data.simulated;
+                    tip: @tr("Mark the retained source files and evidence connections in the original graph. Clear simulated changes first.");
+                    clicked => { root.highlight(); }
+                }
+            }
+            if data.detail.services != "": Note { text: @tr("Configured services: {}", data.detail.services); }
+            Heading { text: @tr("Supporting evidence") + " · " + Fmt.int(data.detail.evidence-retained) + " / " + Fmt.int(data.detail.evidence-total); }
+            for e in data.detail.evidence: VerticalLayout {
+                Note { text: e.title; muted: false; }
+                Mono { text: e.place; }
+                Note { text: e.message; }
+            }
+            Heading { text: @tr("Counter-evidence") + " · " + Fmt.int(data.detail.counter-retained) + " / " + Fmt.int(data.detail.counter-total); }
+            for e in data.detail.counter: VerticalLayout {
+                Note { text: e.title; muted: false; }
+                Mono { text: e.place; }
+                Note { text: e.message; }
+            }
+            if data.detail.more-evidence: More { text: @tr("Show next 20 evidence records"); clicked => { root.more-evidence(); } }
+        }
+    }
+    if data.more: More { text: @tr("Show more pattern assessments"); clicked => { root.more(); } }
+    if data.state == 1: Note { text: @tr("{} / {} assessments", Fmt.int(data.rows.length), Fmt.int(data.total)); }
+    if data.state == 1: Mono { text: data.coverage; }
+    for n in data.notes: Note { text: n; }
+}

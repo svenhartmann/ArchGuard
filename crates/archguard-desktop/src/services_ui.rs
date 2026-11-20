@@ -9,26 +9,75 @@ mod export;
 mod follow;
 mod layout;
 mod paths;
+mod patterns;
+mod sections;
+#[cfg(test)]
+mod sections_check;
 mod state;
 mod sync;
 #[cfg(test)]
 mod tree_check;
 mod view;
 
+use std::path::Path;
+
+use archguard_engine::AnalysisRun;
+use archguard_engine::core::CallAnalysis;
 use slint::ComponentHandle;
 
 use crate::context::Loaded;
 use crate::documents;
-use crate::tab_support::{self, Actions, Shared, TabState, Texts, Topology, index};
+use crate::graph_ui::{self, simulation::Simulation};
+use crate::panes_ui;
+use crate::tab_support::{self, Actions, Calls, Shared, TabState, Texts, Topology, index};
 use crate::ui::{AppWindow, ServicesData, ServicesModel};
 use state::KINDS;
 pub use state::{Mode, ServicesState};
 
-/// Build the tab state from the document's topology.
-fn build_from(topology: Topology) -> ServicesState {
+/// Build the tab state from the document's topology and, with `run`,
+/// its pattern candidates.
+fn build_from(
+    topology: Topology,
+    run: Option<(&Path, &AnalysisRun, &CallAnalysis)>,
+) -> ServicesState {
     let mut state = state::build_from(topology);
+    if let Some((root, run, calls)) = run {
+        sections::read(&mut state, root, run, calls);
+    }
     snapshot_overrides(&mut state);
     state
+}
+
+/// The active document's Graphs show simulated changes.
+fn simulated() -> bool {
+    documents::with_active_state(|s: &mut Simulation| !s.ops.is_empty()).unwrap_or(false)
+}
+
+/// The callbacks of Details → pattern candidates.
+fn wire_sections(ui: &AppWindow, d: &ServicesData, a: &Actions<ServicesState>) {
+    d.on_select_pattern(a.on(|s, _, i: i32| s.patterns.choose(index(i).unwrap_or(usize::MAX))));
+    d.on_more_patterns(a.on0(|s, _| s.patterns.more()));
+    d.on_more_pattern_evidence(a.on0(|s, _| s.patterns.more_evidence()));
+    d.on_clear_pattern_highlight(a.on0(|s, ui| {
+        s.patterns.highlighted = false;
+        graph_ui::mark(ui, &[], &[]);
+    }));
+    // The Graph is changed after the tab's state is put back: revealing
+    // switches tabs, which may show this one again.
+    let w = ui.as_weak();
+    d.on_highlight_pattern(move || {
+        let Some(ui) = w.upgrade() else { return };
+        let mut marks = None;
+        tab_support::update(&ui, |s: &mut ServicesState, _| {
+            marks = s.patterns.highlight().filter(|_| !simulated());
+            s.patterns.highlighted |= marks.is_some();
+        });
+        let Some((files, pairs)) = marks else { return };
+        if let Some(n) = files.first().and_then(|f| graph_ui::node_named(f)) {
+            panes_ui::reveal(&ui, n);
+        }
+        graph_ui::mark(&ui, &files, &pairs);
+    });
 }
 
 /// Register the tab's callbacks once at start-up.
@@ -79,6 +128,13 @@ pub fn wire(ui: &AppWindow) {
         view::fit(s, w, h, Texts::of(ui).t("Unmapped service"));
     }));
     d.on_resized(a.on(|s, _, w: f32| s.viewport = w.floor().max(0.0)));
+    wire_sections(ui, &d, &a);
+    // `ARCHGUARD_DESKTOP_SVC_OPEN=patterns` opens that section for
+    // snapshot runs (Details itself opens by a click).
+    #[cfg(feature = "snapshot")]
+    if let Ok(open) = std::env::var("ARCHGUARD_DESKTOP_SVC_OPEN") {
+        d.set_patterns_open(open.contains("patterns"));
+    }
     follow::wire();
 }
 
@@ -113,7 +169,15 @@ impl TabState for ServicesState {
 pub fn show(ui: &AppWindow, data: &Loaded) {
     tab_support::show_async(ui, || {
         let (root, slot) = (data.root.to_path_buf(), Shared::<Topology>::active());
-        move || build_from(tab_support::topology(&slot, &root))
+        let analysis = documents::with_store(|s| s.active()?.analysis.clone());
+        let calls = Calls::of(data);
+        move || {
+            let topology = tab_support::topology(&slot, &root);
+            let run = analysis
+                .as_ref()
+                .map(|a| (root.as_path(), &a.run, calls.get()));
+            build_from(topology, run.as_ref().map(|(r, a, c)| (*r, *a, &**c)))
+        }
     });
 }
 
@@ -122,6 +186,9 @@ pub fn push(ui: &AppWindow, s: &ServicesState) {
     let d = ui.global::<ServicesData>();
     let mut m = view::build(s, Texts::of(ui).t("Unmapped service"));
     sync::keep(&d.get_model(), &mut m);
+    m.patterns = s.patterns.model();
+    m.patterns.simulated = simulated();
+    m.patterns.highlighted &= !m.patterns.simulated;
     d.set_model(m);
 }
 
@@ -139,7 +206,8 @@ pub fn export_data(ui: &AppWindow) -> Option<(crate::export::Snapshot, crate::ex
 }
 
 /// `ARCHGUARD_DESKTOP_SVC_KIND=<index>`, `ARCHGUARD_DESKTOP_SVC_SERVICE=<name>`
-/// and `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` set the view for snapshot runs.
+/// and `ARCHGUARD_DESKTOP_SVC_ROUTING=inout` set the view for snapshot runs;
+/// `ARCHGUARD_DESKTOP_SVC_PATTERN=<row>` opens a listed pattern assessment.
 #[cfg(feature = "snapshot")]
 fn snapshot_overrides(s: &mut ServicesState) {
     if let Some(k) = std::env::var("ARCHGUARD_DESKTOP_SVC_KIND")
@@ -157,6 +225,14 @@ fn snapshot_overrides(s: &mut ServicesState) {
         }
     }
     s.in_out = std::env::var("ARCHGUARD_DESKTOP_SVC_ROUTING").is_ok_and(|r| r == "inout");
+    let row = |key: &str| {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+    };
+    if let Some(i) = row("ARCHGUARD_DESKTOP_SVC_PATTERN") {
+        s.patterns.choose(i);
+    }
 }
 
 #[cfg(not(feature = "snapshot"))]

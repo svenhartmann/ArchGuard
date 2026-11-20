@@ -8,8 +8,9 @@ import { Icons, Button, Disclosure, ZoomControls, HelpTip, TipArea, EmptyState }
 import { Fmt } from "format.slint";
 import { ServicesTree, SvcRow, SvcEdge } from "services_tree.slint";
 import { ServicesInspector, SvcInspector, SvcEvidence, SvcLink } from "services_inspector.slint";
+import { Note, PatternsSection, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord } from "services_sections.slint";
 
-export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink }
+export { SvcRow, SvcEdge, SvcInspector, SvcEvidence, SvcLink, SvcPatterns, SvcPattern, SvcPatternDetail, SvcRecord }
 
 export struct SvcProject {
     path: string,
@@ -63,10 +64,15 @@ export struct ServicesModel {
     width: float,
     height: float,
     inspector: SvcInspector,
+    // Details → architecture pattern candidates.
+    patterns: SvcPatterns,
 }
 
 export global ServicesData {
     in-out property <ServicesModel> model;
+    // Details → pattern candidates is open (global, so snapshot runs
+    // can open it: ARCHGUARD_DESKTOP_SVC_OPEN).
+    in-out property <bool> patterns-open;
 
     // Group name of a service without project and Compose file.
 
@@ -85,6 +91,12 @@ export global ServicesData {
     callback zoom-by(float);
     callback fit(float, float);
     callback resized(float);
+    // Pattern candidates: open assessment (row), pages, Graph marks.
+    callback select-pattern(int);
+    callback more-patterns();
+    callback more-pattern-evidence();
+    callback highlight-pattern();
+    callback clear-pattern-highlight();
 
     // serviceKindLabel; index as the relation list.
     public pure function kind-label(k: int) -> string {
@@ -119,13 +131,6 @@ component Details inherits VerticalLayout {
         weight: Theme.weight-strong;
     }
     @children
-}
-
-component Note inherits Text {
-    in property <bool> muted: true;
-    color: muted ? Theme.muted : Theme.text;
-    font-size: Theme.font-small;
-    wrap: word-wrap;
 }
 
 component ProjectRow inherits Rectangle {
@@ -285,7 +290,6 @@ export component ServicesView inherits Rectangle {
     property <bool> evidence-open;
     property <bool> projects-open;
     property <bool> workspace-open;
-    property <bool> patterns-open;
     property <bool> contracts-open;
     property <bool> diagnostics-open;
     background: Theme.bg;
@@ -307,7 +311,8 @@ export component ServicesView inherits Rectangle {
         VerticalLayout {
             horizontal-stretch: 1;
             summary := ScrollView {
-                height: min(desc.preferred-height, root.height * 0.35);
+                // An open pattern list gets most of the height.
+                height: min(desc.preferred-height, root.height * (ServicesData.patterns-open ? 0.7 : 0.35));
                 // As wide as the visible area, so the summary wraps before
                 // the edge and the scroll bar.
                 desc := VerticalLayout {
@@ -375,7 +380,18 @@ export component ServicesView inherits Rectangle {
                         }
                     }
                     CliOnly { text: @tr("Project workspace"); command: "archguard workspace --sources"; open <=> root.workspace-open; }
-                    CliOnly { text: @tr("Architecture pattern candidates"); command: "archguard patterns"; open <=> root.patterns-open; }
+                    Details {
+                        text: @tr("Architecture pattern candidates");
+                        open <=> ServicesData.patterns-open;
+                        if ServicesData.patterns-open: PatternsSection {
+                            data: m.patterns;
+                            choose(i) => { ServicesData.select-pattern(i); }
+                            more => { ServicesData.more-patterns(); }
+                            more-evidence => { ServicesData.more-pattern-evidence(); }
+                            highlight => { ServicesData.highlight-pattern(); }
+                            clear-highlight => { ServicesData.clear-pattern-highlight(); }
+                        }
+                    }
                     CliOnly { text: @tr("API contracts and changes"); command: "archguard contracts"; open <=> root.contracts-open; }
                     if m.diagnostics.length > 0: Details {
                         text: @tr("Diagnostics");

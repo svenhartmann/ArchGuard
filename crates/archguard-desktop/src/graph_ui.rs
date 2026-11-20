@@ -22,6 +22,7 @@ use crate::instances::{self, Instance};
 use crate::matrix_ui::MatrixState;
 use crate::panes::Layout;
 use crate::panes_ui;
+use crate::state::marks::Marks;
 use crate::state::{self, GraphState};
 use crate::tab_support::{self, index, with_ui};
 use crate::tree::simulation::cut_hints;
@@ -422,8 +423,21 @@ pub fn show(ui: &AppWindow) {
     push_hits(ui);
 }
 
-/// The tree node named `name` in the active document (snapshot hooks).
-#[cfg(feature = "snapshot")]
+/// Mark `files` (with their packages) and the dependencies `pairs`, by
+/// node name, in every Graph of the active document, on the tree display
+/// with all dependencies; empty names clear the marks.
+pub fn mark(ui: &AppWindow, files: &[String], pairs: &[(String, String)]) {
+    instances::each(|s: &mut Graph| {
+        s.g.marks = Marks::new(&s.g.tree, files, pairs);
+        if !files.is_empty() {
+            s.g.display = 0;
+            s.g.mode = EdgeMode::All;
+        }
+    });
+    panes_ui::sync(ui);
+}
+
+/// The tree node named `name` in the active document.
 pub fn node_named(name: &str) -> Option<usize> {
     documents::with_active_state(|t: &mut Rc<Tree>| instances::node_named(t, name)).flatten()
 }

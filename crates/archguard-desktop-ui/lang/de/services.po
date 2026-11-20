@@ -246,3 +246,100 @@ msgid "Rust executables can be command-line tools or jobs, so they become servic
 msgid_plural "Rust executables can be command-line tools or jobs, so they become services only with a deployment declaration. The {0} applications found are listed under Details."
 msgstr[0] "Rust-Programme können Kommandozeilenwerkzeuge oder Jobs sein und werden daher erst mit einer Deployment-Deklaration zu Diensten. Die gefundene Anwendung steht unter Details."
 msgstr[1] "Rust-Programme können Kommandozeilenwerkzeuge oder Jobs sein und werden daher erst mit einer Deployment-Deklaration zu Diensten. Die {0} gefundenen Anwendungen stehen unter Details."
+
+msgid "Layered architecture"
+msgstr "Schichtenarchitektur"
+
+msgid "Dependency levels"
+msgstr "Abhängigkeitsebenen"
+
+msgid "Dependency inversion"
+msgstr "Abhängigkeitsumkehr"
+
+msgid "Pipeline structure"
+msgstr "Kettenstruktur"
+
+msgid "Modular monolith candidate"
+msgstr "Kandidat für modularen Monolithen"
+
+msgid "Ports and adapters"
+msgstr "Ports und Adapter"
+
+msgid "Microservices candidate"
+msgstr "Microservices-Kandidat"
+
+msgid "Event-driven / messaging candidate"
+msgstr "Ereignis-/nachrichtengetriebener Kandidat"
+
+msgctxt "pattern"
+msgid "Candidate"
+msgstr "Kandidat"
+
+msgid "Candidate with counter-evidence"
+msgstr "Kandidat mit Gegenbelegen"
+
+msgid "Insufficient evidence"
+msgstr "Belege fehlen"
+
+msgid "Rule not matched"
+msgstr "Regel nicht erfüllt"
+
+msgid "Compiler evidence available"
+msgstr "Compilerbelege vorhanden"
+
+msgid "Partial compiler evidence"
+msgstr "Compilerbelege teilweise"
+
+msgid "No source analysis"
+msgstr "Ohne Quellanalyse"
+
+msgid "Compiler evidence unavailable"
+msgstr "Compilerbelege fehlen"
+
+msgid "Reading the pattern candidates …"
+msgstr "Musterkandidaten werden gelesen …"
+
+msgid "{} pattern candidates · {} structural observations · {}"
+msgstr "{} Musterkandidaten · {} Strukturhinweise · {}"
+
+msgid "Patterns are hypotheses from source evidence. Several may coexist; they are not quality gates or probabilities."
+msgstr "Muster sind Hypothesen aus Quellbelegen. Mehrere können gleichzeitig vorliegen; sie sind keine Qualitätsgates oder Wahrscheinlichkeiten."
+
+msgid "Clear pattern highlight"
+msgstr "Mustermarkierung löschen"
+
+msgid "Clear the simulation to highlight original pattern evidence."
+msgstr "Die Simulation leeren, um Originalbelege des Musters zu markieren."
+
+msgid "Detection rule and measurements"
+msgstr "Erkennungsregel und Messwerte"
+
+msgid "Evidence basis: {}"
+msgstr "Beleggrundlage: {}"
+
+msgid "{} / {} source nodes retained"
+msgstr "{} / {} Quellknoten enthalten"
+
+msgid "Highlight evidence in graph"
+msgstr "Belege im Graphen markieren"
+
+msgid "Mark the retained source files and evidence connections in the original graph. Clear simulated changes first."
+msgstr "Enthaltene Quelldateien und belegte Beziehungen im ursprünglichen Graphen markieren. Simulierte Änderungen vorher verwerfen."
+
+msgid "Configured services: {}"
+msgstr "Konfigurierte Dienste: {}"
+
+msgid "Supporting evidence"
+msgstr "Stützende Belege"
+
+msgid "Counter-evidence"
+msgstr "Gegenbelege"
+
+msgid "Show next 20 evidence records"
+msgstr "Nächste 20 Belege"
+
+msgid "Show more pattern assessments"
+msgstr "Weitere Musterbewertungen"
+
+msgid "{} / {} assessments"
+msgstr "{} / {} Bewertungen"

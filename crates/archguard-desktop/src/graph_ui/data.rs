@@ -28,6 +28,8 @@ fn mode_index(m: crate::tree::EdgeMode) -> i32 {
 const TREE: i32 = 0;
 const NETWORK: i32 = 1;
 const DEPENDENCIES: i32 = 2;
+/// `TreeLink::kind` of a link that carries marked evidence (`tree::marks`).
+const MARKED: i32 = 4;
 
 /// Everything the Graph view of tab `id` shows of `g`, in the models of
 /// `old` (what its pane showed before), changed in place. The links,
@@ -55,20 +57,10 @@ pub fn graph_data(
     let node = g.selected.map(|n| &g.tree.nodes[n]);
     let (incoming, outgoing) = neighbors(g, old);
     let net = network_data(g, selected, old);
-    let links = (g.display == TREE).then(|| v.draw(selected, g.mode));
     GraphData {
         id: id as i32,
         rows: tree_rows(g, &covered, &old.rows),
-        links: sync_rows(
-            &old.links,
-            links.into_iter().flatten().map(|d| TreeLink {
-                path: d.path.into(),
-                kind: d.kind as i32,
-                from: d.from as i32,
-                to: d.to as i32,
-                right: d.right,
-            }),
-        ),
+        links: tree_links(g, selected, &old.links),
         selected_row: selected.map_or(-1, |s| s as i32),
         selected_node: g.selected.map_or(-1, |n| n as i32),
         crumbs: crumbs(ui, g, &old.crumbs),
@@ -107,6 +99,30 @@ pub fn graph_data(
         sim: super::simulation::data(g, texts.locale(), &old.sim),
         review: super::review::data(g, &old.review),
     }
+}
+
+/// The tree display's links; empty while another display is shown.
+fn tree_links(
+    g: &GraphState,
+    selected: Option<usize>,
+    old: &ModelRc<TreeLink>,
+) -> ModelRc<TreeLink> {
+    let links = (g.display == TREE).then(|| g.view.draw(selected, g.mode));
+    let marked = g.marks.links(&g.tree, &g.view);
+    sync_rows(
+        old,
+        links.into_iter().flatten().map(|d| TreeLink {
+            path: d.path.into(),
+            kind: if marked.contains(&(d.from, d.to)) {
+                MARKED
+            } else {
+                d.kind as i32
+            },
+            from: d.from as i32,
+            to: d.to as i32,
+            right: d.right,
+        }),
+    )
 }
 
 fn deps(g: &GraphState, selected: Option<usize>, old: &ModelRc<DepCard>) -> ModelRc<DepCard> {
@@ -165,6 +181,7 @@ fn tree_rows(
                 in_cycle: v.in_cycle[i],
                 covered: covered.contains(&i),
                 priority: priority_index(g.priorities[i]),
+                marked: g.marks.row(r),
             }
         }),
     )
