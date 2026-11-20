@@ -49,12 +49,19 @@ pub(crate) enum UiFlowAction {
         #[arg(long)]
         run: bool,
     },
+    /// List the roles, permissions and policies the project defines, with file:line.
+    Roles {
+        #[arg(value_name = "PFAD")]
+        path: Option<PathBuf>,
+    },
 }
 
 impl UiFlowAction {
     pub(crate) fn path(&self) -> Option<&Path> {
         match self {
-            Self::Open { path, .. } | Self::Replay { path, .. } => path.as_deref(),
+            Self::Open { path, .. } | Self::Replay { path, .. } | Self::Roles { path } => {
+                path.as_deref()
+            }
         }
     }
 }
@@ -68,7 +75,9 @@ pub(crate) fn run(config_file: Option<&Path>, root: &Path, action: &UiFlowAction
         Ok(flow) => flow,
         Err(error) => return analysis_error(error),
     };
-    let (UiFlowAction::Open { screen, .. } | UiFlowAction::Replay { screen, .. }) = action;
+    let (UiFlowAction::Open { screen, .. } | UiFlowAction::Replay { screen, .. }) = action else {
+        unreachable!("main dispatches `ui-flow roles` to ui_flow_cmd::roles");
+    };
     let screen = match pick(&flow, screen) {
         Ok(screen) => screen,
         Err(code) => return code,
@@ -79,6 +88,7 @@ pub(crate) fn run(config_file: Option<&Path>, root: &Path, action: &UiFlowAction
             let file = out.clone().unwrap_or_else(|| default_file(screen));
             replay(&flow, screen, &config, role.as_deref(), &file, *run)
         }
+        UiFlowAction::Roles { .. } => unreachable!("handled above"),
     }
 }
 

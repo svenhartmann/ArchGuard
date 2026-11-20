@@ -124,6 +124,9 @@ pub mod ui_flow_backend;
 pub mod ui_flow_blazor;
 pub mod ui_flow_react;
 pub mod ui_flow_replay;
+pub mod ui_flow_roles;
+#[cfg(test)]
+mod ui_flow_roles_tests;
 pub mod ui_flow_slint;
 pub mod ui_flow_vue;
 pub mod ui_flow_xaml;
