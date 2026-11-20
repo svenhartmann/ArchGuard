@@ -381,3 +381,21 @@ attribute was `unknown` become 30 signed in and 21 open; 26 stay
 `undeclared`. `ui-flow` and `domain` JSON of eShop, Squidex, both Bitwarden
 repositories, jhipster, CleanArchitecture, the OpenTelemetry front end and
 the Aspire Vue sample are byte-identical before and after the refactor.
+
+### 2026-11-20: notes for agents, code panel and drill-down in the desktop
+
+Every gap, mismatch and undeclared endpoint in the Screens view can carry a
+note for the coding agent: decision fix, intentional (accept-risk) or later,
+free text and an optional suggested change (appended to the note after
+`Suggested change:`). Notes go into the existing review decision register
+`.archguard/reviews.json` under the item's stable id: the convention id
+`view-<rule>:<file>:<subject>` where a convention covers the item, else
+`view-gap:<file>:<message>`. Agents read them through `review-decision list`
+and the MCP `review_decisions` tool; attaching them to `check` output is
+open. Every file:line opens in a read-only code panel inside the view or in
+the configured editor (program plus argument list, never a shell; paths
+outside the project are refused). An action drills down to its endpoints,
+handler, use cases, transitions, events and integration events across
+services, and to the Calls view for the handler's callees. The role picker
+lists the roles of the catalog, and every evaluation in the desktop goes
+through `resolve_assignment`.

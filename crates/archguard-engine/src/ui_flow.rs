@@ -62,6 +62,11 @@ pub fn analyze_with(ctx: &ExtractContext) -> Result<UiFlow, ArchguardError> {
         crate::ui_flow_xaml::extract_with,
         crate::ui_flow_vue::extract_with,
         crate::ui_flow_slint::extract_with,
+        crate::ui_flow_nestjs::extract_with,
+        crate::ui_flow_svelte::extract_with,
+        crate::ui_flow_django::extract_with,
+        crate::ui_flow_fastapi::extract_with,
+        crate::ui_flow_laravel::extract_with,
         crate::ui_flow_roles::extract_with,
     ];
     Ok(extractors
