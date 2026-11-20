@@ -1925,6 +1925,53 @@ mod spring {
 
     pub(super) use chain::central_rules;
 
+    /// Where a call chain ends in the source text.
+    mod chain_span {
+        use super::super::lex::{skip_ws, skip_ws_back};
+        use super::super::*;
+
+        /// End of the call chain starting at `from`: the `;`, or (Kotlin has none) a
+        /// line end outside brackets whose next code line does not continue the
+        /// chain with a leading `.` (comment lines skipped; a trailing `.` continues).
+        pub(super) fn chain_end(src: &Source, from: usize) -> usize {
+            let b = src.bytes();
+            let end = minimal::statement_end(src, from);
+            let mut j = from;
+            while j < end {
+                if let Some(e) = literal_end(b, j) {
+                    j = e;
+                    continue;
+                }
+                match b[j] {
+                    b'(' | b'[' | b'{' => j = src.pair(j).map_or(j + 1, |c| c + 1),
+                    b'\n' if !continues(src, j) => return j,
+                    _ => j += 1,
+                }
+            }
+            end
+        }
+
+        /// Whether the chain goes on after the line end at `nl`.
+        fn continues(src: &Source, nl: usize) -> bool {
+            let b = src.bytes();
+            let last = skip_ws_back(b, nl);
+            if last > 0 && b[last - 1] == b'.' {
+                return true;
+            }
+            let mut k = skip_ws(b, nl);
+            loop {
+                let rest = &src.text[k.min(b.len())..];
+                if rest.starts_with("//") {
+                    k = skip_ws(b, k + rest.find('\n').unwrap_or(rest.len()));
+                } else if rest.starts_with("/*") {
+                    k = skip_ws(b, k + rest.find("*/").map_or(rest.len(), |e| e + 2));
+                } else {
+                    return b.get(k) == Some(&b'.') || k >= b.len();
+                }
+            }
+        }
+    }
+
     /// Central rules of a `SecurityFilterChain` (`authorizeHttpRequests` /
     /// `authorizeRequests`), applied to the project's endpoints from index
     /// `first` on.
@@ -2153,7 +2200,7 @@ mod spring {
             let b = src.bytes();
             let close = src.pair(open)?;
             let Some(arrow) = src.text[open + 1..close].find("->") else {
-                let (from, to) = (close + 1, minimal::statement_end(src, close + 1));
+                let (from, to) = (close + 1, super::chain_span::chain_end(src, close + 1));
                 let end = (calls(src, from, to).into_iter())
                     .find(|c| c.1 == "and")
                     .map_or(to, |c| c.0);
@@ -4343,6 +4390,41 @@ public class TicketController {
             let flow = configured(&[("src/main/java/app/SecurityConfig.java", &config)]);
             assert_not_evaluated(&flow);
         }
+    }
+
+    fn kotlin(body: &str) -> UiFlow {
+        let config = format!(
+            "class SecurityConfig : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n{body}\n    }}\n}}\n"
+        );
+        configured(&[("src/main/java/app/SecurityConfig.kt", &config)])
+    }
+
+    #[test]
+    fn a_kotlin_chain_ends_at_its_last_line() {
+        // No `;`: a later scoping call is not part of the authorization block.
+        for body in [
+            "        http.authorizeRequests().antMatchers(\"/api/**\").authenticated().anyRequest().permitAll()\n        http.antMatcher(\"/api/**\")",
+            "        http.authorizeRequests()\n            .antMatchers(\"/api/**\").authenticated()\n            // comment between rules\n            .anyRequest().permitAll()\n\n        http.requestMatchers().antMatchers(\"/api/**\")",
+        ] {
+            let flow = kotlin(body);
+            assert_not_evaluated(&flow);
+            assert_eq!(
+                access(&flow, "GET", "/api/v1/open/ping"),
+                &AccessState::Undeclared
+            );
+        }
+        let flow = kotlin(
+            "        http.csrf().disable()\n        http.authorizeRequests()\n            .antMatchers(\"/api/v1/open/**\").permitAll()\n            .anyRequest().authenticated()\n            .and().httpBasic()",
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/other"),
+            &protected(Condition::Authenticated)
+        );
+        assert_eq!(notes(&flow, "not evaluated"), 0, "{:#?}", flow.diagnostics);
     }
 
     #[test]
