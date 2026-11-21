@@ -742,7 +742,7 @@ mod access {
                 },
                 _ => {
                     let Some(m) = self.access.get(name) else {
-                        if !NO_ACCESS_CHECK.contains(&name) {
+                        if !self.checks_no_access(f, callee) {
                             fx.decl.unresolved.push(name.to_string());
                             let line = p.line(at);
                             (self.unresolved.borrow_mut()).insert((f, line, name.to_string()));
@@ -757,6 +757,17 @@ mod access {
                 }
             };
             fx.decl.add(condition);
+        }
+
+        /// A `NO_ACCESS_CHECK` name counts only when imported from its Django/DRF module.
+        fn checks_no_access(&self, f: usize, callee: &str) -> bool {
+            let from_framework = |path: &str| {
+                ["django.views.decorators.", "django.utils.decorators.", "rest_framework.decorators."]
+                    .iter()
+                    .any(|m| path.starts_with(m))
+            };
+            matches!(self.resolve(f, callee), Sym::External(path)
+                if from_framework(&path) && NO_ACCESS_CHECK.contains(&simple(&path)))
         }
 
         /// Decorators about the request rather than the user: methods, DRF
@@ -3606,5 +3617,37 @@ class VS(viewsets.ViewSet):
         let flow = extract(w1().path());
         let unknown = AccessState::Protected(Condition::Unknown("VS.get_permissions".into()));
         assert_eq!(endpoint(&flow, "GET", "/vs/:pk/ping/"), unknown);
+    }
+
+    /// A minimal Django project: `views.py` plus the routes in `urls.py`.
+    fn mini(views: &str, routes: &str) -> UiFlow {
+        let dir = tempfile::tempdir().unwrap();
+        let urls = format!(
+            "from django.urls import path\nfrom django.contrib.auth.decorators import login_required\nfrom . import views\nurlpatterns = [\n{routes}\n]\n"
+        );
+        write(
+            dir.path(),
+            &[
+                ("m/manage.py", ""),
+                ("m/m/__init__.py", ""),
+                ("m/m/settings.py", "ROOT_URLCONF = \"m.urls\"\n"),
+                ("m/m/urls.py", &urls),
+                ("m/m/views.py", views),
+            ],
+        );
+        extract(dir.path())
+    }
+
+    #[test]
+    fn project_decorator_named_like_an_allowlisted_one_is_unknown() {
+        let views = "from rest_framework.decorators import api_view, permission_classes\nfrom rest_framework.permissions import AllowAny\nfrom rest_framework.decorators import schema as drf_schema\n\ndef schema(f):\n    return f\n\n@schema\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef proj(request):\n    pass\n\n@drf_schema(None)\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef real(request):\n    pass\n\n@condition\n@api_view(['GET'])\n@permission_classes([AllowAny])\ndef unimported(request):\n    pass\n";
+        let flow = mini(
+            views,
+            "    path('p/', views.proj),\n    path('r/', views.real),\n    path('u/', views.unimported),",
+        );
+        let unknown = |n: &str| AccessState::Protected(Condition::Unknown(n.into()));
+        assert_eq!(endpoint(&flow, "GET", "/p/"), unknown("schema"));
+        assert_eq!(endpoint(&flow, "GET", "/u/"), unknown("condition"));
+        assert_eq!(endpoint(&flow, "GET", "/r/"), AccessState::Open);
     }
 }
