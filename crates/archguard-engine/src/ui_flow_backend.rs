@@ -1925,40 +1925,99 @@ mod spring {
 
     pub(super) use chain::central_rules;
 
-    /// The rule statements of an authorization lambda.
-    mod lambda_rules {
-        use super::super::lex::skip_ws;
+    /// Which scoping-name calls are rules of the authorization block.
+    mod rule_calls {
+        use super::super::lex::skip_ws_back;
         use super::super::*;
         use super::chain_span;
 
-        /// The parameter name of the lambda argument of the call opening at `open`.
-        pub(super) fn lambda_param(src: &Source, open: usize) -> Option<String> {
-            let text = &src.text[open + 1..src.pair(open)?];
-            let head = text[..text.find("->")?].trim().trim_matches(['(', ')']);
-            head.split_whitespace().last().map(str::to_owned)
+        /// `(parameter, open, close)` of every authorization lambda.
+        pub(super) type Lambdas = [(String, usize, usize)];
+
+        fn ident_before(src: &Source, end: usize) -> (usize, &str) {
+            let b = src.bytes();
+            let start = end
+                - b[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|c| lex::is_ident(**c))
+                    .count();
+            (start, &src.text[start..end])
         }
 
-        /// The statements of a braced authorization lambda that are rule calls:
-        /// those starting with the lambda parameter (`a.requestMatchers(..)…`),
-        /// each up to its `.and()`. Any other statement is no rule.
-        pub(super) fn rule_statements(
-            src: &Source,
-            (from, to): (usize, usize),
-            param: &str,
-        ) -> Vec<(usize, usize)> {
+        /// The link of a receiver chain that ends before `dot`: `(start, name,
+        /// is a call)`; `None` when it is no plain `name` / `name(…)`.
+        fn link_before(src: &Source, dot: usize) -> Option<(usize, &str, bool)> {
             let b = src.bytes();
-            let (mut out, mut j) = (Vec::new(), skip_ws(b, from));
-            while j < to {
-                let end = minimal::statement_end(src, j).min(to);
-                let e = chain_span::ident_end(src, j);
-                if &src.text[j..e] == param && b.get(skip_ws(b, e)) == Some(&b'.') {
-                    let and = lex::words(&src.text[j..end], "and")
-                        .find(|&q| b.get(skip_ws(b, j + q + 3)) == Some(&b'('));
-                    out.push((j, and.map_or(end, |q| j + q)));
+            let end = skip_ws_back(b, dot);
+            let call = end > 0 && b[end - 1] == b')';
+            let name_end = if call {
+                let open = (0..end).rev().find(|&k| src.pair(k) == Some(end - 1));
+                skip_ws_back(b, open.filter(|&k| b[k] == b'(')?)
+            } else {
+                end
+            };
+            let (start, name) = ident_before(src, name_end);
+            (!name.is_empty()).then_some((start, name, call))
+        }
+
+        /// Whether the receiver chain ending before the `.` at `dot` starts at an
+        /// authorization lambda's parameter or at an `authorizeRequests()` /
+        /// `authorizeHttpRequests()` call, with no `.and()` in between. Anything
+        /// unclear (cast, index, `?.`, unbalanced) is not rooted.
+        fn rooted_in_rules(src: &Source, mut dot: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            while let Some((start, name, call)) = link_before(src, dot) {
+                match (call, name) {
+                    (true, "and") => return false,
+                    (true, "authorizeRequests" | "authorizeHttpRequests") => return true,
+                    _ => {}
                 }
-                j = skip_ws(b, end + 1);
+                let before = skip_ws_back(b, start);
+                if before == 0 || b[before - 1] != b'.' {
+                    let param = |&(ref p, f, t): &(String, usize, usize)| {
+                        p == name && f <= start && start < t
+                    };
+                    return !call && lambdas.iter().any(param);
+                }
+                dot = before - 1;
             }
-            out
+            false
+        }
+
+        /// A bare call (static factory) is legitimate only inside the arguments of
+        /// a rule call.
+        fn in_rule_args(src: &Source, s: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            let mut at = s;
+            while let Some(open) = chain_span::enclosing_open(src, at) {
+                let (start, name) = ident_before(src, skip_ws_back(b, open));
+                let before = skip_ws_back(b, start);
+                let rule = chain_span::SCOPING.contains(&name)
+                    && !name.starts_with("securityMatcher")
+                    && before > 0
+                    && b[before - 1] == b'.'
+                    && rooted_in_rules(src, before - 1, lambdas);
+                if rule {
+                    return true;
+                }
+                at = open;
+            }
+            false
+        }
+
+        /// Whether the scoping-name call starting at `s` is a rule call.
+        /// `securityMatcher(s)` never is.
+        pub(super) fn is_rule_call(src: &Source, s: usize, lambdas: &Lambdas) -> bool {
+            let b = src.bytes();
+            if src.text[s..].starts_with("securityMatcher") {
+                return false;
+            }
+            let q = skip_ws_back(b, s);
+            if q > 0 && b[q - 1] == b'.' {
+                return rooted_in_rules(src, q - 1, lambdas);
+            }
+            in_rule_args(src, s, lambdas)
         }
     }
 
@@ -2007,7 +2066,7 @@ mod spring {
         }
 
         /// The innermost `(` around `at` that is still open, if any.
-        fn enclosing_open(src: &Source, at: usize) -> Option<usize> {
+        pub(super) fn enclosing_open(src: &Source, at: usize) -> Option<usize> {
             let b = src.bytes();
             let mut depth = 0;
             for k in (0..at).rev() {
@@ -2077,16 +2136,18 @@ mod spring {
                 .count()
         }
 
-        /// Offset of the first call of a [`SCOPING`] name outside `inside`.
-        pub(super) fn scoping_call(src: &Source, inside: &[(usize, usize)]) -> Option<usize> {
+        /// Offset of the first call of a [`SCOPING`] name that is no rule call.
+        pub(super) fn scoping_call(
+            src: &Source,
+            lambdas: &super::rule_calls::Lambdas,
+        ) -> Option<usize> {
             let b = src.bytes();
             (0..b.len()).find(|&s| {
                 let e = ident_end(src, s);
                 (s == 0 || !lex::is_ident(b[s - 1]))
                     && SCOPING.contains(&&src.text[s..e])
                     && is_call(src, s, e)
-                    // `securityMatcher(s)` is never a rule, even inside the block.
-                    && (!in_ranges(inside, s) || src.text[s..e].starts_with("securityMatcher"))
+                    && !super::rule_calls::is_rule_call(src, s, lambdas)
             })
         }
 
@@ -2230,13 +2291,13 @@ mod spring {
             if chains > 1 {
                 return Some("Several security configurations".into());
             }
-            let skip = |s: &Source| super::chain::skip_ranges(s);
+            let lambdas = |s: &Source| super::chain::auth_lambdas(s);
             let at = |s: &Source, p: usize| format!("{}:{}", s.rel, s.line(p));
             let mentions = |s: &&Source| lex::words(&s.text, "HttpSecurity").next().is_some();
             let scoped = (sources.iter())
                 .filter(|s| !s.rel.ends_with(".cs"))
                 .filter(mentions)
-                .find_map(|s| scoping_call(s, &skip(s)).map(|p| at(s, p)));
+                .find_map(|s| scoping_call(s, &lambdas(s)).map(|p| at(s, p)));
             if let Some(site) = scoped {
                 return Some(format!("A scoping matcher at {site}"));
             }
@@ -2324,9 +2385,13 @@ mod spring {
     ///   { }` blocks used other than as a receiver; any `.apply(…)`, `.with(…)`,
     ///   `.also(…)`, `.let(…)` or `.run(…)` call with parentheses (a configurer).
     ///
-    /// Matchers are rules (not scoping) only as the rule calls inside the
-    /// authorization block, which ends at its first `.and()`. There are no other
-    /// skips: a scoping name or hand-off anywhere else counts, also in
+    /// A scoping-name call is a rule only if its dotted receiver chain (balanced
+    /// calls, newlines allowed) is rooted at the parameter of an authorization
+    /// lambda or at an `authorizeRequests()`/`authorizeHttpRequests()` call, with
+    /// no `.and()` in between; a bare call (static factory) only inside the
+    /// arguments of such a rule call; `securityMatcher(s)` never. Unclear receiver
+    /// chains are not rules. There are no ranges or statement ends involved.
+    /// A scoping name or hand-off anywhere else counts, also in
     /// `configure(WebSecurity)`, a `WebSecurityCustomizer` or the arguments of
     /// `ignoring…Matcher(s)(…)`. Accepted conservative limit: apps using
     /// `web.ignoring().requestMatchers(..)`, `WebSecurityCustomizer`,
@@ -2562,26 +2627,17 @@ mod spring {
             Some((from, end, lambda))
         }
 
-        /// Text ranges where matchers are rules, not scoping: an expression
-        /// lambda or call chain, and of a braced lambda only the statements that
-        /// start with its parameter.
-        pub(in super::super) fn skip_ranges(src: &Source) -> Vec<(usize, usize)> {
-            let mut ranges = Vec::new();
-            for open in authorize_sites(src) {
-                let Some((from, to, lambda)) = block(src, open) else {
-                    continue;
-                };
-                if !lambda {
-                    ranges.push((from, to));
-                } else if let Some(param) = super::lambda_rules::lambda_param(src, open) {
-                    ranges.extend(super::lambda_rules::rule_statements(
-                        src,
-                        (from, to),
-                        &param,
-                    ));
-                }
-            }
-            ranges
+        /// `(parameter, open, close)` of every authorization lambda: its rule calls
+        /// are rooted at the parameter.
+        pub(in super::super) fn auth_lambdas(src: &Source) -> Vec<(String, usize, usize)> {
+            (authorize_sites(src).into_iter())
+                .filter_map(|open| {
+                    let close = src.pair(open)?;
+                    let text = &src.text[open + 1..close];
+                    let head = text[..text.find("->")?].trim().trim_matches(['(', ')']);
+                    Some((head.split_whitespace().last()?.to_owned(), open, close))
+                })
+                .collect()
         }
 
         /// The rules of every `authorizeHttpRequests`/`authorizeRequests` call in `src`.
@@ -5186,6 +5242,23 @@ public class TicketController {
         }
         let kt = "class C : WebSecurityConfigurerAdapter() {\n    override fun configure(http: HttpSecurity) {\n        http.authorizeRequests({ a -> a.antMatchers(\"/api/v1/open/**\").permitAll(); a.anyRequest().authenticated(); getHttp().antMatcher(\"/api/**\") })\n    }\n}\n";
         assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", kt)]));
+        // Kotlin statements separated by newlines only.
+        for x in [
+            "http.antMatcher(\"/admin/**\")",
+            "http.antMatcher(\"/api/**\")",
+        ] {
+            let kt = format!(
+                "class C : WebSecurityConfigurerAdapter() {{\n    override fun configure(http: HttpSecurity) {{\n        http.authorizeRequests({{ a ->\n            a.antMatchers(\"/api/v1/open/**\").permitAll()\n            a.anyRequest().authenticated()\n            {x}\n        }})\n    }}\n}}\n"
+            );
+            assert_not_evaluated(&configured(&[("src/main/java/app/C.kt", &kt)]));
+        }
+        // A multi-line rule chain on the lambda parameter stays evaluated.
+        let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> a\n  .requestMatchers(\"/api/v1/open/**\").permitAll()\n  .anyRequest().authenticated()); return http.build(); } }";
+        let flow = configured(&[("src/main/java/app/C.java", text)]);
+        assert_eq!(
+            access(&flow, "GET", "/api/v1/open/ping"),
+            &AccessState::Open
+        );
         // Static factories inside a rule's arguments stay legitimate.
         let text = "public class C { @Bean SecurityFilterChain api(HttpSecurity http) throws Exception { http.authorizeHttpRequests(a -> { a.requestMatchers(antMatcher(\"/api/v1/open/**\")).permitAll(); a.anyRequest().authenticated(); }); return http.build(); } }";
         let flow = configured(&[("src/main/java/app/C.java", text)]);
