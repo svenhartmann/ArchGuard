@@ -31,14 +31,18 @@
 //!   `''` or that has a child with path `''`, and a route with a named `outlet`. Their
 //!   component acts on every screen of the application (`any_screen`), with the layout's
 //!   route as base for relative links.
-//! - Access: `canActivate` and `canMatch` guards, a plain name or a factory call
-//!   (`permissionGuard('x')`, named by the called function). A guard listed in the
+//! - Access: `canActivate`, `canMatch` and (with `loadChildren`) `canLoad` guards, a
+//!   plain name or a factory call (`permissionGuard('x')`, named by the called function),
+//!   or `mapToCanActivate([...])`; a guard list that is a variable or call is `unknown`. A guard listed in the
 //!   configuration's `[views.access]` takes its meaning there (`open` adds no
 //!   condition; `role:$arg` / `policy:$arg` take the factory's string arguments);
-//!   any other guard is `custom(name)`. Route `data` keys in [`DATA_ROLE_KEYS`] holding a
-//!   literal array add `role(…)` (several: `any`); an enum member (`Authority.ADMIN`)
-//!   stands for its string value when the application declares that enum, else for its
-//!   member name (with a note). Several conditions are `all`; child routes inherit
+//!   any other guard is `custom(name)`. A route `data` key counts only when a guard of the
+//!   route (or a `canActivateChild` guard of an ancestor) reads it in its declaration
+//!   (`route.data.key`, `route.data['key']`; `data` used otherwise: every key): a literal
+//!   array adds `role(…)` (several: `any`), another value is `unknown`; an enum member
+//!   (`Authority.ADMIN`) stands for its string value when the application declares that
+//!   enum, else it is `unknown`. The `data` of a componentless parent is merged into its
+//!   children; keys no guard reads give a note. Routes of one path get ids `…#2`. Several conditions are `all`; child routes inherit
 //!   them (plus `canActivateChild`).
 //! - In the component's template (`templateUrl` or inline `template`):
 //!   `routerLink="…"` and `[routerLink]="'…'"` / `"['…', expr]"`; in its class:
@@ -114,8 +118,6 @@ const ROUTER_CALLS: [&str; 3] = [
     "RouterModule.forChild(",
     "provideRouter(",
 ];
-/// Route `data` keys whose literal array lists the roles the route needs.
-const DATA_ROLE_KEYS: [&str; 3] = ["authorities", "roles", "permissions"];
 
 /// Screens, transitions and HTTP actions of every Angular application below `root`.
 /// Read errors and everything not literal become diagnostics.
@@ -262,6 +264,83 @@ fn guard_condition(
         1 => Some(names.pop()),
         _ => Some(Some(Condition::Any(names))),
     }
+}
+
+/// The body of the declaration whose name starts at `j`: a `const` initializer, else the
+/// first braces (class or function body).
+fn declared_body(text: &str, constant: bool, j: usize, name: &str) -> Option<String> {
+    if constant {
+        return initializer(text, j + name.len()).map(|at| init_source(text, at));
+    }
+    let open = j + text[j..].find('{')?;
+    Some(text[open..close(text, open)].to_string())
+}
+
+impl Reads {
+    /// Records the use of `data` at `at` in a guard `body`: `.key`, `['key']`, a
+    /// destructuring, or anything else (every key).
+    fn add(&mut self, body: &str, at: usize) {
+        let b = body.as_bytes();
+        let mut k = skip_ws(b, at + "data".len());
+        if b.get(k) == Some(&b'?') {
+            k = skip_ws(b, k + 1);
+        }
+        let key = match b.get(k) {
+            Some(b'.') => Some(ident_at(body, skip_ws(b, k + 1)).to_string()),
+            Some(b'[') => match (Parser {
+                s: body,
+                i: skip_ws(b, k + 1),
+            }
+            .value(0))
+            .value
+            {
+                Value::Str(s) => Some(s),
+                _ => None,
+            },
+            _ => return self.add_destructured(body, at),
+        };
+        match key.filter(|k| !k.is_empty()) {
+            Some(key) => self.keys.insert(key),
+            None => !std::mem::replace(&mut self.all, true),
+        };
+    }
+
+    fn add_destructured(&mut self, body: &str, at: usize) {
+        match destructured(body, at) {
+            Some(keys) => self.keys.extend(keys),
+            None => self.all = true,
+        }
+    }
+}
+
+/// The keys of `const { a, b: c } = <chain>.data`; `None` for any other use of `data`.
+fn destructured(body: &str, data: usize) -> Option<Vec<String>> {
+    let b = body.as_bytes();
+    let mut i = data;
+    while i > 0 && (is_ident_char(b[i - 1] as char) || matches!(b[i - 1], b'.' | b'?')) {
+        i -= 1;
+    }
+    let back = |mut i: usize| {
+        while i > 0 && b[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    let eq = back(i).checked_sub(1).filter(|&e| b[e] == b'=')?;
+    let close = back(eq).checked_sub(1).filter(|&c| b[c] == b'}')?;
+    let open = body[..close].rfind('{')?;
+    let pattern = &body[open + 1..close];
+    if pattern.contains(['{', '[']) {
+        return None;
+    }
+    pattern
+        .split(',')
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| {
+            let key = p.split([':', '=']).next()?.trim();
+            (is_ident(key)).then(|| key.to_string())
+        })
+        .collect()
 }
 
 /// A declared or detected project directory.
@@ -434,6 +513,9 @@ impl App<'_> {
                 diagnostics: vec![],
                 refs: BTreeSet::new(),
                 stack: vec![],
+                merged: vec![],
+                child_guards: vec![],
+                reads: BTreeMap::new(),
             };
             walk.array_at(&file, at, "", &[]);
             refs.append(&mut walk.refs);
@@ -450,6 +532,19 @@ impl App<'_> {
         }
         layouts.sort();
         layouts.dedup();
+        // Routes of one path (`canMatch` alternatives) are distinct screens.
+        let mut seen: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
+        for (screen, _) in &mut screens {
+            let origin = (screen.file.clone(), screen.line);
+            let list = seen.entry(screen.id.clone()).or_default();
+            let n = (list.iter().position(|o| *o == origin)).unwrap_or_else(|| {
+                list.push(origin);
+                list.len() - 1
+            });
+            if n > 0 {
+                screen.id = format!("{}#{}", screen.id, n + 1);
+            }
+        }
         self.flows(&screens, &layouts, flow);
         flow.screens.extend(screens.into_iter().map(|(s, _)| s));
     }
@@ -490,6 +585,32 @@ impl App<'_> {
             }
         }
         arrays
+    }
+
+    /// The route `data` keys the guard `name` reads, from its class, function or
+    /// `const` declaration in the application (one hop; calls it makes are not followed).
+    fn guard_reads(&self, name: &str) -> Reads {
+        let mut reads = Reads::default();
+        for body in self.guard_bodies(name) {
+            for at in words(&body, "data") {
+                reads.add(&body, at);
+            }
+        }
+        reads
+    }
+
+    /// Source of every class, function or `const` declaration called `name`.
+    fn guard_bodies(&self, name: &str) -> Vec<String> {
+        let mut bodies = vec![];
+        for text in self.files.values() {
+            for kw in ["class", "function", "const"] {
+                let starts = words(text, kw).into_iter();
+                let starts = starts.map(|p| skip_ws(text.as_bytes(), p + kw.len()));
+                let named = starts.filter(|&j| ident_at(text, j) == name);
+                bodies.extend(named.filter_map(|j| declared_body(text, kw == "const", j, name)));
+            }
+        }
+        bodies
     }
 
     /// The array literal `name` is bound to, in `file` or the file it imports it from.
@@ -1126,6 +1247,20 @@ struct Walk<'w> {
     diagnostics: Vec<UiFlowDiagnostic>,
     refs: BTreeSet<(String, usize)>,
     stack: Vec<(String, usize)>,
+    /// `data` objects (file, offset) of componentless ancestors: merged into children.
+    merged: Vec<(String, usize)>,
+    /// Guards of the `canActivateChild` of ancestors: they see the child's `data`.
+    child_guards: Vec<String>,
+    /// What each guard reads of the route `data`, by guard name.
+    reads: BTreeMap<String, Reads>,
+}
+
+/// The route `data` keys a guard's declaration reads.
+#[derive(Clone, Default)]
+struct Reads {
+    keys: BTreeSet<String>,
+    /// `data` is used other than by key (`const { a } = route.data`): any key may be read.
+    all: bool,
 }
 
 impl<'w> Walk<'w> {
@@ -1193,14 +1328,10 @@ impl<'w> Walk<'w> {
             .collect::<Vec<_>>()
             .join("/");
         let mut guards = inherited.to_vec();
-        for key in ["canActivate", "canMatch"] {
-            if let Some(v) = get(key) {
-                self.guards(src, v, &mut guards);
-            }
-        }
-        if let Some(v) = get("data") {
-            self.data_roles(src, v, &mut guards);
-        }
+        let mut names = self.child_guards.clone();
+        self.route_guards(src, fields, &mut guards, &mut names);
+        let componentless = get("component").is_none() && get("loadComponent").is_none();
+        self.data_roles(src, get("data"), &names, &mut guards);
         let layout = get("outlet").is_some()
             || get("children").is_some_and(|c| path.is_empty() || self.has_empty_child(src, c));
         if let Some(name) = self.component(src, get("component"), get("loadComponent")) {
@@ -1211,8 +1342,14 @@ impl<'w> Walk<'w> {
                 self.screens.push(screen);
             }
         }
+        let (merged, child_guards) = (self.merged.len(), self.child_guards.len());
         if let Some(v) = get("canActivateChild") {
-            self.guards(src, v, &mut guards);
+            let mut child = vec![];
+            self.guards(src, v, &mut guards, &mut child);
+            self.child_guards.extend(child);
+        }
+        if let (true, Some(d)) = (componentless, get("data")) {
+            self.merged.push((src.file.into(), d.at));
         }
         if let Some(v) = get("children") {
             self.children(src, v, &full, &guards);
@@ -1220,6 +1357,32 @@ impl<'w> Walk<'w> {
         if let Some(v) = get("loadChildren") {
             self.load_children(src, v, &full, &guards);
         }
+        self.merged.truncate(merged);
+        self.child_guards.truncate(child_guards);
+    }
+
+    /// `canActivate`, `canMatch` and `canLoad` of a route object.
+    fn route_guards(
+        &mut self,
+        src: Src,
+        fields: &[(String, Item)],
+        guards: &mut Vec<Condition>,
+        names: &mut Vec<String>,
+    ) {
+        let get = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+        for key in ["canActivate", "canMatch"] {
+            if let Some(v) = get(key) {
+                self.guards(src, v, guards, names);
+            }
+        }
+        let Some(v) = get("canLoad") else { return };
+        if get("loadChildren").is_none() {
+            let message = "canLoad on a route without loadChildren guards nothing.";
+            return self.note(src, v.at, message.into());
+        }
+        let message = "canLoad only guards loading the lazy routes once; it does not run on later navigations.";
+        self.note(src, v.at, message.into());
+        self.guards(src, v, guards, names);
     }
 
     /// Whether a child route (inline or a declared array) has the empty path.
@@ -1346,10 +1509,28 @@ impl<'w> Walk<'w> {
         self.diag(src, v.at, message);
     }
 
-    fn guards(&mut self, src: Src, v: &Item, out: &mut Vec<Condition>) {
-        let items = match &v.value {
+    fn guards(&mut self, src: Src, v: &Item, out: &mut Vec<Condition>, names: &mut Vec<String>) {
+        let unwrapped;
+        let items: Vec<&Item> = match &v.value {
             Value::Arr(items) => items.iter().collect(),
-            _ => vec![v],
+            // `mapToCanActivate([A, B])` lists class guards.
+            Value::Raw(call) if call_parts(call).is_some_and(|(n, _)| n == "mapToCanActivate") => {
+                unwrapped = Parser {
+                    s: src.text,
+                    i: v.at + call.find('(').unwrap_or(0),
+                }
+                .array(0);
+                match unwrapped.as_slice() {
+                    [
+                        Item {
+                            value: Value::Arr(items),
+                            ..
+                        },
+                    ] => items.iter().collect(),
+                    _ => return self.unknown_guards(src, v, out),
+                }
+            }
+            _ => return self.unknown_guards(src, v, out),
         };
         for guard in items {
             let source = guard.source(src.text);
@@ -1366,6 +1547,7 @@ impl<'w> Walk<'w> {
                 out.push(Condition::Unknown(source));
                 continue;
             };
+            names.push(name.into());
             match guard_condition(self.app.access.get(name), name, args.as_deref()) {
                 Some(condition) => out.extend(condition),
                 None => {
@@ -1379,38 +1561,140 @@ impl<'w> Walk<'w> {
         }
     }
 
-    /// Roles from the [`DATA_ROLE_KEYS`] of a route's `data`.
-    fn data_roles(&mut self, src: Src, v: &Item, out: &mut Vec<Condition>) {
-        let Value::Obj(fields) = &v.value else {
-            let source = v.source(src.text);
-            if DATA_ROLE_KEYS.iter().any(|k| !words(&source, k).is_empty()) {
+    /// Guards given as a variable, a call or anything but a list: unknown.
+    fn unknown_guards(&mut self, src: Src, v: &Item, out: &mut Vec<Condition>) {
+        let source = v.source(src.text);
+        let message = format!(
+            "Guards are not an array literal (a variable or a call); their conditions are unknown: {source}"
+        );
+        self.diag(src, v.at, message);
+        out.push(Condition::Unknown(source));
+    }
+
+    /// Roles from the `data` keys that a guard of the route reads (`names`: its own
+    /// guards and the `canActivateChild` guards of its ancestors). `data` of
+    /// componentless ancestors is merged in; keys no guard reads give a note.
+    fn data_roles(
+        &mut self,
+        src: Src,
+        data: Option<&Item>,
+        names: &[String],
+        out: &mut Vec<Condition>,
+    ) {
+        let app: &'w App<'w> = self.app;
+        let mut reads = Reads::default();
+        for name in names {
+            let r = (self.reads.entry(name.clone()))
+                .or_insert_with(|| app.guard_reads(name))
+                .clone();
+            reads.keys.extend(r.keys);
+            reads.all |= r.all;
+        }
+        let reading = reads.all || !reads.keys.is_empty();
+        let merged: Vec<(Src, Vec<(String, Item)>)> = (self.merged.iter())
+            .filter_map(|(file, at)| {
+                let (file, text) = app.files.get_key_value(file.as_str())?;
+                let obj = Parser { s: text, i: *at }.value(0);
+                let Value::Obj(f) = obj.value else {
+                    return None;
+                };
+                Some((Src { file, text }, f))
+            })
+            .collect();
+        let own = data.map_or_else(Vec::new, |v| self.own_data(src, v, reading, out));
+        // Own keys override the merged ones; only the own ones get a note.
+        let fields: Vec<(&String, Src, &Item, bool)> = (merged.iter())
+            .flat_map(|(s, f)| f.iter().map(|(k, i)| (k, *s, i, false)))
+            .chain(own.iter().map(|(k, i)| (k, src, i, true)))
+            .collect();
+        let mut done = BTreeSet::new();
+        for (key, s, item, own) in fields.iter().rev() {
+            if done.insert(*key) {
+                self.data_key(key, *s, item, (&reads, *own), out);
+            }
+        }
+    }
+
+    /// The keys of a route's own `data` (`{ … } satisfies T` is an object literal
+    /// too). A spread or non-literal `data` that a guard reads is unknown.
+    fn own_data(
+        &mut self,
+        src: Src,
+        v: &Item,
+        reading: bool,
+        out: &mut Vec<Condition>,
+    ) -> Vec<(String, Item)> {
+        let mut unknown = |this: &mut Self, at: usize, source: String, what: &str| {
+            this.diag(src, at, format!("{what}: {source}"));
+            out.push(Condition::Unknown(source));
+        };
+        if !src.text[v.at..].starts_with('{') {
+            if reading {
+                let what =
+                    "Route data is not an object literal; the keys a guard reads are unknown";
+                unknown(self, v.at, v.source(src.text), what);
+            }
+            return vec![];
+        }
+        let fields = Parser {
+            s: src.text,
+            i: v.at,
+        }
+        .object(0);
+        let spread = |i: &Item| {
+            let what = "Route data spreads keys a guard may read; they are unknown";
+            (i.at, i.source(src.text), what)
+        };
+        // A spread (empty key) may bring any key.
+        for (k, i) in &fields {
+            if k.is_empty() && reading {
+                let (at, source, what) = spread(i);
+                unknown(self, at, source, what);
+            }
+        }
+        fields.into_iter().filter(|(k, _)| !k.is_empty()).collect()
+    }
+
+    /// One merged `data` key: roles when a guard reads it, else a note.
+    fn data_key(
+        &mut self,
+        key: &str,
+        s: Src,
+        item: &Item,
+        (reads, own): (&Reads, bool),
+        out: &mut Vec<Condition>,
+    ) {
+        let read = reads.all || reads.keys.contains(key);
+        let Value::Arr(items) = &item.value else {
+            // Named keys that are no array are unknown; with `data` used as a
+            // whole, non-lists (titles, sort orders) are not taken for roles.
+            if reads.keys.contains(key) {
+                let source = item.source(s.text);
                 let message = format!(
-                    "Route data is not an object literal; the roles it names are unknown: {source}"
+                    "Route data {key} is read by a guard but is not a literal array; the roles are unknown: {source}"
                 );
-                self.diag(src, v.at, message);
+                self.diag(s, item.at, message);
                 out.push(Condition::Unknown(source));
             }
             return;
         };
-        for key in DATA_ROLE_KEYS {
-            let Some((_, item)) = fields.iter().find(|(k, _)| k == key) else {
-                continue;
-            };
-            let Value::Arr(items) = &item.value else {
-                let source = item.source(src.text);
+        if !read {
+            if own && !items.is_empty() {
                 let message = format!(
-                    "Route data {key} is not a literal array; the roles are unknown: {source}"
+                    "Route data {key} is read by no guard of this route; it gives no access condition."
                 );
-                self.diag(src, item.at, message);
-                out.push(Condition::Unknown(source));
-                continue;
-            };
-            let mut roles: Vec<Condition> = items.iter().map(|r| self.role(src, r)).collect();
-            match roles.len() {
-                0 => {}
-                1 => out.extend(roles.pop()),
-                _ => out.push(Condition::Any(roles)),
+                self.note(s, item.at, message);
             }
+            return;
+        }
+        let mut roles: Vec<Condition> = items.iter().map(|r| self.role(s, r)).collect();
+        let condition = match roles.len() {
+            0 => return,
+            1 => roles.remove(0),
+            _ => Condition::Any(roles),
+        };
+        if !out.contains(&condition) {
+            out.push(condition);
         }
     }
 
@@ -1427,11 +1711,11 @@ impl<'w> Walk<'w> {
                         return Condition::Role(value);
                     }
                     let message = format!(
-                        "{source} is no string member of an enum in application {}; the member name {member} stands for the role.",
+                        "{source} is no string member of an enum in application {}; the role is unknown.",
                         self.app.name
                     );
-                    self.note(src, item.at, message);
-                    return Condition::Role(member.into());
+                    self.diag(src, item.at, message);
+                    return Condition::Unknown(source);
                 }
             }
             _ => {}
@@ -2732,57 +3016,266 @@ export default routes;",
     }
 
     // Shaped like jhipster-sample-app: `data.authorities` with enum members.
-    #[test]
-    fn route_data_roles_become_role_conditions() {
-        let dir = project(&[
+    fn web(routes: &str, extra: &[(&str, &str)]) -> UiFlow {
+        let mut files = vec![
             ("web/angular.json", "{}"),
-            (
-                "web/src/app/shared/constants.ts",
-                "export enum Authority {\n  ADMIN = 'ROLE_ADMIN',\n  USER = 'ROLE_USER',\n}\n",
-            ),
-            (
-                "web/src/app/app.routes.ts",
-                "const routes: Routes = [
-  { path: 'admin', data: { authorities: [Authority.ADMIN] }, canActivate: [userRouteAccessService],
-    loadChildren: () => import('./admin/admin.routes') },
-  { path: 'edit', component: EditComponent, data: { roles: ['editor', Other.CHIEF], pageTitle: 'x' } },
-  { path: 'perm', component: PermComponent, data: { permissions: [somePermission] } },
-];
-export default routes;",
-            ),
-            (
-                "web/src/app/admin/admin.routes.ts",
-                "const r: Routes = [{ path: 'users', component: UsersComponent }];\nexport default r;",
-            ),
-        ]);
-        let flow = extract(dir.path());
+            ("web/src/app/app.routes.ts", routes),
+        ];
+        files.extend_from_slice(extra);
+        extract(project(&files).path())
+    }
+
+    fn gap_lines(flow: &UiFlow) -> Vec<u32> {
+        (flow.diagnostics.iter())
+            .filter(|d| d.severity == DiagnosticSeverity::Gap)
+            .map(|d| d.line)
+            .collect()
+    }
+
+    fn custom(n: &str) -> Condition {
+        Condition::Custom(n.into())
+    }
+
+    fn state_of<'f>(flow: &'f UiFlow, id: &str) -> &'f archguard_core::AccessState {
+        &flow.screens.iter().find(|s| s.id == id).unwrap().access
+    }
+
+    // A1, A2, A3, A6, A8: guard behaviour that already holds on the base.
+    #[test]
+    fn plain_guards_chains_and_non_access_keys() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'a', component: A },
+  { path: 'b', component: B, canActivate: [authGuard] },
+  { path: 'c', component: C, canActivate: [g1, g2('x')] },
+  { path: 'p', canActivateChild: [g], component: P, children: [{ path: 'c', component: C2 }] },
+  { path: 'd', component: D, canDeactivate: [dirty] },
+];",
+            &[],
+        );
+        let undeclared = &archguard_core::AccessState::Undeclared;
+        assert_eq!(state_of(&flow, "web:/a"), undeclared);
+        assert_eq!(access_of(&flow, "web:/b"), Some(&custom("authGuard")));
         assert_eq!(
-            access_of(&flow, "web:/admin/users"),
+            access_of(&flow, "web:/c"),
+            Some(&Condition::All(vec![custom("g1"), custom("g2")]))
+        );
+        assert_eq!(state_of(&flow, "web:/p"), undeclared);
+        assert_eq!(access_of(&flow, "web:/p/c"), Some(&custom("g")));
+        assert_eq!(state_of(&flow, "web:/d"), undeclared);
+    }
+
+    #[test]
+    fn map_to_can_activate_unwraps_its_guards() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'a', component: A, canActivate: mapToCanActivate([AuthGuard]) },
+  { path: 'b', component: B, canActivate: mapToCanActivate([G1, g2('x')]) },
+];",
+            &[],
+        );
+        assert_eq!(access_of(&flow, "web:/a"), Some(&custom("AuthGuard")));
+        assert_eq!(
+            access_of(&flow, "web:/b"),
+            Some(&Condition::All(vec![custom("G1"), custom("g2")]))
+        );
+        assert!(flow.complete, "{:?}", flow.diagnostics);
+    }
+
+    #[test]
+    fn inline_guards_and_guards_given_as_a_variable_are_unknown() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'a', component: A, canActivate: [() => inject(S).ok()] },
+  { path: 'b', component: B, canActivate: guards },
+  { path: 'c', component: C, canActivate: [openGuard], canMatch: guards },
+  { path: 'd', component: D, canActivate: makeGuards() },
+];",
+            &[(
+                ".archguard/archguard.toml",
+                "[views.access]\nopenGuard = \"open\"\n",
+            )],
+        );
+        for id in ["a", "b", "c", "d"] {
+            assert!(
+                matches!(
+                    access_of(&flow, &format!("web:/{id}")),
+                    Some(Condition::Unknown(_))
+                ),
+                "{id}: {:?}",
+                flow.screens
+            );
+        }
+        assert_eq!(
+            access_of(&flow, "web:/b"),
+            Some(&Condition::Unknown("guards".into()))
+        );
+        assert_eq!(gap_lines(&flow), vec![2, 3, 4, 5]);
+        assert!(!flow.complete);
+    }
+
+    #[test]
+    fn can_load_guards_the_lazy_routes() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'l', canLoad: [g], loadChildren: () => import('./l.routes') },
+  { path: 'x', component: X, canLoad: [h] },
+];",
+            &[(
+                "web/src/app/l.routes.ts",
+                "const r: Routes = [{ path: 'k', component: K }];\nexport default r;",
+            )],
+        );
+        assert_eq!(access_of(&flow, "web:/l/k"), Some(&custom("g")));
+        // No `loadChildren`: `canLoad` does nothing.
+        assert_eq!(
+            state_of(&flow, "web:/x"),
+            &archguard_core::AccessState::Undeclared
+        );
+        assert!(
+            flow.diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Note && d.message.contains("canLoad")),
+            "{:?}",
+            flow.diagnostics
+        );
+    }
+
+    #[test]
+    fn routes_with_the_same_path_are_distinct_screens() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'd', component: AdminDash, canMatch: [isAdmin] },
+  { path: 'd', component: UserDash },
+];",
+            &[],
+        );
+        assert_eq!(flow.screens.len(), 2);
+        assert_ne!(flow.screens[0].id, flow.screens[1].id);
+        assert_eq!(
+            access_of(&flow, &flow.screens[0].id),
+            Some(&custom("isAdmin"))
+        );
+        assert_eq!(
+            state_of(&flow, &flow.screens[1].id),
+            &archguard_core::AccessState::Undeclared
+        );
+    }
+
+    const READING_GUARD: &str = "export const userRouteAccessService: CanActivateFn = (route, state) => {
+  const authorities = route.data['authorities'];
+  return !authorities?.length || hasAny(authorities);
+};
+export class Plain implements CanActivate { canActivate(route) { return true; } }
+export class Keyed implements CanActivate { canActivate(route) { return route.data?.roles.includes('x'); } }
+";
+
+    #[test]
+    fn data_keys_count_only_with_a_guard_that_reads_them() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'a', component: A, data: { authorities: ['ROLE_ADMIN'] } },
+  { path: 'b', component: B, canActivate: [userRouteAccessService], data: { authorities: [Authority.ADMIN] } },
+  { path: 'c', component: C, canActivate: [userRouteAccessService] },
+  { path: 'd', component: D, canActivate: [userRouteAccessService], data: { authorities: [Roles.X] } },
+  { path: 'e', component: E, canActivate: [Plain], data: { roles: ['x'] } },
+  { path: 'f', component: F, canActivate: [Keyed], data: { roles: ['x', 'y'], authorities: ['no'] } },
+  { path: '', canActivate: [Keyed], data: { roles: ['z'] }, children: [{ path: 'g', component: G }] },
+];",
+            &[
+                ("web/src/app/auth.ts", READING_GUARD),
+                (
+                    "web/src/app/constants.ts",
+                    "export enum Authority { ADMIN = 'ROLE_ADMIN' }",
+                ),
+            ],
+        );
+        // A10: data without a reading guard.
+        assert_eq!(
+            state_of(&flow, "web:/a"),
+            &archguard_core::AccessState::Undeclared
+        );
+        assert!(
+            flow.diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Note
+                    && d.line == 2
+                    && d.message.contains("authorities")),
+            "{:?}",
+            flow.diagnostics
+        );
+        // A11, A12.
+        assert_eq!(
+            access_of(&flow, "web:/b"),
             Some(&Condition::All(vec![
-                Condition::Custom("userRouteAccessService".into()),
+                custom("userRouteAccessService"),
                 Condition::Role("ROLE_ADMIN".into()),
             ]))
         );
-        // `Other` is no enum of the application: the member name stays.
         assert_eq!(
-            access_of(&flow, "web:/edit"),
-            Some(&Condition::Any(vec![
-                Condition::Role("editor".into()),
-                Condition::Role("CHIEF".into()),
+            access_of(&flow, "web:/c"),
+            Some(&custom("userRouteAccessService"))
+        );
+        // A13: enum value not found.
+        assert_eq!(
+            access_of(&flow, "web:/d"),
+            Some(&Condition::All(vec![
+                custom("userRouteAccessService"),
+                Condition::Unknown("Roles.X".into()),
             ]))
         );
+        assert_eq!(gap_lines(&flow), vec![5]);
+        // The guard reads `roles`, not `authorities`; `Plain` reads nothing.
+        assert_eq!(access_of(&flow, "web:/e"), Some(&custom("Plain")));
         assert_eq!(
-            access_of(&flow, "web:/perm"),
-            Some(&Condition::Unknown("somePermission".into()))
+            access_of(&flow, "web:/f"),
+            Some(&Condition::All(vec![
+                custom("Keyed"),
+                Condition::Any(vec![
+                    Condition::Role("x".into()),
+                    Condition::Role("y".into())
+                ]),
+            ]))
         );
-        assert!(!flow.complete);
-        let gaps: Vec<u32> = flow
-            .diagnostics
-            .iter()
-            .filter(|d| d.severity == DiagnosticSeverity::Gap)
-            .map(|d| d.line)
-            .collect();
-        assert_eq!(gaps, vec![5], "{:?}", flow.diagnostics);
+        // A16: a componentless parent's guard and data reach its children.
+        assert_eq!(
+            access_of(&flow, "web:/g"),
+            Some(&Condition::All(vec![
+                custom("Keyed"),
+                Condition::Role("z".into())
+            ]))
+        );
+    }
+
+    #[test]
+    fn data_read_by_destructuring_typed_literals_and_spreads() {
+        let flow = web(
+            "const r: Routes = [
+  { path: 'a', component: A, canActivate: [Jh], data: { authorities: ['ROLE_X'], defaultSort: `id,${ASC}` } },
+  { path: 'b', component: B, canActivate: [Jh], data: { authorities: ['ROLE_Y'] } satisfies RouteData },
+  { path: 'c', component: C, canActivate: [Jh], data: { ...BASE, authorities: ['ROLE_Z'] } },
+  { path: 'd', component: D, canActivate: [Plain], data: { ...BASE } },
+];",
+            &[(
+                "web/src/app/jh.ts",
+                "export const Jh: CanActivateFn = (next) => { const { authorities } = next.data; return ok(authorities); };\n\
+                 export class Plain implements CanActivate { canActivate() { return true; } }",
+            )],
+        );
+        let role = |r: &str| Condition::All(vec![custom("Jh"), Condition::Role(r.into())]);
+        assert_eq!(access_of(&flow, "web:/a"), Some(&role("ROLE_X")));
+        assert_eq!(access_of(&flow, "web:/b"), Some(&role("ROLE_Y")));
+        // A spread may hold the key the guard reads: unknown, never dropped.
+        assert_eq!(
+            access_of(&flow, "web:/c"),
+            Some(&Condition::All(vec![
+                custom("Jh"),
+                Condition::Unknown("...BASE".into()),
+                Condition::Role("ROLE_Z".into()),
+            ]))
+        );
+        assert_eq!(access_of(&flow, "web:/d"), Some(&custom("Plain")));
+        assert_eq!(gap_lines(&flow), vec![4]);
     }
 
     // Shaped like Squidex: functional guards named in `[views.access]`.
