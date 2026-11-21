@@ -1909,26 +1909,33 @@ mod meta {
         (params.iter()).position(|a| ident_at(&a.source(&src.raw), 0) == ident)
     }
 
-    /// The lookup `class` makes through helper `h` (its first call).
+    /// The lookup `class` makes through helper `h`: the levels every call covers.
     fn through(src: &Src, class: &structure::Class, h: &Helper) -> Option<Lookup> {
         let b = src.code.as_bytes();
         let body = &src.code[class.body.0..class.body.1];
-        let open = words(body, &h.name)
-            .iter()
+        let opens: Vec<usize> = (words(body, &h.name).iter())
             .map(|p| skip_ws(b, class.body.0 + p + h.name.len()))
-            .find(|&o| b.get(o) == Some(&b'('))?;
-        let targets = match &h.targets {
-            Ok(text) => text.clone(),
-            Err(i) => {
-                let args = Parser {
-                    s: &src.raw,
-                    i: open,
+            .filter(|&o| b.get(o) == Some(&b'('))
+            .collect();
+        let covers = |open: usize| {
+            let targets = match &h.targets {
+                Ok(text) => text.clone(),
+                Err(i) => {
+                    let args = Parser {
+                        s: &src.raw,
+                        i: open,
+                    }
+                    .array(0);
+                    args.get(*i).map(|a| a.source(&src.raw)).unwrap_or_default()
                 }
-                .array(0);
-                args.get(*i).map(|a| a.source(&src.raw)).unwrap_or_default()
-            }
+            };
+            lookup(h.merge, &targets)
         };
-        Some(lookup(h.merge, &targets))
+        opens.into_iter().map(covers).reduce(|a, b| Lookup {
+            handler: a.handler && b.handler,
+            class: a.class && b.class,
+            ..a
+        })
     }
 
     /// The top-level helper function a lookup outside any class belongs to.
@@ -2846,6 +2853,32 @@ export class JwtAuthGuard implements CanActivate {
         let flow = guards(&format!(
             "{helper}export class G {{ canActivate(c) {{ return pick(this.reflector, [c.getHandler()]); }} }}\n"
         ));
+        assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
+    }
+
+    #[test]
+    fn a_helper_called_with_different_targets_covers_only_their_common_levels() {
+        let flow = run(
+            &[
+                ("package.json", PKG),
+                (
+                    "src/g.ts",
+                    "export const Public = () => SetMetadata('pub', true);\n\
+                     export const pick = (reflector: Reflector, targets: Target[]) => {\n\
+                     \x20 return reflector.getAllAndOverride<boolean>('pub', targets);\n};\n\
+                     export class G { canActivate(c) {\n\
+                     \x20 const a = pick(this.reflector, [c.getHandler()]);\n\
+                     \x20 const b = pick(this.reflector, [c.getClass()]);\n\
+                     \x20 return a || b;\n} }\n",
+                ),
+                ("src/app.module.ts", &app_module("G")),
+                (
+                    "src/a.ts",
+                    "@Controller('c')\nclass C { @Public() @Get() f() {} }\n",
+                ),
+            ],
+            "Public = \"open\"\n",
+        );
         assert_eq!(ep(&flow, "GET", "/c").access, prot(custom("G")));
     }
 }
