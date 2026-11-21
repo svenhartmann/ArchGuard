@@ -95,6 +95,7 @@ pub mod domain_chain;
 pub mod domain_csharp;
 pub mod domain_java;
 pub mod domain_model;
+pub mod domain_python;
 pub mod domain_typescript;
 pub mod extract_ctx;
 #[cfg(test)]
